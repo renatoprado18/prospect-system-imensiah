@@ -87,6 +87,20 @@ calendar = GoogleCalendarIntegration()
 fathom = FathomIntegration()
 
 
+# Debug endpoint
+@app.get("/debug/oauth")
+async def debug_oauth():
+    """Debug OAuth configuration"""
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "NOT_SET")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "NOT_SET")
+    return {
+        "client_id_prefix": client_id[:20] + "..." if len(client_id) > 20 else client_id,
+        "client_id_length": len(client_id),
+        "secret_set": len(client_secret) > 10,
+        "secret_length": len(client_secret)
+    }
+
+
 # ============== Pydantic Models ==============
 
 class ProspectCreate(BaseModel):
