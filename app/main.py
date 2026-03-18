@@ -28,10 +28,13 @@ from integrations.google_calendar import GoogleCalendarIntegration, create_calen
 from integrations.fathom import FathomIntegration, handle_fathom_webhook
 
 # Config
-DB_PATH = os.getenv("DB_PATH", "data/prospects.db")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.getenv("DB_PATH", os.path.join(BASE_DIR, "..", "data", "prospects.db"))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 FATHOM_API_KEY = os.getenv("FATHOM_API_KEY")
+TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 # Lifespan handler
 @asynccontextmanager
@@ -61,10 +64,10 @@ app.add_middleware(
 )
 
 # Templates
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 # Static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Services
 scorer = DynamicScorer(DB_PATH)

@@ -1,13 +1,19 @@
 """
-Vercel Serverless Function Entry Point
+Vercel Serverless Function Entry Point for FastAPI
 """
 import sys
 import os
 
-# Add app directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'app'))
+# Add directories to path
+root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+app_dir = os.path.join(root_dir, 'app')
+sys.path.insert(0, root_dir)
+sys.path.insert(0, app_dir)
 
-from main import app
+# Change working directory
+os.chdir(app_dir)
 
-# Vercel handler
-handler = app
+# Import FastAPI app
+from app.main import app
+
+# Vercel uses 'app' as handler for ASGI
