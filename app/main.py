@@ -17,7 +17,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 
 from models import (
@@ -28,7 +27,7 @@ from scoring import DynamicScorer
 from integrations.google_calendar import GoogleCalendarIntegration, create_calendar_link
 from integrations.fathom import FathomIntegration, handle_fathom_webhook
 from auth import (
-    oauth, get_current_user, require_auth, require_admin, require_operador,
+    get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
 )
 
@@ -62,9 +61,6 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
-
-# Session middleware (required for OAuth)
-app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
 # CORS
 app.add_middleware(
