@@ -4,16 +4,35 @@ Vercel Serverless Function Entry Point for FastAPI
 import sys
 import os
 
-# Add directories to path
-root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-app_dir = os.path.join(root_dir, 'app')
-sys.path.insert(0, root_dir)
-sys.path.insert(0, app_dir)
+# Setup paths
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+APP_DIR = os.path.join(ROOT_DIR, 'app')
 
-# Change working directory
-os.chdir(app_dir)
+sys.path.insert(0, ROOT_DIR)
+sys.path.insert(0, APP_DIR)
 
-# Import FastAPI app
-from app.main import app
+# Set environment
+os.environ['DB_PATH'] = '/tmp/prospects.db'
 
-# Vercel uses 'app' as handler for ASGI
+# Now import the app
+try:
+    from app.main import app
+except Exception as e:
+    # Fallback minimal app for debugging
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+
+    app = FastAPI()
+
+    @app.get("/")
+    def root():
+        return JSONResponse({
+            "error": str(e),
+            "root_dir": ROOT_DIR,
+            "app_dir": APP_DIR,
+            "sys_path": sys.path[:5]
+        })
+
+    @app.get("/health")
+    def health():
+        return {"status": "fallback", "error": str(e)}

@@ -29,19 +29,23 @@ from integrations.fathom import FathomIntegration, handle_fathom_webhook
 
 # Config
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.getenv("DB_PATH", os.path.join(BASE_DIR, "..", "data", "prospects.db"))
+DB_PATH = os.getenv("DB_PATH", "/tmp/prospects.db")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 FATHOM_API_KEY = os.getenv("FATHOM_API_KEY")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
+DATA_DIR = os.path.join(BASE_DIR, "..", "data")
 
 # Lifespan handler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    os.makedirs("data", exist_ok=True)
-    init_db(DB_PATH)
+    os.makedirs("/tmp", exist_ok=True)
+    try:
+        init_db(DB_PATH)
+    except Exception as e:
+        print(f"DB init error: {e}")
     yield
     # Shutdown
     pass
@@ -860,7 +864,7 @@ async def import_from_csv(background_tasks: BackgroundTasks):
     """
     import csv
 
-    csv_path = "data/prospects_imensiah.csv"
+    csv_path = os.path.join(DATA_DIR, "prospects_imensiah.csv")
 
     if not os.path.exists(csv_path):
         raise HTTPException(status_code=404, detail="Arquivo CSV não encontrado")
