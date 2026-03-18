@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Prospects | ImensIAH</title>
+
+    <!-- Bootstrap 5 -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --success: #16a34a;
+            --warning: #f59e0b;
+            --danger: #dc2626;
+            --tier-a: #16a34a;
+            --tier-b: #2563eb;
+            --tier-c: #f59e0b;
+            --tier-d: #9ca3af;
+            --tier-e: #d1d5db;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f8fafc;
+        }
+
+        .navbar {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+        }
+
+        .sidebar {
+            background: white;
+            min-height: calc(100vh - 56px);
+            box-shadow: 2px 0 8px rgba(0,0,0,0.05);
+        }
+
+        .sidebar .nav-link {
+            color: #475569;
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin: 4px 12px;
+        }
+
+        .sidebar .nav-link:hover, .sidebar .nav-link.active {
+            background: #f1f5f9;
+            color: var(--primary);
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+        }
+
+        .stat-card .number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+
+        .tier-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.8rem;
+        }
+
+        .tier-A { background: #dcfce7; color: #166534; }
+        .tier-B { background: #dbeafe; color: #1e40af; }
+        .tier-C { background: #fef3c7; color: #92400e; }
+        .tier-D { background: #f3f4f6; color: #4b5563; }
+        .tier-E { background: #f9fafb; color: #9ca3af; }
+
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .status-novo { background: #e0f2fe; color: #0369a1; }
+        .status-contatado { background: #fef3c7; color: #92400e; }
+        .status-reuniao_agendada { background: #ddd6fe; color: #6d28d9; }
+        .status-reuniao_realizada { background: #d1fae5; color: #047857; }
+        .status-negociando { background: #fce7f3; color: #be185d; }
+        .status-convertido { background: #dcfce7; color: #166534; }
+        .status-perdido { background: #fee2e2; color: #dc2626; }
+
+        .prospect-card {
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            border-left: 4px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .prospect-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            transform: translateX(4px);
+        }
+
+        .prospect-card.tier-A { border-left-color: var(--tier-a); }
+        .prospect-card.tier-B { border-left-color: var(--tier-b); }
+        .prospect-card.tier-C { border-left-color: var(--tier-c); }
+
+        .score-circle {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+
+        .score-high { background: #dcfce7; color: #166534; }
+        .score-medium { background: #fef3c7; color: #92400e; }
+        .score-low { background: #f3f4f6; color: #6b7280; }
+
+        .funnel-bar {
+            height: 40px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            color: white;
+            font-weight: 600;
+            transition: width 0.5s ease;
+        }
+
+        .action-btn {
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 0.875rem;
+        }
+
+        .modal-content {
+            border-radius: 16px;
+        }
+
+        .reason-tag {
+            display: inline-block;
+            padding: 4px 10px;
+            background: #f1f5f9;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            margin: 2px;
+        }
+
+        #prospectsTable {
+            font-size: 0.9rem;
+        }
+
+        #prospectsTable th {
+            font-weight: 600;
+            color: #64748b;
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        .icp-insight {
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .argument-card {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+
+        .argument-card.effective {
+            border-left: 4px solid var(--success);
+        }
+    </style>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-dark px-4">
+        <div class="d-flex align-items-center">
+            <span class="navbar-brand mb-0 h1">
+                <i class="bi bi-bullseye me-2"></i>
+                Prospects ImensIAH
+            </span>
+        </div>
+        <div class="d-flex align-items-center">
+            <span class="text-white-50 me-3">
+                <i class="bi bi-person-circle me-1"></i>
+                Andressa Santos
+            </span>
+            <button class="btn btn-outline-light btn-sm" onclick="syncFathom()">
+                <i class="bi bi-arrow-repeat me-1"></i>
+                Sincronizar Fathom
+            </button>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-2 sidebar py-4">
+                <ul class="nav flex-column">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#" onclick="showSection('dashboard')">
+                            <i class="bi bi-speedometer2 me-2"></i>
+                            Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showSection('prospects')">
+                            <i class="bi bi-people me-2"></i>
+                            Prospects
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showSection('meetings')">
+                            <i class="bi bi-calendar-event me-2"></i>
+                            Reuniões
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showSection('analytics')">
+                            <i class="bi bi-graph-up me-2"></i>
+                            Analytics
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="showSection('icp')">
+                            <i class="bi bi-lightbulb me-2"></i>
+                            ICP & Insights
+                        </a>
+                    </li>
+                    <li class="nav-item mt-4">
+                        <a class="nav-link text-muted" href="#" onclick="showSection('settings')">
+                            <i class="bi bi-gear me-2"></i>
+                            Configurações
+                        </a>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Main Content -->
+            <div class="col-md-10 py-4 px-4">
+
+                <!-- Dashboard Section -->
+                <section id="section-dashboard">
+                    <h4 class="mb-4">Dashboard</h4>
+
+                    <!-- Stats Cards -->
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <div class="text-muted mb-1">Tier A</div>
+                                        <div class="number" id="stat-tier-a">-</div>
+                                    </div>
+                                    <div class="align-self-center">
+                                        <i class="bi bi-star-fill text-success" style="font-size:2rem"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <div class="text-muted mb-1">Reuniões Agendadas</div>
+                                        <div class="number" id="stat-meetings">-</div>
+                                    </div>
+                                    <div class="align-self-center">
+                                        <i class="bi bi-calendar-check text-primary" style="font-size:2rem"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <div class="text-muted mb-1">Convertidos</div>
+                                        <div class="number" id="stat-converted">-</div>
+                                    </div>
+                                    <div class="align-self-center">
+                                        <i class="bi bi-trophy text-warning" style="font-size:2rem"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-card">
+                                <div class="d-flex justify-content-between">
+                                    <div>
+                                        <div class="text-muted mb-1">Receita</div>
+                                        <div class="number" id="stat-revenue">-</div>
+                                    </div>
+                                    <div class="align-self-center">
+                                        <i class="bi bi-currency-dollar text-success" style="font-size:2rem"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <!-- Top Prospects -->
+                        <div class="col-md-8">
+                            <div class="stat-card">
+                                <h5 class="mb-3">
+                                    <i class="bi bi-fire text-danger me-2"></i>
+                                    Top Prospects para Contato
+                                </h5>
+                                <div id="top-prospects-list">
+                                    <!-- Populated by JS -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Funnel -->
+                        <div class="col-md-4">
+                            <div class="stat-card">
+                                <h5 class="mb-3">
+                                    <i class="bi bi-funnel me-2"></i>
+                                    Funil de Vendas
+                                </h5>
+                                <div id="funnel-chart">
+                                    <!-- Populated by JS -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Prospects Section -->
+                <section id="section-prospects" style="display:none">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h4>Prospects</h4>
+                        <div class="d-flex gap-2">
+                            <select class="form-select form-select-sm" id="filter-tier" onchange="loadProspects()">
+                                <option value="">Todos os Tiers</option>
+                                <option value="A">Tier A</option>
+                                <option value="B">Tier B</option>
+                                <option value="C">Tier C</option>
+                            </select>
+                            <select class="form-select form-select-sm" id="filter-status" onchange="loadProspects()">
+                                <option value="">Todos os Status</option>
+                                <option value="novo">Novo</option>
+                                <option value="contatado">Contatado</option>
+                                <option value="reuniao_agendada">Reunião Agendada</option>
+                                <option value="reuniao_realizada">Reunião Realizada</option>
+                                <option value="negociando">Negociando</option>
+                            </select>
+                            <input type="text" class="form-control form-control-sm" id="search-input"
+                                   placeholder="Buscar..." onkeyup="loadProspects()">
+                        </div>
+                    </div>
+
+                    <div class="stat-card">
+                        <table class="table table-hover" id="prospectsTable">
+                            <thead>
+                                <tr>
+                                    <th>Score</th>
+                                    <th>Nome</th>
+                                    <th>Empresa</th>
+                                    <th>Cargo</th>
+                                    <th>Tier</th>
+                                    <th>Status</th>
+                                    <th>Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="prospects-tbody">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Meetings Section -->
+                <section id="section-meetings" style="display:none">
+                    <h4 class="mb-4">Reuniões</h4>
+                    <div class="stat-card">
+                        <p class="text-muted">Próximas reuniões e histórico</p>
+                        <div id="meetings-list">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Analytics Section -->
+                <section id="section-analytics" style="display:none">
+                    <h4 class="mb-4">Analytics</h4>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="stat-card">
+                                <h5>Taxa de Conversão por Tier</h5>
+                                <div id="conversion-by-tier">
+                                    <!-- Chart -->
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="stat-card">
+                                <h5>Objeções Mais Comuns</h5>
+                                <div id="common-objections">
+                                    <!-- List -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ICP Section -->
+                <section id="section-icp" style="display:none">
+                    <h4 class="mb-4">
+                        <i class="bi bi-lightbulb-fill text-warning me-2"></i>
+                        Perfil Ideal de Cliente & Insights
+                    </h4>
+
+                    <div class="icp-insight">
+                        <h5>Recomendações Baseadas em Dados</h5>
+                        <div id="icp-recommendations">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="stat-card">
+                                <h5>Cargos com Maior Conversão</h5>
+                                <div id="top-converting-roles">
+                                    <!-- Populated by JS -->
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="stat-card">
+                                <h5>Features Mais Valorizadas</h5>
+                                <div id="valued-features">
+                                    <!-- Populated by JS -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="stat-card mt-4">
+                        <h5>Argumentos de Venda Otimizados</h5>
+                        <div id="sales-arguments">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Settings Section -->
+                <section id="section-settings" style="display:none">
+                    <h4 class="mb-4">Configurações</h4>
+                    <div class="stat-card">
+                        <h5>Integrações</h5>
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <div class="border rounded p-3 mb-3">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>Google Calendar</strong>
+                                            <p class="text-muted mb-0 small">Agendar reuniões automaticamente</p>
+                                        </div>
+                                        <span class="badge bg-success">Conectado</span>
+                                    </div>
+                                </div>
+                                <div class="border rounded p-3">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>Fathom</strong>
+                                            <p class="text-muted mb-0 small">Análise de reuniões com IA</p>
+                                        </div>
+                                        <span class="badge bg-success">Conectado</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <h5 class="mt-4">Importar Dados</h5>
+                        <button class="btn btn-primary" onclick="importCSV()">
+                            <i class="bi bi-upload me-2"></i>
+                            Importar CSV de Contatos
+                        </button>
+                    </div>
+                </section>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Schedule Meeting Modal -->
+    <div class="modal fade" id="scheduleMeetingModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Agendar Reunião</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="schedule-prospect-id">
+                    <div class="mb-3">
+                        <label class="form-label">Prospect</label>
+                        <input type="text" class="form-control" id="schedule-prospect-name" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Tipo de Reunião</label>
+                        <select class="form-select" id="schedule-type">
+                            <option value="discovery">Discovery Call</option>
+                            <option value="demo">Demo</option>
+                            <option value="negociacao">Negociação</option>
+                            <option value="fechamento">Fechamento</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Data e Hora</label>
+                        <input type="datetime-local" class="form-control" id="schedule-datetime">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Duração</label>
+                        <select class="form-select" id="schedule-duration">
+                            <option value="30">30 minutos</option>
+                            <option value="45">45 minutos</option>
+                            <option value="60">1 hora</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" onclick="confirmScheduleMeeting()">
+                        <i class="bi bi-calendar-plus me-2"></i>
+                        Agendar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Feedback Modal -->
+    <div class="modal fade" id="feedbackModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Feedback da Reunião</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="feedback-prospect-id">
+                    <div class="mb-3">
+                        <label class="form-label">Resultado da Reunião</label>
+                        <select class="form-select" id="feedback-outcome">
+                            <option value="muito_interessado">Muito Interessado - Quer avançar</option>
+                            <option value="interessado">Interessado - Precisa avaliar</option>
+                            <option value="neutro">Neutro - Sem decisão clara</option>
+                            <option value="pouco_interesse">Pouco Interesse</option>
+                            <option value="sem_interesse">Sem Interesse</option>
+                            <option value="nao_compareceu">Não Compareceu</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Objeções Identificadas</label>
+                        <div class="d-flex flex-wrap gap-2" id="objections-checkboxes">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="Preocupação com preço" id="obj1">
+                                <label class="form-check-label" for="obj1">Preço</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="Limitação de orçamento" id="obj2">
+                                <label class="form-check-label" for="obj2">Orçamento</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="Falta de tempo" id="obj3">
+                                <label class="form-check-label" for="obj3">Tempo</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="Precisa aprovação interna" id="obj4">
+                                <label class="form-check-label" for="obj4">Aprovação</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="Avaliando concorrentes" id="obj5">
+                                <label class="form-check-label" for="obj5">Concorrência</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Features de Interesse</label>
+                        <div class="d-flex flex-wrap gap-2" id="features-checkboxes">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="IA" id="feat1">
+                                <label class="form-check-label" for="feat1">IA</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="Velocidade 48h" id="feat2">
+                                <label class="form-check-label" for="feat2">Velocidade 48h</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="Expertise humana" id="feat3">
+                                <label class="form-check-label" for="feat3">Expertise humana</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="Diagnóstico rápido" id="feat4">
+                                <label class="form-check-label" for="feat4">Diagnóstico</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" value="Análise estratégica" id="feat5">
+                                <label class="form-check-label" for="feat5">Estratégia</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Notas</label>
+                        <textarea class="form-control" id="feedback-notes" rows="3"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Próximos Passos</label>
+                        <input type="text" class="form-control" id="feedback-next-steps">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" onclick="submitFeedback()">
+                        <i class="bi bi-check-lg me-2"></i>
+                        Salvar Feedback
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prospect Details Modal -->
+    <div class="modal fade" id="prospectDetailModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Detalhes do Prospect</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="prospect-detail-content">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        const API_BASE = '';
+
+        // Navigation
+        function showSection(section) {
+            document.querySelectorAll('section').forEach(s => s.style.display = 'none');
+            document.getElementById('section-' + section).style.display = 'block';
+
+            document.querySelectorAll('.sidebar .nav-link').forEach(l => l.classList.remove('active'));
+            event.target.classList.add('active');
+
+            if (section === 'dashboard') loadDashboard();
+            if (section === 'prospects') loadProspects();
+            if (section === 'icp') loadICP();
+            if (section === 'analytics') loadAnalytics();
+        }
+
+        // Load Dashboard
+        async function loadDashboard() {
+            try {
+                const response = await fetch(`${API_BASE}/api/analytics/dashboard`);
+                const data = await response.json();
+
+                document.getElementById('stat-tier-a').textContent = data.por_tier?.A || 0;
+                document.getElementById('stat-meetings').textContent = data.reunioes_agendadas || 0;
+                document.getElementById('stat-converted').textContent = data.total_convertidos || 0;
+                document.getElementById('stat-revenue').textContent = `R$ ${(data.receita_total || 0).toLocaleString('pt-BR')}`;
+
+                // Top prospects
+                const topList = document.getElementById('top-prospects-list');
+                topList.innerHTML = (data.top_prospects || []).map(p => `
+                    <div class="prospect-card tier-${p.tier}" onclick="showProspectDetail(${p.id})">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>${p.nome}</strong>
+                                <div class="text-muted small">${p.cargo || ''} ${p.empresa ? '@ ' + p.empresa : ''}</div>
+                            </div>
+                            <div class="d-flex align-items-center gap-3">
+                                <span class="tier-badge tier-${p.tier}">Tier ${p.tier}</span>
+                                <div class="score-circle ${p.score >= 50 ? 'score-high' : p.score >= 30 ? 'score-medium' : 'score-low'}">
+                                    ${p.score}
+                                </div>
+                                <button class="btn btn-sm btn-primary action-btn" onclick="event.stopPropagation(); openScheduleModal(${p.id}, '${p.nome}')">
+                                    <i class="bi bi-calendar-plus me-1"></i>
+                                    Agendar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+
+                // Load funnel
+                loadFunnel();
+
+            } catch (error) {
+                console.error('Error loading dashboard:', error);
+            }
+        }
+
+        async function loadFunnel() {
+            try {
+                const response = await fetch(`${API_BASE}/api/analytics/funnel`);
+                const data = await response.json();
+
+                const funnelContainer = document.getElementById('funnel-chart');
+                const maxCount = Math.max(...data.funnel.map(s => s.count), 1);
+                const colors = ['#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#22c55e', '#16a34a'];
+
+                funnelContainer.innerHTML = data.funnel.map((stage, i) => `
+                    <div class="funnel-bar" style="width: ${Math.max(20, (stage.count / maxCount) * 100)}%; background: ${colors[i]}">
+                        ${stage.stage}: ${stage.count}
+                    </div>
+                `).join('');
+
+            } catch (error) {
+                console.error('Error loading funnel:', error);
+            }
+        }
+
+        // Load Prospects
+        async function loadProspects() {
+            const tier = document.getElementById('filter-tier').value;
+            const status = document.getElementById('filter-status').value;
+            const search = document.getElementById('search-input').value;
+
+            try {
+                let url = `${API_BASE}/api/prospects?limit=100`;
+                if (tier) url += `&tier=${tier}`;
+                if (status) url += `&status=${status}`;
+                if (search) url += `&search=${encodeURIComponent(search)}`;
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                const tbody = document.getElementById('prospects-tbody');
+                tbody.innerHTML = data.prospects.map(p => `
+                    <tr onclick="showProspectDetail(${p.id})" style="cursor:pointer">
+                        <td>
+                            <div class="score-circle ${p.score >= 50 ? 'score-high' : p.score >= 30 ? 'score-medium' : 'score-low'}" style="width:36px;height:36px;font-size:0.8rem">
+                                ${p.score}
+                            </div>
+                        </td>
+                        <td><strong>${p.nome}</strong></td>
+                        <td>${p.empresa || '-'}</td>
+                        <td>${p.cargo || '-'}</td>
+                        <td><span class="tier-badge tier-${p.tier}">Tier ${p.tier}</span></td>
+                        <td><span class="status-badge status-${p.status}">${formatStatus(p.status)}</span></td>
+                        <td onclick="event.stopPropagation()">
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" onclick="openScheduleModal(${p.id}, '${p.nome}')">
+                                    <i class="bi bi-calendar-plus"></i>
+                                </button>
+                                <button class="btn btn-outline-success" onclick="openFeedbackModal(${p.id})">
+                                    <i class="bi bi-chat-dots"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `).join('');
+
+            } catch (error) {
+                console.error('Error loading prospects:', error);
+            }
+        }
+
+        // Load ICP Analysis
+        async function loadICP() {
+            try {
+                const [icpResponse, argsResponse] = await Promise.all([
+                    fetch(`${API_BASE}/api/analytics/icp`),
+                    fetch(`${API_BASE}/api/analytics/arguments`)
+                ]);
+
+                const icpData = await icpResponse.json();
+                const argsData = await argsResponse.json();
+
+                // Recommendations
+                const recsContainer = document.getElementById('icp-recommendations');
+                recsContainer.innerHTML = (icpData.recomendacoes_icp || []).map(rec => `
+                    <div class="alert alert-info mb-2">
+                        <i class="bi bi-lightbulb me-2"></i>
+                        ${rec}
+                    </div>
+                `).join('') || '<p class="text-muted">Ainda não há dados suficientes para recomendações.</p>';
+
+                // Top converting roles
+                const rolesContainer = document.getElementById('top-converting-roles');
+                rolesContainer.innerHTML = (icpData.cargos_top_conversao || []).slice(0, 5).map(role => `
+                    <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+                        <span>${role.cargo}</span>
+                        <div>
+                            <span class="badge bg-success">${role.taxa_conversao}% conversão</span>
+                            <span class="text-muted small">(${role.total} total)</span>
+                        </div>
+                    </div>
+                `).join('') || '<p class="text-muted">Sem dados suficientes ainda.</p>';
+
+                // Valued features
+                const featuresContainer = document.getElementById('valued-features');
+                featuresContainer.innerHTML = (icpData.features_mais_valorizadas || []).slice(0, 5).map(feat => `
+                    <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+                        <span>${feat.feature}</span>
+                        <span class="badge bg-primary">${feat.frequencia}x mencionado</span>
+                    </div>
+                `).join('') || '<p class="text-muted">Sem dados suficientes ainda.</p>';
+
+                // Sales arguments
+                const argsContainer = document.getElementById('sales-arguments');
+                argsContainer.innerHTML = (argsData.arguments || []).map(arg => `
+                    <div class="argument-card ${arg.taxa_conversao > 20 ? 'effective' : ''}">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <strong>${arg.argumento}</strong>
+                                <div class="text-muted small">Categoria: ${arg.categoria || 'Geral'}</div>
+                            </div>
+                            <div class="text-end">
+                                ${arg.vezes_usado > 0 ? `<span class="badge bg-secondary">${arg.vezes_usado}x usado</span>` : ''}
+                                ${arg.taxa_conversao > 0 ? `<span class="badge bg-success">${arg.taxa_conversao}% conversão</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+
+            } catch (error) {
+                console.error('Error loading ICP:', error);
+            }
+        }
+
+        // Schedule Meeting
+        function openScheduleModal(prospectId, prospectName) {
+            document.getElementById('schedule-prospect-id').value = prospectId;
+            document.getElementById('schedule-prospect-name').value = prospectName;
+
+            // Set default datetime to tomorrow at 10am
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            tomorrow.setHours(10, 0, 0, 0);
+            document.getElementById('schedule-datetime').value = tomorrow.toISOString().slice(0, 16);
+
+            new bootstrap.Modal(document.getElementById('scheduleMeetingModal')).show();
+        }
+
+        async function confirmScheduleMeeting() {
+            const prospectId = document.getElementById('schedule-prospect-id').value;
+            const datetime = document.getElementById('schedule-datetime').value;
+            const type = document.getElementById('schedule-type').value;
+            const duration = document.getElementById('schedule-duration').value;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/meetings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prospect_id: parseInt(prospectId),
+                        data_hora: datetime,
+                        duracao_minutos: parseInt(duration),
+                        tipo: type
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.calendar_link) {
+                    alert('Reunião agendada com sucesso!');
+                    window.open(data.calendar_link, '_blank');
+                }
+
+                bootstrap.Modal.getInstance(document.getElementById('scheduleMeetingModal')).hide();
+                loadDashboard();
+
+            } catch (error) {
+                console.error('Error scheduling meeting:', error);
+                alert('Erro ao agendar reunião');
+            }
+        }
+
+        // Feedback
+        function openFeedbackModal(prospectId) {
+            document.getElementById('feedback-prospect-id').value = prospectId;
+            new bootstrap.Modal(document.getElementById('feedbackModal')).show();
+        }
+
+        async function submitFeedback() {
+            const prospectId = document.getElementById('feedback-prospect-id').value;
+            const outcome = document.getElementById('feedback-outcome').value;
+            const notes = document.getElementById('feedback-notes').value;
+            const nextSteps = document.getElementById('feedback-next-steps').value;
+
+            const objecoes = [];
+            document.querySelectorAll('#objections-checkboxes input:checked').forEach(cb => {
+                objecoes.push(cb.value);
+            });
+
+            const features = [];
+            document.querySelectorAll('#features-checkboxes input:checked').forEach(cb => {
+                features.push(cb.value);
+            });
+
+            try {
+                const response = await fetch(`${API_BASE}/api/feedback`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prospect_id: parseInt(prospectId),
+                        outcome: outcome,
+                        objecoes: objecoes,
+                        features_interesse: features,
+                        notes: notes,
+                        proximos_passos: nextSteps
+                    })
+                });
+
+                const data = await response.json();
+                alert('Feedback registrado com sucesso!');
+                bootstrap.Modal.getInstance(document.getElementById('feedbackModal')).hide();
+                loadProspects();
+
+            } catch (error) {
+                console.error('Error submitting feedback:', error);
+                alert('Erro ao registrar feedback');
+            }
+        }
+
+        // Prospect Detail
+        async function showProspectDetail(prospectId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/prospects/${prospectId}`);
+                const data = await response.json();
+                const p = data.prospect;
+
+                const reasons = p.reasons ? (typeof p.reasons === 'string' ? JSON.parse(p.reasons) : p.reasons) : [];
+
+                document.getElementById('prospect-detail-content').innerHTML = `
+                    <div class="row">
+                        <div class="col-md-8">
+                            <h4>${p.nome}</h4>
+                            <p class="text-muted">${p.cargo || ''} ${p.empresa ? '@ ' + p.empresa : ''}</p>
+
+                            <div class="row mt-4">
+                                <div class="col-md-6">
+                                    <strong>Email:</strong> ${p.email || '-'}<br>
+                                    <strong>Telefone:</strong> ${p.telefone || '-'}<br>
+                                    <strong>LinkedIn:</strong> ${p.linkedin || '-'}
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>Status:</strong> <span class="status-badge status-${p.status}">${formatStatus(p.status)}</span><br>
+                                    <strong>Último contato:</strong> ${p.data_ultimo_contato ? new Date(p.data_ultimo_contato).toLocaleDateString('pt-BR') : '-'}
+                                </div>
+                            </div>
+
+                            <div class="mt-4">
+                                <strong>Por que é um bom prospect:</strong>
+                                <div class="mt-2">
+                                    ${reasons.map(r => `<span class="reason-tag">${r}</span>`).join('')}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4 text-center">
+                            <div class="score-circle score-${p.score >= 50 ? 'high' : p.score >= 30 ? 'medium' : 'low'}" style="width:80px;height:80px;font-size:1.5rem;margin:0 auto">
+                                ${p.score}
+                            </div>
+                            <div class="mt-2">
+                                <span class="tier-badge tier-${p.tier}">Tier ${p.tier}</span>
+                            </div>
+                            <div class="mt-4">
+                                <button class="btn btn-primary w-100 mb-2" onclick="openScheduleModal(${p.id}, '${p.nome}')">
+                                    <i class="bi bi-calendar-plus me-2"></i>
+                                    Agendar Reunião
+                                </button>
+                                <button class="btn btn-success w-100" onclick="openFeedbackModal(${p.id})">
+                                    <i class="bi bi-chat-dots me-2"></i>
+                                    Registrar Feedback
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                new bootstrap.Modal(document.getElementById('prospectDetailModal')).show();
+
+            } catch (error) {
+                console.error('Error loading prospect detail:', error);
+            }
+        }
+
+        // Sync Fathom
+        async function syncFathom() {
+            try {
+                const response = await fetch(`${API_BASE}/api/fathom/sync`);
+                const data = await response.json();
+                alert(`Fathom sincronizado! ${data.meetings_processed || 0} reuniões processadas.`);
+            } catch (error) {
+                console.error('Error syncing Fathom:', error);
+            }
+        }
+
+        // Import CSV
+        async function importCSV() {
+            try {
+                const response = await fetch(`${API_BASE}/api/import/csv`, { method: 'POST' });
+                const data = await response.json();
+                alert(`Importação concluída! ${data.count || 0} prospects importados.`);
+                loadDashboard();
+            } catch (error) {
+                console.error('Error importing CSV:', error);
+                alert('Erro na importação');
+            }
+        }
+
+        // Helpers
+        function formatStatus(status) {
+            const map = {
+                'novo': 'Novo',
+                'contatado': 'Contatado',
+                'reuniao_agendada': 'Reunião Agendada',
+                'reuniao_realizada': 'Reunião Realizada',
+                'negociando': 'Negociando',
+                'convertido': 'Convertido',
+                'perdido': 'Perdido',
+                'nurturing': 'Nurturing'
+            };
+            return map[status] || status;
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDashboard();
+        });
+    </script>
+</body>
+</html>
