@@ -12,12 +12,6 @@ from fastapi.responses import RedirectResponse
 from authlib.integrations.starlette_client import OAuth
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
-# Config
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
-BASE_URL = os.getenv("BASE_URL", "https://prospect-system.vercel.app")
-
 # Allowed users and their roles
 ALLOWED_USERS = {
     "renato@almeida-prado.com": {
@@ -30,20 +24,42 @@ ALLOWED_USERS = {
     }
 }
 
+# Lazy loading for config
+def get_secret_key():
+    return os.getenv("SECRET_KEY", secrets.token_hex(32))
+
+def get_base_url():
+    return os.getenv("BASE_URL", "https://prospect-system.vercel.app")
+
+SECRET_KEY = get_secret_key()
+
 # Session serializer
 serializer = URLSafeTimedSerializer(SECRET_KEY)
 
-# OAuth setup
+# OAuth setup - lazy registration
 oauth = OAuth()
-oauth.register(
-    name='google',
-    client_id=GOOGLE_CLIENT_ID,
-    client_secret=GOOGLE_CLIENT_SECRET,
-    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-    client_kwargs={
-        'scope': 'openid email profile'
-    }
-)
+_oauth_registered = False
+
+def ensure_oauth_registered():
+    """Register OAuth client lazily to ensure env vars are loaded"""
+    global _oauth_registered
+    if _oauth_registered:
+        return
+
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+
+    if client_id and client_secret:
+        oauth.register(
+            name='google',
+            client_id=client_id,
+            client_secret=client_secret,
+            server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+            client_kwargs={
+                'scope': 'openid email profile'
+            }
+        )
+        _oauth_registered = True
 
 
 def create_session_token(user_data: dict) -> str:
@@ -107,12 +123,14 @@ def require_operador(request: Request) -> dict:
 
 async def google_login(request: Request):
     """Initiate Google OAuth login"""
-    redirect_uri = f"{BASE_URL}/auth/google/callback"
+    ensure_oauth_registered()
+    redirect_uri = f"{get_base_url()}/auth/google/callback"
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 
 async def google_callback(request: Request):
     """Handle Google OAuth callback"""
+    ensure_oauth_registered()
     try:
         token = await oauth.google.authorize_access_token(request)
     except Exception as e:
