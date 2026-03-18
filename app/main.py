@@ -12,11 +12,12 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
 
 from models import (
@@ -26,6 +27,10 @@ from models import (
 from scoring import DynamicScorer
 from integrations.google_calendar import GoogleCalendarIntegration, create_calendar_link
 from integrations.fathom import FathomIntegration, handle_fathom_webhook
+from auth import (
+    oauth, get_current_user, require_auth, require_admin, require_operador,
+    google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
+)
 
 # Config
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -57,6 +62,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Session middleware (required for OAuth)
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
 # CORS
 app.add_middleware(
@@ -134,19 +142,77 @@ def row_to_dict(row):
     return dict(row) if row else None
 
 
-# ============== API Routes - Auth & Users ==============
+# ============== API Routes - Auth ==============
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, error: Optional[str] = None, email: Optional[str] = None):
+    """Página de login"""
+    user = get_current_user(request)
+    if user:
+        # Already logged in, redirect
+        return RedirectResponse(url="/admin" if user["role"] == "admin" else "/", status_code=302)
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "error": error,
+        "email": email
+    })
+
+@app.get("/auth/google/login")
+async def auth_google_login(request: Request):
+    """Inicia login com Google"""
+    return await google_login(request)
+
+@app.get("/auth/google/callback")
+async def auth_google_callback(request: Request):
+    """Callback do Google OAuth"""
+    return await google_callback(request)
+
+@app.get("/logout")
+async def auth_logout():
+    """Logout e limpa sessão"""
+    return logout()
+
+@app.get("/api/auth/me")
+async def get_me(request: Request):
+    """Retorna dados do usuário logado"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+    return user
+
+
+# ============== API Routes - Pages ==============
 
 @app.get("/", response_class=HTMLResponse)
-async def root(request: Request, user: Optional[str] = None):
-    """Redireciona baseado no usuário"""
-    if user == "renato":
-        return templates.TemplateResponse("admin.html", {"request": request})
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+async def root(request: Request):
+    """Dashboard - requer autenticação"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # Admin vai para /admin
+    if user["role"] == "admin":
+        return RedirectResponse(url="/admin", status_code=302)
+
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request,
+        "user": user
+    })
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_panel(request: Request):
-    """Painel administrativo para Renato"""
-    return templates.TemplateResponse("admin.html", {"request": request})
+    """Painel administrativo - apenas admin"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if user["role"] != "admin":
+        return RedirectResponse(url="/", status_code=302)
+
+    return templates.TemplateResponse("admin.html", {
+        "request": request,
+        "user": user
+    })
 
 @app.get("/api/user/{email}")
 async def get_user(email: str):

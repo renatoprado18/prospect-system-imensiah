@@ -3,6 +3,7 @@ Vercel Serverless Function Entry Point for FastAPI
 """
 import sys
 import os
+import secrets
 
 # Setup paths
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -13,6 +14,8 @@ sys.path.insert(0, APP_DIR)
 
 # Set environment
 os.environ['DB_PATH'] = '/tmp/prospects.db'
+os.environ.setdefault('SECRET_KEY', os.getenv('SECRET_KEY', secrets.token_hex(32)))
+os.environ.setdefault('BASE_URL', 'https://prospect-system.vercel.app')
 
 # Now import the app
 try:
