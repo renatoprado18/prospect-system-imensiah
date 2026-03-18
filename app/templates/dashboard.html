@@ -99,6 +99,64 @@
         .status-convertido { background: #dcfce7; color: #166534; }
         .status-perdido { background: #fee2e2; color: #dc2626; }
 
+        /* Tutorial Styles */
+        .tutorial-modal .modal-content {
+            border-radius: 20px;
+            overflow: hidden;
+        }
+        .tutorial-header {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        .tutorial-step {
+            padding: 30px;
+            display: none;
+        }
+        .tutorial-step.active {
+            display: block;
+        }
+        .tutorial-step h4 {
+            color: #1e3a5f;
+            margin-bottom: 20px;
+        }
+        .tutorial-step-indicator {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 20px;
+        }
+        .step-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #e2e8f0;
+        }
+        .step-dot.active {
+            background: #2563eb;
+        }
+        .tutorial-feature {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 16px;
+            background: #f8fafc;
+            border-radius: 12px;
+            margin-bottom: 12px;
+        }
+        .tutorial-feature i {
+            font-size: 1.5rem;
+            color: #2563eb;
+        }
+        .tutorial-video {
+            background: #1e3a5f;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            color: white;
+        }
+
         .prospect-card {
             background: white;
             border-radius: 12px;
@@ -665,6 +723,213 @@
         </div>
     </div>
 
+    <!-- Tutorial Modal -->
+    <div class="modal fade tutorial-modal" id="tutorialModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <!-- Step 1: Welcome -->
+                <div class="tutorial-step active" id="tutorial-step-1">
+                    <div class="tutorial-header">
+                        <h2>Bem-vinda ao Sistema de Prospects!</h2>
+                        <p class="mb-0 opacity-75">Vamos te mostrar como usar o sistema em menos de 2 minutos</p>
+                    </div>
+                    <div class="p-4 text-center">
+                        <img src="https://cdn-icons-png.flaticon.com/512/2910/2910791.png" alt="Welcome" style="width:120px;opacity:0.8">
+                        <h4 class="mt-4">Oi, Andressa!</h4>
+                        <p class="text-muted">
+                            Este sistema foi criado para te ajudar a identificar e contatar os melhores prospects
+                            para a ImensIAH. O Renato já pré-selecionou os contatos mais qualificados para você.
+                        </p>
+                        <div class="tutorial-step-indicator">
+                            <span class="step-dot active"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                        </div>
+                        <button class="btn btn-primary btn-lg mt-4" onclick="nextTutorialStep()">
+                            Começar Tour <i class="bi bi-arrow-right ms-2"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Step 2: Understanding Tiers -->
+                <div class="tutorial-step" id="tutorial-step-2">
+                    <div class="p-4">
+                        <h4><i class="bi bi-star-fill text-warning me-2"></i>Entendendo os Tiers</h4>
+                        <p class="text-muted mb-4">Cada prospect recebe uma classificação baseada em seu potencial:</p>
+
+                        <div class="tutorial-feature">
+                            <span class="tier-badge tier-A" style="font-size:1rem;padding:8px 16px">A</span>
+                            <div>
+                                <strong>Tier A - Prioridade Máxima</strong>
+                                <p class="mb-0 text-muted small">CEOs, Fundadores, Diretores de PMEs em setores estratégicos. Contate primeiro!</p>
+                            </div>
+                        </div>
+                        <div class="tutorial-feature">
+                            <span class="tier-badge tier-B" style="font-size:1rem;padding:8px 16px">B</span>
+                            <div>
+                                <strong>Tier B - Alta Prioridade</strong>
+                                <p class="mb-0 text-muted small">Executivos e gestores com poder de decisão. Excelentes prospects.</p>
+                            </div>
+                        </div>
+                        <div class="tutorial-feature">
+                            <span class="tier-badge tier-C" style="font-size:1rem;padding:8px 16px">C</span>
+                            <div>
+                                <strong>Tier C - Prioridade Média</strong>
+                                <p class="mb-0 text-muted small">Profissionais com potencial. Requerem mais qualificação.</p>
+                            </div>
+                        </div>
+
+                        <div class="tutorial-step-indicator">
+                            <span class="step-dot"></span>
+                            <span class="step-dot active"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                        </div>
+                        <div class="d-flex justify-content-between mt-4">
+                            <button class="btn btn-outline-secondary" onclick="prevTutorialStep()">
+                                <i class="bi bi-arrow-left me-2"></i> Voltar
+                            </button>
+                            <button class="btn btn-primary" onclick="nextTutorialStep()">
+                                Próximo <i class="bi bi-arrow-right ms-2"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: How to Schedule -->
+                <div class="tutorial-step" id="tutorial-step-3">
+                    <div class="p-4">
+                        <h4><i class="bi bi-calendar-check text-primary me-2"></i>Agendando Reuniões</h4>
+                        <p class="text-muted mb-4">O processo é simples e integrado com o Google Calendar:</p>
+
+                        <div class="tutorial-feature">
+                            <i class="bi bi-1-circle-fill"></i>
+                            <div>
+                                <strong>Selecione um Prospect</strong>
+                                <p class="mb-0 text-muted small">Clique em qualquer prospect da lista para ver detalhes</p>
+                            </div>
+                        </div>
+                        <div class="tutorial-feature">
+                            <i class="bi bi-2-circle-fill"></i>
+                            <div>
+                                <strong>Clique em "Agendar Reunião"</strong>
+                                <p class="mb-0 text-muted small">Escolha data, horário e tipo de reunião (Discovery, Demo, etc.)</p>
+                            </div>
+                        </div>
+                        <div class="tutorial-feature">
+                            <i class="bi bi-3-circle-fill"></i>
+                            <div>
+                                <strong>Confirmação Automática</strong>
+                                <p class="mb-0 text-muted small">O sistema cria o evento no Google Calendar com link do Meet</p>
+                            </div>
+                        </div>
+
+                        <div class="tutorial-step-indicator">
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot active"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                        </div>
+                        <div class="d-flex justify-content-between mt-4">
+                            <button class="btn btn-outline-secondary" onclick="prevTutorialStep()">
+                                <i class="bi bi-arrow-left me-2"></i> Voltar
+                            </button>
+                            <button class="btn btn-primary" onclick="nextTutorialStep()">
+                                Próximo <i class="bi bi-arrow-right ms-2"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 4: Feedback -->
+                <div class="tutorial-step" id="tutorial-step-4">
+                    <div class="p-4">
+                        <h4><i class="bi bi-chat-dots text-success me-2"></i>Registrando Feedback</h4>
+                        <p class="text-muted mb-4">Após cada reunião, registre o resultado para o sistema aprender:</p>
+
+                        <div class="tutorial-feature">
+                            <i class="bi bi-emoji-smile text-success"></i>
+                            <div>
+                                <strong>Resultado da Reunião</strong>
+                                <p class="mb-0 text-muted small">Muito Interessado, Interessado, Neutro, Pouco Interesse, etc.</p>
+                            </div>
+                        </div>
+                        <div class="tutorial-feature">
+                            <i class="bi bi-exclamation-triangle text-warning"></i>
+                            <div>
+                                <strong>Objeções Identificadas</strong>
+                                <p class="mb-0 text-muted small">Preço, Orçamento, Tempo, Aprovação - ajuda a melhorar argumentos</p>
+                            </div>
+                        </div>
+                        <div class="tutorial-feature">
+                            <i class="bi bi-heart text-danger"></i>
+                            <div>
+                                <strong>Features de Interesse</strong>
+                                <p class="mb-0 text-muted small">O que mais chamou atenção do prospect - IA, Velocidade, Consultoria</p>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-info mt-3">
+                            <i class="bi bi-lightbulb me-2"></i>
+                            <strong>Dica:</strong> Quanto mais feedback você registrar, mais inteligente o sistema fica!
+                        </div>
+
+                        <div class="tutorial-step-indicator">
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot active"></span>
+                            <span class="step-dot"></span>
+                        </div>
+                        <div class="d-flex justify-content-between mt-4">
+                            <button class="btn btn-outline-secondary" onclick="prevTutorialStep()">
+                                <i class="bi bi-arrow-left me-2"></i> Voltar
+                            </button>
+                            <button class="btn btn-primary" onclick="nextTutorialStep()">
+                                Próximo <i class="bi bi-arrow-right ms-2"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 5: Ready! -->
+                <div class="tutorial-step" id="tutorial-step-5">
+                    <div class="tutorial-header">
+                        <h2>Você está pronta!</h2>
+                        <p class="mb-0 opacity-75">Agora é só começar a contatar os prospects</p>
+                    </div>
+                    <div class="p-4 text-center">
+                        <i class="bi bi-check-circle-fill text-success" style="font-size:5rem"></i>
+                        <h4 class="mt-4">Resumo do seu fluxo de trabalho:</h4>
+                        <div class="text-start mx-auto" style="max-width:400px">
+                            <p><i class="bi bi-check text-success me-2"></i>Acesse o <strong>Dashboard</strong> para ver os top prospects</p>
+                            <p><i class="bi bi-check text-success me-2"></i>Filtre por <strong>Tier A e B</strong> para priorizar</p>
+                            <p><i class="bi bi-check text-success me-2"></i>Clique em <strong>Agendar</strong> para marcar reuniões</p>
+                            <p><i class="bi bi-check text-success me-2"></i>Após reunião, registre o <strong>Feedback</strong></p>
+                            <p><i class="bi bi-check text-success me-2"></i>Acompanhe resultados em <strong>Analytics</strong></p>
+                        </div>
+
+                        <div class="tutorial-step-indicator">
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot"></span>
+                            <span class="step-dot active"></span>
+                        </div>
+                        <button class="btn btn-success btn-lg mt-4" onclick="completeTutorial()">
+                            <i class="bi bi-rocket-takeoff me-2"></i>
+                            Começar a Trabalhar!
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 
@@ -1052,9 +1317,62 @@
             return map[status] || status;
         }
 
+        // Tutorial
+        let currentTutorialStep = 1;
+        const totalTutorialSteps = 5;
+
+        function showTutorialStep(step) {
+            document.querySelectorAll('.tutorial-step').forEach(s => s.classList.remove('active'));
+            document.getElementById(`tutorial-step-${step}`).classList.add('active');
+            currentTutorialStep = step;
+        }
+
+        function nextTutorialStep() {
+            if (currentTutorialStep < totalTutorialSteps) {
+                showTutorialStep(currentTutorialStep + 1);
+            }
+        }
+
+        function prevTutorialStep() {
+            if (currentTutorialStep > 1) {
+                showTutorialStep(currentTutorialStep - 1);
+            }
+        }
+
+        async function completeTutorial() {
+            try {
+                await fetch(`${API_BASE}/api/user/andressa/complete-tutorial`, { method: 'POST' });
+                localStorage.setItem('tutorial_completed', 'true');
+            } catch (e) {
+                console.log('Tutorial completion saved locally');
+                localStorage.setItem('tutorial_completed', 'true');
+            }
+            bootstrap.Modal.getInstance(document.getElementById('tutorialModal')).hide();
+        }
+
+        async function checkTutorial() {
+            // Check local storage first
+            if (localStorage.getItem('tutorial_completed') === 'true') {
+                return;
+            }
+
+            // Check server
+            try {
+                const response = await fetch(`${API_BASE}/api/user/andressa`);
+                const user = await response.json();
+                if (!user.tutorial_concluido) {
+                    new bootstrap.Modal(document.getElementById('tutorialModal')).show();
+                }
+            } catch (e) {
+                // Show tutorial if can't check
+                new bootstrap.Modal(document.getElementById('tutorialModal')).show();
+            }
+        }
+
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
             loadDashboard();
+            checkTutorial();
         });
     </script>
 </body>

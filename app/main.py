@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from models import (
     Prospect, Meeting, ProspectStatus, ProspectTier,
-    MeetingOutcome, init_db
+    MeetingOutcome, UserRole, init_db
 )
 from scoring import DynamicScorer
 from integrations.google_calendar import GoogleCalendarIntegration, create_calendar_link
@@ -105,6 +105,16 @@ class FeedbackSubmit(BaseModel):
     notes: str = ""
     proximos_passos: str = ""
 
+class ProspectApproval(BaseModel):
+    aprovado: bool
+    notas: str = ""
+    prioridade: int = 0
+
+class BulkApproval(BaseModel):
+    prospect_ids: List[int]
+    aprovado: bool
+    notas: str = ""
+
 
 # ============== Database Helpers ==============
 
@@ -117,12 +127,210 @@ def row_to_dict(row):
     return dict(row) if row else None
 
 
-# ============== API Routes - Prospects ==============
+# ============== API Routes - Auth & Users ==============
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    """Dashboard principal para Andressa"""
+async def root(request: Request, user: Optional[str] = None):
+    """Redireciona baseado no usuário"""
+    if user == "renato":
+        return templates.TemplateResponse("admin.html", {"request": request})
     return templates.TemplateResponse("dashboard.html", {"request": request})
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_panel(request: Request):
+    """Painel administrativo para Renato"""
+    return templates.TemplateResponse("admin.html", {"request": request})
+
+@app.get("/api/user/{email}")
+async def get_user(email: str):
+    """Obtém dados do usuário"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM users WHERE email LIKE ?", (f"%{email}%",))
+    user = cursor.fetchone()
+    conn.close()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+
+    return row_to_dict(user)
+
+@app.post("/api/user/{email}/complete-tutorial")
+async def complete_tutorial(email: str):
+    """Marca tutorial como concluído"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "UPDATE users SET tutorial_concluido = TRUE WHERE email LIKE ?",
+        (f"%{email}%",)
+    )
+    conn.commit()
+    conn.close()
+
+    return {"status": "completed"}
+
+
+# ============== API Routes - Approval (Renato Only) ==============
+
+@app.get("/api/admin/pending")
+async def list_pending_approval(
+    tier: Optional[str] = None,
+    limit: int = Query(100, le=500),
+    offset: int = 0
+):
+    """Lista prospects pendentes de aprovação (para Renato)"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    query = "SELECT * FROM prospects WHERE status = 'pendente_aprovacao'"
+    params = []
+
+    if tier:
+        query += " AND tier = ?"
+        params.append(tier)
+
+    query += " ORDER BY score DESC, tier ASC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+
+    # Contar totais por tier
+    cursor.execute('''
+        SELECT tier, COUNT(*) as count
+        FROM prospects
+        WHERE status = 'pendente_aprovacao'
+        GROUP BY tier
+    ''')
+    tier_counts = {row['tier']: row['count'] for row in cursor.fetchall()}
+
+    conn.close()
+
+    return {
+        "prospects": [row_to_dict(row) for row in rows],
+        "tier_counts": tier_counts,
+        "total": sum(tier_counts.values())
+    }
+
+@app.post("/api/admin/approve/{prospect_id}")
+async def approve_prospect(prospect_id: int, approval: ProspectApproval):
+    """Aprova ou rejeita um prospect (Renato)"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    new_status = "novo" if approval.aprovado else "rejeitado"
+
+    cursor.execute('''
+        UPDATE prospects
+        SET aprovado_por_renato = ?,
+            status = ?,
+            notas_renato = ?,
+            prioridade_renato = ?,
+            data_aprovacao = ?
+        WHERE id = ?
+    ''', (
+        approval.aprovado,
+        new_status,
+        approval.notas,
+        approval.prioridade,
+        datetime.now().isoformat(),
+        prospect_id
+    ))
+
+    # Log
+    cursor.execute('''
+        INSERT INTO activity_log (prospect_id, usuario, acao, detalhes)
+        VALUES (?, 'Renato', ?, ?)
+    ''', (
+        prospect_id,
+        'Aprovado' if approval.aprovado else 'Rejeitado',
+        approval.notas
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return {"status": new_status, "prospect_id": prospect_id}
+
+@app.post("/api/admin/approve-bulk")
+async def approve_bulk(bulk: BulkApproval):
+    """Aprova múltiplos prospects de uma vez"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    new_status = "novo" if bulk.aprovado else "rejeitado"
+    approved_count = 0
+
+    for prospect_id in bulk.prospect_ids:
+        cursor.execute('''
+            UPDATE prospects
+            SET aprovado_por_renato = ?,
+                status = ?,
+                notas_renato = ?,
+                data_aprovacao = ?
+            WHERE id = ? AND status = 'pendente_aprovacao'
+        ''', (
+            bulk.aprovado,
+            new_status,
+            bulk.notas,
+            datetime.now().isoformat(),
+            prospect_id
+        ))
+        if cursor.rowcount > 0:
+            approved_count += 1
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "completed",
+        "approved_count": approved_count,
+        "action": "aprovado" if bulk.aprovado else "rejeitado"
+    }
+
+@app.get("/api/admin/stats")
+async def admin_stats():
+    """Estatísticas para painel admin"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    stats = {}
+
+    # Pendentes por tier
+    cursor.execute('''
+        SELECT tier, COUNT(*) as count
+        FROM prospects
+        WHERE status = 'pendente_aprovacao'
+        GROUP BY tier
+        ORDER BY tier
+    ''')
+    stats['pendentes_por_tier'] = {row['tier']: row['count'] for row in cursor.fetchall()}
+    stats['total_pendentes'] = sum(stats['pendentes_por_tier'].values())
+
+    # Aprovados
+    cursor.execute("SELECT COUNT(*) FROM prospects WHERE aprovado_por_renato = TRUE")
+    stats['total_aprovados'] = cursor.fetchone()[0]
+
+    # Rejeitados
+    cursor.execute("SELECT COUNT(*) FROM prospects WHERE status = 'rejeitado'")
+    stats['total_rejeitados'] = cursor.fetchone()[0]
+
+    # Top prospects pendentes
+    cursor.execute('''
+        SELECT * FROM prospects
+        WHERE status = 'pendente_aprovacao' AND tier IN ('A', 'B')
+        ORDER BY score DESC
+        LIMIT 20
+    ''')
+    stats['top_pendentes'] = [row_to_dict(row) for row in cursor.fetchall()]
+
+    conn.close()
+    return stats
+
+
+# ============== API Routes - Prospects ==============
 
 
 @app.get("/api/prospects")
@@ -130,15 +338,25 @@ async def list_prospects(
     tier: Optional[str] = None,
     status: Optional[str] = None,
     search: Optional[str] = None,
+    user_role: str = "operador",  # operador=Andressa, admin=Renato
     limit: int = Query(50, le=500),
     offset: int = 0
 ):
-    """Lista prospects com filtros"""
+    """
+    Lista prospects com filtros
+
+    - Para Andressa (operador): só vê prospects aprovados por Renato
+    - Para Renato (admin): vê todos
+    """
     conn = get_db()
     cursor = conn.cursor()
 
     query = "SELECT * FROM prospects WHERE 1=1"
     params = []
+
+    # Andressa só vê aprovados (não pendentes nem rejeitados)
+    if user_role != "admin":
+        query += " AND aprovado_por_renato = TRUE AND status != 'rejeitado' AND status != 'pendente_aprovacao'"
 
     if tier:
         query += " AND tier = ?"
@@ -153,7 +371,8 @@ async def list_prospects(
         search_term = f"%{search}%"
         params.extend([search_term, search_term, search_term])
 
-    query += " ORDER BY score DESC LIMIT ? OFFSET ?"
+    # Ordenar por prioridade de Renato primeiro, depois score
+    query += " ORDER BY prioridade_renato DESC, score DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
 
     cursor.execute(query, params)
@@ -529,30 +748,37 @@ async def sync_fathom_meetings():
 # ============== API Routes - Analytics & ICP ==============
 
 @app.get("/api/analytics/dashboard")
-async def get_dashboard_stats():
-    """Estatísticas para dashboard"""
+async def get_dashboard_stats(user_role: str = "operador"):
+    """Estatísticas para dashboard (filtra por aprovados para Andressa)"""
     conn = get_db()
     cursor = conn.cursor()
 
     stats = {}
 
-    # Total por tier
-    cursor.execute('''
-        SELECT tier, COUNT(*) as count FROM prospects GROUP BY tier
+    # Filtro base para Andressa
+    aprovado_filter = "AND aprovado_por_renato = TRUE" if user_role != "admin" else ""
+
+    # Total por tier (só aprovados)
+    cursor.execute(f'''
+        SELECT tier, COUNT(*) as count FROM prospects
+        WHERE 1=1 {aprovado_filter}
+        GROUP BY tier
     ''')
     stats['por_tier'] = {row['tier']: row['count'] for row in cursor.fetchall()}
 
-    # Total por status
-    cursor.execute('''
-        SELECT status, COUNT(*) as count FROM prospects GROUP BY status
+    # Total por status (só aprovados)
+    cursor.execute(f'''
+        SELECT status, COUNT(*) as count FROM prospects
+        WHERE status NOT IN ('pendente_aprovacao', 'rejeitado') {aprovado_filter}
+        GROUP BY status
     ''')
     stats['por_status'] = {row['status']: row['count'] for row in cursor.fetchall()}
 
     # Conversões
-    cursor.execute('SELECT COUNT(*) FROM prospects WHERE converted = TRUE')
+    cursor.execute(f'SELECT COUNT(*) FROM prospects WHERE converted = TRUE {aprovado_filter}')
     stats['total_convertidos'] = cursor.fetchone()[0]
 
-    cursor.execute('SELECT SUM(deal_value) FROM prospects WHERE converted = TRUE')
+    cursor.execute(f'SELECT SUM(deal_value) FROM prospects WHERE converted = TRUE {aprovado_filter}')
     result = cursor.fetchone()[0]
     stats['receita_total'] = result or 0
 
@@ -566,11 +792,12 @@ async def get_dashboard_stats():
     ''', (datetime.now().isoformat(),))
     stats['reunioes_agendadas'] = cursor.fetchone()[0]
 
-    # Top prospects para contato
-    cursor.execute('''
+    # Top prospects para contato (só aprovados para Andressa)
+    cursor.execute(f'''
         SELECT * FROM prospects
         WHERE status IN ('novo', 'contatado') AND tier IN ('A', 'B')
-        ORDER BY score DESC
+        {aprovado_filter}
+        ORDER BY prioridade_renato DESC, score DESC
         LIMIT 10
     ''')
     stats['top_prospects'] = [row_to_dict(row) for row in cursor.fetchall()]

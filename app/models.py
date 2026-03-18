@@ -9,7 +9,8 @@ import sqlite3
 import json
 
 class ProspectStatus(str, Enum):
-    NOVO = "novo"
+    PENDENTE_APROVACAO = "pendente_aprovacao"  # Aguardando Renato aprovar
+    NOVO = "novo"  # Aprovado, disponível para Andressa
     CONTATADO = "contatado"
     REUNIAO_AGENDADA = "reuniao_agendada"
     REUNIAO_REALIZADA = "reuniao_realizada"
@@ -17,6 +18,11 @@ class ProspectStatus(str, Enum):
     CONVERTIDO = "convertido"
     PERDIDO = "perdido"
     NURTURING = "nurturing"
+    REJEITADO = "rejeitado"  # Renato rejeitou
+
+class UserRole(str, Enum):
+    ADMIN = "admin"  # Renato - pode aprovar, ver tudo
+    OPERADOR = "operador"  # Andressa - só vê aprovados
 
 class ProspectTier(str, Enum):
     A = "A"
@@ -125,6 +131,30 @@ def init_db(db_path: str = "data/prospects.db"):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
+    # Tabela de usuários
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            role TEXT DEFAULT 'operador',
+            senha_hash TEXT,
+            tutorial_concluido BOOLEAN DEFAULT FALSE,
+            data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ultimo_acesso TIMESTAMP
+        )
+    ''')
+
+    # Inserir usuários padrão
+    cursor.execute('''
+        INSERT OR IGNORE INTO users (nome, email, role, tutorial_concluido)
+        VALUES ('Renato', 'renato@almeida-prado.com', 'admin', TRUE)
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO users (nome, email, role, tutorial_concluido)
+        VALUES ('Andressa Santos', 'andressa@almeida-prado.com', 'operador', FALSE)
+    ''')
+
     # Tabela de prospects
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS prospects (
@@ -140,7 +170,11 @@ def init_db(db_path: str = "data/prospects.db"):
             tier TEXT DEFAULT 'E',
             score_breakdown TEXT DEFAULT '{}',
             reasons TEXT DEFAULT '[]',
-            status TEXT DEFAULT 'novo',
+            status TEXT DEFAULT 'pendente_aprovacao',
+            aprovado_por_renato BOOLEAN DEFAULT FALSE,
+            data_aprovacao TIMESTAMP,
+            notas_renato TEXT,
+            prioridade_renato INTEGER DEFAULT 0,
             data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             data_ultimo_contato TIMESTAMP,
             data_reuniao TIMESTAMP,

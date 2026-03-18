@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Aprovação de Prospects | ImensIAH</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #1e3a5f;
+            --tier-a: #16a34a;
+            --tier-b: #2563eb;
+            --tier-c: #f59e0b;
+        }
+        body { font-family: 'Inter', sans-serif; background: #f1f5f9; }
+        .navbar { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); }
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .prospect-row {
+            background: white;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border-left: 4px solid #e5e7eb;
+            transition: all 0.2s;
+        }
+        .prospect-row:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        .prospect-row.tier-A { border-left-color: var(--tier-a); }
+        .prospect-row.tier-B { border-left-color: var(--tier-b); }
+        .prospect-row.tier-C { border-left-color: var(--tier-c); }
+        .prospect-row.selected { background: #f0fdf4; border-left-color: var(--tier-a); }
+
+        .tier-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.75rem;
+        }
+        .tier-A { background: #dcfce7; color: #166534; }
+        .tier-B { background: #dbeafe; color: #1e40af; }
+        .tier-C { background: #fef3c7; color: #92400e; }
+
+        .score-badge {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 0.9rem;
+        }
+        .score-high { background: #dcfce7; color: #166534; }
+        .score-medium { background: #fef3c7; color: #92400e; }
+
+        .reason-tag {
+            display: inline-block;
+            padding: 3px 8px;
+            background: #f1f5f9;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            margin: 2px;
+            color: #475569;
+        }
+
+        .btn-approve {
+            background: #16a34a;
+            color: white;
+            border: none;
+        }
+        .btn-approve:hover { background: #15803d; color: white; }
+
+        .btn-reject {
+            background: #dc2626;
+            color: white;
+            border: none;
+        }
+        .btn-reject:hover { background: #b91c1c; color: white; }
+
+        .filter-tabs .nav-link {
+            color: #64748b;
+            border: none;
+            padding: 12px 24px;
+            font-weight: 500;
+        }
+        .filter-tabs .nav-link.active {
+            color: var(--primary);
+            border-bottom: 3px solid var(--primary);
+            background: transparent;
+        }
+
+        .bulk-actions {
+            position: sticky;
+            bottom: 0;
+            background: white;
+            padding: 16px;
+            border-top: 1px solid #e5e7eb;
+            box-shadow: 0 -4px 12px rgba(0,0,0,0.05);
+        }
+
+        .priority-input {
+            width: 60px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark px-4 py-3">
+        <div class="d-flex align-items-center">
+            <span class="navbar-brand mb-0 h4">
+                <i class="bi bi-shield-check me-2"></i>
+                Painel de Aprovação | ImensIAH
+            </span>
+        </div>
+        <div class="d-flex align-items-center gap-3">
+            <span class="text-white-50">
+                <i class="bi bi-person-fill me-1"></i>
+                Renato
+            </span>
+            <a href="/" class="btn btn-outline-light btn-sm">
+                <i class="bi bi-arrow-left me-1"></i>
+                Ver Dashboard Andressa
+            </a>
+        </div>
+    </nav>
+
+    <div class="container-fluid py-4 px-4">
+        <!-- Stats -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="stat-card text-center">
+                    <div class="text-muted mb-1">Pendentes Total</div>
+                    <div class="h2 mb-0" id="stat-pending">-</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="stat-card text-center">
+                    <div class="text-muted mb-1">Tier A</div>
+                    <div class="h3 mb-0 text-success" id="stat-tier-a">-</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="stat-card text-center">
+                    <div class="text-muted mb-1">Tier B</div>
+                    <div class="h3 mb-0 text-primary" id="stat-tier-b">-</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="stat-card text-center">
+                    <div class="text-muted mb-1">Tier C</div>
+                    <div class="h3 mb-0 text-warning" id="stat-tier-c">-</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card text-center">
+                    <div class="text-muted mb-1">Já Aprovados</div>
+                    <div class="h3 mb-0 text-success" id="stat-approved">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="stat-card mb-4">
+            <div class="d-flex justify-content-between align-items-center">
+                <ul class="nav filter-tabs" id="tierTabs">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#" onclick="filterTier('')">Todos</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="filterTier('A')">
+                            <span class="tier-badge tier-A me-1">A</span> Prioridade Alta
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="filterTier('B')">
+                            <span class="tier-badge tier-B me-1">B</span> Prioridade Média
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#" onclick="filterTier('C')">
+                            <span class="tier-badge tier-C me-1">C</span> Avaliar
+                        </a>
+                    </li>
+                </ul>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-primary btn-sm" onclick="selectAll()">
+                        <i class="bi bi-check-all me-1"></i>
+                        Selecionar Todos
+                    </button>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="deselectAll()">
+                        Limpar Seleção
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Prospects List -->
+        <div id="prospects-list">
+            <!-- Populated by JS -->
+        </div>
+
+        <!-- Bulk Actions -->
+        <div class="bulk-actions" id="bulk-actions" style="display:none">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="fw-bold" id="selected-count">0</span> prospects selecionados
+                </div>
+                <div class="d-flex gap-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <label class="text-muted small">Notas:</label>
+                        <input type="text" class="form-control form-control-sm" id="bulk-notes"
+                               placeholder="Notas opcionais..." style="width: 200px">
+                    </div>
+                    <button class="btn btn-approve" onclick="bulkApprove(true)">
+                        <i class="bi bi-check-lg me-1"></i>
+                        Aprovar Selecionados
+                    </button>
+                    <button class="btn btn-reject" onclick="bulkApprove(false)">
+                        <i class="bi bi-x-lg me-1"></i>
+                        Rejeitar Selecionados
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal fade" id="detailModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Detalhes do Prospect</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="detail-content">
+                    <!-- Populated by JS -->
+                </div>
+                <div class="modal-footer">
+                    <div class="d-flex gap-2 w-100">
+                        <input type="text" class="form-control" id="approval-notes" placeholder="Notas (opcional)">
+                        <input type="number" class="form-control priority-input" id="approval-priority"
+                               placeholder="Prioridade" min="0" max="10" value="0">
+                        <button class="btn btn-reject" onclick="approveFromModal(false)">
+                            <i class="bi bi-x-lg me-1"></i>
+                            Rejeitar
+                        </button>
+                        <button class="btn btn-approve" onclick="approveFromModal(true)">
+                            <i class="bi bi-check-lg me-1"></i>
+                            Aprovar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const API_BASE = '';
+        let currentTier = '';
+        let selectedIds = new Set();
+        let currentProspectId = null;
+
+        // Load stats
+        async function loadStats() {
+            const response = await fetch(`${API_BASE}/api/admin/stats`);
+            const data = await response.json();
+
+            document.getElementById('stat-pending').textContent = data.total_pendentes || 0;
+            document.getElementById('stat-tier-a').textContent = data.pendentes_por_tier?.A || 0;
+            document.getElementById('stat-tier-b').textContent = data.pendentes_por_tier?.B || 0;
+            document.getElementById('stat-tier-c').textContent = data.pendentes_por_tier?.C || 0;
+            document.getElementById('stat-approved').textContent = data.total_aprovados || 0;
+        }
+
+        // Load prospects
+        async function loadProspects() {
+            let url = `${API_BASE}/api/admin/pending?limit=200`;
+            if (currentTier) url += `&tier=${currentTier}`;
+
+            const response = await fetch(url);
+            const data = await response.json();
+
+            const container = document.getElementById('prospects-list');
+            container.innerHTML = data.prospects.map(p => {
+                const reasons = p.reasons ? (typeof p.reasons === 'string' ? JSON.parse(p.reasons) : p.reasons) : [];
+                const isSelected = selectedIds.has(p.id);
+
+                return `
+                    <div class="prospect-row tier-${p.tier} ${isSelected ? 'selected' : ''}" data-id="${p.id}">
+                        <div class="d-flex align-items-start gap-3">
+                            <div class="form-check mt-2">
+                                <input class="form-check-input" type="checkbox" ${isSelected ? 'checked' : ''}
+                                       onchange="toggleSelect(${p.id})">
+                            </div>
+                            <div class="score-badge ${p.score >= 50 ? 'score-high' : 'score-medium'}">
+                                ${p.score}
+                            </div>
+                            <div class="flex-grow-1">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <div>
+                                        <h6 class="mb-1">${p.nome}</h6>
+                                        <div class="text-muted small">
+                                            ${p.cargo || ''} ${p.empresa ? '@ ' + p.empresa : ''}
+                                        </div>
+                                    </div>
+                                    <span class="tier-badge tier-${p.tier}">Tier ${p.tier}</span>
+                                </div>
+                                <div class="mt-2">
+                                    ${reasons.slice(0, 3).map(r => `<span class="reason-tag">${r}</span>`).join('')}
+                                </div>
+                                <div class="mt-2 text-muted small">
+                                    ${p.email ? `<i class="bi bi-envelope me-1"></i>${p.email}` : ''}
+                                    ${p.telefone ? `<span class="ms-3"><i class="bi bi-phone me-1"></i>${p.telefone}</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="d-flex flex-column gap-2">
+                                <button class="btn btn-sm btn-outline-secondary" onclick="showDetail(${p.id})">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                                <button class="btn btn-sm btn-approve" onclick="quickApprove(${p.id}, true)">
+                                    <i class="bi bi-check-lg"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger" onclick="quickApprove(${p.id}, false)">
+                                    <i class="bi bi-x-lg"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            updateBulkActions();
+        }
+
+        // Filter by tier
+        function filterTier(tier) {
+            currentTier = tier;
+            document.querySelectorAll('.filter-tabs .nav-link').forEach(el => el.classList.remove('active'));
+            event.target.classList.add('active');
+            loadProspects();
+        }
+
+        // Selection
+        function toggleSelect(id) {
+            if (selectedIds.has(id)) {
+                selectedIds.delete(id);
+                document.querySelector(`[data-id="${id}"]`)?.classList.remove('selected');
+            } else {
+                selectedIds.add(id);
+                document.querySelector(`[data-id="${id}"]`)?.classList.add('selected');
+            }
+            updateBulkActions();
+        }
+
+        function selectAll() {
+            document.querySelectorAll('.prospect-row').forEach(el => {
+                const id = parseInt(el.dataset.id);
+                selectedIds.add(id);
+                el.classList.add('selected');
+                el.querySelector('input[type="checkbox"]').checked = true;
+            });
+            updateBulkActions();
+        }
+
+        function deselectAll() {
+            selectedIds.clear();
+            document.querySelectorAll('.prospect-row').forEach(el => {
+                el.classList.remove('selected');
+                el.querySelector('input[type="checkbox"]').checked = false;
+            });
+            updateBulkActions();
+        }
+
+        function updateBulkActions() {
+            const bulkActions = document.getElementById('bulk-actions');
+            const count = selectedIds.size;
+            document.getElementById('selected-count').textContent = count;
+            bulkActions.style.display = count > 0 ? 'block' : 'none';
+        }
+
+        // Quick approve/reject
+        async function quickApprove(id, aprovado) {
+            await fetch(`${API_BASE}/api/admin/approve/${id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ aprovado, notas: '', prioridade: 0 })
+            });
+
+            document.querySelector(`[data-id="${id}"]`)?.remove();
+            selectedIds.delete(id);
+            loadStats();
+            updateBulkActions();
+        }
+
+        // Bulk approve
+        async function bulkApprove(aprovado) {
+            const notes = document.getElementById('bulk-notes').value;
+
+            await fetch(`${API_BASE}/api/admin/approve-bulk`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prospect_ids: Array.from(selectedIds),
+                    aprovado,
+                    notas: notes
+                })
+            });
+
+            selectedIds.forEach(id => {
+                document.querySelector(`[data-id="${id}"]`)?.remove();
+            });
+            selectedIds.clear();
+            document.getElementById('bulk-notes').value = '';
+            loadStats();
+            updateBulkActions();
+        }
+
+        // Detail modal
+        async function showDetail(id) {
+            currentProspectId = id;
+            const response = await fetch(`${API_BASE}/api/prospects/${id}?user_role=admin`);
+            const data = await response.json();
+            const p = data.prospect;
+            const reasons = p.reasons ? (typeof p.reasons === 'string' ? JSON.parse(p.reasons) : p.reasons) : [];
+
+            document.getElementById('detail-content').innerHTML = `
+                <div class="row">
+                    <div class="col-md-8">
+                        <h4>${p.nome}</h4>
+                        <p class="text-muted">${p.cargo || ''} ${p.empresa ? '@ ' + p.empresa : ''}</p>
+
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <strong>Email:</strong> ${p.email || '-'}<br>
+                                <strong>Telefone:</strong> ${p.telefone || '-'}
+                            </div>
+                            <div class="col-md-6">
+                                <strong>LinkedIn:</strong> ${p.linkedin || '-'}<br>
+                                <strong>Website:</strong> ${p.website || '-'}
+                            </div>
+                        </div>
+
+                        <div class="mt-4">
+                            <strong>Por que é um bom prospect:</strong>
+                            <div class="mt-2">
+                                ${reasons.map(r => `<div class="reason-tag">${r}</div>`).join('')}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-center">
+                        <div class="score-badge ${p.score >= 50 ? 'score-high' : 'score-medium'}"
+                             style="width:80px;height:80px;font-size:1.5rem;margin:0 auto">
+                            ${p.score}
+                        </div>
+                        <div class="mt-2">
+                            <span class="tier-badge tier-${p.tier}">Tier ${p.tier}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            new bootstrap.Modal(document.getElementById('detailModal')).show();
+        }
+
+        async function approveFromModal(aprovado) {
+            const notes = document.getElementById('approval-notes').value;
+            const priority = parseInt(document.getElementById('approval-priority').value) || 0;
+
+            await fetch(`${API_BASE}/api/admin/approve/${currentProspectId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ aprovado, notas: notes, prioridade: priority })
+            });
+
+            bootstrap.Modal.getInstance(document.getElementById('detailModal')).hide();
+            document.querySelector(`[data-id="${currentProspectId}"]`)?.remove();
+            loadStats();
+        }
+
+        // Init
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            loadProspects();
+        });
+    </script>
+</body>
+</html>
