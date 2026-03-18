@@ -90,10 +90,11 @@ async def debug_oauth():
     client_id = os.getenv("GOOGLE_CLIENT_ID", "NOT_SET")
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "NOT_SET")
     return {
-        "client_id_prefix": client_id[:20] + "..." if len(client_id) > 20 else client_id,
+        "client_id": client_id,
         "client_id_length": len(client_id),
         "secret_set": len(client_secret) > 10,
-        "secret_length": len(client_secret)
+        "secret_length": len(client_secret),
+        "expected": "855862664507-m6vubegh1hibp0980pqeparo6m18ah5g.apps.googleusercontent.com"
     }
 
 
