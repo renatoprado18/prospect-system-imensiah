@@ -942,8 +942,8 @@ async def import_from_csv(background_tasks: BackgroundTasks):
             try:
                 cursor.execute('''
                     INSERT OR IGNORE INTO prospects
-                    (nome, empresa, cargo, email, telefone, score, tier, reasons)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (nome, empresa, cargo, email, telefone, score, tier, reasons, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendente_aprovacao')
                 ''', (
                     row.get('Nome', ''),
                     row.get('Empresa', ''),
