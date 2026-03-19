@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAP - Configuracoes</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #0ea5e9;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --dark: #1e293b;
+            --light: #f8fafc;
+            --gray-100: #f1f5f9;
+            --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1;
+            --gray-400: #94a3b8;
+            --gray-500: #64748b;
+            --gray-600: #475569;
+            --sidebar-width: 260px;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--gray-100);
+            margin: 0;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: var(--sidebar-width);
+            background: linear-gradient(180deg, var(--dark) 0%, #0f172a 100%);
+            color: white;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header { padding: 24px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .sidebar-logo { display: flex; align-items: center; gap: 12px; font-size: 1.5rem; font-weight: 700; text-decoration: none; color: white; }
+        .sidebar-logo .icon { width: 40px; height: 40px; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+        .sidebar-nav { flex: 1; padding: 16px 0; overflow-y: auto; }
+        .nav-section { padding: 8px 16px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--gray-400); margin-top: 16px; }
+        .nav-item { display: flex; align-items: center; gap: 12px; padding: 12px 24px; color: var(--gray-300); text-decoration: none; transition: all 0.2s; border-left: 3px solid transparent; }
+        .nav-item:hover { background: rgba(255,255,255,0.05); color: white; }
+        .nav-item.active { background: rgba(99, 102, 241, 0.15); color: white; border-left-color: var(--primary); }
+        .nav-item i { font-size: 1.2rem; width: 24px; text-align: center; }
+        .nav-item .badge { margin-left: auto; background: var(--primary); padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; }
+        .sidebar-footer { padding: 16px 24px; border-top: 1px solid rgba(255,255,255,0.1); }
+        .user-info { display: flex; align-items: center; gap: 12px; }
+        .user-avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); display: flex; align-items: center; justify-content: center; font-weight: 600; }
+        .user-name { font-weight: 500; font-size: 0.9rem; }
+        .user-role { font-size: 0.75rem; color: var(--gray-400); }
+
+        /* Main Content */
+        .main-content { margin-left: var(--sidebar-width); padding: 24px 32px; min-height: 100vh; }
+
+        /* Header */
+        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+        .page-title { font-size: 1.75rem; font-weight: 700; color: var(--dark); margin: 0; }
+        .page-subtitle { color: var(--gray-500); font-size: 0.9rem; margin-top: 4px; }
+
+        /* Cards */
+        .card { background: white; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); border: none; margin-bottom: 24px; }
+        .card-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--gray-200); background: transparent; }
+        .card-title { font-size: 1rem; font-weight: 600; color: var(--dark); margin: 0; display: flex; align-items: center; gap: 10px; }
+        .card-body { padding: 24px; }
+
+        /* Account Cards */
+        .account-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 20px; }
+
+        .account-card {
+            background: var(--gray-100);
+            border-radius: 16px;
+            padding: 24px;
+            transition: all 0.2s;
+        }
+
+        .account-card.connected { background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2); }
+        .account-card.disconnected { background: var(--gray-100); border: 1px dashed var(--gray-300); }
+
+        .account-header { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+
+        .account-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .account-icon.google { background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .account-icon.professional { background: linear-gradient(135deg, #4285f4 0%, #34a853 100%); color: white; }
+        .account-icon.personal { background: linear-gradient(135deg, #ea4335 0%, #fbbc05 100%); color: white; }
+
+        .account-info { flex: 1; }
+        .account-type { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gray-500); margin-bottom: 4px; }
+        .account-email { font-weight: 600; color: var(--dark); font-size: 1rem; }
+        .account-status { font-size: 0.8rem; margin-top: 4px; }
+        .account-status.connected { color: var(--success); }
+        .account-status.disconnected { color: var(--gray-400); }
+
+        .account-meta { display: flex; gap: 16px; margin-bottom: 16px; font-size: 0.85rem; color: var(--gray-500); }
+        .account-meta i { margin-right: 6px; }
+
+        .account-actions { display: flex; gap: 8px; }
+
+        /* Buttons */
+        .btn-primary { background: var(--primary); border-color: var(--primary); padding: 10px 20px; border-radius: 10px; font-weight: 500; }
+        .btn-primary:hover { background: var(--primary-dark); border-color: var(--primary-dark); }
+        .btn-success { background: var(--success); border-color: var(--success); border-radius: 10px; }
+        .btn-outline-secondary { border-radius: 10px; }
+        .btn-outline-danger { border-radius: 10px; }
+
+        /* Connect Buttons */
+        .connect-buttons { display: flex; gap: 16px; margin-top: 24px; }
+
+        .connect-btn {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 20px;
+            background: white;
+            border: 2px dashed var(--gray-300);
+            border-radius: 16px;
+            color: var(--gray-600);
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .connect-btn:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+            background: rgba(99, 102, 241, 0.05);
+        }
+
+        .connect-btn i { font-size: 1.5rem; }
+        .connect-btn-text { text-align: left; }
+        .connect-btn-title { font-weight: 600; font-size: 0.95rem; }
+        .connect-btn-desc { font-size: 0.8rem; opacity: 0.7; margin-top: 2px; }
+
+        /* Alert */
+        .alert-custom {
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .alert-success { background: rgba(16, 185, 129, 0.1); color: var(--success); border: none; }
+        .alert-danger { background: rgba(239, 68, 68, 0.1); color: var(--danger); border: none; }
+        .alert-info { background: rgba(14, 165, 233, 0.1); color: var(--secondary); border: none; }
+
+        /* Sync Progress */
+        .sync-progress {
+            display: none;
+            align-items: center;
+            gap: 12px;
+            padding: 16px;
+            background: rgba(99, 102, 241, 0.1);
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+
+        .sync-progress.active { display: flex; }
+
+        /* Section */
+        .settings-section { margin-bottom: 32px; }
+        .section-title { font-size: 1.1rem; font-weight: 600; color: var(--dark); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main-content { margin-left: 0; padding: 16px; }
+            .account-grid { grid-template-columns: 1fr; }
+            .connect-buttons { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <a href="/rap" class="sidebar-logo">
+                <div class="icon"><i class="bi bi-robot"></i></div>
+                <span>RAP</span>
+            </a>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a href="/rap" class="nav-item">
+                <i class="bi bi-grid-1x2"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="/rap/contacts" class="nav-item">
+                <i class="bi bi-people"></i>
+                <span>Contatos</span>
+            </a>
+            <a href="/rap/inbox" class="nav-item">
+                <i class="bi bi-inbox"></i>
+                <span>Inbox</span>
+            </a>
+            <a href="/rap/calendar" class="nav-item">
+                <i class="bi bi-calendar3"></i>
+                <span>Calendario</span>
+            </a>
+            <a href="/rap/tasks" class="nav-item">
+                <i class="bi bi-check2-square"></i>
+                <span>Tarefas</span>
+            </a>
+
+            <div class="nav-section">Gestao</div>
+            <a href="/admin" class="nav-item">
+                <i class="bi bi-funnel"></i>
+                <span>Prospects</span>
+            </a>
+            <a href="/rap/conselhoos" class="nav-item">
+                <i class="bi bi-briefcase"></i>
+                <span>ConselhoOS</span>
+            </a>
+
+            <div class="nav-section">Sistema</div>
+            <a href="/rap/settings" class="nav-item active">
+                <i class="bi bi-gear"></i>
+                <span>Configuracoes</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-info">
+                <div class="user-avatar">R</div>
+                <div>
+                    <div class="user-name">Renato</div>
+                    <div class="user-role">Admin</div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">Configuracoes</h1>
+                <p class="page-subtitle">Gerencie suas integracoes e preferencias</p>
+            </div>
+        </div>
+
+        <!-- Alerts -->
+        <div id="alertContainer"></div>
+
+        <!-- Google Accounts Section -->
+        <div class="settings-section">
+            <h2 class="section-title">
+                <i class="bi bi-google"></i>
+                Contas Google
+            </h2>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Contas Conectadas</h3>
+                    <button class="btn btn-primary btn-sm" onclick="syncAllAccounts()">
+                        <i class="bi bi-arrow-repeat me-2"></i>Sincronizar Todas
+                    </button>
+                </div>
+                <div class="card-body">
+                    <!-- Sync Progress -->
+                    <div class="sync-progress" id="syncProgress">
+                        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                        <span id="syncProgressText">Sincronizando contatos...</span>
+                    </div>
+
+                    <div class="account-grid" id="accountsGrid">
+                        <!-- Populated by JS -->
+                    </div>
+
+                    <div class="connect-buttons">
+                        <a href="/api/google/connect/professional" class="connect-btn" id="connectProfessional">
+                            <i class="bi bi-briefcase"></i>
+                            <div class="connect-btn-text">
+                                <div class="connect-btn-title">Conta Profissional</div>
+                                <div class="connect-btn-desc">renato@almeida-prado.com</div>
+                            </div>
+                        </a>
+                        <a href="/api/google/connect/personal" class="connect-btn" id="connectPersonal">
+                            <i class="bi bi-person"></i>
+                            <div class="connect-btn-text">
+                                <div class="connect-btn-title">Conta Pessoal</div>
+                                <div class="connect-btn-desc">renato.almeida.prado@gmail.com</div>
+                            </div>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stats Section -->
+        <div class="settings-section">
+            <h2 class="section-title">
+                <i class="bi bi-bar-chart"></i>
+                Estatisticas
+            </h2>
+
+            <div class="card">
+                <div class="card-body">
+                    <div class="row g-4">
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <div style="font-size: 2rem; font-weight: 700; color: var(--primary);" id="statTotal">-</div>
+                                <div style="color: var(--gray-500); font-size: 0.9rem;">Contatos</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <div style="font-size: 2rem; font-weight: 700; color: var(--success);" id="statProfessional">-</div>
+                                <div style="color: var(--gray-500); font-size: 0.9rem;">Profissionais</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <div style="font-size: 2rem; font-weight: 700; color: var(--warning);" id="statPersonal">-</div>
+                                <div style="color: var(--gray-500); font-size: 0.9rem;">Pessoais</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <div style="font-size: 2rem; font-weight: 700; color: var(--secondary);" id="statWithPhoto">-</div>
+                                <div style="color: var(--gray-500); font-size: 0.9rem;">Com Foto</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Check URL params for alerts
+        document.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+
+            if (params.get('success') === 'connected') {
+                showAlert('success', `Conta ${params.get('email')} conectada com sucesso!`);
+            }
+
+            if (params.get('error')) {
+                showAlert('danger', `Erro: ${params.get('error')}`);
+            }
+
+            loadAccounts();
+            loadStats();
+        });
+
+        function showAlert(type, message) {
+            const container = document.getElementById('alertContainer');
+            container.innerHTML = `
+                <div class="alert alert-custom alert-${type}">
+                    <i class="bi bi-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
+                    ${message}
+                    <button type="button" class="btn-close ms-auto" onclick="this.parentElement.remove()"></button>
+                </div>
+            `;
+        }
+
+        async function loadAccounts() {
+            try {
+                const response = await fetch('/api/google/accounts');
+                const data = await response.json();
+
+                const grid = document.getElementById('accountsGrid');
+
+                if (data.accounts.length === 0) {
+                    grid.innerHTML = `
+                        <div style="grid-column: 1 / -1; text-align: center; padding: 32px; color: var(--gray-500);">
+                            <i class="bi bi-cloud-slash" style="font-size: 2rem; margin-bottom: 12px;"></i>
+                            <p>Nenhuma conta conectada</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                grid.innerHTML = data.accounts.map(account => renderAccountCard(account)).join('');
+
+                // Update connect buttons
+                const connectedEmails = data.accounts.filter(a => a.conectado).map(a => a.email);
+                if (connectedEmails.some(e => e.includes('almeida-prado.com'))) {
+                    document.getElementById('connectProfessional').style.display = 'none';
+                }
+                if (connectedEmails.some(e => e.includes('gmail.com'))) {
+                    document.getElementById('connectPersonal').style.display = 'none';
+                }
+
+            } catch (error) {
+                console.error('Error loading accounts:', error);
+            }
+        }
+
+        function renderAccountCard(account) {
+            const isConnected = account.conectado;
+            const isProfessional = account.tipo === 'professional';
+            const lastSync = account.ultima_sync ? formatDate(account.ultima_sync) : 'Nunca';
+
+            return `
+                <div class="account-card ${isConnected ? 'connected' : 'disconnected'}">
+                    <div class="account-header">
+                        <div class="account-icon ${isProfessional ? 'professional' : 'personal'}">
+                            <i class="bi bi-${isProfessional ? 'briefcase' : 'person'}"></i>
+                        </div>
+                        <div class="account-info">
+                            <div class="account-type">${isProfessional ? 'Profissional' : 'Pessoal'}</div>
+                            <div class="account-email">${account.email}</div>
+                            <div class="account-status ${isConnected ? 'connected' : 'disconnected'}">
+                                <i class="bi bi-${isConnected ? 'check-circle-fill' : 'x-circle'}"></i>
+                                ${isConnected ? 'Conectada' : 'Desconectada'}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="account-meta">
+                        <span><i class="bi bi-clock-history"></i>Ultimo sync: ${lastSync}</span>
+                    </div>
+
+                    <div class="account-actions">
+                        ${isConnected ? `
+                            <button class="btn btn-success btn-sm" onclick="syncAccount(${account.id})">
+                                <i class="bi bi-arrow-repeat me-1"></i>Sincronizar
+                            </button>
+                            <button class="btn btn-outline-danger btn-sm" onclick="disconnectAccount(${account.id})">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        ` : `
+                            <a href="/api/google/connect/${account.tipo}" class="btn btn-primary btn-sm">
+                                <i class="bi bi-link me-1"></i>Reconectar
+                            </a>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/contacts/stats');
+                const stats = await response.json();
+
+                document.getElementById('statTotal').textContent = stats.total.toLocaleString();
+                document.getElementById('statProfessional').textContent = (stats.by_context?.professional || 0).toLocaleString();
+                document.getElementById('statPersonal').textContent = (stats.by_context?.personal || 0).toLocaleString();
+                document.getElementById('statWithPhoto').textContent = stats.with_photo.toLocaleString();
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        async function syncAccount(accountId) {
+            const progress = document.getElementById('syncProgress');
+            const progressText = document.getElementById('syncProgressText');
+
+            progress.classList.add('active');
+            progressText.textContent = 'Sincronizando contatos...';
+
+            try {
+                const response = await fetch(`/api/google/sync/${accountId}`, { method: 'POST' });
+                const data = await response.json();
+
+                if (response.ok) {
+                    const stats = data.stats;
+                    showAlert('success', `Sincronizado! ${stats.imported} novos, ${stats.updated} atualizados.`);
+                    loadAccounts();
+                    loadStats();
+                } else {
+                    showAlert('danger', data.detail || 'Erro ao sincronizar');
+                }
+            } catch (error) {
+                showAlert('danger', 'Erro de conexao');
+            } finally {
+                progress.classList.remove('active');
+            }
+        }
+
+        async function syncAllAccounts() {
+            const progress = document.getElementById('syncProgress');
+            const progressText = document.getElementById('syncProgressText');
+
+            progress.classList.add('active');
+            progressText.textContent = 'Sincronizando todas as contas...';
+
+            try {
+                const response = await fetch('/api/google/sync-all', { method: 'POST' });
+                const data = await response.json();
+
+                let totalImported = 0;
+                let totalUpdated = 0;
+
+                data.results.forEach(r => {
+                    if (r.status === 'success') {
+                        totalImported += r.stats.imported;
+                        totalUpdated += r.stats.updated;
+                    }
+                });
+
+                showAlert('success', `Sincronizado! ${totalImported} novos, ${totalUpdated} atualizados.`);
+                loadAccounts();
+                loadStats();
+            } catch (error) {
+                showAlert('danger', 'Erro de conexao');
+            } finally {
+                progress.classList.remove('active');
+            }
+        }
+
+        async function disconnectAccount(accountId) {
+            if (!confirm('Deseja desconectar esta conta?')) return;
+
+            try {
+                const response = await fetch(`/api/google/accounts/${accountId}`, { method: 'DELETE' });
+
+                if (response.ok) {
+                    showAlert('success', 'Conta desconectada');
+                    loadAccounts();
+                } else {
+                    showAlert('danger', 'Erro ao desconectar');
+                }
+            } catch (error) {
+                showAlert('danger', 'Erro de conexao');
+            }
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+    </script>
+</body>
+</html>

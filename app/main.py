@@ -327,6 +327,21 @@ async def rap_contact_detail(request: Request, contact_id: int):
         "contact_id": contact_id
     })
 
+@app.get("/rap/settings", response_class=HTMLResponse)
+async def rap_settings(request: Request):
+    """RAP Settings Page - Google Accounts Management"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    if user.get("role") != "admin":
+        return RedirectResponse(url="/rap", status_code=302)
+
+    return templates.TemplateResponse("rap_settings.html", {
+        "request": request,
+        "user": user
+    })
+
 
 @app.get("/api/user/{email}")
 async def get_user(email: str):
@@ -1977,6 +1992,240 @@ async def contacts_stats():
         "with_photo": with_photo,
         "with_linkedin": with_linkedin
     }
+
+
+# ============== Google Accounts Integration ==============
+
+from integrations.google_contacts import (
+    get_connect_url,
+    exchange_code_for_tokens,
+    refresh_access_token,
+    get_user_email,
+    sync_contacts_from_google,
+    CONTACTS_SCOPES
+)
+
+
+@app.get("/api/google/accounts")
+async def list_google_accounts(request: Request):
+    """Lista contas Google conectadas"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        SELECT id, email, tipo, conectado, ultima_sync, criado_em
+        FROM google_accounts
+        ORDER BY tipo
+    ''')
+    accounts = [row_to_dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    return {"accounts": accounts}
+
+
+@app.get("/api/google/connect/{account_type}")
+async def connect_google_account(request: Request, account_type: str):
+    """
+    Inicia OAuth para conectar uma conta Google
+    account_type: 'professional' ou 'personal'
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin pode conectar contas")
+
+    if account_type not in ["professional", "personal"]:
+        raise HTTPException(status_code=400, detail="Tipo deve ser 'professional' ou 'personal'")
+
+    auth_url = get_connect_url(account_type)
+    return RedirectResponse(url=auth_url, status_code=302)
+
+
+@app.get("/api/google/callback")
+async def google_accounts_callback(request: Request):
+    """Callback do OAuth para contas Google"""
+    code = request.query_params.get("code")
+    state = request.query_params.get("state", "professional")  # account_type
+    error = request.query_params.get("error")
+
+    if error:
+        return RedirectResponse(
+            url=f"/rap/settings?error={error}",
+            status_code=302
+        )
+
+    if not code:
+        return RedirectResponse(
+            url="/rap/settings?error=no_code",
+            status_code=302
+        )
+
+    try:
+        # Exchange code for tokens
+        tokens = await exchange_code_for_tokens(code)
+        access_token = tokens.get("access_token")
+        refresh_token = tokens.get("refresh_token")
+        expires_in = tokens.get("expires_in", 3600)
+
+        if not access_token:
+            return RedirectResponse(
+                url="/rap/settings?error=no_token",
+                status_code=302
+            )
+
+        # Get user email
+        email = await get_user_email(access_token)
+
+        # Save to database
+        conn = get_db()
+        cursor = conn.cursor()
+
+        token_expiry = (datetime.now() + timedelta(seconds=expires_in)).isoformat()
+
+        cursor.execute('''
+            INSERT INTO google_accounts (email, tipo, access_token, refresh_token, token_expiry, scopes, conectado)
+            VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+            ON CONFLICT (email) DO UPDATE SET
+                access_token = EXCLUDED.access_token,
+                refresh_token = COALESCE(EXCLUDED.refresh_token, google_accounts.refresh_token),
+                token_expiry = EXCLUDED.token_expiry,
+                scopes = EXCLUDED.scopes,
+                conectado = TRUE
+        ''', (
+            email,
+            state,  # 'professional' or 'personal'
+            access_token,
+            refresh_token,
+            token_expiry,
+            json.dumps(CONTACTS_SCOPES)
+        ))
+
+        conn.commit()
+        conn.close()
+
+        return RedirectResponse(
+            url=f"/rap/settings?success=connected&email={email}",
+            status_code=302
+        )
+
+    except Exception as e:
+        return RedirectResponse(
+            url=f"/rap/settings?error={str(e)[:100]}",
+            status_code=302
+        )
+
+
+@app.post("/api/google/sync/{account_id}")
+async def sync_google_contacts(request: Request, account_id: int, background_tasks: BackgroundTasks):
+    """
+    Sincroniza contatos de uma conta Google
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin pode sincronizar")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        SELECT * FROM google_accounts WHERE id = %s
+    ''', (account_id,))
+    account = cursor.fetchone()
+
+    if not account:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Conta nao encontrada")
+
+    account = row_to_dict(account)
+
+    if not account.get("conectado"):
+        conn.close()
+        raise HTTPException(status_code=400, detail="Conta desconectada")
+
+    try:
+        stats = await sync_contacts_from_google(
+            access_token=account["access_token"],
+            refresh_token=account["refresh_token"],
+            account_email=account["email"],
+            db_connection=conn
+        )
+        conn.close()
+
+        return {
+            "status": "synced",
+            "account": account["email"],
+            "stats": stats
+        }
+
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/google/sync-all")
+async def sync_all_google_contacts(request: Request):
+    """Sincroniza contatos de todas as contas conectadas"""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin pode sincronizar")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        SELECT * FROM google_accounts WHERE conectado = TRUE
+    ''')
+    accounts = [row_to_dict(row) for row in cursor.fetchall()]
+
+    results = []
+    for account in accounts:
+        try:
+            stats = await sync_contacts_from_google(
+                access_token=account["access_token"],
+                refresh_token=account["refresh_token"],
+                account_email=account["email"],
+                db_connection=conn
+            )
+            results.append({
+                "account": account["email"],
+                "status": "success",
+                "stats": stats
+            })
+        except Exception as e:
+            results.append({
+                "account": account["email"],
+                "status": "error",
+                "error": str(e)
+            })
+
+    conn.close()
+
+    return {"results": results}
+
+
+@app.delete("/api/google/accounts/{account_id}")
+async def disconnect_google_account(request: Request, account_id: int):
+    """Desconecta uma conta Google"""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin pode desconectar")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        UPDATE google_accounts
+        SET conectado = FALSE, access_token = NULL
+        WHERE id = %s
+    ''', (account_id,))
+
+    conn.commit()
+    conn.close()
+
+    return {"status": "disconnected"}
 
 
 # Vercel handler
