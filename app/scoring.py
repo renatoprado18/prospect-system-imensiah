@@ -4,12 +4,13 @@ Sistema de Scoring Dinâmico para Prospects ImensIAH
 Este sistema aprende com os resultados das reuniões e conversões
 para melhorar continuamente a qualificação de prospects.
 """
-import sqlite3
 import json
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 import re
+
+from database import get_connection
 
 @dataclass
 class ScoringWeights:
@@ -72,30 +73,31 @@ class ScoringWeights:
 class DynamicScorer:
     """Sistema de scoring que aprende com conversões"""
 
-    def __init__(self, db_path: str = "data/prospects.db"):
-        self.db_path = db_path
+    def __init__(self):
         self.weights = ScoringWeights()
         self._load_learned_weights()
 
     def _load_learned_weights(self):
         """Carrega pesos aprendidos do banco de dados"""
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = get_connection()
             cursor = conn.cursor()
 
             # Analisar conversões por cargo
             cursor.execute('''
                 SELECT cargo,
                        COUNT(*) as total,
-                       SUM(CASE WHEN converted = 1 THEN 1 ELSE 0 END) as convertidos
+                       SUM(CASE WHEN converted = true THEN 1 ELSE 0 END) as convertidos
                 FROM prospects
                 WHERE cargo IS NOT NULL AND cargo != ''
                 GROUP BY cargo
-                HAVING total >= 3
+                HAVING COUNT(*) >= 3
             ''')
 
             for row in cursor.fetchall():
-                cargo, total, convertidos = row
+                cargo = row['cargo']
+                total = row['total']
+                convertidos = row['convertidos']
                 taxa = convertidos / total if total > 0 else 0
                 # Ajustar multiplicador baseado na taxa de conversão
                 if taxa > 0.3:
@@ -236,9 +238,6 @@ class DynamicScorer:
 
         Este é o coração do sistema de aprendizado
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
         cargo = (prospect.get('cargo') or '').lower()
         empresa = (prospect.get('empresa') or '').lower()
 
@@ -265,8 +264,6 @@ class DynamicScorer:
                         self.weights.high_value_indicators.append(word)
                         break
 
-        conn.close()
-
     def analyze_icp(self) -> Dict:
         """
         Analisa os dados para identificar o Perfil Ideal de Cliente
@@ -274,9 +271,6 @@ class DynamicScorer:
         Returns:
             Análise completa do ICP baseada em dados reais
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
         analysis = {
             "data_analise": datetime.now().isoformat(),
             "total_prospects": 0,
@@ -292,12 +286,15 @@ class DynamicScorer:
         }
 
         try:
-            # Total de prospects e conversões
-            cursor.execute('SELECT COUNT(*) FROM prospects')
-            analysis["total_prospects"] = cursor.fetchone()[0]
+            conn = get_connection()
+            cursor = conn.cursor()
 
-            cursor.execute('SELECT COUNT(*) FROM prospects WHERE converted = 1')
-            analysis["total_convertidos"] = cursor.fetchone()[0]
+            # Total de prospects e conversões
+            cursor.execute('SELECT COUNT(*) as count FROM prospects')
+            analysis["total_prospects"] = cursor.fetchone()['count']
+
+            cursor.execute('SELECT COUNT(*) as count FROM prospects WHERE converted = true')
+            analysis["total_convertidos"] = cursor.fetchone()['count']
 
             if analysis["total_prospects"] > 0:
                 analysis["taxa_conversao_geral"] = round(
@@ -308,39 +305,37 @@ class DynamicScorer:
             cursor.execute('''
                 SELECT cargo,
                        COUNT(*) as total,
-                       SUM(CASE WHEN converted = 1 THEN 1 ELSE 0 END) as convertidos,
-                       ROUND(AVG(CASE WHEN converted = 1 THEN deal_value ELSE 0 END), 2) as ticket_medio
+                       SUM(CASE WHEN converted = true THEN 1 ELSE 0 END) as convertidos,
+                       ROUND(AVG(CASE WHEN converted = true THEN deal_value ELSE 0 END)::numeric, 2) as ticket_medio
                 FROM prospects
                 WHERE cargo IS NOT NULL AND cargo != ''
                 GROUP BY cargo
-                HAVING total >= 2
-                ORDER BY (convertidos * 1.0 / total) DESC
+                HAVING COUNT(*) >= 2
+                ORDER BY (SUM(CASE WHEN converted = true THEN 1 ELSE 0 END)::float / COUNT(*)) DESC
                 LIMIT 10
             ''')
 
             for row in cursor.fetchall():
-                cargo, total, convertidos, ticket = row
                 analysis["cargos_top_conversao"].append({
-                    "cargo": cargo,
-                    "total": total,
-                    "convertidos": convertidos,
-                    "taxa_conversao": round(convertidos / total * 100, 1) if total > 0 else 0,
-                    "ticket_medio": ticket or 0
+                    "cargo": row['cargo'],
+                    "total": row['total'],
+                    "convertidos": row['convertidos'],
+                    "taxa_conversao": round(row['convertidos'] / row['total'] * 100, 1) if row['total'] > 0 else 0,
+                    "ticket_medio": float(row['ticket_medio']) if row['ticket_medio'] else 0
                 })
 
             # Taxa de conversão por tier
             cursor.execute('''
                 SELECT tier,
                        COUNT(*) as total,
-                       SUM(CASE WHEN converted = 1 THEN 1 ELSE 0 END) as convertidos
+                       SUM(CASE WHEN converted = true THEN 1 ELSE 0 END) as convertidos
                 FROM prospects
                 GROUP BY tier
             ''')
 
             taxa_por_tier = {}
             for row in cursor.fetchall():
-                tier, total, convertidos = row
-                taxa_por_tier[tier] = round(convertidos / total * 100, 1) if total > 0 else 0
+                taxa_por_tier[row['tier']] = round(row['convertidos'] / row['total'] * 100, 1) if row['total'] > 0 else 0
 
             analysis["taxa_conversao_por_tier"] = taxa_por_tier
 
@@ -352,7 +347,7 @@ class DynamicScorer:
 
             objecao_count = {}
             for row in cursor.fetchall():
-                objecoes = json.loads(row[0])
+                objecoes = json.loads(row['objecoes'])
                 for obj in objecoes:
                     objecao_count[obj] = objecao_count.get(obj, 0) + 1
 
@@ -365,12 +360,12 @@ class DynamicScorer:
             # Features mais valorizadas (de prospects convertidos)
             cursor.execute('''
                 SELECT interesse_features FROM prospects
-                WHERE converted = 1 AND interesse_features IS NOT NULL AND interesse_features != '[]'
+                WHERE converted = true AND interesse_features IS NOT NULL AND interesse_features != '[]'
             ''')
 
             feature_count = {}
             for row in cursor.fetchall():
-                features = json.loads(row[0])
+                features = json.loads(row['interesse_features'])
                 for feat in features:
                     feature_count[feat] = feature_count.get(feat, 0) + 1
 
@@ -382,19 +377,20 @@ class DynamicScorer:
 
             # Ticket médio
             cursor.execute('''
-                SELECT AVG(deal_value) FROM prospects
-                WHERE converted = 1 AND deal_value > 0
+                SELECT AVG(deal_value) as avg FROM prospects
+                WHERE converted = true AND deal_value > 0
             ''')
             result = cursor.fetchone()
-            analysis["ticket_medio"] = round(result[0], 2) if result[0] else 0
+            analysis["ticket_medio"] = round(float(result['avg']), 2) if result['avg'] else 0
 
             # Gerar recomendações de ICP
             analysis["recomendacoes_icp"] = self._generate_icp_recommendations(analysis)
 
+            conn.close()
+
         except Exception as e:
             analysis["error"] = str(e)
 
-        conn.close()
         return analysis
 
     def _generate_icp_recommendations(self, analysis: Dict) -> List[str]:
@@ -449,12 +445,12 @@ class DynamicScorer:
         Returns:
             Lista de argumentos com sua efetividade
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
         arguments = []
 
         try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
             # Buscar argumentos com melhor conversão
             cursor.execute('''
                 SELECT argumento, categoria, efetividade_score, vezes_usado, vezes_converteu
@@ -465,12 +461,14 @@ class DynamicScorer:
 
             for row in cursor.fetchall():
                 arguments.append({
-                    "argumento": row[0],
-                    "categoria": row[1],
-                    "efetividade": row[2],
-                    "vezes_usado": row[3],
-                    "taxa_conversao": round(row[4] / row[3] * 100, 1) if row[3] > 0 else 0
+                    "argumento": row['argumento'],
+                    "categoria": row['categoria'],
+                    "efetividade": row['efetividade_score'],
+                    "vezes_usado": row['vezes_usado'],
+                    "taxa_conversao": round(row['vezes_converteu'] / row['vezes_usado'] * 100, 1) if row['vezes_usado'] > 0 else 0
                 })
+
+            conn.close()
 
         except:
             # Retornar argumentos base se não houver dados
@@ -501,5 +499,4 @@ class DynamicScorer:
                 }
             ]
 
-        conn.close()
         return arguments

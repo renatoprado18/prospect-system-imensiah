@@ -108,6 +108,57 @@
             width: 60px;
             text-align: center;
         }
+
+        /* Tutorial Styles */
+        .tutorial-modal .modal-content {
+            border-radius: 20px;
+            overflow: hidden;
+        }
+        .tutorial-header {
+            background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        .tutorial-step {
+            padding: 30px;
+            display: none;
+        }
+        .tutorial-step.active {
+            display: block;
+        }
+        .tutorial-step h4 {
+            color: #1e3a5f;
+            margin-bottom: 20px;
+        }
+        .tutorial-step-indicator {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 20px;
+        }
+        .step-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #e2e8f0;
+        }
+        .step-dot.active {
+            background: #1e3a5f;
+        }
+        .tutorial-feature {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 16px;
+            background: #f8fafc;
+            border-radius: 12px;
+            margin-bottom: 12px;
+        }
+        .tutorial-feature i {
+            font-size: 1.5rem;
+            color: #1e3a5f;
+        }
     </style>
 </head>
 <body>
@@ -119,6 +170,10 @@
             </span>
         </div>
         <div class="d-flex align-items-center gap-3">
+            <a href="/" class="btn btn-outline-light btn-sm">
+                <i class="bi bi-speedometer2 me-1"></i>
+                Dashboard
+            </a>
             <span class="text-white-50">
                 <i class="bi bi-person-fill me-1"></i>
                 {% if user %}{{ user.name }}{% else %}Admin{% endif %}
@@ -230,6 +285,141 @@
         </div>
     </div>
 
+    <!-- Tutorial Modal -->
+    <div class="modal fade tutorial-modal" id="tutorialModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="tutorial-header">
+                    <i class="bi bi-shield-check" style="font-size: 3rem;"></i>
+                    <h3 class="mt-3 mb-2">Painel de Aprovacao</h3>
+                    <p class="mb-0 opacity-75">Gerencie e aprove prospects qualificados</p>
+                </div>
+
+                <!-- Step 1 -->
+                <div class="tutorial-step active" data-step="1">
+                    <h4><i class="bi bi-funnel me-2"></i>Sistema de Tiers</h4>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-award-fill text-success"></i>
+                        <div>
+                            <strong>Tier A - Prioridade Alta</strong>
+                            <p class="mb-0 text-muted small">Prospects com maior potencial. Score 50+, cargo de decisao, setor alvo.</p>
+                        </div>
+                    </div>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-star-fill text-primary"></i>
+                        <div>
+                            <strong>Tier B - Prioridade Media</strong>
+                            <p class="mb-0 text-muted small">Bom potencial. Score 30-49, empresa grande ou setor complementar.</p>
+                        </div>
+                    </div>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-bookmark-fill text-warning"></i>
+                        <div>
+                            <strong>Tier C - Avaliar</strong>
+                            <p class="mb-0 text-muted small">Requer analise. Score abaixo de 30, pode ter potencial especifico.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2 -->
+                <div class="tutorial-step" data-step="2">
+                    <h4><i class="bi bi-check2-square me-2"></i>Aprovacao Individual</h4>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-eye"></i>
+                        <div>
+                            <strong>Ver Detalhes</strong>
+                            <p class="mb-0 text-muted small">Clique no icone de olho para ver informacoes completas do prospect.</p>
+                        </div>
+                    </div>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-check-lg text-success"></i>
+                        <div>
+                            <strong>Aprovar Rapidamente</strong>
+                            <p class="mb-0 text-muted small">Use o botao verde para aprovar diretamente da lista.</p>
+                        </div>
+                    </div>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-x-lg text-danger"></i>
+                        <div>
+                            <strong>Rejeitar</strong>
+                            <p class="mb-0 text-muted small">Use o botao vermelho para remover prospects que nao se encaixam.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3 -->
+                <div class="tutorial-step" data-step="3">
+                    <h4><i class="bi bi-collection me-2"></i>Aprovacao em Massa</h4>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-check-all"></i>
+                        <div>
+                            <strong>Selecionar Multiplos</strong>
+                            <p class="mb-0 text-muted small">Marque a caixa de selecao de varios prospects para aprovar em lote.</p>
+                        </div>
+                    </div>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-filter"></i>
+                        <div>
+                            <strong>Filtrar por Tier</strong>
+                            <p class="mb-0 text-muted small">Use os filtros para ver apenas Tier A, B ou C. Ideal para aprovar em massa.</p>
+                        </div>
+                    </div>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-pencil-square"></i>
+                        <div>
+                            <strong>Adicionar Notas</strong>
+                            <p class="mb-0 text-muted small">Inclua notas para lembrar por que aprovou ou rejeitou cada prospect.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 4 -->
+                <div class="tutorial-step" data-step="4">
+                    <h4><i class="bi bi-arrow-repeat me-2"></i>Fluxo de Trabalho</h4>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-1-circle-fill text-primary"></i>
+                        <div>
+                            <strong>1. Revisar Tier A</strong>
+                            <p class="mb-0 text-muted small">Comece pelos prospects de maior potencial.</p>
+                        </div>
+                    </div>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-2-circle-fill text-primary"></i>
+                        <div>
+                            <strong>2. Aprovar em Lote</strong>
+                            <p class="mb-0 text-muted small">Selecione todos os bons e aprove de uma vez.</p>
+                        </div>
+                    </div>
+                    <div class="tutorial-feature">
+                        <i class="bi bi-3-circle-fill text-primary"></i>
+                        <div>
+                            <strong>3. Ver no Dashboard</strong>
+                            <p class="mb-0 text-muted small">Prospects aprovados aparecem no Dashboard para contato.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-footer border-0 justify-content-between">
+                    <button class="btn btn-link text-muted" onclick="skipTutorial()">Pular tutorial</button>
+                    <div>
+                        <div class="tutorial-step-indicator mb-3">
+                            <span class="step-dot active" data-dot="1"></span>
+                            <span class="step-dot" data-dot="2"></span>
+                            <span class="step-dot" data-dot="3"></span>
+                            <span class="step-dot" data-dot="4"></span>
+                        </div>
+                        <button class="btn btn-outline-secondary me-2" id="prevStep" onclick="prevTutorialStep()" style="display:none">
+                            <i class="bi bi-arrow-left me-1"></i>Anterior
+                        </button>
+                        <button class="btn btn-primary" id="nextStep" onclick="nextTutorialStep()">
+                            Proximo<i class="bi bi-arrow-right ms-1"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Detail Modal -->
     <div class="modal fade" id="detailModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
@@ -289,7 +479,21 @@
 
             const container = document.getElementById('prospects-list');
             container.innerHTML = data.prospects.map(p => {
-                const reasons = p.reasons ? (typeof p.reasons === 'string' ? JSON.parse(p.reasons) : p.reasons) : [];
+                // reasons pode ser JSON array, string com | como separador, ou string simples
+                let reasons = [];
+                if (p.reasons) {
+                    if (typeof p.reasons === 'string') {
+                        if (p.reasons.startsWith('[')) {
+                            try { reasons = JSON.parse(p.reasons); } catch(e) { reasons = []; }
+                        } else if (p.reasons.includes('|')) {
+                            reasons = p.reasons.split('|').map(r => r.trim());
+                        } else {
+                            reasons = [p.reasons];
+                        }
+                    } else {
+                        reasons = p.reasons;
+                    }
+                }
                 const isSelected = selectedIds.has(p.id);
 
                 return `
@@ -428,7 +632,21 @@
             const response = await fetch(`${API_BASE}/api/prospects/${id}?user_role=admin`);
             const data = await response.json();
             const p = data.prospect;
-            const reasons = p.reasons ? (typeof p.reasons === 'string' ? JSON.parse(p.reasons) : p.reasons) : [];
+            // Parse reasons - pode ser JSON array ou string com |
+            let reasons = [];
+            if (p.reasons) {
+                if (typeof p.reasons === 'string') {
+                    if (p.reasons.startsWith('[')) {
+                        try { reasons = JSON.parse(p.reasons); } catch(e) { reasons = []; }
+                    } else if (p.reasons.includes('|')) {
+                        reasons = p.reasons.split('|').map(r => r.trim());
+                    } else {
+                        reasons = [p.reasons];
+                    }
+                } else {
+                    reasons = p.reasons;
+                }
+            }
 
             document.getElementById('detail-content').innerHTML = `
                 <div class="row">
@@ -484,10 +702,90 @@
             loadStats();
         }
 
+        // Tutorial
+        let currentTutorialStep = 1;
+        const totalTutorialSteps = 4;
+
+        function showTutorial() {
+            currentTutorialStep = 1;
+            updateTutorialUI();
+            new bootstrap.Modal(document.getElementById('tutorialModal')).show();
+        }
+
+        function updateTutorialUI() {
+            // Update steps visibility
+            document.querySelectorAll('.tutorial-step').forEach(el => {
+                el.classList.remove('active');
+                if (parseInt(el.dataset.step) === currentTutorialStep) {
+                    el.classList.add('active');
+                }
+            });
+
+            // Update dots
+            document.querySelectorAll('.step-dot').forEach(el => {
+                el.classList.remove('active');
+                if (parseInt(el.dataset.dot) <= currentTutorialStep) {
+                    el.classList.add('active');
+                }
+            });
+
+            // Update buttons
+            document.getElementById('prevStep').style.display = currentTutorialStep > 1 ? 'inline-block' : 'none';
+            const nextBtn = document.getElementById('nextStep');
+            if (currentTutorialStep === totalTutorialSteps) {
+                nextBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Comecar';
+                nextBtn.className = 'btn btn-success';
+            } else {
+                nextBtn.innerHTML = 'Proximo<i class="bi bi-arrow-right ms-1"></i>';
+                nextBtn.className = 'btn btn-primary';
+            }
+        }
+
+        function nextTutorialStep() {
+            if (currentTutorialStep < totalTutorialSteps) {
+                currentTutorialStep++;
+                updateTutorialUI();
+            } else {
+                completeTutorial();
+            }
+        }
+
+        function prevTutorialStep() {
+            if (currentTutorialStep > 1) {
+                currentTutorialStep--;
+                updateTutorialUI();
+            }
+        }
+
+        function skipTutorial() {
+            completeTutorial();
+        }
+
+        function completeTutorial() {
+            localStorage.setItem('adminTutorialComplete', 'true');
+            bootstrap.Modal.getInstance(document.getElementById('tutorialModal')).hide();
+        }
+
+        function checkTutorial() {
+            // Check for reset parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('reset_tutorial') === 'true') {
+                localStorage.removeItem('adminTutorialComplete');
+                // Clean URL without reload
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+
+            const tutorialComplete = localStorage.getItem('adminTutorialComplete');
+            if (!tutorialComplete) {
+                setTimeout(() => showTutorial(), 500);
+            }
+        }
+
         // Init
         document.addEventListener('DOMContentLoaded', () => {
             loadStats();
             loadProspects();
+            checkTutorial();
         });
     </script>
 </body>

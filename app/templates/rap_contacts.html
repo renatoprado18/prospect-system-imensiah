@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAP - Contatos</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #0ea5e9;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --dark: #1e293b;
+            --light: #f8fafc;
+            --gray-100: #f1f5f9;
+            --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1;
+            --gray-400: #94a3b8;
+            --gray-500: #64748b;
+            --gray-600: #475569;
+            --sidebar-width: 260px;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--gray-100);
+            margin: 0;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: var(--sidebar-width);
+            background: linear-gradient(180deg, var(--dark) 0%, #0f172a 100%);
+            color: white;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 24px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .sidebar-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            text-decoration: none;
+            color: white;
+        }
+
+        .sidebar-logo .icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sidebar-nav {
+            flex: 1;
+            padding: 16px 0;
+            overflow-y: auto;
+        }
+
+        .nav-section {
+            padding: 8px 16px;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--gray-400);
+            margin-top: 16px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 24px;
+            color: var(--gray-300);
+            text-decoration: none;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-item:hover {
+            background: rgba(255,255,255,0.05);
+            color: white;
+        }
+
+        .nav-item.active {
+            background: rgba(99, 102, 241, 0.15);
+            color: white;
+            border-left-color: var(--primary);
+        }
+
+        .nav-item i {
+            font-size: 1.2rem;
+            width: 24px;
+            text-align: center;
+        }
+
+        .nav-item .badge {
+            margin-left: auto;
+            background: var(--primary);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+        }
+
+        .sidebar-footer {
+            padding: 16px 24px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+        }
+
+        .user-name {
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .user-role {
+            font-size: 0.75rem;
+            color: var(--gray-400);
+        }
+
+        /* Main Content */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            padding: 24px 32px;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .page-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--dark);
+            margin: 0;
+        }
+
+        .page-subtitle {
+            color: var(--gray-500);
+            font-size: 0.9rem;
+            margin-top: 4px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        /* Search & Filters */
+        .filters-bar {
+            background: white;
+            border-radius: 16px;
+            padding: 20px 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .search-box {
+            position: relative;
+            flex: 1;
+            min-width: 250px;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 12px 16px 12px 44px;
+            border: 1px solid var(--gray-200);
+            border-radius: 12px;
+            font-size: 0.95rem;
+            background: var(--gray-100);
+            transition: all 0.2s;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary);
+            background: white;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .search-box i {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--gray-400);
+        }
+
+        .filter-group {
+            display: flex;
+            gap: 8px;
+        }
+
+        .filter-btn {
+            padding: 10px 16px;
+            border: 1px solid var(--gray-200);
+            border-radius: 10px;
+            background: white;
+            color: var(--gray-600);
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .filter-btn:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .filter-btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+
+        /* Contacts Grid */
+        .contacts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 16px;
+        }
+
+        .contact-card {
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            transition: all 0.2s;
+            cursor: pointer;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+
+        .contact-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+        }
+
+        .contact-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .contact-avatar {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 1.2rem;
+            flex-shrink: 0;
+        }
+
+        .contact-avatar img {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        .contact-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .contact-name {
+            font-weight: 600;
+            font-size: 1.05rem;
+            color: var(--dark);
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .contact-role {
+            font-size: 0.85rem;
+            color: var(--gray-500);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .contact-role i {
+            font-size: 0.75rem;
+        }
+
+        .contact-company {
+            font-size: 0.8rem;
+            color: var(--gray-400);
+            margin-top: 2px;
+        }
+
+        .contact-meta {
+            display: flex;
+            gap: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--gray-100);
+        }
+
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.8rem;
+            color: var(--gray-500);
+        }
+
+        .meta-item i {
+            color: var(--gray-400);
+        }
+
+        .contact-tags {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+
+        .tag {
+            padding: 4px 10px;
+            background: var(--gray-100);
+            border-radius: 20px;
+            font-size: 0.75rem;
+            color: var(--gray-600);
+        }
+
+        .tag.professional {
+            background: rgba(99, 102, 241, 0.1);
+            color: var(--primary);
+        }
+
+        .tag.personal {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success);
+        }
+
+        /* Buttons */
+        .btn-primary {
+            background: var(--primary);
+            border-color: var(--primary);
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            border-color: var(--primary-dark);
+        }
+
+        .btn-outline-secondary {
+            border-radius: 10px;
+            padding: 10px 20px;
+        }
+
+        /* Pagination */
+        .pagination-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 16px;
+            margin-top: 32px;
+            padding: 16px;
+        }
+
+        .pagination-info {
+            color: var(--gray-500);
+            font-size: 0.9rem;
+        }
+
+        .pagination-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .page-btn {
+            width: 40px;
+            height: 40px;
+            border: 1px solid var(--gray-200);
+            border-radius: 10px;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .page-btn:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .page-btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+
+        .page-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 64px 24px;
+            background: white;
+            border-radius: 16px;
+        }
+
+        .empty-state i {
+            font-size: 4rem;
+            color: var(--gray-300);
+            margin-bottom: 16px;
+        }
+
+        .empty-state h3 {
+            color: var(--dark);
+            margin-bottom: 8px;
+        }
+
+        .empty-state p {
+            color: var(--gray-500);
+        }
+
+        /* Loading */
+        .loading-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 64px;
+            background: white;
+            border-radius: 16px;
+        }
+
+        .loading-text {
+            margin-top: 16px;
+            color: var(--gray-500);
+        }
+
+        /* Stats bar */
+        .stats-bar {
+            display: flex;
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--gray-600);
+            font-size: 0.9rem;
+        }
+
+        .stat-item strong {
+            color: var(--dark);
+        }
+
+        /* Alphabet filter */
+        .alphabet-filter {
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+            margin-left: auto;
+        }
+
+        .letter-btn {
+            width: 28px;
+            height: 28px;
+            border: none;
+            background: transparent;
+            color: var(--gray-500);
+            font-size: 0.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .letter-btn:hover {
+            background: var(--gray-100);
+            color: var(--primary);
+        }
+
+        .letter-btn.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        @media (max-width: 1200px) {
+            .contacts-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main-content { margin-left: 0; padding: 16px; }
+            .contacts-grid { grid-template-columns: 1fr; }
+            .filters-bar { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <a href="/rap" class="sidebar-logo">
+                <div class="icon"><i class="bi bi-robot"></i></div>
+                <span>RAP</span>
+            </a>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a href="/rap" class="nav-item">
+                <i class="bi bi-grid-1x2"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="/rap/contacts" class="nav-item active">
+                <i class="bi bi-people"></i>
+                <span>Contatos</span>
+                <span class="badge" id="sidebarContactsCount">-</span>
+            </a>
+            <a href="/rap/inbox" class="nav-item">
+                <i class="bi bi-inbox"></i>
+                <span>Inbox</span>
+                <span class="badge">0</span>
+            </a>
+            <a href="/rap/calendar" class="nav-item">
+                <i class="bi bi-calendar3"></i>
+                <span>Calendario</span>
+            </a>
+            <a href="/rap/tasks" class="nav-item">
+                <i class="bi bi-check2-square"></i>
+                <span>Tarefas</span>
+            </a>
+
+            <div class="nav-section">Gestao</div>
+            <a href="/admin" class="nav-item">
+                <i class="bi bi-funnel"></i>
+                <span>Prospects</span>
+            </a>
+            <a href="/rap/conselhoos" class="nav-item">
+                <i class="bi bi-briefcase"></i>
+                <span>ConselhoOS</span>
+            </a>
+
+            <div class="nav-section">Sistema</div>
+            <a href="/rap/settings" class="nav-item">
+                <i class="bi bi-gear"></i>
+                <span>Configuracoes</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-info">
+                <div class="user-avatar">R</div>
+                <div>
+                    <div class="user-name">Renato</div>
+                    <div class="user-role">Admin</div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">Contatos</h1>
+                <p class="page-subtitle">Gerencie seus <span id="totalCount">0</span> contatos</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-outline-secondary" onclick="exportContacts()">
+                    <i class="bi bi-download me-2"></i>Exportar
+                </button>
+                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newContactModal">
+                    <i class="bi bi-plus me-2"></i>Novo Contato
+                </button>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters-bar">
+            <div class="search-box">
+                <i class="bi bi-search"></i>
+                <input type="text" placeholder="Buscar por nome, empresa, cargo..." id="searchInput">
+            </div>
+            <div class="filter-group">
+                <button class="filter-btn active" data-filter="all">
+                    <i class="bi bi-grid"></i> Todos
+                </button>
+                <button class="filter-btn" data-filter="professional">
+                    <i class="bi bi-briefcase"></i> Profissional
+                </button>
+                <button class="filter-btn" data-filter="personal">
+                    <i class="bi bi-heart"></i> Pessoal
+                </button>
+            </div>
+            <div class="alphabet-filter" id="alphabetFilter">
+                <!-- Generated by JS -->
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-bar" id="statsBar">
+            <div class="stat-item">
+                <i class="bi bi-people"></i>
+                <span><strong id="statTotal">0</strong> contatos</span>
+            </div>
+            <div class="stat-item">
+                <i class="bi bi-image"></i>
+                <span><strong id="statPhotos">0</strong> com foto</span>
+            </div>
+            <div class="stat-item">
+                <i class="bi bi-linkedin"></i>
+                <span><strong id="statLinkedin">0</strong> com LinkedIn</span>
+            </div>
+        </div>
+
+        <!-- Contacts Grid -->
+        <div id="contactsContainer">
+            <div class="loading-container">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Carregando...</span>
+                </div>
+                <div class="loading-text">Carregando contatos...</div>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination-container" id="pagination" style="display: none;">
+            <button class="page-btn" id="prevBtn" onclick="prevPage()">
+                <i class="bi bi-chevron-left"></i>
+            </button>
+            <div class="pagination-info">
+                Pagina <span id="currentPage">1</span> de <span id="totalPages">1</span>
+            </div>
+            <button class="page-btn" id="nextBtn" onclick="nextPage()">
+                <i class="bi bi-chevron-right"></i>
+            </button>
+        </div>
+    </main>
+
+    <!-- New Contact Modal -->
+    <div class="modal fade" id="newContactModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content" style="border-radius: 16px; border: none;">
+                <div class="modal-header" style="border-bottom: 1px solid var(--gray-200); padding: 20px 24px;">
+                    <h5 class="modal-title" style="font-weight: 600;">Novo Contato</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" style="padding: 24px;">
+                    <form id="newContactForm">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Nome *</label>
+                                <input type="text" class="form-control" name="nome" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Apelido</label>
+                                <input type="text" class="form-control" name="apelido">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Empresa</label>
+                                <input type="text" class="form-control" name="empresa">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Cargo</label>
+                                <input type="text" class="form-control" name="cargo">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Email</label>
+                                <input type="email" class="form-control" name="email">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Telefone</label>
+                                <input type="tel" class="form-control" name="telefone">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">LinkedIn</label>
+                                <input type="url" class="form-control" name="linkedin" placeholder="https://linkedin.com/in/...">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Contexto</label>
+                                <select class="form-select" name="contexto">
+                                    <option value="professional">Profissional</option>
+                                    <option value="personal">Pessoal</option>
+                                    <option value="both">Ambos</option>
+                                </select>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer" style="border-top: 1px solid var(--gray-200); padding: 16px 24px;">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" onclick="saveContact()">Salvar Contato</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // State
+        let contacts = [];
+        let currentPage = 1;
+        let totalContacts = 0;
+        let currentFilter = 'all';
+        let currentSearch = '';
+        let currentLetter = '';
+        const perPage = 30;
+
+        // Init
+        document.addEventListener('DOMContentLoaded', () => {
+            loadStats();
+            loadContacts();
+            setupAlphabetFilter();
+            setupEventListeners();
+        });
+
+        function setupAlphabetFilter() {
+            const container = document.getElementById('alphabetFilter');
+            const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+            container.innerHTML = letters.map(letter =>
+                `<button class="letter-btn" data-letter="${letter}">${letter}</button>`
+            ).join('');
+        }
+
+        function setupEventListeners() {
+            // Search
+            let searchTimeout;
+            document.getElementById('searchInput').addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => {
+                    currentSearch = e.target.value;
+                    currentPage = 1;
+                    loadContacts();
+                }, 300);
+            });
+
+            // Context filters
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentFilter = btn.dataset.filter;
+                    currentPage = 1;
+                    loadContacts();
+                });
+            });
+
+            // Alphabet filter
+            document.getElementById('alphabetFilter').addEventListener('click', (e) => {
+                if (e.target.classList.contains('letter-btn')) {
+                    document.querySelectorAll('.letter-btn').forEach(b => b.classList.remove('active'));
+
+                    if (currentLetter === e.target.dataset.letter) {
+                        currentLetter = '';
+                    } else {
+                        e.target.classList.add('active');
+                        currentLetter = e.target.dataset.letter;
+                    }
+                    currentPage = 1;
+                    loadContacts();
+                }
+            });
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/contacts/stats');
+                const stats = await response.json();
+
+                document.getElementById('statTotal').textContent = stats.total.toLocaleString();
+                document.getElementById('totalCount').textContent = stats.total.toLocaleString();
+                document.getElementById('sidebarContactsCount').textContent = stats.total > 999
+                    ? Math.round(stats.total/1000) + 'k'
+                    : stats.total;
+                document.getElementById('statPhotos').textContent = stats.with_photo.toLocaleString();
+                document.getElementById('statLinkedin').textContent = stats.with_linkedin.toLocaleString();
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        async function loadContacts() {
+            const container = document.getElementById('contactsContainer');
+            container.innerHTML = `
+                <div class="loading-container">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Carregando...</span>
+                    </div>
+                    <div class="loading-text">Carregando contatos...</div>
+                </div>
+            `;
+
+            try {
+                let url = `/api/contacts?limit=${perPage}&offset=${(currentPage - 1) * perPage}`;
+
+                // Build search query with letter prefix if needed
+                let searchQuery = currentSearch;
+                if (currentLetter) {
+                    searchQuery = currentLetter + (currentSearch ? '%' + currentSearch : '');
+                }
+                if (searchQuery) {
+                    url += `&search=${encodeURIComponent(searchQuery)}`;
+                }
+
+                if (currentFilter !== 'all') {
+                    url += `&contexto=${currentFilter}`;
+                }
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                contacts = data.contacts;
+                totalContacts = data.total;
+
+                renderContacts();
+                updatePagination();
+            } catch (error) {
+                console.error('Error loading contacts:', error);
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="bi bi-exclamation-circle"></i>
+                        <h3>Erro ao carregar contatos</h3>
+                        <p>Tente novamente mais tarde</p>
+                    </div>
+                `;
+            }
+        }
+
+        function renderContacts() {
+            const container = document.getElementById('contactsContainer');
+
+            if (contacts.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="bi bi-people"></i>
+                        <h3>Nenhum contato encontrado</h3>
+                        <p>Tente ajustar os filtros ou adicione um novo contato</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="contacts-grid">
+                    ${contacts.map(contact => renderContactCard(contact)).join('')}
+                </div>
+            `;
+        }
+
+        function renderContactCard(contact) {
+            const initials = contact.nome.split(' ')
+                .filter(n => n.length > 0)
+                .map(n => n[0])
+                .slice(0, 2)
+                .join('')
+                .toUpperCase();
+
+            // Get primary email
+            let primaryEmail = '';
+            if (contact.emails && contact.emails.length > 0) {
+                const emails = typeof contact.emails === 'string'
+                    ? JSON.parse(contact.emails)
+                    : contact.emails;
+                primaryEmail = emails[0]?.email || '';
+            }
+
+            // Get primary phone
+            let primaryPhone = '';
+            if (contact.telefones && contact.telefones.length > 0) {
+                const phones = typeof contact.telefones === 'string'
+                    ? JSON.parse(contact.telefones)
+                    : contact.telefones;
+                primaryPhone = phones[0]?.number || '';
+            }
+
+            const contextClass = contact.contexto === 'personal' ? 'personal' : 'professional';
+            const contextLabel = contact.contexto === 'personal' ? 'Pessoal' : 'Profissional';
+
+            return `
+                <a href="/rap/contacts/${contact.id}" class="contact-card">
+                    <div class="contact-header">
+                        <div class="contact-avatar">
+                            ${contact.foto_url
+                                ? `<img src="${contact.foto_url}" alt="${contact.nome}">`
+                                : initials
+                            }
+                        </div>
+                        <div class="contact-info">
+                            <div class="contact-name">${contact.nome}</div>
+                            ${contact.cargo
+                                ? `<div class="contact-role"><i class="bi bi-briefcase"></i> ${contact.cargo}</div>`
+                                : ''
+                            }
+                            ${contact.empresa
+                                ? `<div class="contact-company">${contact.empresa}</div>`
+                                : ''
+                            }
+                        </div>
+                    </div>
+                    <div class="contact-meta">
+                        ${primaryEmail
+                            ? `<div class="meta-item"><i class="bi bi-envelope"></i> ${primaryEmail}</div>`
+                            : ''
+                        }
+                        ${primaryPhone
+                            ? `<div class="meta-item"><i class="bi bi-phone"></i> ${primaryPhone}</div>`
+                            : ''
+                        }
+                    </div>
+                    <div class="contact-tags">
+                        <span class="tag ${contextClass}">${contextLabel}</span>
+                        ${contact.linkedin ? '<span class="tag"><i class="bi bi-linkedin"></i> LinkedIn</span>' : ''}
+                    </div>
+                </a>
+            `;
+        }
+
+        function updatePagination() {
+            const pagination = document.getElementById('pagination');
+            const totalPages = Math.ceil(totalContacts / perPage);
+
+            if (totalPages <= 1) {
+                pagination.style.display = 'none';
+                return;
+            }
+
+            pagination.style.display = 'flex';
+            document.getElementById('currentPage').textContent = currentPage;
+            document.getElementById('totalPages').textContent = totalPages;
+            document.getElementById('prevBtn').disabled = currentPage === 1;
+            document.getElementById('nextBtn').disabled = currentPage === totalPages;
+        }
+
+        function prevPage() {
+            if (currentPage > 1) {
+                currentPage--;
+                loadContacts();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        }
+
+        function nextPage() {
+            const totalPages = Math.ceil(totalContacts / perPage);
+            if (currentPage < totalPages) {
+                currentPage++;
+                loadContacts();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        }
+
+        async function saveContact() {
+            const form = document.getElementById('newContactForm');
+            const formData = new FormData(form);
+
+            const contact = {
+                nome: formData.get('nome'),
+                apelido: formData.get('apelido') || null,
+                empresa: formData.get('empresa') || null,
+                cargo: formData.get('cargo') || null,
+                linkedin: formData.get('linkedin') || null,
+                contexto: formData.get('contexto'),
+                emails: formData.get('email') ? [{ email: formData.get('email'), type: 'work', primary: true }] : [],
+                telefones: formData.get('telefone') ? [{ number: formData.get('telefone'), type: 'mobile' }] : [],
+                origem: 'manual'
+            };
+
+            try {
+                const response = await fetch('/api/contacts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(contact)
+                });
+
+                if (response.ok) {
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('newContactModal'));
+                    modal.hide();
+                    form.reset();
+                    loadContacts();
+                    loadStats();
+                } else {
+                    alert('Erro ao salvar contato');
+                }
+            } catch (error) {
+                console.error('Error saving contact:', error);
+                alert('Erro ao salvar contato');
+            }
+        }
+
+        function exportContacts() {
+            // TODO: Implement export
+            alert('Exportacao em desenvolvimento');
+        }
+    </script>
+</body>
+</html>

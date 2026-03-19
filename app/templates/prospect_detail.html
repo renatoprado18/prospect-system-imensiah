@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Detalhe do Prospect | ImensIAH</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #1e3a5f;
+            --tier-a: #16a34a;
+            --tier-b: #2563eb;
+            --tier-c: #f59e0b;
+            --tier-d: #6b7280;
+            --tier-e: #9ca3af;
+        }
+        body { font-family: 'Inter', sans-serif; background: #f1f5f9; }
+        .navbar { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); }
+
+        .prospect-header {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 24px;
+        }
+
+        .prospect-avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #1e3a5f 0%, #3b82f6 100%);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            font-weight: 600;
+        }
+
+        .tier-badge {
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+        .tier-A { background: #dcfce7; color: #166534; }
+        .tier-B { background: #dbeafe; color: #1e40af; }
+        .tier-C { background: #fef3c7; color: #92400e; }
+        .tier-D { background: #f3f4f6; color: #4b5563; }
+        .tier-E { background: #f9fafb; color: #6b7280; }
+
+        .score-circle {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.25rem;
+        }
+        .score-high { background: #dcfce7; color: #166534; }
+        .score-medium { background: #fef3c7; color: #92400e; }
+        .score-low { background: #fee2e2; color: #991b1b; }
+
+        .panel-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            height: 100%;
+        }
+
+        .panel-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #e5e7eb;
+            font-weight: 600;
+            color: #1e3a5f;
+        }
+
+        .panel-body {
+            padding: 20px;
+        }
+
+        /* Timeline styles */
+        .timeline-item {
+            position: relative;
+            padding-left: 32px;
+            padding-bottom: 24px;
+            border-left: 2px solid #e5e7eb;
+            margin-left: 8px;
+        }
+        .timeline-item:last-child {
+            border-left-color: transparent;
+            padding-bottom: 0;
+        }
+        .timeline-icon {
+            position: absolute;
+            left: -12px;
+            top: 0;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+        }
+        .timeline-icon.reuniao { background: #dbeafe; color: #1e40af; }
+        .timeline-icon.email { background: #fef3c7; color: #92400e; }
+        .timeline-icon.linkedin { background: #dbeafe; color: #0077b5; }
+        .timeline-icon.telefone { background: #dcfce7; color: #166534; }
+        .timeline-icon.nota { background: #f3f4f6; color: #4b5563; }
+        .timeline-icon.evento { background: #fce7f3; color: #9d174d; }
+
+        .timeline-date {
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+        .timeline-title {
+            font-weight: 500;
+            color: #1e293b;
+            margin: 4px 0;
+        }
+        .timeline-desc {
+            font-size: 0.875rem;
+            color: #64748b;
+        }
+        .timeline-tags {
+            margin-top: 8px;
+        }
+        .timeline-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #f1f5f9;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            margin-right: 4px;
+            color: #475569;
+        }
+        .fathom-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            background: #7c3aed;
+            color: white;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            text-decoration: none;
+            margin-top: 8px;
+        }
+        .fathom-link:hover { background: #6d28d9; color: white; }
+
+        .sentiment-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+        }
+        .sentiment-positivo { background: #dcfce7; color: #166534; }
+        .sentiment-neutro { background: #f3f4f6; color: #4b5563; }
+        .sentiment-negativo { background: #fee2e2; color: #991b1b; }
+
+        /* Enrichment styles */
+        .enrichment-section {
+            margin-bottom: 20px;
+        }
+        .enrichment-section h6 {
+            color: #64748b;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 12px;
+        }
+        .linkedin-post {
+            padding: 12px;
+            background: #f8fafc;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border-left: 3px solid #0077b5;
+        }
+        .linkedin-post .post-date {
+            font-size: 0.7rem;
+            color: #64748b;
+        }
+        .linkedin-post .post-text {
+            font-size: 0.85rem;
+            color: #334155;
+            margin: 4px 0;
+        }
+        .linkedin-post .post-engagement {
+            font-size: 0.7rem;
+            color: #0077b5;
+        }
+
+        /* Actions styles */
+        .action-btn {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            background: white;
+            width: 100%;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            color: inherit;
+        }
+        .action-btn:hover {
+            border-color: #1e3a5f;
+            background: #f8fafc;
+        }
+        .action-btn i {
+            font-size: 1.25rem;
+            color: #1e3a5f;
+        }
+
+        /* Follow-up suggestions */
+        .followup-item {
+            padding: 12px;
+            background: #fffbeb;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border-left: 3px solid #f59e0b;
+        }
+        .followup-item.urgent {
+            background: #fef2f2;
+            border-left-color: #ef4444;
+        }
+        .followup-item .followup-reason {
+            font-size: 0.7rem;
+            color: #92400e;
+            text-transform: uppercase;
+        }
+        .followup-item .followup-text {
+            font-size: 0.875rem;
+            color: #1e293b;
+            margin-top: 4px;
+        }
+
+        /* Modal styles */
+        .modal-header {
+            background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+            color: white;
+        }
+        .modal-header .btn-close {
+            filter: invert(1);
+        }
+
+        .contact-info-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+        }
+        .contact-info-item i {
+            width: 20px;
+            color: #64748b;
+        }
+        .contact-info-item a {
+            color: #1e3a5f;
+            text-decoration: none;
+        }
+        .contact-info-item a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-dark py-3">
+        <div class="container">
+            <a class="navbar-brand d-flex align-items-center gap-2" href="/">
+                <i class="bi bi-arrow-left"></i>
+                <span>Voltar ao Dashboard</span>
+            </a>
+            <div class="d-flex align-items-center gap-3">
+                <span class="text-light">{{ user.name }}</span>
+                <a href="/logout" class="btn btn-outline-light btn-sm">Sair</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container py-4">
+        <!-- Loading state -->
+        <div id="loading" class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Carregando...</span>
+            </div>
+        </div>
+
+        <!-- Content -->
+        <div id="content" style="display: none;">
+            <!-- Prospect Header -->
+            <div class="prospect-header">
+                <div class="row align-items-center">
+                    <div class="col-auto">
+                        <div class="prospect-avatar" id="avatar"></div>
+                    </div>
+                    <div class="col">
+                        <div class="d-flex align-items-center gap-3 mb-2">
+                            <h2 class="mb-0" id="prospectName"></h2>
+                            <span class="tier-badge" id="tierBadge"></span>
+                        </div>
+                        <p class="text-muted mb-2" id="cargoEmpresa"></p>
+                        <div class="d-flex flex-wrap gap-3">
+                            <div class="contact-info-item" id="emailInfo" style="display: none;">
+                                <i class="bi bi-envelope"></i>
+                                <a href="#" id="emailLink"></a>
+                            </div>
+                            <div class="contact-info-item" id="telefoneInfo" style="display: none;">
+                                <i class="bi bi-telephone"></i>
+                                <a href="#" id="telefoneLink"></a>
+                            </div>
+                            <div class="contact-info-item" id="linkedinInfo" style="display: none;">
+                                <i class="bi bi-linkedin"></i>
+                                <a href="#" target="_blank" id="linkedinLink">Ver perfil</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-auto text-center">
+                        <div class="score-circle" id="scoreCircle"></div>
+                        <small class="text-muted">Score</small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Three Column Layout -->
+            <div class="row g-4">
+                <!-- Timeline Column -->
+                <div class="col-lg-5">
+                    <div class="panel-card">
+                        <div class="panel-header d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-clock-history me-2"></i>Timeline</span>
+                            <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
+                                <i class="bi bi-plus"></i> Adicionar
+                            </button>
+                        </div>
+                        <div class="panel-body" id="timelineContainer">
+                            <p class="text-muted text-center py-4" id="emptyTimeline">
+                                Nenhuma interação registrada ainda
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Enrichment Column -->
+                <div class="col-lg-4">
+                    <div class="panel-card">
+                        <div class="panel-header">
+                            <i class="bi bi-person-badge me-2"></i>Enriquecimento
+                        </div>
+                        <div class="panel-body">
+                            <!-- LinkedIn Section -->
+                            <div class="enrichment-section">
+                                <h6><i class="bi bi-linkedin me-1"></i> LinkedIn</h6>
+                                <div id="linkedinSection">
+                                    <p class="text-muted small" id="noLinkedin">Nenhum perfil vinculado</p>
+                                    <div id="linkedinPosts" style="display: none;"></div>
+                                </div>
+                            </div>
+
+                            <!-- Company Section -->
+                            <div class="enrichment-section">
+                                <h6><i class="bi bi-building me-1"></i> Empresa</h6>
+                                <div id="empresaInfo">
+                                    <p class="mb-1"><strong id="empresaNome">-</strong></p>
+                                    <p class="small text-muted" id="empresaDetalhes"></p>
+                                </div>
+                            </div>
+
+                            <!-- Relationship Section -->
+                            <div class="enrichment-section">
+                                <h6><i class="bi bi-people me-1"></i> Relacionamento</h6>
+                                <div id="relacionamentoInfo">
+                                    <p class="text-muted small">Sem informação de relacionamento</p>
+                                </div>
+                            </div>
+
+                            <!-- Notes Section -->
+                            <div class="enrichment-section">
+                                <h6><i class="bi bi-journal-text me-1"></i> Notas do Renato</h6>
+                                <div id="notasRenato">
+                                    <p class="text-muted small">-</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actions Column -->
+                <div class="col-lg-3">
+                    <div class="panel-card mb-4">
+                        <div class="panel-header">
+                            <i class="bi bi-lightning me-2"></i>Ações
+                        </div>
+                        <div class="panel-body">
+                            <button class="action-btn" onclick="openScheduleModal()">
+                                <i class="bi bi-calendar-plus"></i>
+                                <span>Agendar Reunião</span>
+                            </button>
+                            <a class="action-btn" id="sendEmailBtn" href="#">
+                                <i class="bi bi-envelope"></i>
+                                <span>Enviar Email</span>
+                            </a>
+                            <a class="action-btn" id="whatsappBtn" href="#" target="_blank">
+                                <i class="bi bi-whatsapp"></i>
+                                <span>WhatsApp</span>
+                            </a>
+                            <a class="action-btn" id="openLinkedinBtn" href="#" target="_blank">
+                                <i class="bi bi-linkedin"></i>
+                                <span>Abrir LinkedIn</span>
+                            </a>
+                        </div>
+                    </div>
+
+                    <div class="panel-card">
+                        <div class="panel-header">
+                            <i class="bi bi-lightbulb me-2"></i>Sugestões de Follow-up
+                        </div>
+                        <div class="panel-body" id="followupContainer">
+                            <p class="text-muted small text-center">Carregando...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Interaction Modal -->
+    <div class="modal fade" id="addInteractionModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Nova Interação</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addInteractionForm">
+                        <div class="mb-3">
+                            <label class="form-label">Tipo de Interação</label>
+                            <select class="form-select" id="interactionTipo" required>
+                                <option value="reuniao">Reunião</option>
+                                <option value="email">Email</option>
+                                <option value="telefone">Ligação</option>
+                                <option value="linkedin">LinkedIn</option>
+                                <option value="evento">Evento</option>
+                                <option value="nota">Nota</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Título</label>
+                            <input type="text" class="form-control" id="interactionTitulo" placeholder="Ex: Reunião de descoberta">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Data</label>
+                            <input type="datetime-local" class="form-control" id="interactionData">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Descrição</label>
+                            <textarea class="form-control" id="interactionDescricao" rows="3" placeholder="Detalhes da interação..."></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Link Fathom (opcional)</label>
+                            <input type="url" class="form-control" id="interactionFathomLink" placeholder="https://fathom.video/share/...">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Tags (separadas por vírgula)</label>
+                            <input type="text" class="form-control" id="interactionTags" placeholder="board_academy, indicacao, ex_cliente">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Sentimento</label>
+                            <select class="form-select" id="interactionSentimento">
+                                <option value="">Não definido</option>
+                                <option value="positivo">Positivo</option>
+                                <option value="neutro">Neutro</option>
+                                <option value="negativo">Negativo</option>
+                            </select>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" onclick="saveInteraction()">Salvar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Get prospect ID from URL
+        const pathParts = window.location.pathname.split('/');
+        const prospectId = pathParts[pathParts.length - 1];
+
+        let prospectData = null;
+
+        // Load prospect data
+        async function loadProspect() {
+            try {
+                const response = await fetch(`/api/prospects/${prospectId}`);
+                if (!response.ok) throw new Error('Prospect não encontrado');
+
+                const data = await response.json();
+                prospectData = data.prospect;
+
+                renderProspect(data);
+                loadFollowupSuggestions();
+
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('content').style.display = 'block';
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('loading').innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        Erro ao carregar prospect: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        function renderProspect(data) {
+            const p = data.prospect;
+
+            // Avatar
+            const initials = p.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+            document.getElementById('avatar').textContent = initials;
+
+            // Header
+            document.getElementById('prospectName').textContent = p.nome;
+            document.getElementById('tierBadge').textContent = `Tier ${p.tier}`;
+            document.getElementById('tierBadge').className = `tier-badge tier-${p.tier}`;
+            document.getElementById('cargoEmpresa').textContent =
+                [p.cargo, p.empresa].filter(Boolean).join(' @ ') || 'Cargo não informado';
+
+            // Score
+            const scoreEl = document.getElementById('scoreCircle');
+            scoreEl.textContent = p.score || 0;
+            scoreEl.className = 'score-circle ' +
+                (p.score >= 70 ? 'score-high' : p.score >= 40 ? 'score-medium' : 'score-low');
+
+            // Contact info
+            if (p.email) {
+                document.getElementById('emailInfo').style.display = 'flex';
+                document.getElementById('emailLink').href = `mailto:${p.email}`;
+                document.getElementById('emailLink').textContent = p.email;
+                document.getElementById('sendEmailBtn').href = `mailto:${p.email}`;
+            }
+
+            if (p.telefone) {
+                document.getElementById('telefoneInfo').style.display = 'flex';
+                const tel = p.telefone.replace(/\D/g, '');
+                document.getElementById('telefoneLink').href = `tel:${tel}`;
+                document.getElementById('telefoneLink').textContent = p.telefone;
+                document.getElementById('whatsappBtn').href = `https://wa.me/55${tel}`;
+            }
+
+            if (p.linkedin) {
+                document.getElementById('linkedinInfo').style.display = 'flex';
+                document.getElementById('linkedinLink').href = p.linkedin;
+                document.getElementById('openLinkedinBtn').href = p.linkedin;
+                document.getElementById('noLinkedin').style.display = 'none';
+            }
+
+            // Empresa
+            document.getElementById('empresaNome').textContent = p.empresa || '-';
+
+            // Notas do Renato
+            if (p.notas_renato) {
+                document.getElementById('notasRenato').innerHTML = `<p class="small">${p.notas_renato}</p>`;
+            }
+
+            // Enrichment data
+            if (p.dados_enriquecidos) {
+                try {
+                    const enriched = typeof p.dados_enriquecidos === 'string'
+                        ? JSON.parse(p.dados_enriquecidos)
+                        : p.dados_enriquecidos;
+
+                    if (enriched.relacionamento) {
+                        let relHtml = '';
+                        if (enriched.relacionamento.tipo) {
+                            relHtml += `<p class="mb-1"><strong>Tipo:</strong> ${enriched.relacionamento.tipo}</p>`;
+                        }
+                        if (enriched.relacionamento.conhece_desde) {
+                            relHtml += `<p class="mb-1"><strong>Conhece desde:</strong> ${enriched.relacionamento.conhece_desde}</p>`;
+                        }
+                        if (enriched.relacionamento.conexoes_comuns) {
+                            relHtml += `<p class="mb-0"><strong>Conexões:</strong> ${enriched.relacionamento.conexoes_comuns.join(', ')}</p>`;
+                        }
+                        if (relHtml) {
+                            document.getElementById('relacionamentoInfo').innerHTML = `<div class="small">${relHtml}</div>`;
+                        }
+                    }
+
+                    if (enriched.linkedin && enriched.linkedin.posts) {
+                        document.getElementById('linkedinPosts').style.display = 'block';
+                        let postsHtml = '';
+                        enriched.linkedin.posts.slice(0, 3).forEach(post => {
+                            postsHtml += `
+                                <div class="linkedin-post">
+                                    <div class="post-date">${post.date}</div>
+                                    <div class="post-text">${post.text.substring(0, 150)}${post.text.length > 150 ? '...' : ''}</div>
+                                    <div class="post-engagement"><i class="bi bi-hand-thumbs-up"></i> ${post.engagement} interações</div>
+                                </div>
+                            `;
+                        });
+                        document.getElementById('linkedinPosts').innerHTML = postsHtml;
+                    }
+                } catch (e) {
+                    console.error('Error parsing enriched data:', e);
+                }
+            }
+
+            // Timeline
+            renderTimeline(data.interactions || []);
+        }
+
+        function renderTimeline(interactions) {
+            const container = document.getElementById('timelineContainer');
+
+            if (!interactions || interactions.length === 0) {
+                document.getElementById('emptyTimeline').style.display = 'block';
+                return;
+            }
+
+            document.getElementById('emptyTimeline').style.display = 'none';
+
+            const icons = {
+                reuniao: 'bi-camera-video',
+                email: 'bi-envelope',
+                linkedin: 'bi-linkedin',
+                telefone: 'bi-telephone',
+                evento: 'bi-calendar-event',
+                nota: 'bi-sticky'
+            };
+
+            let html = '';
+            interactions.forEach(int => {
+                const date = int.data_interacao
+                    ? new Date(int.data_interacao).toLocaleDateString('pt-BR', {
+                        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                    })
+                    : 'Data não informada';
+
+                let tags = [];
+                if (int.tags) {
+                    try {
+                        tags = typeof int.tags === 'string' ? JSON.parse(int.tags) : int.tags;
+                    } catch (e) { }
+                }
+
+                html += `
+                    <div class="timeline-item">
+                        <div class="timeline-icon ${int.tipo}">
+                            <i class="bi ${icons[int.tipo] || 'bi-circle'}"></i>
+                        </div>
+                        <div class="timeline-date">${date}</div>
+                        <div class="timeline-title">${int.titulo || int.tipo.charAt(0).toUpperCase() + int.tipo.slice(1)}</div>
+                        ${int.descricao ? `<div class="timeline-desc">${int.descricao}</div>` : ''}
+                        ${int.sentimento ? `<span class="sentiment-badge sentiment-${int.sentimento}">${int.sentimento}</span>` : ''}
+                        ${tags.length > 0 ? `
+                            <div class="timeline-tags">
+                                ${tags.map(t => `<span class="timeline-tag">${t}</span>`).join('')}
+                            </div>
+                        ` : ''}
+                        ${int.fathom_link ? `
+                            <a href="${int.fathom_link}" target="_blank" class="fathom-link">
+                                <i class="bi bi-play-circle"></i> Ver no Fathom
+                            </a>
+                        ` : ''}
+                        ${int.fathom_summary ? `<div class="timeline-desc mt-2"><em>${int.fathom_summary}</em></div>` : ''}
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        async function loadFollowupSuggestions() {
+            const container = document.getElementById('followupContainer');
+            const suggestions = [];
+
+            // Calculate days since last contact
+            if (prospectData.data_ultimo_contato) {
+                const lastContact = new Date(prospectData.data_ultimo_contato);
+                const daysSince = Math.floor((new Date() - lastContact) / (1000 * 60 * 60 * 24));
+
+                if (daysSince > 30) {
+                    suggestions.push({
+                        urgent: true,
+                        reason: 'Sem contato há mais de 30 dias',
+                        text: 'Reengajar contato - enviar mensagem personalizada'
+                    });
+                } else if (daysSince > 7) {
+                    suggestions.push({
+                        urgent: false,
+                        reason: `${daysSince} dias sem contato`,
+                        text: 'Fazer follow-up da última conversa'
+                    });
+                }
+            } else {
+                suggestions.push({
+                    urgent: false,
+                    reason: 'Novo prospect',
+                    text: 'Fazer primeiro contato'
+                });
+            }
+
+            // Check meeting outcome
+            if (prospectData.meeting_outcome === 'muito_interessado') {
+                suggestions.push({
+                    urgent: true,
+                    reason: 'Alto interesse',
+                    text: 'Avançar para proposta comercial'
+                });
+            }
+
+            // Check LinkedIn
+            if (prospectData.linkedin) {
+                suggestions.push({
+                    urgent: false,
+                    reason: 'LinkedIn disponível',
+                    text: 'Verificar publicações recentes para comentar'
+                });
+            }
+
+            // Render suggestions
+            if (suggestions.length === 0) {
+                container.innerHTML = '<p class="text-muted small text-center">Nenhuma sugestão no momento</p>';
+            } else {
+                let html = '';
+                suggestions.forEach(s => {
+                    html += `
+                        <div class="followup-item ${s.urgent ? 'urgent' : ''}">
+                            <div class="followup-reason">${s.reason}</div>
+                            <div class="followup-text">${s.text}</div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+        }
+
+        async function saveInteraction() {
+            const tipo = document.getElementById('interactionTipo').value;
+            const titulo = document.getElementById('interactionTitulo').value;
+            const data = document.getElementById('interactionData').value;
+            const descricao = document.getElementById('interactionDescricao').value;
+            const fathomLink = document.getElementById('interactionFathomLink').value;
+            const tagsStr = document.getElementById('interactionTags').value;
+            const sentimento = document.getElementById('interactionSentimento').value;
+
+            const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(Boolean) : [];
+
+            const payload = {
+                tipo,
+                titulo: titulo || null,
+                descricao: descricao || null,
+                data_interacao: data ? new Date(data).toISOString() : null,
+                fathom_link: fathomLink || null,
+                tags,
+                sentimento: sentimento || null
+            };
+
+            try {
+                const response = await fetch(`/api/prospects/${prospectId}/interactions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) throw new Error('Erro ao salvar');
+
+                // Close modal and reload
+                bootstrap.Modal.getInstance(document.getElementById('addInteractionModal')).hide();
+                document.getElementById('addInteractionForm').reset();
+                loadProspect();
+            } catch (error) {
+                alert('Erro ao salvar interação: ' + error.message);
+            }
+        }
+
+        function openScheduleModal() {
+            // TODO: Implement schedule meeting modal
+            alert('Funcionalidade de agendamento em desenvolvimento');
+        }
+
+        // Init
+        loadProspect();
+    </script>
+</body>
+</html>

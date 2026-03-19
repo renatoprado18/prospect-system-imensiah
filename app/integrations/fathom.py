@@ -325,6 +325,120 @@ class FathomIntegration:
 
         return processed
 
+    async def extract_from_share_link(self, share_url: str) -> Optional[Dict]:
+        """
+        Extrai dados de um link compartilhado do Fathom
+
+        Args:
+            share_url: URL no formato https://fathom.video/share/XXXXX
+
+        Returns:
+            Dados da reunião extraídos do link
+        """
+        import re
+
+        # Extrair o share ID do URL
+        match = re.search(r'fathom\.video/share/([A-Za-z0-9_-]+)', share_url)
+        if not match:
+            return None
+
+        share_id = match.group(1)
+
+        # Tentar buscar via API com o share token
+        async with httpx.AsyncClient() as client:
+            # Primeiro tentar endpoint de share público
+            try:
+                response = await client.get(
+                    f"{self.BASE_URL}/shared/{share_id}",
+                    headers=self.headers,
+                    timeout=10.0
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    return {
+                        "share_id": share_id,
+                        "share_url": share_url,
+                        "title": data.get("title", "Reunião Fathom"),
+                        "summary": data.get("summary", ""),
+                        "duration_minutes": data.get("duration_seconds", 0) // 60,
+                        "participants": data.get("participants", []),
+                        "action_items": data.get("action_items", []),
+                        "key_topics": data.get("key_topics", []),
+                        "date": data.get("started_at", ""),
+                        "call_id": data.get("id", share_id)
+                    }
+            except Exception as e:
+                print(f"Error fetching share data: {e}")
+
+        # Fallback: retornar dados básicos do link
+        return {
+            "share_id": share_id,
+            "share_url": share_url,
+            "title": "Reunião Fathom",
+            "summary": "",
+            "duration_minutes": 0,
+            "participants": [],
+            "action_items": [],
+            "key_topics": [],
+            "date": None,
+            "call_id": share_id
+        }
+
+    async def get_unlinked_meetings(self, linked_ids: List[str]) -> List[Dict]:
+        """
+        Retorna reuniões que ainda não foram vinculadas a nenhum prospect
+
+        Args:
+            linked_ids: Lista de IDs de reuniões já vinculadas
+
+        Returns:
+            Lista de reuniões não vinculadas
+        """
+        all_meetings = await self.get_meetings(limit=50)
+
+        unlinked = []
+        for meeting in all_meetings:
+            if meeting.get("id") not in linked_ids:
+                unlinked.append({
+                    "id": meeting.get("id"),
+                    "title": meeting.get("title", "Sem título"),
+                    "date": meeting.get("started_at"),
+                    "duration_minutes": meeting.get("duration_seconds", 0) // 60,
+                    "participants": meeting.get("participants", [])
+                })
+
+        return unlinked
+
+    async def suggest_prospect_match(self, meeting: Dict, prospects_emails: List[Dict]) -> Optional[Dict]:
+        """
+        Sugere qual prospect corresponde a uma reunião baseado nos participantes
+
+        Args:
+            meeting: Dados da reunião com participantes
+            prospects_emails: Lista de dicts com {id, nome, email} dos prospects
+
+        Returns:
+            Prospect sugerido ou None
+        """
+        participants = meeting.get("participants", [])
+        participant_emails = [p.get("email", "").lower() for p in participants if p.get("email")]
+
+        for prospect in prospects_emails:
+            if prospect.get("email") and prospect["email"].lower() in participant_emails:
+                return prospect
+
+        # Tentar match por nome
+        participant_names = [p.get("name", "").lower() for p in participants if p.get("name")]
+        for prospect in prospects_emails:
+            if prospect.get("nome"):
+                prospect_name_parts = prospect["nome"].lower().split()
+                for pname in participant_names:
+                    if any(part in pname for part in prospect_name_parts if len(part) > 2):
+                        return prospect
+
+        return None
+
 
 # Webhook handler para Fathom callbacks
 async def handle_fathom_webhook(payload: Dict) -> Dict:

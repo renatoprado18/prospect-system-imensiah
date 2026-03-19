@@ -12,7 +12,5 @@ google-api-python-client==2.114.0
 google-auth-oauthlib==1.2.0
 google-auth-httplib2==0.2.0
 
-# Database (SQLite built-in)
-# For production, consider:
-# asyncpg==0.29.0
-# databases==0.8.0
+# Database - Vercel Postgres
+psycopg2-binary==2.9.9

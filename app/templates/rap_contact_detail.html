@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAP - Contato</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #0ea5e9;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --dark: #1e293b;
+            --light: #f8fafc;
+            --gray-100: #f1f5f9;
+            --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1;
+            --gray-400: #94a3b8;
+            --gray-500: #64748b;
+            --gray-600: #475569;
+            --sidebar-width: 260px;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--gray-100);
+            margin: 0;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: var(--sidebar-width);
+            background: linear-gradient(180deg, var(--dark) 0%, #0f172a 100%);
+            color: white;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 24px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .sidebar-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            text-decoration: none;
+            color: white;
+        }
+
+        .sidebar-logo .icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sidebar-nav {
+            flex: 1;
+            padding: 16px 0;
+            overflow-y: auto;
+        }
+
+        .nav-section {
+            padding: 8px 16px;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--gray-400);
+            margin-top: 16px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 24px;
+            color: var(--gray-300);
+            text-decoration: none;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-item:hover {
+            background: rgba(255,255,255,0.05);
+            color: white;
+        }
+
+        .nav-item.active {
+            background: rgba(99, 102, 241, 0.15);
+            color: white;
+            border-left-color: var(--primary);
+        }
+
+        .nav-item i { font-size: 1.2rem; width: 24px; text-align: center; }
+        .nav-item .badge { margin-left: auto; background: var(--primary); padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; }
+
+        .sidebar-footer { padding: 16px 24px; border-top: 1px solid rgba(255,255,255,0.1); }
+        .user-info { display: flex; align-items: center; gap: 12px; }
+        .user-avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); display: flex; align-items: center; justify-content: center; font-weight: 600; }
+        .user-name { font-weight: 500; font-size: 0.9rem; }
+        .user-role { font-size: 0.75rem; color: var(--gray-400); }
+
+        /* Main Content */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            padding: 24px 32px;
+            min-height: 100vh;
+        }
+
+        /* Back link */
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--gray-500);
+            text-decoration: none;
+            font-size: 0.9rem;
+            margin-bottom: 16px;
+            transition: color 0.2s;
+        }
+
+        .back-link:hover { color: var(--primary); }
+
+        /* Profile Header */
+        .profile-header {
+            background: white;
+            border-radius: 20px;
+            padding: 32px;
+            margin-bottom: 24px;
+            display: flex;
+            gap: 32px;
+            align-items: flex-start;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+
+        .profile-avatar {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 2.5rem;
+            flex-shrink: 0;
+            position: relative;
+        }
+
+        .profile-avatar img {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        .enrich-badge {
+            position: absolute;
+            bottom: 4px;
+            right: 4px;
+            width: 32px;
+            height: 32px;
+            background: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .enrich-badge:hover {
+            transform: scale(1.1);
+            background: var(--primary);
+            color: white;
+        }
+
+        .profile-info { flex: 1; }
+
+        .profile-name {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--dark);
+            margin: 0 0 4px 0;
+        }
+
+        .profile-role {
+            font-size: 1.1rem;
+            color: var(--gray-500);
+            margin-bottom: 8px;
+        }
+
+        .profile-company {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--gray-600);
+            font-size: 0.95rem;
+        }
+
+        .profile-company i { color: var(--gray-400); }
+
+        .profile-tags {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+
+        .tag {
+            padding: 6px 14px;
+            background: var(--gray-100);
+            border-radius: 20px;
+            font-size: 0.8rem;
+            color: var(--gray-600);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .tag.professional { background: rgba(99, 102, 241, 0.1); color: var(--primary); }
+        .tag.personal { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+
+        .profile-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* Contact info cards */
+        .contact-cards {
+            display: flex;
+            gap: 16px;
+            margin-top: 24px;
+            flex-wrap: wrap;
+        }
+
+        .contact-card-mini {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: var(--gray-100);
+            border-radius: 12px;
+            color: var(--dark);
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .contact-card-mini:hover {
+            background: var(--primary);
+            color: white;
+        }
+
+        .contact-card-mini i {
+            font-size: 1.2rem;
+            width: 24px;
+            text-align: center;
+        }
+
+        .contact-card-mini .label {
+            font-size: 0.75rem;
+            opacity: 0.7;
+        }
+
+        .contact-card-mini .value {
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        /* Content Grid */
+        .content-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            border: none;
+            margin-bottom: 24px;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--gray-200);
+            background: transparent;
+        }
+
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--dark);
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card-body { padding: 24px; }
+
+        /* Timeline */
+        .timeline {
+            position: relative;
+            padding-left: 32px;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 11px;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            background: var(--gray-200);
+        }
+
+        .timeline-item {
+            position: relative;
+            padding-bottom: 24px;
+        }
+
+        .timeline-item:last-child { padding-bottom: 0; }
+
+        .timeline-dot {
+            position: absolute;
+            left: -32px;
+            top: 4px;
+            width: 24px;
+            height: 24px;
+            background: white;
+            border: 2px solid var(--gray-300);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            color: var(--gray-500);
+        }
+
+        .timeline-dot.email { border-color: var(--secondary); color: var(--secondary); }
+        .timeline-dot.meeting { border-color: var(--success); color: var(--success); }
+        .timeline-dot.whatsapp { border-color: #25D366; color: #25D366; }
+        .timeline-dot.note { border-color: var(--warning); color: var(--warning); }
+        .timeline-dot.call { border-color: var(--primary); color: var(--primary); }
+
+        .timeline-content {
+            background: var(--gray-100);
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        .timeline-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+
+        .timeline-title {
+            font-weight: 600;
+            color: var(--dark);
+            font-size: 0.95rem;
+        }
+
+        .timeline-date {
+            font-size: 0.75rem;
+            color: var(--gray-400);
+        }
+
+        .timeline-text {
+            font-size: 0.9rem;
+            color: var(--gray-600);
+            line-height: 1.5;
+        }
+
+        .timeline-meta {
+            display: flex;
+            gap: 16px;
+            margin-top: 12px;
+            font-size: 0.8rem;
+            color: var(--gray-500);
+        }
+
+        /* Facts */
+        .fact-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px;
+            border-bottom: 1px solid var(--gray-100);
+        }
+
+        .fact-item:last-child { border-bottom: none; }
+
+        .fact-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--gray-100);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--gray-500);
+            flex-shrink: 0;
+        }
+
+        .fact-content { flex: 1; }
+        .fact-category { font-size: 0.7rem; color: var(--gray-400); text-transform: uppercase; letter-spacing: 0.05em; }
+        .fact-text { font-size: 0.9rem; color: var(--dark); margin-top: 2px; }
+
+        /* Conversations */
+        .conversation-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-radius: 12px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .conversation-item:hover { background: var(--gray-100); }
+
+        .conversation-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+
+        .conversation-icon.email { background: rgba(14, 165, 233, 0.1); color: var(--secondary); }
+        .conversation-icon.whatsapp { background: rgba(37, 211, 102, 0.1); color: #25D366; }
+
+        .conversation-info { flex: 1; min-width: 0; }
+        .conversation-subject { font-weight: 500; color: var(--dark); font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .conversation-preview { font-size: 0.8rem; color: var(--gray-500); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .conversation-date { font-size: 0.75rem; color: var(--gray-400); }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 32px;
+            color: var(--gray-500);
+        }
+
+        .empty-state i { font-size: 2.5rem; color: var(--gray-300); margin-bottom: 12px; }
+
+        /* Buttons */
+        .btn-primary { background: var(--primary); border-color: var(--primary); padding: 10px 20px; border-radius: 10px; font-weight: 500; }
+        .btn-primary:hover { background: var(--primary-dark); border-color: var(--primary-dark); }
+        .btn-outline-secondary { border-radius: 10px; }
+        .btn-icon { width: 44px; height: 44px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 12px; font-size: 1.2rem; }
+
+        /* Loading */
+        .loading-container { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 64px; }
+        .loading-text { margin-top: 16px; color: var(--gray-500); }
+
+        @media (max-width: 1200px) {
+            .content-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main-content { margin-left: 0; padding: 16px; }
+            .profile-header { flex-direction: column; text-align: center; }
+            .profile-avatar { margin: 0 auto; }
+            .profile-actions { flex-direction: row; justify-content: center; }
+            .contact-cards { justify-content: center; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <a href="/rap" class="sidebar-logo">
+                <div class="icon"><i class="bi bi-robot"></i></div>
+                <span>RAP</span>
+            </a>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a href="/rap" class="nav-item">
+                <i class="bi bi-grid-1x2"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="/rap/contacts" class="nav-item active">
+                <i class="bi bi-people"></i>
+                <span>Contatos</span>
+            </a>
+            <a href="/rap/inbox" class="nav-item">
+                <i class="bi bi-inbox"></i>
+                <span>Inbox</span>
+            </a>
+            <a href="/rap/calendar" class="nav-item">
+                <i class="bi bi-calendar3"></i>
+                <span>Calendario</span>
+            </a>
+            <a href="/rap/tasks" class="nav-item">
+                <i class="bi bi-check2-square"></i>
+                <span>Tarefas</span>
+            </a>
+
+            <div class="nav-section">Gestao</div>
+            <a href="/admin" class="nav-item">
+                <i class="bi bi-funnel"></i>
+                <span>Prospects</span>
+            </a>
+            <a href="/rap/conselhoos" class="nav-item">
+                <i class="bi bi-briefcase"></i>
+                <span>ConselhoOS</span>
+            </a>
+
+            <div class="nav-section">Sistema</div>
+            <a href="/rap/settings" class="nav-item">
+                <i class="bi bi-gear"></i>
+                <span>Configuracoes</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-info">
+                <div class="user-avatar">R</div>
+                <div>
+                    <div class="user-name">Renato</div>
+                    <div class="user-role">Admin</div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <a href="/rap/contacts" class="back-link">
+            <i class="bi bi-arrow-left"></i> Voltar para Contatos
+        </a>
+
+        <div id="contactContainer">
+            <div class="loading-container">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Carregando...</span>
+                </div>
+                <div class="loading-text">Carregando contato...</div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Add Interaction Modal -->
+    <div class="modal fade" id="addInteractionModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content" style="border-radius: 16px; border: none;">
+                <div class="modal-header" style="border-bottom: 1px solid var(--gray-200); padding: 20px 24px;">
+                    <h5 class="modal-title" style="font-weight: 600;">Adicionar Interacao</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" style="padding: 24px;">
+                    <form id="interactionForm">
+                        <div class="mb-3">
+                            <label class="form-label">Tipo</label>
+                            <select class="form-select" name="tipo" required>
+                                <option value="nota">Nota</option>
+                                <option value="email">Email</option>
+                                <option value="reuniao">Reuniao</option>
+                                <option value="telefone">Telefonema</option>
+                                <option value="whatsapp">WhatsApp</option>
+                                <option value="linkedin">LinkedIn</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Titulo</label>
+                            <input type="text" class="form-control" name="titulo">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Descricao</label>
+                            <textarea class="form-control" name="descricao" rows="4"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Data</label>
+                            <input type="datetime-local" class="form-control" name="data_interacao">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer" style="border-top: 1px solid var(--gray-200); padding: 16px 24px;">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" onclick="saveInteraction()">Salvar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const contactId = {{ contact_id }};
+        let contactData = null;
+
+        document.addEventListener('DOMContentLoaded', loadContact);
+
+        async function loadContact() {
+            try {
+                const response = await fetch(`/api/contacts/${contactId}`);
+                if (!response.ok) throw new Error('Contact not found');
+
+                const data = await response.json();
+                contactData = data;
+                renderContact(data);
+            } catch (error) {
+                console.error('Error loading contact:', error);
+                document.getElementById('contactContainer').innerHTML = `
+                    <div class="empty-state">
+                        <i class="bi bi-exclamation-circle"></i>
+                        <h3>Contato nao encontrado</h3>
+                        <p><a href="/rap/contacts">Voltar para lista</a></p>
+                    </div>
+                `;
+            }
+        }
+
+        function renderContact(data) {
+            const { contact, memories, facts, conversations } = data;
+
+            const initials = contact.nome.split(' ')
+                .filter(n => n.length > 0)
+                .map(n => n[0])
+                .slice(0, 2)
+                .join('')
+                .toUpperCase();
+
+            // Parse arrays
+            const emails = parseJsonField(contact.emails);
+            const telefones = parseJsonField(contact.telefones);
+            const categorias = parseJsonField(contact.categorias);
+            const tags = parseJsonField(contact.tags);
+
+            const contextClass = contact.contexto === 'personal' ? 'personal' : 'professional';
+            const contextLabel = contact.contexto === 'personal' ? 'Pessoal' : 'Profissional';
+
+            const container = document.getElementById('contactContainer');
+            container.innerHTML = `
+                <!-- Profile Header -->
+                <div class="profile-header">
+                    <div class="profile-avatar">
+                        ${contact.foto_url
+                            ? `<img src="${contact.foto_url}" alt="${contact.nome}">`
+                            : initials
+                        }
+                        <div class="enrich-badge" onclick="enrichContact()" title="Enriquecer dados">
+                            <i class="bi bi-magic"></i>
+                        </div>
+                    </div>
+
+                    <div class="profile-info">
+                        <h1 class="profile-name">${contact.nome}</h1>
+                        ${contact.cargo ? `<p class="profile-role">${contact.cargo}</p>` : ''}
+                        ${contact.empresa ? `
+                            <div class="profile-company">
+                                <i class="bi bi-building"></i>
+                                ${contact.empresa}
+                            </div>
+                        ` : ''}
+
+                        <div class="profile-tags">
+                            <span class="tag ${contextClass}">${contextLabel}</span>
+                            ${contact.linkedin ? '<span class="tag"><i class="bi bi-linkedin"></i> LinkedIn</span>' : ''}
+                            ${categorias.map(c => `<span class="tag">${c}</span>`).join('')}
+                        </div>
+
+                        <div class="contact-cards">
+                            ${emails.map(e => `
+                                <a href="mailto:${e.email}" class="contact-card-mini">
+                                    <i class="bi bi-envelope"></i>
+                                    <div>
+                                        <div class="label">${e.type || 'Email'}</div>
+                                        <div class="value">${e.email}</div>
+                                    </div>
+                                </a>
+                            `).join('')}
+
+                            ${telefones.map(t => `
+                                <a href="tel:${t.number}" class="contact-card-mini">
+                                    <i class="bi bi-${t.whatsapp ? 'whatsapp' : 'telephone'}"></i>
+                                    <div>
+                                        <div class="label">${t.type || 'Telefone'}</div>
+                                        <div class="value">${t.number}</div>
+                                    </div>
+                                </a>
+                            `).join('')}
+
+                            ${contact.linkedin ? `
+                                <a href="${contact.linkedin}" target="_blank" class="contact-card-mini">
+                                    <i class="bi bi-linkedin"></i>
+                                    <div>
+                                        <div class="label">LinkedIn</div>
+                                        <div class="value">Perfil</div>
+                                    </div>
+                                </a>
+                            ` : ''}
+                        </div>
+                    </div>
+
+                    <div class="profile-actions">
+                        <button class="btn btn-primary" onclick="composeEmail()">
+                            <i class="bi bi-envelope me-2"></i>Email
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="openWhatsApp()">
+                            <i class="bi bi-whatsapp me-2"></i>WhatsApp
+                        </button>
+                        <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
+                            <i class="bi bi-plus me-2"></i>Interacao
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Content Grid -->
+                <div class="content-grid">
+                    <!-- Timeline -->
+                    <div>
+                        <div class="card">
+                            <div class="card-header">
+                                <h2 class="card-title">
+                                    <i class="bi bi-clock-history"></i>
+                                    Timeline de Interacoes
+                                </h2>
+                                <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
+                                    <i class="bi bi-plus"></i> Adicionar
+                                </button>
+                            </div>
+                            <div class="card-body">
+                                ${memories.length > 0 ? `
+                                    <div class="timeline">
+                                        ${memories.map(m => renderTimelineItem(m)).join('')}
+                                    </div>
+                                ` : `
+                                    <div class="empty-state">
+                                        <i class="bi bi-clock"></i>
+                                        <p>Nenhuma interacao registrada</p>
+                                    </div>
+                                `}
+                            </div>
+                        </div>
+
+                        <!-- Conversations -->
+                        ${conversations.length > 0 ? `
+                            <div class="card">
+                                <div class="card-header">
+                                    <h2 class="card-title">
+                                        <i class="bi bi-chat-dots"></i>
+                                        Conversas Recentes
+                                    </h2>
+                                </div>
+                                <div class="card-body">
+                                    ${conversations.map(c => renderConversation(c)).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+
+                    <!-- Sidebar -->
+                    <div>
+                        <!-- AI Summary -->
+                        ${contact.resumo_ai ? `
+                            <div class="card">
+                                <div class="card-header">
+                                    <h2 class="card-title">
+                                        <i class="bi bi-robot"></i>
+                                        Resumo IA
+                                    </h2>
+                                </div>
+                                <div class="card-body">
+                                    <p style="font-size: 0.9rem; color: var(--gray-600); line-height: 1.6;">
+                                        ${contact.resumo_ai}
+                                    </p>
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        <!-- Facts -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h2 class="card-title">
+                                    <i class="bi bi-lightbulb"></i>
+                                    Fatos Importantes
+                                </h2>
+                            </div>
+                            <div class="card-body" style="padding: 12px;">
+                                ${facts.length > 0 ? facts.map(f => renderFact(f)).join('') : `
+                                    <div class="empty-state">
+                                        <i class="bi bi-lightbulb"></i>
+                                        <p>Nenhum fato registrado</p>
+                                    </div>
+                                `}
+                            </div>
+                        </div>
+
+                        <!-- Birthday -->
+                        ${contact.aniversario ? `
+                            <div class="card">
+                                <div class="card-body" style="display: flex; align-items: center; gap: 16px;">
+                                    <div style="width: 48px; height: 48px; background: rgba(245, 158, 11, 0.1); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+                                        <i class="bi bi-cake2" style="font-size: 1.5rem; color: var(--warning);"></i>
+                                    </div>
+                                    <div>
+                                        <div style="font-size: 0.8rem; color: var(--gray-500);">Aniversario</div>
+                                        <div style="font-weight: 600; color: var(--dark);">${formatDate(contact.aniversario)}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        <!-- Stats -->
+                        <div class="card">
+                            <div class="card-body">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; text-align: center;">
+                                    <div>
+                                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary);">
+                                            ${contact.total_interacoes || 0}
+                                        </div>
+                                        <div style="font-size: 0.8rem; color: var(--gray-500);">Interacoes</div>
+                                    </div>
+                                    <div>
+                                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--success);">
+                                            ${facts.length}
+                                        </div>
+                                        <div style="font-size: 0.8rem; color: var(--gray-500);">Fatos</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderTimelineItem(memory) {
+            const typeIcons = {
+                'meeting': 'bi-camera-video',
+                'email': 'bi-envelope',
+                'whatsapp': 'bi-whatsapp',
+                'call': 'bi-telephone',
+                'note': 'bi-sticky'
+            };
+
+            const icon = typeIcons[memory.tipo] || 'bi-circle';
+            const dotClass = memory.tipo || '';
+
+            return `
+                <div class="timeline-item">
+                    <div class="timeline-dot ${dotClass}">
+                        <i class="bi ${icon}"></i>
+                    </div>
+                    <div class="timeline-content">
+                        <div class="timeline-header">
+                            <span class="timeline-title">${memory.titulo || memory.tipo}</span>
+                            <span class="timeline-date">${formatDateTime(memory.data_ocorrencia)}</span>
+                        </div>
+                        <div class="timeline-text">${memory.resumo || ''}</div>
+                        ${memory.fatos_importantes && memory.fatos_importantes.length > 0 ? `
+                            <div class="timeline-meta">
+                                <span><i class="bi bi-lightbulb"></i> ${memory.fatos_importantes.length} fatos extraidos</span>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderConversation(conv) {
+            const icon = conv.canal === 'whatsapp' ? 'whatsapp' : 'email';
+
+            return `
+                <div class="conversation-item">
+                    <div class="conversation-icon ${icon}">
+                        <i class="bi bi-${icon}"></i>
+                    </div>
+                    <div class="conversation-info">
+                        <div class="conversation-subject">${conv.assunto || 'Sem assunto'}</div>
+                        <div class="conversation-preview">${conv.resumo_ai || `${conv.total_mensagens} mensagens`}</div>
+                    </div>
+                    <div class="conversation-date">${formatDateTime(conv.ultimo_mensagem)}</div>
+                </div>
+            `;
+        }
+
+        function renderFact(fact) {
+            const categoryIcons = {
+                'professional': 'bi-briefcase',
+                'personal': 'bi-heart',
+                'preference': 'bi-star'
+            };
+
+            const icon = categoryIcons[fact.categoria] || 'bi-info-circle';
+
+            return `
+                <div class="fact-item">
+                    <div class="fact-icon">
+                        <i class="bi ${icon}"></i>
+                    </div>
+                    <div class="fact-content">
+                        <div class="fact-category">${fact.categoria}</div>
+                        <div class="fact-text">${fact.fato}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function parseJsonField(field) {
+            if (!field) return [];
+            if (Array.isArray(field)) return field;
+            try {
+                return JSON.parse(field);
+            } catch {
+                return [];
+            }
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('pt-BR');
+        }
+
+        function formatDateTime(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        async function enrichContact() {
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/enrich`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    alert('Enriquecimento iniciado! Os dados serao atualizados em breve.');
+                } else {
+                    alert('Erro ao iniciar enriquecimento');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Erro ao iniciar enriquecimento');
+            }
+        }
+
+        function composeEmail() {
+            const emails = parseJsonField(contactData.contact.emails);
+            if (emails.length > 0) {
+                window.location.href = `mailto:${emails[0].email}`;
+            } else {
+                alert('Contato sem email cadastrado');
+            }
+        }
+
+        function openWhatsApp() {
+            const telefones = parseJsonField(contactData.contact.telefones);
+            const whatsapp = telefones.find(t => t.whatsapp) || telefones[0];
+            if (whatsapp) {
+                const number = whatsapp.number.replace(/\D/g, '');
+                window.open(`https://wa.me/${number}`, '_blank');
+            } else {
+                alert('Contato sem telefone cadastrado');
+            }
+        }
+
+        async function saveInteraction() {
+            const form = document.getElementById('interactionForm');
+            const formData = new FormData(form);
+
+            const interaction = {
+                tipo: formData.get('tipo'),
+                titulo: formData.get('titulo') || null,
+                descricao: formData.get('descricao') || null,
+                data_interacao: formData.get('data_interacao') || null
+            };
+
+            // TODO: Create interaction endpoint for contacts
+            alert('Interacao salva (em desenvolvimento)');
+
+            const modal = bootstrap.Modal.getInstance(document.getElementById('addInteractionModal'));
+            modal.hide();
+            form.reset();
+        }
+    </script>
+</body>
+</html>

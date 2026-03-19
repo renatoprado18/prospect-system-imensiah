@@ -7,7 +7,6 @@ Domínio: prospects.almeida-prado.com
 """
 import os
 import json
-import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional, List
 from contextlib import asynccontextmanager
@@ -21,11 +20,13 @@ from pydantic import BaseModel
 
 from models import (
     Prospect, Meeting, ProspectStatus, ProspectTier,
-    MeetingOutcome, UserRole, init_db
+    MeetingOutcome, UserRole
 )
+from database import get_db as get_pg_db, init_db, get_connection
 from scoring import DynamicScorer
 from integrations.google_calendar import GoogleCalendarIntegration, create_calendar_link
 from integrations.fathom import FathomIntegration, handle_fathom_webhook
+from integrations.linkedin import LinkedInIntegration
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
@@ -33,7 +34,6 @@ from auth import (
 
 # Config
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.getenv("DB_PATH", "/tmp/prospects.db")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 FATHOM_API_KEY = os.getenv("FATHOM_API_KEY")
@@ -45,9 +45,9 @@ DATA_DIR = os.path.join(BASE_DIR, "..", "data")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    os.makedirs("/tmp", exist_ok=True)
     try:
-        init_db(DB_PATH)
+        init_db()
+        print("PostgreSQL database initialized")
     except Exception as e:
         print(f"DB init error: {e}")
     yield
@@ -78,9 +78,10 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Services
-scorer = DynamicScorer(DB_PATH)
+scorer = DynamicScorer()  # Now uses PostgreSQL
 calendar = GoogleCalendarIntegration()
 fathom = FathomIntegration()
+linkedin = LinkedInIntegration()
 
 
 # ============== Pydantic Models ==============
@@ -126,16 +127,83 @@ class BulkApproval(BaseModel):
     aprovado: bool
     notas: str = ""
 
+class InteractionCreate(BaseModel):
+    tipo: str  # 'reuniao', 'email', 'linkedin', 'telefone', 'evento', 'nota'
+    titulo: Optional[str] = None
+    descricao: Optional[str] = None
+    data_interacao: Optional[datetime] = None
+    fathom_link: Optional[str] = None
+    fathom_summary: Optional[str] = None
+    tags: Optional[List[str]] = []
+    sentimento: Optional[str] = None  # 'positivo', 'neutro', 'negativo'
+
+class InteractionUpdate(BaseModel):
+    tipo: Optional[str] = None
+    titulo: Optional[str] = None
+    descricao: Optional[str] = None
+    data_interacao: Optional[datetime] = None
+    fathom_link: Optional[str] = None
+    fathom_summary: Optional[str] = None
+    tags: Optional[List[str]] = None
+    sentimento: Optional[str] = None
+
 
 # ============== Database Helpers ==============
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Get PostgreSQL connection"""
+    return get_connection()
 
 def row_to_dict(row):
+    """Convert RealDictRow to dict"""
     return dict(row) if row else None
+
+
+# ============== Health Check ==============
+
+@app.get("/api/health")
+async def health_check():
+    """Verifica status do sistema e banco de dados"""
+    import os
+    status = {"status": "ok", "database": "not_connected"}
+
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) as count FROM prospects")
+        count = cursor.fetchone()['count']
+        conn.close()
+        status["database"] = "connected"
+        status["prospects_count"] = count
+    except Exception as e:
+        status["database"] = "error"
+        status["error"] = str(e)
+        status["postgres_url_set"] = bool(os.getenv("POSTGRES_URL"))
+
+    return status
+
+@app.post("/api/admin/reset-db")
+async def reset_database():
+    """Reseta o banco de dados (CUIDADO!)"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Drop unique index if exists
+    cursor.execute("DROP INDEX IF EXISTS idx_prospects_email")
+
+    # Clear prospects table
+    cursor.execute("DELETE FROM prospects")
+
+    # Recreate non-unique index
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_prospects_email
+        ON prospects(email) WHERE email IS NOT NULL AND email != ''
+    ''')
+
+    conn.commit()
+    conn.close()
+
+    return {"status": "reset", "message": "Database cleared and index recreated"}
 
 
 # ============== API Routes - Auth ==============
@@ -186,10 +254,7 @@ async def root(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    # Admin vai para /admin
-    if user["role"] == "admin":
-        return RedirectResponse(url="/admin", status_code=302)
-
+    # Admin e operador podem ver o dashboard
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "user": user
@@ -210,13 +275,66 @@ async def admin_panel(request: Request):
         "user": user
     })
 
+@app.get("/prospect/{prospect_id}", response_class=HTMLResponse)
+async def prospect_detail_page(request: Request, prospect_id: int):
+    """Página de detalhe do prospect"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    return templates.TemplateResponse("prospect_detail.html", {
+        "request": request,
+        "user": user,
+        "prospect_id": prospect_id
+    })
+
+# ============== RAP Pages ==============
+
+@app.get("/rap", response_class=HTMLResponse)
+async def rap_dashboard(request: Request):
+    """RAP Dashboard - Assistente Pessoal"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    return templates.TemplateResponse("rap_dashboard.html", {
+        "request": request,
+        "user": user
+    })
+
+@app.get("/rap/contacts", response_class=HTMLResponse)
+async def rap_contacts(request: Request):
+    """RAP Contacts List"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    return templates.TemplateResponse("rap_contacts.html", {
+        "request": request,
+        "user": user
+    })
+
+@app.get("/rap/contacts/{contact_id}", response_class=HTMLResponse)
+async def rap_contact_detail(request: Request, contact_id: int):
+    """RAP Contact Detail Page"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    return templates.TemplateResponse("rap_contact_detail.html", {
+        "request": request,
+        "user": user,
+        "contact_id": contact_id
+    })
+
+
 @app.get("/api/user/{email}")
 async def get_user(email: str):
     """Obtém dados do usuário"""
     conn = get_db()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM users WHERE email LIKE ?", (f"%{email}%",))
+    cursor.execute("SELECT * FROM users WHERE email LIKE %s", (f"%{email}%",))
     user = cursor.fetchone()
     conn.close()
 
@@ -232,7 +350,7 @@ async def complete_tutorial(email: str):
     cursor = conn.cursor()
 
     cursor.execute(
-        "UPDATE users SET tutorial_concluido = TRUE WHERE email LIKE ?",
+        "UPDATE users SET tutorial_concluido = TRUE WHERE email LIKE %s",
         (f"%{email}%",)
     )
     conn.commit()
@@ -257,10 +375,10 @@ async def list_pending_approval(
     params = []
 
     if tier:
-        query += " AND tier = ?"
+        query += " AND tier = %s"
         params.append(tier)
 
-    query += " ORDER BY score DESC, tier ASC LIMIT ? OFFSET ?"
+    query += " ORDER BY score DESC, tier ASC LIMIT %s OFFSET %s"
     params.extend([limit, offset])
 
     cursor.execute(query, params)
@@ -293,12 +411,12 @@ async def approve_prospect(prospect_id: int, approval: ProspectApproval):
 
     cursor.execute('''
         UPDATE prospects
-        SET aprovado_por_renato = ?,
-            status = ?,
-            notas_renato = ?,
-            prioridade_renato = ?,
-            data_aprovacao = ?
-        WHERE id = ?
+        SET aprovado_por_renato = %s,
+            status = %s,
+            notas_renato = %s,
+            prioridade_renato = %s,
+            data_aprovacao = %s
+        WHERE id = %s
     ''', (
         approval.aprovado,
         new_status,
@@ -311,7 +429,7 @@ async def approve_prospect(prospect_id: int, approval: ProspectApproval):
     # Log
     cursor.execute('''
         INSERT INTO activity_log (prospect_id, usuario, acao, detalhes)
-        VALUES (?, 'Renato', ?, ?)
+        VALUES (%s, 'Renato', %s, %s)
     ''', (
         prospect_id,
         'Aprovado' if approval.aprovado else 'Rejeitado',
@@ -335,11 +453,11 @@ async def approve_bulk(bulk: BulkApproval):
     for prospect_id in bulk.prospect_ids:
         cursor.execute('''
             UPDATE prospects
-            SET aprovado_por_renato = ?,
-                status = ?,
-                notas_renato = ?,
-                data_aprovacao = ?
-            WHERE id = ? AND status = 'pendente_aprovacao'
+            SET aprovado_por_renato = %s,
+                status = %s,
+                notas_renato = %s,
+                data_aprovacao = %s
+            WHERE id = %s AND status = 'pendente_aprovacao'
         ''', (
             bulk.aprovado,
             new_status,
@@ -379,12 +497,12 @@ async def admin_stats():
     stats['total_pendentes'] = sum(stats['pendentes_por_tier'].values())
 
     # Aprovados
-    cursor.execute("SELECT COUNT(*) FROM prospects WHERE aprovado_por_renato = TRUE")
-    stats['total_aprovados'] = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) as count FROM prospects WHERE aprovado_por_renato = TRUE")
+    stats['total_aprovados'] = cursor.fetchone()['count']
 
     # Rejeitados
-    cursor.execute("SELECT COUNT(*) FROM prospects WHERE status = 'rejeitado'")
-    stats['total_rejeitados'] = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) as count FROM prospects WHERE status = 'rejeitado'")
+    stats['total_rejeitados'] = cursor.fetchone()['count']
 
     # Top prospects pendentes
     cursor.execute('''
@@ -428,20 +546,20 @@ async def list_prospects(
         query += " AND aprovado_por_renato = TRUE AND status != 'rejeitado' AND status != 'pendente_aprovacao'"
 
     if tier:
-        query += " AND tier = ?"
+        query += " AND tier = %s"
         params.append(tier)
 
     if status:
-        query += " AND status = ?"
+        query += " AND status = %s"
         params.append(status)
 
     if search:
-        query += " AND (nome LIKE ? OR empresa LIKE ? OR cargo LIKE ?)"
+        query += " AND (nome ILIKE %s OR empresa ILIKE %s OR cargo ILIKE %s)"
         search_term = f"%{search}%"
         params.extend([search_term, search_term, search_term])
 
     # Ordenar por prioridade de Renato primeiro, depois score
-    query += " ORDER BY prioridade_renato DESC, score DESC LIMIT ? OFFSET ?"
+    query += " ORDER BY prioridade_renato DESC, score DESC LIMIT %s OFFSET %s"
     params.extend([limit, offset])
 
     cursor.execute(query, params)
@@ -449,8 +567,9 @@ async def list_prospects(
 
     # Count total
     count_query = query.replace("SELECT *", "SELECT COUNT(*)").split("ORDER BY")[0]
-    cursor.execute(count_query, params[:-2])
-    total = cursor.fetchone()[0]
+    cursor.execute(count_query, params[:-2] if params[:-2] else None)
+    result = cursor.fetchone()
+    total = result['count'] if result else 0
 
     conn.close()
 
@@ -468,7 +587,7 @@ async def get_prospect(prospect_id: int):
     conn = get_db()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM prospects WHERE id = ?", (prospect_id,))
+    cursor.execute("SELECT * FROM prospects WHERE id = %s", (prospect_id,))
     row = cursor.fetchone()
 
     if not row:
@@ -479,24 +598,32 @@ async def get_prospect(prospect_id: int):
 
     # Buscar reuniões
     cursor.execute(
-        "SELECT * FROM meetings WHERE prospect_id = ? ORDER BY data_hora DESC",
+        "SELECT * FROM meetings WHERE prospect_id = %s ORDER BY data_hora DESC",
         (prospect_id,)
     )
     meetings = [row_to_dict(r) for r in cursor.fetchall()]
 
     # Buscar atividades
     cursor.execute(
-        "SELECT * FROM activity_log WHERE prospect_id = ? ORDER BY data_hora DESC LIMIT 20",
+        "SELECT * FROM activity_log WHERE prospect_id = %s ORDER BY data_hora DESC LIMIT 20",
         (prospect_id,)
     )
     activities = [row_to_dict(r) for r in cursor.fetchall()]
+
+    # Buscar interações (timeline)
+    cursor.execute(
+        "SELECT * FROM interactions WHERE prospect_id = %s ORDER BY data_interacao DESC NULLS LAST, created_at DESC",
+        (prospect_id,)
+    )
+    interactions = [row_to_dict(r) for r in cursor.fetchall()]
 
     conn.close()
 
     return {
         "prospect": prospect,
         "meetings": meetings,
-        "activities": activities
+        "activities": activities,
+        "interactions": interactions
     }
 
 
@@ -513,14 +640,15 @@ async def create_prospect(prospect: ProspectCreate):
     cursor.execute('''
         INSERT INTO prospects (nome, empresa, cargo, email, telefone, linkedin,
                               score, tier, score_breakdown, reasons)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
     ''', (
         prospect.nome, prospect.empresa, prospect.cargo,
         prospect.email, prospect.telefone, prospect.linkedin,
         score, tier, json.dumps(breakdown), json.dumps(reasons)
     ))
 
-    prospect_id = cursor.lastrowid
+    prospect_id = cursor.fetchone()['id']
     conn.commit()
     conn.close()
 
@@ -539,7 +667,7 @@ async def update_prospect(prospect_id: int, update: ProspectUpdate):
     for field, value in update.model_dump(exclude_none=True).items():
         if isinstance(value, list):
             value = json.dumps(value)
-        updates.append(f"{field} = ?")
+        updates.append(f"{field} = %s")
         params.append(value)
 
     if not updates:
@@ -547,20 +675,143 @@ async def update_prospect(prospect_id: int, update: ProspectUpdate):
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
     params.append(prospect_id)
-    query = f"UPDATE prospects SET {', '.join(updates)} WHERE id = ?"
+    query = f"UPDATE prospects SET {', '.join(updates)} WHERE id = %s"
 
     cursor.execute(query, params)
 
     # Log atividade
     cursor.execute('''
         INSERT INTO activity_log (prospect_id, usuario, acao, detalhes)
-        VALUES (?, 'Andressa', 'Atualização', ?)
+        VALUES (%s, 'Andressa', 'Atualização', %s)
     ''', (prospect_id, json.dumps(update.model_dump(exclude_none=True))))
 
     conn.commit()
     conn.close()
 
     return {"status": "updated"}
+
+
+# ============== API Routes - Interactions (Timeline) ==============
+
+@app.get("/api/prospects/{prospect_id}/interactions")
+async def list_interactions(prospect_id: int):
+    """Lista todas as interações de um prospect (timeline)"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT * FROM interactions WHERE prospect_id = %s ORDER BY data_interacao DESC NULLS LAST, created_at DESC",
+        (prospect_id,)
+    )
+    interactions = [row_to_dict(r) for r in cursor.fetchall()]
+    conn.close()
+
+    return {"interactions": interactions}
+
+
+@app.post("/api/prospects/{prospect_id}/interactions")
+async def create_interaction(prospect_id: int, interaction: InteractionCreate):
+    """Cria nova interação na timeline do prospect"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Verificar se prospect existe
+    cursor.execute("SELECT id FROM prospects WHERE id = %s", (prospect_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Prospect não encontrado")
+
+    # Se não tiver data, usar agora
+    data_interacao = interaction.data_interacao or datetime.now()
+
+    cursor.execute('''
+        INSERT INTO interactions (prospect_id, tipo, titulo, descricao, data_interacao,
+                                  fathom_link, fathom_summary, tags, sentimento)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+    ''', (
+        prospect_id,
+        interaction.tipo,
+        interaction.titulo,
+        interaction.descricao,
+        data_interacao.isoformat(),
+        interaction.fathom_link,
+        interaction.fathom_summary,
+        json.dumps(interaction.tags or []),
+        interaction.sentimento
+    ))
+
+    interaction_id = cursor.fetchone()['id']
+
+    # Atualizar data_ultimo_contato do prospect
+    cursor.execute('''
+        UPDATE prospects SET data_ultimo_contato = %s WHERE id = %s
+    ''', (data_interacao.isoformat(), prospect_id))
+
+    # Log
+    cursor.execute('''
+        INSERT INTO activity_log (prospect_id, usuario, acao, detalhes)
+        VALUES (%s, 'Sistema', 'Nova Interação', %s)
+    ''', (prospect_id, f"Tipo: {interaction.tipo} - {interaction.titulo or 'Sem título'}"))
+
+    conn.commit()
+    conn.close()
+
+    return {"id": interaction_id, "status": "created"}
+
+
+@app.put("/api/interactions/{interaction_id}")
+async def update_interaction(interaction_id: int, update: InteractionUpdate):
+    """Atualiza uma interação existente"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    updates = []
+    params = []
+
+    for field, value in update.model_dump(exclude_none=True).items():
+        if field == 'tags' and isinstance(value, list):
+            value = json.dumps(value)
+        if field == 'data_interacao' and value:
+            value = value.isoformat()
+        updates.append(f"{field} = %s")
+        params.append(value)
+
+    if not updates:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+
+    params.append(interaction_id)
+    query = f"UPDATE interactions SET {', '.join(updates)} WHERE id = %s"
+
+    cursor.execute(query, params)
+
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Interação não encontrada")
+
+    conn.commit()
+    conn.close()
+
+    return {"status": "updated"}
+
+
+@app.delete("/api/interactions/{interaction_id}")
+async def delete_interaction(interaction_id: int):
+    """Remove uma interação"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("DELETE FROM interactions WHERE id = %s", (interaction_id,))
+
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Interação não encontrada")
+
+    conn.commit()
+    conn.close()
+
+    return {"status": "deleted"}
 
 
 @app.post("/api/prospects/{prospect_id}/convert")
@@ -576,18 +827,18 @@ async def mark_converted(
     # Atualizar prospect
     cursor.execute('''
         UPDATE prospects
-        SET converted = TRUE, deal_value = ?, conversion_notes = ?, status = 'convertido'
-        WHERE id = ?
+        SET converted = TRUE, deal_value = %s, conversion_notes = %s, status = 'convertido'
+        WHERE id = %s
     ''', (deal_value, notes, prospect_id))
 
     # Buscar dados do prospect para learning
-    cursor.execute("SELECT * FROM prospects WHERE id = ?", (prospect_id,))
+    cursor.execute("SELECT * FROM prospects WHERE id = %s", (prospect_id,))
     prospect = row_to_dict(cursor.fetchone())
 
     # Log
     cursor.execute('''
         INSERT INTO activity_log (prospect_id, usuario, acao, detalhes)
-        VALUES (?, 'Sistema', 'Conversão', ?)
+        VALUES (%s, 'Sistema', 'Conversão', %s)
     ''', (prospect_id, f"Deal: R$ {deal_value}"))
 
     conn.commit()
@@ -608,7 +859,7 @@ async def schedule_meeting(meeting: MeetingCreate, background_tasks: BackgroundT
     cursor = conn.cursor()
 
     # Buscar prospect
-    cursor.execute("SELECT * FROM prospects WHERE id = ?", (meeting.prospect_id,))
+    cursor.execute("SELECT * FROM prospects WHERE id = %s", (meeting.prospect_id,))
     prospect = row_to_dict(cursor.fetchone())
 
     if not prospect:
@@ -647,7 +898,8 @@ async def schedule_meeting(meeting: MeetingCreate, background_tasks: BackgroundT
     # Salvar reunião
     cursor.execute('''
         INSERT INTO meetings (prospect_id, google_event_id, data_hora, duracao_minutos, tipo)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id
     ''', (
         meeting.prospect_id,
         calendar_event.get('id') if calendar_event else None,
@@ -656,19 +908,19 @@ async def schedule_meeting(meeting: MeetingCreate, background_tasks: BackgroundT
         meeting.tipo
     ))
 
-    meeting_id = cursor.lastrowid
+    meeting_id = cursor.fetchone()['id']
 
     # Atualizar status do prospect
     cursor.execute('''
         UPDATE prospects
-        SET status = 'reuniao_agendada', data_reuniao = ?
-        WHERE id = ?
+        SET status = 'reuniao_agendada', data_reuniao = %s
+        WHERE id = %s
     ''', (meeting.data_hora.isoformat(), meeting.prospect_id))
 
     # Log
     cursor.execute('''
         INSERT INTO activity_log (prospect_id, usuario, acao, detalhes)
-        VALUES (?, 'Andressa', 'Reunião Agendada', ?)
+        VALUES (%s, 'Andressa', 'Reunião Agendada', %s)
     ''', (meeting.prospect_id, f"Tipo: {meeting.tipo}, Data: {meeting.data_hora}"))
 
     conn.commit()
@@ -728,12 +980,12 @@ async def submit_feedback(feedback: FeedbackSubmit):
     cursor.execute('''
         UPDATE prospects
         SET status = 'reuniao_realizada',
-            meeting_outcome = ?,
-            meeting_notes = ?,
-            objecoes = ?,
-            interesse_features = ?,
-            data_ultimo_contato = ?
-        WHERE id = ?
+            meeting_outcome = %s,
+            meeting_notes = %s,
+            objecoes = %s,
+            interesse_features = %s,
+            data_ultimo_contato = %s
+        WHERE id = %s
     ''', (
         feedback.outcome.value,
         feedback.notes,
@@ -743,12 +995,15 @@ async def submit_feedback(feedback: FeedbackSubmit):
         feedback.prospect_id
     ))
 
-    # Atualizar meeting
+    # Atualizar meeting (PostgreSQL doesn't support ORDER BY in UPDATE, use subquery)
     cursor.execute('''
         UPDATE meetings
-        SET realizada = TRUE, outcome = ?, objecoes_identificadas = ?, pontos_interesse = ?, proximos_passos = ?
-        WHERE prospect_id = ? AND realizada = FALSE
-        ORDER BY data_hora DESC LIMIT 1
+        SET realizada = TRUE, outcome = %s, objecoes_identificadas = %s, pontos_interesse = %s, proximos_passos = %s
+        WHERE id = (
+            SELECT id FROM meetings
+            WHERE prospect_id = %s AND realizada = FALSE
+            ORDER BY data_hora DESC LIMIT 1
+        )
     ''', (
         feedback.outcome.value,
         json.dumps(feedback.objecoes),
@@ -760,14 +1015,15 @@ async def submit_feedback(feedback: FeedbackSubmit):
     # Registrar objeções para análise
     for objecao in feedback.objecoes:
         cursor.execute('''
-            INSERT OR IGNORE INTO sales_arguments (argumento, categoria, objecao_relacionada)
-            VALUES (?, 'objecao', ?)
+            INSERT INTO sales_arguments (argumento, categoria, objecao_relacionada)
+            VALUES (%s, 'objecao', %s)
+            ON CONFLICT DO NOTHING
         ''', (f"Resposta para: {objecao}", objecao))
 
     # Log
     cursor.execute('''
         INSERT INTO activity_log (prospect_id, usuario, acao, detalhes)
-        VALUES (?, 'Andressa', 'Feedback Reunião', ?)
+        VALUES (%s, 'Andressa', 'Feedback Reunião', %s)
     ''', (feedback.prospect_id, f"Outcome: {feedback.outcome.value}"))
 
     conn.commit()
@@ -814,6 +1070,400 @@ async def sync_fathom_meetings():
         return {"status": "error", "message": str(e)}
 
 
+class FathomLinkRequest(BaseModel):
+    fathom_url: str
+    titulo: Optional[str] = None
+    descricao: Optional[str] = None
+    data_interacao: Optional[datetime] = None
+
+
+@app.post("/api/prospects/{prospect_id}/fathom/link")
+async def link_fathom_meeting(prospect_id: int, request: FathomLinkRequest):
+    """
+    Vincula uma reunião do Fathom ao prospect e cria interação na timeline
+
+    Aceita URL de compartilhamento do Fathom e extrai dados automaticamente
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Verificar se prospect existe
+    cursor.execute("SELECT id, nome FROM prospects WHERE id = %s", (prospect_id,))
+    prospect = cursor.fetchone()
+    if not prospect:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Prospect não encontrado")
+
+    # Extrair dados do Fathom
+    fathom_data = await fathom.extract_from_share_link(request.fathom_url)
+
+    titulo = request.titulo or (fathom_data.get("title") if fathom_data else "Reunião Fathom")
+    descricao = request.descricao or (fathom_data.get("summary") if fathom_data else "")
+    data_interacao = request.data_interacao or datetime.now()
+
+    if fathom_data and fathom_data.get("date"):
+        try:
+            data_interacao = datetime.fromisoformat(fathom_data["date"].replace("Z", "+00:00"))
+        except:
+            pass
+
+    # Criar interação na timeline
+    cursor.execute('''
+        INSERT INTO interactions (prospect_id, tipo, titulo, descricao, data_interacao,
+                                  fathom_link, fathom_summary, tags, sentimento)
+        VALUES (%s, 'reuniao', %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+    ''', (
+        prospect_id,
+        titulo,
+        descricao,
+        data_interacao.isoformat() if hasattr(data_interacao, 'isoformat') else str(data_interacao),
+        request.fathom_url,
+        fathom_data.get("summary", "") if fathom_data else "",
+        json.dumps(["fathom"]),
+        "positivo" if fathom_data else None
+    ))
+
+    interaction_id = cursor.fetchone()['id']
+
+    # Atualizar data_ultimo_contato do prospect
+    cursor.execute('''
+        UPDATE prospects SET data_ultimo_contato = %s, fathom_meeting_id = %s
+        WHERE id = %s
+    ''', (
+        data_interacao.isoformat() if hasattr(data_interacao, 'isoformat') else str(data_interacao),
+        fathom_data.get("call_id") if fathom_data else None,
+        prospect_id
+    ))
+
+    # Log
+    cursor.execute('''
+        INSERT INTO activity_log (prospect_id, usuario, acao, detalhes)
+        VALUES (%s, 'Sistema', 'Fathom Vinculado', %s)
+    ''', (prospect_id, f"Reunião: {titulo}"))
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "linked",
+        "interaction_id": interaction_id,
+        "fathom_data": fathom_data
+    }
+
+
+@app.get("/api/fathom/unlinked")
+async def get_unlinked_fathom_meetings():
+    """Lista reuniões do Fathom que ainda não foram vinculadas a prospects"""
+    if not FATHOM_API_KEY:
+        return {"status": "Fathom API key not configured", "meetings": []}
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Buscar IDs de reuniões já vinculadas
+    cursor.execute('''
+        SELECT DISTINCT fathom_meeting_id FROM prospects
+        WHERE fathom_meeting_id IS NOT NULL
+    ''')
+    linked_ids = [row['fathom_meeting_id'] for row in cursor.fetchall()]
+
+    # Buscar emails de prospects para sugestão de match
+    cursor.execute('SELECT id, nome, email FROM prospects WHERE email IS NOT NULL')
+    prospects_emails = [row_to_dict(row) for row in cursor.fetchall()]
+
+    conn.close()
+
+    try:
+        unlinked = await fathom.get_unlinked_meetings(linked_ids)
+
+        # Adicionar sugestões de match
+        for meeting in unlinked:
+            suggestion = await fathom.suggest_prospect_match(meeting, prospects_emails)
+            meeting['suggested_prospect'] = suggestion
+
+        return {"meetings": unlinked}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "meetings": []}
+
+
+# ============== API Routes - LinkedIn & Enrichment ==============
+
+class LinkedInUpdate(BaseModel):
+    linkedin_url: Optional[str] = None
+    headline: Optional[str] = None
+    location: Optional[str] = None
+    connections: Optional[int] = None
+    notes: Optional[str] = None
+
+class LinkedInPostAdd(BaseModel):
+    post_url: str
+    post_text: str
+    post_date: Optional[str] = None
+    engagement: Optional[int] = None
+
+class RelacionamentoUpdate(BaseModel):
+    tipo: Optional[str] = None  # 'colega_board_academy', 'ex_cliente', 'indicacao', etc
+    conhece_desde: Optional[str] = None
+    conexoes_comuns: Optional[List[str]] = None
+    notas: Optional[str] = None
+
+
+@app.put("/api/prospects/{prospect_id}/linkedin")
+async def update_prospect_linkedin(prospect_id: int, data: LinkedInUpdate):
+    """Atualiza dados do LinkedIn do prospect"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Buscar dados atuais
+    cursor.execute("SELECT dados_enriquecidos, linkedin FROM prospects WHERE id = %s", (prospect_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Prospect não encontrado")
+
+    # Parse dados existentes
+    try:
+        enriched = json.loads(row['dados_enriquecidos']) if row['dados_enriquecidos'] else {}
+    except:
+        enriched = {}
+
+    # Atualizar dados LinkedIn
+    linkedin_data = enriched.get("linkedin", {})
+    if data.linkedin_url:
+        linkedin_data["url"] = linkedin.normalize_linkedin_url(data.linkedin_url)
+        linkedin_data["username"] = linkedin.extract_linkedin_username(data.linkedin_url)
+    if data.headline:
+        linkedin_data["headline"] = data.headline
+    if data.location:
+        linkedin_data["location"] = data.location
+    if data.connections:
+        linkedin_data["connections"] = data.connections
+    if data.notes:
+        linkedin_data["notes"] = data.notes
+
+    linkedin_data["last_updated"] = datetime.now().isoformat()
+    enriched["linkedin"] = linkedin_data
+
+    # Atualizar prospect
+    cursor.execute('''
+        UPDATE prospects
+        SET dados_enriquecidos = %s,
+            linkedin = COALESCE(%s, linkedin)
+        WHERE id = %s
+    ''', (
+        json.dumps(enriched),
+        linkedin.normalize_linkedin_url(data.linkedin_url) if data.linkedin_url else None,
+        prospect_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return {"status": "updated", "linkedin_data": linkedin_data}
+
+
+@app.post("/api/prospects/{prospect_id}/linkedin/posts")
+async def add_linkedin_post(prospect_id: int, post: LinkedInPostAdd):
+    """Adiciona uma publicação relevante do LinkedIn"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT dados_enriquecidos FROM prospects WHERE id = %s", (prospect_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Prospect não encontrado")
+
+    try:
+        enriched = json.loads(row['dados_enriquecidos']) if row['dados_enriquecidos'] else {}
+    except:
+        enriched = {}
+
+    linkedin_data = enriched.get("linkedin", {})
+    linkedin_data = linkedin.add_post(
+        linkedin_data,
+        post.post_url,
+        post.post_text,
+        post.post_date,
+        post.engagement
+    )
+
+    enriched["linkedin"] = linkedin_data
+
+    cursor.execute('''
+        UPDATE prospects SET dados_enriquecidos = %s WHERE id = %s
+    ''', (json.dumps(enriched), prospect_id))
+
+    conn.commit()
+    conn.close()
+
+    return {"status": "added", "posts_count": len(linkedin_data.get("posts", []))}
+
+
+@app.put("/api/prospects/{prospect_id}/relacionamento")
+async def update_prospect_relacionamento(prospect_id: int, data: RelacionamentoUpdate):
+    """Atualiza informações de relacionamento com o prospect"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT dados_enriquecidos FROM prospects WHERE id = %s", (prospect_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Prospect não encontrado")
+
+    try:
+        enriched = json.loads(row['dados_enriquecidos']) if row['dados_enriquecidos'] else {}
+    except:
+        enriched = {}
+
+    relacionamento = enriched.get("relacionamento", {})
+
+    if data.tipo:
+        relacionamento["tipo"] = data.tipo
+    if data.conhece_desde:
+        relacionamento["conhece_desde"] = data.conhece_desde
+    if data.conexoes_comuns:
+        relacionamento["conexoes_comuns"] = data.conexoes_comuns
+    if data.notas:
+        relacionamento["notas"] = data.notas
+
+    relacionamento["last_updated"] = datetime.now().isoformat()
+    enriched["relacionamento"] = relacionamento
+
+    cursor.execute('''
+        UPDATE prospects SET dados_enriquecidos = %s WHERE id = %s
+    ''', (json.dumps(enriched), prospect_id))
+
+    conn.commit()
+    conn.close()
+
+    return {"status": "updated", "relacionamento": relacionamento}
+
+
+@app.get("/api/prospects/{prospect_id}/followup-suggestions")
+async def get_followup_suggestions(prospect_id: int):
+    """Retorna sugestões de follow-up baseadas no contexto do prospect"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM prospects WHERE id = %s", (prospect_id,))
+    prospect = row_to_dict(cursor.fetchone())
+
+    if not prospect:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Prospect não encontrado")
+
+    # Buscar interações recentes
+    cursor.execute('''
+        SELECT * FROM interactions
+        WHERE prospect_id = %s
+        ORDER BY data_interacao DESC LIMIT 5
+    ''', (prospect_id,))
+    interactions = [row_to_dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+
+    suggestions = []
+
+    # 1. Baseado em tempo desde último contato
+    if prospect.get('data_ultimo_contato'):
+        try:
+            last_contact = datetime.fromisoformat(str(prospect['data_ultimo_contato']).replace('Z', '+00:00'))
+            days_since = (datetime.now(last_contact.tzinfo) - last_contact).days if last_contact.tzinfo else (datetime.now() - last_contact).days
+        except:
+            days_since = 999
+
+        if days_since > 30:
+            suggestions.append({
+                "priority": "high",
+                "type": "reengagement",
+                "reason": f"Sem contato há {days_since} dias",
+                "action": "Reengajar contato - enviar mensagem personalizada"
+            })
+        elif days_since > 7:
+            suggestions.append({
+                "priority": "medium",
+                "type": "followup",
+                "reason": f"{days_since} dias sem contato",
+                "action": "Fazer follow-up da última conversa"
+            })
+    else:
+        suggestions.append({
+            "priority": "high",
+            "type": "first_contact",
+            "reason": "Novo prospect",
+            "action": "Fazer primeiro contato"
+        })
+
+    # 2. Baseado no outcome da reunião
+    if prospect.get('meeting_outcome'):
+        outcome = prospect['meeting_outcome']
+        if outcome == 'muito_interessado':
+            suggestions.append({
+                "priority": "high",
+                "type": "proposal",
+                "reason": "Alto interesse demonstrado",
+                "action": "Enviar proposta comercial"
+            })
+        elif outcome == 'interessado':
+            suggestions.append({
+                "priority": "medium",
+                "type": "nurture",
+                "reason": "Interesse moderado",
+                "action": "Enviar material adicional ou case relevante"
+            })
+
+    # 3. Baseado em dados do LinkedIn
+    try:
+        enriched = json.loads(prospect.get('dados_enriquecidos', '{}'))
+        linkedin_data = enriched.get('linkedin', {})
+
+        if linkedin_data.get('posts'):
+            recent_posts = [p for p in linkedin_data['posts'][:3]]
+            if recent_posts:
+                suggestions.append({
+                    "priority": "medium",
+                    "type": "engagement",
+                    "reason": "Publicações recentes no LinkedIn",
+                    "action": f"Comentar publicação: {recent_posts[0].get('text', '')[:50]}...",
+                    "url": recent_posts[0].get('url')
+                })
+
+        # Baseado em relacionamento
+        relacionamento = enriched.get('relacionamento', {})
+        if relacionamento.get('tipo'):
+            suggestions.append({
+                "priority": "low",
+                "type": "relationship",
+                "reason": f"Tipo: {relacionamento['tipo']}",
+                "action": f"Mencionar conexão ({relacionamento['tipo']}) no contato"
+            })
+    except:
+        pass
+
+    # 4. Baseado em interações recentes
+    if interactions:
+        last_interaction = interactions[0]
+        if last_interaction.get('fathom_link') and not last_interaction.get('fathom_summary'):
+            suggestions.append({
+                "priority": "low",
+                "type": "documentation",
+                "reason": "Reunião sem resumo",
+                "action": "Adicionar resumo e próximos passos da reunião"
+            })
+
+    # Ordenar por prioridade
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    suggestions.sort(key=lambda x: priority_order.get(x.get("priority", "low"), 3))
+
+    return {"suggestions": suggestions}
+
+
 # ============== API Routes - Analytics & ICP ==============
 
 @app.get("/api/analytics/dashboard")
@@ -844,22 +1494,21 @@ async def get_dashboard_stats(user_role: str = "operador"):
     stats['por_status'] = {row['status']: row['count'] for row in cursor.fetchall()}
 
     # Conversões
-    cursor.execute(f'SELECT COUNT(*) FROM prospects WHERE converted = TRUE {aprovado_filter}')
-    stats['total_convertidos'] = cursor.fetchone()[0]
+    cursor.execute(f'SELECT COUNT(*) as count FROM prospects WHERE converted = TRUE {aprovado_filter}')
+    stats['total_convertidos'] = cursor.fetchone()['count']
 
-    cursor.execute(f'SELECT SUM(deal_value) FROM prospects WHERE converted = TRUE {aprovado_filter}')
-    result = cursor.fetchone()[0]
-    stats['receita_total'] = result or 0
+    cursor.execute(f'SELECT COALESCE(SUM(deal_value), 0) as total FROM prospects WHERE converted = TRUE {aprovado_filter}')
+    stats['receita_total'] = float(cursor.fetchone()['total'])
 
     # Reuniões
-    cursor.execute('SELECT COUNT(*) FROM meetings WHERE realizada = TRUE')
-    stats['reunioes_realizadas'] = cursor.fetchone()[0]
+    cursor.execute('SELECT COUNT(*) as count FROM meetings WHERE realizada = TRUE')
+    stats['reunioes_realizadas'] = cursor.fetchone()['count']
 
     cursor.execute('''
-        SELECT COUNT(*) FROM meetings
-        WHERE data_hora > ? AND realizada = FALSE
+        SELECT COUNT(*) as count FROM meetings
+        WHERE data_hora > %s AND realizada = FALSE
     ''', (datetime.now().isoformat(),))
-    stats['reunioes_agendadas'] = cursor.fetchone()[0]
+    stats['reunioes_agendadas'] = cursor.fetchone()['count']
 
     # Top prospects para contato (só aprovados para Andressa)
     cursor.execute(f'''
@@ -905,10 +1554,10 @@ async def get_sales_funnel():
     funnel = []
     for label, status in funnel_stages:
         cursor.execute(
-            'SELECT COUNT(*) FROM prospects WHERE status = ?',
+            'SELECT COUNT(*) as count FROM prospects WHERE status = %s',
             (status,)
         )
-        count = cursor.fetchone()[0]
+        count = cursor.fetchone()['count']
         funnel.append({"stage": label, "count": count})
 
     conn.close()
@@ -917,52 +1566,417 @@ async def get_sales_funnel():
 
 # ============== Import de dados ==============
 
-@app.post("/api/import/csv")
-async def import_from_csv(background_tasks: BackgroundTasks):
+class BulkImportData(BaseModel):
+    prospects: List[dict]
+
+class BulkNameUpdate(BaseModel):
+    updates: List[dict]  # [{email: str, nome: str, empresa: str}]
+
+@app.post("/api/admin/update-names")
+async def update_prospect_names(data: BulkNameUpdate):
     """
-    Importa prospects do CSV processado
-
-    Usa o arquivo gerado pelo script de análise inicial
+    Atualiza nomes dos prospects em massa baseado no email
     """
-    import csv
-
-    csv_path = os.path.join(DATA_DIR, "prospects_imensiah.csv")
-
-    if not os.path.exists(csv_path):
-        raise HTTPException(status_code=404, detail="Arquivo CSV não encontrado")
-
     conn = get_db()
     cursor = conn.cursor()
 
-    imported = 0
-    with open(csv_path, 'r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
+    updated = 0
+    not_found = 0
 
-        for row in reader:
-            try:
-                cursor.execute('''
-                    INSERT OR IGNORE INTO prospects
-                    (nome, empresa, cargo, email, telefone, score, tier, reasons, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendente_aprovacao')
-                ''', (
-                    row.get('Nome', ''),
-                    row.get('Empresa', ''),
-                    row.get('Cargo', ''),
-                    row.get('Email', ''),
-                    row.get('Telefone', ''),
-                    int(row.get('Score', 0)),
-                    row.get('Tier', 'E').split()[0],
-                    row.get('Razões de Qualificação', '')
-                ))
-                imported += 1
-            except Exception as e:
-                print(f"Error importing row: {e}")
-                continue
+    for item in data.updates:
+        email = item.get('email', '').lower().strip()
+        nome = item.get('nome', '').strip()
+        empresa = item.get('empresa', '').strip()
+
+        if not email or not nome:
+            continue
+
+        # Update by email match
+        cursor.execute('''
+            UPDATE prospects
+            SET nome = %s,
+                empresa = COALESCE(NULLIF(%s, ''), empresa)
+            WHERE LOWER(email) = %s
+        ''', (nome, empresa, email))
+
+        if cursor.rowcount > 0:
+            updated += cursor.rowcount
+        else:
+            not_found += 1
 
     conn.commit()
     conn.close()
 
-    return {"status": "imported", "count": imported}
+    return {
+        "status": "completed",
+        "updated": updated,
+        "not_found": not_found
+    }
+
+@app.post("/api/import/bulk")
+async def import_bulk(data: BulkImportData):
+    """
+    Importa prospects via JSON
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    imported = 0
+    errors = 0
+
+    for row in data.prospects:
+        try:
+            email = row.get('email') or row.get('Email') or None
+            nome = row.get('nome') or row.get('Nome', '')
+            # Clean nome - remove brackets if present
+            if nome.startswith('[') and ']' in nome:
+                nome = nome[1:nome.index(']')]
+
+            cursor.execute('''
+                INSERT INTO prospects
+                (nome, empresa, cargo, email, telefone, score, tier, reasons, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pendente_aprovacao')
+            ''', (
+                nome,
+                row.get('empresa') or row.get('Empresa', ''),
+                row.get('cargo') or row.get('Cargo', ''),
+                email if email else None,
+                row.get('telefone') or row.get('Telefone', ''),
+                int(row.get('score') or row.get('Score', 0)),
+                (row.get('tier') or row.get('Tier', 'E')).split()[0],
+                row.get('reasons') or row.get('Razões de Qualificação', '')
+            ))
+            imported += 1
+        except Exception as e:
+            errors += 1
+            continue
+
+    conn.commit()
+    conn.close()
+
+    return {"status": "imported", "count": imported, "errors": errors}
+
+
+# ============== API Routes - Contacts (RAP) ==============
+
+class ContactCreate(BaseModel):
+    nome: str
+    apelido: Optional[str] = None
+    empresa: Optional[str] = None
+    cargo: Optional[str] = None
+    emails: Optional[List[dict]] = []
+    telefones: Optional[List[dict]] = []
+    linkedin: Optional[str] = None
+    contexto: Optional[str] = 'professional'
+    categorias: Optional[List[str]] = []
+    tags: Optional[List[str]] = []
+    aniversario: Optional[str] = None
+    google_contact_id: Optional[str] = None
+    origem: Optional[str] = 'manual'
+
+class ContactsImportData(BaseModel):
+    contacts: List[dict]
+
+
+@app.get("/api/contacts")
+async def list_contacts(
+    search: Optional[str] = None,
+    contexto: Optional[str] = None,
+    limit: int = Query(50, le=500),
+    offset: int = 0
+):
+    """Lista todos os contatos com busca"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    query = "SELECT * FROM contacts WHERE 1=1"
+    params = []
+
+    if search:
+        query += " AND (nome ILIKE %s OR empresa ILIKE %s OR cargo ILIKE %s)"
+        search_term = f"%{search}%"
+        params.extend([search_term, search_term, search_term])
+
+    if contexto:
+        query += " AND contexto = %s"
+        params.append(contexto)
+
+    query += " ORDER BY nome ASC LIMIT %s OFFSET %s"
+    params.extend([limit, offset])
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+
+    # Count total
+    count_query = "SELECT COUNT(*) as count FROM contacts WHERE 1=1"
+    count_params = []
+    if search:
+        count_query += " AND (nome ILIKE %s OR empresa ILIKE %s OR cargo ILIKE %s)"
+        count_params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+    if contexto:
+        count_query += " AND contexto = %s"
+        count_params.append(contexto)
+
+    cursor.execute(count_query, count_params if count_params else None)
+    total = cursor.fetchone()['count']
+
+    conn.close()
+
+    return {
+        "contacts": [row_to_dict(row) for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@app.get("/api/contacts/{contact_id}")
+async def get_contact(contact_id: int):
+    """Obtém detalhes de um contato com timeline"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM contacts WHERE id = %s", (contact_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Contato não encontrado")
+
+    contact = row_to_dict(row)
+
+    # Buscar memórias/interações
+    cursor.execute('''
+        SELECT * FROM contact_memories
+        WHERE contact_id = %s
+        ORDER BY data_ocorrencia DESC
+        LIMIT 50
+    ''', (contact_id,))
+    memories = [row_to_dict(r) for r in cursor.fetchall()]
+
+    # Buscar fatos
+    cursor.execute('''
+        SELECT * FROM contact_facts
+        WHERE contact_id = %s
+        ORDER BY criado_em DESC
+    ''', (contact_id,))
+    facts = [row_to_dict(r) for r in cursor.fetchall()]
+
+    # Buscar conversas recentes
+    cursor.execute('''
+        SELECT * FROM conversations
+        WHERE contact_id = %s
+        ORDER BY ultimo_mensagem DESC
+        LIMIT 10
+    ''', (contact_id,))
+    conversations = [row_to_dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+
+    return {
+        "contact": contact,
+        "memories": memories,
+        "facts": facts,
+        "conversations": conversations
+    }
+
+
+@app.post("/api/contacts")
+async def create_contact(contact: ContactCreate):
+    """Cria novo contato"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        INSERT INTO contacts (nome, apelido, empresa, cargo, emails, telefones,
+                             linkedin, contexto, categorias, tags, aniversario,
+                             google_contact_id, origem)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+    ''', (
+        contact.nome,
+        contact.apelido,
+        contact.empresa,
+        contact.cargo,
+        json.dumps(contact.emails),
+        json.dumps(contact.telefones),
+        contact.linkedin,
+        contact.contexto,
+        json.dumps(contact.categorias),
+        json.dumps(contact.tags),
+        contact.aniversario,
+        contact.google_contact_id,
+        contact.origem
+    ))
+
+    contact_id = cursor.fetchone()['id']
+    conn.commit()
+    conn.close()
+
+    return {"id": contact_id, "status": "created"}
+
+
+@app.post("/api/contacts/import")
+async def import_contacts(data: ContactsImportData):
+    """
+    Importa contatos do Google Contacts CSV (formato JSON)
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    imported = 0
+    errors = 0
+    duplicates = 0
+
+    for row in data.contacts:
+        try:
+            # Build name
+            first = row.get('First Name', '').strip()
+            middle = row.get('Middle Name', '').strip()
+            last = row.get('Last Name', '').strip()
+            nome = f"{first} {middle} {last}".strip()
+            nome = ' '.join(nome.split())  # Remove extra spaces
+
+            if not nome:
+                nome = row.get('Organization Name', '').strip()
+
+            if not nome:
+                errors += 1
+                continue
+
+            # Build emails array
+            emails = []
+            for i in range(1, 5):
+                email_val = row.get(f'E-mail {i} - Value', '').strip()
+                email_type = row.get(f'E-mail {i} - Label', 'other').strip()
+                if email_val and '@' in email_val:
+                    emails.append({
+                        'type': email_type.lower().replace('* ', ''),
+                        'email': email_val.lower(),
+                        'primary': i == 1
+                    })
+
+            # Build phones array
+            telefones = []
+            for i in range(1, 5):
+                phone_val = row.get(f'Phone {i} - Value', '').strip()
+                phone_type = row.get(f'Phone {i} - Label', 'other').strip()
+                if phone_val:
+                    # Clean phone - take first number if multiple
+                    phone_val = phone_val.split(':::')[0].strip()
+                    telefones.append({
+                        'type': phone_type.lower(),
+                        'number': phone_val,
+                        'whatsapp': 'mobile' in phone_type.lower()
+                    })
+
+            # Other fields
+            empresa = row.get('Organization Name', '').strip()
+            cargo = row.get('Organization Title', '').strip()
+            birthday = row.get('Birthday', '').strip()
+            notes = row.get('Notes', '').strip()
+
+            # Check for duplicate by google_contact_id or email
+            google_id = None  # CSV doesn't have this
+            if emails:
+                cursor.execute(
+                    "SELECT id FROM contacts WHERE emails @> %s::jsonb",
+                    (json.dumps([{'email': emails[0]['email']}]),)
+                )
+                if cursor.fetchone():
+                    duplicates += 1
+                    continue
+
+            cursor.execute('''
+                INSERT INTO contacts (nome, empresa, cargo, emails, telefones,
+                                     contexto, origem, aniversario)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                nome,
+                empresa,
+                cargo,
+                json.dumps(emails),
+                json.dumps(telefones),
+                'professional',
+                'google_contacts',
+                birthday if birthday and birthday != '0/0/00' else None
+            ))
+            imported += 1
+
+        except Exception as e:
+            errors += 1
+            continue
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "imported",
+        "imported": imported,
+        "duplicates": duplicates,
+        "errors": errors
+    }
+
+
+@app.post("/api/contacts/{contact_id}/enrich")
+async def enrich_contact(contact_id: int, background_tasks: BackgroundTasks):
+    """
+    Enriquece contato com dados externos (LinkedIn, foto, etc)
+    Executa em background
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Mark as enriching
+    cursor.execute('''
+        UPDATE contacts SET enriquecimento_status = 'pending'
+        WHERE id = %s
+    ''', (contact_id,))
+
+    conn.commit()
+    conn.close()
+
+    # TODO: Add background task for enrichment
+    # background_tasks.add_task(enrich_contact_background, contact_id)
+
+    return {"status": "enrichment_started", "contact_id": contact_id}
+
+
+@app.get("/api/contacts/stats")
+async def contacts_stats():
+    """Estatísticas dos contatos"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) as count FROM contacts")
+    total = cursor.fetchone()['count']
+
+    cursor.execute('''
+        SELECT contexto, COUNT(*) as count FROM contacts
+        GROUP BY contexto
+    ''')
+    by_context = {row['contexto']: row['count'] for row in cursor.fetchall()}
+
+    cursor.execute('''
+        SELECT COUNT(*) as count FROM contacts
+        WHERE foto_url IS NOT NULL
+    ''')
+    with_photo = cursor.fetchone()['count']
+
+    cursor.execute('''
+        SELECT COUNT(*) as count FROM contacts
+        WHERE linkedin IS NOT NULL
+    ''')
+    with_linkedin = cursor.fetchone()['count']
+
+    conn.close()
+
+    return {
+        "total": total,
+        "by_context": by_context,
+        "with_photo": with_photo,
+        "with_linkedin": with_linkedin
+    }
 
 
 # Vercel handler

@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 from enum import Enum
-import sqlite3
 import json
 
 class ProspectStatus(str, Enum):
@@ -125,131 +124,8 @@ class ICPAnalysis(BaseModel):
 
     data_analise: datetime = Field(default_factory=datetime.now)
 
-# Database Setup
-def init_db(db_path: str = "data/prospects.db"):
-    """Inicializa o banco de dados"""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    # Tabela de usuários
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            role TEXT DEFAULT 'operador',
-            senha_hash TEXT,
-            tutorial_concluido BOOLEAN DEFAULT FALSE,
-            data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            ultimo_acesso TIMESTAMP
-        )
-    ''')
-
-    # Inserir usuários padrão
-    cursor.execute('''
-        INSERT OR IGNORE INTO users (nome, email, role, tutorial_concluido)
-        VALUES ('Renato', 'renato@almeida-prado.com', 'admin', TRUE)
-    ''')
-    cursor.execute('''
-        INSERT OR IGNORE INTO users (nome, email, role, tutorial_concluido)
-        VALUES ('Andressa Santos', 'andressa@almeida-prado.com', 'operador', FALSE)
-    ''')
-
-    # Tabela de prospects
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS prospects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT NOT NULL,
-            empresa TEXT,
-            cargo TEXT,
-            email TEXT,
-            telefone TEXT,
-            website TEXT,
-            linkedin TEXT,
-            score INTEGER DEFAULT 0,
-            tier TEXT DEFAULT 'E',
-            score_breakdown TEXT DEFAULT '{}',
-            reasons TEXT DEFAULT '[]',
-            status TEXT DEFAULT 'pendente_aprovacao',
-            aprovado_por_renato BOOLEAN DEFAULT FALSE,
-            data_aprovacao TIMESTAMP,
-            notas_renato TEXT,
-            prioridade_renato INTEGER DEFAULT 0,
-            data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            data_ultimo_contato TIMESTAMP,
-            data_reuniao TIMESTAMP,
-            meeting_outcome TEXT,
-            fathom_meeting_id TEXT,
-            meeting_notes TEXT,
-            objecoes TEXT DEFAULT '[]',
-            interesse_features TEXT DEFAULT '[]',
-            converted BOOLEAN DEFAULT FALSE,
-            deal_value REAL,
-            conversion_notes TEXT,
-            dados_enriquecidos TEXT DEFAULT '{}'
-        )
-    ''')
-
-    # Tabela de reuniões
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS meetings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            prospect_id INTEGER NOT NULL,
-            google_event_id TEXT,
-            fathom_meeting_id TEXT,
-            data_hora TIMESTAMP,
-            duracao_minutos INTEGER DEFAULT 30,
-            tipo TEXT DEFAULT 'discovery',
-            realizada BOOLEAN DEFAULT FALSE,
-            outcome TEXT,
-            summary TEXT,
-            key_topics TEXT DEFAULT '[]',
-            action_items TEXT DEFAULT '[]',
-            sentiment TEXT,
-            objecoes_identificadas TEXT DEFAULT '[]',
-            pontos_interesse TEXT DEFAULT '[]',
-            proximos_passos TEXT,
-            FOREIGN KEY (prospect_id) REFERENCES prospects(id)
-        )
-    ''')
-
-    # Tabela de análise de ICP
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS icp_analysis (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data_analise TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            analysis_data TEXT NOT NULL
-        )
-    ''')
-
-    # Tabela de argumentos de venda
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS sales_arguments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            argumento TEXT NOT NULL,
-            categoria TEXT,
-            efetividade_score REAL DEFAULT 0,
-            vezes_usado INTEGER DEFAULT 0,
-            vezes_converteu INTEGER DEFAULT 0,
-            objecao_relacionada TEXT,
-            data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-
-    # Tabela de log de atividades
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS activity_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            prospect_id INTEGER,
-            usuario TEXT,
-            acao TEXT NOT NULL,
-            detalhes TEXT,
-            data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (prospect_id) REFERENCES prospects(id)
-        )
-    ''')
-
-    conn.commit()
-    conn.close()
-
-    return True
+# Database initialization is now in database.py
+def init_db(db_path: str = None):
+    """Wrapper for backwards compatibility - now uses PostgreSQL"""
+    from database import init_db as pg_init_db
+    return pg_init_db()
