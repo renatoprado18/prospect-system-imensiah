@@ -252,8 +252,6 @@ async def sync_contacts_from_google(
     Sync all contacts from a Google account to local database
     Returns stats: {imported, updated, skipped, errors}
     """
-    from database import row_to_dict
-
     stats = {"imported": 0, "updated": 0, "skipped": 0, "errors": 0}
 
     try:
