@@ -271,13 +271,15 @@
         function executeConfirmedAction() {
             console.log('executeConfirmedAction called!');
             const syncGoogle = document.getElementById('sync-google').checked;
-            console.log('syncGoogle:', syncGoogle, 'pendingAction:', pendingAction);
-            closeConfirmModal();
-            if (pendingAction) {
-                console.log('Calling pendingAction...');
-                pendingAction(syncGoogle);
+            const action = pendingAction; // Save before closing
+            console.log('syncGoogle:', syncGoogle, 'action:', action);
+            document.getElementById('confirm-modal').classList.add('hidden');
+            pendingAction = null;
+            if (action) {
+                console.log('Calling action...');
+                action(syncGoogle);
             } else {
-                console.error('pendingAction is null!');
+                console.error('action is null!');
             }
         }
 
