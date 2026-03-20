@@ -1745,6 +1745,43 @@ async def list_contacts(
     }
 
 
+@app.get("/api/contacts/stats")
+async def contacts_stats():
+    """Estatísticas dos contatos"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) as count FROM contacts")
+    total = cursor.fetchone()['count']
+
+    cursor.execute('''
+        SELECT contexto, COUNT(*) as count FROM contacts
+        GROUP BY contexto
+    ''')
+    by_context = {row['contexto']: row['count'] for row in cursor.fetchall()}
+
+    cursor.execute('''
+        SELECT COUNT(*) as count FROM contacts
+        WHERE foto_url IS NOT NULL AND foto_url != ''
+    ''')
+    with_photo = cursor.fetchone()['count']
+
+    cursor.execute('''
+        SELECT COUNT(*) as count FROM contacts
+        WHERE linkedin IS NOT NULL AND linkedin != ''
+    ''')
+    with_linkedin = cursor.fetchone()['count']
+
+    conn.close()
+
+    return {
+        "total": total,
+        "by_context": by_context,
+        "with_photo": with_photo,
+        "with_linkedin": with_linkedin
+    }
+
+
 @app.get("/api/contacts/{contact_id}")
 async def get_contact(contact_id: int):
     """Obtém detalhes de um contato com timeline"""
@@ -1955,43 +1992,6 @@ async def enrich_contact(contact_id: int, background_tasks: BackgroundTasks):
     # background_tasks.add_task(enrich_contact_background, contact_id)
 
     return {"status": "enrichment_started", "contact_id": contact_id}
-
-
-@app.get("/api/contacts/stats")
-async def contacts_stats():
-    """Estatísticas dos contatos"""
-    conn = get_db()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT COUNT(*) as count FROM contacts")
-    total = cursor.fetchone()['count']
-
-    cursor.execute('''
-        SELECT contexto, COUNT(*) as count FROM contacts
-        GROUP BY contexto
-    ''')
-    by_context = {row['contexto']: row['count'] for row in cursor.fetchall()}
-
-    cursor.execute('''
-        SELECT COUNT(*) as count FROM contacts
-        WHERE foto_url IS NOT NULL
-    ''')
-    with_photo = cursor.fetchone()['count']
-
-    cursor.execute('''
-        SELECT COUNT(*) as count FROM contacts
-        WHERE linkedin IS NOT NULL
-    ''')
-    with_linkedin = cursor.fetchone()['count']
-
-    conn.close()
-
-    return {
-        "total": total,
-        "by_context": by_context,
-        "with_photo": with_photo,
-        "with_linkedin": with_linkedin
-    }
 
 
 # ============== Google Accounts Integration ==============
