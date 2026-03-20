@@ -27,6 +27,7 @@ from scoring import DynamicScorer
 from integrations.google_calendar import GoogleCalendarIntegration, create_calendar_link
 from integrations.fathom import FathomIntegration, handle_fathom_webhook
 from integrations.linkedin import LinkedInIntegration
+from integrations.whatsapp import WhatsAppIntegration, parse_webhook_message, format_phone_display
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
@@ -82,6 +83,7 @@ scorer = DynamicScorer()  # Now uses PostgreSQL
 calendar = GoogleCalendarIntegration()
 fathom = FathomIntegration()
 linkedin = LinkedInIntegration()
+whatsapp = WhatsAppIntegration()
 
 
 # ============== Pydantic Models ==============
@@ -1093,6 +1095,155 @@ async def fathom_webhook(request: Request):
     payload = await request.json()
     result = await handle_fathom_webhook(payload)
     return result
+
+
+# ============== WhatsApp Integration ==============
+
+@app.post("/api/webhooks/whatsapp")
+async def whatsapp_webhook(request: Request):
+    """
+    Webhook para receber eventos da Evolution API (WhatsApp)
+
+    Events:
+    - messages.upsert: Nova mensagem recebida/enviada
+    - connection.update: Status da conexao mudou
+    """
+    try:
+        payload = await request.json()
+        parsed = parse_webhook_message(payload)
+
+        if not parsed:
+            return {"status": "ignored", "reason": "unsupported event"}
+
+        # Handle connection updates
+        if parsed.get("event") == "connection_update":
+            return {"status": "ok", "connection_state": parsed.get("state")}
+
+        # Process message
+        phone = parsed.get("phone")
+        direction = parsed.get("direction")
+        content = parsed.get("content")
+        timestamp = parsed.get("timestamp")
+        push_name = parsed.get("push_name")
+
+        if not phone or not content:
+            return {"status": "ignored", "reason": "no content"}
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        try:
+            # Find contact by phone number (search in telefones JSONB array)
+            cursor.execute("""
+                SELECT id, nome, telefones
+                FROM contacts
+                WHERE telefones::text ILIKE %s
+                LIMIT 1
+            """, (f'%{phone[-8:]}%',))  # Match last 8 digits
+
+            contact = cursor.fetchone()
+            contact_id = None
+            contact_name = push_name or "Desconhecido"
+
+            if contact:
+                contact_id = contact['id']
+                contact_name = contact['nome']
+
+                # Update ultimo_contato
+                cursor.execute("""
+                    UPDATE contacts
+                    SET ultimo_contato = %s
+                    WHERE id = %s
+                """, (timestamp, contact_id))
+
+            # Find or create conversation
+            conversation_id = None
+            if contact_id:
+                cursor.execute("""
+                    SELECT id FROM conversations
+                    WHERE contact_id = %s AND canal = 'whatsapp'
+                    LIMIT 1
+                """, (contact_id,))
+                conv = cursor.fetchone()
+
+                if conv:
+                    conversation_id = conv['id']
+                    # Update last message time
+                    cursor.execute("""
+                        UPDATE conversations
+                        SET ultimo_mensagem = %s, total_mensagens = total_mensagens + 1
+                        WHERE id = %s
+                    """, (timestamp, conversation_id))
+                else:
+                    # Create new conversation
+                    cursor.execute("""
+                        INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
+                        VALUES (%s, 'whatsapp', %s, 1)
+                        RETURNING id
+                    """, (contact_id, timestamp))
+                    conversation_id = cursor.fetchone()['id']
+
+            # Save message
+            cursor.execute("""
+                INSERT INTO messages (conversation_id, contact_id, direcao, conteudo, enviado_em, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (conversation_id, contact_id, direction, content, timestamp,
+                  json.dumps({"phone": phone, "push_name": push_name})))
+
+            message_id = cursor.fetchone()['id']
+            conn.commit()
+
+            return {
+                "status": "ok",
+                "message_id": message_id,
+                "contact_id": contact_id,
+                "contact_name": contact_name,
+                "direction": direction
+            }
+
+        except Exception as e:
+            conn.rollback()
+            print(f"WhatsApp webhook error: {e}")
+            return {"status": "error", "message": str(e)}
+        finally:
+            cursor.close()
+            conn.close()
+
+    except Exception as e:
+        print(f"WhatsApp webhook parse error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/whatsapp/status")
+async def whatsapp_status():
+    """Get WhatsApp connection status"""
+    status = await whatsapp.get_connection_status()
+    return status
+
+
+@app.post("/api/whatsapp/send")
+async def send_whatsapp_message(request: Request):
+    """
+    Send a WhatsApp message
+
+    Body:
+    - phone: Phone number (any format)
+    - message: Text message
+    """
+    data = await request.json()
+    phone = data.get("phone")
+    message = data.get("message")
+
+    if not phone or not message:
+        raise HTTPException(status_code=400, detail="phone and message required")
+
+    result = await whatsapp.send_text(phone, message)
+
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return {"status": "sent", "result": result}
 
 
 @app.get("/api/fathom/sync")
