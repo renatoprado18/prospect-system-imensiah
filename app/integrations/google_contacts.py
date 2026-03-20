@@ -598,6 +598,11 @@ async def sync_contacts_incremental(
         "full_sync_required": False
     }
 
+    # If no sync token, we need a full sync first
+    if not sync_token:
+        stats["full_sync_required"] = True
+        return stats
+
     try:
         result = await fetch_contacts_incremental(access_token, sync_token)
     except Exception as e:
