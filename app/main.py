@@ -1950,15 +1950,17 @@ async def merge_contacts_endpoint(request: Request):
 @app.post("/api/contacts/auto-merge-all")
 async def auto_merge_all_duplicates(request: Request):
     """
-    Automatically merge all detected duplicates.
-    Propagates changes to Google Contacts.
+    Automatically merge duplicates in batches to avoid timeout.
+    Use batch_size and offset for pagination.
     """
     user = get_current_user(request)
     if not user or user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Apenas admin")
 
     body = await request.json() if request.headers.get('content-type') == 'application/json' else {}
-    propagate = body.get('propagate', True)
+    propagate = body.get('propagate', False)  # Default to False for speed
+    batch_size = body.get('batch_size', 50)  # Process 50 groups at a time
+    offset = body.get('offset', 0)
 
     conn = get_db()
     cursor = conn.cursor()
@@ -1970,20 +1972,25 @@ async def auto_merge_all_duplicates(request: Request):
     ''')
     contacts = [row_to_dict(row) for row in cursor.fetchall()]
 
-    duplicates = find_duplicates(contacts)
+    all_duplicates = find_duplicates(contacts)
+    duplicate_keys = list(all_duplicates.keys())
+    total_groups = len(duplicate_keys)
+
+    # Get batch of duplicates to process
+    batch_keys = duplicate_keys[offset:offset + batch_size]
 
     merged_count = 0
     deleted_count = 0
     google_updates = 0
     google_errors = 0
 
-    for key, dup_contacts in duplicates.items():
+    for key in batch_keys:
+        dup_contacts = all_duplicates[key]
         if len(dup_contacts) >= 2:
             if propagate:
                 result = await merge_duplicate_contacts_with_propagation(
                     dup_contacts, conn, google_contacts_module
                 )
-                # Count Google propagation stats
                 google_prop = result.get('google_propagation', {})
                 for account, status in google_prop.get('updates', {}).items():
                     if status.get('status') in ['updated', 'created']:
@@ -1999,9 +2006,18 @@ async def auto_merge_all_duplicates(request: Request):
 
     conn.close()
 
+    next_offset = offset + batch_size
+    has_more = next_offset < total_groups
+
     response = {
         "merged_groups": merged_count,
-        "deleted_contacts": deleted_count
+        "deleted_contacts": deleted_count,
+        "batch_processed": len(batch_keys),
+        "total_groups": total_groups,
+        "offset": offset,
+        "next_offset": next_offset if has_more else None,
+        "has_more": has_more,
+        "progress_percent": min(100, int((next_offset / total_groups) * 100)) if total_groups > 0 else 100
     }
 
     if propagate:

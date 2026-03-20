@@ -456,36 +456,81 @@
         }
 
         async function mergeAllDuplicates(syncGoogle) {
-            showProgress('Mesclando Duplicatas', 'Processando grupos de contatos duplicados...');
-            updateProgress(30, 'Mesclando contatos...');
+            showProgress('Mesclando Duplicatas', 'Iniciando processamento em lotes...');
+            updateProgress(0, 'Preparando...');
+
+            let totalMerged = 0;
+            let totalDeleted = 0;
+            let totalGoogleUpdates = 0;
+            let totalGoogleErrors = 0;
+            let offset = 0;
+            let hasMore = true;
+            let batchNum = 0;
 
             try {
-                const response = await fetch('/api/contacts/auto-merge-all', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ propagate: syncGoogle })
-                });
-                const result = await response.json();
+                while (hasMore) {
+                    batchNum++;
+                    updateProgress(0, `Processando lote ${batchNum}...`);
+
+                    const response = await fetch('/api/contacts/auto-merge-all', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            propagate: syncGoogle,
+                            batch_size: 50,
+                            offset: offset
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const error = await response.json();
+                        throw new Error(error.detail || 'Erro ao processar');
+                    }
+
+                    const result = await response.json();
+
+                    totalMerged += result.merged_groups;
+                    totalDeleted += result.deleted_contacts;
+                    if (result.google_updates) totalGoogleUpdates += result.google_updates;
+                    if (result.google_errors) totalGoogleErrors += result.google_errors;
+
+                    hasMore = result.has_more;
+                    offset = result.next_offset || 0;
+
+                    updateProgress(
+                        result.progress_percent,
+                        `${totalMerged} grupos mesclados, ${totalDeleted} removidos...`
+                    );
+
+                    // Small delay between batches
+                    if (hasMore) {
+                        await new Promise(r => setTimeout(r, 200));
+                    }
+                }
 
                 updateProgress(100, 'Concluido!');
                 await new Promise(r => setTimeout(r, 500));
                 hideProgress();
 
                 let content = `
-                    <p class="mb-2"><strong>${result.merged_groups}</strong> grupos mesclados</p>
-                    <p class="mb-2"><strong>${result.deleted_contacts}</strong> contatos duplicados removidos</p>
+                    <p class="mb-2"><strong>${totalMerged}</strong> grupos mesclados</p>
+                    <p class="mb-2"><strong>${totalDeleted}</strong> contatos duplicados removidos</p>
                 `;
-                if (syncGoogle && result.google_updates !== undefined) {
-                    content += `<p class="text-sm text-gray-500">${result.google_updates} atualizados no Google</p>`;
-                    if (result.google_errors > 0) {
-                        content += `<p class="text-sm text-red-500">${result.google_errors} erros no Google</p>`;
+                if (syncGoogle) {
+                    content += `<p class="text-sm text-gray-500">${totalGoogleUpdates} atualizados no Google</p>`;
+                    if (totalGoogleErrors > 0) {
+                        content += `<p class="text-sm text-red-500">${totalGoogleErrors} erros no Google</p>`;
                     }
                 }
                 showResult(true, 'Duplicatas Mescladas!', content);
 
             } catch (err) {
                 hideProgress();
-                showResult(false, 'Erro', `<p class="text-red-600">${err.message}</p>`);
+                let errorContent = `<p class="text-red-600 mb-2">${err.message}</p>`;
+                if (totalMerged > 0) {
+                    errorContent += `<p class="text-gray-600">Parcialmente concluido: ${totalMerged} grupos mesclados antes do erro.</p>`;
+                }
+                showResult(false, 'Erro', errorContent);
             }
         }
 
