@@ -2311,5 +2311,232 @@ async def disconnect_google_account(request: Request, account_id: int):
     return {"status": "disconnected"}
 
 
+# ============== Contact Deduplication & Normalization ==============
+
+from services.contact_dedup import (
+    analyze_contacts,
+    normalize_name,
+    apply_name_fixes,
+    merge_duplicate_contacts,
+    find_duplicates,
+    merge_contacts,
+    apply_name_fixes_with_propagation,
+    merge_duplicate_contacts_with_propagation,
+    propagate_contact_to_google
+)
+import integrations.google_contacts as google_contacts_module
+
+
+@app.get("/api/contacts/analyze")
+async def analyze_contacts_issues(request: Request):
+    """Analyze contacts for duplicates, name issues, etc."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        SELECT id, nome, empresa, cargo, emails, telefones, foto_url,
+               linkedin, contexto, google_contact_id, origem
+        FROM contacts
+        ORDER BY nome
+    ''')
+
+    contacts = [row_to_dict(row) for row in cursor.fetchall()]
+    conn.close()
+
+    analysis = analyze_contacts(contacts)
+
+    return {
+        "total_contacts": analysis['total_contacts'],
+        "issues_count": analysis['issues_count'],
+        "duplicates": len(analysis['duplicates']),
+        "caps_lock_names": len(analysis['caps_lock_names']),
+        "lowercase_names": len(analysis['lowercase_names']),
+        "no_phone": len(analysis['no_phone']),
+        "no_email": len(analysis['no_email']),
+        "no_name": len(analysis['no_name']),
+        "details": {
+            "duplicates": analysis['duplicates'][:20],  # Limit for response size
+            "caps_lock_names": analysis['caps_lock_names'][:50],
+            "lowercase_names": analysis['lowercase_names'][:50]
+        }
+    }
+
+
+@app.post("/api/contacts/fix-names")
+async def fix_contact_names(request: Request, propagate: bool = True):
+    """
+    Fix ALL CAPS and lowercase names.
+    If propagate=True, also updates Google Contacts.
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Find contacts with name issues
+    cursor.execute('''
+        SELECT id, nome, empresa, cargo, emails, telefones, google_contact_id, contexto
+        FROM contacts
+        WHERE nome = UPPER(nome) OR nome = LOWER(nome)
+    ''')
+
+    contacts = [row_to_dict(row) for row in cursor.fetchall()]
+
+    if propagate:
+        # Use async propagation function
+        stats = await apply_name_fixes_with_propagation(
+            contacts, conn, google_contacts_module
+        )
+        conn.close()
+        return {
+            "fixed": stats['fixed'],
+            "total_checked": len(contacts),
+            "google_updates": stats.get('google_updates', 0),
+            "google_errors": stats.get('google_errors', 0)
+        }
+    else:
+        # Just fix locally
+        fixed = 0
+        for contact in contacts:
+            name = contact.get('nome', '')
+            if name:
+                new_name = normalize_name(name)
+                if new_name != name:
+                    cursor.execute(
+                        "UPDATE contacts SET nome = %s, atualizado_em = CURRENT_TIMESTAMP WHERE id = %s",
+                        (new_name, contact['id'])
+                    )
+                    fixed += 1
+
+        conn.commit()
+        conn.close()
+        return {"fixed": fixed, "total_checked": len(contacts)}
+
+
+@app.post("/api/contacts/merge")
+async def merge_contacts_endpoint(request: Request):
+    """
+    Merge duplicate contacts.
+    Also propagates changes to Google Contacts (updates merged, deletes duplicates).
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin")
+
+    body = await request.json()
+    contact_ids = body.get('contact_ids', [])
+    propagate = body.get('propagate', True)
+
+    if len(contact_ids) < 2:
+        raise HTTPException(status_code=400, detail="Precisa de pelo menos 2 contatos para merge")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Get contacts
+    cursor.execute(
+        "SELECT * FROM contacts WHERE id = ANY(%s)",
+        (contact_ids,)
+    )
+    contacts = [row_to_dict(row) for row in cursor.fetchall()]
+
+    if len(contacts) < 2:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Contatos nao encontrados")
+
+    if propagate:
+        result = await merge_duplicate_contacts_with_propagation(
+            contacts, conn, google_contacts_module
+        )
+    else:
+        result = merge_duplicate_contacts(contacts, conn)
+
+    conn.close()
+    return result
+
+
+@app.post("/api/contacts/auto-merge-all")
+async def auto_merge_all_duplicates(request: Request):
+    """
+    Automatically merge all detected duplicates.
+    Propagates changes to Google Contacts.
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin")
+
+    body = await request.json() if request.headers.get('content-type') == 'application/json' else {}
+    propagate = body.get('propagate', True)
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        SELECT id, nome, empresa, cargo, emails, telefones, foto_url,
+               linkedin, contexto, google_contact_id
+        FROM contacts
+    ''')
+    contacts = [row_to_dict(row) for row in cursor.fetchall()]
+
+    duplicates = find_duplicates(contacts)
+
+    merged_count = 0
+    deleted_count = 0
+    google_updates = 0
+    google_errors = 0
+
+    for key, dup_contacts in duplicates.items():
+        if len(dup_contacts) >= 2:
+            if propagate:
+                result = await merge_duplicate_contacts_with_propagation(
+                    dup_contacts, conn, google_contacts_module
+                )
+                # Count Google propagation stats
+                google_prop = result.get('google_propagation', {})
+                for account, status in google_prop.get('updates', {}).items():
+                    if status.get('status') in ['updated', 'created']:
+                        google_updates += 1
+                    elif status.get('status') == 'error':
+                        google_errors += 1
+            else:
+                result = merge_duplicate_contacts(dup_contacts, conn)
+
+            if result.get('status') == 'merged':
+                merged_count += 1
+                deleted_count += len(result.get('deleted_ids', []))
+
+    conn.close()
+
+    response = {
+        "merged_groups": merged_count,
+        "deleted_contacts": deleted_count
+    }
+
+    if propagate:
+        response["google_updates"] = google_updates
+        response["google_errors"] = google_errors
+
+    return response
+
+
+@app.get("/rap/contacts/cleanup")
+async def rap_contacts_cleanup(request: Request):
+    """Page for reviewing and cleaning up contacts"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login")
+
+    return templates.TemplateResponse("rap_contacts_cleanup.html", {
+        "request": request,
+        "user": user
+    })
+
+
 # Vercel handler
 app_handler = app

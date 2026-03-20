@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAP - Limpeza de Contatos</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .sidebar { width: 240px; }
+        .main-content { margin-left: 240px; }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Sidebar -->
+    <aside class="sidebar fixed top-0 left-0 h-full bg-white shadow-lg z-10">
+        <div class="p-4 border-b">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl flex items-center justify-center text-white font-bold">R</div>
+                <span class="text-xl font-bold text-gray-800">RAP</span>
+            </div>
+        </div>
+        <nav class="p-4 space-y-2">
+            <a href="/rap" class="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-600 hover:bg-gray-100">
+                <span>Dashboard</span>
+            </a>
+            <a href="/rap/contacts" class="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-600 hover:bg-gray-100">
+                <span>Contatos</span>
+            </a>
+            <a href="/rap/contacts/cleanup" class="flex items-center gap-3 px-3 py-2 rounded-lg bg-green-50 text-green-700 font-medium">
+                <span>Limpeza</span>
+            </a>
+            <a href="/rap/settings" class="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-600 hover:bg-gray-100">
+                <span>Configuracoes</span>
+            </a>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content min-h-screen p-8">
+        <div class="max-w-6xl mx-auto">
+            <h1 class="text-2xl font-bold text-gray-800 mb-2">Limpeza de Contatos</h1>
+            <p class="text-gray-500 mb-6">Detectar e corrigir duplicatas, nomes em CAPS LOCK, e outros problemas</p>
+
+            <!-- Loading State -->
+            <div id="loading" class="text-center py-12">
+                <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-green-500 border-t-transparent"></div>
+                <p class="mt-4 text-gray-500">Analisando contatos...</p>
+            </div>
+
+            <!-- Analysis Results -->
+            <div id="results" class="hidden">
+                <!-- Summary Cards -->
+                <div class="grid grid-cols-4 gap-4 mb-8">
+                    <div class="bg-white rounded-xl shadow-sm p-6">
+                        <p class="text-3xl font-bold text-gray-800" id="total-contacts">0</p>
+                        <p class="text-gray-500">Total de Contatos</p>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm p-6">
+                        <p class="text-3xl font-bold text-red-500" id="duplicates-count">0</p>
+                        <p class="text-gray-500">Duplicatas</p>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm p-6">
+                        <p class="text-3xl font-bold text-orange-500" id="caps-count">0</p>
+                        <p class="text-gray-500">Nomes em CAPS</p>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm p-6">
+                        <p class="text-3xl font-bold text-yellow-500" id="no-phone-count">0</p>
+                        <p class="text-gray-500">Sem Telefone</p>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex gap-4 mb-8">
+                    <button onclick="fixAllNames()" class="px-6 py-3 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition" id="fix-names-btn">
+                        Corrigir Nomes em CAPS
+                    </button>
+                    <button onclick="mergeAllDuplicates()" class="px-6 py-3 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition" id="merge-btn">
+                        Mesclar Todas Duplicatas
+                    </button>
+                    <button onclick="analyzeContacts()" class="px-6 py-3 bg-gray-500 text-white rounded-lg font-medium hover:bg-gray-600 transition">
+                        Reanalisar
+                    </button>
+                </div>
+
+                <!-- Duplicates Section -->
+                <div class="bg-white rounded-xl shadow-sm mb-8">
+                    <div class="p-6 border-b">
+                        <h2 class="text-lg font-semibold text-gray-800">Contatos Duplicados</h2>
+                        <p class="text-gray-500 text-sm">Contatos com mesmo telefone ou email</p>
+                    </div>
+                    <div id="duplicates-list" class="divide-y max-h-96 overflow-y-auto">
+                        <!-- Duplicates will be inserted here -->
+                    </div>
+                </div>
+
+                <!-- CAPS Names Section -->
+                <div class="bg-white rounded-xl shadow-sm mb-8">
+                    <div class="p-6 border-b">
+                        <h2 class="text-lg font-semibold text-gray-800">Nomes em CAPS LOCK</h2>
+                        <p class="text-gray-500 text-sm">Nomes que precisam de correcao de capitalizacao</p>
+                    </div>
+                    <div id="caps-list" class="divide-y max-h-96 overflow-y-auto">
+                        <!-- CAPS names will be inserted here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error State -->
+            <div id="error" class="hidden bg-red-50 border border-red-200 rounded-xl p-6 text-center">
+                <p class="text-red-600" id="error-message">Erro ao carregar dados</p>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let analysisData = null;
+
+        async function analyzeContacts() {
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('results').classList.add('hidden');
+            document.getElementById('error').classList.add('hidden');
+
+            try {
+                const response = await fetch('/api/contacts/analyze');
+                if (!response.ok) throw new Error('Erro ao analisar contatos');
+
+                analysisData = await response.json();
+                displayResults(analysisData);
+
+            } catch (err) {
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('error').classList.remove('hidden');
+                document.getElementById('error-message').textContent = err.message;
+            }
+        }
+
+        function displayResults(data) {
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('results').classList.remove('hidden');
+
+            // Update summary
+            document.getElementById('total-contacts').textContent = data.total_contacts.toLocaleString();
+            document.getElementById('duplicates-count').textContent = data.duplicates;
+            document.getElementById('caps-count').textContent = data.caps_lock_names + data.lowercase_names;
+            document.getElementById('no-phone-count').textContent = data.no_phone;
+
+            // Display duplicates
+            const dupList = document.getElementById('duplicates-list');
+            dupList.innerHTML = '';
+
+            if (data.details.duplicates.length === 0) {
+                dupList.innerHTML = '<div class="p-6 text-center text-gray-500">Nenhuma duplicata encontrada</div>';
+            } else {
+                data.details.duplicates.forEach((dup, idx) => {
+                    const contacts = dup.contacts;
+                    const merged = dup.suggested_merge;
+
+                    let html = `
+                        <div class="p-4 hover:bg-gray-50">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-sm font-medium text-red-600">
+                                    ${dup.key.startsWith('phone:') ? 'Mesmo telefone' : 'Mesmo email'}: ${dup.key.split(':')[1]}
+                                </span>
+                                <span class="text-sm text-gray-500">${contacts.length} contatos</span>
+                            </div>
+                            <div class="grid grid-cols-${contacts.length} gap-2 mb-2">
+                    `;
+
+                    contacts.forEach(c => {
+                        html += `
+                            <div class="bg-gray-100 rounded p-2 text-sm">
+                                <p class="font-medium">${c.nome || 'Sem nome'}</p>
+                                <p class="text-gray-500 text-xs">${c.empresa || ''}</p>
+                                <p class="text-gray-400 text-xs">${c.contexto || ''}</p>
+                            </div>
+                        `;
+                    });
+
+                    html += `
+                            </div>
+                            <div class="bg-green-50 rounded p-2 text-sm">
+                                <span class="text-green-700 font-medium">Sugestao de merge:</span>
+                                <span class="text-green-800">${merged.nome}</span>
+                                <span class="text-green-600 text-xs ml-2">(${merged.contexto})</span>
+                            </div>
+                        </div>
+                    `;
+
+                    dupList.innerHTML += html;
+                });
+            }
+
+            // Display CAPS names
+            const capsList = document.getElementById('caps-list');
+            capsList.innerHTML = '';
+
+            const allCapsIssues = [...(data.details.caps_lock_names || []), ...(data.details.lowercase_names || [])];
+
+            if (allCapsIssues.length === 0) {
+                capsList.innerHTML = '<div class="p-6 text-center text-gray-500">Nenhum nome para corrigir</div>';
+            } else {
+                allCapsIssues.slice(0, 50).forEach(item => {
+                    capsList.innerHTML += `
+                        <div class="p-4 flex items-center justify-between hover:bg-gray-50">
+                            <div>
+                                <p class="font-medium text-gray-800">${item.original}</p>
+                                <p class="text-sm text-gray-500">${item.contact.empresa || ''}</p>
+                            </div>
+                            <div class="flex items-center gap-4">
+                                <span class="text-gray-400">→</span>
+                                <span class="font-medium text-green-600">${item.suggested}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+        }
+
+        async function fixAllNames() {
+            const btn = document.getElementById('fix-names-btn');
+            btn.disabled = true;
+            btn.textContent = 'Corrigindo...';
+
+            try {
+                const response = await fetch('/api/contacts/fix-names?propagate=true', { method: 'POST' });
+                const result = await response.json();
+
+                let msg = `Corrigidos: ${result.fixed} nomes no banco local`;
+                if (result.google_updates !== undefined) {
+                    msg += `\nAtualizados no Google: ${result.google_updates}`;
+                    if (result.google_errors > 0) {
+                        msg += `\nErros no Google: ${result.google_errors}`;
+                    }
+                }
+                alert(msg);
+                analyzeContacts();
+
+            } catch (err) {
+                alert('Erro: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Corrigir Nomes em CAPS';
+            }
+        }
+
+        async function mergeAllDuplicates() {
+            if (!confirm('Isso vai mesclar TODAS as duplicatas automaticamente e sincronizar com o Google. Continuar?')) {
+                return;
+            }
+
+            const btn = document.getElementById('merge-btn');
+            btn.disabled = true;
+            btn.textContent = 'Mesclando...';
+
+            try {
+                const response = await fetch('/api/contacts/auto-merge-all', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ propagate: true })
+                });
+                const result = await response.json();
+
+                let msg = `Mesclados: ${result.merged_groups} grupos\nRemovidos: ${result.deleted_contacts} contatos duplicados`;
+                if (result.google_updates !== undefined) {
+                    msg += `\n\nGoogle Contacts:`;
+                    msg += `\n- Atualizados: ${result.google_updates}`;
+                    if (result.google_errors > 0) {
+                        msg += `\n- Erros: ${result.google_errors}`;
+                    }
+                }
+                alert(msg);
+                analyzeContacts();
+
+            } catch (err) {
+                alert('Erro: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Mesclar Todas Duplicatas';
+            }
+        }
+
+        // Load on page load
+        document.addEventListener('DOMContentLoaded', analyzeContacts);
+    </script>
+</body>
+</html>
