@@ -1312,6 +1312,186 @@ async def disconnect_whatsapp():
             raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/whatsapp/sync")
+async def sync_whatsapp_history():
+    """
+    Sync WhatsApp message history from Evolution API.
+    Fetches all chats and their messages, linking to existing contacts.
+    """
+    chats = await whatsapp.get_all_chats()
+
+    if not chats:
+        return {"status": "no_chats", "message": "Nenhum chat encontrado"}
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    stats = {
+        "chats_processed": 0,
+        "messages_imported": 0,
+        "messages_skipped": 0,
+        "contacts_matched": 0,
+        "errors": []
+    }
+
+    try:
+        for chat in chats:
+            chat_id = chat.get("id", "")
+            if not chat_id.endswith("@s.whatsapp.net"):
+                continue
+
+            phone = chat_id.replace("@s.whatsapp.net", "")
+            push_name = chat.get("name") or chat.get("pushName") or ""
+
+            # Fetch messages for this chat
+            messages = await whatsapp.get_messages_for_chat(phone, limit=200)
+
+            if not messages:
+                continue
+
+            stats["chats_processed"] += 1
+
+            # Find contact by phone number
+            cursor.execute("""
+                SELECT id, nome
+                FROM contacts
+                WHERE telefones::text ILIKE %s
+                LIMIT 1
+            """, (f'%{phone[-8:]}%',))
+
+            contact = cursor.fetchone()
+            contact_id = None
+            contact_name = push_name or "Desconhecido"
+
+            if contact:
+                contact_id = contact['id']
+                contact_name = contact['nome']
+                stats["contacts_matched"] += 1
+
+            # Find or create conversation
+            conversation_id = None
+            if contact_id:
+                cursor.execute("""
+                    SELECT id FROM conversations
+                    WHERE contact_id = %s AND canal = 'whatsapp'
+                    LIMIT 1
+                """, (contact_id,))
+                conv = cursor.fetchone()
+
+                if conv:
+                    conversation_id = conv['id']
+                else:
+                    cursor.execute("""
+                        INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
+                        VALUES (%s, 'whatsapp', NOW(), 0)
+                        RETURNING id
+                    """, (contact_id,))
+                    conversation_id = cursor.fetchone()['id']
+
+            # Process each message
+            for msg in messages:
+                parsed = whatsapp.parse_stored_message(msg)
+                if not parsed:
+                    continue
+
+                message_id_ext = parsed.get("message_id")
+                content = parsed.get("content")
+                direction = parsed.get("direction")
+                timestamp = parsed.get("timestamp")
+
+                # Check if message already exists (by external message_id in metadata)
+                cursor.execute("""
+                    SELECT id FROM messages
+                    WHERE metadata->>'message_id' = %s
+                    LIMIT 1
+                """, (message_id_ext,))
+
+                if cursor.fetchone():
+                    stats["messages_skipped"] += 1
+                    continue
+
+                # Insert message
+                cursor.execute("""
+                    INSERT INTO messages (conversation_id, contact_id, direcao, conteudo, enviado_em, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (
+                    conversation_id,
+                    contact_id,
+                    direction,
+                    content,
+                    timestamp,
+                    json.dumps({
+                        "phone": phone,
+                        "push_name": push_name,
+                        "message_id": message_id_ext,
+                        "message_type": parsed.get("message_type")
+                    })
+                ))
+                stats["messages_imported"] += 1
+
+            # Update conversation stats
+            if conversation_id:
+                cursor.execute("""
+                    UPDATE conversations
+                    SET ultimo_mensagem = (
+                        SELECT MAX(enviado_em) FROM messages WHERE conversation_id = %s
+                    ),
+                    total_mensagens = (
+                        SELECT COUNT(*) FROM messages WHERE conversation_id = %s
+                    )
+                    WHERE id = %s
+                """, (conversation_id, conversation_id, conversation_id))
+
+                # Update contact's ultimo_contato
+                if contact_id:
+                    cursor.execute("""
+                        UPDATE contacts
+                        SET ultimo_contato = (
+                            SELECT MAX(enviado_em) FROM messages WHERE contact_id = %s
+                        )
+                        WHERE id = %s
+                    """, (contact_id, contact_id))
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        stats["errors"].append(str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+    return {
+        "status": "ok",
+        **stats
+    }
+
+
+@app.get("/api/whatsapp/chats")
+async def get_whatsapp_chats():
+    """
+    List all WhatsApp chats/conversations from Evolution API.
+    """
+    chats = await whatsapp.get_all_chats()
+
+    # Format for display
+    formatted = []
+    for chat in chats:
+        chat_id = chat.get("id", "")
+        if not chat_id.endswith("@s.whatsapp.net"):
+            continue
+
+        phone = chat_id.replace("@s.whatsapp.net", "")
+        formatted.append({
+            "phone": phone,
+            "phone_display": format_phone_display(phone),
+            "name": chat.get("name") or chat.get("pushName") or "",
+            "unread_count": chat.get("unreadCount", 0)
+        })
+
+    return {"chats": formatted, "total": len(formatted)}
+
+
 @app.get("/api/fathom/sync")
 async def sync_fathom_meetings():
     """Sincroniza reuniões recentes do Fathom"""

@@ -171,6 +171,142 @@ class WhatsAppIntegration:
             except:
                 return None
 
+    async def get_all_chats(self) -> List[Dict[str, Any]]:
+        """
+        Get all chats/conversations from WhatsApp
+
+        Returns:
+            List of chat objects with remoteJid, name, lastMessage, etc.
+        """
+        if not self.base_url or not self.api_key:
+            return []
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/chat/findChats/{self.instance}",
+                    headers=self._get_headers(),
+                    json={},
+                    timeout=30.0
+                )
+                data = response.json()
+                # Filter only individual chats (not groups)
+                return [chat for chat in data if chat.get("id", "").endswith("@s.whatsapp.net")]
+            except Exception as e:
+                print(f"Error fetching chats: {e}")
+                return []
+
+    async def get_messages_for_chat(self, phone: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get messages from a specific chat
+
+        Args:
+            phone: Phone number (will be normalized)
+            limit: Maximum number of messages to fetch
+
+        Returns:
+            List of message objects
+        """
+        if not self.base_url or not self.api_key:
+            return []
+
+        normalized_phone = self._normalize_phone(phone)
+        remote_jid = f"{normalized_phone}@s.whatsapp.net"
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/chat/findMessages/{self.instance}",
+                    headers=self._get_headers(),
+                    json={
+                        "where": {
+                            "key": {
+                                "remoteJid": remote_jid
+                            }
+                        },
+                        "limit": limit
+                    },
+                    timeout=60.0
+                )
+                return response.json()
+            except Exception as e:
+                print(f"Error fetching messages for {phone}: {e}")
+                return []
+
+    def parse_stored_message(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Parse a stored message from Evolution API into a normalized format
+
+        Args:
+            msg: Raw message object from findMessages
+
+        Returns:
+            Normalized message dict or None
+        """
+        try:
+            key = msg.get("key", {})
+            message = msg.get("message", {})
+
+            # Get phone from remoteJid
+            remote_jid = key.get("remoteJid", "")
+            if not remote_jid.endswith("@s.whatsapp.net"):
+                return None
+
+            phone = remote_jid.replace("@s.whatsapp.net", "")
+
+            # Direction
+            from_me = key.get("fromMe", False)
+            direction = "outgoing" if from_me else "incoming"
+
+            # Extract content
+            content = None
+            message_type = "text"
+
+            if "conversation" in message:
+                content = message["conversation"]
+            elif "extendedTextMessage" in message:
+                content = message["extendedTextMessage"].get("text", "")
+            elif "imageMessage" in message:
+                content = message["imageMessage"].get("caption", "[Imagem]")
+                message_type = "image"
+            elif "videoMessage" in message:
+                content = message["videoMessage"].get("caption", "[Video]")
+                message_type = "video"
+            elif "audioMessage" in message:
+                content = "[Audio]"
+                message_type = "audio"
+            elif "documentMessage" in message:
+                content = message["documentMessage"].get("fileName", "[Documento]")
+                message_type = "document"
+            elif "stickerMessage" in message:
+                content = "[Sticker]"
+                message_type = "sticker"
+
+            if content is None:
+                return None
+
+            # Timestamp
+            timestamp = msg.get("messageTimestamp")
+            if timestamp:
+                if isinstance(timestamp, dict):
+                    timestamp = timestamp.get("low", 0)
+                dt = datetime.fromtimestamp(int(timestamp))
+            else:
+                dt = datetime.now()
+
+            return {
+                "phone": phone,
+                "direction": direction,
+                "content": content,
+                "message_type": message_type,
+                "timestamp": dt,
+                "message_id": key.get("id"),
+                "push_name": msg.get("pushName")
+            }
+        except Exception as e:
+            print(f"Error parsing message: {e}")
+            return None
+
 
 def parse_webhook_message(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """

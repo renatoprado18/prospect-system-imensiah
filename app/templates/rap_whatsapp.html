@@ -356,6 +356,31 @@
             </div>
         </div>
 
+        <!-- Sync History Card -->
+        <div class="card" id="syncCard" style="display: none;">
+            <div class="card-header">
+                <h5 class="card-title"><i class="bi bi-cloud-download"></i> Sincronizar Historico</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">Buscar historico de mensagens do WhatsApp e vincular aos contatos existentes.</p>
+                <div class="d-flex align-items-center gap-3">
+                    <button class="btn btn-whatsapp" onclick="syncHistory()" id="syncBtn">
+                        <i class="bi bi-arrow-repeat me-2"></i> Sincronizar Mensagens
+                    </button>
+                    <div id="syncStatus" style="display: none;">
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                        <span id="syncStatusText">Sincronizando...</span>
+                    </div>
+                </div>
+                <div id="syncResult" class="mt-3" style="display: none;">
+                    <div class="alert alert-success mb-0">
+                        <i class="bi bi-check-circle me-2"></i>
+                        <span id="syncResultText"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Send Test Message -->
         <div class="card" id="sendCard" style="display: none;">
             <div class="card-header">
@@ -429,6 +454,7 @@
             const statsGrid = document.getElementById('statsGrid');
             const sendCard = document.getElementById('sendCard');
             const activityCard = document.getElementById('activityCard');
+            const syncCard = document.getElementById('syncCard');
 
             if (state === 'open') {
                 // Connected
@@ -443,6 +469,7 @@
                 statsGrid.style.display = 'grid';
                 sendCard.style.display = 'block';
                 activityCard.style.display = 'block';
+                syncCard.style.display = 'block';
             } else if (state === 'connecting') {
                 // Connecting - show QR
                 statusBadge.innerHTML = `
@@ -456,6 +483,7 @@
                 statsGrid.style.display = 'none';
                 sendCard.style.display = 'none';
                 activityCard.style.display = 'none';
+                syncCard.style.display = 'none';
                 refreshQR();
             } else {
                 // Disconnected
@@ -470,6 +498,7 @@
                 statsGrid.style.display = 'none';
                 sendCard.style.display = 'none';
                 activityCard.style.display = 'none';
+                syncCard.style.display = 'none';
                 refreshQR();
             }
         }
@@ -529,6 +558,43 @@
             } catch (error) {
                 showToast('Erro ao desconectar');
                 console.error(error);
+            }
+        }
+
+        async function syncHistory() {
+            const syncBtn = document.getElementById('syncBtn');
+            const syncStatus = document.getElementById('syncStatus');
+            const syncResult = document.getElementById('syncResult');
+
+            syncBtn.disabled = true;
+            syncStatus.style.display = 'inline-flex';
+            syncResult.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/whatsapp/sync', { method: 'POST' });
+                const data = await response.json();
+
+                syncStatus.style.display = 'none';
+                syncResult.style.display = 'block';
+
+                if (data.status === 'ok') {
+                    document.getElementById('syncResultText').textContent =
+                        `${data.messages_imported} mensagens importadas de ${data.chats_processed} conversas. ` +
+                        `${data.contacts_matched} contatos vinculados. ` +
+                        `${data.messages_skipped} mensagens ja existentes.`;
+                } else if (data.status === 'no_chats') {
+                    document.getElementById('syncResultText').textContent = 'Nenhuma conversa encontrada no WhatsApp.';
+                } else {
+                    document.getElementById('syncResultText').textContent = 'Erro: ' + (data.errors?.join(', ') || 'Erro desconhecido');
+                    document.querySelector('#syncResult .alert').className = 'alert alert-danger mb-0';
+                }
+            } catch (error) {
+                syncStatus.style.display = 'none';
+                syncResult.style.display = 'block';
+                document.getElementById('syncResultText').textContent = 'Erro ao sincronizar: ' + error.message;
+                document.querySelector('#syncResult .alert').className = 'alert alert-danger mb-0';
+            } finally {
+                syncBtn.disabled = false;
             }
         }
 
