@@ -12,5 +12,10 @@
       "dest": "api/index.py"
     }
   ],
-  "regions": ["gru1"]
+  "regions": ["gru1"],
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 300
+    }
+  }
 }

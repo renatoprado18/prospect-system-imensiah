@@ -475,10 +475,18 @@
             const progressText = document.getElementById('syncProgressText');
 
             progress.classList.add('active');
-            progressText.textContent = 'Sincronizando contatos...';
+            progressText.textContent = 'Sincronizando contatos... (pode levar alguns minutos)';
 
             try {
-                const response = await fetch(`/api/google/sync/${accountId}`, { method: 'POST' });
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 360000); // 6 min timeout
+
+                const response = await fetch(`/api/google/sync/${accountId}`, {
+                    method: 'POST',
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
                 const data = await response.json();
 
                 if (response.ok) {
@@ -490,7 +498,11 @@
                     showAlert('danger', data.detail || 'Erro ao sincronizar');
                 }
             } catch (error) {
-                showAlert('danger', 'Erro de conexao');
+                if (error.name === 'AbortError') {
+                    showAlert('danger', 'Timeout: sincronizacao demorou muito. Tente novamente.');
+                } else {
+                    showAlert('danger', 'Erro: ' + (error.message || 'conexao falhou'));
+                }
             } finally {
                 progress.classList.remove('active');
             }
@@ -501,10 +513,18 @@
             const progressText = document.getElementById('syncProgressText');
 
             progress.classList.add('active');
-            progressText.textContent = 'Sincronizando todas as contas...';
+            progressText.textContent = 'Sincronizando todas as contas... (pode levar alguns minutos)';
 
             try {
-                const response = await fetch('/api/google/sync-all', { method: 'POST' });
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 min timeout
+
+                const response = await fetch('/api/google/sync-all', {
+                    method: 'POST',
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
                 const data = await response.json();
 
                 let totalImported = 0;
@@ -521,7 +541,11 @@
                 loadAccounts();
                 loadStats();
             } catch (error) {
-                showAlert('danger', 'Erro de conexao');
+                if (error.name === 'AbortError') {
+                    showAlert('danger', 'Timeout: sincronizacao demorou muito. Tente novamente.');
+                } else {
+                    showAlert('danger', 'Erro: ' + (error.message || 'conexao falhou'));
+                }
             } finally {
                 progress.classList.remove('active');
             }
