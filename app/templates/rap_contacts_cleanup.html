@@ -10,6 +10,8 @@
         body { font-family: 'Inter', sans-serif; }
         .sidebar { width: 240px; }
         .main-content { margin-left: 240px; }
+        .modal-backdrop { background: rgba(0,0,0,0.5); }
+        .progress-bar { transition: width 0.3s ease; }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -37,6 +39,64 @@
         </nav>
     </aside>
 
+    <!-- Progress Modal -->
+    <div id="progress-modal" class="fixed inset-0 z-50 hidden">
+        <div class="modal-backdrop absolute inset-0"></div>
+        <div class="absolute inset-0 flex items-center justify-center">
+            <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full mx-4">
+                <div class="text-center">
+                    <div class="inline-block animate-spin rounded-full h-12 w-12 border-4 border-green-500 border-t-transparent mb-4"></div>
+                    <h3 class="text-xl font-bold text-gray-800 mb-2" id="progress-title">Processando...</h3>
+                    <p class="text-gray-500 mb-4" id="progress-message">Aguarde enquanto processamos os contatos</p>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="progress-bar bg-green-500 h-2 rounded-full" id="progress-bar" style="width: 0%"></div>
+                    </div>
+                    <p class="text-sm text-gray-400 mt-2" id="progress-detail"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirm-modal" class="fixed inset-0 z-50 hidden">
+        <div class="modal-backdrop absolute inset-0" onclick="closeConfirmModal()"></div>
+        <div class="absolute inset-0 flex items-center justify-center">
+            <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-lg w-full mx-4">
+                <h3 class="text-xl font-bold text-gray-800 mb-4" id="confirm-title">Confirmar Acao</h3>
+                <div id="confirm-content" class="mb-6"></div>
+                <div class="flex items-center gap-3 mb-6">
+                    <input type="checkbox" id="sync-google" class="w-4 h-4 text-green-600 rounded">
+                    <label for="sync-google" class="text-sm text-gray-600">Sincronizar alteracoes com Google Contacts</label>
+                </div>
+                <div class="flex gap-4">
+                    <button onclick="closeConfirmModal()" class="flex-1 px-6 py-3 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition">
+                        Cancelar
+                    </button>
+                    <button onclick="executeConfirmedAction()" id="confirm-btn" class="flex-1 px-6 py-3 bg-green-500 text-white rounded-lg font-medium hover:bg-green-600 transition">
+                        Confirmar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Result Modal -->
+    <div id="result-modal" class="fixed inset-0 z-50 hidden">
+        <div class="modal-backdrop absolute inset-0" onclick="closeResultModal()"></div>
+        <div class="absolute inset-0 flex items-center justify-center">
+            <div class="bg-white rounded-2xl shadow-2xl p-8 max-w-lg w-full mx-4">
+                <div class="text-center">
+                    <div id="result-icon" class="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center text-3xl"></div>
+                    <h3 class="text-xl font-bold text-gray-800 mb-2" id="result-title">Concluido</h3>
+                    <div id="result-content" class="text-gray-600 mb-6"></div>
+                    <button onclick="closeResultModal()" class="px-8 py-3 bg-green-500 text-white rounded-lg font-medium hover:bg-green-600 transition">
+                        Fechar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Main Content -->
     <main class="main-content min-h-screen p-8">
         <div class="max-w-6xl mx-auto">
@@ -57,11 +117,11 @@
                         <p class="text-3xl font-bold text-gray-800" id="total-contacts">0</p>
                         <p class="text-gray-500">Total de Contatos</p>
                     </div>
-                    <div class="bg-white rounded-xl shadow-sm p-6">
+                    <div class="bg-white rounded-xl shadow-sm p-6 cursor-pointer hover:shadow-md transition" onclick="scrollToSection('duplicates-section')">
                         <p class="text-3xl font-bold text-red-500" id="duplicates-count">0</p>
                         <p class="text-gray-500">Duplicatas</p>
                     </div>
-                    <div class="bg-white rounded-xl shadow-sm p-6">
+                    <div class="bg-white rounded-xl shadow-sm p-6 cursor-pointer hover:shadow-md transition" onclick="scrollToSection('caps-section')">
                         <p class="text-3xl font-bold text-orange-500" id="caps-count">0</p>
                         <p class="text-gray-500">Nomes em CAPS</p>
                     </div>
@@ -72,23 +132,32 @@
                 </div>
 
                 <!-- Action Buttons -->
-                <div class="flex gap-4 mb-8">
-                    <button onclick="fixAllNames()" class="px-6 py-3 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition" id="fix-names-btn">
-                        Corrigir Nomes em CAPS
-                    </button>
-                    <button onclick="mergeAllDuplicates()" class="px-6 py-3 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition" id="merge-btn">
-                        Mesclar Todas Duplicatas
-                    </button>
-                    <button onclick="analyzeContacts()" class="px-6 py-3 bg-gray-500 text-white rounded-lg font-medium hover:bg-gray-600 transition">
-                        Reanalisar
-                    </button>
+                <div class="bg-white rounded-xl shadow-sm p-6 mb-8">
+                    <h2 class="text-lg font-semibold text-gray-800 mb-4">Acoes de Limpeza</h2>
+                    <div class="flex flex-wrap gap-4">
+                        <button onclick="confirmFixNames()" class="px-6 py-3 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 transition flex items-center gap-2" id="fix-names-btn">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                            Corrigir <span id="caps-btn-count">0</span> Nomes em CAPS
+                        </button>
+                        <button onclick="confirmMergeDuplicates()" class="px-6 py-3 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition flex items-center gap-2" id="merge-btn">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                            Mesclar <span id="dup-btn-count">0</span> Duplicatas
+                        </button>
+                        <button onclick="analyzeContacts()" class="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            Reanalisar
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Duplicates Section -->
-                <div class="bg-white rounded-xl shadow-sm mb-8">
-                    <div class="p-6 border-b">
-                        <h2 class="text-lg font-semibold text-gray-800">Contatos Duplicados</h2>
-                        <p class="text-gray-500 text-sm">Contatos com mesmo telefone ou email</p>
+                <div id="duplicates-section" class="bg-white rounded-xl shadow-sm mb-8">
+                    <div class="p-6 border-b flex justify-between items-center">
+                        <div>
+                            <h2 class="text-lg font-semibold text-gray-800">Contatos Duplicados</h2>
+                            <p class="text-gray-500 text-sm">Contatos com mesmo telefone ou email</p>
+                        </div>
+                        <span class="bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-medium" id="dup-badge">0 grupos</span>
                     </div>
                     <div id="duplicates-list" class="divide-y max-h-96 overflow-y-auto">
                         <!-- Duplicates will be inserted here -->
@@ -96,10 +165,13 @@
                 </div>
 
                 <!-- CAPS Names Section -->
-                <div class="bg-white rounded-xl shadow-sm mb-8">
-                    <div class="p-6 border-b">
-                        <h2 class="text-lg font-semibold text-gray-800">Nomes em CAPS LOCK</h2>
-                        <p class="text-gray-500 text-sm">Nomes que precisam de correcao de capitalizacao</p>
+                <div id="caps-section" class="bg-white rounded-xl shadow-sm mb-8">
+                    <div class="p-6 border-b flex justify-between items-center">
+                        <div>
+                            <h2 class="text-lg font-semibold text-gray-800">Nomes em CAPS LOCK</h2>
+                            <p class="text-gray-500 text-sm">Nomes que precisam de correcao de capitalizacao</p>
+                        </div>
+                        <span class="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-sm font-medium" id="caps-badge">0 nomes</span>
                     </div>
                     <div id="caps-list" class="divide-y max-h-96 overflow-y-auto">
                         <!-- CAPS names will be inserted here -->
@@ -110,12 +182,76 @@
             <!-- Error State -->
             <div id="error" class="hidden bg-red-50 border border-red-200 rounded-xl p-6 text-center">
                 <p class="text-red-600" id="error-message">Erro ao carregar dados</p>
+                <button onclick="analyzeContacts()" class="mt-4 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200">Tentar novamente</button>
             </div>
         </div>
     </main>
 
     <script>
         let analysisData = null;
+        let pendingAction = null;
+
+        function scrollToSection(id) {
+            document.getElementById(id).scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function showProgress(title, message) {
+            document.getElementById('progress-title').textContent = title;
+            document.getElementById('progress-message').textContent = message;
+            document.getElementById('progress-bar').style.width = '0%';
+            document.getElementById('progress-detail').textContent = '';
+            document.getElementById('progress-modal').classList.remove('hidden');
+        }
+
+        function updateProgress(percent, detail) {
+            document.getElementById('progress-bar').style.width = percent + '%';
+            document.getElementById('progress-detail').textContent = detail;
+        }
+
+        function hideProgress() {
+            document.getElementById('progress-modal').classList.add('hidden');
+        }
+
+        function showResult(success, title, content) {
+            const icon = document.getElementById('result-icon');
+            icon.className = 'w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center text-3xl';
+            if (success) {
+                icon.classList.add('bg-green-100', 'text-green-600');
+                icon.innerHTML = '&#10003;';
+            } else {
+                icon.classList.add('bg-red-100', 'text-red-600');
+                icon.innerHTML = '&#10007;';
+            }
+            document.getElementById('result-title').textContent = title;
+            document.getElementById('result-content').innerHTML = content;
+            document.getElementById('result-modal').classList.remove('hidden');
+        }
+
+        function closeResultModal() {
+            document.getElementById('result-modal').classList.add('hidden');
+            analyzeContacts();
+        }
+
+        function showConfirm(title, content, action) {
+            document.getElementById('confirm-title').textContent = title;
+            document.getElementById('confirm-content').innerHTML = content;
+            document.getElementById('sync-google').checked = false;
+            pendingAction = action;
+            document.getElementById('confirm-modal').classList.remove('hidden');
+        }
+
+        function closeConfirmModal() {
+            document.getElementById('confirm-modal').classList.add('hidden');
+            pendingAction = null;
+        }
+
+        function executeConfirmedAction() {
+            const syncGoogle = document.getElementById('sync-google').checked;
+            closeConfirmModal();
+            if (pendingAction) {
+                pendingAction(syncGoogle);
+            }
+        }
 
         async function analyzeContacts() {
             document.getElementById('loading').classList.remove('hidden');
@@ -140,11 +276,27 @@
             document.getElementById('loading').classList.add('hidden');
             document.getElementById('results').classList.remove('hidden');
 
+            const capsTotal = data.caps_lock_names + data.lowercase_names;
+
             // Update summary
             document.getElementById('total-contacts').textContent = data.total_contacts.toLocaleString();
-            document.getElementById('duplicates-count').textContent = data.duplicates;
-            document.getElementById('caps-count').textContent = data.caps_lock_names + data.lowercase_names;
-            document.getElementById('no-phone-count').textContent = data.no_phone;
+            document.getElementById('duplicates-count').textContent = data.duplicates.toLocaleString();
+            document.getElementById('caps-count').textContent = capsTotal.toLocaleString();
+            document.getElementById('no-phone-count').textContent = data.no_phone.toLocaleString();
+
+            // Update button counts
+            document.getElementById('caps-btn-count').textContent = capsTotal;
+            document.getElementById('dup-btn-count').textContent = data.duplicates;
+
+            // Update badges
+            document.getElementById('dup-badge').textContent = data.duplicates + ' grupos';
+            document.getElementById('caps-badge').textContent = capsTotal + ' nomes';
+
+            // Disable buttons if nothing to do
+            document.getElementById('fix-names-btn').disabled = capsTotal === 0;
+            document.getElementById('merge-btn').disabled = data.duplicates === 0;
+            if (capsTotal === 0) document.getElementById('fix-names-btn').classList.add('opacity-50', 'cursor-not-allowed');
+            if (data.duplicates === 0) document.getElementById('merge-btn').classList.add('opacity-50', 'cursor-not-allowed');
 
             // Display duplicates
             const dupList = document.getElementById('duplicates-list');
@@ -165,25 +317,30 @@
                                 </span>
                                 <span class="text-sm text-gray-500">${contacts.length} contatos</span>
                             </div>
-                            <div class="grid grid-cols-${contacts.length} gap-2 mb-2">
+                            <div class="grid grid-cols-${Math.min(contacts.length, 3)} gap-2 mb-2">
                     `;
 
-                    contacts.forEach(c => {
+                    contacts.slice(0, 3).forEach(c => {
                         html += `
                             <div class="bg-gray-100 rounded p-2 text-sm">
-                                <p class="font-medium">${c.nome || 'Sem nome'}</p>
-                                <p class="text-gray-500 text-xs">${c.empresa || ''}</p>
+                                <p class="font-medium truncate">${c.nome || 'Sem nome'}</p>
+                                <p class="text-gray-500 text-xs truncate">${c.empresa || ''}</p>
                                 <p class="text-gray-400 text-xs">${c.contexto || ''}</p>
                             </div>
                         `;
                     });
 
+                    if (contacts.length > 3) {
+                        html += `<div class="bg-gray-100 rounded p-2 text-sm flex items-center justify-center text-gray-500">+${contacts.length - 3} mais</div>`;
+                    }
+
                     html += `
                             </div>
-                            <div class="bg-green-50 rounded p-2 text-sm">
-                                <span class="text-green-700 font-medium">Sugestao de merge:</span>
+                            <div class="bg-green-50 rounded p-2 text-sm flex items-center gap-2">
+                                <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                <span class="text-green-700 font-medium">Resultado:</span>
                                 <span class="text-green-800">${merged.nome}</span>
-                                <span class="text-green-600 text-xs ml-2">(${merged.contexto})</span>
+                                <span class="text-green-600 text-xs">(${merged.contexto})</span>
                             </div>
                         </div>
                     `;
@@ -204,80 +361,119 @@
                 allCapsIssues.slice(0, 50).forEach(item => {
                     capsList.innerHTML += `
                         <div class="p-4 flex items-center justify-between hover:bg-gray-50">
-                            <div>
-                                <p class="font-medium text-gray-800">${item.original}</p>
-                                <p class="text-sm text-gray-500">${item.contact.empresa || ''}</p>
+                            <div class="flex-1 min-w-0">
+                                <p class="font-medium text-gray-800 truncate">${item.original}</p>
+                                <p class="text-sm text-gray-500 truncate">${item.contact.empresa || ''}</p>
                             </div>
-                            <div class="flex items-center gap-4">
-                                <span class="text-gray-400">→</span>
+                            <div class="flex items-center gap-4 ml-4">
+                                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg>
                                 <span class="font-medium text-green-600">${item.suggested}</span>
                             </div>
                         </div>
                     `;
                 });
+                if (allCapsIssues.length > 50) {
+                    capsList.innerHTML += `<div class="p-4 text-center text-gray-500">E mais ${allCapsIssues.length - 50} nomes...</div>`;
+                }
             }
         }
 
-        async function fixAllNames() {
-            const btn = document.getElementById('fix-names-btn');
-            btn.disabled = true;
-            btn.textContent = 'Corrigindo...';
+        function confirmFixNames() {
+            const count = analysisData ? (analysisData.caps_lock_names + analysisData.lowercase_names) : 0;
+            showConfirm(
+                'Corrigir Nomes em CAPS',
+                `<div class="space-y-4">
+                    <p class="text-gray-600">Esta acao vai corrigir <strong>${count}</strong> nomes que estao em CAPS LOCK ou minusculas.</p>
+                    <div class="bg-orange-50 p-4 rounded-lg">
+                        <p class="text-orange-800 text-sm"><strong>Exemplo:</strong></p>
+                        <p class="text-orange-700 text-sm">JOAO DA SILVA → Joao da Silva</p>
+                        <p class="text-orange-700 text-sm">maria santos → Maria Santos</p>
+                    </div>
+                    <p class="text-gray-500 text-sm">As alteracoes serao aplicadas no banco de dados local.</p>
+                </div>`,
+                fixAllNames
+            );
+        }
+
+        function confirmMergeDuplicates() {
+            const count = analysisData ? analysisData.duplicates : 0;
+            showConfirm(
+                'Mesclar Duplicatas',
+                `<div class="space-y-4">
+                    <p class="text-gray-600">Esta acao vai mesclar <strong>${count}</strong> grupos de contatos duplicados.</p>
+                    <div class="bg-red-50 p-4 rounded-lg">
+                        <p class="text-red-800 text-sm"><strong>O que acontece:</strong></p>
+                        <ul class="text-red-700 text-sm list-disc ml-4">
+                            <li>Contatos com mesmo telefone/email sao unidos</li>
+                            <li>O melhor nome e mantido</li>
+                            <li>Todos os telefones e emails sao combinados</li>
+                            <li>Contatos extras sao removidos</li>
+                        </ul>
+                    </div>
+                    <p class="text-gray-500 text-sm">Revise a lista de duplicatas antes de confirmar.</p>
+                </div>`,
+                mergeAllDuplicates
+            );
+        }
+
+        async function fixAllNames(syncGoogle) {
+            showProgress('Corrigindo Nomes', 'Processando contatos com nomes em CAPS...');
+            updateProgress(30, 'Aplicando correcoes no banco local...');
 
             try {
-                const response = await fetch('/api/contacts/fix-names?propagate=true', { method: 'POST' });
+                const response = await fetch(`/api/contacts/fix-names?propagate=${syncGoogle}`, { method: 'POST' });
                 const result = await response.json();
 
-                let msg = `Corrigidos: ${result.fixed} nomes no banco local`;
-                if (result.google_updates !== undefined) {
-                    msg += `\nAtualizados no Google: ${result.google_updates}`;
+                updateProgress(100, 'Concluido!');
+                await new Promise(r => setTimeout(r, 500));
+                hideProgress();
+
+                let content = `<p class="mb-2"><strong>${result.fixed}</strong> nomes corrigidos no banco local</p>`;
+                if (syncGoogle && result.google_updates !== undefined) {
+                    content += `<p class="text-sm text-gray-500">${result.google_updates} atualizados no Google</p>`;
                     if (result.google_errors > 0) {
-                        msg += `\nErros no Google: ${result.google_errors}`;
+                        content += `<p class="text-sm text-red-500">${result.google_errors} erros no Google</p>`;
                     }
                 }
-                alert(msg);
-                analyzeContacts();
+                showResult(true, 'Nomes Corrigidos!', content);
 
             } catch (err) {
-                alert('Erro: ' + err.message);
-            } finally {
-                btn.disabled = false;
-                btn.textContent = 'Corrigir Nomes em CAPS';
+                hideProgress();
+                showResult(false, 'Erro', `<p class="text-red-600">${err.message}</p>`);
             }
         }
 
-        async function mergeAllDuplicates() {
-            if (!confirm('Isso vai mesclar TODAS as duplicatas automaticamente e sincronizar com o Google. Continuar?')) {
-                return;
-            }
-
-            const btn = document.getElementById('merge-btn');
-            btn.disabled = true;
-            btn.textContent = 'Mesclando...';
+        async function mergeAllDuplicates(syncGoogle) {
+            showProgress('Mesclando Duplicatas', 'Processando grupos de contatos duplicados...');
+            updateProgress(30, 'Mesclando contatos...');
 
             try {
                 const response = await fetch('/api/contacts/auto-merge-all', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ propagate: true })
+                    body: JSON.stringify({ propagate: syncGoogle })
                 });
                 const result = await response.json();
 
-                let msg = `Mesclados: ${result.merged_groups} grupos\nRemovidos: ${result.deleted_contacts} contatos duplicados`;
-                if (result.google_updates !== undefined) {
-                    msg += `\n\nGoogle Contacts:`;
-                    msg += `\n- Atualizados: ${result.google_updates}`;
+                updateProgress(100, 'Concluido!');
+                await new Promise(r => setTimeout(r, 500));
+                hideProgress();
+
+                let content = `
+                    <p class="mb-2"><strong>${result.merged_groups}</strong> grupos mesclados</p>
+                    <p class="mb-2"><strong>${result.deleted_contacts}</strong> contatos duplicados removidos</p>
+                `;
+                if (syncGoogle && result.google_updates !== undefined) {
+                    content += `<p class="text-sm text-gray-500">${result.google_updates} atualizados no Google</p>`;
                     if (result.google_errors > 0) {
-                        msg += `\n- Erros: ${result.google_errors}`;
+                        content += `<p class="text-sm text-red-500">${result.google_errors} erros no Google</p>`;
                     }
                 }
-                alert(msg);
-                analyzeContacts();
+                showResult(true, 'Duplicatas Mescladas!', content);
 
             } catch (err) {
-                alert('Erro: ' + err.message);
-            } finally {
-                btn.disabled = false;
-                btn.textContent = 'Mesclar Todas Duplicatas';
+                hideProgress();
+                showResult(false, 'Erro', `<p class="text-red-600">${err.message}</p>`);
             }
         }
 
