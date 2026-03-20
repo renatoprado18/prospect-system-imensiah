@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RAP - Limpeza de Contatos v2</title>
+    <title>RAP - Limpeza de Contatos</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -208,19 +208,13 @@
         }
 
         function showProgress(title, message) {
-            console.log('showProgress:', title, message);
             const modal = document.getElementById('progress-modal');
-            console.log('modal element:', modal);
-            if (!modal) {
-                console.error('progress-modal not found!');
-                return;
-            }
+            if (!modal) return;
             document.getElementById('progress-title').textContent = title;
             document.getElementById('progress-message').textContent = message;
             document.getElementById('progress-bar').style.width = '0%';
             document.getElementById('progress-detail').textContent = '';
             modal.classList.remove('hidden');
-            console.log('modal classes after remove hidden:', modal.className);
         }
 
         function updateProgress(percent, detail) {
@@ -253,14 +247,11 @@
         }
 
         function showConfirm(title, content, action) {
-            console.log('showConfirm called:', title);
             document.getElementById('confirm-title').textContent = title;
             document.getElementById('confirm-content').innerHTML = content;
             document.getElementById('sync-google').checked = false;
             pendingAction = action;
-            console.log('pendingAction set to:', action);
             document.getElementById('confirm-modal').classList.remove('hidden');
-            console.log('confirm-modal should be visible now');
         }
 
         function closeConfirmModal() {
@@ -269,17 +260,12 @@
         }
 
         function executeConfirmedAction() {
-            console.log('executeConfirmedAction called!');
             const syncGoogle = document.getElementById('sync-google').checked;
-            const action = pendingAction; // Save before closing
-            console.log('syncGoogle:', syncGoogle, 'action:', action);
+            const action = pendingAction;
             document.getElementById('confirm-modal').classList.add('hidden');
             pendingAction = null;
             if (action) {
-                console.log('Calling action...');
                 action(syncGoogle);
-            } else {
-                console.error('action is null!');
             }
         }
 
@@ -426,9 +412,7 @@
         }
 
         function confirmMergeDuplicates() {
-            console.log('confirmMergeDuplicates clicked!');
             const count = analysisData ? analysisData.duplicates : 0;
-            console.log('count:', count, 'analysisData:', analysisData);
             showConfirm(
                 'Mesclar Duplicatas',
                 `<div class="space-y-4">
@@ -476,10 +460,7 @@
         }
 
         async function mergeAllDuplicates(syncGoogle) {
-            console.log('mergeAllDuplicates called, syncGoogle:', syncGoogle);
-            console.log('progress-modal element:', document.getElementById('progress-modal'));
             showProgress('Mesclando Duplicatas', 'Iniciando processamento em lotes...');
-            console.log('showProgress called');
             updateProgress(0, 'Preparando...');
 
             let totalMerged = 0;
