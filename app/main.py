@@ -326,7 +326,21 @@ async def rap_contacts_cleanup(request: Request):
         "user": user
     })
 
-# NOTE: This parameterized route MUST come AFTER specific routes like /cleanup
+
+@app.get("/rap/contacts/linkedin", response_class=HTMLResponse)
+async def rap_contacts_linkedin(request: Request):
+    """Page for importing LinkedIn connections"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    return templates.TemplateResponse("rap_linkedin_import.html", {
+        "request": request,
+        "user": user
+    })
+
+
+# NOTE: This parameterized route MUST come AFTER specific routes like /cleanup, /linkedin
 @app.get("/rap/contacts/{contact_id}", response_class=HTMLResponse)
 async def rap_contact_detail(request: Request, contact_id: int):
     """RAP Contact Detail Page"""
@@ -2025,6 +2039,168 @@ async def auto_merge_all_duplicates(request: Request):
         response["google_errors"] = google_errors
 
     return response
+
+
+# ============== LinkedIn Import ==============
+
+@app.post("/api/contacts/linkedin/analyze")
+async def analyze_linkedin_csv(request: Request):
+    """
+    Analisa CSV do LinkedIn e retorna preview das ações.
+    Não faz alterações, apenas mostra o que será feito.
+    """
+    from services.linkedin_import import analyze_linkedin_import
+
+    form = await request.form()
+    file = form.get('file')
+
+    if not file:
+        raise HTTPException(status_code=400, detail="Arquivo CSV não fornecido")
+
+    content = await file.read()
+
+    # Tentar decodificar (LinkedIn usa UTF-8 ou UTF-16)
+    try:
+        csv_content = content.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            csv_content = content.decode('utf-16')
+        except UnicodeDecodeError:
+            csv_content = content.decode('latin-1')
+
+    # Buscar contatos existentes
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, nome, empresa, cargo, linkedin, emails FROM contacts")
+    existing_contacts = [row_to_dict(r) for r in cursor.fetchall()]
+    conn.close()
+
+    # Analisar
+    analysis = await analyze_linkedin_import(csv_content, existing_contacts)
+
+    return analysis
+
+
+@app.post("/api/contacts/linkedin/import")
+async def import_linkedin_csv(request: Request):
+    """
+    Executa importação do CSV do LinkedIn.
+    Atualiza contatos existentes e/ou cria novos.
+    """
+    from services.linkedin_import import parse_linkedin_csv, find_matching_contact, get_updates_needed
+
+    form = await request.form()
+    file = form.get('file')
+    update_existing = form.get('update_existing', 'true').lower() == 'true'
+    create_new = form.get('create_new', 'true').lower() == 'true'
+
+    if not file:
+        raise HTTPException(status_code=400, detail="Arquivo CSV não fornecido")
+
+    content = await file.read()
+
+    # Decodificar
+    try:
+        csv_content = content.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            csv_content = content.decode('utf-16')
+        except UnicodeDecodeError:
+            csv_content = content.decode('latin-1')
+
+    # Parsear conexões
+    connections = parse_linkedin_csv(csv_content)
+
+    # Buscar contatos existentes
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, nome, empresa, cargo, linkedin, emails FROM contacts")
+    existing_contacts = [row_to_dict(r) for r in cursor.fetchall()]
+
+    results = {
+        'updated': 0,
+        'created': 0,
+        'skipped': 0,
+        'errors': [],
+        'details': []
+    }
+
+    for linkedin_conn in connections:
+        try:
+            match, score, match_type = find_matching_contact(linkedin_conn, existing_contacts)
+
+            if match and update_existing:
+                updates = get_updates_needed(linkedin_conn, match)
+
+                if updates:
+                    # Construir UPDATE
+                    set_parts = []
+                    values = []
+
+                    for upd in updates:
+                        field = upd['field']
+                        set_parts.append(f"{field} = %s")
+                        values.append(upd['new'])
+
+                    if set_parts:
+                        values.append(match['id'])
+                        cursor.execute(
+                            f"UPDATE contacts SET {', '.join(set_parts)} WHERE id = %s",
+                            values
+                        )
+
+                        results['updated'] += 1
+                        results['details'].append({
+                            'action': 'updated',
+                            'name': match['nome'],
+                            'updates': {u['field']: u['new'] for u in updates}
+                        })
+                else:
+                    results['skipped'] += 1
+
+            elif not match and create_new and linkedin_conn['full_name']:
+                # Criar novo contato
+                emails_json = None
+                if linkedin_conn.get('email'):
+                    emails_json = json.dumps([{
+                        'type': 'linkedin',
+                        'email': linkedin_conn['email'],
+                        'primary': True
+                    }])
+
+                cursor.execute('''
+                    INSERT INTO contacts (nome, empresa, cargo, linkedin, emails, origem, contexto, criado_em)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                ''', (
+                    linkedin_conn['full_name'],
+                    linkedin_conn.get('company'),
+                    linkedin_conn.get('position'),
+                    linkedin_conn.get('linkedin_url'),
+                    emails_json,
+                    'linkedin',
+                    'professional'
+                ))
+
+                results['created'] += 1
+                results['details'].append({
+                    'action': 'created',
+                    'name': linkedin_conn['full_name'],
+                    'company': linkedin_conn.get('company')
+                })
+
+            else:
+                results['skipped'] += 1
+
+        except Exception as e:
+            results['errors'].append({
+                'name': linkedin_conn.get('full_name', 'Unknown'),
+                'error': str(e)
+            })
+
+    conn.commit()
+    conn.close()
+
+    return results
 
 
 # NOTE: This parameterized route MUST come AFTER the specific routes above
