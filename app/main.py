@@ -1336,11 +1336,11 @@ async def sync_whatsapp_history():
 
     try:
         for chat in chats:
-            chat_id = chat.get("id", "")
-            if not chat_id.endswith("@s.whatsapp.net"):
+            # Use _phone field added by get_all_chats
+            phone = chat.get("_phone")
+            if not phone:
                 continue
 
-            phone = chat_id.replace("@s.whatsapp.net", "")
             push_name = chat.get("name") or chat.get("pushName") or ""
 
             # Fetch messages for this chat

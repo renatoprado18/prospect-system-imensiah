@@ -190,8 +190,35 @@ class WhatsAppIntegration:
                     timeout=30.0
                 )
                 data = response.json()
-                # Filter only individual chats (not groups)
-                return [chat for chat in data if chat.get("id", "").endswith("@s.whatsapp.net")]
+
+                # Filter individual chats (not groups which end with @g.us)
+                individual_chats = []
+                for chat in data:
+                    remote_jid = chat.get("remoteJid", "") or chat.get("id", "")
+
+                    # Skip groups
+                    if remote_jid.endswith("@g.us"):
+                        continue
+
+                    # Extract phone number from different formats
+                    phone = None
+
+                    if remote_jid.endswith("@s.whatsapp.net"):
+                        # Standard format: 5511984153337@s.whatsapp.net
+                        phone = remote_jid.replace("@s.whatsapp.net", "")
+                    elif remote_jid.endswith("@lid"):
+                        # LID format - check remoteJidAlt in lastMessage
+                        last_msg = chat.get("lastMessage", {})
+                        key = last_msg.get("key", {})
+                        alt_jid = key.get("remoteJidAlt", "")
+                        if alt_jid.endswith("@s.whatsapp.net"):
+                            phone = alt_jid.replace("@s.whatsapp.net", "")
+
+                    if phone and phone.isdigit():
+                        chat["_phone"] = phone
+                        individual_chats.append(chat)
+
+                return individual_chats
             except Exception as e:
                 print(f"Error fetching chats: {e}")
                 return []
@@ -228,7 +255,16 @@ class WhatsAppIntegration:
                     },
                     timeout=60.0
                 )
-                return response.json()
+                data = response.json()
+
+                # API returns {"messages": {"records": [...]}}
+                if isinstance(data, dict):
+                    messages = data.get("messages", {})
+                    if isinstance(messages, dict):
+                        return messages.get("records", [])
+                    return messages if isinstance(messages, list) else []
+
+                return data if isinstance(data, list) else []
             except Exception as e:
                 print(f"Error fetching messages for {phone}: {e}")
                 return []
