@@ -509,3 +509,223 @@ async def delete_google_contact(access_token: str, resource_name: str) -> bool:
         )
 
         return response.status_code == 200
+
+
+async def fetch_contacts_incremental(
+    access_token: str,
+    sync_token: Optional[str] = None,
+    page_size: int = 100
+) -> Dict[str, Any]:
+    """
+    Fetch contacts incrementally using sync token.
+    Returns: {contacts: [], next_sync_token: str, full_sync_required: bool}
+    """
+    contacts = []
+    next_page_token = None
+    next_sync_token = None
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        while True:
+            params = {
+                "pageSize": page_size,
+                "personFields": "names,emailAddresses,phoneNumbers,organizations,photos,birthdays,urls,biographies,memberships",
+                "sources": "READ_SOURCE_TYPE_CONTACT",
+                "requestSyncToken": True  # Request a sync token in response
+            }
+
+            if sync_token and not next_page_token:
+                # Use sync token for incremental sync
+                params["syncToken"] = sync_token
+            elif next_page_token:
+                params["pageToken"] = next_page_token
+
+            response = await client.get(
+                f"{GOOGLE_PEOPLE_API}/people/me/connections",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params=params
+            )
+
+            if response.status_code == 401:
+                raise Exception("Token expired")
+
+            if response.status_code == 410:
+                # Sync token expired, need full sync
+                return {
+                    "contacts": [],
+                    "next_sync_token": None,
+                    "full_sync_required": True
+                }
+
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch contacts: {response.text}")
+
+            data = response.json()
+            connections = data.get("connections", [])
+            contacts.extend(connections)
+
+            next_page_token = data.get("nextPageToken")
+            next_sync_token = data.get("nextSyncToken")
+
+            if not next_page_token:
+                break
+
+    return {
+        "contacts": contacts,
+        "next_sync_token": next_sync_token,
+        "full_sync_required": False
+    }
+
+
+async def sync_contacts_incremental(
+    access_token: str,
+    refresh_token: str,
+    account_email: str,
+    sync_token: Optional[str],
+    db_connection
+) -> Dict[str, Any]:
+    """
+    Incremental sync - only fetch and process changed contacts.
+    Much faster than full sync, suitable for cron jobs.
+    Returns: {imported, updated, deleted, skipped, errors, next_sync_token, full_sync_required}
+    """
+    stats = {
+        "imported": 0,
+        "updated": 0,
+        "deleted": 0,
+        "skipped": 0,
+        "errors": 0,
+        "next_sync_token": None,
+        "full_sync_required": False
+    }
+
+    try:
+        result = await fetch_contacts_incremental(access_token, sync_token)
+    except Exception as e:
+        if "Token expired" in str(e):
+            # Refresh token and retry
+            try:
+                new_tokens = await refresh_access_token(refresh_token)
+                access_token = new_tokens["access_token"]
+
+                # Update token in database
+                cursor = db_connection.cursor()
+                cursor.execute('''
+                    UPDATE google_accounts
+                    SET access_token = %s, token_expiry = %s
+                    WHERE email = %s
+                ''', (
+                    access_token,
+                    (datetime.now() + timedelta(seconds=new_tokens.get("expires_in", 3600))).isoformat(),
+                    account_email
+                ))
+                db_connection.commit()
+
+                result = await fetch_contacts_incremental(access_token, sync_token)
+            except Exception as refresh_error:
+                raise Exception(f"Token refresh failed: {refresh_error}")
+        else:
+            raise
+
+    if result["full_sync_required"]:
+        stats["full_sync_required"] = True
+        return stats
+
+    stats["next_sync_token"] = result["next_sync_token"]
+    cursor = db_connection.cursor()
+
+    for person in result["contacts"]:
+        try:
+            # Check if contact was deleted
+            metadata = person.get("metadata", {})
+            if metadata.get("deleted"):
+                # Handle deletion
+                resource_name = person.get("resourceName", "")
+                google_contact_id = resource_name.replace("people/", "") if resource_name else None
+                if google_contact_id:
+                    cursor.execute(
+                        "DELETE FROM contacts WHERE google_contact_id = %s",
+                        (google_contact_id,)
+                    )
+                    if cursor.rowcount > 0:
+                        stats["deleted"] += 1
+                continue
+
+            contact = parse_google_contact(person, account_email)
+
+            if not contact["nome"]:
+                stats["skipped"] += 1
+                continue
+
+            # Check if contact exists
+            if contact["google_contact_id"]:
+                cursor.execute(
+                    "SELECT id FROM contacts WHERE google_contact_id = %s",
+                    (contact["google_contact_id"],)
+                )
+                existing = cursor.fetchone()
+
+                if existing:
+                    # Update existing
+                    cursor.execute('''
+                        UPDATE contacts SET
+                            nome = %s,
+                            empresa = %s,
+                            cargo = %s,
+                            emails = %s,
+                            telefones = %s,
+                            foto_url = COALESCE(%s, foto_url),
+                            linkedin = COALESCE(%s, linkedin),
+                            aniversario = COALESCE(%s, aniversario),
+                            contexto = %s,
+                            atualizado_em = CURRENT_TIMESTAMP
+                        WHERE google_contact_id = %s
+                    ''', (
+                        contact["nome"],
+                        contact["empresa"],
+                        contact["cargo"],
+                        json.dumps(contact["emails"]),
+                        json.dumps(contact["telefones"]),
+                        contact["foto_url"],
+                        contact["linkedin"],
+                        contact["aniversario"],
+                        contact["contexto"],
+                        contact["google_contact_id"]
+                    ))
+                    stats["updated"] += 1
+                else:
+                    # Insert new
+                    cursor.execute('''
+                        INSERT INTO contacts (
+                            nome, empresa, cargo, emails, telefones, foto_url,
+                            linkedin, aniversario, google_contact_id, contexto, origem
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ''', (
+                        contact["nome"],
+                        contact["empresa"],
+                        contact["cargo"],
+                        json.dumps(contact["emails"]),
+                        json.dumps(contact["telefones"]),
+                        contact["foto_url"],
+                        contact["linkedin"],
+                        contact["aniversario"],
+                        contact["google_contact_id"],
+                        contact["contexto"],
+                        contact["origem"]
+                    ))
+                    stats["imported"] += 1
+
+        except Exception as e:
+            stats["errors"] += 1
+            continue
+
+    db_connection.commit()
+
+    # Update sync token and last sync time
+    cursor.execute('''
+        UPDATE google_accounts
+        SET ultima_sync = CURRENT_TIMESTAMP, sync_token = %s
+        WHERE email = %s
+    ''', (result["next_sync_token"], account_email))
+    db_connection.commit()
+
+    return stats

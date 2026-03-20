@@ -71,10 +71,14 @@ async def refresh_access_token(refresh_token: str) -> dict:
         return response.json()
 
 
-async def fetch_all_contacts(access_token: str, account_email: str) -> list:
-    """Buscar todos os contatos de uma conta Google"""
+async def fetch_all_contacts(access_token: str, account_email: str) -> dict:
+    """
+    Buscar todos os contatos de uma conta Google.
+    Retorna: {contacts: list, sync_token: str}
+    """
     contacts = []
     next_page_token = None
+    next_sync_token = None
     page = 0
 
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -83,7 +87,8 @@ async def fetch_all_contacts(access_token: str, account_email: str) -> list:
             params = {
                 "pageSize": 1000,
                 "personFields": "names,emailAddresses,phoneNumbers,organizations,photos,birthdays,urls,biographies,memberships",
-                "sources": "READ_SOURCE_TYPE_CONTACT"
+                "sources": "READ_SOURCE_TYPE_CONTACT",
+                "requestSyncToken": True  # Request sync token for incremental sync later
             }
 
             if next_page_token:
@@ -108,11 +113,13 @@ async def fetch_all_contacts(access_token: str, account_email: str) -> list:
             contacts.extend(connections)
 
             next_page_token = data.get("nextPageToken")
+            next_sync_token = data.get("nextSyncToken")
+
             if not next_page_token:
                 break
 
     print(f"  [{account_email}] Total: {len(contacts)} contatos")
-    return contacts
+    return {"contacts": contacts, "sync_token": next_sync_token}
 
 
 def parse_google_contact(person: dict, account_email: str) -> dict:
@@ -362,7 +369,9 @@ async def sync_account(conn, account: dict) -> dict:
 
     # Buscar contatos
     try:
-        contacts = await fetch_all_contacts(access_token, email)
+        result = await fetch_all_contacts(access_token, email)
+        contacts = result["contacts"]
+        sync_token = result["sync_token"]
     except Exception as e:
         if "Token expirado" in str(e):
             print("  Token expirado, tentando renovar...")
@@ -382,7 +391,9 @@ async def sync_account(conn, account: dict) -> dict:
                 ))
                 conn.commit()
 
-                contacts = await fetch_all_contacts(access_token, email)
+                result = await fetch_all_contacts(access_token, email)
+                contacts = result["contacts"]
+                sync_token = result["sync_token"]
             except Exception as refresh_error:
                 print(f"  ERRO: {refresh_error}")
                 return {"error": str(refresh_error)}
@@ -393,6 +404,15 @@ async def sync_account(conn, account: dict) -> dict:
     # Sincronizar com banco
     print(f"\n  Sincronizando {len(contacts)} contatos com o banco...")
     stats = sync_contacts_to_db(conn, contacts, email)
+
+    # Salvar sync_token para incremental sync futuro
+    if sync_token:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE google_accounts SET sync_token = %s WHERE email = %s
+        ''', (sync_token, email))
+        conn.commit()
+        print(f"  Sync token salvo para sincronização incremental")
 
     print(f"\n  Resultado:")
     print(f"    - Importados: {stats['imported']}")

@@ -2002,6 +2002,7 @@ from integrations.google_contacts import (
     refresh_access_token,
     get_user_email,
     sync_contacts_from_google,
+    sync_contacts_incremental,
     CONTACTS_SCOPES
 )
 
@@ -2204,6 +2205,88 @@ async def sync_all_google_contacts(request: Request):
     conn.close()
 
     return {"results": results}
+
+
+@app.get("/api/cron/sync-contacts")
+async def cron_sync_contacts(request: Request):
+    """
+    Cron endpoint for incremental contact sync.
+    Called by Vercel Cron every 30 minutes.
+    Uses sync tokens for efficient delta sync.
+    """
+    # Verify cron authorization (Vercel sets this header)
+    auth_header = request.headers.get("authorization", "")
+    cron_secret = os.getenv("CRON_SECRET", "")
+
+    # In production, Vercel Cron sets Authorization header
+    # For local testing, allow without auth
+    is_vercel_cron = request.headers.get("x-vercel-cron") == "true"
+    is_authorized = (
+        is_vercel_cron or
+        auth_header == f"Bearer {cron_secret}" or
+        os.getenv("VERCEL_ENV") != "production"
+    )
+
+    if not is_authorized and cron_secret:
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Get all connected accounts
+    cursor.execute('''
+        SELECT * FROM google_accounts WHERE conectado = TRUE
+    ''')
+    accounts = [row_to_dict(row) for row in cursor.fetchall()]
+
+    results = []
+    total_changes = 0
+
+    for account in accounts:
+        try:
+            stats = await sync_contacts_incremental(
+                access_token=account["access_token"],
+                refresh_token=account["refresh_token"],
+                account_email=account["email"],
+                sync_token=account.get("sync_token"),
+                db_connection=conn
+            )
+
+            # If full sync is required (sync token expired), flag it
+            if stats.get("full_sync_required"):
+                results.append({
+                    "account": account["email"],
+                    "status": "full_sync_required",
+                    "message": "Sync token expired, full sync needed"
+                })
+            else:
+                changes = stats["imported"] + stats["updated"] + stats["deleted"]
+                total_changes += changes
+                results.append({
+                    "account": account["email"],
+                    "status": "success",
+                    "imported": stats["imported"],
+                    "updated": stats["updated"],
+                    "deleted": stats["deleted"],
+                    "errors": stats["errors"]
+                })
+
+        except Exception as e:
+            results.append({
+                "account": account["email"],
+                "status": "error",
+                "error": str(e)
+            })
+
+    conn.close()
+
+    return {
+        "status": "completed",
+        "timestamp": datetime.now().isoformat(),
+        "accounts_processed": len(accounts),
+        "total_changes": total_changes,
+        "results": results
+    }
 
 
 @app.delete("/api/google/accounts/{account_id}")
