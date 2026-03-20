@@ -314,6 +314,19 @@ async def rap_contacts(request: Request):
         "user": user
     })
 
+@app.get("/rap/contacts/cleanup", response_class=HTMLResponse)
+async def rap_contacts_cleanup(request: Request):
+    """Page for reviewing and cleaning up contacts"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    return templates.TemplateResponse("rap_contacts_cleanup.html", {
+        "request": request,
+        "user": user
+    })
+
+# NOTE: This parameterized route MUST come AFTER specific routes like /cleanup
 @app.get("/rap/contacts/{contact_id}", response_class=HTMLResponse)
 async def rap_contact_detail(request: Request, contact_id: int):
     """RAP Contact Detail Page"""
@@ -2526,21 +2539,6 @@ async def disconnect_google_account(request: Request, account_id: int):
     conn.close()
 
     return {"status": "disconnected"}
-
-
-# ============== Cleanup Page ==============
-
-@app.get("/rap/contacts/cleanup")
-async def rap_contacts_cleanup(request: Request):
-    """Page for reviewing and cleaning up contacts"""
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse(url="/login")
-
-    return templates.TemplateResponse("rap_contacts_cleanup.html", {
-        "request": request,
-        "user": user
-    })
 
 
 # Vercel handler
