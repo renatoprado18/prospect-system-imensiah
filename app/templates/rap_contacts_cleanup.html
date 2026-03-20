@@ -208,11 +208,19 @@
         }
 
         function showProgress(title, message) {
+            console.log('showProgress:', title, message);
+            const modal = document.getElementById('progress-modal');
+            console.log('modal element:', modal);
+            if (!modal) {
+                console.error('progress-modal not found!');
+                return;
+            }
             document.getElementById('progress-title').textContent = title;
             document.getElementById('progress-message').textContent = message;
             document.getElementById('progress-bar').style.width = '0%';
             document.getElementById('progress-detail').textContent = '';
-            document.getElementById('progress-modal').classList.remove('hidden');
+            modal.classList.remove('hidden');
+            console.log('modal classes after remove hidden:', modal.className);
         }
 
         function updateProgress(percent, detail) {
@@ -456,7 +464,10 @@
         }
 
         async function mergeAllDuplicates(syncGoogle) {
+            console.log('mergeAllDuplicates called, syncGoogle:', syncGoogle);
+            console.log('progress-modal element:', document.getElementById('progress-modal'));
             showProgress('Mesclando Duplicatas', 'Iniciando processamento em lotes...');
+            console.log('showProgress called');
             updateProgress(0, 'Preparando...');
 
             let totalMerged = 0;
