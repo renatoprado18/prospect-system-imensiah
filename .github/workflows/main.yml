@@ -1,0 +1,22 @@
+name: Full Google Contacts Sync
+
+  on:
+    schedule:
+      - cron: '0 6 * * 0'  # Domingo 3 AM São Paulo
+    workflow_dispatch:
+
+  jobs:
+    sync-contacts:
+      runs-on: ubuntu-latest
+      timeout-minutes: 30
+      steps:
+        - uses: actions/checkout@v4
+        - uses: actions/setup-python@v5
+          with:
+            python-version: '3.12'
+        - run: pip install python-dotenv httpx psycopg2-binary
+        - run: python scripts/sync_google_contacts.py
+          env:
+            DATABASE_URL: ${{ secrets.DATABASE_URL }}
+            GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+            GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
