@@ -372,6 +372,19 @@ async def rap_settings(request: Request):
     })
 
 
+@app.get("/rap/whatsapp", response_class=HTMLResponse)
+async def rap_whatsapp(request: Request):
+    """RAP WhatsApp Integration Page"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    return templates.TemplateResponse("rap_whatsapp.html", {
+        "request": request,
+        "user": user
+    })
+
+
 @app.get("/api/user/{email}")
 async def get_user(email: str):
     """Obtém dados do usuário"""
@@ -1244,6 +1257,59 @@ async def send_whatsapp_message(request: Request):
         raise HTTPException(status_code=500, detail=result["error"])
 
     return {"status": "sent", "result": result}
+
+
+@app.get("/api/whatsapp/qr")
+async def get_whatsapp_qr():
+    """Get QR code for WhatsApp connection"""
+    import httpx
+
+    base_url = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+    api_key = os.getenv("EVOLUTION_API_KEY", "")
+    instance = os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp")
+
+    if not base_url or not api_key:
+        raise HTTPException(status_code=500, detail="Evolution API not configured")
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                f"{base_url}/instance/connect/{instance}",
+                headers={"apikey": api_key},
+                timeout=10.0
+            )
+            data = response.json()
+            return {
+                "qr_base64": data.get("base64"),
+                "pairing_code": data.get("pairingCode"),
+                "count": data.get("count")
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/whatsapp/disconnect")
+async def disconnect_whatsapp():
+    """Disconnect WhatsApp instance"""
+    import httpx
+
+    base_url = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+    api_key = os.getenv("EVOLUTION_API_KEY", "")
+    instance = os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp")
+
+    if not base_url or not api_key:
+        raise HTTPException(status_code=500, detail="Evolution API not configured")
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.delete(
+                f"{base_url}/instance/logout/{instance}",
+                headers={"apikey": api_key},
+                timeout=10.0
+            )
+            return response.json()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/fathom/sync")

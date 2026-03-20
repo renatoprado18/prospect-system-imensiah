@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAP - WhatsApp</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #0ea5e9;
+            --success: #10b981;
+            --whatsapp: #25D366;
+            --whatsapp-dark: #128C7E;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --dark: #1e293b;
+            --light: #f8fafc;
+            --gray-100: #f1f5f9;
+            --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1;
+            --gray-400: #94a3b8;
+            --gray-500: #64748b;
+            --gray-600: #475569;
+            --sidebar-width: 260px;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--gray-100);
+            margin: 0;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: var(--sidebar-width);
+            background: linear-gradient(180deg, var(--dark) 0%, #0f172a 100%);
+            color: white;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header { padding: 24px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .sidebar-logo { display: flex; align-items: center; gap: 12px; font-size: 1.5rem; font-weight: 700; text-decoration: none; color: white; }
+        .sidebar-logo .icon { width: 40px; height: 40px; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+        .sidebar-nav { flex: 1; padding: 16px 0; overflow-y: auto; }
+        .nav-section { padding: 8px 16px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--gray-400); margin-top: 16px; }
+        .nav-item { display: flex; align-items: center; gap: 12px; padding: 12px 24px; color: var(--gray-300); text-decoration: none; transition: all 0.2s; border-left: 3px solid transparent; }
+        .nav-item:hover { background: rgba(255,255,255,0.05); color: white; }
+        .nav-item.active { background: rgba(99, 102, 241, 0.15); color: white; border-left-color: var(--primary); }
+        .nav-item i { font-size: 1.2rem; width: 24px; text-align: center; }
+
+        /* Main Content */
+        .main-content { margin-left: var(--sidebar-width); padding: 24px 32px; min-height: 100vh; }
+
+        /* Header */
+        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+        .page-title { font-size: 1.75rem; font-weight: 700; color: var(--dark); margin: 0; }
+        .page-subtitle { color: var(--gray-500); font-size: 0.9rem; margin-top: 4px; }
+
+        /* Cards */
+        .card { background: white; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); border: none; margin-bottom: 24px; }
+        .card-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--gray-200); background: transparent; }
+        .card-title { font-size: 1rem; font-weight: 600; color: var(--dark); margin: 0; display: flex; align-items: center; gap: 10px; }
+        .card-body { padding: 24px; }
+
+        /* Status Badge */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        .status-badge.connected {
+            background: rgba(37, 211, 102, 0.15);
+            color: var(--whatsapp-dark);
+        }
+        .status-badge.disconnected {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+        }
+        .status-badge.connecting {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--warning);
+        }
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+        .status-badge.connected .status-dot { animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* WhatsApp Card */
+        .whatsapp-card {
+            background: linear-gradient(135deg, var(--whatsapp) 0%, var(--whatsapp-dark) 100%);
+            color: white;
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+        }
+        .whatsapp-card h3 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .whatsapp-card p {
+            opacity: 0.9;
+            margin-bottom: 24px;
+        }
+        .whatsapp-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            background: rgba(255,255,255,0.15);
+            padding: 16px 20px;
+            border-radius: 12px;
+        }
+        .whatsapp-info i {
+            font-size: 2rem;
+        }
+        .whatsapp-info-text {
+            flex: 1;
+        }
+        .whatsapp-info-label {
+            font-size: 0.8rem;
+            opacity: 0.8;
+        }
+        .whatsapp-info-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        /* QR Code */
+        .qr-container {
+            text-align: center;
+            padding: 32px;
+            background: var(--gray-100);
+            border-radius: 16px;
+        }
+        .qr-container img {
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+        .qr-instructions {
+            color: var(--gray-600);
+            font-size: 0.9rem;
+        }
+        .qr-instructions ol {
+            text-align: left;
+            max-width: 300px;
+            margin: 16px auto 0;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--dark);
+        }
+        .stat-label {
+            color: var(--gray-500);
+            font-size: 0.85rem;
+            margin-top: 4px;
+        }
+
+        /* Send Message Form */
+        .send-form {
+            background: var(--gray-100);
+            border-radius: 12px;
+            padding: 24px;
+        }
+        .send-form input, .send-form textarea {
+            border-radius: 10px;
+            border: 1px solid var(--gray-300);
+            padding: 12px 16px;
+        }
+        .send-form input:focus, .send-form textarea:focus {
+            border-color: var(--whatsapp);
+            box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.15);
+        }
+
+        /* Buttons */
+        .btn-whatsapp {
+            background: var(--whatsapp);
+            border-color: var(--whatsapp);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+        .btn-whatsapp:hover {
+            background: var(--whatsapp-dark);
+            border-color: var(--whatsapp-dark);
+            color: white;
+        }
+        .btn-outline-danger { border-radius: 10px; }
+
+        /* Toast */
+        .toast-container {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 1000;
+        }
+
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main-content { margin-left: 0; padding: 16px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <a href="/rap" class="sidebar-logo">
+                <div class="icon"><i class="bi bi-robot"></i></div>
+                <span>RAP</span>
+            </a>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a href="/rap" class="nav-item">
+                <i class="bi bi-grid-1x2"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="/rap/contacts" class="nav-item">
+                <i class="bi bi-people"></i>
+                <span>Contatos</span>
+            </a>
+            <a href="/rap/inbox" class="nav-item">
+                <i class="bi bi-inbox"></i>
+                <span>Inbox</span>
+            </a>
+            <a href="/rap/calendar" class="nav-item">
+                <i class="bi bi-calendar3"></i>
+                <span>Calendario</span>
+            </a>
+            <a href="/rap/tasks" class="nav-item">
+                <i class="bi bi-check2-square"></i>
+                <span>Tarefas</span>
+            </a>
+
+            <div class="nav-section">Integracoes</div>
+            <a href="/rap/whatsapp" class="nav-item active">
+                <i class="bi bi-whatsapp"></i>
+                <span>WhatsApp</span>
+            </a>
+
+            <div class="nav-section">Sistema</div>
+            <a href="/rap/settings" class="nav-item">
+                <i class="bi bi-gear"></i>
+                <span>Configuracoes</span>
+            </a>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="page-header">
+            <div>
+                <h1 class="page-title"><i class="bi bi-whatsapp me-2" style="color: var(--whatsapp);"></i> WhatsApp</h1>
+                <p class="page-subtitle">Gerenciar integracao com WhatsApp via Evolution API</p>
+            </div>
+            <div id="statusBadge">
+                <span class="status-badge connecting">
+                    <span class="status-dot"></span>
+                    Verificando...
+                </span>
+            </div>
+        </div>
+
+        <!-- Connection Status Card -->
+        <div id="connectionCard" class="whatsapp-card" style="display: none;">
+            <h3><i class="bi bi-check-circle me-2"></i> Conectado</h3>
+            <p>Sua conta WhatsApp esta conectada e pronta para enviar/receber mensagens.</p>
+            <div class="whatsapp-info">
+                <i class="bi bi-phone"></i>
+                <div class="whatsapp-info-text">
+                    <div class="whatsapp-info-label">Numero conectado</div>
+                    <div class="whatsapp-info-value" id="connectedNumber">+55 11 98415-3337</div>
+                </div>
+                <button class="btn btn-outline-light btn-sm" onclick="disconnect()">
+                    <i class="bi bi-x-circle me-1"></i> Desconectar
+                </button>
+            </div>
+        </div>
+
+        <!-- QR Code Card (when disconnected) -->
+        <div id="qrCard" class="card" style="display: none;">
+            <div class="card-header">
+                <h5 class="card-title"><i class="bi bi-qr-code"></i> Conectar WhatsApp</h5>
+                <button class="btn btn-outline-secondary btn-sm" onclick="refreshQR()">
+                    <i class="bi bi-arrow-clockwise me-1"></i> Atualizar QR
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="qr-container">
+                    <img id="qrImage" src="" alt="QR Code" width="280" />
+                    <div class="qr-instructions">
+                        <p><strong>Para conectar:</strong></p>
+                        <ol>
+                            <li>Abra o WhatsApp no celular</li>
+                            <li>Toque em <strong>Aparelhos Conectados</strong></li>
+                            <li>Toque em <strong>Conectar Aparelho</strong></li>
+                            <li>Aponte a camera para este QR Code</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-grid" id="statsGrid" style="display: none;">
+            <div class="stat-card">
+                <div class="stat-value" id="totalMessages">0</div>
+                <div class="stat-label">Mensagens Hoje</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalConversations">0</div>
+                <div class="stat-label">Conversas Ativas</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalContacts">0</div>
+                <div class="stat-label">Contatos com WhatsApp</div>
+            </div>
+        </div>
+
+        <!-- Send Test Message -->
+        <div class="card" id="sendCard" style="display: none;">
+            <div class="card-header">
+                <h5 class="card-title"><i class="bi bi-send"></i> Enviar Mensagem</h5>
+            </div>
+            <div class="card-body">
+                <div class="send-form">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Telefone</label>
+                            <input type="text" class="form-control" id="phoneInput" placeholder="+55 11 99999-9999">
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label">Mensagem</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="messageInput" placeholder="Digite sua mensagem...">
+                                <button class="btn btn-whatsapp" onclick="sendMessage()">
+                                    <i class="bi bi-send"></i> Enviar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="card" id="activityCard" style="display: none;">
+            <div class="card-header">
+                <h5 class="card-title"><i class="bi bi-clock-history"></i> Atividade Recente</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">As mensagens recebidas aparecerao aqui e serao vinculadas automaticamente aos contatos.</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Toast -->
+    <div class="toast-container">
+        <div id="toast" class="toast" role="alert">
+            <div class="toast-header">
+                <i class="bi bi-whatsapp text-success me-2"></i>
+                <strong class="me-auto">WhatsApp</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+            </div>
+            <div class="toast-body" id="toastBody"></div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let connectionState = 'checking';
+
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/whatsapp/status');
+                const data = await response.json();
+
+                const state = data.instance?.state || data.error || 'unknown';
+                updateUI(state);
+            } catch (error) {
+                console.error('Error checking status:', error);
+                updateUI('error');
+            }
+        }
+
+        function updateUI(state) {
+            const statusBadge = document.getElementById('statusBadge');
+            const connectionCard = document.getElementById('connectionCard');
+            const qrCard = document.getElementById('qrCard');
+            const statsGrid = document.getElementById('statsGrid');
+            const sendCard = document.getElementById('sendCard');
+            const activityCard = document.getElementById('activityCard');
+
+            if (state === 'open') {
+                // Connected
+                statusBadge.innerHTML = `
+                    <span class="status-badge connected">
+                        <span class="status-dot"></span>
+                        Conectado
+                    </span>
+                `;
+                connectionCard.style.display = 'block';
+                qrCard.style.display = 'none';
+                statsGrid.style.display = 'grid';
+                sendCard.style.display = 'block';
+                activityCard.style.display = 'block';
+            } else if (state === 'connecting') {
+                // Connecting - show QR
+                statusBadge.innerHTML = `
+                    <span class="status-badge connecting">
+                        <span class="status-dot"></span>
+                        Conectando...
+                    </span>
+                `;
+                connectionCard.style.display = 'none';
+                qrCard.style.display = 'block';
+                statsGrid.style.display = 'none';
+                sendCard.style.display = 'none';
+                activityCard.style.display = 'none';
+                refreshQR();
+            } else {
+                // Disconnected
+                statusBadge.innerHTML = `
+                    <span class="status-badge disconnected">
+                        <span class="status-dot"></span>
+                        Desconectado
+                    </span>
+                `;
+                connectionCard.style.display = 'none';
+                qrCard.style.display = 'block';
+                statsGrid.style.display = 'none';
+                sendCard.style.display = 'none';
+                activityCard.style.display = 'none';
+                refreshQR();
+            }
+        }
+
+        async function refreshQR() {
+            try {
+                const response = await fetch('/api/whatsapp/qr');
+                const data = await response.json();
+
+                if (data.qr_base64) {
+                    const qrImage = document.getElementById('qrImage');
+                    qrImage.src = data.qr_base64;
+                }
+            } catch (error) {
+                console.error('Error refreshing QR:', error);
+            }
+        }
+
+        async function sendMessage() {
+            const phone = document.getElementById('phoneInput').value;
+            const message = document.getElementById('messageInput').value;
+
+            if (!phone || !message) {
+                showToast('Preencha telefone e mensagem');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/whatsapp/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, message })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'sent') {
+                    showToast('Mensagem enviada com sucesso!');
+                    document.getElementById('messageInput').value = '';
+                } else {
+                    showToast('Erro ao enviar: ' + (data.detail || 'Erro desconhecido'));
+                }
+            } catch (error) {
+                showToast('Erro ao enviar mensagem');
+                console.error(error);
+            }
+        }
+
+        async function disconnect() {
+            if (!confirm('Deseja realmente desconectar o WhatsApp?')) return;
+
+            try {
+                const response = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
+                const data = await response.json();
+                showToast('WhatsApp desconectado');
+                setTimeout(checkStatus, 2000);
+            } catch (error) {
+                showToast('Erro ao desconectar');
+                console.error(error);
+            }
+        }
+
+        function showToast(message) {
+            document.getElementById('toastBody').textContent = message;
+            const toast = new bootstrap.Toast(document.getElementById('toast'));
+            toast.show();
+        }
+
+        // Check status on load and periodically
+        checkStatus();
+        setInterval(checkStatus, 30000);  // Check every 30 seconds
+    </script>
+</body>
+</html>
