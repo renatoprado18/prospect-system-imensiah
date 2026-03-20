@@ -825,12 +825,18 @@
                                     <i class="bi bi-lightbulb"></i>
                                     Fatos Importantes
                                 </h2>
+                                <button class="btn btn-sm btn-outline-primary" onclick="extractFacts()" id="extractFactsBtn" title="Extrair fatos das mensagens com IA">
+                                    <i class="bi bi-magic"></i>
+                                </button>
                             </div>
-                            <div class="card-body" style="padding: 12px;">
+                            <div class="card-body" style="padding: 12px;" id="factsContainer">
                                 ${facts.length > 0 ? facts.map(f => renderFact(f)).join('') : `
                                     <div class="empty-state">
                                         <i class="bi bi-lightbulb"></i>
                                         <p>Nenhum fato registrado</p>
+                                        <button class="btn btn-sm btn-primary mt-2" onclick="extractFacts()">
+                                            <i class="bi bi-magic me-1"></i>Extrair com IA
+                                        </button>
                                     </div>
                                 `}
                             </div>
@@ -929,22 +935,87 @@
             const categoryIcons = {
                 'professional': 'bi-briefcase',
                 'personal': 'bi-heart',
-                'preference': 'bi-star'
+                'preference': 'bi-star',
+                'interest': 'bi-lightbulb',
+                'commitment': 'bi-check2-circle'
+            };
+
+            const categoryLabels = {
+                'professional': 'Profissional',
+                'personal': 'Pessoal',
+                'preference': 'Preferencia',
+                'interest': 'Interesse',
+                'commitment': 'Compromisso'
             };
 
             const icon = categoryIcons[fact.categoria] || 'bi-info-circle';
+            const label = categoryLabels[fact.categoria] || fact.categoria;
 
             return `
-                <div class="fact-item">
+                <div class="fact-item" data-fact-id="${fact.id}">
                     <div class="fact-icon">
                         <i class="bi ${icon}"></i>
                     </div>
                     <div class="fact-content">
-                        <div class="fact-category">${fact.categoria}</div>
+                        <div class="fact-category">${label}</div>
                         <div class="fact-text">${fact.fato}</div>
                     </div>
+                    <button class="btn btn-sm btn-link text-danger" onclick="deleteFact(${fact.id})" title="Remover fato">
+                        <i class="bi bi-x"></i>
+                    </button>
                 </div>
             `;
+        }
+
+        async function extractFacts() {
+            const btn = document.getElementById('extractFactsBtn');
+            const container = document.getElementById('factsContainer');
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/extract-facts`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Erro ao extrair fatos');
+                }
+
+                if (data.facts_saved > 0) {
+                    // Reload contact to get updated facts
+                    await loadContact();
+                    alert(`${data.facts_saved} fatos extraidos das mensagens!`);
+                } else if (data.facts_extracted > 0) {
+                    alert('Fatos ja existentes no perfil.');
+                } else {
+                    alert('Nenhum fato relevante encontrado nas mensagens.');
+                }
+            } catch (error) {
+                alert('Erro: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-magic"></i>';
+            }
+        }
+
+        async function deleteFact(factId) {
+            if (!confirm('Remover este fato?')) return;
+
+            try {
+                const response = await fetch(`/api/contacts/facts/${factId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    document.querySelector(`[data-fact-id="${factId}"]`).remove();
+                }
+            } catch (error) {
+                alert('Erro ao remover fato');
+            }
         }
 
         function parseJsonField(field) {

@@ -38,6 +38,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 FATHOM_API_KEY = os.getenv("FATHOM_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 DATA_DIR = os.path.join(BASE_DIR, "..", "data")
@@ -1598,6 +1599,208 @@ async def get_whatsapp_chats():
         })
 
     return {"chats": formatted, "total": len(formatted)}
+
+
+@app.post("/api/contacts/{contact_id}/extract-facts")
+async def extract_contact_facts(contact_id: int):
+    """
+    Use AI to extract relevant facts from a contact's messages.
+    Requires ANTHROPIC_API_KEY environment variable.
+    """
+    import httpx
+
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Get contact info
+        cursor.execute("SELECT id, nome FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+
+        contact_name = contact['nome']
+
+        # Get recent messages for this contact
+        cursor.execute("""
+            SELECT conteudo, direcao, enviado_em, metadata
+            FROM messages
+            WHERE contact_id = %s
+            ORDER BY enviado_em DESC
+            LIMIT 50
+        """, (contact_id,))
+
+        messages = cursor.fetchall()
+        if not messages:
+            return {"status": "no_messages", "facts": []}
+
+        # Format messages for AI
+        messages_text = []
+        for msg in messages:
+            direction = "Eu" if msg['direcao'] == 'outgoing' else contact_name
+            date = msg['enviado_em'].strftime("%d/%m/%Y") if msg['enviado_em'] else ""
+            metadata = msg['metadata'] or {}
+            group_name = metadata.get('group_name', '')
+            source = f" (grupo: {group_name})" if group_name else ""
+            messages_text.append(f"[{date}] {direction}{source}: {msg['conteudo']}")
+
+        conversation = "\n".join(messages_text)
+
+        # Call Anthropic API
+        prompt = f"""Analise as mensagens abaixo entre mim e {contact_name} e extraia fatos relevantes sobre essa pessoa.
+
+Fatos relevantes incluem:
+- Informacoes profissionais (cargo, empresa, projetos)
+- Informacoes pessoais (familia, viagens, hobbies)
+- Interesses e preferencias
+- Pedidos ou compromissos mencionados
+- Eventos importantes na vida da pessoa
+
+Ignore:
+- Mensagens genericas (bom dia, ok, etc)
+- Links sem contexto
+- Memes e figurinhas
+
+Retorne em formato JSON com a estrutura:
+{{
+  "facts": [
+    {{"categoria": "professional|personal|interest|commitment", "fato": "descricao do fato", "confianca": 0.0-1.0}}
+  ]
+}}
+
+Mensagens:
+{conversation}
+
+Retorne APENAS o JSON, sem explicacoes."""
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-3-haiku-20240307",
+                    "max_tokens": 1024,
+                    "messages": [{"role": "user", "content": prompt}]
+                },
+                timeout=30.0
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(status_code=500, detail=f"AI API error: {response.text}")
+
+            ai_response = response.json()
+            content = ai_response.get("content", [{}])[0].get("text", "{}")
+
+            # Parse JSON response
+            try:
+                facts_data = json.loads(content)
+                facts = facts_data.get("facts", [])
+            except json.JSONDecodeError:
+                # Try to extract JSON from response
+                import re
+                json_match = re.search(r'\{[\s\S]*\}', content)
+                if json_match:
+                    facts_data = json.loads(json_match.group())
+                    facts = facts_data.get("facts", [])
+                else:
+                    facts = []
+
+        # Save facts to database
+        saved_facts = []
+        for fact in facts:
+            categoria = fact.get("categoria", "general")
+            fato = fact.get("fato", "")
+            confianca = fact.get("confianca", 0.8)
+
+            if not fato:
+                continue
+
+            # Check if fact already exists
+            cursor.execute("""
+                SELECT id FROM contact_facts
+                WHERE contact_id = %s AND fato = %s
+                LIMIT 1
+            """, (contact_id, fato))
+
+            if cursor.fetchone():
+                continue
+
+            cursor.execute("""
+                INSERT INTO contact_facts (contact_id, categoria, fato, fonte, confianca)
+                VALUES (%s, %s, %s, 'whatsapp_ai', %s)
+                RETURNING id
+            """, (contact_id, categoria, fato, confianca))
+
+            fact_id = cursor.fetchone()['id']
+            saved_facts.append({
+                "id": fact_id,
+                "categoria": categoria,
+                "fato": fato,
+                "confianca": confianca
+            })
+
+        conn.commit()
+
+        return {
+            "status": "ok",
+            "contact_name": contact_name,
+            "messages_analyzed": len(messages),
+            "facts_extracted": len(facts),
+            "facts_saved": len(saved_facts),
+            "facts": saved_facts
+        }
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.get("/api/contacts/{contact_id}/facts")
+async def get_contact_facts(contact_id: int):
+    """Get all facts for a contact"""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("""
+            SELECT id, categoria, fato, fonte, confianca, verificado, criado_em
+            FROM contact_facts
+            WHERE contact_id = %s
+            ORDER BY criado_em DESC
+        """, (contact_id,))
+
+        facts = [dict(row) for row in cursor.fetchall()]
+
+        return {"contact_id": contact_id, "facts": facts}
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.delete("/api/contacts/facts/{fact_id}")
+async def delete_contact_fact(fact_id: int):
+    """Delete a specific fact"""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("DELETE FROM contact_facts WHERE id = %s", (fact_id,))
+        conn.commit()
+        return {"status": "deleted", "fact_id": fact_id}
+    finally:
+        cursor.close()
+        conn.close()
 
 
 @app.get("/api/fathom/sync")
