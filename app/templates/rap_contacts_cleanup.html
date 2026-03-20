@@ -253,11 +253,14 @@
         }
 
         function showConfirm(title, content, action) {
+            console.log('showConfirm called:', title);
             document.getElementById('confirm-title').textContent = title;
             document.getElementById('confirm-content').innerHTML = content;
             document.getElementById('sync-google').checked = false;
             pendingAction = action;
+            console.log('pendingAction set to:', action);
             document.getElementById('confirm-modal').classList.remove('hidden');
+            console.log('confirm-modal should be visible now');
         }
 
         function closeConfirmModal() {
@@ -266,10 +269,15 @@
         }
 
         function executeConfirmedAction() {
+            console.log('executeConfirmedAction called!');
             const syncGoogle = document.getElementById('sync-google').checked;
+            console.log('syncGoogle:', syncGoogle, 'pendingAction:', pendingAction);
             closeConfirmModal();
             if (pendingAction) {
+                console.log('Calling pendingAction...');
                 pendingAction(syncGoogle);
+            } else {
+                console.error('pendingAction is null!');
             }
         }
 
@@ -416,7 +424,9 @@
         }
 
         function confirmMergeDuplicates() {
+            console.log('confirmMergeDuplicates clicked!');
             const count = analysisData ? analysisData.duplicates : 0;
+            console.log('count:', count, 'analysisData:', analysisData);
             showConfirm(
                 'Mesclar Duplicatas',
                 `<div class="space-y-4">
