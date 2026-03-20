@@ -171,9 +171,12 @@ class WhatsAppIntegration:
             except:
                 return None
 
-    async def get_all_chats(self) -> List[Dict[str, Any]]:
+    async def get_all_chats(self, include_groups: bool = False) -> List[Dict[str, Any]]:
         """
         Get all chats/conversations from WhatsApp
+
+        Args:
+            include_groups: If True, include group chats with _is_group=True
 
         Returns:
             List of chat objects with remoteJid, name, lastMessage, etc.
@@ -191,13 +194,17 @@ class WhatsAppIntegration:
                 )
                 data = response.json()
 
-                # Filter individual chats (not groups which end with @g.us)
-                individual_chats = []
+                chats = []
                 for chat in data:
                     remote_jid = chat.get("remoteJid", "") or chat.get("id", "")
 
-                    # Skip groups
+                    # Handle groups
                     if remote_jid.endswith("@g.us"):
+                        if include_groups:
+                            chat["_is_group"] = True
+                            chat["_group_id"] = remote_jid
+                            chat["_group_name"] = chat.get("name") or chat.get("pushName") or "Grupo"
+                            chats.append(chat)
                         continue
 
                     # Extract phone number from different formats
@@ -216,12 +223,161 @@ class WhatsAppIntegration:
 
                     if phone and phone.isdigit():
                         chat["_phone"] = phone
-                        individual_chats.append(chat)
+                        chat["_is_group"] = False
+                        chats.append(chat)
 
-                return individual_chats
+                return chats
             except Exception as e:
                 print(f"Error fetching chats: {e}")
                 return []
+
+    async def get_group_messages(self, group_id: str, my_phone: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get messages from a group where the user participated (sent or was mentioned)
+
+        Args:
+            group_id: Group JID (e.g., 120363028921569581@g.us)
+            my_phone: User's phone number to filter interactions
+            limit: Maximum messages to fetch
+
+        Returns:
+            List of messages where user participated, with participant info
+        """
+        if not self.base_url or not self.api_key:
+            return []
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.base_url}/chat/findMessages/{self.instance}",
+                    headers=self._get_headers(),
+                    json={
+                        "where": {
+                            "key": {
+                                "remoteJid": group_id
+                            }
+                        },
+                        "limit": limit
+                    },
+                    timeout=60.0
+                )
+                data = response.json()
+
+                # Extract records
+                if isinstance(data, dict):
+                    messages = data.get("messages", {})
+                    if isinstance(messages, dict):
+                        all_messages = messages.get("records", [])
+                    else:
+                        all_messages = messages if isinstance(messages, list) else []
+                else:
+                    all_messages = data if isinstance(data, list) else []
+
+                # Filter for interactions (fromMe=true OR mentions my number)
+                my_interactions = []
+                for msg in all_messages:
+                    key = msg.get("key", {})
+
+                    # Message I sent
+                    if key.get("fromMe"):
+                        my_interactions.append(msg)
+                        continue
+
+                    # Message that mentions me (check participantAlt or message content)
+                    participant_alt = key.get("participantAlt", "")
+                    if my_phone in participant_alt:
+                        my_interactions.append(msg)
+                        continue
+
+                    # Check if message content mentions my number or name
+                    message = msg.get("message", {})
+                    content = ""
+                    if "conversation" in message:
+                        content = message["conversation"]
+                    elif "extendedTextMessage" in message:
+                        content = message["extendedTextMessage"].get("text", "")
+
+                    # Check for @mentions (contextInfo.mentionedJid)
+                    context_info = message.get("contextInfo") or msg.get("contextInfo") or {}
+                    mentioned = context_info.get("mentionedJid", [])
+                    for jid in mentioned:
+                        if my_phone in jid:
+                            my_interactions.append(msg)
+                            break
+
+                return my_interactions
+            except Exception as e:
+                print(f"Error fetching group messages: {e}")
+                return []
+
+    def parse_group_message(self, msg: Dict[str, Any], group_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse a group message to extract participant info
+
+        Returns:
+            Dict with phone, direction, content, group_name, etc.
+        """
+        try:
+            key = msg.get("key", {})
+            message = msg.get("message", {})
+
+            # Get participant phone
+            participant_phone = None
+            participant_alt = key.get("participantAlt", "")
+            if participant_alt.endswith("@s.whatsapp.net"):
+                participant_phone = participant_alt.replace("@s.whatsapp.net", "")
+
+            # Direction
+            from_me = key.get("fromMe", False)
+            direction = "outgoing" if from_me else "incoming"
+
+            # Extract content
+            content = None
+            message_type = "text"
+
+            if "conversation" in message:
+                content = message["conversation"]
+            elif "extendedTextMessage" in message:
+                content = message["extendedTextMessage"].get("text", "")
+            elif "imageMessage" in message:
+                content = message["imageMessage"].get("caption", "[Imagem]")
+                message_type = "image"
+            elif "videoMessage" in message:
+                content = message["videoMessage"].get("caption", "[Video]")
+                message_type = "video"
+            elif "audioMessage" in message:
+                content = "[Audio]"
+                message_type = "audio"
+            elif "documentMessage" in message:
+                content = message["documentMessage"].get("fileName", "[Documento]")
+                message_type = "document"
+
+            if content is None:
+                return None
+
+            # Timestamp
+            timestamp = msg.get("messageTimestamp")
+            if timestamp:
+                if isinstance(timestamp, dict):
+                    timestamp = timestamp.get("low", 0)
+                dt = datetime.fromtimestamp(int(timestamp))
+            else:
+                dt = datetime.now()
+
+            return {
+                "phone": participant_phone,
+                "direction": direction,
+                "content": content,
+                "message_type": message_type,
+                "timestamp": dt,
+                "message_id": key.get("id"),
+                "push_name": msg.get("pushName"),
+                "group_name": group_name,
+                "is_group": True
+            }
+        except Exception as e:
+            print(f"Error parsing group message: {e}")
+            return None
 
     async def get_messages_for_chat(self, phone: str, limit: int = 100) -> List[Dict[str, Any]]:
         """

@@ -1313,12 +1313,18 @@ async def disconnect_whatsapp():
 
 
 @app.post("/api/whatsapp/sync")
-async def sync_whatsapp_history():
+async def sync_whatsapp_history(include_groups: bool = False):
     """
     Sync WhatsApp message history from Evolution API.
     Fetches all chats and their messages, linking to existing contacts.
+
+    Args:
+        include_groups: If True, also sync group messages where user participated
     """
-    chats = await whatsapp.get_all_chats()
+    # User's phone number for filtering group interactions
+    MY_PHONE = "5511984153337"
+
+    chats = await whatsapp.get_all_chats(include_groups=include_groups)
 
     if not chats:
         return {"status": "no_chats", "message": "Nenhum chat encontrado"}
@@ -1327,7 +1333,8 @@ async def sync_whatsapp_history():
     cursor = conn.cursor()
 
     stats = {
-        "chats_processed": 0,
+        "individual_chats": 0,
+        "groups_processed": 0,
         "messages_imported": 0,
         "messages_skipped": 0,
         "contacts_matched": 0,
@@ -1336,121 +1343,222 @@ async def sync_whatsapp_history():
 
     try:
         for chat in chats:
-            # Use _phone field added by get_all_chats
-            phone = chat.get("_phone")
-            if not phone:
-                continue
+            is_group = chat.get("_is_group", False)
 
-            push_name = chat.get("name") or chat.get("pushName") or ""
+            if is_group:
+                # Process group - only my interactions
+                group_id = chat.get("_group_id")
+                group_name = chat.get("_group_name", "Grupo")
 
-            # Fetch messages for this chat
-            messages = await whatsapp.get_messages_for_chat(phone, limit=200)
+                if not group_id:
+                    continue
 
-            if not messages:
-                continue
+                # Fetch only messages where I participated
+                messages = await whatsapp.get_group_messages(group_id, MY_PHONE, limit=200)
 
-            stats["chats_processed"] += 1
+                if not messages:
+                    continue
 
-            # Find contact by phone number
-            cursor.execute("""
-                SELECT id, nome
-                FROM contacts
-                WHERE telefones::text ILIKE %s
-                LIMIT 1
-            """, (f'%{phone[-8:]}%',))
+                stats["groups_processed"] += 1
 
-            contact = cursor.fetchone()
-            contact_id = None
-            contact_name = push_name or "Desconhecido"
+                # Process each group message
+                for msg in messages:
+                    parsed = whatsapp.parse_group_message(msg, group_name)
+                    if not parsed:
+                        continue
 
-            if contact:
-                contact_id = contact['id']
-                contact_name = contact['nome']
-                stats["contacts_matched"] += 1
+                    # For outgoing messages (fromMe), skip - we want to track interactions with others
+                    if parsed.get("direction") == "outgoing":
+                        # Still save the message but linked to the context
+                        pass
 
-            # Find or create conversation
-            conversation_id = None
-            if contact_id:
-                cursor.execute("""
-                    SELECT id FROM conversations
-                    WHERE contact_id = %s AND canal = 'whatsapp'
-                    LIMIT 1
-                """, (contact_id,))
-                conv = cursor.fetchone()
+                    # For incoming messages, find the contact who sent it
+                    participant_phone = parsed.get("phone")
+                    if not participant_phone:
+                        continue
 
-                if conv:
-                    conversation_id = conv['id']
-                else:
+                    # Find contact by participant phone
                     cursor.execute("""
-                        INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
-                        VALUES (%s, 'whatsapp', NOW(), 0)
-                        RETURNING id
+                        SELECT id, nome
+                        FROM contacts
+                        WHERE telefones::text ILIKE %s
+                        LIMIT 1
+                    """, (f'%{participant_phone[-8:]}%',))
+
+                    contact = cursor.fetchone()
+                    if not contact:
+                        # Skip messages from unknown contacts in groups
+                        continue
+
+                    contact_id = contact['id']
+                    stats["contacts_matched"] += 1
+
+                    # Check if message already exists
+                    message_id_ext = parsed.get("message_id")
+                    cursor.execute("""
+                        SELECT id FROM messages
+                        WHERE metadata->>'message_id' = %s
+                        LIMIT 1
+                    """, (message_id_ext,))
+
+                    if cursor.fetchone():
+                        stats["messages_skipped"] += 1
+                        continue
+
+                    # Find or create conversation for this contact
+                    cursor.execute("""
+                        SELECT id FROM conversations
+                        WHERE contact_id = %s AND canal = 'whatsapp'
+                        LIMIT 1
                     """, (contact_id,))
-                    conversation_id = cursor.fetchone()['id']
+                    conv = cursor.fetchone()
 
-            # Process each message
-            for msg in messages:
-                parsed = whatsapp.parse_stored_message(msg)
-                if not parsed:
+                    if conv:
+                        conversation_id = conv['id']
+                    else:
+                        cursor.execute("""
+                            INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
+                            VALUES (%s, 'whatsapp', NOW(), 0)
+                            RETURNING id
+                        """, (contact_id,))
+                        conversation_id = cursor.fetchone()['id']
+
+                    # Insert group message
+                    cursor.execute("""
+                        INSERT INTO messages (conversation_id, contact_id, direcao, conteudo, enviado_em, metadata)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        conversation_id,
+                        contact_id,
+                        parsed.get("direction"),
+                        parsed.get("content"),
+                        parsed.get("timestamp"),
+                        json.dumps({
+                            "phone": participant_phone,
+                            "push_name": parsed.get("push_name"),
+                            "message_id": message_id_ext,
+                            "message_type": parsed.get("message_type"),
+                            "is_group": True,
+                            "group_name": group_name
+                        })
+                    ))
+                    stats["messages_imported"] += 1
+
+            else:
+                # Process individual chat (existing logic)
+                phone = chat.get("_phone")
+                if not phone:
                     continue
 
-                message_id_ext = parsed.get("message_id")
-                content = parsed.get("content")
-                direction = parsed.get("direction")
-                timestamp = parsed.get("timestamp")
+                push_name = chat.get("name") or chat.get("pushName") or ""
 
-                # Check if message already exists (by external message_id in metadata)
+                # Fetch messages for this chat
+                messages = await whatsapp.get_messages_for_chat(phone, limit=200)
+
+                if not messages:
+                    continue
+
+                stats["individual_chats"] += 1
+
+                # Find contact by phone number
                 cursor.execute("""
-                    SELECT id FROM messages
-                    WHERE metadata->>'message_id' = %s
+                    SELECT id, nome
+                    FROM contacts
+                    WHERE telefones::text ILIKE %s
                     LIMIT 1
-                """, (message_id_ext,))
+                """, (f'%{phone[-8:]}%',))
 
-                if cursor.fetchone():
-                    stats["messages_skipped"] += 1
-                    continue
+                contact = cursor.fetchone()
+                contact_id = None
 
-                # Insert message
-                cursor.execute("""
-                    INSERT INTO messages (conversation_id, contact_id, direcao, conteudo, enviado_em, metadata)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (
-                    conversation_id,
-                    contact_id,
-                    direction,
-                    content,
-                    timestamp,
-                    json.dumps({
-                        "phone": phone,
-                        "push_name": push_name,
-                        "message_id": message_id_ext,
-                        "message_type": parsed.get("message_type")
-                    })
-                ))
-                stats["messages_imported"] += 1
+                if contact:
+                    contact_id = contact['id']
+                    stats["contacts_matched"] += 1
 
-            # Update conversation stats
-            if conversation_id:
-                cursor.execute("""
-                    UPDATE conversations
-                    SET ultimo_mensagem = (
-                        SELECT MAX(enviado_em) FROM messages WHERE conversation_id = %s
-                    ),
-                    total_mensagens = (
-                        SELECT COUNT(*) FROM messages WHERE conversation_id = %s
-                    )
-                    WHERE id = %s
-                """, (conversation_id, conversation_id, conversation_id))
-
-                # Update contact's ultimo_contato
+                # Find or create conversation
+                conversation_id = None
                 if contact_id:
                     cursor.execute("""
-                        UPDATE contacts
-                        SET ultimo_contato = (
-                            SELECT MAX(enviado_em) FROM messages WHERE contact_id = %s
+                        SELECT id FROM conversations
+                        WHERE contact_id = %s AND canal = 'whatsapp'
+                        LIMIT 1
+                    """, (contact_id,))
+                    conv = cursor.fetchone()
+
+                    if conv:
+                        conversation_id = conv['id']
+                    else:
+                        cursor.execute("""
+                            INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
+                            VALUES (%s, 'whatsapp', NOW(), 0)
+                            RETURNING id
+                        """, (contact_id,))
+                        conversation_id = cursor.fetchone()['id']
+
+                # Process each message
+                for msg in messages:
+                    parsed = whatsapp.parse_stored_message(msg)
+                    if not parsed:
+                        continue
+
+                    message_id_ext = parsed.get("message_id")
+                    content = parsed.get("content")
+                    direction = parsed.get("direction")
+                    timestamp = parsed.get("timestamp")
+
+                    # Check if message already exists
+                    cursor.execute("""
+                        SELECT id FROM messages
+                        WHERE metadata->>'message_id' = %s
+                        LIMIT 1
+                    """, (message_id_ext,))
+
+                    if cursor.fetchone():
+                        stats["messages_skipped"] += 1
+                        continue
+
+                    # Insert message
+                    cursor.execute("""
+                        INSERT INTO messages (conversation_id, contact_id, direcao, conteudo, enviado_em, metadata)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        conversation_id,
+                        contact_id,
+                        direction,
+                        content,
+                        timestamp,
+                        json.dumps({
+                            "phone": phone,
+                            "push_name": push_name,
+                            "message_id": message_id_ext,
+                            "message_type": parsed.get("message_type"),
+                            "is_group": False
+                        })
+                    ))
+                    stats["messages_imported"] += 1
+
+                # Update conversation stats
+                if conversation_id:
+                    cursor.execute("""
+                        UPDATE conversations
+                        SET ultimo_mensagem = (
+                            SELECT MAX(enviado_em) FROM messages WHERE conversation_id = %s
+                        ),
+                        total_mensagens = (
+                            SELECT COUNT(*) FROM messages WHERE conversation_id = %s
                         )
                         WHERE id = %s
-                    """, (contact_id, contact_id))
+                    """, (conversation_id, conversation_id, conversation_id))
+
+                    # Update contact's ultimo_contato
+                    if contact_id:
+                        cursor.execute("""
+                            UPDATE contacts
+                            SET ultimo_contato = (
+                                SELECT MAX(enviado_em) FROM messages WHERE contact_id = %s
+                            )
+                            WHERE id = %s
+                        """, (contact_id, contact_id))
 
         conn.commit()
 
