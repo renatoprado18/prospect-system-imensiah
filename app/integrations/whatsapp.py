@@ -687,6 +687,50 @@ def parse_webhook_message(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "raw": data
         }
 
+    elif event == "messages.update":
+        # Message status update (sent -> delivered -> read)
+        data = payload.get("data", {})
+
+        # data can be a list of updates
+        updates = data if isinstance(data, list) else [data]
+
+        for update in updates:
+            key = update.get("key", {})
+            update_info = update.get("update", {})
+
+            remote_jid = key.get("remoteJid", "")
+            if not remote_jid.endswith("@s.whatsapp.net"):
+                continue
+
+            phone = remote_jid.replace("@s.whatsapp.net", "")
+            message_id = key.get("id")
+
+            # Determine status from update
+            status = None
+            status_code = update_info.get("status")
+
+            # Evolution API status codes:
+            # 1 = PENDING, 2 = SERVER_ACK (sent), 3 = DELIVERY_ACK (delivered), 4 = READ, 5 = PLAYED
+            if status_code == 2:
+                status = "sent"
+            elif status_code == 3:
+                status = "delivered"
+            elif status_code == 4:
+                status = "read"
+            elif status_code == 5:
+                status = "played"  # For audio/video
+
+            if status and message_id:
+                return {
+                    "event": "message_status",
+                    "phone": phone,
+                    "message_id": message_id,
+                    "status": status,
+                    "timestamp": datetime.now()
+                }
+
+        return None
+
     elif event == "connection.update":
         # Connection status changed
         data = payload.get("data", {})

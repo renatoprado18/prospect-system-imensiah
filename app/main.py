@@ -1137,12 +1137,48 @@ async def whatsapp_webhook(request: Request):
         if parsed.get("event") == "connection_update":
             return {"status": "ok", "connection_state": parsed.get("state")}
 
+        # Handle message status updates (delivered, read)
+        if parsed.get("event") == "message_status":
+            message_id = parsed.get("message_id")
+            status = parsed.get("status")
+            timestamp = parsed.get("timestamp")
+
+            if message_id and status:
+                conn = get_connection()
+                cursor = conn.cursor()
+                try:
+                    # Update message status in metadata
+                    cursor.execute("""
+                        UPDATE messages
+                        SET metadata = jsonb_set(
+                            COALESCE(metadata, '{}'),
+                            '{status}',
+                            %s::jsonb
+                        ),
+                        lido_em = CASE WHEN %s = 'read' THEN %s ELSE lido_em END
+                        WHERE external_id = %s
+                    """, (
+                        json.dumps(status),
+                        status,
+                        timestamp,
+                        message_id
+                    ))
+                    conn.commit()
+                    updated = cursor.rowcount
+                finally:
+                    conn.close()
+
+                return {"status": "ok", "message_status": status, "updated": updated}
+
+            return {"status": "ignored", "reason": "no message_id"}
+
         # Process message
         phone = parsed.get("phone")
         direction = parsed.get("direction")
         content = parsed.get("content")
         timestamp = parsed.get("timestamp")
         push_name = parsed.get("push_name")
+        external_msg_id = parsed.get("message_id")  # WhatsApp message ID for status tracking
 
         if not phone or not content:
             return {"status": "ignored", "reason": "no content"}
@@ -1201,13 +1237,14 @@ async def whatsapp_webhook(request: Request):
                     """, (contact_id, timestamp))
                     conversation_id = cursor.fetchone()['id']
 
-            # Save message
+            # Save message with external_id for status tracking
+            initial_status = "sent" if direction == "outgoing" else "received"
             cursor.execute("""
-                INSERT INTO messages (conversation_id, contact_id, direcao, conteudo, enviado_em, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO messages (conversation_id, contact_id, external_id, direcao, conteudo, enviado_em, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
-            """, (conversation_id, contact_id, direction, content, timestamp,
-                  json.dumps({"phone": phone, "push_name": push_name})))
+            """, (conversation_id, contact_id, external_msg_id, direction, content, timestamp,
+                  json.dumps({"phone": phone, "push_name": push_name, "status": initial_status})))
 
             message_id = cursor.fetchone()['id']
             conn.commit()

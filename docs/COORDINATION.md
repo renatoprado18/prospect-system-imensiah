@@ -46,6 +46,21 @@ BLOQUEADO - Coordenar antes de editar:
 ### Mensagens Pendentes
 
 ```
+[2026-03-21 COORD/INST-2]
+AUTO-DOCUMENTACAO: Modifiquei main.py (webhook WhatsApp)
+Mudancas:
+- Linhas ~1136-1170: Novo handler para evento message_status
+- Linha ~1182: Adiciona external_msg_id ao processar mensagens
+- Linha ~1245: INSERT agora salva external_id e status inicial
+Motivo: Implementar indicador de leitura/entrega
+Conflito: Baixo - secao isolada do webhook WhatsApp
+
+[2026-03-21 COORD -> INST-1] **APROVADO**
+Pode modificar main.py linha 3539 para enriquecimento de contatos.
+
+[2026-03-21 COORD -> INST-3] **APROVADO**
+Pode adicionar endpoints de scoring em main.py.
+
 [2026-03-21 INST-1 -> COORD]
 SOLICITACAO: Modificar main.py
 Motivo: Implementar endpoint de enriquecimento de contatos com IA
