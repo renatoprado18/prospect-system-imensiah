@@ -454,9 +454,14 @@
 
                     <div class="account-actions">
                         ${isConnected ? `
-                            <button class="btn btn-success btn-sm" onclick="syncAccount(${account.id})">
-                                <i class="bi bi-arrow-repeat me-1"></i>Sincronizar
-                            </button>
+                            <div class="btn-group" role="group">
+                                <button class="btn btn-success btn-sm" onclick="syncAccount(${account.id})" title="Sincronizar Contatos">
+                                    <i class="bi bi-people me-1"></i>Contatos
+                                </button>
+                                <button class="btn btn-primary btn-sm" onclick="syncGmail(${account.id})" title="Sincronizar Emails">
+                                    <i class="bi bi-envelope me-1"></i>Emails
+                                </button>
+                            </div>
                             <button class="btn btn-outline-danger btn-sm" onclick="disconnectAccount(${account.id})">
                                 <i class="bi bi-x-lg"></i>
                             </button>
@@ -554,6 +559,43 @@
                 showAlert('success', `Sincronizado! ${totalImported} novos, ${totalUpdated} atualizados.`);
                 loadAccounts();
                 loadStats();
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    showAlert('danger', 'Timeout: sincronizacao demorou muito. Tente novamente.');
+                } else {
+                    showAlert('danger', 'Erro: ' + (error.message || 'conexao falhou'));
+                }
+            } finally {
+                progress.classList.remove('active');
+            }
+        }
+
+        async function syncGmail(accountId) {
+            const progress = document.getElementById('syncProgress');
+            const progressText = document.getElementById('syncProgressText');
+
+            progress.classList.add('active');
+            progressText.textContent = 'Sincronizando emails... (pode levar alguns minutos)';
+
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 360000); // 6 min timeout
+
+                const response = await fetch(`/api/gmail/sync/${accountId}?days=30&max_messages=100`, {
+                    method: 'GET',
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    const stats = data.stats;
+                    showAlert('success', `Emails sincronizados! ${stats.fetched} buscados, ${stats.linked} vinculados a contatos, ${stats.saved} salvos.`);
+                    loadAccounts();
+                } else {
+                    showAlert('danger', data.detail || 'Erro ao sincronizar emails');
+                }
             } catch (error) {
                 if (error.name === 'AbortError') {
                     showAlert('danger', 'Timeout: sincronizacao demorou muito. Tente novamente.');
