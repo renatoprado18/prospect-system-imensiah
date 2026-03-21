@@ -94,6 +94,16 @@ Templates WhatsApp concluido! 8 templates, API endpoints, UI preview.
 [2026-03-21 INST-3] **MERGE CONCLUIDO**
 feature/scoring-icp merged na main (commit 4a95799).
 TODAS instancias devem sincronizar: git fetch origin && git rebase origin/main
+
+[2026-03-21 INST-3 -> COORD] **SOLICITO PERMISSAO - ARQUIVO BLOQUEADO**
+Preciso editar: app/main.py
+Motivo: Adicionar endpoints para expor funcoes do Scoring v2.0
+Endpoints planejados:
+  - POST /api/admin/scoring/recalculate - Recalcula scores de todos prospects
+  - GET /api/admin/scoring/stats - Estatisticas do sistema de scoring
+  - GET /api/admin/icp/analysis - Analise ICP completa
+Conflito potencial: INST-2 tambem editando main.py (WhatsApp)
+Aguardo aprovacao do coordenador.
 ```
 
 ## Decisoes Arquiteturais
