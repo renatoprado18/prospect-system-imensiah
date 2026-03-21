@@ -484,16 +484,30 @@
 
             let html = '<div class="list-group list-group-flush">';
             for (const msg of messages) {
-                const icon = msg.direction === 'incoming' ? 'bi-arrow-down-left text-success' : 'bi-arrow-up-right text-primary';
+                const isOutgoing = msg.direction === 'outgoing';
+                const icon = isOutgoing ? 'bi-arrow-up-right text-primary' : 'bi-arrow-down-left text-success';
                 const time = msg.sent_at ? new Date(msg.sent_at).toLocaleString('pt-BR') : '';
-                const contactLink = msg.contact_id ? `<a href="/rap/contacts/${msg.contact_id}">${msg.contact_name || 'Contato'}</a>` : (msg.phone || 'Desconhecido');
+
+                let contactDisplay;
+                if (isOutgoing) {
+                    // Outgoing message - show "Você → Contact"
+                    const recipient = msg.contact_id
+                        ? `<a href="/rap/contacts/${msg.contact_id}">${msg.contact_name || 'Contato'}</a>`
+                        : (msg.phone || 'Desconhecido');
+                    contactDisplay = `<span class="text-primary">Você</span> → ${recipient}`;
+                } else {
+                    // Incoming message - show contact name
+                    contactDisplay = msg.contact_id
+                        ? `<a href="/rap/contacts/${msg.contact_id}">${msg.contact_name || 'Contato'}</a>`
+                        : (msg.phone || 'Desconhecido');
+                }
 
                 html += `
                     <div class="list-group-item d-flex align-items-start gap-3 py-3">
                         <i class="bi ${icon}" style="font-size: 1.2rem;"></i>
                         <div class="flex-grow-1">
                             <div class="d-flex justify-content-between align-items-center">
-                                <strong>${contactLink}</strong>
+                                <strong>${contactDisplay}</strong>
                                 <small class="text-muted">${time}</small>
                             </div>
                             <p class="mb-0 text-muted small">${msg.content || '[midia]'}</p>

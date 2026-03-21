@@ -2521,6 +2521,7 @@ class ContactsImportData(BaseModel):
 @app.get("/api/contacts")
 async def list_contacts(
     search: Optional[str] = None,
+    q: Optional[str] = None,  # Alias for search
     contexto: Optional[str] = None,
     limit: int = Query(50, le=500),
     offset: int = 0
@@ -2529,13 +2530,17 @@ async def list_contacts(
     conn = get_db()
     cursor = conn.cursor()
 
+    # Support both 'search' and 'q' parameters
+    search_term_raw = search or q
+
     query = "SELECT * FROM contacts WHERE 1=1"
     params = []
 
-    if search:
-        query += " AND (nome ILIKE %s OR empresa ILIKE %s OR cargo ILIKE %s)"
-        search_term = f"%{search}%"
-        params.extend([search_term, search_term, search_term])
+    if search_term_raw:
+        # Search in name, company, cargo, and phone numbers
+        query += " AND (nome ILIKE %s OR empresa ILIKE %s OR cargo ILIKE %s OR telefones::text ILIKE %s)"
+        search_term = f"%{search_term_raw}%"
+        params.extend([search_term, search_term, search_term, search_term])
 
     if contexto:
         query += " AND contexto = %s"
@@ -2550,9 +2555,9 @@ async def list_contacts(
     # Count total
     count_query = "SELECT COUNT(*) as count FROM contacts WHERE 1=1"
     count_params = []
-    if search:
-        count_query += " AND (nome ILIKE %s OR empresa ILIKE %s OR cargo ILIKE %s)"
-        count_params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+    if search_term_raw:
+        count_query += " AND (nome ILIKE %s OR empresa ILIKE %s OR cargo ILIKE %s OR telefones::text ILIKE %s)"
+        count_params.extend([f"%{search_term_raw}%", f"%{search_term_raw}%", f"%{search_term_raw}%", f"%{search_term_raw}%"])
     if contexto:
         count_query += " AND contexto = %s"
         count_params.append(contexto)
