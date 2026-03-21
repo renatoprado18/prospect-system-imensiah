@@ -112,6 +112,15 @@ Endpoints na main (commit 43c3a96):
   - GET /api/scoring/stats (admin only)
   - GET /api/scoring/icp (admin only)
 TODAS instancias: git fetch && git rebase origin/main
+
+[2026-03-21 INST-2/COORD] **STATUS: 4/5 FEATURES WHATSAPP COMPLETAS**
+Features concluidas na branch feature/whatsapp-improvements:
+  - Templates de Mensagem (8 templates com variaveis)
+  - Indicador de Leitura/Entrega (icones de status)
+  - Busca em Conversas (GET /api/whatsapp/search)
+  - Exportar Conversas (GET /api/whatsapp/export/{contact_id})
+Feature pendente: Agendamento (requer database.py - arquivo bloqueado)
+Status: AGUARDANDO outras instancias antes de solicitar merge.
 ```
 
 ## Decisoes Arquiteturais
