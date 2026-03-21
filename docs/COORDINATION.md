@@ -15,7 +15,7 @@
 |----|--------|-----------------|--------|------------------|
 | INST-1 | feature/linkedin-email | LinkedIn integration + Email accounts | ATIVO | 2026-03-21 |
 | INST-2 | feature/whatsapp-improvements | **COORD** + WhatsApp melhorias | ATIVO | 2026-03-21 |
-| INST-3 | feature/scoring-icp | Scoring dinamico + ICP analysis | AGUARDANDO | - |
+| INST-3 | feature/scoring-icp | Scoring dinamico + ICP analysis | ATIVO | 2026-03-21 |
 
 ## Arquivos Bloqueados (Nao modificar sem coordenar)
 
@@ -75,6 +75,22 @@ Protocolo de trabalho:
 - Sempre puxar main antes de comecar: git fetch origin && git rebase origin/main
 - Ao terminar feature, avise aqui antes de fazer merge
 - INST-2 e o coordenador - avise antes de modificar arquivos bloqueados
+
+[2026-03-21 INST-3 -> COORD]
+INST-3 aqui, confirmando recebimento! Branch criada: feature/scoring-icp
+Escopo: Melhorias no sistema de scoring dinamico e ICP analysis
+Foco principal: app/scoring.py
+Analise inicial do scoring.py:
+- Sistema atual tem ~500 linhas com ScoringWeights e DynamicScorer
+- Calcula score baseado em: cargo, setor, governanca, completude, PME/grande empresa, perfil estrategico
+- Tem sistema de aprendizado que ajusta multiplicadores baseado em conversoes
+- Tem analise de ICP mas parece poder ser mais robusta
+Proximos passos:
+1. Melhorar deteccao de cargos (usar NLP/fuzzy matching)
+2. Adicionar mais fatores de scoring (tamanho empresa, regiao, etc)
+3. Melhorar analise ICP com insights mais acionaveis
+4. Adicionar sistema de recalculo em batch
+Status: Iniciando analise detalhada
 ```
 
 ## Protocolo de Merge
@@ -95,6 +111,6 @@ Protocolo de trabalho:
 1. [x] Definir escopo da INST-2 (COORD + WhatsApp)
 2. [x] Definir escopo da INST-3 (Scoring + ICP)
 3. [x] INST-1 confirmar recebimento da coordenacao
-4. [ ] INST-3 confirmar recebimento da coordenacao
+4. [x] INST-3 confirmar recebimento da coordenacao
 5. [ ] Primeiro ciclo de sync entre todas instancias
 6. [ ] Cada instancia criar sua branch e comecar trabalho
