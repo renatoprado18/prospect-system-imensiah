@@ -3733,6 +3733,7 @@ async def enrich_contact(contact_id: int, request: Request):
                 "resumo": result.get("enrichment", {}).get("resumo", ""),
                 "fatos": result.get("enrichment", {}).get("fatos", []),
                 "insights": result.get("enrichment", {}).get("insights", {}),
+                "oportunidades": result.get("enrichment", {}).get("oportunidades", []),
                 "sugestoes": result.get("enrichment", {}).get("sugestoes", []),
                 "save_stats": result.get("save_stats", {})
             }
@@ -4469,6 +4470,49 @@ async def api_scoring_icp(user: dict = Depends(require_admin)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro na análise ICP: {str(e)}")
+
+
+# ============== Scoring de Contacts (Google Contacts) ==============
+# Endpoints para scoring de contacts sincronizados do Google
+# Adicionado por INST-3
+
+@app.post("/api/contacts/scoring/recalculate")
+async def api_contacts_scoring_recalculate(
+    batch_size: int = 200,
+    offset: int = 0,
+    user: dict = Depends(require_admin)
+):
+    """
+    Recalcula scores de contacts (Google Contacts) em batches.
+    Usa informações enriquecidas: emails, telefones, linkedin_headline, tags, etc.
+    Requer permissão de admin.
+    """
+    try:
+        stats = scorer.recalculate_contact_scores(batch_size=batch_size, offset=offset)
+        return {
+            "success": True,
+            "message": f"Batch processado: {stats['total_processados']} contacts",
+            "stats": stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao recalcular scores de contacts: {str(e)}")
+
+
+@app.get("/api/contacts/scoring/stats")
+async def api_contacts_scoring_stats(user: dict = Depends(require_admin)):
+    """
+    Retorna estatísticas do scoring de contacts.
+    Inclui: distribuição por tier, médias, totais.
+    Requer permissão de admin.
+    """
+    try:
+        stats = scorer.get_contact_scoring_stats()
+        return {
+            "success": True,
+            "stats": stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao obter stats de contacts: {str(e)}")
 
 
 # Vercel handler

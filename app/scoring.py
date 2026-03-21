@@ -977,3 +977,325 @@ class DynamicScorer:
             )[:5])
         }
         return stats
+
+    # =========================================================================
+    # SCORING PARA CONTACTS (Google Contacts sincronizados)
+    # =========================================================================
+
+    def calculate_contact_score(self, contact: Dict) -> Tuple[int, Dict[str, int], List[str]]:
+        """
+        Calcula o score de um contact do Google.
+        Aproveita dados adicionais: emails[], telefones[], linkedin_headline,
+        empresa_dados, tags, origem.
+
+        Returns:
+            Tuple[score_total, breakdown, reasons]
+        """
+        score = 0
+        breakdown = {}
+        reasons = []
+
+        cargo = contact.get('cargo') or ''
+        empresa = (contact.get('empresa') or '').lower()
+        linkedin_headline = (contact.get('linkedin_headline') or '').lower()
+        combined = f"{normalize_text(cargo)} {empresa} {linkedin_headline}"
+
+        # 1. CARGO (0-30 pts) - COM FUZZY MATCHING
+        cargo_score, matched_cargo = self._score_cargo_fuzzy(cargo)
+
+        # Também verificar linkedin_headline se cargo não encontrou match
+        if cargo_score == 0 and linkedin_headline:
+            cargo_score, matched_cargo = self._score_cargo_fuzzy(linkedin_headline)
+
+        if cargo_score > 0:
+            breakdown['cargo'] = cargo_score
+            score += cargo_score
+            reasons.append(f"Cargo: {cargo or linkedin_headline} (+{cargo_score}pts)")
+
+        # 2. SETOR (0-20 pts)
+        setor_score = 0
+        matched_setor = ""
+        for keyword, points in self.weights.setor_weights.items():
+            if keyword in combined:
+                if points > setor_score:
+                    setor_score = points
+                    matched_setor = keyword
+
+        if setor_score > 0:
+            breakdown['setor'] = setor_score
+            score += setor_score
+            reasons.append(f"Setor: {matched_setor} (+{setor_score}pts)")
+
+        # 3. GOVERNANÇA/IBGC (0-15 pts)
+        ibgc_keywords = ["ibgc", "governança", "governance", "conselho", "board"]
+        for kw in ibgc_keywords:
+            if kw in combined:
+                breakdown['governanca'] = 15
+                score += 15
+                reasons.append("Governança corporativa (+15pts)")
+                break
+
+        # 4. COMPLETUDE DE DADOS (0-20 pts) - Mais detalhado para contacts
+        completeness = 0
+        contact_items = []
+
+        # Emails (JSONB array)
+        emails = contact.get('emails') or []
+        if isinstance(emails, str):
+            try:
+                emails = json.loads(emails)
+            except:
+                emails = []
+        if emails and len(emails) > 0:
+            completeness += 7
+            contact_items.append(f"email({len(emails)})")
+
+        # Telefones (JSONB array)
+        telefones = contact.get('telefones') or []
+        if isinstance(telefones, str):
+            try:
+                telefones = json.loads(telefones)
+            except:
+                telefones = []
+        if telefones and len(telefones) > 0:
+            completeness += 5
+            contact_items.append(f"tel({len(telefones)})")
+
+        if contact.get('empresa'):
+            completeness += 3
+            contact_items.append("empresa")
+
+        if contact.get('linkedin'):
+            completeness += 3
+            contact_items.append("linkedin")
+
+        if contact.get('linkedin_headline'):
+            completeness += 2
+            contact_items.append("headline")
+
+        if completeness > 0:
+            breakdown['completude'] = completeness
+            score += completeness
+            reasons.append(f"Dados: {', '.join(contact_items)} (+{completeness}pts)")
+
+        # 5. PME vs Grande Empresa
+        pme_indicators = ["ltda", "eireli", "me ", "epp", "startup", "ventures"]
+        large_corp = ["s.a.", " sa ", "bnp", "itaú", "bradesco", "santander", "microsoft", "google"]
+
+        is_pme = any(ind in empresa for ind in pme_indicators)
+        is_large = any(ind in empresa for ind in large_corp)
+
+        if is_pme and not is_large:
+            breakdown['pme'] = 10
+            score += 10
+            reasons.append("PME (+10pts)")
+        elif is_large:
+            breakdown['grande_empresa'] = -5
+            score -= 5
+            reasons.append("Grande corporação (-5pts)")
+
+        # 6. PERFIL ESTRATÉGICO
+        strategic = ["estratégia", "strategy", "decisão", "transformação", "inovação", "growth", "ceo", "founder"]
+        for kw in strategic:
+            if kw in combined:
+                breakdown['estrategico'] = 8
+                score += 8
+                reasons.append("Perfil estratégico (+8pts)")
+                break
+
+        # 7. ORIGEM DO CONTATO (campo existe em contacts!)
+        origem = (contact.get('origem') or '').lower()
+        if origem:
+            for keyword, points in self.weights.origem_weights.items():
+                if keyword in origem:
+                    breakdown['origem'] = points
+                    score += points
+                    reasons.append(f"Origem: {origem} (+{points}pts)")
+                    break
+
+        # 8. TAGS (campo existe em contacts!)
+        tags = contact.get('tags') or []
+        if isinstance(tags, str):
+            try:
+                tags = json.loads(tags)
+            except:
+                tags = []
+        high_value_tags = ['vip', 'prioridade', 'importante', 'cliente', 'parceiro', 'investidor']
+        for tag in tags:
+            if any(hvt in str(tag).lower() for hvt in high_value_tags):
+                breakdown['tags'] = 10
+                score += 10
+                reasons.append(f"Tag de valor: {tag} (+10pts)")
+                break
+
+        # 9. INTERAÇÕES (campo existe em contacts!)
+        total_interacoes = contact.get('total_interacoes') or 0
+        if total_interacoes >= 10:
+            breakdown['engajamento'] = 10
+            score += 10
+            reasons.append(f"Alto engajamento: {total_interacoes} interações (+10pts)")
+        elif total_interacoes >= 5:
+            breakdown['engajamento'] = 5
+            score += 5
+            reasons.append(f"Engajamento médio: {total_interacoes} interações (+5pts)")
+
+        # 10. ENRIQUECIMENTO AI
+        if contact.get('resumo_ai') or contact.get('insights_ai'):
+            breakdown['enriquecido'] = 5
+            score += 5
+            reasons.append("Dados enriquecidos por IA (+5pts)")
+
+        return max(0, min(score, self.weights.max_score)), breakdown, reasons
+
+    def recalculate_contact_scores(self, batch_size: int = 200, offset: int = 0) -> Dict[str, Any]:
+        """
+        Recalcula os scores dos contacts em batches.
+
+        Args:
+            batch_size: Número de contacts por batch (default 200)
+            offset: Offset para paginação (default 0)
+
+        Returns:
+            Estatísticas do recálculo
+        """
+        stats = {
+            "total_processados": 0,
+            "scores_aumentados": 0,
+            "scores_diminuidos": 0,
+            "tiers_alterados": 0,
+            "erros": 0,
+            "tempo_execucao": 0,
+            "batch_size": batch_size,
+            "offset": offset,
+            "next_offset": None,
+            "completo": False
+        }
+
+        start_time = datetime.now()
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Contar total
+            cursor.execute('SELECT COUNT(*) as total FROM contacts')
+            total = cursor.fetchone()['total']
+            stats["total_geral"] = total
+
+            # Buscar batch de contacts
+            cursor.execute('''
+                SELECT id, nome, empresa, cargo, emails, telefones, linkedin,
+                       linkedin_headline, empresa_dados, origem, tags,
+                       total_interacoes, resumo_ai, insights_ai,
+                       score as old_score, tier as old_tier
+                FROM contacts
+                ORDER BY id
+                LIMIT %s OFFSET %s
+            ''', (batch_size, offset))
+
+            contacts = cursor.fetchall()
+            stats["total_processados"] = len(contacts)
+
+            for row in contacts:
+                try:
+                    contact_data = dict(row)
+                    new_score, breakdown, reasons = self.calculate_contact_score(contact_data)
+                    new_tier = self.determine_tier(new_score)
+
+                    old_score = row['old_score'] or 0
+                    old_tier = row['old_tier'] or 'E'
+
+                    if new_score > old_score:
+                        stats["scores_aumentados"] += 1
+                    elif new_score < old_score:
+                        stats["scores_diminuidos"] += 1
+
+                    if new_tier != old_tier:
+                        stats["tiers_alterados"] += 1
+
+                    # Atualizar no banco
+                    cursor.execute('''
+                        UPDATE contacts
+                        SET score = %s,
+                            tier = %s,
+                            score_breakdown = %s,
+                            score_reasons = %s
+                        WHERE id = %s
+                    ''', (
+                        new_score,
+                        new_tier,
+                        json.dumps(breakdown),
+                        json.dumps(reasons),
+                        row['id']
+                    ))
+
+                except Exception as e:
+                    stats["erros"] += 1
+
+            conn.commit()
+            conn.close()
+
+            # Calcular próximo offset
+            next_offset = offset + batch_size
+            if next_offset >= total:
+                stats["completo"] = True
+                stats["next_offset"] = None
+            else:
+                stats["next_offset"] = next_offset
+
+        except Exception as e:
+            stats["error"] = str(e)
+
+        stats["tempo_execucao"] = (datetime.now() - start_time).total_seconds()
+        return stats
+
+    def get_contact_scoring_stats(self) -> Dict[str, Any]:
+        """
+        Retorna estatísticas de scoring dos contacts.
+        """
+        stats = {
+            "total_contacts": 0,
+            "contacts_com_score": 0,
+            "distribuicao_tiers": {},
+            "score_medio": 0,
+            "top_contacts": []
+        }
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('SELECT COUNT(*) as total FROM contacts')
+            stats["total_contacts"] = cursor.fetchone()['total']
+
+            cursor.execute('SELECT COUNT(*) as total FROM contacts WHERE score > 0')
+            stats["contacts_com_score"] = cursor.fetchone()['total']
+
+            cursor.execute('''
+                SELECT tier, COUNT(*) as total
+                FROM contacts
+                GROUP BY tier
+                ORDER BY tier
+            ''')
+            for row in cursor.fetchall():
+                stats["distribuicao_tiers"][row['tier'] or 'E'] = row['total']
+
+            cursor.execute('SELECT AVG(score) as avg FROM contacts WHERE score > 0')
+            result = cursor.fetchone()
+            stats["score_medio"] = round(float(result['avg'] or 0), 1)
+
+            cursor.execute('''
+                SELECT id, nome, empresa, cargo, score, tier
+                FROM contacts
+                WHERE score > 0
+                ORDER BY score DESC
+                LIMIT 10
+            ''')
+            stats["top_contacts"] = [dict(row) for row in cursor.fetchall()]
+
+            conn.close()
+
+        except Exception as e:
+            stats["error"] = str(e)
+
+        return stats

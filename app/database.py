@@ -240,6 +240,15 @@ def init_db():
             ON contacts(nome)
         ''')
 
+        # Adicionar colunas de scoring à tabela contacts (se não existirem)
+        cursor.execute('''
+            ALTER TABLE contacts
+            ADD COLUMN IF NOT EXISTS score INTEGER DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS tier TEXT DEFAULT 'E',
+            ADD COLUMN IF NOT EXISTS score_breakdown TEXT DEFAULT '{}',
+            ADD COLUMN IF NOT EXISTS score_reasons TEXT DEFAULT '[]'
+        ''')
+
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_contacts_emails
             ON contacts USING GIN(emails)
