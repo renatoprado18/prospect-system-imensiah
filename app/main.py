@@ -1542,30 +1542,44 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
                     stats["messages_imported"] += 1
                     existing_msg_ids.add(message_id_ext)  # Track for this run
 
-                # Update conversation stats
-                if conversation_id:
+                # Update stats with simpler incremental updates (avoid deadlocks)
+                if stats["messages_imported"] > 0 and conversation_id:
                     cursor.execute("""
                         UPDATE conversations
-                        SET ultimo_mensagem = (
-                            SELECT MAX(enviado_em) FROM messages WHERE conversation_id = %s
-                        ),
-                        total_mensagens = (
-                            SELECT COUNT(*) FROM messages WHERE conversation_id = %s
-                        )
+                        SET total_mensagens = total_mensagens + 1,
+                            ultimo_mensagem = NOW()
                         WHERE id = %s
-                    """, (conversation_id, conversation_id, conversation_id))
-
-                    # Update contact's ultimo_contato
-                    if contact_id:
-                        cursor.execute("""
-                            UPDATE contacts
-                            SET ultimo_contato = (
-                                SELECT MAX(enviado_em) FROM messages WHERE contact_id = %s
-                            )
-                            WHERE id = %s
-                        """, (contact_id, contact_id))
+                    """, (conversation_id,))
 
         conn.commit()
+
+        # Update contact ultimo_contato in a separate transaction (avoid deadlocks)
+        conn2 = get_connection()
+        cursor2 = conn2.cursor()
+        try:
+            # Get distinct contact IDs that were updated
+            updated_contacts = set()
+            for chat in chats:
+                phone = chat.get("_phone")
+                if phone:
+                    digits = ''.join(filter(str.isdigit, phone))
+                    key = digits[-8:] if len(digits) >= 8 else digits
+                    contact = phone_to_contact.get(key)
+                    if contact:
+                        updated_contacts.add(contact['id'])
+
+            for cid in updated_contacts:
+                cursor2.execute("""
+                    UPDATE contacts
+                    SET ultimo_contato = NOW()
+                    WHERE id = %s
+                """, (cid,))
+            conn2.commit()
+        except Exception:
+            conn2.rollback()
+        finally:
+            cursor2.close()
+            conn2.close()
 
     except Exception as e:
         conn.rollback()
