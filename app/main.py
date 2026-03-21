@@ -1351,6 +1351,33 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
     }
 
     try:
+        # PRE-LOAD: All contacts with phones into memory for fast lookup
+        cursor.execute("""
+            SELECT id, nome, telefones
+            FROM contacts
+            WHERE telefones IS NOT NULL AND telefones::text != '[]'
+        """)
+        all_contacts = cursor.fetchall()
+
+        # Build phone lookup dict: last 8 digits -> contact
+        phone_to_contact = {}
+        for c in all_contacts:
+            phones = c['telefones'] if isinstance(c['telefones'], list) else []
+            for p in phones:
+                phone_num = p.get('number', '') if isinstance(p, dict) else str(p)
+                # Normalize: keep only digits, take last 8
+                digits = ''.join(filter(str.isdigit, phone_num))
+                if len(digits) >= 8:
+                    phone_to_contact[digits[-8:]] = {'id': c['id'], 'nome': c['nome']}
+
+        # PRE-LOAD: All existing message IDs to avoid duplicates
+        cursor.execute("SELECT metadata->>'message_id' as msg_id FROM messages WHERE metadata->>'message_id' IS NOT NULL")
+        existing_msg_ids = {row['msg_id'] for row in cursor.fetchall()}
+
+        # PRE-LOAD: All existing conversations
+        cursor.execute("SELECT id, contact_id FROM conversations WHERE canal = 'whatsapp'")
+        contact_to_conversation = {row['contact_id']: row['id'] for row in cursor.fetchall()}
+
         for chat in chats:
             is_group = chat.get("_is_group", False)
 
@@ -1386,15 +1413,11 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
                     if not participant_phone:
                         continue
 
-                    # Find contact by participant phone
-                    cursor.execute("""
-                        SELECT id, nome
-                        FROM contacts
-                        WHERE telefones::text ILIKE %s
-                        LIMIT 1
-                    """, (f'%{participant_phone[-8:]}%',))
+                    # Fast in-memory contact lookup for groups
+                    part_digits = ''.join(filter(str.isdigit, participant_phone))
+                    part_key = part_digits[-8:] if len(part_digits) >= 8 else part_digits
 
-                    contact = cursor.fetchone()
+                    contact = phone_to_contact.get(part_key)
                     if not contact:
                         # Skip messages from unknown contacts in groups
                         continue
@@ -1402,28 +1425,15 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
                     contact_id = contact['id']
                     stats["contacts_matched"] += 1
 
-                    # Check if message already exists
+                    # Fast in-memory message existence check
                     message_id_ext = parsed.get("message_id")
-                    cursor.execute("""
-                        SELECT id FROM messages
-                        WHERE metadata->>'message_id' = %s
-                        LIMIT 1
-                    """, (message_id_ext,))
-
-                    if cursor.fetchone():
+                    if message_id_ext in existing_msg_ids:
                         stats["messages_skipped"] += 1
                         continue
 
-                    # Find or create conversation for this contact
-                    cursor.execute("""
-                        SELECT id FROM conversations
-                        WHERE contact_id = %s AND canal = 'whatsapp'
-                        LIMIT 1
-                    """, (contact_id,))
-                    conv = cursor.fetchone()
-
-                    if conv:
-                        conversation_id = conv['id']
+                    # Fast in-memory conversation lookup
+                    if contact_id in contact_to_conversation:
+                        conversation_id = contact_to_conversation[contact_id]
                     else:
                         cursor.execute("""
                             INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
@@ -1431,6 +1441,7 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
                             RETURNING id
                         """, (contact_id,))
                         conversation_id = cursor.fetchone()['id']
+                        contact_to_conversation[contact_id] = conversation_id
 
                     # Insert group message
                     cursor.execute("""
@@ -1452,6 +1463,7 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
                         })
                     ))
                     stats["messages_imported"] += 1
+                    existing_msg_ids.add(message_id_ext)  # Track for this run
 
             else:
                 # Process individual chat (existing logic)
@@ -1461,15 +1473,11 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
 
                 push_name = chat.get("name") or chat.get("pushName") or ""
 
-                # First check if contact exists before fetching messages (faster)
-                cursor.execute("""
-                    SELECT id, nome
-                    FROM contacts
-                    WHERE telefones::text ILIKE %s
-                    LIMIT 1
-                """, (f'%{phone[-8:]}%',))
+                # Fast in-memory lookup instead of database query
+                phone_digits = ''.join(filter(str.isdigit, phone))
+                phone_key = phone_digits[-8:] if len(phone_digits) >= 8 else phone_digits
 
-                contact = cursor.fetchone()
+                contact = phone_to_contact.get(phone_key)
                 if not contact:
                     # Skip chats without matching contact
                     continue
@@ -1485,16 +1493,9 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
 
                 stats["individual_chats"] += 1
 
-                # Find or create conversation (contact_id is always set at this point)
-                cursor.execute("""
-                    SELECT id FROM conversations
-                    WHERE contact_id = %s AND canal = 'whatsapp'
-                    LIMIT 1
-                """, (contact_id,))
-                conv = cursor.fetchone()
-
-                if conv:
-                    conversation_id = conv['id']
+                # Fast in-memory conversation lookup
+                if contact_id in contact_to_conversation:
+                    conversation_id = contact_to_conversation[contact_id]
                 else:
                     cursor.execute("""
                         INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
@@ -1502,6 +1503,7 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
                         RETURNING id
                     """, (contact_id,))
                     conversation_id = cursor.fetchone()['id']
+                    contact_to_conversation[contact_id] = conversation_id
 
                 # Process each message
                 for msg in messages:
@@ -1514,14 +1516,8 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
                     direction = parsed.get("direction")
                     timestamp = parsed.get("timestamp")
 
-                    # Check if message already exists
-                    cursor.execute("""
-                        SELECT id FROM messages
-                        WHERE metadata->>'message_id' = %s
-                        LIMIT 1
-                    """, (message_id_ext,))
-
-                    if cursor.fetchone():
+                    # Fast in-memory check instead of database query
+                    if message_id_ext in existing_msg_ids:
                         stats["messages_skipped"] += 1
                         continue
 
@@ -1544,6 +1540,7 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
                         })
                     ))
                     stats["messages_imported"] += 1
+                    existing_msg_ids.add(message_id_ext)  # Track for this run
 
                 # Update conversation stats
                 if conversation_id:
