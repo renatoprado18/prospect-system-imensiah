@@ -36,7 +36,7 @@ BLOQUEADO - Coordenar antes de editar:
 | feature/linkedin-email | gmail.py, google_contacts.py, main.py | - | MERGED |
 | feature/whatsapp-improvements | whatsapp.py, rap_whatsapp.html, main.py | main.py | EM PROGRESSO |
 | feature/scoring-icp | app/scoring.py | Nenhum | **MERGED** |
-| feature/contact-enrichment | services/enrichment.py, templates | main.py (endpoints) | INICIANDO |
+| feature/contact-enrichment | services/enrichment.py, templates, main.py | - | **MERGED** |
 
 ## Protocolo de Merge (OBRIGATORIO)
 
