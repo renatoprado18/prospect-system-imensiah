@@ -427,6 +427,25 @@
             </div>
         </div>
 
+        <!-- Search Messages -->
+        <div class="card" id="searchCard" style="display: none;">
+            <div class="card-header">
+                <h5 class="card-title"><i class="bi bi-search"></i> Buscar Conversas</h5>
+            </div>
+            <div class="card-body">
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control" id="searchInput" placeholder="Buscar mensagens..." minlength="3">
+                    <button class="btn btn-outline-secondary" type="button" onclick="searchMessages()">
+                        <i class="bi bi-search"></i>
+                    </button>
+                </div>
+                <div id="searchResults" style="display: none;">
+                    <small class="text-muted" id="searchCount"></small>
+                    <div id="searchResultsList" class="list-group list-group-flush mt-2"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- Recent Activity -->
         <div class="card" id="activityCard" style="display: none;">
             <div class="card-header">
@@ -671,6 +690,7 @@
             const sendCard = document.getElementById('sendCard');
             const activityCard = document.getElementById('activityCard');
             const syncCard = document.getElementById('syncCard');
+            const searchCard = document.getElementById('searchCard');
 
             if (state === 'open') {
                 // Connected
@@ -684,6 +704,7 @@
                 qrCard.style.display = 'none';
                 statsGrid.style.display = 'grid';
                 sendCard.style.display = 'block';
+                searchCard.style.display = 'block';
                 activityCard.style.display = 'block';
                 syncCard.style.display = 'block';
             } else if (state === 'connecting') {
@@ -698,6 +719,7 @@
                 qrCard.style.display = 'block';
                 statsGrid.style.display = 'none';
                 sendCard.style.display = 'none';
+                searchCard.style.display = 'none';
                 activityCard.style.display = 'none';
                 syncCard.style.display = 'none';
                 refreshQR();
@@ -762,6 +784,70 @@
                 console.error(error);
             }
         }
+
+        async function searchMessages() {
+            const query = document.getElementById('searchInput').value.trim();
+            const resultsDiv = document.getElementById('searchResults');
+            const resultsList = document.getElementById('searchResultsList');
+            const countSpan = document.getElementById('searchCount');
+
+            if (query.length < 3) {
+                showToast('Digite pelo menos 3 caracteres');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/whatsapp/search?q=${encodeURIComponent(query)}&limit=50`);
+                const data = await response.json();
+
+                if (data.error) {
+                    showToast('Erro na busca: ' + data.error);
+                    return;
+                }
+
+                resultsDiv.style.display = 'block';
+                countSpan.textContent = `${data.total} resultado(s) encontrado(s)`;
+
+                if (data.results.length === 0) {
+                    resultsList.innerHTML = '<div class="list-group-item text-muted">Nenhuma mensagem encontrada</div>';
+                    return;
+                }
+
+                resultsList.innerHTML = data.results.map(msg => {
+                    // Highlight the search term
+                    const regex = new RegExp(`(${query})`, 'gi');
+                    const highlighted = msg.content.replace(regex, '<mark>$1</mark>');
+                    const fromMe = msg.direction === 'outgoing';
+                    const direction = fromMe ? 'Enviada' : 'Recebida';
+                    const date = msg.sent_at ? new Date(msg.sent_at).toLocaleString('pt-BR') : '';
+
+                    return `
+                        <a href="#" class="list-group-item list-group-item-action" onclick="selectContact(${msg.contact_id}); return false;">
+                            <div class="d-flex justify-content-between">
+                                <strong>${msg.contact_name}</strong>
+                                <small class="text-muted">${date}</small>
+                            </div>
+                            <small class="badge bg-${fromMe ? 'primary' : 'secondary'}">${direction}</small>
+                            <p class="mb-0 small">${highlighted}</p>
+                        </a>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                showToast('Erro ao buscar mensagens');
+                console.error(error);
+            }
+        }
+
+        // Search on Enter key
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                searchInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') searchMessages();
+                });
+            }
+        });
 
         async function disconnect() {
             if (!confirm('Deseja realmente desconectar o WhatsApp?')) return;

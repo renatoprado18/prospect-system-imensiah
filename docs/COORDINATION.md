@@ -31,10 +31,50 @@ BLOQUEADO - Coordenar antes de editar:
 
 ## Mudancas Pendentes de Merge
 
+<<<<<<< Updated upstream
 | Branch | Arquivos Modificados | Conflitos Potenciais | Pronto para Merge |
 |--------|---------------------|---------------------|-------------------|
 | feature/linkedin-email | app/main.py, app/integrations/gmail.py, app/integrations/google_contacts.py | app/main.py (rotas) | MERGED - Gmail sync aprovado |
 | feature/whatsapp-improvements | whatsapp.py, rap_whatsapp.html, main.py (endpoints) | main.py (rotas) | PARCIAL - Templates concluido |
+=======
+| Branch | Arquivos Modificados | Conflitos Potenciais | Status |
+|--------|---------------------|---------------------|--------|
+| feature/linkedin-email | gmail.py, google_contacts.py, main.py | - | MERGED |
+| feature/whatsapp-improvements | whatsapp.py, rap_whatsapp.html, main.py | main.py | EM PROGRESSO |
+| feature/scoring-icp | app/scoring.py | Nenhum | **MERGED** |
+| feature/contact-enrichment | services/enrichment.py, templates, main.py | - | **PRONTO PARA MERGE** |
+
+## Protocolo de Merge (OBRIGATORIO)
+
+### Passo a Passo:
+
+```
+1. INSTANCIA termina feature
+   - Atualiza COORDINATION.md: "PRONTO PARA MERGE"
+   - git push origin feature/sua-branch (NAO main!)
+   - AGUARDA aprovacao
+
+2. COORDENADOR revisa
+   - Verifica codigo e conflitos
+   - Atualiza COORDINATION.md: "APROVADO" ou "REQUER AJUSTES"
+   - Define ORDEM se multiplas branches prontas
+
+3. INSTANCIA executa merge (SOMENTE apos aprovacao)
+   - git checkout main
+   - git pull origin main
+   - git merge feature/sua-branch
+   - git push origin main
+   - Atualiza COORDINATION.md: "MERGED"
+
+4. TODAS instancias sincronizam
+   - git fetch origin && git rebase origin/main
+```
+
+### Por que este processo?
+- Instancia que desenvolveu conhece o codigo e resolve conflitos melhor
+- Coordenador garante revisao e ordem correta
+- Evita conflitos entre branches simultaneas
+>>>>>>> Stashed changes
 
 ## Comunicacao Entre Instancias
 
@@ -46,6 +86,7 @@ BLOQUEADO - Coordenar antes de editar:
 ### Mensagens Pendentes
 
 ```
+<<<<<<< Updated upstream
 [2026-03-21 COORD/INST-2]
 AUTO-DOCUMENTACAO: Modifiquei main.py (webhook WhatsApp)
 Mudancas:
@@ -54,6 +95,23 @@ Mudancas:
 - Linha ~1245: INSERT agora salva external_id e status inicial
 Motivo: Implementar indicador de leitura/entrega
 Conflito: Baixo - secao isolada do webhook WhatsApp
+=======
+[2026-03-21 INST-1] **FEATURE CONCLUIDA: Contact Enrichment**
+Arquivos criados/modificados:
+- app/services/contact_enrichment.py (novo)
+- app/main.py (endpoint implementado)
+- app/templates/rap_contact_detail.html (UI atualizada)
+Funcionalidades: Analise AI de emails/WhatsApp, resumo, fatos, insights.
+Commits em main: 054e5e0, db017dd (com aprovacao do COORD)
+
+[2026-03-21 COORD -> INST-3] **APROVADO PARA MERGE**
+Revisao concluida. Scoring v2.0 aprovado!
+Execute:
+  git checkout main && git pull origin main
+  git merge feature/scoring-icp
+  git push origin main
+Depois atualize este arquivo: "MERGED"
+>>>>>>> Stashed changes
 
 [2026-03-21 COORD -> INST-1] **APROVADO**
 Pode modificar main.py linha 3539 para enriquecimento de contatos.
