@@ -161,8 +161,27 @@ async def enrich_contact_with_ai(contact_id: int, db_connection) -> Dict[str, An
     else:
         existing_facts_text = "Nenhum fato registrado anteriormente."
 
-    # Build prompt
-    prompt = f"""Analise os dados deste contato e gere um enriquecimento completo.
+    # Build prompt with business context
+    prompt = f"""Voce e um assistente de relacionamento profissional para Renato Almeida Prado.
+
+## SOBRE RENATO (para contexto)
+
+Renato e fundador da **ImensIAH**, uma plataforma de Governanca Estrategica que ajuda empresas com:
+- Gestao de conselhos (administrativo, consultivo, fiscal)
+- Governanca corporativa
+- Planejamento estrategico com IA
+
+Renato tambem atua como:
+- Conselheiro em diversas empresas
+- Mentor de startups e scale-ups
+- Investidor anjo
+- Advisor estrategico
+
+**Objetivos de Renato**:
+1. Identificar empresas que precisam de governanca/conselhos
+2. Expandir rede de relacionamentos estrategicos
+3. Encontrar oportunidades de negocio (consultoria, advisory, investimento)
+4. Manter relacionamentos aquecidos com decisores
 
 ## DADOS DO CONTATO
 
@@ -190,31 +209,41 @@ Ultimo contato: {contact.get('ultimo_contato') or 'N/A'}
 
 ## TAREFA
 
-Com base nos dados acima, gere:
+Analise PROFUNDAMENTE as conversas e gere insights ACIONAVEIS:
 
-1. **RESUMO** (2-3 paragrafos): Um perfil completo da pessoa, incluindo:
-   - Quem ela e profissionalmente
-   - Natureza do relacionamento comigo (Renato)
-   - Historico de interacoes relevantes
-   - Contexto pessoal que seja evidente nas conversas
+1. **RESUMO** (2-3 paragrafos): Perfil estrategico da pessoa:
+   - Quem e profissionalmente (cargo, empresa, influencia)
+   - Natureza do relacionamento com Renato
+   - POTENCIAL para negocios/parcerias/conselhos
+   - Sinais de oportunidade nas conversas
 
-2. **NOVOS FATOS** (lista): Fatos importantes extraidos das conversas que ainda nao estao nos "fatos conhecidos". Cada fato deve ter:
-   - categoria: "professional", "personal", "preference", "relationship"
-   - fato: descricao clara e objetiva
-   - confianca: 0.5 a 1.0 (baseado na certeza)
+2. **NOVOS FATOS** (lista): Extraia informacoes valiosas:
+   - categoria: "professional", "personal", "preference", "relationship", "opportunity"
+   - fato: informacao especifica e util
+   - confianca: 0.5 a 1.0
 
 3. **INSIGHTS** (objeto JSON):
-   - forca_relacionamento: "forte", "medio", "fraco" (baseado na frequencia e tom)
+   - forca_relacionamento: "forte", "medio", "fraco"
    - sentimento_geral: "positivo", "neutro", "negativo"
-   - topicos_frequentes: lista de assuntos mais discutidos
+   - topicos_frequentes: assuntos discutidos
    - ultima_interacao_relevante: resumo breve
+   - potencial_negocio: "alto", "medio", "baixo", "nenhum" (para ImensIAH/consultoria)
+   - perfil_decisor: true/false (e tomador de decisao na empresa?)
+   - conexoes_estrategicas: lista de pessoas/empresas mencionadas que podem ser uteis
 
-4. **SUGESTOES** (lista): Acoes sugeridas para fortalecer o relacionamento:
-   - Tipo: "follow_up", "aniversario", "oportunidade", "reconexao"
-   - Descricao da acao
-   - Prioridade: "alta", "media", "baixa"
+4. **OPORTUNIDADES** (lista): Identifique oportunidades CONCRETAS:
+   - tipo: "conselho", "consultoria", "investimento", "parceria", "indicacao", "networking"
+   - descricao: oportunidade especifica identificada
+   - evidencia: onde voce viu isso na conversa
+   - proximo_passo: acao concreta para Renato
 
-Responda APENAS com JSON valido no formato:
+5. **SUGESTOES** (lista): Acoes para AGORA:
+   - tipo: "follow_up", "agendar_reuniao", "enviar_proposta", "reconexao", "aniversario", "apresentar_imensiah"
+   - descricao: acao especifica e contextualizada
+   - prioridade: "alta", "media", "baixa"
+   - timing: "imediato", "esta_semana", "este_mes", "trimestre"
+
+Responda APENAS com JSON valido:
 {{
     "resumo": "...",
     "fatos": [
@@ -224,10 +253,16 @@ Responda APENAS com JSON valido no formato:
         "forca_relacionamento": "...",
         "sentimento_geral": "...",
         "topicos_frequentes": [...],
-        "ultima_interacao_relevante": "..."
+        "ultima_interacao_relevante": "...",
+        "potencial_negocio": "...",
+        "perfil_decisor": true/false,
+        "conexoes_estrategicas": [...]
     }},
+    "oportunidades": [
+        {{"tipo": "...", "descricao": "...", "evidencia": "...", "proximo_passo": "..."}}
+    ],
     "sugestoes": [
-        {{"tipo": "...", "descricao": "...", "prioridade": "..."}}
+        {{"tipo": "...", "descricao": "...", "prioridade": "...", "timing": "..."}}
     ]
 }}
 """
@@ -308,6 +343,11 @@ async def save_enrichment_results(
     try:
         # Update contact resumo_ai
         if enrichment.get("resumo"):
+            # Combine insights with oportunidades and sugestoes for storage
+            full_insights = enrichment.get("insights", {})
+            full_insights["oportunidades"] = enrichment.get("oportunidades", [])
+            full_insights["sugestoes"] = enrichment.get("sugestoes", [])
+
             cursor.execute("""
                 UPDATE contacts
                 SET resumo_ai = %s,
@@ -317,7 +357,7 @@ async def save_enrichment_results(
                 WHERE id = %s
             """, (
                 enrichment["resumo"],
-                json.dumps(enrichment.get("insights", {})),
+                json.dumps(full_insights),
                 contact_id
             ))
             stats["resumo_updated"] = True

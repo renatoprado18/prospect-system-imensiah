@@ -121,6 +121,14 @@ Features concluidas na branch feature/whatsapp-improvements:
   - Exportar Conversas (GET /api/whatsapp/export/{contact_id})
 Feature pendente: Agendamento (requer database.py - arquivo bloqueado)
 Status: AGUARDANDO outras instancias antes de solicitar merge.
+
+[2026-03-21 INST-3] **MERGED - CONTACTS SCORING** (commit 29464de)
+Nova feature: Scoring integrado com tabela contacts (6696 contatos do Google)
+Modificados (diretamente na main com aprovacao anterior):
+  - app/database.py: Colunas score/tier/score_breakdown/score_reasons em contacts
+  - app/scoring.py: calculate_contact_score(), recalculate_contact_scores(), get_contact_scoring_stats()
+  - app/main.py: Endpoints POST/GET /api/contacts/scoring/recalculate e /stats
+TODAS instancias: git fetch && git rebase origin/main
 ```
 
 ## Decisoes Arquiteturais

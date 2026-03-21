@@ -899,6 +899,21 @@
                             </div>
                         ` : ''}
 
+                        <!-- Oportunidades (from AI enrichment) -->
+                        ${contact.insights_ai?.oportunidades?.length > 0 ? `
+                            <div class="card" style="border: 1px solid var(--success); border-top: 3px solid var(--success);">
+                                <div class="card-header" style="background: linear-gradient(135deg, #10b98110, #10b98105);">
+                                    <h2 class="card-title" style="color: var(--success);">
+                                        <i class="bi bi-rocket-takeoff"></i>
+                                        Oportunidades
+                                    </h2>
+                                </div>
+                                <div class="card-body">
+                                    ${renderOportunidades(contact.insights_ai.oportunidades)}
+                                </div>
+                            </div>
+                        ` : ''}
+
                         <!-- Facts -->
                         <div class="card">
                             <div class="card-header">
@@ -1188,6 +1203,96 @@
                     </div>
                 `;
             }
+
+            // Business potential (new)
+            if (insights.potencial_negocio) {
+                const potentialColors = {
+                    'alto': 'var(--success)',
+                    'medio': 'var(--warning)',
+                    'baixo': 'var(--gray-400)',
+                    'nenhum': 'var(--gray-300)'
+                };
+                const color = potentialColors[insights.potencial_negocio] || 'var(--gray-400)';
+                html += `
+                    <div style="display: flex; align-items: center; gap: 12px; margin-top: 8px;">
+                        <i class="bi bi-briefcase" style="color: ${color};"></i>
+                        <span style="font-size: 0.85rem;">Potencial negócio: <strong style="color: ${color};">${insights.potencial_negocio}</strong></span>
+                    </div>
+                `;
+            }
+
+            // Decision maker profile (new)
+            if (insights.perfil_decisor !== undefined) {
+                html += `
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <i class="bi bi-person-check ${insights.perfil_decisor ? 'text-success' : 'text-secondary'}"></i>
+                        <span style="font-size: 0.85rem;">Decisor: <strong>${insights.perfil_decisor ? 'Sim' : 'Não identificado'}</strong></span>
+                    </div>
+                `;
+            }
+
+            // Strategic connections (new)
+            if (insights.conexoes_estrategicas && insights.conexoes_estrategicas.length > 0) {
+                html += `
+                    <div style="margin-top: 8px;">
+                        <div style="font-size: 0.75rem; color: var(--gray-500); margin-bottom: 6px;">
+                            <i class="bi bi-diagram-3"></i> Conexões mencionadas:
+                        </div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                            ${insights.conexoes_estrategicas.map(c => `
+                                <span style="background: var(--primary-light, #e0e7ff); color: var(--primary); padding: 4px 10px; border-radius: 12px; font-size: 0.8rem;">${c}</span>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function renderOportunidades(oportunidades) {
+            if (!oportunidades || oportunidades.length === 0) return '';
+
+            const tipoIcons = {
+                'conselho': 'bi-people',
+                'consultoria': 'bi-lightbulb',
+                'investimento': 'bi-graph-up-arrow',
+                'parceria': 'bi-handshake',
+                'indicacao': 'bi-share',
+                'networking': 'bi-globe'
+            };
+
+            const tipoColors = {
+                'conselho': '#6366f1',
+                'consultoria': '#f59e0b',
+                'investimento': '#10b981',
+                'parceria': '#3b82f6',
+                'indicacao': '#8b5cf6',
+                'networking': '#ec4899'
+            };
+
+            let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
+
+            oportunidades.forEach(op => {
+                const icon = tipoIcons[op.tipo] || 'bi-star';
+                const color = tipoColors[op.tipo] || 'var(--primary)';
+                html += `
+                    <div style="background: linear-gradient(135deg, ${color}10, ${color}05); border-left: 3px solid ${color}; padding: 12px; border-radius: 8px;">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                            <i class="bi ${icon}" style="color: ${color};"></i>
+                            <span style="font-weight: 600; font-size: 0.85rem; text-transform: uppercase; color: ${color};">${op.tipo}</span>
+                        </div>
+                        <p style="font-size: 0.9rem; margin: 0 0 8px 0; color: var(--gray-700);">${op.descricao}</p>
+                        ${op.proximo_passo ? `
+                            <div style="font-size: 0.8rem; color: var(--gray-600); background: white; padding: 8px; border-radius: 6px;">
+                                <i class="bi bi-arrow-right-circle me-1"></i>
+                                <strong>Próximo passo:</strong> ${op.proximo_passo}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            });
 
             html += '</div>';
             return html;
