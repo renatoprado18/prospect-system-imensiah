@@ -106,15 +106,12 @@ Endpoints planejados:
 Conflito potencial: INST-2 tambem editando main.py (WhatsApp)
 Aguardo aprovacao do coordenador.
 
-[2026-03-21 INST-3] **PRONTO PARA MERGE - SCORING API**
-Endpoints adicionados em main.py (linha ~4215):
+[2026-03-21 INST-3] **MERGED - SCORING API**
+Endpoints na main (commit 43c3a96):
   - POST /api/scoring/recalculate (admin only)
   - GET /api/scoring/stats (admin only)
   - GET /api/scoring/icp (admin only)
-Commit: 43c3a96 - feat(scoring): Add scoring API endpoints
-Secao separada: # ============== SCORING API ==============
-Todos endpoints protegidos com require_admin.
-Aguardo aprovacao do coordenador.
+TODAS instancias: git fetch && git rebase origin/main
 ```
 
 ## Decisoes Arquiteturais
