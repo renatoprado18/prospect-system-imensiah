@@ -590,6 +590,36 @@
         </div>
     </main>
 
+    <!-- Edit LinkedIn Modal -->
+    <div class="modal fade" id="editLinkedInModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content" style="border-radius: 16px; border: none;">
+                <div class="modal-header" style="border-bottom: 1px solid var(--gray-200); padding: 20px 24px;">
+                    <h5 class="modal-title" style="font-weight: 600;"><i class="bi bi-linkedin me-2"></i>LinkedIn</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" style="padding: 24px;">
+                    <div class="mb-3">
+                        <label class="form-label">URL do Perfil LinkedIn</label>
+                        <input type="url" class="form-control" id="linkedinUrl" placeholder="https://linkedin.com/in/nome">
+                        <small class="text-muted">Cole a URL completa do perfil LinkedIn</small>
+                    </div>
+                    <div id="linkedinPreview" style="display: none;" class="mt-3 p-3 bg-light rounded">
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="bi bi-check-circle text-success"></i>
+                            <span id="linkedinPreviewText"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer" style="border-top: 1px solid var(--gray-200); padding: 16px 24px;">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-outline-danger" onclick="removeLinkedIn()" id="removeLinkedInBtn" style="display: none;">Remover</button>
+                    <button type="button" class="btn btn-primary" onclick="saveLinkedIn()">Salvar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Add Interaction Modal -->
     <div class="modal fade" id="addInteractionModal" tabindex="-1">
         <div class="modal-dialog">
@@ -748,6 +778,9 @@
                         </button>
                         <button class="btn btn-outline-secondary" onclick="openWhatsApp()">
                             <i class="bi bi-whatsapp me-2"></i>WhatsApp
+                        </button>
+                        <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editLinkedInModal">
+                            <i class="bi bi-linkedin me-2"></i>LinkedIn
                         </button>
                         <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
                             <i class="bi bi-plus me-2"></i>Interacao
@@ -1081,6 +1114,81 @@
             } else {
                 alert('Contato sem telefone cadastrado');
             }
+        }
+
+        // LinkedIn Modal functions
+        document.getElementById('editLinkedInModal').addEventListener('show.bs.modal', function() {
+            const linkedinUrl = contactData?.contact?.linkedin || '';
+            document.getElementById('linkedinUrl').value = linkedinUrl;
+            document.getElementById('removeLinkedInBtn').style.display = linkedinUrl ? 'inline-block' : 'none';
+            updateLinkedInPreview(linkedinUrl);
+        });
+
+        document.getElementById('linkedinUrl').addEventListener('input', function(e) {
+            updateLinkedInPreview(e.target.value);
+        });
+
+        function updateLinkedInPreview(url) {
+            const preview = document.getElementById('linkedinPreview');
+            const previewText = document.getElementById('linkedinPreviewText');
+
+            if (url && url.includes('linkedin.com')) {
+                // Extract username from URL
+                const match = url.match(/linkedin\.com\/in\/([^\/\?]+)/);
+                if (match) {
+                    previewText.textContent = `Perfil: ${match[1]}`;
+                    preview.style.display = 'block';
+                    return;
+                }
+            }
+            preview.style.display = 'none';
+        }
+
+        async function saveLinkedIn() {
+            const url = document.getElementById('linkedinUrl').value.trim();
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ linkedin: url || null })
+                });
+
+                if (!response.ok) throw new Error('Erro ao salvar');
+
+                const modal = bootstrap.Modal.getInstance(document.getElementById('editLinkedInModal'));
+                modal.hide();
+
+                // Reload contact data
+                loadContact();
+                showToast('LinkedIn atualizado!');
+            } catch (error) {
+                alert('Erro ao salvar LinkedIn: ' + error.message);
+            }
+        }
+
+        async function removeLinkedIn() {
+            if (!confirm('Remover LinkedIn deste contato?')) return;
+
+            document.getElementById('linkedinUrl').value = '';
+            await saveLinkedIn();
+        }
+
+        function showToast(message) {
+            // Simple toast notification
+            const toast = document.createElement('div');
+            toast.className = 'position-fixed bottom-0 end-0 p-3';
+            toast.style.zIndex = '1100';
+            toast.innerHTML = `
+                <div class="toast show" role="alert">
+                    <div class="toast-body d-flex align-items-center gap-2">
+                        <i class="bi bi-check-circle text-success"></i>
+                        ${message}
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
         }
 
         async function saveInteraction() {
