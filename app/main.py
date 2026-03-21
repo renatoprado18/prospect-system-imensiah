@@ -1264,9 +1264,10 @@ async def whatsapp_status():
         """)
         contacts_with_whatsapp = cursor.fetchone()['count']
 
-        # Recent activity (last 10 messages)
+        # Recent activity (last 10 messages) - convert to Brazil time
         cursor.execute("""
-            SELECT m.id, m.direcao, m.conteudo, m.enviado_em,
+            SELECT m.id, m.direcao, m.conteudo,
+                   (m.enviado_em AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') as enviado_em_local,
                    c.nome as contact_name, c.id as contact_id,
                    m.metadata->>'phone' as phone,
                    m.metadata->>'is_group' as is_group
@@ -1282,7 +1283,7 @@ async def whatsapp_status():
                 "id": row['id'],
                 "direction": row['direcao'],
                 "content": row['conteudo'][:100] if row['conteudo'] else None,
-                "sent_at": row['enviado_em'].isoformat() if row['enviado_em'] else None,
+                "sent_at": row['enviado_em_local'].isoformat() if row['enviado_em_local'] else None,
                 "contact_name": row['contact_name'],
                 "contact_id": row['contact_id'],
                 "phone": row['phone'],
