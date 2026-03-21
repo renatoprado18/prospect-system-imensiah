@@ -1384,6 +1384,78 @@ async def disconnect_whatsapp():
             raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============== WHATSAPP SEARCH ==============
+
+@app.get("/api/whatsapp/search")
+async def search_whatsapp_messages(
+    q: str,
+    contact_id: int = None,
+    limit: int = 50
+):
+    """
+    Search WhatsApp messages by content.
+
+    Args:
+        q: Search query (min 3 characters)
+        contact_id: Optional - filter by specific contact
+        limit: Max results (default 50)
+    """
+    if not q or len(q) < 3:
+        raise HTTPException(status_code=400, detail="Query must be at least 3 characters")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Build query
+        if contact_id:
+            cursor.execute("""
+                SELECT m.id, m.conversation_id, m.contact_id, m.direcao, m.conteudo,
+                       m.enviado_em, m.metadata, c.nome as contact_name
+                FROM messages m
+                LEFT JOIN contacts c ON m.contact_id = c.id
+                JOIN conversations conv ON m.conversation_id = conv.id
+                WHERE conv.canal = 'whatsapp'
+                  AND m.contact_id = %s
+                  AND m.conteudo ILIKE %s
+                ORDER BY m.enviado_em DESC
+                LIMIT %s
+            """, (contact_id, f"%{q}%", limit))
+        else:
+            cursor.execute("""
+                SELECT m.id, m.conversation_id, m.contact_id, m.direcao, m.conteudo,
+                       m.enviado_em, m.metadata, c.nome as contact_name
+                FROM messages m
+                LEFT JOIN contacts c ON m.contact_id = c.id
+                JOIN conversations conv ON m.conversation_id = conv.id
+                WHERE conv.canal = 'whatsapp'
+                  AND m.conteudo ILIKE %s
+                ORDER BY m.enviado_em DESC
+                LIMIT %s
+            """, (f"%{q}%", limit))
+
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                "id": row["id"],
+                "contact_id": row["contact_id"],
+                "contact_name": row["contact_name"] or "Desconhecido",
+                "direction": row["direcao"],
+                "content": row["conteudo"],
+                "sent_at": row["enviado_em"].isoformat() if row["enviado_em"] else None,
+                "metadata": row["metadata"] if isinstance(row["metadata"], dict) else {}
+            })
+
+        return {
+            "query": q,
+            "total": len(results),
+            "results": results
+        }
+
+    finally:
+        conn.close()
+
+
 @app.post("/api/whatsapp/sync")
 async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50, offset: int = 0):
     """
@@ -3537,27 +3609,57 @@ async def import_contacts(data: ContactsImportData):
 
 
 @app.post("/api/contacts/{contact_id}/enrich")
-async def enrich_contact(contact_id: int, background_tasks: BackgroundTasks):
+async def enrich_contact(contact_id: int):
     """
-    Enriquece contato com dados externos (LinkedIn, foto, etc)
-    Executa em background
+    Enriquece contato com IA usando dados de emails, WhatsApp e LinkedIn.
+    Gera resumo, extrai fatos e insights sobre o relacionamento.
     """
-    conn = get_db()
+    from services.contact_enrichment import enrich_and_save
+
+    conn = get_connection()
     cursor = conn.cursor()
+
+    # Verify contact exists
+    cursor.execute("SELECT id, nome FROM contacts WHERE id = %s", (contact_id,))
+    contact = cursor.fetchone()
+    if not contact:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Contato nao encontrado")
 
     # Mark as enriching
     cursor.execute('''
         UPDATE contacts SET enriquecimento_status = 'pending'
         WHERE id = %s
     ''', (contact_id,))
-
     conn.commit()
-    conn.close()
 
-    # TODO: Add background task for enrichment
-    # background_tasks.add_task(enrich_contact_background, contact_id)
+    try:
+        # Run enrichment
+        result = await enrich_and_save(contact_id, conn)
 
-    return {"status": "enrichment_started", "contact_id": contact_id}
+        if result.get("status") != "success":
+            # Mark as failed
+            cursor.execute('''
+                UPDATE contacts SET enriquecimento_status = 'failed'
+                WHERE id = %s
+            ''', (contact_id,))
+            conn.commit()
+            raise HTTPException(status_code=500, detail=result.get("error", "Erro no enriquecimento"))
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        cursor.execute('''
+            UPDATE contacts SET enriquecimento_status = 'failed'
+            WHERE id = %s
+        ''', (contact_id,))
+        conn.commit()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
 
 
 # ============== Google Accounts Integration ==============
