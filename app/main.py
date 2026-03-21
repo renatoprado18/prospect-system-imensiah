@@ -1231,8 +1231,77 @@ async def whatsapp_webhook(request: Request):
 
 @app.get("/api/whatsapp/status")
 async def whatsapp_status():
-    """Get WhatsApp connection status"""
+    """Get WhatsApp connection status with stats"""
     status = await whatsapp.get_connection_status()
+
+    # Add WhatsApp stats from database
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Messages today
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM messages
+            WHERE metadata->>'is_group' IS NOT NULL
+            AND enviado_em >= CURRENT_DATE
+        """)
+        messages_today = cursor.fetchone()['count']
+
+        # Active conversations (with WhatsApp messages)
+        cursor.execute("""
+            SELECT COUNT(DISTINCT c.id) as count
+            FROM conversations c
+            WHERE c.canal = 'whatsapp'
+            AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id)
+        """)
+        active_conversations = cursor.fetchone()['count']
+
+        # Contacts with WhatsApp messages
+        cursor.execute("""
+            SELECT COUNT(DISTINCT contact_id) as count
+            FROM messages
+            WHERE metadata->>'is_group' IS NOT NULL
+        """)
+        contacts_with_whatsapp = cursor.fetchone()['count']
+
+        # Recent activity (last 10 messages)
+        cursor.execute("""
+            SELECT m.id, m.direcao, m.conteudo, m.enviado_em,
+                   c.nome as contact_name, c.id as contact_id,
+                   m.metadata->>'phone' as phone,
+                   m.metadata->>'is_group' as is_group
+            FROM messages m
+            LEFT JOIN contacts c ON m.contact_id = c.id
+            WHERE m.metadata->>'is_group' IS NOT NULL
+            ORDER BY m.enviado_em DESC
+            LIMIT 10
+        """)
+        recent_messages = []
+        for row in cursor.fetchall():
+            recent_messages.append({
+                "id": row['id'],
+                "direction": row['direcao'],
+                "content": row['conteudo'][:100] if row['conteudo'] else None,
+                "sent_at": row['enviado_em'].isoformat() if row['enviado_em'] else None,
+                "contact_name": row['contact_name'],
+                "contact_id": row['contact_id'],
+                "phone": row['phone'],
+                "is_group": row['is_group'] == 'true'
+            })
+
+        cursor.close()
+        conn.close()
+
+        status['stats'] = {
+            'messages_today': messages_today,
+            'active_conversations': active_conversations,
+            'contacts_with_whatsapp': contacts_with_whatsapp
+        }
+        status['recent_activity'] = recent_messages
+
+    except Exception as e:
+        status['stats_error'] = str(e)
+
     return status
 
 

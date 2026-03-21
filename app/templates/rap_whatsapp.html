@@ -374,9 +374,15 @@
                     </div>
                 </div>
 
-                <div class="d-flex align-items-center gap-3">
+                <div class="d-flex align-items-center gap-3 flex-wrap">
                     <button class="btn btn-whatsapp" onclick="syncHistory()" id="syncBtn">
                         <i class="bi bi-arrow-repeat me-2"></i> Sincronizar Mensagens
+                    </button>
+                    <button class="btn btn-outline-primary" onclick="autoSync()" id="autoSyncBtn">
+                        <i class="bi bi-play-circle me-2"></i> Auto-Sync (Todos)
+                    </button>
+                    <button class="btn btn-outline-danger" onclick="stopAutoSync()" id="stopAutoSyncBtn" style="display: none;">
+                        <i class="bi bi-stop-circle me-2"></i> Parar
                     </button>
                     <div id="syncStatus" style="display: none;">
                         <span class="spinner-border spinner-border-sm me-2"></span>
@@ -423,7 +429,7 @@
             <div class="card-header">
                 <h5 class="card-title"><i class="bi bi-clock-history"></i> Atividade Recente</h5>
             </div>
-            <div class="card-body">
+            <div class="card-body" id="activityBody">
                 <p class="text-muted">As mensagens recebidas aparecerao aqui e serao vinculadas automaticamente aos contatos.</p>
             </div>
         </div>
@@ -444,6 +450,8 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let connectionState = 'checking';
+        let autoSyncRunning = false;
+        let autoSyncAbort = false;
 
         async function checkStatus() {
             try {
@@ -452,10 +460,49 @@
 
                 const state = data.instance?.state || data.error || 'unknown';
                 updateUI(state);
+
+                // Update stats if available
+                if (data.stats) {
+                    document.getElementById('totalMessages').textContent = data.stats.messages_today || 0;
+                    document.getElementById('totalConversations').textContent = data.stats.active_conversations || 0;
+                    document.getElementById('totalContacts').textContent = data.stats.contacts_with_whatsapp || 0;
+                }
+
+                // Update recent activity
+                if (data.recent_activity && data.recent_activity.length > 0) {
+                    renderRecentActivity(data.recent_activity);
+                }
             } catch (error) {
                 console.error('Error checking status:', error);
                 updateUI('error');
             }
+        }
+
+        function renderRecentActivity(messages) {
+            const activityBody = document.getElementById('activityBody');
+            if (!activityBody) return;
+
+            let html = '<div class="list-group list-group-flush">';
+            for (const msg of messages) {
+                const icon = msg.direction === 'incoming' ? 'bi-arrow-down-left text-success' : 'bi-arrow-up-right text-primary';
+                const time = msg.sent_at ? new Date(msg.sent_at).toLocaleString('pt-BR') : '';
+                const contactLink = msg.contact_id ? `<a href="/rap/contacts/${msg.contact_id}">${msg.contact_name || 'Contato'}</a>` : (msg.phone || 'Desconhecido');
+
+                html += `
+                    <div class="list-group-item d-flex align-items-start gap-3 py-3">
+                        <i class="bi ${icon}" style="font-size: 1.2rem;"></i>
+                        <div class="flex-grow-1">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <strong>${contactLink}</strong>
+                                <small class="text-muted">${time}</small>
+                            </div>
+                            <p class="mb-0 text-muted small">${msg.content || '[midia]'}</p>
+                        </div>
+                    </div>
+                `;
+            }
+            html += '</div>';
+            activityBody.innerHTML = html;
         }
 
         function updateUI(state) {
@@ -625,6 +672,84 @@
             document.getElementById('toastBody').textContent = message;
             const toast = new bootstrap.Toast(document.getElementById('toast'));
             toast.show();
+        }
+
+        async function autoSync() {
+            if (autoSyncRunning) return;
+
+            autoSyncRunning = true;
+            autoSyncAbort = false;
+
+            const autoSyncBtn = document.getElementById('autoSyncBtn');
+            const stopBtn = document.getElementById('stopAutoSyncBtn');
+            const syncBtn = document.getElementById('syncBtn');
+            const syncStatus = document.getElementById('syncStatus');
+            const syncResult = document.getElementById('syncResult');
+            const includeGroups = document.getElementById('includeGroups').checked;
+
+            autoSyncBtn.style.display = 'none';
+            stopBtn.style.display = 'inline-block';
+            syncBtn.disabled = true;
+            syncStatus.style.display = 'inline-flex';
+
+            let totalImported = 0;
+            let totalSkipped = 0;
+            let totalContacts = 0;
+            let round = 0;
+            let remaining = 1;
+
+            while (remaining > 0 && !autoSyncAbort) {
+                round++;
+                document.getElementById('syncStatusText').textContent = `Rodada ${round}... Aguarde`;
+
+                try {
+                    const url = `/api/whatsapp/sync?include_groups=${includeGroups}&limit=50`;
+                    const response = await fetch(url, { method: 'POST' });
+                    const data = await response.json();
+
+                    if (data.status === 'ok') {
+                        totalImported += data.messages_imported || 0;
+                        totalSkipped += data.messages_skipped || 0;
+                        totalContacts = data.contacts_matched || totalContacts;
+                        remaining = data.remaining || 0;
+
+                        // Update result during sync
+                        syncResult.style.display = 'block';
+                        document.querySelector('#syncResult .alert').className = 'alert alert-info mb-0';
+                        document.getElementById('syncResultText').textContent =
+                            `Rodada ${round}: ${totalImported} importadas, ${totalSkipped} existentes. Restam ${remaining} chats...`;
+
+                        // Brief pause between rounds
+                        await new Promise(r => setTimeout(r, 1000));
+                    } else {
+                        showToast('Erro: ' + (data.errors?.join(', ') || 'Erro desconhecido'));
+                        break;
+                    }
+                } catch (error) {
+                    showToast('Erro: ' + error.message);
+                    break;
+                }
+            }
+
+            // Final result
+            syncStatus.style.display = 'none';
+            syncResult.style.display = 'block';
+            document.querySelector('#syncResult .alert').className = 'alert alert-success mb-0';
+            document.getElementById('syncResultText').textContent =
+                `Concluido! ${totalImported} mensagens importadas, ${totalSkipped} ja existentes, ${totalContacts} contatos. ${round} rodadas.`;
+
+            autoSyncRunning = false;
+            autoSyncBtn.style.display = 'inline-block';
+            stopBtn.style.display = 'none';
+            syncBtn.disabled = false;
+
+            // Refresh stats
+            checkStatus();
+        }
+
+        function stopAutoSync() {
+            autoSyncAbort = true;
+            showToast('Parando auto-sync...');
         }
 
         // Check status on load and periodically
