@@ -3354,6 +3354,50 @@ async def get_contact(contact_id: int):
     }
 
 
+@app.put("/api/contacts/{contact_id}")
+async def update_contact(contact_id: int, request: Request):
+    """Atualiza um contato"""
+    body = await request.json()
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Check if contact exists
+    cursor.execute("SELECT id FROM contacts WHERE id = %s", (contact_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Contato não encontrado")
+
+    # Build update query dynamically
+    allowed_fields = ['nome', 'apelido', 'empresa', 'cargo', 'emails', 'telefones',
+                      'linkedin', 'contexto', 'categorias', 'tags', 'aniversario']
+
+    updates = []
+    values = []
+    for field in allowed_fields:
+        if field in body:
+            value = body[field]
+            # Convert lists/dicts to JSON
+            if isinstance(value, (list, dict)):
+                value = json.dumps(value)
+            updates.append(f"{field} = %s")
+            values.append(value)
+
+    if not updates:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+
+    values.append(contact_id)
+    query = f"UPDATE contacts SET {', '.join(updates)}, atualizado_em = NOW() WHERE id = %s RETURNING *"
+
+    cursor.execute(query, values)
+    updated = row_to_dict(cursor.fetchone())
+    conn.commit()
+    conn.close()
+
+    return {"status": "ok", "contact": updated}
+
+
 @app.post("/api/contacts")
 async def create_contact(contact: ContactCreate):
     """Cria novo contato"""
