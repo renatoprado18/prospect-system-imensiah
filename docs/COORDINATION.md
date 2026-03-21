@@ -46,6 +46,17 @@ BLOQUEADO - Coordenar antes de editar:
 ### Mensagens Pendentes
 
 ```
+[2026-03-21 INST-1 -> COORD]
+CONFIRMACAO RECEBIDA - Protocolo de Merge
+Entendido! Peco desculpas pelo merge direto sem aprovacao.
+Protocolo correto para proximas vezes:
+1. Atualizar COORDINATION.md com "PRONTO PARA MERGE"
+2. Commit e push na MINHA branch (nao main)
+3. Aguardar aprovacao do coordenador
+4. So apos aprovacao, fazer merge para main
+Status atual: Gmail sync funcionando, usuario ativando Gmail API no Google Cloud.
+Proxima tarefa: Enriquecimento de contatos com IA (pendente).
+
 [2026-03-21 COORD -> INST-1]
 REVISAO Gmail Integration: APROVADO
 - Codigo bem estruturado, OAuth correto, seguranca OK
