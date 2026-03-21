@@ -455,6 +455,133 @@
         let connectionState = 'checking';
         let autoSyncRunning = false;
         let autoSyncAbort = false;
+        let allTemplates = [];
+        let selectedTemplate = null;
+
+        // Load templates on page load
+        async function loadTemplates() {
+            try {
+                const response = await fetch('/api/whatsapp/templates');
+                const data = await response.json();
+                allTemplates = data.templates || [];
+                populateTemplateSelect(allTemplates);
+            } catch (error) {
+                console.error('Error loading templates:', error);
+            }
+        }
+
+        function populateTemplateSelect(templates) {
+            const select = document.getElementById('templateSelect');
+            if (!select) return;
+            select.innerHTML = '<option value="">Selecione um template...</option>';
+            for (const t of templates) {
+                const option = document.createElement('option');
+                option.value = t.id;
+                option.textContent = t.nome;
+                option.dataset.template = JSON.stringify(t);
+                select.appendChild(option);
+            }
+        }
+
+        function filterTemplates() {
+            const category = document.getElementById('templateCategory').value;
+            let filtered = category ? allTemplates.filter(t => t.categoria === category) : allTemplates;
+            populateTemplateSelect(filtered);
+            selectedTemplate = null;
+            document.getElementById('templateVariables').style.display = 'none';
+            document.getElementById('templatePreview').style.display = 'none';
+            document.getElementById('sendTemplateBtn').disabled = true;
+        }
+
+        function selectTemplate() {
+            const select = document.getElementById('templateSelect');
+            const selectedOption = select.options[select.selectedIndex];
+            if (!selectedOption.value) {
+                selectedTemplate = null;
+                document.getElementById('templateVariables').style.display = 'none';
+                document.getElementById('templatePreview').style.display = 'none';
+                document.getElementById('sendTemplateBtn').disabled = true;
+                return;
+            }
+            selectedTemplate = JSON.parse(selectedOption.dataset.template);
+            renderVariableInputs(selectedTemplate);
+            document.getElementById('sendTemplateBtn').disabled = false;
+        }
+
+        function renderVariableInputs(template) {
+            const container = document.getElementById('variablesContainer');
+            container.innerHTML = '';
+            if (!template.variaveis || template.variaveis.length === 0) {
+                document.getElementById('templateVariables').style.display = 'none';
+                previewTemplate();
+                return;
+            }
+            document.getElementById('templateVariables').style.display = 'block';
+            const placeholders = {nome:'Ex: Joao', empresa:'Ex: Empresa XYZ', quando:'Ex: amanha as 14h', pontos:'Ex: 1. Ponto A', assunto:'Ex: projeto', servico:'Ex: consultoria'};
+            for (const varName of template.variaveis) {
+                const col = document.createElement('div');
+                col.className = 'col-md-4';
+                col.innerHTML = `<label class="form-label small">{${varName}}</label><input type="text" class="form-control form-control-sm" id="var_${varName}" placeholder="${placeholders[varName] || varName}" oninput="previewTemplate()">`;
+                container.appendChild(col);
+            }
+            setTimeout(previewTemplate, 100);
+        }
+
+        function getVariableValues() {
+            if (!selectedTemplate || !selectedTemplate.variaveis) return {};
+            const values = {};
+            for (const varName of selectedTemplate.variaveis) {
+                const input = document.getElementById(`var_${varName}`);
+                values[varName] = input ? input.value : '';
+            }
+            return values;
+        }
+
+        async function previewTemplate() {
+            if (!selectedTemplate) return;
+            const variables = getVariableValues();
+            try {
+                const response = await fetch(`/api/whatsapp/templates/${selectedTemplate.id}/preview`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ variables })
+                });
+                const data = await response.json();
+                document.getElementById('previewText').textContent = data.mensagem_renderizada || '';
+                document.getElementById('templatePreview').style.display = 'block';
+            } catch (error) {
+                console.error('Error previewing template:', error);
+            }
+        }
+
+        async function sendWithTemplate() {
+            const phone = document.getElementById('templatePhoneInput').value;
+            if (!phone) { showToast('Preencha o telefone'); return; }
+            if (!selectedTemplate) { showToast('Selecione um template'); return; }
+            const variables = getVariableValues();
+            try {
+                const response = await fetch('/api/whatsapp/send-template', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, template_id: selectedTemplate.id, variables })
+                });
+                const data = await response.json();
+                if (data.status === 'sent') {
+                    showToast('Mensagem enviada com sucesso!');
+                    document.getElementById('templatePhoneInput').value = '';
+                    document.getElementById('templateSelect').value = '';
+                    selectedTemplate = null;
+                    document.getElementById('templateVariables').style.display = 'none';
+                    document.getElementById('templatePreview').style.display = 'none';
+                    document.getElementById('sendTemplateBtn').disabled = true;
+                } else {
+                    showToast('Erro ao enviar: ' + (data.detail || 'Erro desconhecido'));
+                }
+            } catch (error) {
+                showToast('Erro ao enviar mensagem');
+                console.error(error);
+            }
+        }
 
         async function checkStatus() {
             try {
@@ -815,6 +942,7 @@
 
         // Check status on load and periodically
         checkStatus();
+        loadTemplates();
         setInterval(checkStatus, 30000);  // Check every 30 seconds
     </script>
 </body>

@@ -27,7 +27,10 @@ from scoring import DynamicScorer
 from integrations.google_calendar import GoogleCalendarIntegration, create_calendar_link
 from integrations.fathom import FathomIntegration, handle_fathom_webhook
 from integrations.linkedin import LinkedInIntegration
-from integrations.whatsapp import WhatsAppIntegration, parse_webhook_message, format_phone_display
+from integrations.whatsapp import (
+    WhatsAppIntegration, parse_webhook_message, format_phone_display,
+    get_all_templates, get_template, render_template, get_templates_by_category
+)
 from integrations.gmail import GmailIntegration, parse_gmail_date
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
@@ -1329,6 +1332,59 @@ async def send_whatsapp_message(request: Request):
         raise HTTPException(status_code=500, detail=result["error"])
 
     return {"status": "sent", "result": result}
+
+
+# ============== WHATSAPP TEMPLATES ==============
+
+@app.get("/api/whatsapp/templates")
+async def list_whatsapp_templates(categoria: str = None):
+    """List all available message templates"""
+    if categoria:
+        templates = get_templates_by_category(categoria)
+    else:
+        templates = get_all_templates()
+    return {"templates": templates, "total": len(templates)}
+
+
+@app.get("/api/whatsapp/templates/{template_id}")
+async def get_whatsapp_template(template_id: str):
+    """Get a specific template by ID"""
+    template = get_template(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+    return template
+
+
+@app.post("/api/whatsapp/templates/{template_id}/preview")
+async def preview_template(template_id: str, request: Request):
+    """Preview a rendered template without sending"""
+    data = await request.json()
+    variables = data.get("variables", {})
+    template = get_template(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+    rendered = render_template(template_id, variables)
+    return {"template_id": template_id, "template_nome": template["nome"], "mensagem_renderizada": rendered}
+
+
+@app.post("/api/whatsapp/send-template")
+async def send_whatsapp_template(request: Request):
+    """Send a WhatsApp message using a template"""
+    data = await request.json()
+    phone = data.get("phone")
+    template_id = data.get("template_id")
+    variables = data.get("variables", {})
+    if not phone:
+        raise HTTPException(status_code=400, detail="phone is required")
+    if not template_id:
+        raise HTTPException(status_code=400, detail="template_id is required")
+    template = get_template(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+    result = await whatsapp.send_with_template(phone, template_id, variables)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return {"status": "sent", "template_used": template_id, "result": result}
 
 
 @app.get("/api/whatsapp/qr")
