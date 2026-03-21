@@ -835,18 +835,47 @@
                     <!-- Sidebar -->
                     <div>
                         <!-- AI Summary -->
-                        ${contact.resumo_ai ? `
+                        <div class="card">
+                            <div class="card-header">
+                                <h2 class="card-title">
+                                    <i class="bi bi-robot"></i>
+                                    Resumo IA
+                                </h2>
+                                <button class="btn btn-sm btn-outline-primary" onclick="enrichContact()" id="enrichBtn" title="Enriquecer com IA">
+                                    <i class="bi bi-magic"></i> Enriquecer
+                                </button>
+                            </div>
+                            <div class="card-body" id="aiSummaryBody">
+                                ${contact.resumo_ai ? `
+                                    <p style="font-size: 0.9rem; color: var(--gray-600); line-height: 1.6; white-space: pre-line;">
+                                        ${contact.resumo_ai}
+                                    </p>
+                                    ${contact.ultimo_enriquecimento ? `
+                                        <small class="text-muted">Atualizado: ${formatDateTime(contact.ultimo_enriquecimento)}</small>
+                                    ` : ''}
+                                ` : `
+                                    <div class="empty-state">
+                                        <i class="bi bi-robot"></i>
+                                        <p>Nenhum resumo gerado</p>
+                                        <button class="btn btn-sm btn-primary mt-2" onclick="enrichContact()">
+                                            <i class="bi bi-magic me-1"></i>Gerar com IA
+                                        </button>
+                                    </div>
+                                `}
+                            </div>
+                        </div>
+
+                        <!-- AI Insights -->
+                        ${contact.insights_ai && Object.keys(contact.insights_ai).length > 0 ? `
                             <div class="card">
                                 <div class="card-header">
                                     <h2 class="card-title">
-                                        <i class="bi bi-robot"></i>
-                                        Resumo IA
+                                        <i class="bi bi-graph-up"></i>
+                                        Insights
                                     </h2>
                                 </div>
                                 <div class="card-body">
-                                    <p style="font-size: 0.9rem; color: var(--gray-600); line-height: 1.6;">
-                                        ${contact.resumo_ai}
-                                    </p>
+                                    ${renderInsights(contact.insights_ai)}
                                 </div>
                             </div>
                         ` : ''}
@@ -1079,20 +1108,125 @@
             });
         }
 
+        function renderInsights(insights) {
+            if (!insights || Object.keys(insights).length === 0) return '';
+
+            const strengthColors = {
+                'forte': 'var(--success)',
+                'medio': 'var(--warning)',
+                'fraco': 'var(--danger)'
+            };
+
+            const sentimentIcons = {
+                'positivo': 'bi-emoji-smile text-success',
+                'neutro': 'bi-emoji-neutral text-secondary',
+                'negativo': 'bi-emoji-frown text-danger'
+            };
+
+            let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
+
+            // Relationship strength
+            if (insights.forca_relacionamento) {
+                const color = strengthColors[insights.forca_relacionamento] || 'var(--gray-500)';
+                html += `
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="width: 8px; height: 8px; border-radius: 50%; background: ${color};"></div>
+                        <span style="font-size: 0.85rem;">Relacionamento: <strong>${insights.forca_relacionamento}</strong></span>
+                    </div>
+                `;
+            }
+
+            // Sentiment
+            if (insights.sentimento_geral) {
+                const icon = sentimentIcons[insights.sentimento_geral] || 'bi-emoji-neutral';
+                html += `
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <i class="bi ${icon}"></i>
+                        <span style="font-size: 0.85rem;">Sentimento: <strong>${insights.sentimento_geral}</strong></span>
+                    </div>
+                `;
+            }
+
+            // Frequent topics
+            if (insights.topicos_frequentes && insights.topicos_frequentes.length > 0) {
+                html += `
+                    <div>
+                        <div style="font-size: 0.75rem; color: var(--gray-500); margin-bottom: 6px;">Topicos frequentes:</div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                            ${insights.topicos_frequentes.map(t => `
+                                <span style="background: var(--gray-100); padding: 4px 10px; border-radius: 12px; font-size: 0.8rem;">${t}</span>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Last relevant interaction
+            if (insights.ultima_interacao_relevante) {
+                html += `
+                    <div style="font-size: 0.85rem; color: var(--gray-600); padding: 10px; background: var(--gray-100); border-radius: 8px; margin-top: 8px;">
+                        <i class="bi bi-chat-quote me-2"></i>${insights.ultima_interacao_relevante}
+                    </div>
+                `;
+            }
+
+            html += '</div>';
+            return html;
+        }
+
         async function enrichContact() {
+            const btn = document.getElementById('enrichBtn');
+            const summaryBody = document.getElementById('aiSummaryBody');
+
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Analisando...';
+            }
+
+            if (summaryBody) {
+                summaryBody.innerHTML = `
+                    <div style="text-align: center; padding: 24px;">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <p style="margin-top: 12px; color: var(--gray-500);">Analisando emails, WhatsApp e dados do contato...</p>
+                    </div>
+                `;
+            }
+
             try {
                 const response = await fetch(`/api/contacts/${contactId}/enrich`, {
                     method: 'POST'
                 });
 
-                if (response.ok) {
-                    alert('Enriquecimento iniciado! Os dados serao atualizados em breve.');
-                } else {
-                    alert('Erro ao iniciar enriquecimento');
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Erro ao enriquecer contato');
+                }
+
+                // Reload contact to show updated data
+                await loadContact();
+
+                // Show success message
+                if (data.save_stats) {
+                    const stats = data.save_stats;
+                    let msg = 'Enriquecimento concluido!';
+                    if (stats.facts_added > 0) {
+                        msg += ` ${stats.facts_added} novos fatos extraidos.`;
+                    }
+                    alert(msg);
                 }
             } catch (error) {
                 console.error('Error:', error);
-                alert('Erro ao iniciar enriquecimento');
+                alert('Erro: ' + error.message);
+
+                // Restore button
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-magic"></i> Enriquecer';
+                }
+
+                // Reload to restore state
+                await loadContact();
             }
         }
 
