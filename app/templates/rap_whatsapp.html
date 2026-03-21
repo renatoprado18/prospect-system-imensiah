@@ -700,6 +700,7 @@
             const autoSyncBtn = document.getElementById('autoSyncBtn');
             const stopBtn = document.getElementById('stopAutoSyncBtn');
             const syncBtn = document.getElementById('syncBtn');
+            const relinkBtn = document.getElementById('relinkBtn');
             const syncStatus = document.getElementById('syncStatus');
             const syncResult = document.getElementById('syncResult');
             const includeGroups = document.getElementById('includeGroups').checked;
@@ -707,6 +708,7 @@
             autoSyncBtn.style.display = 'none';
             stopBtn.style.display = 'inline-block';
             syncBtn.disabled = true;
+            relinkBtn.disabled = true;
             syncStatus.style.display = 'inline-flex';
 
             let totalImported = 0;
@@ -714,30 +716,34 @@
             let totalContacts = 0;
             let round = 0;
             let remaining = 1;
+            let currentOffset = 0;
 
             while (remaining > 0 && !autoSyncAbort) {
                 round++;
                 document.getElementById('syncStatusText').textContent = `Rodada ${round}... Aguarde`;
 
                 try {
-                    const url = `/api/whatsapp/sync?include_groups=${includeGroups}&limit=50`;
+                    const url = `/api/whatsapp/sync?include_groups=${includeGroups}&limit=50&offset=${currentOffset}`;
                     const response = await fetch(url, { method: 'POST' });
                     const data = await response.json();
 
                     if (data.status === 'ok') {
                         totalImported += data.messages_imported || 0;
                         totalSkipped += data.messages_skipped || 0;
-                        totalContacts = data.contacts_matched || totalContacts;
+                        totalContacts += data.contacts_matched || 0;
                         remaining = data.remaining || 0;
+                        currentOffset = data.next_offset || (currentOffset + 50);
 
                         // Update result during sync
                         syncResult.style.display = 'block';
                         document.querySelector('#syncResult .alert').className = 'alert alert-info mb-0';
                         document.getElementById('syncResultText').textContent =
-                            `Rodada ${round}: ${totalImported} importadas, ${totalSkipped} existentes. Restam ${remaining} chats...`;
+                            `Rodada ${round}: ${totalImported} importadas, ${totalSkipped} existentes, ${totalContacts} contatos. Restam ${remaining} chats...`;
 
                         // Brief pause between rounds
                         await new Promise(r => setTimeout(r, 1000));
+                    } else if (data.status === 'complete') {
+                        remaining = 0;
                     } else {
                         showToast('Erro: ' + (data.errors?.join(', ') || 'Erro desconhecido'));
                         break;
@@ -759,6 +765,7 @@
             autoSyncBtn.style.display = 'inline-block';
             stopBtn.style.display = 'none';
             syncBtn.disabled = false;
+            relinkBtn.disabled = false;
 
             // Refresh stats
             checkStatus();

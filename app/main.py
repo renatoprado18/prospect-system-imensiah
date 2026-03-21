@@ -1384,7 +1384,7 @@ async def disconnect_whatsapp():
 
 
 @app.post("/api/whatsapp/sync")
-async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
+async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50, offset: int = 0):
     """
     Sync WhatsApp message history from Evolution API.
     Fetches all chats and their messages, linking to existing contacts.
@@ -1392,6 +1392,7 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
     Args:
         include_groups: If True, also sync group messages where user participated
         limit: Maximum number of chats to process (default 50 to avoid timeout)
+        offset: Number of chats to skip (for pagination)
     """
     # User's phone number for filtering group interactions
     MY_PHONE = "5511984153337"
@@ -1404,9 +1405,13 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
     if not all_chats:
         return {"status": "no_chats", "message": "Nenhum chat encontrado"}
 
-    # Limit chats to avoid timeout (Vercel has 60s limit)
-    chats = all_chats[:limit]
     total_chats = len(all_chats)
+
+    # Apply offset and limit for pagination
+    chats = all_chats[offset:offset + limit]
+
+    if not chats:
+        return {"status": "complete", "message": "Todos os chats foram processados", "total_chats": total_chats}
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -1662,7 +1667,9 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
         "status": "ok",
         "total_chats_available": total_chats,
         "chats_processed_this_run": len(chats),
-        "remaining": max(0, total_chats - limit),
+        "offset_used": offset,
+        "next_offset": offset + len(chats),
+        "remaining": max(0, total_chats - offset - len(chats)),
         **stats
     }
 
