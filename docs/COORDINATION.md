@@ -129,6 +129,13 @@ Modificados (diretamente na main com aprovacao anterior):
   - app/scoring.py: calculate_contact_score(), recalculate_contact_scores(), get_contact_scoring_stats()
   - app/main.py: Endpoints POST/GET /api/contacts/scoring/recalculate e /stats
 TODAS instancias: git fetch && git rebase origin/main
+
+[2026-03-21 COORD] **REVISAO INST-3 CONTACTS SCORING - APROVADO**
+Mudanca em database.py revisada:
+  - Usa ADD COLUMN IF NOT EXISTS (seguro, idempotente)
+  - Colunas com defaults (nao quebra dados existentes)
+  - Aprovado retroativamente
+NOTA: Proximas mudancas em arquivos bloqueados, solicitar ANTES de commitar.
 ```
 
 ## Decisoes Arquiteturais
