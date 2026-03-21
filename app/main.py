@@ -2878,6 +2878,106 @@ async def merge_contacts_endpoint(request: Request):
     return result
 
 
+@app.post("/api/contacts/move-data")
+async def move_contact_data(request: Request):
+    """
+    Move emails and/or phones from one contact to another.
+    Used to fix incorrectly merged contacts.
+
+    Body:
+    - from_contact_id: Source contact ID
+    - to_contact_id: Destination contact ID
+    - emails_to_move: List of email addresses to move (optional)
+    - phones_to_move: List of phone numbers to move (optional)
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin")
+
+    body = await request.json()
+    from_id = body.get('from_contact_id')
+    to_id = body.get('to_contact_id')
+    emails_to_move = body.get('emails_to_move', [])
+    phones_to_move = body.get('phones_to_move', [])
+
+    if not from_id or not to_id:
+        raise HTTPException(status_code=400, detail="from_contact_id e to_contact_id são obrigatórios")
+
+    if not emails_to_move and not phones_to_move:
+        raise HTTPException(status_code=400, detail="Especifique emails_to_move e/ou phones_to_move")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    try:
+        # Get both contacts
+        cursor.execute("SELECT id, nome, emails, telefones FROM contacts WHERE id IN (%s, %s)", (from_id, to_id))
+        contacts = {row['id']: row_to_dict(row) for row in cursor.fetchall()}
+
+        if from_id not in contacts or to_id not in contacts:
+            raise HTTPException(status_code=404, detail="Contato não encontrado")
+
+        from_contact = contacts[from_id]
+        to_contact = contacts[to_id]
+
+        moved = {"emails": [], "phones": []}
+
+        # Move emails
+        from_emails = from_contact.get('emails', []) or []
+        to_emails = to_contact.get('emails', []) or []
+
+        new_from_emails = []
+        for email in from_emails:
+            email_addr = email.get('email', '') if isinstance(email, dict) else email
+            if email_addr in emails_to_move:
+                to_emails.append(email)
+                moved["emails"].append(email_addr)
+            else:
+                new_from_emails.append(email)
+
+        # Move phones
+        from_phones = from_contact.get('telefones', []) or []
+        to_phones = to_contact.get('telefones', []) or []
+
+        new_from_phones = []
+        for phone in from_phones:
+            phone_num = phone.get('number', '') if isinstance(phone, dict) else phone
+            # Normalize for comparison
+            phone_digits = ''.join(filter(str.isdigit, phone_num))
+            move_match = any(phone_digits.endswith(p[-8:]) or p[-8:] in phone_digits
+                           for p in [''.join(filter(str.isdigit, pn)) for pn in phones_to_move])
+            if move_match:
+                to_phones.append(phone)
+                moved["phones"].append(phone_num)
+            else:
+                new_from_phones.append(phone)
+
+        # Update contacts
+        cursor.execute("""
+            UPDATE contacts SET emails = %s, telefones = %s WHERE id = %s
+        """, (json.dumps(new_from_emails), json.dumps(new_from_phones), from_id))
+
+        cursor.execute("""
+            UPDATE contacts SET emails = %s, telefones = %s WHERE id = %s
+        """, (json.dumps(to_emails), json.dumps(to_phones), to_id))
+
+        conn.commit()
+
+        return {
+            "status": "ok",
+            "from_contact": from_contact.get('nome'),
+            "to_contact": to_contact.get('nome'),
+            "moved": moved
+        }
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+
 @app.post("/api/contacts/auto-merge-all")
 async def auto_merge_all_duplicates(request: Request):
     """
