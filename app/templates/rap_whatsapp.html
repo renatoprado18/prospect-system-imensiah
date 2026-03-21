@@ -608,6 +608,18 @@
             }
         }
 
+        function getStatusIcon(status, direction) {
+            // Status icons for outgoing messages
+            if (direction !== 'outgoing') return '';
+            switch(status) {
+                case 'sent': return '<i class="bi bi-check text-muted ms-1" title="Enviada"></i>';
+                case 'delivered': return '<i class="bi bi-check-all text-muted ms-1" title="Entregue"></i>';
+                case 'read': return '<i class="bi bi-check-all text-primary ms-1" title="Lida"></i>';
+                case 'played': return '<i class="bi bi-check-all text-primary ms-1" title="Visualizada"></i>';
+                default: return '<i class="bi bi-clock text-muted ms-1" title="Pendente"></i>';
+            }
+        }
+
         function renderRecentActivity(messages) {
             const activityBody = document.getElementById('activityBody');
             if (!activityBody) return;
@@ -617,6 +629,8 @@
                 const isOutgoing = msg.direction === 'outgoing';
                 const icon = isOutgoing ? 'bi-arrow-up-right text-primary' : 'bi-arrow-down-left text-success';
                 const time = msg.sent_at ? new Date(msg.sent_at).toLocaleString('pt-BR') : '';
+                const status = msg.metadata?.status || (isOutgoing ? 'sent' : 'received');
+                const statusIcon = getStatusIcon(status, msg.direction);
 
                 let contactDisplay;
                 if (isOutgoing) {
@@ -638,7 +652,7 @@
                         <div class="flex-grow-1">
                             <div class="d-flex justify-content-between align-items-center">
                                 <strong>${contactDisplay}</strong>
-                                <small class="text-muted">${time}</small>
+                                <small class="text-muted">${time}${statusIcon}</small>
                             </div>
                             <p class="mb-0 text-muted small">${msg.content || '[midia]'}</p>
                         </div>
