@@ -4213,5 +4213,61 @@ async def get_gmail_threads_for_contact(request: Request, contact_id: int, limit
         conn.close()
 
 
+# ============== SCORING API ==============
+# Endpoints para sistema de scoring dinâmico v2.0
+# Adicionado por INST-3
+
+@app.post("/api/scoring/recalculate")
+async def api_scoring_recalculate(user: dict = Depends(require_admin)):
+    """
+    Recalcula os scores de todos os prospects.
+    Útil após ajustes nos pesos ou novos aprendizados.
+    Requer permissão de admin.
+    """
+    try:
+        stats = scorer.recalculate_all_scores()
+        return {
+            "success": True,
+            "message": "Scores recalculados com sucesso",
+            "stats": stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao recalcular scores: {str(e)}")
+
+
+@app.get("/api/scoring/stats")
+async def api_scoring_stats(user: dict = Depends(require_admin)):
+    """
+    Retorna estatísticas do sistema de scoring atual.
+    Inclui: total de pesos, multiplicadores aprendidos, high value indicators.
+    Requer permissão de admin.
+    """
+    try:
+        stats = scorer.get_scoring_stats()
+        return {
+            "success": True,
+            "stats": stats
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao obter stats: {str(e)}")
+
+
+@app.get("/api/scoring/icp")
+async def api_scoring_icp(user: dict = Depends(require_admin)):
+    """
+    Retorna análise completa do ICP (Ideal Customer Profile).
+    Inclui: taxas de conversão, cargos top, insights acionáveis, recomendações.
+    Requer permissão de admin.
+    """
+    try:
+        analysis = scorer.analyze_icp()
+        return {
+            "success": True,
+            "analysis": analysis
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro na análise ICP: {str(e)}")
+
+
 # Vercel handler
 app_handler = app
