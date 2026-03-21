@@ -1971,7 +1971,7 @@ Retorne APENAS o JSON, sem explicacoes."""
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-3-5-haiku-20241022",
+                    "model": "claude-3-sonnet-20240229",
                     "max_tokens": 1024,
                     "messages": [{"role": "user", "content": prompt}]
                 },
