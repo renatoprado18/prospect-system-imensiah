@@ -1780,6 +1780,88 @@ async def relink_whatsapp_messages():
     return {"status": "ok", **stats}
 
 
+@app.post("/api/whatsapp/fix-contact")
+async def fix_whatsapp_contact(request: Request):
+    """
+    Fix messages linked to wrong contact.
+    Moves all messages with a specific phone to the correct contact.
+
+    Body:
+    - phone: Phone number (last 8 digits used for matching)
+    - correct_contact_id: The correct contact ID to link messages to
+    """
+    body = await request.json()
+    phone = body.get('phone', '')
+    correct_contact_id = body.get('correct_contact_id')
+
+    if not phone or not correct_contact_id:
+        raise HTTPException(status_code=400, detail="phone e correct_contact_id são obrigatórios")
+
+    # Normalize phone to last 8 digits
+    phone_digits = ''.join(filter(str.isdigit, phone))
+    phone_suffix = phone_digits[-8:] if len(phone_digits) >= 8 else phone_digits
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    stats = {"messages_fixed": 0, "conversation_created": False}
+
+    try:
+        # Find or create conversation for correct contact
+        cursor.execute("""
+            SELECT id FROM conversations
+            WHERE contact_id = %s AND canal = 'whatsapp'
+        """, (correct_contact_id,))
+        conv = cursor.fetchone()
+
+        if conv:
+            conversation_id = conv['id']
+        else:
+            cursor.execute("""
+                INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
+                VALUES (%s, 'whatsapp', NOW(), 0)
+                RETURNING id
+            """, (correct_contact_id,))
+            conversation_id = cursor.fetchone()['id']
+            stats["conversation_created"] = True
+
+        # Update all messages with this phone number
+        cursor.execute("""
+            UPDATE messages
+            SET contact_id = %s, conversation_id = %s
+            WHERE metadata->>'phone' LIKE %s
+            RETURNING id
+        """, (correct_contact_id, conversation_id, f'%{phone_suffix}%'))
+
+        stats["messages_fixed"] = cursor.rowcount
+
+        # Update conversation stats
+        cursor.execute("""
+            UPDATE conversations
+            SET total_mensagens = (SELECT COUNT(*) FROM messages WHERE conversation_id = %s),
+                ultimo_mensagem = (SELECT MAX(enviado_em) FROM messages WHERE conversation_id = %s)
+            WHERE id = %s
+        """, (conversation_id, conversation_id, conversation_id))
+
+        # Clean up old empty conversations
+        cursor.execute("""
+            DELETE FROM conversations
+            WHERE canal = 'whatsapp' AND id != %s
+            AND NOT EXISTS (SELECT 1 FROM messages WHERE conversation_id = conversations.id)
+        """, (conversation_id,))
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+    return {"status": "ok", **stats}
+
+
 @app.get("/api/whatsapp/chats")
 async def get_whatsapp_chats():
     """
