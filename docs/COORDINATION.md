@@ -35,6 +35,7 @@ BLOQUEADO - Coordenar antes de editar:
 |--------|---------------------|---------------------|-------------------|
 | feature/linkedin-email | app/main.py, app/integrations/gmail.py, app/integrations/google_contacts.py | app/main.py (rotas) | NAO - em progresso |
 | feature/whatsapp-improvements | whatsapp.py, rap_whatsapp.html, main.py (endpoints) | main.py (rotas) | NAO - planejamento concluido |
+| feature/scoring-icp | app/scoring.py | Nenhum (arquivo independente) | SIM - melhorias concluidas |
 
 ## Comunicacao Entre Instancias
 
@@ -103,6 +104,43 @@ Proximos passos:
 3. Melhorar analise ICP com insights mais acionaveis
 4. Adicionar sistema de recalculo em batch
 Status: Iniciando analise detalhada
+
+[2026-03-21 INST-3 -> COORD] MELHORIAS CONCLUIDAS!
+Commit: feat(scoring): Melhorias v2.0 no sistema de scoring dinâmico
+Arquivo modificado: app/scoring.py (516 linhas adicionadas, 61 removidas)
+
+RESUMO DAS MELHORIAS:
+
+1. FUZZY MATCHING PARA CARGOS (CONCLUIDO)
+   - normalize_text(): Remove acentos, normaliza espacos
+   - expand_abbreviations(): Expande Dir.->diretor, VP->vice presidente, etc
+   - fuzzy_match_score(): Detecta variacoes como "Diretor" vs "Dir."
+   - extract_cargo_components(): Extrai nivel, area, senioridade, founder
+
+2. NOVOS FATORES DE SCORING (CONCLUIDO)
+   - origem_weights: indicacao +15, linkedin +10, evento +12, ibgc +12
+   - regiao_weights: SP +10, RJ +8, MG +6, DF +7
+   - Recencia: leads < 7 dias ganham +5pts
+   - LinkedIn disponivel: +5pts
+   - Dados enriquecidos: +5pts
+
+3. ANALISE ICP APRIMORADA (CONCLUIDO)
+   - Score medio de convertidos vs nao convertidos
+   - Tempo medio de conversao em dias
+   - Distribuicao de prospects por tier
+   - _generate_actionable_insights(): Insights com tipo, prioridade e acao
+   - Recomendacao de score minimo baseado em dados
+
+4. RECALCULO EM BATCH (CONCLUIDO)
+   - recalculate_all_scores(): Atualiza todos prospects
+   - Retorna estatisticas: processados, aumentados, diminuidos, tiers alterados
+   - get_scoring_stats(): Estatisticas do sistema de scoring
+
+NENHUM ARQUIVO BLOQUEADO FOI MODIFICADO!
+Apenas app/scoring.py foi alterado (dentro do meu escopo).
+
+Status: Pronto para merge quando coordenador aprovar.
+Proximo: Posso adicionar endpoints em main.py se necessario (requer coordenacao).
 ```
 
 ## Protocolo de Merge
