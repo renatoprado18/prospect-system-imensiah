@@ -1424,6 +1424,131 @@ async def send_whatsapp_template(request: Request):
     return {"status": "sent", "template_used": template_id, "result": result}
 
 
+@app.get("/api/whatsapp/search")
+async def search_whatsapp_messages(
+    q: str,
+    contact_id: int = None,
+    limit: int = 50
+):
+    """
+    Search WhatsApp messages by content.
+    """
+    if not q or len(q) < 3:
+        raise HTTPException(status_code=400, detail="Query must be at least 3 characters")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        if contact_id:
+            cursor.execute("""
+                SELECT m.id, m.conversation_id, m.contact_id, m.direcao, m.conteudo,
+                       m.enviado_em, m.metadata, c.nome as contact_name
+                FROM messages m
+                LEFT JOIN contacts c ON m.contact_id = c.id
+                JOIN conversations conv ON m.conversation_id = conv.id
+                WHERE conv.canal = 'whatsapp'
+                  AND m.contact_id = %s
+                  AND m.conteudo ILIKE %s
+                ORDER BY m.enviado_em DESC
+                LIMIT %s
+            """, (contact_id, f"%{q}%", limit))
+        else:
+            cursor.execute("""
+                SELECT m.id, m.conversation_id, m.contact_id, m.direcao, m.conteudo,
+                       m.enviado_em, m.metadata, c.nome as contact_name
+                FROM messages m
+                LEFT JOIN contacts c ON m.contact_id = c.id
+                JOIN conversations conv ON m.conversation_id = conv.id
+                WHERE conv.canal = 'whatsapp'
+                  AND m.conteudo ILIKE %s
+                ORDER BY m.enviado_em DESC
+                LIMIT %s
+            """, (f"%{q}%", limit))
+
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                "id": row["id"],
+                "contact_id": row["contact_id"],
+                "contact_name": row["contact_name"] or "Desconhecido",
+                "direction": row["direcao"],
+                "content": row["conteudo"],
+                "sent_at": row["enviado_em"].isoformat() if row["enviado_em"] else None,
+                "metadata": row["metadata"] if isinstance(row["metadata"], dict) else {}
+            })
+
+        return {"query": q, "total": len(results), "results": results}
+    finally:
+        conn.close()
+
+
+@app.get("/api/whatsapp/export/{contact_id}")
+async def export_whatsapp_conversation(contact_id: int, format: str = "csv"):
+    """Export WhatsApp conversation history for a contact."""
+    from fastapi.responses import StreamingResponse
+    import io
+    import csv
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT nome, telefone FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+
+        cursor.execute("""
+            SELECT m.direcao, m.conteudo, m.enviado_em, m.metadata
+            FROM messages m
+            JOIN conversations conv ON m.conversation_id = conv.id
+            WHERE conv.canal = 'whatsapp' AND m.contact_id = %s
+            ORDER BY m.enviado_em ASC
+        """, (contact_id,))
+        messages = cursor.fetchall()
+
+        if format == "json":
+            data = {
+                "contact": {"id": contact_id, "name": contact["nome"], "phone": contact["telefone"]},
+                "messages": [
+                    {
+                        "direction": msg["direcao"],
+                        "content": msg["conteudo"],
+                        "sent_at": msg["enviado_em"].isoformat() if msg["enviado_em"] else None,
+                        "status": msg["metadata"].get("status") if isinstance(msg["metadata"], dict) else None
+                    }
+                    for msg in messages
+                ],
+                "total": len(messages),
+                "exported_at": datetime.now().isoformat()
+            }
+            return data
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Data/Hora", "Direcao", "Mensagem", "Status"])
+
+        for msg in messages:
+            sent_at = msg["enviado_em"].strftime("%Y-%m-%d %H:%M:%S") if msg["enviado_em"] else ""
+            direction = "Enviada" if msg["direcao"] == "outgoing" else "Recebida"
+            content = msg["conteudo"] or "[midia]"
+            status = msg["metadata"].get("status", "") if isinstance(msg["metadata"], dict) else ""
+            writer.writerow([sent_at, direction, content, status])
+
+        output.seek(0)
+        contact_name = contact["nome"].replace(" ", "_") if contact["nome"] else str(contact_id)
+        filename = f"whatsapp_{contact_name}_{datetime.now().strftime('%Y%m%d')}.csv"
+
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode('utf-8-sig')),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    finally:
+        conn.close()
+
+
 @app.get("/api/whatsapp/qr")
 async def get_whatsapp_qr():
     """Get QR code for WhatsApp connection"""
