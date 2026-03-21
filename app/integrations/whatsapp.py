@@ -9,6 +9,104 @@ from datetime import datetime
 from typing import Optional, Dict, List, Any
 
 
+# Message Templates
+MESSAGE_TEMPLATES = {
+    "saudacao": {
+        "id": "saudacao",
+        "nome": "Saudacao Inicial",
+        "categoria": "primeiro_contato",
+        "mensagem": "Ola {nome}! Aqui e o Renato da ImensIAH. Tudo bem com voce?",
+        "variaveis": ["nome"],
+        "descricao": "Primeira mensagem para novo contato"
+    },
+    "followup_reuniao": {
+        "id": "followup_reuniao",
+        "nome": "Follow-up Pos-Reuniao",
+        "categoria": "followup",
+        "mensagem": "Ola {nome}! Foi um prazer conversar com voce hoje. Conforme combinamos, segue o resumo dos pontos principais:\n\n{pontos}\n\nFico a disposicao para qualquer duvida!",
+        "variaveis": ["nome", "pontos"],
+        "descricao": "Enviar apos reuniao com resumo"
+    },
+    "lembrete_reuniao": {
+        "id": "lembrete_reuniao",
+        "nome": "Lembrete de Reuniao",
+        "categoria": "lembrete",
+        "mensagem": "Ola {nome}! Passando para lembrar da nossa reuniao {quando}. Nos falamos em breve!",
+        "variaveis": ["nome", "quando"],
+        "descricao": "Lembrar de reuniao agendada"
+    },
+    "envio_proposta": {
+        "id": "envio_proposta",
+        "nome": "Envio de Proposta",
+        "categoria": "comercial",
+        "mensagem": "Ola {nome}! Conforme conversamos, segue a proposta para {empresa}. Qualquer duvida, estou a disposicao para alinharmos.",
+        "variaveis": ["nome", "empresa"],
+        "descricao": "Acompanhar envio de proposta"
+    },
+    "agradecimento": {
+        "id": "agradecimento",
+        "nome": "Agradecimento",
+        "categoria": "relacionamento",
+        "mensagem": "Ola {nome}! Muito obrigado pela conversa de hoje. Foi otimo conhecer mais sobre {assunto}. Vamos nos falando!",
+        "variaveis": ["nome", "assunto"],
+        "descricao": "Agradecer apos interacao"
+    },
+    "retomada": {
+        "id": "retomada",
+        "nome": "Retomada de Contato",
+        "categoria": "followup",
+        "mensagem": "Ola {nome}! Espero que esteja tudo bem. Faz um tempo que nao nos falamos e gostaria de saber como estao as coisas por ai. Podemos marcar um cafe virtual?",
+        "variaveis": ["nome"],
+        "descricao": "Retomar contato apos periodo sem interacao"
+    },
+    "aniversario": {
+        "id": "aniversario",
+        "nome": "Parabens Aniversario",
+        "categoria": "relacionamento",
+        "mensagem": "Ola {nome}! Feliz aniversario! Desejo um dia incrivel e um ano repleto de realizacoes. Grande abraco!",
+        "variaveis": ["nome"],
+        "descricao": "Parabenizar por aniversario"
+    },
+    "indicacao": {
+        "id": "indicacao",
+        "nome": "Pedido de Indicacao",
+        "categoria": "comercial",
+        "mensagem": "Ola {nome}! Espero que esteja bem. Estou expandindo minha rede e gostaria de saber se voce conhece alguem que poderia se beneficiar dos nossos servicos de {servico}. Agradeco qualquer indicacao!",
+        "variaveis": ["nome", "servico"],
+        "descricao": "Pedir indicacoes de novos contatos"
+    }
+}
+
+
+def get_all_templates() -> List[Dict[str, Any]]:
+    """Return all available message templates"""
+    return list(MESSAGE_TEMPLATES.values())
+
+
+def get_template(template_id: str) -> Optional[Dict[str, Any]]:
+    """Get a specific template by ID"""
+    return MESSAGE_TEMPLATES.get(template_id)
+
+
+def render_template(template_id: str, variables: Dict[str, str]) -> Optional[str]:
+    """Render a template with the provided variables"""
+    template = MESSAGE_TEMPLATES.get(template_id)
+    if not template:
+        return None
+    message = template["mensagem"]
+    for var_name, var_value in variables.items():
+        message = message.replace("{" + var_name + "}", str(var_value))
+    unreplaced = re.findall(r'\{(\w+)\}', message)
+    for var in unreplaced:
+        message = message.replace("{" + var + "}", "")
+    return message.strip()
+
+
+def get_templates_by_category(category: str) -> List[Dict[str, Any]]:
+    """Get all templates in a specific category"""
+    return [t for t in MESSAGE_TEMPLATES.values() if t["categoria"] == category]
+
+
 class WhatsAppIntegration:
     """
     Integration with Evolution API for WhatsApp
@@ -91,6 +189,19 @@ class WhatsAppIntegration:
                 return response.json()
             except Exception as e:
                 return {"error": str(e)}
+
+    async def send_with_template(self, phone: str, template_id: str, variables: Dict[str, str]) -> Dict[str, Any]:
+        """Send a message using a predefined template"""
+        template = get_template(template_id)
+        if not template:
+            return {"error": f"Template '{template_id}' not found"}
+        message = render_template(template_id, variables)
+        if not message:
+            return {"error": "Failed to render template"}
+        result = await self.send_text(phone, message)
+        if "error" not in result:
+            result["template_used"] = {"id": template_id, "nome": template["nome"], "variables": variables}
+        return result
 
     async def send_media(self, phone: str, media_url: str, caption: str = "", media_type: str = "image") -> Dict[str, Any]:
         """
@@ -575,6 +686,50 @@ def parse_webhook_message(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "push_name": data.get("pushName"),
             "raw": data
         }
+
+    elif event == "messages.update":
+        # Message status update (sent -> delivered -> read)
+        data = payload.get("data", {})
+
+        # data can be a list of updates
+        updates = data if isinstance(data, list) else [data]
+
+        for update in updates:
+            key = update.get("key", {})
+            update_info = update.get("update", {})
+
+            remote_jid = key.get("remoteJid", "")
+            if not remote_jid.endswith("@s.whatsapp.net"):
+                continue
+
+            phone = remote_jid.replace("@s.whatsapp.net", "")
+            message_id = key.get("id")
+
+            # Determine status from update
+            status = None
+            status_code = update_info.get("status")
+
+            # Evolution API status codes:
+            # 1 = PENDING, 2 = SERVER_ACK (sent), 3 = DELIVERY_ACK (delivered), 4 = READ, 5 = PLAYED
+            if status_code == 2:
+                status = "sent"
+            elif status_code == 3:
+                status = "delivered"
+            elif status_code == 4:
+                status = "read"
+            elif status_code == 5:
+                status = "played"  # For audio/video
+
+            if status and message_id:
+                return {
+                    "event": "message_status",
+                    "phone": phone,
+                    "message_id": message_id,
+                    "status": status,
+                    "timestamp": datetime.now()
+                }
+
+        return None
 
     elif event == "connection.update":
         # Connection status changed

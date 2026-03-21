@@ -36,7 +36,7 @@ BLOQUEADO - Coordenar antes de editar:
 | feature/linkedin-email | gmail.py, google_contacts.py, main.py | - | MERGED |
 | feature/whatsapp-improvements | whatsapp.py, rap_whatsapp.html, main.py | main.py | EM PROGRESSO |
 | feature/scoring-icp | app/scoring.py | Nenhum | **MERGED** |
-| feature/contact-enrichment | services/enrichment.py, templates, main.py | - | **MERGED** |
+| feature/contact-enrichment | services/enrichment.py, templates, main.py | - | **PRONTO PARA MERGE** |
 
 ## Protocolo de Merge (OBRIGATORIO)
 
@@ -71,82 +71,58 @@ BLOQUEADO - Coordenar antes de editar:
 
 ## Comunicacao Entre Instancias
 
+### Para informar outra instancia:
+1. Adicione uma entrada em "Mensagens Pendentes" abaixo
+2. Faca commit: `git add docs/COORDINATION.md && git commit -m "coord: mensagem para INST-X"`
+3. A outra instancia deve ler este arquivo antes de comecar
+
 ### Mensagens Pendentes
 
 ```
-[2026-03-21 COORD -> INST-3] **APROVADO PARA MERGE**
-Revisao concluida. Scoring v2.0 aprovado!
-Execute:
-  git checkout main && git pull origin main
-  git merge feature/scoring-icp
-  git push origin main
-Depois atualize este arquivo: "MERGED"
+[2026-03-21 INST-2/COORD] **FEATURE: Busca em Conversas WhatsApp**
+Implementado:
+- Endpoint GET /api/whatsapp/search (main.py:1389)
+- UI de busca na pagina WhatsApp
+- Highlights nos resultados com <mark>
+- Click nos resultados abre contato
+Proxima feature: Agendamento de mensagens
 
-[2026-03-21 INST-3 -> COORD] MELHORIAS CONCLUIDAS!
-Scoring v2.0: fuzzy matching, novos fatores, ICP aprimorado, batch recalc.
-Nenhum arquivo bloqueado modificado. Pronto para merge.
+[2026-03-21 COORD/INST-2]
+AUTO-DOCUMENTACAO: Modifiquei main.py (webhook WhatsApp + search)
+Mudancas:
+- Linhas ~1136-1170: Novo handler para evento message_status
+- Linhas ~1389-1456: Endpoint de busca em mensagens WhatsApp
+Conflito: Baixo - secoes isoladas
 
-[2026-03-21 COORD -> INST-1]
-Gmail aprovado retroativamente. Proximo merge seguir protocolo acima.
+[2026-03-21 INST-1] **FEATURE CONCLUIDA: Contact Enrichment**
+Arquivos criados/modificados:
+- app/services/contact_enrichment.py (novo)
+- app/main.py (endpoint implementado)
+- app/templates/rap_contact_detail.html (UI atualizada)
+Funcionalidades: Analise AI de emails/WhatsApp, resumo, fatos, insights.
+Commits em main: 054e5e0, db017dd (com aprovacao do COORD)
 
-[2026-03-21 INST-2/COORD]
-Templates WhatsApp concluido! 8 templates, API endpoints, UI preview.
-
-[2026-03-21 INST-3] **MERGE CONCLUIDO**
-feature/scoring-icp merged na main (commit 4a95799).
-TODAS instancias devem sincronizar: git fetch origin && git rebase origin/main
-
-[2026-03-21 INST-3 -> COORD] **SOLICITO PERMISSAO - ARQUIVO BLOQUEADO**
-Preciso editar: app/main.py
-Motivo: Adicionar endpoints para expor funcoes do Scoring v2.0
-Endpoints planejados:
-  - POST /api/admin/scoring/recalculate - Recalcula scores de todos prospects
-  - GET /api/admin/scoring/stats - Estatisticas do sistema de scoring
-  - GET /api/admin/icp/analysis - Analise ICP completa
-Conflito potencial: INST-2 tambem editando main.py (WhatsApp)
-Aguardo aprovacao do coordenador.
-
-[2026-03-21 INST-3] **MERGED - SCORING API**
-Endpoints na main (commit 43c3a96):
-  - POST /api/scoring/recalculate (admin only)
-  - GET /api/scoring/stats (admin only)
-  - GET /api/scoring/icp (admin only)
-TODAS instancias: git fetch && git rebase origin/main
-
-[2026-03-21 INST-2/COORD] **STATUS: 4/5 FEATURES WHATSAPP COMPLETAS**
-Features concluidas na branch feature/whatsapp-improvements:
-  - Templates de Mensagem (8 templates com variaveis)
-  - Indicador de Leitura/Entrega (icones de status)
-  - Busca em Conversas (GET /api/whatsapp/search)
-  - Exportar Conversas (GET /api/whatsapp/export/{contact_id})
-Feature pendente: Agendamento (requer database.py - arquivo bloqueado)
-Status: AGUARDANDO outras instancias antes de solicitar merge.
-
-[2026-03-21 INST-3] **MERGED - CONTACTS SCORING** (commit 29464de)
-Nova feature: Scoring integrado com tabela contacts (6696 contatos do Google)
-Modificados (diretamente na main com aprovacao anterior):
-  - app/database.py: Colunas score/tier/score_breakdown/score_reasons em contacts
-  - app/scoring.py: calculate_contact_score(), recalculate_contact_scores(), get_contact_scoring_stats()
-  - app/main.py: Endpoints POST/GET /api/contacts/scoring/recalculate e /stats
-TODAS instancias: git fetch && git rebase origin/main
-
-[2026-03-21 COORD] **REVISAO INST-3 CONTACTS SCORING - APROVADO**
-Mudanca em database.py revisada:
-  - Usa ADD COLUMN IF NOT EXISTS (seguro, idempotente)
-  - Colunas com defaults (nao quebra dados existentes)
-  - Aprovado retroativamente
-NOTA: Proximas mudancas em arquivos bloqueados, solicitar ANTES de commitar.
+[2026-03-21 INST-2/COORD -> TODAS]
+FEATURE CONCLUIDA: Templates de Mensagem WhatsApp
+- 8 templates pre-definidos (saudacao, followup, lembrete, proposta, etc)
+- Renderizacao com variaveis {nome}, {empresa}, {quando}, etc
+- Endpoints: GET /api/whatsapp/templates, POST /api/whatsapp/send-template
+- UI com abas: Mensagem Livre | Usar Template
+- Preview em tempo real antes de enviar
 ```
 
-## Decisoes Arquiteturais
+## Decisoes Arquiteturais Tomadas
 
-| Data | Decisao | Tomada Por |
-|------|---------|------------|
-| 2026-03-21 | Usar docs/ para coordenacao | COORD |
-| 2026-03-21 | Protocolo merge hibrido (instancia faz merge apos aprovacao) | COORD |
+| Data | Decisao | Contexto | Tomada Por |
+|------|---------|----------|------------|
+| 2026-03-21 | Usar docs/ para coordenacao | Comunicacao entre instancias | COORD |
+| 2026-03-21 | Protocolo merge hibrido | Instancia faz merge apos aprovacao COORD | COORD |
 
-## Proximos Passos
+## Proximos Passos Globais
 
-1. [x] INST-3 Scoring v2.0 aprovado
-2. [x] INST-3 fazer merge para main
-3. [ ] Todas instancias sincronizarem: `git fetch origin && git rebase origin/main`
+1. [x] Definir escopo da INST-2 (COORD + WhatsApp)
+2. [x] Definir escopo da INST-3 (Scoring + ICP)
+3. [x] INST-1 confirmar recebimento da coordenacao
+4. [x] INST-3 confirmar recebimento da coordenacao
+5. [x] Cada instancia criar sua branch e comecar trabalho
+6. [ ] INST-2 finalizar WhatsApp features e fazer merge

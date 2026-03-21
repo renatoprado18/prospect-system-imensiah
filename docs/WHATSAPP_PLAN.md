@@ -110,30 +110,37 @@ Enviar mensagem direto da pagina do prospect
 
 ---
 
-## Ordem de Implementacao Sugerida
+## Ordem de Implementacao
 
-| Fase | Feature | Complexidade | Arquivos Bloqueados |
-|------|---------|--------------|---------------------|
-| 1 | Templates de Mensagem | Baixa | Nenhum |
-| 2 | Indicador Leitura | Media | Nenhum |
-| 3 | Busca em Conversas | Baixa | Nenhum |
-| 4 | Agendamento | Alta | database.py |
-| 5 | Exportar Conversas | Baixa | Nenhum |
+| Fase | Feature | Complexidade | Status |
+|------|---------|--------------|--------|
+| 1 | Templates de Mensagem | Baixa | **CONCLUIDO** |
+| 2 | Indicador Leitura | Media | **CONCLUIDO** |
+| 3 | Busca em Conversas | Baixa | **CONCLUIDO** |
+| 4 | Exportar Conversas | Baixa | **CONCLUIDO** |
+| 5 | Agendamento | Alta | PENDENTE (requer database.py) |
 
 ---
+
+## Decisoes Tomadas
+
+1. **Templates**: Armazenados em whatsapp.py como dicionario Python
+2. **Busca**: PostgreSQL ILIKE (busca simples, eficiente)
+3. **Export**: CSV com UTF-8-sig para Excel, JSON opcional
 
 ## Decisoes Pendentes
 
-1. **Templates**: Armazenar em banco ou arquivo JSON?
-2. **Agendamento**: Usar cron do Vercel ou fila externa?
-3. **Busca**: PostgreSQL full-text ou busca simples?
+1. **Agendamento**: Usar cron do Vercel ou fila externa?
 
 ---
 
-## Proximos Passos
+## Status Atual
 
-1. [ ] Escolher primeira feature a implementar
-2. [ ] Detalhar design tecnico
-3. [ ] Implementar
-4. [ ] Testar
-5. [ ] Atualizar COORDINATION.md
+**4 de 5 features implementadas!**
+
+- Templates: 8 templates com variaveis, preview, UI com abas
+- Status: Icones de leitura/entrega nas mensagens
+- Busca: Pesquisa por conteudo com highlights
+- Export: Download CSV/JSON da conversa de um contato
+
+**Proxima feature**: Agendamento (requer coordenacao para editar database.py)

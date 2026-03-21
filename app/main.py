@@ -27,7 +27,10 @@ from scoring import DynamicScorer
 from integrations.google_calendar import GoogleCalendarIntegration, create_calendar_link
 from integrations.fathom import FathomIntegration, handle_fathom_webhook
 from integrations.linkedin import LinkedInIntegration
-from integrations.whatsapp import WhatsAppIntegration, parse_webhook_message, format_phone_display
+from integrations.whatsapp import (
+    WhatsAppIntegration, parse_webhook_message, format_phone_display,
+    get_all_templates, get_template, render_template, get_templates_by_category
+)
 from integrations.gmail import GmailIntegration, parse_gmail_date
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
@@ -1134,12 +1137,48 @@ async def whatsapp_webhook(request: Request):
         if parsed.get("event") == "connection_update":
             return {"status": "ok", "connection_state": parsed.get("state")}
 
+        # Handle message status updates (delivered, read)
+        if parsed.get("event") == "message_status":
+            message_id = parsed.get("message_id")
+            status = parsed.get("status")
+            timestamp = parsed.get("timestamp")
+
+            if message_id and status:
+                conn = get_connection()
+                cursor = conn.cursor()
+                try:
+                    # Update message status in metadata
+                    cursor.execute("""
+                        UPDATE messages
+                        SET metadata = jsonb_set(
+                            COALESCE(metadata, '{}'),
+                            '{status}',
+                            %s::jsonb
+                        ),
+                        lido_em = CASE WHEN %s = 'read' THEN %s ELSE lido_em END
+                        WHERE external_id = %s
+                    """, (
+                        json.dumps(status),
+                        status,
+                        timestamp,
+                        message_id
+                    ))
+                    conn.commit()
+                    updated = cursor.rowcount
+                finally:
+                    conn.close()
+
+                return {"status": "ok", "message_status": status, "updated": updated}
+
+            return {"status": "ignored", "reason": "no message_id"}
+
         # Process message
         phone = parsed.get("phone")
         direction = parsed.get("direction")
         content = parsed.get("content")
         timestamp = parsed.get("timestamp")
         push_name = parsed.get("push_name")
+        external_msg_id = parsed.get("message_id")  # WhatsApp message ID for status tracking
 
         if not phone or not content:
             return {"status": "ignored", "reason": "no content"}
@@ -1198,13 +1237,14 @@ async def whatsapp_webhook(request: Request):
                     """, (contact_id, timestamp))
                     conversation_id = cursor.fetchone()['id']
 
-            # Save message
+            # Save message with external_id for status tracking
+            initial_status = "sent" if direction == "outgoing" else "received"
             cursor.execute("""
-                INSERT INTO messages (conversation_id, contact_id, direcao, conteudo, enviado_em, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO messages (conversation_id, contact_id, external_id, direcao, conteudo, enviado_em, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
-            """, (conversation_id, contact_id, direction, content, timestamp,
-                  json.dumps({"phone": phone, "push_name": push_name})))
+            """, (conversation_id, contact_id, external_msg_id, direction, content, timestamp,
+                  json.dumps({"phone": phone, "push_name": push_name, "status": initial_status})))
 
             message_id = cursor.fetchone()['id']
             conn.commit()
@@ -1329,6 +1369,184 @@ async def send_whatsapp_message(request: Request):
         raise HTTPException(status_code=500, detail=result["error"])
 
     return {"status": "sent", "result": result}
+
+
+# ============== WHATSAPP TEMPLATES ==============
+
+@app.get("/api/whatsapp/templates")
+async def list_whatsapp_templates(categoria: str = None):
+    """List all available message templates"""
+    if categoria:
+        templates = get_templates_by_category(categoria)
+    else:
+        templates = get_all_templates()
+    return {"templates": templates, "total": len(templates)}
+
+
+@app.get("/api/whatsapp/templates/{template_id}")
+async def get_whatsapp_template(template_id: str):
+    """Get a specific template by ID"""
+    template = get_template(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+    return template
+
+
+@app.post("/api/whatsapp/templates/{template_id}/preview")
+async def preview_template(template_id: str, request: Request):
+    """Preview a rendered template without sending"""
+    data = await request.json()
+    variables = data.get("variables", {})
+    template = get_template(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+    rendered = render_template(template_id, variables)
+    return {"template_id": template_id, "template_nome": template["nome"], "mensagem_renderizada": rendered}
+
+
+@app.post("/api/whatsapp/send-template")
+async def send_whatsapp_template(request: Request):
+    """Send a WhatsApp message using a template"""
+    data = await request.json()
+    phone = data.get("phone")
+    template_id = data.get("template_id")
+    variables = data.get("variables", {})
+    if not phone:
+        raise HTTPException(status_code=400, detail="phone is required")
+    if not template_id:
+        raise HTTPException(status_code=400, detail="template_id is required")
+    template = get_template(template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+    result = await whatsapp.send_with_template(phone, template_id, variables)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return {"status": "sent", "template_used": template_id, "result": result}
+
+
+@app.get("/api/whatsapp/search")
+async def search_whatsapp_messages(
+    q: str,
+    contact_id: int = None,
+    limit: int = 50
+):
+    """
+    Search WhatsApp messages by content.
+    """
+    if not q or len(q) < 3:
+        raise HTTPException(status_code=400, detail="Query must be at least 3 characters")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        if contact_id:
+            cursor.execute("""
+                SELECT m.id, m.conversation_id, m.contact_id, m.direcao, m.conteudo,
+                       m.enviado_em, m.metadata, c.nome as contact_name
+                FROM messages m
+                LEFT JOIN contacts c ON m.contact_id = c.id
+                JOIN conversations conv ON m.conversation_id = conv.id
+                WHERE conv.canal = 'whatsapp'
+                  AND m.contact_id = %s
+                  AND m.conteudo ILIKE %s
+                ORDER BY m.enviado_em DESC
+                LIMIT %s
+            """, (contact_id, f"%{q}%", limit))
+        else:
+            cursor.execute("""
+                SELECT m.id, m.conversation_id, m.contact_id, m.direcao, m.conteudo,
+                       m.enviado_em, m.metadata, c.nome as contact_name
+                FROM messages m
+                LEFT JOIN contacts c ON m.contact_id = c.id
+                JOIN conversations conv ON m.conversation_id = conv.id
+                WHERE conv.canal = 'whatsapp'
+                  AND m.conteudo ILIKE %s
+                ORDER BY m.enviado_em DESC
+                LIMIT %s
+            """, (f"%{q}%", limit))
+
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                "id": row["id"],
+                "contact_id": row["contact_id"],
+                "contact_name": row["contact_name"] or "Desconhecido",
+                "direction": row["direcao"],
+                "content": row["conteudo"],
+                "sent_at": row["enviado_em"].isoformat() if row["enviado_em"] else None,
+                "metadata": row["metadata"] if isinstance(row["metadata"], dict) else {}
+            })
+
+        return {"query": q, "total": len(results), "results": results}
+    finally:
+        conn.close()
+
+
+@app.get("/api/whatsapp/export/{contact_id}")
+async def export_whatsapp_conversation(contact_id: int, format: str = "csv"):
+    """Export WhatsApp conversation history for a contact."""
+    from fastapi.responses import StreamingResponse
+    import io
+    import csv
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT nome, telefone FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+
+        cursor.execute("""
+            SELECT m.direcao, m.conteudo, m.enviado_em, m.metadata
+            FROM messages m
+            JOIN conversations conv ON m.conversation_id = conv.id
+            WHERE conv.canal = 'whatsapp' AND m.contact_id = %s
+            ORDER BY m.enviado_em ASC
+        """, (contact_id,))
+        messages = cursor.fetchall()
+
+        if format == "json":
+            data = {
+                "contact": {"id": contact_id, "name": contact["nome"], "phone": contact["telefone"]},
+                "messages": [
+                    {
+                        "direction": msg["direcao"],
+                        "content": msg["conteudo"],
+                        "sent_at": msg["enviado_em"].isoformat() if msg["enviado_em"] else None,
+                        "status": msg["metadata"].get("status") if isinstance(msg["metadata"], dict) else None
+                    }
+                    for msg in messages
+                ],
+                "total": len(messages),
+                "exported_at": datetime.now().isoformat()
+            }
+            return data
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Data/Hora", "Direcao", "Mensagem", "Status"])
+
+        for msg in messages:
+            sent_at = msg["enviado_em"].strftime("%Y-%m-%d %H:%M:%S") if msg["enviado_em"] else ""
+            direction = "Enviada" if msg["direcao"] == "outgoing" else "Recebida"
+            content = msg["conteudo"] or "[midia]"
+            status = msg["metadata"].get("status", "") if isinstance(msg["metadata"], dict) else ""
+            writer.writerow([sent_at, direction, content, status])
+
+        output.seek(0)
+        contact_name = contact["nome"].replace(" ", "_") if contact["nome"] else str(contact_id)
+        filename = f"whatsapp_{contact_name}_{datetime.now().strftime('%Y%m%d')}.csv"
+
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode('utf-8-sig')),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    finally:
+        conn.close()
 
 
 @app.get("/api/whatsapp/qr")
