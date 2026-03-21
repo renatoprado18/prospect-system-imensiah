@@ -240,15 +240,33 @@ def get_name_score(name: str) -> int:
 
 # ============== Duplicate Detection ==============
 
-def find_duplicates(contacts: List[Dict]) -> Dict[str, List[Dict]]:
+def normalize_name_for_dedup(name: str) -> str:
+    """Normalize name for duplicate detection"""
+    if not name:
+        return ""
+    # Remove accents
+    name = unicodedata.normalize('NFD', name)
+    name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
+    # Lowercase and strip
+    name = name.lower().strip()
+    # Remove common suffixes/prefixes
+    name = re.sub(r'\s+(jr\.?|sr\.?|filho|neto|ii|iii|iv)$', '', name, flags=re.IGNORECASE)
+    # Remove extra spaces
+    name = ' '.join(name.split())
+    return name
+
+
+def find_duplicates(contacts: List[Dict], include_name_duplicates: bool = True) -> Dict[str, List[Dict]]:
     """
-    Find duplicate contacts by phone number or email.
+    Find duplicate contacts by phone number, email, or name.
     Returns: {normalized_key: [contact1, contact2, ...]}
     """
     # Group by normalized phone
     by_phone = defaultdict(list)
     # Group by email
     by_email = defaultdict(list)
+    # Group by name
+    by_name = defaultdict(list)
 
     for contact in contacts:
         contact_id = contact.get('id')
@@ -288,6 +306,13 @@ def find_duplicates(contacts: List[Dict]) -> Dict[str, List[Dict]]:
             if email and '@' in email:
                 by_email[email].append(contact)
 
+        # Index by name
+        if include_name_duplicates:
+            name = contact.get('nome', '')
+            normalized_name = normalize_name_for_dedup(name)
+            if normalized_name and len(normalized_name) >= 3:
+                by_name[normalized_name].append(contact)
+
     # Collect duplicates (more than one contact per key)
     duplicates = {}
 
@@ -310,6 +335,23 @@ def find_duplicates(contacts: List[Dict]) -> Dict[str, List[Dict]]:
 
             if not already_captured:
                 duplicates[key] = contacts_list
+
+    # Add name-based duplicates
+    if include_name_duplicates:
+        for name, contacts_list in by_name.items():
+            if len(contacts_list) > 1:
+                key = f"name:{name}"
+                # Only add if not already captured by phone or email
+                contact_ids = {c['id'] for c in contacts_list}
+                already_captured = False
+                for existing_key, existing_contacts in duplicates.items():
+                    existing_ids = {c['id'] for c in existing_contacts}
+                    if contact_ids == existing_ids:
+                        already_captured = True
+                        break
+
+                if not already_captured:
+                    duplicates[key] = contacts_list
 
     return duplicates
 
