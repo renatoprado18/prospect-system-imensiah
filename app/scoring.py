@@ -511,10 +511,13 @@ class DynamicScorer:
                         self.weights.high_value_indicators.append(word)
                         break
 
-    def recalculate_all_scores(self) -> Dict[str, Any]:
+    def recalculate_all_scores(self, batch_size: int = 200, offset: int = 0) -> Dict[str, Any]:
         """
-        Recalcula os scores de todos os prospects.
-        Útil após ajustes nos pesos ou novos aprendizados.
+        Recalcula os scores dos prospects em batches.
+
+        Args:
+            batch_size: Número de prospects por batch (default 200)
+            offset: Offset para paginação (default 0)
 
         Returns:
             Estatísticas do recálculo
@@ -525,7 +528,11 @@ class DynamicScorer:
             "scores_diminuidos": 0,
             "tiers_alterados": 0,
             "erros": 0,
-            "tempo_execucao": 0
+            "tempo_execucao": 0,
+            "batch_size": batch_size,
+            "offset": offset,
+            "next_offset": None,
+            "completo": False
         }
 
         start_time = datetime.now()
@@ -534,14 +541,20 @@ class DynamicScorer:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Buscar todos os prospects
-            # Nota: origem não existe na tabela atual, será adicionado futuramente
+            # Contar total
+            cursor.execute('SELECT COUNT(*) as total FROM prospects')
+            total = cursor.fetchone()['total']
+            stats["total_geral"] = total
+
+            # Buscar batch de prospects
             cursor.execute('''
                 SELECT id, nome, empresa, cargo, email, telefone, linkedin,
                        score as old_score, tier as old_tier, data_criacao,
                        dados_enriquecidos
                 FROM prospects
-            ''')
+                ORDER BY id
+                LIMIT %s OFFSET %s
+            ''', (batch_size, offset))
 
             prospects = cursor.fetchall()
             stats["total_processados"] = len(prospects)
@@ -584,6 +597,14 @@ class DynamicScorer:
 
             conn.commit()
             conn.close()
+
+            # Calcular próximo offset
+            next_offset = offset + batch_size
+            if next_offset >= total:
+                stats["completo"] = True
+                stats["next_offset"] = None
+            else:
+                stats["next_offset"] = next_offset
 
         except Exception as e:
             stats["error"] = str(e)

@@ -4416,17 +4416,21 @@ async def get_gmail_threads_for_contact(request: Request, contact_id: int, limit
 # Adicionado por INST-3
 
 @app.post("/api/scoring/recalculate")
-async def api_scoring_recalculate(user: dict = Depends(require_admin)):
+async def api_scoring_recalculate(
+    batch_size: int = 200,
+    offset: int = 0,
+    user: dict = Depends(require_admin)
+):
     """
-    Recalcula os scores de todos os prospects.
-    Útil após ajustes nos pesos ou novos aprendizados.
+    Recalcula os scores dos prospects em batches.
+    Use batch_size e offset para processar em partes.
     Requer permissão de admin.
     """
     try:
-        stats = scorer.recalculate_all_scores()
+        stats = scorer.recalculate_all_scores(batch_size=batch_size, offset=offset)
         return {
             "success": True,
-            "message": "Scores recalculados com sucesso",
+            "message": f"Batch processado: {stats['total_processados']} prospects",
             "stats": stats
         }
     except Exception as e:
