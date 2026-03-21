@@ -601,6 +601,9 @@
                     }
                     resultText += `${data.contacts_matched} contatos vinculados. `;
                     resultText += `${data.messages_skipped} ja existentes.`;
+                    if (data.remaining > 0) {
+                        resultText += ` (${data.remaining} chats restantes - clique novamente para continuar)`;
+                    }
                     document.getElementById('syncResultText').textContent = resultText;
                 } else if (data.status === 'no_chats') {
                     document.getElementById('syncResultText').textContent = 'Nenhuma conversa encontrada no WhatsApp.';
