@@ -33,10 +33,10 @@ BLOQUEADO - Coordenar antes de editar:
 
 | Branch | Arquivos Modificados | Conflitos Potenciais | Status |
 |--------|---------------------|---------------------|--------|
-| feature/linkedin-email | gmail.py, google_contacts.py, main.py | - | MERGED |
-| feature/whatsapp-improvements | whatsapp.py, rap_whatsapp.html, main.py | main.py | EM PROGRESSO |
-| feature/scoring-icp | app/scoring.py | Nenhum | **MERGED** |
-| feature/contact-enrichment | services/enrichment.py, templates, main.py | - | **PRONTO PARA MERGE** |
+| feature/linkedin-email | gmail.py, google_contacts.py, main.py | - | **MERGED** |
+| feature/whatsapp-improvements | whatsapp.py, rap_whatsapp.html, main.py | - | **MERGED** |
+| feature/scoring-icp | app/scoring.py | - | **MERGED** |
+| feature/contact-enrichment | services/enrichment.py, templates, main.py | - | **MERGED** |
 
 ## Protocolo de Merge (OBRIGATORIO)
 
@@ -109,6 +109,23 @@ FEATURE CONCLUIDA: Templates de Mensagem WhatsApp
 - Endpoints: GET /api/whatsapp/templates, POST /api/whatsapp/send-template
 - UI com abas: Mensagem Livre | Usar Template
 - Preview em tempo real antes de enviar
+
+[2026-03-21 INST-2/COORD] **MERGED - WHATSAPP IMPROVEMENTS** (commit 092bbc3)
+Features merged:
+  - Templates de Mensagem (8 templates com variaveis)
+  - Indicador de Leitura/Entrega (icones de status)
+  - Busca em Conversas (GET /api/whatsapp/search)
+  - Exportar Conversas (GET /api/whatsapp/export/{contact_id})
+
+[2026-03-21 COORD] **SESSAO CONCLUIDA - TODAS FEATURES MERGED**
+Resumo:
+  - INST-1: Gmail + Contact Enrichment v2
+  - INST-2: WhatsApp 4 features
+  - INST-3: Scoring v2.0 + Contacts Scoring
+Pendentes para proxima sessao:
+  - WhatsApp: Agendamento (requer database.py)
+  - WhatsApp: Import de .txt exportados
+  - Testar endpoints scoring em producao
 ```
 
 ## Decisoes Arquiteturais Tomadas
@@ -125,4 +142,4 @@ FEATURE CONCLUIDA: Templates de Mensagem WhatsApp
 3. [x] INST-1 confirmar recebimento da coordenacao
 4. [x] INST-3 confirmar recebimento da coordenacao
 5. [x] Cada instancia criar sua branch e comecar trabalho
-6. [ ] INST-2 finalizar WhatsApp features e fazer merge
+6. [x] INST-2 finalizar WhatsApp features e fazer merge
