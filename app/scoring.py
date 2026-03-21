@@ -537,7 +537,7 @@ class DynamicScorer:
             # Buscar todos os prospects
             cursor.execute('''
                 SELECT id, nome, empresa, cargo, email, telefone, linkedin,
-                       score as old_score, tier as old_tier, origem, data_criacao,
+                       score as old_score, tier as old_tier, data_criacao,
                        dados_enriquecidos
                 FROM prospects
             ''')

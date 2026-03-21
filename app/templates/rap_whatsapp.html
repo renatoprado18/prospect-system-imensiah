@@ -446,6 +446,35 @@
             </div>
         </div>
 
+        <!-- Export Conversation -->
+        <div class="card" id="exportCard" style="display: none;">
+            <div class="card-header">
+                <h5 class="card-title"><i class="bi bi-download"></i> Exportar Conversa</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-6">
+                        <label class="form-label">Selecione o Contato</label>
+                        <select class="form-select" id="exportContactSelect">
+                            <option value="">Carregando contatos...</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Formato</label>
+                        <select class="form-select" id="exportFormat">
+                            <option value="csv">CSV</option>
+                            <option value="json">JSON</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <button class="btn btn-outline-primary w-100" onclick="exportConversation()">
+                            <i class="bi bi-download me-1"></i> Exportar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Recent Activity -->
         <div class="card" id="activityCard" style="display: none;">
             <div class="card-header">
@@ -474,133 +503,6 @@
         let connectionState = 'checking';
         let autoSyncRunning = false;
         let autoSyncAbort = false;
-        let allTemplates = [];
-        let selectedTemplate = null;
-
-        // Load templates on page load
-        async function loadTemplates() {
-            try {
-                const response = await fetch('/api/whatsapp/templates');
-                const data = await response.json();
-                allTemplates = data.templates || [];
-                populateTemplateSelect(allTemplates);
-            } catch (error) {
-                console.error('Error loading templates:', error);
-            }
-        }
-
-        function populateTemplateSelect(templates) {
-            const select = document.getElementById('templateSelect');
-            if (!select) return;
-            select.innerHTML = '<option value="">Selecione um template...</option>';
-            for (const t of templates) {
-                const option = document.createElement('option');
-                option.value = t.id;
-                option.textContent = t.nome;
-                option.dataset.template = JSON.stringify(t);
-                select.appendChild(option);
-            }
-        }
-
-        function filterTemplates() {
-            const category = document.getElementById('templateCategory').value;
-            let filtered = category ? allTemplates.filter(t => t.categoria === category) : allTemplates;
-            populateTemplateSelect(filtered);
-            selectedTemplate = null;
-            document.getElementById('templateVariables').style.display = 'none';
-            document.getElementById('templatePreview').style.display = 'none';
-            document.getElementById('sendTemplateBtn').disabled = true;
-        }
-
-        function selectTemplate() {
-            const select = document.getElementById('templateSelect');
-            const selectedOption = select.options[select.selectedIndex];
-            if (!selectedOption.value) {
-                selectedTemplate = null;
-                document.getElementById('templateVariables').style.display = 'none';
-                document.getElementById('templatePreview').style.display = 'none';
-                document.getElementById('sendTemplateBtn').disabled = true;
-                return;
-            }
-            selectedTemplate = JSON.parse(selectedOption.dataset.template);
-            renderVariableInputs(selectedTemplate);
-            document.getElementById('sendTemplateBtn').disabled = false;
-        }
-
-        function renderVariableInputs(template) {
-            const container = document.getElementById('variablesContainer');
-            container.innerHTML = '';
-            if (!template.variaveis || template.variaveis.length === 0) {
-                document.getElementById('templateVariables').style.display = 'none';
-                previewTemplate();
-                return;
-            }
-            document.getElementById('templateVariables').style.display = 'block';
-            const placeholders = {nome:'Ex: Joao', empresa:'Ex: Empresa XYZ', quando:'Ex: amanha as 14h', pontos:'Ex: 1. Ponto A', assunto:'Ex: projeto', servico:'Ex: consultoria'};
-            for (const varName of template.variaveis) {
-                const col = document.createElement('div');
-                col.className = 'col-md-4';
-                col.innerHTML = `<label class="form-label small">{${varName}}</label><input type="text" class="form-control form-control-sm" id="var_${varName}" placeholder="${placeholders[varName] || varName}" oninput="previewTemplate()">`;
-                container.appendChild(col);
-            }
-            setTimeout(previewTemplate, 100);
-        }
-
-        function getVariableValues() {
-            if (!selectedTemplate || !selectedTemplate.variaveis) return {};
-            const values = {};
-            for (const varName of selectedTemplate.variaveis) {
-                const input = document.getElementById(`var_${varName}`);
-                values[varName] = input ? input.value : '';
-            }
-            return values;
-        }
-
-        async function previewTemplate() {
-            if (!selectedTemplate) return;
-            const variables = getVariableValues();
-            try {
-                const response = await fetch(`/api/whatsapp/templates/${selectedTemplate.id}/preview`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ variables })
-                });
-                const data = await response.json();
-                document.getElementById('previewText').textContent = data.mensagem_renderizada || '';
-                document.getElementById('templatePreview').style.display = 'block';
-            } catch (error) {
-                console.error('Error previewing template:', error);
-            }
-        }
-
-        async function sendWithTemplate() {
-            const phone = document.getElementById('templatePhoneInput').value;
-            if (!phone) { showToast('Preencha o telefone'); return; }
-            if (!selectedTemplate) { showToast('Selecione um template'); return; }
-            const variables = getVariableValues();
-            try {
-                const response = await fetch('/api/whatsapp/send-template', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone, template_id: selectedTemplate.id, variables })
-                });
-                const data = await response.json();
-                if (data.status === 'sent') {
-                    showToast('Mensagem enviada com sucesso!');
-                    document.getElementById('templatePhoneInput').value = '';
-                    document.getElementById('templateSelect').value = '';
-                    selectedTemplate = null;
-                    document.getElementById('templateVariables').style.display = 'none';
-                    document.getElementById('templatePreview').style.display = 'none';
-                    document.getElementById('sendTemplateBtn').disabled = true;
-                } else {
-                    showToast('Erro ao enviar: ' + (data.detail || 'Erro desconhecido'));
-                }
-            } catch (error) {
-                showToast('Erro ao enviar mensagem');
-                console.error(error);
-            }
-        }
 
         async function checkStatus() {
             try {
@@ -627,18 +529,6 @@
             }
         }
 
-        function getStatusIcon(status, direction) {
-            // Status icons for outgoing messages
-            if (direction !== 'outgoing') return '';
-            switch(status) {
-                case 'sent': return '<i class="bi bi-check text-muted ms-1" title="Enviada"></i>';
-                case 'delivered': return '<i class="bi bi-check-all text-muted ms-1" title="Entregue"></i>';
-                case 'read': return '<i class="bi bi-check-all text-primary ms-1" title="Lida"></i>';
-                case 'played': return '<i class="bi bi-check-all text-primary ms-1" title="Visualizada"></i>';
-                default: return '<i class="bi bi-clock text-muted ms-1" title="Pendente"></i>';
-            }
-        }
-
         function renderRecentActivity(messages) {
             const activityBody = document.getElementById('activityBody');
             if (!activityBody) return;
@@ -648,8 +538,6 @@
                 const isOutgoing = msg.direction === 'outgoing';
                 const icon = isOutgoing ? 'bi-arrow-up-right text-primary' : 'bi-arrow-down-left text-success';
                 const time = msg.sent_at ? new Date(msg.sent_at).toLocaleString('pt-BR') : '';
-                const status = msg.metadata?.status || (isOutgoing ? 'sent' : 'received');
-                const statusIcon = getStatusIcon(status, msg.direction);
 
                 let contactDisplay;
                 if (isOutgoing) {
@@ -671,7 +559,7 @@
                         <div class="flex-grow-1">
                             <div class="d-flex justify-content-between align-items-center">
                                 <strong>${contactDisplay}</strong>
-                                <small class="text-muted">${time}${statusIcon}</small>
+                                <small class="text-muted">${time}</small>
                             </div>
                             <p class="mb-0 text-muted small">${msg.content || '[midia]'}</p>
                         </div>
@@ -691,6 +579,7 @@
             const activityCard = document.getElementById('activityCard');
             const syncCard = document.getElementById('syncCard');
             const searchCard = document.getElementById('searchCard');
+            const exportCard = document.getElementById('exportCard');
 
             if (state === 'open') {
                 // Connected
@@ -704,9 +593,11 @@
                 qrCard.style.display = 'none';
                 statsGrid.style.display = 'grid';
                 sendCard.style.display = 'block';
-                searchCard.style.display = 'block';
                 activityCard.style.display = 'block';
                 syncCard.style.display = 'block';
+                searchCard.style.display = 'block';
+                exportCard.style.display = 'block';
+                loadContactsForExport();
             } else if (state === 'connecting') {
                 // Connecting - show QR
                 statusBadge.innerHTML = `
@@ -719,9 +610,10 @@
                 qrCard.style.display = 'block';
                 statsGrid.style.display = 'none';
                 sendCard.style.display = 'none';
-                searchCard.style.display = 'none';
                 activityCard.style.display = 'none';
                 syncCard.style.display = 'none';
+                searchCard.style.display = 'none';
+                exportCard.style.display = 'none';
                 refreshQR();
             } else {
                 // Disconnected
@@ -737,9 +629,106 @@
                 sendCard.style.display = 'none';
                 activityCard.style.display = 'none';
                 syncCard.style.display = 'none';
+                searchCard.style.display = 'none';
+                exportCard.style.display = 'none';
                 refreshQR();
             }
         }
+
+        async function loadContactsForExport() {
+            const select = document.getElementById('exportContactSelect');
+            if (!select) return;
+            try {
+                const response = await fetch('/api/contacts?limit=200');
+                const data = await response.json();
+                const contacts = data.contacts || [];
+                select.innerHTML = '<option value="">Selecione um contato...</option>';
+                for (const c of contacts) {
+                    if (c.telefone) {
+                        const option = document.createElement('option');
+                        option.value = c.id;
+                        option.textContent = `${c.nome || 'Sem nome'} (${c.telefone})`;
+                        select.appendChild(option);
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading contacts:', error);
+                select.innerHTML = '<option value="">Erro ao carregar contatos</option>';
+            }
+        }
+
+        function exportConversation() {
+            const contactId = document.getElementById('exportContactSelect').value;
+            const format = document.getElementById('exportFormat').value;
+            if (!contactId) {
+                showToast('Selecione um contato');
+                return;
+            }
+            window.location.href = `/api/whatsapp/export/${contactId}?format=${format}`;
+        }
+
+        async function searchMessages() {
+            const query = document.getElementById('searchInput').value.trim();
+            const resultsDiv = document.getElementById('searchResults');
+            const resultsList = document.getElementById('searchResultsList');
+            const countSpan = document.getElementById('searchCount');
+
+            if (query.length < 3) {
+                showToast('Digite pelo menos 3 caracteres');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/whatsapp/search?q=${encodeURIComponent(query)}&limit=50`);
+                const data = await response.json();
+
+                if (data.error) {
+                    showToast('Erro na busca: ' + data.error);
+                    return;
+                }
+
+                resultsDiv.style.display = 'block';
+                countSpan.textContent = `${data.total} resultado(s) encontrado(s)`;
+
+                if (data.results.length === 0) {
+                    resultsList.innerHTML = '<div class="list-group-item text-muted">Nenhuma mensagem encontrada</div>';
+                    return;
+                }
+
+                resultsList.innerHTML = data.results.map(msg => {
+                    const regex = new RegExp(`(${query})`, 'gi');
+                    const highlighted = msg.content.replace(regex, '<mark>$1</mark>');
+                    const fromMe = msg.direction === 'outgoing';
+                    const direction = fromMe ? 'Enviada' : 'Recebida';
+                    const date = msg.sent_at ? new Date(msg.sent_at).toLocaleString('pt-BR') : '';
+
+                    return `
+                        <a href="/rap/contacts/${msg.contact_id}" class="list-group-item list-group-item-action">
+                            <div class="d-flex justify-content-between">
+                                <strong>${msg.contact_name}</strong>
+                                <small class="text-muted">${date}</small>
+                            </div>
+                            <small class="badge bg-${fromMe ? 'primary' : 'secondary'}">${direction}</small>
+                            <p class="mb-0 small">${highlighted}</p>
+                        </a>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                showToast('Erro ao buscar mensagens');
+                console.error(error);
+            }
+        }
+
+        // Search on Enter key
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                searchInput.addEventListener('keypress', function(e) {
+                    if (e.key === 'Enter') searchMessages();
+                });
+            }
+        });
 
         async function refreshQR() {
             try {
@@ -784,70 +773,6 @@
                 console.error(error);
             }
         }
-
-        async function searchMessages() {
-            const query = document.getElementById('searchInput').value.trim();
-            const resultsDiv = document.getElementById('searchResults');
-            const resultsList = document.getElementById('searchResultsList');
-            const countSpan = document.getElementById('searchCount');
-
-            if (query.length < 3) {
-                showToast('Digite pelo menos 3 caracteres');
-                return;
-            }
-
-            try {
-                const response = await fetch(`/api/whatsapp/search?q=${encodeURIComponent(query)}&limit=50`);
-                const data = await response.json();
-
-                if (data.error) {
-                    showToast('Erro na busca: ' + data.error);
-                    return;
-                }
-
-                resultsDiv.style.display = 'block';
-                countSpan.textContent = `${data.total} resultado(s) encontrado(s)`;
-
-                if (data.results.length === 0) {
-                    resultsList.innerHTML = '<div class="list-group-item text-muted">Nenhuma mensagem encontrada</div>';
-                    return;
-                }
-
-                resultsList.innerHTML = data.results.map(msg => {
-                    // Highlight the search term
-                    const regex = new RegExp(`(${query})`, 'gi');
-                    const highlighted = msg.content.replace(regex, '<mark>$1</mark>');
-                    const fromMe = msg.direction === 'outgoing';
-                    const direction = fromMe ? 'Enviada' : 'Recebida';
-                    const date = msg.sent_at ? new Date(msg.sent_at).toLocaleString('pt-BR') : '';
-
-                    return `
-                        <a href="#" class="list-group-item list-group-item-action" onclick="selectContact(${msg.contact_id}); return false;">
-                            <div class="d-flex justify-content-between">
-                                <strong>${msg.contact_name}</strong>
-                                <small class="text-muted">${date}</small>
-                            </div>
-                            <small class="badge bg-${fromMe ? 'primary' : 'secondary'}">${direction}</small>
-                            <p class="mb-0 small">${highlighted}</p>
-                        </a>
-                    `;
-                }).join('');
-
-            } catch (error) {
-                showToast('Erro ao buscar mensagens');
-                console.error(error);
-            }
-        }
-
-        // Search on Enter key
-        document.addEventListener('DOMContentLoaded', function() {
-            const searchInput = document.getElementById('searchInput');
-            if (searchInput) {
-                searchInput.addEventListener('keypress', function(e) {
-                    if (e.key === 'Enter') searchMessages();
-                });
-            }
-        });
 
         async function disconnect() {
             if (!confirm('Deseja realmente desconectar o WhatsApp?')) return;
@@ -1042,7 +967,6 @@
 
         // Check status on load and periodically
         checkStatus();
-        loadTemplates();
         setInterval(checkStatus, 30000);  // Check every 30 seconds
     </script>
 </body>
