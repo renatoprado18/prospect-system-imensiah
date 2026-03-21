@@ -196,6 +196,25 @@
             color: white;
         }
 
+        .enrich-badge .spinning {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+
         .profile-info { flex: 1; }
 
         .profile-name {
@@ -1175,59 +1194,78 @@
         }
 
         async function enrichContact() {
-            const btn = document.getElementById('enrichBtn');
-            const summaryBody = document.getElementById('aiSummaryBody');
-
-            if (btn) {
-                btn.disabled = true;
-                btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Analisando...';
-            }
-
-            if (summaryBody) {
-                summaryBody.innerHTML = `
-                    <div style="text-align: center; padding: 24px;">
-                        <div class="spinner-border text-primary" role="status"></div>
-                        <p style="margin-top: 12px; color: var(--gray-500);">Analisando emails, WhatsApp e dados do contato...</p>
-                    </div>
-                `;
-            }
+            const enrichBadge = document.querySelector('.enrich-badge');
+            const originalContent = enrichBadge.innerHTML;
 
             try {
+                // Show loading state
+                enrichBadge.innerHTML = '<i class="bi bi-hourglass-split spinning"></i>';
+                enrichBadge.style.pointerEvents = 'none';
+
                 const response = await fetch(`/api/contacts/${contactId}/enrich`, {
                     method: 'POST'
                 });
 
-                const data = await response.json();
+                const result = await response.json();
 
-                if (!response.ok) {
-                    throw new Error(data.detail || 'Erro ao enriquecer contato');
-                }
+                if (result.status === 'success') {
+                    // Update the page with new data
+                    contactData.contact.resumo_ai = result.resumo;
+                    contactData.contact.insights_ai = result.insights;
 
-                // Reload contact to show updated data
-                await loadContact();
-
-                // Show success message
-                if (data.save_stats) {
-                    const stats = data.save_stats;
-                    let msg = 'Enriquecimento concluido!';
-                    if (stats.facts_added > 0) {
-                        msg += ` ${stats.facts_added} novos fatos extraidos.`;
+                    // Show success notification
+                    let msg = 'Enriquecimento concluído!';
+                    if (result.save_stats && result.save_stats.facts_added > 0) {
+                        msg += ` ${result.save_stats.facts_added} novos fatos extraídos.`;
                     }
-                    alert(msg);
+                    showNotification(msg, 'success');
+
+                    // Reload to show updated data
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1500);
+                } else {
+                    showNotification('Erro: ' + (result.error || 'Falha no enriquecimento'), 'error');
+                    enrichBadge.innerHTML = originalContent;
+                    enrichBadge.style.pointerEvents = 'auto';
                 }
             } catch (error) {
                 console.error('Error:', error);
-                alert('Erro: ' + error.message);
-
-                // Restore button
-                if (btn) {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="bi bi-magic"></i> Enriquecer';
-                }
-
-                // Reload to restore state
-                await loadContact();
+                showNotification('Erro ao conectar com servidor', 'error');
+                enrichBadge.innerHTML = originalContent;
+                enrichBadge.style.pointerEvents = 'auto';
             }
+        }
+
+        function showNotification(message, type = 'info') {
+            // Create notification element
+            const notification = document.createElement('div');
+            notification.className = `notification notification-${type}`;
+            notification.innerHTML = `
+                <i class="bi bi-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+                <span>${message}</span>
+            `;
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 12px 20px;
+                background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#3b82f6'};
+                color: white;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                z-index: 9999;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                animation: slideIn 0.3s ease;
+            `;
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.style.animation = 'slideOut 0.3s ease';
+                setTimeout(() => notification.remove(), 300);
+            }, 4000);
         }
 
         function composeEmail() {

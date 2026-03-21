@@ -1456,6 +1456,93 @@ async def search_whatsapp_messages(
         conn.close()
 
 
+@app.get("/api/whatsapp/export/{contact_id}")
+async def export_whatsapp_conversation(
+    contact_id: int,
+    format: str = "csv"
+):
+    """
+    Export WhatsApp conversation history for a contact.
+
+    Args:
+        contact_id: Contact ID to export conversation for
+        format: Export format - 'csv' (default) or 'json'
+    """
+    from fastapi.responses import StreamingResponse
+    import io
+    import csv
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Get contact info
+        cursor.execute("SELECT nome, telefone FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contact not found")
+
+        # Get all messages for this contact
+        cursor.execute("""
+            SELECT m.direcao, m.conteudo, m.enviado_em, m.metadata
+            FROM messages m
+            JOIN conversations conv ON m.conversation_id = conv.id
+            WHERE conv.canal = 'whatsapp' AND m.contact_id = %s
+            ORDER BY m.enviado_em ASC
+        """, (contact_id,))
+
+        messages = cursor.fetchall()
+
+        if format == "json":
+            import json
+            data = {
+                "contact": {
+                    "id": contact_id,
+                    "name": contact["nome"],
+                    "phone": contact["telefone"]
+                },
+                "messages": [
+                    {
+                        "direction": msg["direcao"],
+                        "content": msg["conteudo"],
+                        "sent_at": msg["enviado_em"].isoformat() if msg["enviado_em"] else None,
+                        "status": msg["metadata"].get("status") if isinstance(msg["metadata"], dict) else None
+                    }
+                    for msg in messages
+                ],
+                "total": len(messages),
+                "exported_at": datetime.now().isoformat()
+            }
+            return data
+
+        # Default: CSV format
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Data/Hora", "Direcao", "Mensagem", "Status"])
+
+        for msg in messages:
+            sent_at = msg["enviado_em"].strftime("%Y-%m-%d %H:%M:%S") if msg["enviado_em"] else ""
+            direction = "Enviada" if msg["direcao"] == "outgoing" else "Recebida"
+            content = msg["conteudo"] or "[midia]"
+            status = ""
+            if isinstance(msg["metadata"], dict):
+                status = msg["metadata"].get("status", "")
+            writer.writerow([sent_at, direction, content, status])
+
+        output.seek(0)
+        contact_name = contact["nome"].replace(" ", "_") if contact["nome"] else str(contact_id)
+        filename = f"whatsapp_{contact_name}_{datetime.now().strftime('%Y%m%d')}.csv"
+
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode('utf-8-sig')),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    finally:
+        conn.close()
+
+
 @app.post("/api/whatsapp/sync")
 async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50, offset: int = 0):
     """
@@ -3609,18 +3696,20 @@ async def import_contacts(data: ContactsImportData):
 
 
 @app.post("/api/contacts/{contact_id}/enrich")
-async def enrich_contact(contact_id: int):
+async def enrich_contact(contact_id: int, request: Request):
     """
-    Enriquece contato com IA usando dados de emails, WhatsApp e LinkedIn.
-    Gera resumo, extrai fatos e insights sobre o relacionamento.
+    Enriquece contato com AI analisando emails e WhatsApp.
+    Gera resumo, fatos importantes e insights do relacionamento.
     """
-    from services.contact_enrichment import enrich_and_save
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
 
-    conn = get_connection()
+    conn = get_db()
     cursor = conn.cursor()
 
     # Verify contact exists
-    cursor.execute("SELECT id, nome FROM contacts WHERE id = %s", (contact_id,))
+    cursor.execute('SELECT id, nome FROM contacts WHERE id = %s', (contact_id,))
     contact = cursor.fetchone()
     if not contact:
         conn.close()
@@ -3634,31 +3723,38 @@ async def enrich_contact(contact_id: int):
     conn.commit()
 
     try:
-        # Run enrichment
+        # Import and run enrichment service
+        from services.contact_enrichment import enrich_and_save
         result = await enrich_and_save(contact_id, conn)
 
-        if result.get("status") != "success":
+        if result.get("status") == "success":
+            return {
+                "status": "success",
+                "resumo": result.get("enrichment", {}).get("resumo", ""),
+                "fatos": result.get("enrichment", {}).get("fatos", []),
+                "insights": result.get("enrichment", {}).get("insights", {}),
+                "sugestoes": result.get("enrichment", {}).get("sugestoes", []),
+                "save_stats": result.get("save_stats", {})
+            }
+        else:
             # Mark as failed
             cursor.execute('''
                 UPDATE contacts SET enriquecimento_status = 'failed'
                 WHERE id = %s
             ''', (contact_id,))
             conn.commit()
-            raise HTTPException(status_code=500, detail=result.get("error", "Erro no enriquecimento"))
-
-        return result
-
-    except HTTPException:
-        raise
+            return {
+                "status": "error",
+                "error": result.get("error", "Erro desconhecido no enriquecimento")
+            }
     except Exception as e:
         cursor.execute('''
             UPDATE contacts SET enriquecimento_status = 'failed'
             WHERE id = %s
         ''', (contact_id,))
         conn.commit()
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "error", "error": str(e)}
     finally:
-        cursor.close()
         conn.close()
 
 
