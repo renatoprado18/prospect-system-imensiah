@@ -14,12 +14,15 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_PEOPLE_API = "https://people.googleapis.com/v1"
 
-# Scopes for contacts
+# Scopes for contacts + Gmail
 CONTACTS_SCOPES = [
     "openid",
     "email",
     "profile",
     "https://www.googleapis.com/auth/contacts",  # Read/write contacts
+    "https://www.googleapis.com/auth/gmail.readonly",  # Read emails
+    "https://www.googleapis.com/auth/gmail.send",  # Send emails
+    "https://www.googleapis.com/auth/gmail.modify",  # Modify emails (labels, read status)
 ]
 
 

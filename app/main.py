@@ -28,6 +28,7 @@ from integrations.google_calendar import GoogleCalendarIntegration, create_calen
 from integrations.fathom import FathomIntegration, handle_fathom_webhook
 from integrations.linkedin import LinkedInIntegration
 from integrations.whatsapp import WhatsAppIntegration, parse_webhook_message, format_phone_display
+from integrations.gmail import GmailIntegration, parse_gmail_date
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
@@ -3874,6 +3875,342 @@ async def disconnect_google_account(request: Request, account_id: int):
     conn.close()
 
     return {"status": "disconnected"}
+
+
+# ============== Gmail Integration ==============
+
+gmail = GmailIntegration()
+
+
+@app.get("/api/gmail/sync/{account_id}")
+async def sync_gmail_messages(request: Request, account_id: int, days: int = 30, max_messages: int = 100):
+    """
+    Sync Gmail messages for a connected account.
+    Links messages to existing contacts when email matches.
+
+    Args:
+        account_id: Google account ID
+        days: How many days back to sync (default 30)
+        max_messages: Maximum messages to fetch (default 100)
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin pode sincronizar")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Get account
+    cursor.execute("SELECT * FROM google_accounts WHERE id = %s", (account_id,))
+    account = cursor.fetchone()
+
+    if not account:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Conta nao encontrada")
+
+    account = dict(account)
+
+    if not account.get("conectado"):
+        conn.close()
+        raise HTTPException(status_code=400, detail="Conta desconectada")
+
+    access_token = account.get("access_token")
+    refresh_token = account.get("refresh_token")
+    account_email = account.get("email")
+
+    # Check if token needs refresh
+    token_expiry = account.get("token_expiry")
+    if token_expiry and isinstance(token_expiry, str):
+        token_expiry = datetime.fromisoformat(token_expiry.replace("Z", "+00:00"))
+
+    if token_expiry and datetime.now() > token_expiry:
+        # Refresh token
+        try:
+            new_tokens = await gmail.refresh_access_token(refresh_token)
+            access_token = new_tokens.get("access_token")
+            expires_in = new_tokens.get("expires_in", 3600)
+
+            cursor.execute('''
+                UPDATE google_accounts
+                SET access_token = %s, token_expiry = %s
+                WHERE id = %s
+            ''', (
+                access_token,
+                (datetime.now() + timedelta(seconds=expires_in)).isoformat(),
+                account_id
+            ))
+            conn.commit()
+        except Exception as e:
+            conn.close()
+            raise HTTPException(status_code=401, detail=f"Falha ao renovar token: {str(e)}")
+
+    # Build query for recent messages
+    from_date = (datetime.now() - timedelta(days=days)).strftime("%Y/%m/%d")
+    query = f"after:{from_date}"
+
+    stats = {"fetched": 0, "linked": 0, "saved": 0, "errors": 0}
+
+    try:
+        # List messages
+        result = await gmail.list_messages(access_token, query=query, max_results=max_messages)
+
+        if "error" in result:
+            if result["error"] == "token_expired":
+                raise HTTPException(status_code=401, detail="Token expirado")
+            raise HTTPException(status_code=500, detail=result["error"])
+
+        messages = result.get("messages", [])
+        stats["fetched"] = len(messages)
+
+        # Build email -> contact_id lookup
+        cursor.execute("""
+            SELECT id, emails FROM contacts WHERE emails != '[]'::jsonb
+        """)
+        email_to_contact = {}
+        for row in cursor.fetchall():
+            contact_emails = row["emails"] if isinstance(row["emails"], list) else json.loads(row["emails"] or "[]")
+            for e in contact_emails:
+                if isinstance(e, dict):
+                    email_to_contact[e.get("email", "").lower()] = row["id"]
+                elif isinstance(e, str):
+                    email_to_contact[e.lower()] = row["id"]
+
+        # Process each message
+        for msg_ref in messages:
+            try:
+                msg_id = msg_ref.get("id")
+
+                # Check if already exists
+                cursor.execute(
+                    "SELECT id FROM messages WHERE external_id = %s",
+                    (f"gmail:{msg_id}",)
+                )
+                if cursor.fetchone():
+                    continue
+
+                # Get full message
+                full_msg = await gmail.get_message(access_token, msg_id)
+                if "error" in full_msg:
+                    stats["errors"] += 1
+                    continue
+
+                headers = gmail.parse_message_headers(full_msg)
+                body = gmail.parse_message_body(full_msg)
+
+                from_header = headers.get("from", "")
+                to_header = headers.get("to", "")
+                subject = headers.get("subject", "")
+                date_str = headers.get("date", "")
+                message_date = parse_gmail_date(date_str) or datetime.now()
+
+                # Determine direction based on account email
+                from_email = gmail.extract_email_address(from_header)
+                to_email = gmail.extract_email_address(to_header)
+
+                if from_email == account_email.lower():
+                    direction = "outgoing"
+                    other_email = to_email
+                else:
+                    direction = "incoming"
+                    other_email = from_email
+
+                # Try to link to contact
+                contact_id = email_to_contact.get(other_email)
+                conversation_id = None
+
+                if contact_id:
+                    stats["linked"] += 1
+
+                    # Find or create conversation
+                    thread_id = full_msg.get("threadId")
+                    cursor.execute("""
+                        SELECT id FROM conversations
+                        WHERE contact_id = %s AND canal = 'email' AND external_id = %s
+                    """, (contact_id, f"gmail:{thread_id}"))
+                    conv = cursor.fetchone()
+
+                    if conv:
+                        conversation_id = conv["id"]
+                    else:
+                        cursor.execute("""
+                            INSERT INTO conversations (contact_id, canal, external_id, assunto, ultimo_mensagem)
+                            VALUES (%s, 'email', %s, %s, %s)
+                            RETURNING id
+                        """, (contact_id, f"gmail:{thread_id}", subject, message_date))
+                        conversation_id = cursor.fetchone()["id"]
+
+                # Save message
+                cursor.execute("""
+                    INSERT INTO messages (
+                        conversation_id, contact_id, external_id, direcao,
+                        conteudo, conteudo_html, metadata, enviado_em
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    conversation_id,
+                    contact_id,
+                    f"gmail:{msg_id}",
+                    direction,
+                    body.get("text", "")[:10000],  # Limit text length
+                    body.get("html", "")[:50000],  # Limit HTML length
+                    json.dumps({
+                        "from": from_header,
+                        "to": to_header,
+                        "subject": subject,
+                        "thread_id": full_msg.get("threadId"),
+                        "account": account_email
+                    }),
+                    message_date
+                ))
+                stats["saved"] += 1
+
+                # Update conversation timestamp
+                if conversation_id:
+                    cursor.execute("""
+                        UPDATE conversations
+                        SET ultimo_mensagem = GREATEST(ultimo_mensagem, %s),
+                            total_mensagens = total_mensagens + 1
+                        WHERE id = %s
+                    """, (message_date, conversation_id))
+
+                # Update contact last contact
+                if contact_id:
+                    cursor.execute("""
+                        UPDATE contacts
+                        SET ultimo_contato = GREATEST(ultimo_contato, %s),
+                            total_interacoes = total_interacoes + 1
+                        WHERE id = %s
+                    """, (message_date, contact_id))
+
+            except Exception as e:
+                stats["errors"] += 1
+                continue
+
+        conn.commit()
+
+        # Update last sync
+        cursor.execute("""
+            UPDATE google_accounts SET ultima_sync = CURRENT_TIMESTAMP WHERE id = %s
+        """, (account_id,))
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+    return {
+        "status": "ok",
+        "account": account_email,
+        "stats": stats
+    }
+
+
+@app.post("/api/gmail/send")
+async def send_gmail_message(request: Request):
+    """
+    Send an email via Gmail API.
+
+    Body:
+    - account_id: Google account ID to send from
+    - to: Recipient email
+    - subject: Email subject
+    - body: Plain text body
+    - html_body: Optional HTML body
+    - thread_id: Optional thread ID for replies
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin pode enviar")
+
+    body = await request.json()
+    account_id = body.get("account_id")
+    to = body.get("to")
+    subject = body.get("subject")
+    text_body = body.get("body", "")
+    html_body = body.get("html_body")
+    thread_id = body.get("thread_id")
+
+    if not all([account_id, to, subject]):
+        raise HTTPException(status_code=400, detail="account_id, to, subject sao obrigatorios")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Get account
+    cursor.execute("SELECT * FROM google_accounts WHERE id = %s", (account_id,))
+    account = cursor.fetchone()
+
+    if not account:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Conta nao encontrada")
+
+    account = dict(account)
+    access_token = account.get("access_token")
+
+    try:
+        result = await gmail.send_message(
+            access_token=access_token,
+            to=to,
+            subject=subject,
+            body=text_body,
+            html_body=html_body,
+            thread_id=thread_id
+        )
+
+        if "error" in result:
+            raise HTTPException(status_code=500, detail=result["error"])
+
+        conn.close()
+        return {"status": "sent", "message_id": result.get("id")}
+
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/gmail/threads/{contact_id}")
+async def get_gmail_threads_for_contact(request: Request, contact_id: int, limit: int = 20):
+    """
+    Get Gmail threads for a specific contact.
+    Returns conversations linked to this contact.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Get email conversations for this contact
+        cursor.execute("""
+            SELECT c.id, c.assunto, c.ultimo_mensagem, c.total_mensagens, c.external_id
+            FROM conversations c
+            WHERE c.contact_id = %s AND c.canal = 'email'
+            ORDER BY c.ultimo_mensagem DESC
+            LIMIT %s
+        """, (contact_id, limit))
+
+        conversations = [dict(row) for row in cursor.fetchall()]
+
+        # Get messages for each conversation
+        for conv in conversations:
+            cursor.execute("""
+                SELECT id, direcao, conteudo, metadata, enviado_em
+                FROM messages
+                WHERE conversation_id = %s
+                ORDER BY enviado_em DESC
+                LIMIT 5
+            """, (conv["id"],))
+            conv["messages"] = [dict(row) for row in cursor.fetchall()]
+
+        return {"contact_id": contact_id, "conversations": conversations}
+
+    finally:
+        cursor.close()
+        conn.close()
 
 
 # Vercel handler

@@ -33,7 +33,7 @@ BLOQUEADO - Coordenar antes de editar:
 
 | Branch | Arquivos Modificados | Conflitos Potenciais | Pronto para Merge |
 |--------|---------------------|---------------------|-------------------|
-| (nenhum ainda) | - | - | - |
+| feature/linkedin-email | app/main.py, app/integrations/gmail.py, app/integrations/google_contacts.py | app/main.py (rotas) | NAO - em progresso |
 
 ## Comunicacao Entre Instancias
 
@@ -45,6 +45,14 @@ BLOQUEADO - Coordenar antes de editar:
 ### Mensagens Pendentes
 
 ```
+[2026-03-21 INST-1 -> COORD]
+INST-1 aqui, confirmando recebimento. Branch criada: feature/linkedin-email
+Modificacoes realizadas (dentro do meu escopo de Email):
+- app/main.py: Adicionados endpoints de Gmail (/api/gmail/sync, /api/gmail/send, /api/gmail/threads)
+- app/integrations/gmail.py: Novo arquivo - integracao Gmail API
+- app/integrations/google_contacts.py: Adicionados scopes do Gmail aos CONTACTS_SCOPES
+Status: Trabalhando na integracao Gmail. Proximo: Testar e criar UI.
+
 [2026-03-21 COORD -> INST-1]
 Sistema de coordenacao criado. Por favor:
 1. Faca: git pull origin main
@@ -86,7 +94,7 @@ Protocolo de trabalho:
 
 1. [x] Definir escopo da INST-2 (COORD + WhatsApp)
 2. [x] Definir escopo da INST-3 (Scoring + ICP)
-3. [ ] INST-1 confirmar recebimento da coordenacao
+3. [x] INST-1 confirmar recebimento da coordenacao
 4. [ ] INST-3 confirmar recebimento da coordenacao
 5. [ ] Primeiro ciclo de sync entre todas instancias
 6. [ ] Cada instancia criar sua branch e comecar trabalho
