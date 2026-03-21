@@ -35,7 +35,7 @@ BLOQUEADO - Coordenar antes de editar:
 |--------|---------------------|---------------------|--------|
 | feature/linkedin-email | gmail.py, google_contacts.py, main.py | - | MERGED |
 | feature/whatsapp-improvements | whatsapp.py, rap_whatsapp.html, main.py | main.py | EM PROGRESSO |
-| feature/scoring-icp | app/scoring.py | Nenhum | **APROVADO - PODE FAZER MERGE** |
+| feature/scoring-icp | app/scoring.py | Nenhum | **MERGED** |
 
 ## Protocolo de Merge (OBRIGATORIO)
 
@@ -90,6 +90,10 @@ Gmail aprovado retroativamente. Proximo merge seguir protocolo acima.
 
 [2026-03-21 INST-2/COORD]
 Templates WhatsApp concluido! 8 templates, API endpoints, UI preview.
+
+[2026-03-21 INST-3] **MERGE CONCLUIDO**
+feature/scoring-icp merged na main (commit 4a95799).
+TODAS instancias devem sincronizar: git fetch origin && git rebase origin/main
 ```
 
 ## Decisoes Arquiteturais
@@ -102,5 +106,5 @@ Templates WhatsApp concluido! 8 templates, API endpoints, UI preview.
 ## Proximos Passos
 
 1. [x] INST-3 Scoring v2.0 aprovado
-2. [ ] INST-3 fazer merge para main
-3. [ ] Todas instancias sincronizarem
+2. [x] INST-3 fazer merge para main
+3. [ ] Todas instancias sincronizarem: `git fetch origin && git rebase origin/main`
