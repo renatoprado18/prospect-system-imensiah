@@ -13,9 +13,9 @@
 
 | ID | Branch | Responsavel Por | Status | Ultima Atividade |
 |----|--------|-----------------|--------|------------------|
-| COORD | main | Coordenacao geral, documentacao, consistencia | ATIVO | 2026-03-21 |
 | INST-1 | feature/linkedin-email | LinkedIn integration + Email accounts | ATIVO | 2026-03-21 |
-| INST-2 | (a definir) | (a definir) | AGUARDANDO | - |
+| INST-2 | feature/whatsapp-improvements | **COORD** + WhatsApp melhorias | ATIVO | 2026-03-21 |
+| INST-3 | feature/scoring-icp | Scoring dinamico + ICP analysis | AGUARDANDO | - |
 
 ## Arquivos Bloqueados (Nao modificar sem coordenar)
 
@@ -47,15 +47,26 @@ BLOQUEADO - Coordenar antes de editar:
 ```
 [2026-03-21 COORD -> INST-1]
 Sistema de coordenacao criado. Por favor:
-1. Leia docs/ARCHITECTURE.md para visao geral
-2. Atualize seu status neste arquivo quando fizer mudancas
-3. Antes de modificar arquivos BLOQUEADOS, adicione mensagem aqui
+1. Faca: git pull origin main
+2. Leia docs/ARCHITECTURE.md para visao geral
+3. Atualize seu status neste arquivo quando fizer mudancas
+4. Antes de modificar arquivos BLOQUEADOS, adicione mensagem aqui
+5. Voce e responsavel por: LinkedIn + Email accounts
+
+[2026-03-21 COORD -> INST-3]
+Bem-vindo! Voce e a INST-3, responsavel por Scoring dinamico + ICP analysis.
+1. Faca: git pull origin main
+2. Leia docs/ARCHITECTURE.md e docs/MODULES.md
+3. Crie branch: git checkout -b feature/scoring-icp
+4. Foco: app/scoring.py, melhorias no sistema de pontuacao e ICP
+5. Arquivos BLOQUEADOS requerem coordenacao (veja acima)
 
 [2026-03-21 COORD -> TODAS]
 Protocolo de trabalho:
 - Commits frequentes e pequenos
 - Sempre puxar main antes de comecar: git fetch origin && git rebase origin/main
 - Ao terminar feature, avise aqui antes de fazer merge
+- INST-2 e o coordenador - avise antes de modificar arquivos bloqueados
 ```
 
 ## Protocolo de Merge
@@ -73,7 +84,9 @@ Protocolo de trabalho:
 
 ## Proximos Passos Globais
 
-1. [ ] Definir escopo da INST-2
-2. [ ] Definir escopo da INST-3 (se houver)
+1. [x] Definir escopo da INST-2 (COORD + WhatsApp)
+2. [x] Definir escopo da INST-3 (Scoring + ICP)
 3. [ ] INST-1 confirmar recebimento da coordenacao
-4. [ ] Primeiro ciclo de sync entre todas instancias
+4. [ ] INST-3 confirmar recebimento da coordenacao
+5. [ ] Primeiro ciclo de sync entre todas instancias
+6. [ ] Cada instancia criar sua branch e comecar trabalho
