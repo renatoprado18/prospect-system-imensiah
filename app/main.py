@@ -1461,15 +1461,7 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
 
                 push_name = chat.get("name") or chat.get("pushName") or ""
 
-                # Fetch messages for this chat
-                messages = await whatsapp.get_messages_for_chat(phone, limit=200)
-
-                if not messages:
-                    continue
-
-                stats["individual_chats"] += 1
-
-                # Find contact by phone number
+                # First check if contact exists before fetching messages (faster)
                 cursor.execute("""
                     SELECT id, nome
                     FROM contacts
@@ -1478,31 +1470,38 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
                 """, (f'%{phone[-8:]}%',))
 
                 contact = cursor.fetchone()
-                contact_id = None
+                if not contact:
+                    # Skip chats without matching contact
+                    continue
 
-                if contact:
-                    contact_id = contact['id']
-                    stats["contacts_matched"] += 1
+                contact_id = contact['id']
+                stats["contacts_matched"] += 1
 
-                # Find or create conversation
-                conversation_id = None
-                if contact_id:
+                # Fetch messages for this chat (reduced limit for speed)
+                messages = await whatsapp.get_messages_for_chat(phone, limit=50)
+
+                if not messages:
+                    continue
+
+                stats["individual_chats"] += 1
+
+                # Find or create conversation (contact_id is always set at this point)
+                cursor.execute("""
+                    SELECT id FROM conversations
+                    WHERE contact_id = %s AND canal = 'whatsapp'
+                    LIMIT 1
+                """, (contact_id,))
+                conv = cursor.fetchone()
+
+                if conv:
+                    conversation_id = conv['id']
+                else:
                     cursor.execute("""
-                        SELECT id FROM conversations
-                        WHERE contact_id = %s AND canal = 'whatsapp'
-                        LIMIT 1
+                        INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
+                        VALUES (%s, 'whatsapp', NOW(), 0)
+                        RETURNING id
                     """, (contact_id,))
-                    conv = cursor.fetchone()
-
-                    if conv:
-                        conversation_id = conv['id']
-                    else:
-                        cursor.execute("""
-                            INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
-                            VALUES (%s, 'whatsapp', NOW(), 0)
-                            RETURNING id
-                        """, (contact_id,))
-                        conversation_id = cursor.fetchone()['id']
+                    conversation_id = cursor.fetchone()['id']
 
                 # Process each message
                 for msg in messages:
