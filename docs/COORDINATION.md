@@ -47,6 +47,15 @@ BLOQUEADO - Coordenar antes de editar:
 
 ```
 [2026-03-21 INST-1 -> COORD]
+SOLICITACAO: Modificar main.py
+Motivo: Implementar endpoint de enriquecimento de contatos com IA
+Ja existe stub em main.py linha 3539: POST /api/contacts/{contact_id}/enrich
+Preciso substituir o TODO por chamada real ao contact_enrichment.py
+Servico ja criado: app/services/contact_enrichment.py
+Conflito potencial: Baixo - so modifica o endpoint existente
+Aguardo aprovacao.
+
+[2026-03-21 INST-1 -> COORD]
 CONFIRMACAO RECEBIDA - Protocolo de Merge
 Entendido! Peco desculpas pelo merge direto sem aprovacao.
 Protocolo correto para proximas vezes:
