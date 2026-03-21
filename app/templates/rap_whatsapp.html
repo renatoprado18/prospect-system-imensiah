@@ -381,6 +381,9 @@
                     <button class="btn btn-outline-primary" onclick="autoSync()" id="autoSyncBtn">
                         <i class="bi bi-play-circle me-2"></i> Auto-Sync (Todos)
                     </button>
+                    <button class="btn btn-outline-secondary" onclick="relinkMessages()" id="relinkBtn">
+                        <i class="bi bi-link-45deg me-2"></i> Re-vincular
+                    </button>
                     <button class="btn btn-outline-danger" onclick="stopAutoSync()" id="stopAutoSyncBtn" style="display: none;">
                         <i class="bi bi-stop-circle me-2"></i> Parar
                     </button>
@@ -764,6 +767,43 @@
         function stopAutoSync() {
             autoSyncAbort = true;
             showToast('Parando auto-sync...');
+        }
+
+        async function relinkMessages() {
+            const relinkBtn = document.getElementById('relinkBtn');
+            const syncStatus = document.getElementById('syncStatus');
+            const syncResult = document.getElementById('syncResult');
+
+            relinkBtn.disabled = true;
+            syncStatus.style.display = 'inline-flex';
+            document.getElementById('syncStatusText').textContent = 'Re-vinculando...';
+            syncResult.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/whatsapp/relink', { method: 'POST' });
+                const data = await response.json();
+
+                syncStatus.style.display = 'none';
+                syncResult.style.display = 'block';
+
+                if (data.status === 'ok') {
+                    document.querySelector('#syncResult .alert').className = 'alert alert-success mb-0';
+                    document.getElementById('syncResultText').textContent =
+                        `Re-vinculado! ${data.messages_linked} mensagens vinculadas de ${data.messages_checked} verificadas. ${data.conversations_created} conversas criadas.`;
+                    // Refresh stats
+                    checkStatus();
+                } else {
+                    document.querySelector('#syncResult .alert').className = 'alert alert-danger mb-0';
+                    document.getElementById('syncResultText').textContent = 'Erro: ' + (data.errors?.join(', ') || 'Erro desconhecido');
+                }
+            } catch (error) {
+                syncStatus.style.display = 'none';
+                syncResult.style.display = 'block';
+                document.querySelector('#syncResult .alert').className = 'alert alert-danger mb-0';
+                document.getElementById('syncResultText').textContent = 'Erro: ' + error.message;
+            } finally {
+                relinkBtn.disabled = false;
+            }
         }
 
         // Check status on load and periodically

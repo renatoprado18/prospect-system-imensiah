@@ -1239,11 +1239,11 @@ async def whatsapp_status():
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Messages today
+        # Messages today (Brazil timezone)
         cursor.execute("""
             SELECT COUNT(*) as count FROM messages
             WHERE metadata->>'is_group' IS NOT NULL
-            AND enviado_em >= CURRENT_DATE
+            AND enviado_em >= (CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date
         """)
         messages_today = cursor.fetchone()['count']
 
@@ -1664,6 +1664,112 @@ async def sync_whatsapp_history(include_groups: bool = False, limit: int = 50):
         "remaining": max(0, total_chats - limit),
         **stats
     }
+
+
+@app.post("/api/whatsapp/relink")
+async def relink_whatsapp_messages():
+    """
+    Re-link WhatsApp messages to contacts based on phone number.
+    Useful when contacts were updated after messages were synced.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    stats = {
+        "messages_checked": 0,
+        "messages_linked": 0,
+        "conversations_created": 0,
+        "errors": []
+    }
+
+    try:
+        # Build phone lookup dict from all contacts
+        cursor.execute("""
+            SELECT id, nome, telefones
+            FROM contacts
+            WHERE telefones IS NOT NULL AND telefones::text != '[]'
+        """)
+        all_contacts = cursor.fetchall()
+
+        phone_to_contact = {}
+        for c in all_contacts:
+            phones = c['telefones'] if isinstance(c['telefones'], list) else []
+            for p in phones:
+                phone_num = p.get('number', '') if isinstance(p, dict) else str(p)
+                digits = ''.join(filter(str.isdigit, phone_num))
+                if len(digits) >= 8:
+                    phone_to_contact[digits[-8:]] = {'id': c['id'], 'nome': c['nome']}
+
+        # Get existing conversations
+        cursor.execute("SELECT id, contact_id FROM conversations WHERE canal = 'whatsapp'")
+        contact_to_conversation = {row['contact_id']: row['id'] for row in cursor.fetchall()}
+
+        # Find all unlinked WhatsApp messages (contact_id is NULL)
+        cursor.execute("""
+            SELECT id, metadata->>'phone' as phone
+            FROM messages
+            WHERE metadata->>'is_group' IS NOT NULL
+            AND contact_id IS NULL
+        """)
+        unlinked_messages = cursor.fetchall()
+
+        stats["messages_checked"] = len(unlinked_messages)
+
+        for msg in unlinked_messages:
+            phone = msg['phone']
+            if not phone:
+                continue
+
+            # Normalize phone
+            digits = ''.join(filter(str.isdigit, phone))
+            phone_key = digits[-8:] if len(digits) >= 8 else digits
+
+            contact = phone_to_contact.get(phone_key)
+            if not contact:
+                continue
+
+            contact_id = contact['id']
+
+            # Find or create conversation
+            if contact_id in contact_to_conversation:
+                conversation_id = contact_to_conversation[contact_id]
+            else:
+                cursor.execute("""
+                    INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
+                    VALUES (%s, 'whatsapp', NOW(), 0)
+                    RETURNING id
+                """, (contact_id,))
+                conversation_id = cursor.fetchone()['id']
+                contact_to_conversation[contact_id] = conversation_id
+                stats["conversations_created"] += 1
+
+            # Update the message
+            cursor.execute("""
+                UPDATE messages
+                SET contact_id = %s, conversation_id = %s
+                WHERE id = %s
+            """, (contact_id, conversation_id, msg['id']))
+
+            stats["messages_linked"] += 1
+
+        # Update conversation stats
+        cursor.execute("""
+            UPDATE conversations c
+            SET total_mensagens = (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id),
+                ultimo_mensagem = (SELECT MAX(enviado_em) FROM messages m WHERE m.conversation_id = c.id)
+            WHERE c.canal = 'whatsapp'
+        """)
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        stats["errors"].append(str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+    return {"status": "ok", **stats}
 
 
 @app.get("/api/whatsapp/chats")
