@@ -223,24 +223,24 @@ Aguardando: Aprovacao do ARCH
 - INST-3: Scoring v2.0 + Contacts Scoring -> MERGED
 
 ### Sessao 2026-03-25 (Em Andamento)
-- 1ARCH: Arquitetura Circulos + Analise ConselhoOS + Schema changes -> CONCLUIDO
-- 2INTEL: Implementacao logica Circulos -> **MERGED** (commits 7d64aba, 5d320ed)
-- 3FLOW: Implementacao UI/API Circulos -> **MERGED** (commit b4a28e9)
+- 1ARCH: Arquitetura + Coordenacao + Workflow -> CONCLUIDO
+- 2INTEL: Circulos + Briefings -> **MERGED**
+- 3FLOW: Circulos UI + Briefings UI -> **MERGED**
 
 **Feature Circulos: 100% COMPLETA**
+**Feature Briefings: 100% COMPLETA**
 
-## Proxima Feature: Briefings Inteligentes
+## Feature Briefings: COMPLETA
 
-### INTEL
-**Instrucoes**: `docs/INTEL_BRIEFINGS_TASK.md`
-**Branch**: `feature/briefings-intel`
-**Arquivo**: `app/services/briefings.py`
+**2INTEL**: `app/services/briefings.py` (537 linhas) -> **MERGED**
+**3FLOW**: `app/templates/rap_briefings.html` + endpoints -> **MERGED**
 
-### FLOW
-**Instrucoes**: `docs/FLOW_BRIEFINGS_TASK.md`
-**Branch**: `feature/briefings-flow`
-**Arquivos**: `app/main.py`, `app/templates/rap_briefings.html`
-**Nota**: Pode usar mocks enquanto INTEL nao termina
+### Funcionalidades Implementadas
+- `GET /api/briefings/pending` - Lista contatos precisando briefing
+- `POST /api/contacts/{id}/briefing` - Gera briefing com AI
+- `GET /rap/briefings` - Pagina de briefings
+- Integracao com Circulos (health score, frequencia)
+- Contexto inclui: fatos, memorias, mensagens, tasks
 
 ## Proximos Passos Globais
 
@@ -250,7 +250,8 @@ Aguardando: Aprovacao do ARCH
 4. [x] Analisar ConselhoOS para integracao futura
 5. [x] INTEL implementar circulos.py
 6. [x] ARCH aprovar e fazer schema changes em database.py
-7. [x] FLOW implementar UI e endpoints
-8. [ ] INTEL implementar briefings.py
-9. [ ] Testar sistema completo
-10. [ ] Deploy e calibragem do algoritmo
+7. [x] FLOW implementar UI e endpoints Circulos
+8. [x] INTEL implementar briefings.py
+9. [x] FLOW implementar UI briefings
+10. [ ] Testar sistema completo
+11. [ ] Deploy em producao
