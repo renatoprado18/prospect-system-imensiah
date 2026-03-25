@@ -130,6 +130,11 @@ Feature Circulos 100% completa:
 Proxima tarefa INTEL: Briefings Inteligentes
   - Ler docs/INTEL_BRIEFINGS_TASK.md
   - Implementar app/services/briefings.py
+
+Proxima tarefa FLOW: Briefings UI
+  - Ler docs/FLOW_BRIEFINGS_TASK.md
+  - Implementar endpoints e rap_briefings.html
+  - Pode usar mocks enquanto INTEL nao termina
 ```
 
 ## Protocolo de Merge (OBRIGATORIO)
@@ -184,9 +189,16 @@ Proxima tarefa INTEL: Briefings Inteligentes
 
 ## Proxima Feature: Briefings Inteligentes
 
+### INTEL
 **Instrucoes**: `docs/INTEL_BRIEFINGS_TASK.md`
-**Responsavel**: INTEL
 **Branch**: `feature/briefings-intel`
+**Arquivo**: `app/services/briefings.py`
+
+### FLOW
+**Instrucoes**: `docs/FLOW_BRIEFINGS_TASK.md`
+**Branch**: `feature/briefings-flow`
+**Arquivos**: `app/main.py`, `app/templates/rap_briefings.html`
+**Nota**: Pode usar mocks enquanto INTEL nao termina
 
 ## Proximos Passos Globais
 
