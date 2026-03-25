@@ -135,6 +135,48 @@ Proxima tarefa 3FLOW: Briefings UI
   - Ler docs/FLOW_BRIEFINGS_TASK.md
   - Implementar endpoints e rap_briefings.html
   - Pode usar mocks enquanto INTEL nao termina
+
+[2026-03-25 INTEL] **PRONTO PARA REVIEW: briefings.py**
+Branch: feature/briefings-intel
+Commit: e3fba41
+Arquivo: app/services/briefings.py (537 linhas)
+
+Funcoes implementadas:
+  - get_contact_data(): Busca dados completos (mensagens, fatos, memorias, tasks)
+  - format_contact_context(): Formata para prompt AI com contexto ImensIAH
+  - generate_briefing(): Gera briefing usando Claude API
+  - get_contacts_needing_briefing(): Lista contatos que precisam atencao
+  - get_briefing_summary(): Resumo rapido sem chamar AI
+
+Features:
+  - Integracao com health score do Circulos
+  - Alertas de aniversario
+  - Deteccao de oportunidades de negocio
+  - Contexto sobre Renato/ImensIAH no prompt
+  - Output estruturado para UI
+
+Aguardando: Aprovacao do ARCH
+
+[2026-03-25 FLOW] **PRONTO PARA REVIEW: Briefings UI/API**
+Branch: feature/briefings-flow
+Arquivos modificados:
+  - app/main.py: Endpoints de Briefings (3 endpoints)
+    GET /api/briefings/pending - Contatos que precisam briefing
+    POST /api/contacts/{id}/briefing - Gerar briefing com AI
+    GET /rap/briefings - Pagina HTML
+
+Arquivos criados:
+  - app/templates/rap_briefings.html (novo) - Interface de briefings
+
+Features implementadas:
+  - Lista contatos precisando briefing
+  - Busca de contato
+  - Geracao de briefing com contexto opcional
+  - Visualizacao formatada do briefing
+  - Botao copiar
+
+Depende de: INTEL briefings.py (disponivel)
+Aguardando: Aprovacao do ARCH
 ```
 
 ## Protocolo de Merge (OBRIGATORIO)

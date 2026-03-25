@@ -44,6 +44,10 @@ from services.circulos import (
     calcular_health_score,
     CIRCULO_CONFIG
 )
+from services.briefings import (
+    generate_briefing,
+    get_contacts_needing_briefing
+)
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
@@ -4862,6 +4866,38 @@ async def recalculate_contact_circulo(contact_id: int, force: bool = False):
 async def rap_circulos_page(request: Request):
     """Pagina de dashboard dos Circulos"""
     return templates.TemplateResponse("rap_circulos.html", {"request": request})
+
+
+# ============== BRIEFINGS ENDPOINTS ==============
+# Sistema de geracao de briefings inteligentes para contatos
+# Implementado por: FLOW (2026-03-25)
+
+@app.get("/api/briefings/pending")
+async def get_pending_briefings(limit: int = 10):
+    """Lista contatos que precisam de briefing"""
+    return get_contacts_needing_briefing(limit=limit)
+
+
+@app.post("/api/contacts/{contact_id}/briefing")
+async def create_contact_briefing(contact_id: int, data: dict = None):
+    """Gera briefing inteligente para um contato usando AI"""
+    contexto = data.get("contexto") if data else None
+    result = await generate_briefing(
+        contact_id=contact_id,
+        contexto_reuniao=contexto,
+        incluir_sugestoes=True
+    )
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+# ============== BRIEFINGS PAGE ROUTE ==============
+
+@app.get("/rap/briefings", response_class=HTMLResponse)
+async def rap_briefings_page(request: Request):
+    """Pagina de briefings"""
+    return templates.TemplateResponse("rap_briefings.html", {"request": request})
 
 
 # Vercel handler
