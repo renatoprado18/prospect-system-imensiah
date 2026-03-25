@@ -18,8 +18,8 @@ Nova nomenclatura:
 | ID | Nome | Responsabilidades | Branch Atual | Status |
 |----|------|-------------------|--------------|--------|
 | 1ARCH | Arquiteto/Coordenador | Coordenacao, arquitetura, revisao | main | ATIVO |
-| 2INTEL | Inteligencia | AI, scoring, algoritmos, classificacao | feature/dashboard-api | **NOVA TAREFA** |
-| 3FLOW | Flow & UX | UI, API endpoints, canais, automacao | feature/intel-ui | **NOVA TAREFA** |
+| 2INTEL | Inteligencia | AI, scoring, algoritmos, classificacao | main | DISPONIVEL |
+| 3FLOW | Flow & UX | UI, API endpoints, canais, automacao | main | DISPONIVEL |
 
 ---
 
@@ -31,8 +31,8 @@ Nova nomenclatura:
 
 | Instancia | Tarefa | Documento | Status |
 |-----------|--------|-----------|--------|
-| 2INTEL | API Dashboard Unificado | `docs/INTEL_DASHBOARD_TASK.md` | PENDENTE |
-| 3FLOW | Reestruturacao UI | `docs/FLOW_REESTRUTURACAO_TASK.md` | PENDENTE |
+| 2INTEL | API Dashboard Unificado | `docs/INTEL_DASHBOARD_TASK.md` | **MERGED** |
+| 3FLOW | Reestruturacao UI | `docs/FLOW_REESTRUTURACAO_TASK.md` | **MERGED** |
 
 ### Mudancas Principais
 
@@ -251,7 +251,16 @@ Integracoes:
   - briefings.py (contatos que precisam briefing)
 
 Output JSON conforme especificacao em INTEL_DASHBOARD_TASK.md
-Aguardando: Aprovacao do 1ARCH
+
+[2026-03-25 1ARCH] **APROVADO E MERGED: Dashboard API + UI**
+Merge: 827126a (INTEL + FLOW)
+Commits adicionais de fix: 9190a61, 38eccaa, 3253e88, 54f58d8
+Features deployadas:
+  - GET /api/v1/dashboard - Dashboard unificado
+  - Branding atualizado para INTEL
+  - UI reestruturada
+
+**Feature Migracao intel.almeida-prado.com: EM FINALIZACAO**
 ```
 
 ## Protocolo de Merge (OBRIGATORIO)
@@ -304,6 +313,8 @@ Aguardando: Aprovacao do 1ARCH
 
 **Feature Circulos: 100% COMPLETA**
 **Feature Briefings: 100% COMPLETA**
+**Feature Dashboard API: 100% COMPLETA**
+**Feature UI INTEL: 100% COMPLETA**
 
 ## Feature Briefings: COMPLETA
 
@@ -330,7 +341,7 @@ Aguardando: Aprovacao do 1ARCH
 9. [x] FLOW implementar UI briefings
 10. [x] Testar sistema completo
 11. [x] Deploy em producao
-12. [ ] **INTEL: Criar API Dashboard unificado**
-13. [ ] **FLOW: Migrar UI para intel.almeida-prado.com**
+12. [x] **INTEL: Criar API Dashboard unificado**
+13. [x] **FLOW: Migrar UI para intel.almeida-prado.com**
 14. [ ] Configurar dominio intel.almeida-prado.com no Vercel
 15. [ ] Recalcular circulos de todos os contatos
