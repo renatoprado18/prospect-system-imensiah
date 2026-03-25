@@ -231,6 +231,27 @@ Tarefa 3FLOW:
   - Migrar rotas /rap/* para /*
   - Atualizar sidebar e branding
   - Pode rodar em PARALELO com INTEL
+
+[2026-03-25 2INTEL] **PRONTO PARA REVIEW: dashboard.py**
+Branch: feature/dashboard-api
+Commit: 723afe2
+Arquivo: app/services/dashboard.py (394 linhas)
+
+Funcoes implementadas:
+  - get_dashboard_stats(): Estatisticas gerais do sistema
+  - get_circulos_resumo(): Resumo por circulo com health medio
+  - get_alertas(): Alertas priorizados (aniversarios, health critico/baixo)
+  - get_contatos_recentes(): Ultimos contatos interagidos
+  - get_full_dashboard(): Dados completos em uma chamada
+  - get_dashboard_health_trend(): Tendencia de health over time
+  - get_quick_stats(): Stats leves para widgets
+
+Integracoes:
+  - circulos.py (health scores, dados de circulos)
+  - briefings.py (contatos que precisam briefing)
+
+Output JSON conforme especificacao em INTEL_DASHBOARD_TASK.md
+Aguardando: Aprovacao do 1ARCH
 ```
 
 ## Protocolo de Merge (OBRIGATORIO)
