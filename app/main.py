@@ -5059,5 +5059,78 @@ async def rap_briefings_page(request: Request):
     return templates.TemplateResponse("rap_briefings.html", {"request": request})
 
 
+# ============== AUTO TAGS ENDPOINTS ==============
+# Sistema de sugestao automatica de tags para contatos
+# Implementado por: INTEL (2026-03-25)
+
+@app.get("/api/contacts/{contact_id}/suggested-tags")
+async def get_suggested_tags(contact_id: int):
+    """
+    Analisa um contato e sugere tags automaticas.
+
+    Analisa:
+    - Empresa (setor: financeiro, tecnologia, etc)
+    - Cargo (nivel: c-level, diretor, gerente)
+    - Email domain (governo, educacao)
+    - Historico de mensagens (keywords)
+    """
+    result = analisar_contato_para_tags(contact_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@app.post("/api/contacts/{contact_id}/apply-tags")
+async def apply_tags_to_contact(contact_id: int, data: dict = None):
+    """
+    Aplica tags sugeridas a um contato.
+
+    Body (opcional): {"tags": ["tag1", "tag2"]}
+    Se nao informado, aplica todas as tags sugeridas.
+    """
+    if data and data.get("tags"):
+        tags = data["tags"]
+    else:
+        # Analisar e pegar tags novas
+        analise = analisar_contato_para_tags(contact_id)
+        if "error" in analise:
+            raise HTTPException(status_code=404, detail=analise["error"])
+        tags = analise.get("tags_novas", [])
+
+    result = aplicar_tags_contato(contact_id, tags)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@app.post("/api/contacts/apply-auto-tags")
+async def apply_auto_tags_batch(
+    batch_size: int = 100,
+    offset: int = 0,
+    auto_apply: bool = False
+):
+    """
+    Analisa e opcionalmente aplica tags em lote.
+
+    Args:
+        batch_size: Contatos por lote (default 100)
+        offset: Offset para paginacao
+        auto_apply: Se True, aplica tags automaticamente
+
+    Retorna progresso para chamadas subsequentes.
+    """
+    return aplicar_tags_em_lote(
+        batch_size=batch_size,
+        offset=offset,
+        auto_apply=auto_apply
+    )
+
+
+@app.get("/api/tags/statistics")
+async def get_tags_stats():
+    """Retorna estatisticas de uso das tags no sistema."""
+    return get_tag_statistics()
+
+
 # Vercel handler
 app_handler = app
