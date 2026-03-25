@@ -6,20 +6,32 @@
 
 ## Status Atual
 
-**Ultima atualizacao**: 2026-03-25 (tarde)
-**Instancias ativas**: 3 (nova estrutura)
-**Novo dominio**: `intel.almeida-prado.com` (em implementacao)
+**Ultima atualizacao**: 2026-03-25 (noite)
+**Instancias ativas**: 3
+**Dominio**: `intel.almeida-prado.com` (ATIVO)
+**Modo**: AUTONOMO - instancias trabalham em fila de tarefas
 
-## Nova Estrutura de Instancias (2026-03-25)
+## Estrutura de Instancias
 
-O sistema esta evoluindo de B2B sales para **Assistente Pessoal Inteligente**.
-Nova nomenclatura:
+| ID | Nome | Responsabilidades | Fila de Tarefas | Status |
+|----|------|-------------------|-----------------|--------|
+| 1ARCH | Arquiteto/Coordenador | Coordenacao, arquitetura, revisao | - | ATIVO |
+| 2INTEL | Inteligencia | AI, scoring, algoritmos, classificacao | `docs/INTEL_TASK_QUEUE.md` | **TRABALHANDO** |
+| 3FLOW | Flow & UX | UI, API endpoints, canais, automacao | `docs/FLOW_TASK_QUEUE.md` | **TRABALHANDO** |
 
-| ID | Nome | Responsabilidades | Branch Atual | Status |
-|----|------|-------------------|--------------|--------|
-| 1ARCH | Arquiteto/Coordenador | Coordenacao, arquitetura, revisao | main | ATIVO |
-| 2INTEL | Inteligencia | AI, scoring, algoritmos, classificacao | main | DISPONIVEL |
-| 3FLOW | Flow & UX | UI, API endpoints, canais, automacao | main | DISPONIVEL |
+## Modo de Trabalho Autonomo
+
+```
+1. Instancia pega proxima tarefa PENDENTE da sua fila
+2. Cria branch: feature/{inst}-{nome-curto}
+3. Implementa e testa
+4. Commit e push para a branch
+5. Atualiza status na fila para PRONTO
+6. CONTINUA para proxima tarefa (NAO espera aprovacao)
+7. ARCH faz review e merge em paralelo
+```
+
+**IMPORTANTE**: Nao bloquear esperando aprovacao. Sinalizar e continuar.
 
 ---
 
