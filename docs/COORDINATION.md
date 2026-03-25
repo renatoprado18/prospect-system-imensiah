@@ -16,9 +16,9 @@ Nova nomenclatura:
 
 | ID | Nome | Responsabilidades | Branch Atual | Status |
 |----|------|-------------------|--------------|--------|
-| ARCH | Arquiteto/Coordenador | Coordenacao, arquitetura, revisao | main | ATIVO |
-| INTEL | Inteligencia | AI, scoring, algoritmos, classificacao | main | **MERGED** |
-| FLOW | Flow & UX | UI, API endpoints, canais, automacao | main | **MERGED** |
+| 1ARCH | Arquiteto/Coordenador | Coordenacao, arquitetura, revisao | main | ATIVO |
+| 2INTEL | Inteligencia | AI, scoring, algoritmos, classificacao | main | **MERGED** |
+| 3FLOW | Flow & UX | UI, API endpoints, canais, automacao | main | **MERGED** |
 
 ## Feature Atual: Sistema de Circulos
 
@@ -123,15 +123,15 @@ Depende de: INTEL circulos.py (MERGED)
 [2026-03-25 ARCH] **APROVADO E MERGED: FLOW Circulos UI/API**
 Merge concluido em main.
 Feature Circulos 100% completa:
-  - INTEL: circulos.py (logica)
-  - ARCH: database.py (schema)
-  - FLOW: main.py + rap_circulos.html (UI/API)
+  - 2INTEL: circulos.py (logica)
+  - 1ARCH: database.py (schema)
+  - 3FLOW: main.py + rap_circulos.html (UI/API)
 
-Proxima tarefa INTEL: Briefings Inteligentes
+Proxima tarefa 2INTEL: Briefings Inteligentes
   - Ler docs/INTEL_BRIEFINGS_TASK.md
   - Implementar app/services/briefings.py
 
-Proxima tarefa FLOW: Briefings UI
+Proxima tarefa 3FLOW: Briefings UI
   - Ler docs/FLOW_BRIEFINGS_TASK.md
   - Implementar endpoints e rap_briefings.html
   - Pode usar mocks enquanto INTEL nao termina
@@ -181,9 +181,9 @@ Proxima tarefa FLOW: Briefings UI
 - INST-3: Scoring v2.0 + Contacts Scoring -> MERGED
 
 ### Sessao 2026-03-25 (Em Andamento)
-- ARCH: Arquitetura Circulos + Analise ConselhoOS + Schema changes -> CONCLUIDO
-- INTEL: Implementacao logica Circulos -> **MERGED** (commits 7d64aba, 5d320ed)
-- FLOW: Implementacao UI/API Circulos -> **MERGED** (commit b4a28e9)
+- 1ARCH: Arquitetura Circulos + Analise ConselhoOS + Schema changes -> CONCLUIDO
+- 2INTEL: Implementacao logica Circulos -> **MERGED** (commits 7d64aba, 5d320ed)
+- 3FLOW: Implementacao UI/API Circulos -> **MERGED** (commit b4a28e9)
 
 **Feature Circulos: 100% COMPLETA**
 
