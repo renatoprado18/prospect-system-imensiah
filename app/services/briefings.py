@@ -11,8 +11,8 @@ import json
 import os
 import httpx
 
-from app.database import get_db
-from app.services.circulos import (
+from database import get_db
+from services.circulos import (
     CIRCULO_CONFIG,
     calcular_health_score,
     calcular_dias_sem_contato

@@ -14,7 +14,7 @@ Data: 2026-03-25
 
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple, Any
-from app.database import get_db
+from database import get_db
 import json
 import logging
 
