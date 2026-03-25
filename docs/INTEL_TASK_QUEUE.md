@@ -148,8 +148,9 @@ def calcular_engajamento(contact_id: int) -> Dict:
 
 ## Tarefa 5: Contexto Enriquecido para Briefings
 
-**Status**: PENDENTE
+**Status**: **PRONTO**
 **Branch**: `feature/intel-briefing-context`
+**Commit**: 698214e
 **Prioridade**: BAIXA
 
 ### Objetivo
@@ -167,8 +168,8 @@ Melhorar briefings com mais contexto automatico.
 
 | Tarefa | Branch | Status | Resumo |
 |--------|--------|--------|--------|
-| 1. Recalcular Circulos | - | PENDENTE | - |
-| 2. Tags Automaticas | - | PENDENTE | - |
-| 3. Duplicados | - | PENDENTE | - |
-| 4. Engajamento | - | PENDENTE | - |
-| 5. Briefing Context | - | PENDENTE | - |
+| 1. Recalcular Circulos | feature/intel-recalc-circulos | **PRONTO** | recalcular_todos_circulos_batch() + POST /api/circulos/recalculate-batch |
+| 2. Tags Automaticas | feature/intel-auto-tags | **PRONTO** | auto_tags.py (16 categorias) + 4 endpoints |
+| 3. Duplicados | feature/intel-duplicados | **PRONTO** | duplicados.py + Levenshtein + 3 endpoints |
+| 4. Engajamento | feature/intel-engajamento | **PRONTO** | engajamento.py + 4 fatores + 4 endpoints |
+| 5. Briefing Context | feature/intel-briefing-context | **PRONTO** | briefing_context.py + tom/topicos/promessas + 5 endpoints |
