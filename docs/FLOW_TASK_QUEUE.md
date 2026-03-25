@@ -182,9 +182,16 @@ Adicionar info de Circulos e Health na pagina do contato.
 
 | Tarefa | Branch | Status | Resumo |
 |--------|--------|--------|--------|
-| 1. Sidebar INTEL | - | PENDENTE | - |
-| 2. Widget Circulos | - | PENDENTE | - |
-| 3. Configuracoes | - | PENDENTE | - |
-| 4. Notif. Aniversario | - | PENDENTE | - |
-| 5. Busca Global | - | PENDENTE | - |
-| 6. Pagina Contato | feature/intel-engajamento (f5f3262) | PRONTO | Circulo badge, Health card, Briefing button |
+| 1. Sidebar INTEL | feature/flow-sidebar-intel | PRECISA REBASE | Branch desatualizada |
+| 2. Widget Circulos | feature/flow-dashboard-circulos | PRECISA REBASE | Branch desatualizada |
+| 3. Configuracoes | b48f774 | **MERGED** | Circulos frequency settings |
+| 4. Notif. Aniversario | 00d12e6 | **MERGED** | Birthday banner + reminders |
+| 5. Busca Global | feature/flow-search | PRECISA REBASE | Branch desatualizada |
+| 6. Pagina Contato | feature/intel-engajamento | **MERGED** | Circulo badge, Health card |
+
+---
+
+## NOTA: Branches Desatualizadas
+
+As branches 1, 2 e 5 precisam de rebase para incorporar mudancas de main.
+Use: `git checkout <branch> && git rebase main`
