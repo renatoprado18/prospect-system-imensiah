@@ -245,14 +245,8 @@ def get_alertas(limit: int = 10) -> List[Dict]:
             })
             seen_ids.add(contact['id'])
 
-        # 4. Aniversarios proximos (7 dias) - MEDIA prioridade
-        for row in cursor.execute("""
-            SELECT id, nome, empresa, circulo, aniversario, foto_url
-            FROM contacts
-            WHERE aniversario IS NOT NULL
-              AND COALESCE(circulo, 5) <= 4
-        """).fetchall() if hasattr(cursor, 'execute') else []:
-            pass  # Ja processado acima com prioridade alta para <= 3 dias
+        # Nota: Aniversarios proximos ja foram processados acima (item 1)
+        # com prioridade alta para <= 3 dias
 
     # Ordenar: alta primeiro, depois media
     prioridade_ordem = {"alta": 0, "media": 1, "baixa": 2}
