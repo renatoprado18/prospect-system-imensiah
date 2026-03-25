@@ -1,9 +1,9 @@
 """
-Sistema de Gestão de Prospects - ImensIAH
+INTEL - Assistente Pessoal Inteligente
 API Backend com FastAPI
 
 Deploy: Vercel (Serverless)
-Domínio: prospects.almeida-prado.com
+Domínio: intel.almeida-prado.com
 """
 import os
 import json
@@ -53,6 +53,11 @@ from services.dashboard import (
     get_alertas,
     get_contatos_recentes,
     get_circulos_resumo
+)
+from services.duplicados import (
+    encontrar_duplicados,
+    merge_contatos,
+    get_duplicate_statistics
 )
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
@@ -5051,6 +5056,67 @@ async def create_contact_briefing(contact_id: int, data: dict = None):
 async def rap_briefings_page(request: Request):
     """Pagina de briefings"""
     return templates.TemplateResponse("rap_briefings.html", {"request": request})
+
+
+# ============== DUPLICADOS ENDPOINTS ==============
+# Sistema de deteccao e merge de contatos duplicados
+# Implementado por: INTEL (2026-03-25)
+
+@app.get("/api/contacts/duplicates")
+async def get_duplicates(
+    threshold: float = 0.5,
+    limit: int = 50,
+    offset: int = 0
+):
+    """
+    Encontra possiveis contatos duplicados.
+
+    Args:
+        threshold: Score minimo (0.0-1.0) para considerar duplicado
+        limit: Numero maximo de pares a retornar
+        offset: Offset para paginacao
+
+    Score considera:
+    - Email igual: +0.5
+    - Telefone igual: +0.4
+    - Nome similar: +0.1 a +0.3
+    """
+    return encontrar_duplicados(
+        threshold=threshold,
+        limit=limit,
+        offset=offset
+    )
+
+
+@app.post("/api/contacts/merge")
+async def merge_duplicate_contacts(data: dict):
+    """
+    Merge dois contatos duplicados.
+
+    Body: {"keep_id": 123, "merge_id": 456}
+
+    O contato merge_id sera excluido apos transferir:
+    - Dados mais completos
+    - Mensagens
+    - Conversas
+    - Tasks
+    """
+    keep_id = data.get("keep_id")
+    merge_id = data.get("merge_id")
+
+    if not keep_id or not merge_id:
+        raise HTTPException(status_code=400, detail="keep_id e merge_id sao obrigatorios")
+
+    result = merge_contatos(keep_id, merge_id)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.get("/api/contacts/duplicates/stats")
+async def get_duplicates_stats():
+    """Retorna estatisticas sobre duplicados no sistema."""
+    return get_duplicate_statistics()
 
 
 # Vercel handler

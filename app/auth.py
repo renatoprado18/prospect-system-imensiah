@@ -1,5 +1,5 @@
 """
-Google OAuth Authentication for Prospect System
+Google OAuth Authentication for INTEL
 Authenticates Renato (admin) and Andressa (operador) via Google
 """
 import os
@@ -31,7 +31,7 @@ def get_config():
         "client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
         "client_secret": os.getenv("GOOGLE_CLIENT_SECRET", ""),
         "secret_key": os.getenv("SECRET_KEY", secrets.token_hex(32)),
-        "base_url": os.getenv("BASE_URL", "https://prospect-system.vercel.app")
+        "base_url": os.getenv("BASE_URL", "https://intel.almeida-prado.com")
     }
 
 # Google OAuth endpoints
