@@ -6,37 +6,95 @@
 
 ## Status Atual
 
-**Ultima atualizacao**: 2026-03-21
-**Instancias ativas**: 3
+**Ultima atualizacao**: 2026-03-25
+**Instancias ativas**: 3 (nova estrutura)
 
-## Instancias e Responsabilidades
+## Nova Estrutura de Instancias (2026-03-25)
 
-| ID | Branch | Responsavel Por | Status | Ultima Atividade |
-|----|--------|-----------------|--------|------------------|
-| INST-1 | feature/linkedin-email | LinkedIn integration + Email accounts | ATIVO | 2026-03-21 |
-| INST-2 | feature/whatsapp-improvements | **COORD** + WhatsApp melhorias | ATIVO | 2026-03-21 |
-| INST-3 | feature/scoring-icp | Scoring dinamico + ICP analysis | ATIVO | 2026-03-21 |
+O sistema esta evoluindo de B2B sales para **Assistente Pessoal Inteligente**.
+Nova nomenclatura:
+
+| ID | Nome | Responsabilidades | Branch Atual | Status |
+|----|------|-------------------|--------------|--------|
+| ARCH | Arquiteto/Coordenador | Coordenacao, arquitetura, revisao | main | ATIVO |
+| INTEL | Inteligencia | AI, scoring, algoritmos, classificacao | main | **MERGED** |
+| FLOW | Flow & UX | UI, API endpoints, canais, automacao | feature/circulos-flow | AGUARDANDO |
+
+## Feature Atual: Sistema de Circulos
+
+**Documentacao**: `docs/CIRCULOS_ARCHITECTURE.md`
+**Instrucoes INTEL**: `docs/INTEL_CIRCULOS_TASK.md`
+**Instrucoes FLOW**: `docs/FLOW_CIRCULOS_TASK.md`
+
+### Descricao
+Sistema de classificacao de 12k+ contatos em niveis de proximidade (1-5).
+Inclui health score para monitorar saude dos relacionamentos.
+
+### Dependencias
+```
+1. INTEL implementa logica (circulos.py)
+2. ARCH aprova e faz schema changes (database.py)
+3. FLOW implementa UI/API
+```
 
 ## Arquivos Bloqueados (Nao modificar sem coordenar)
 
-Estes arquivos sao modificados por multiplas features. **AVISE ANTES de editar**:
-
 ```
-BLOQUEADO - Coordenar antes de editar:
+BLOQUEADO - Coordenar com ARCH antes de editar:
 - app/main.py          (rotas - todas as features adicionam aqui)
 - app/models.py        (schemas - impacta todos os modulos)
 - app/database.py      (tabelas - mudancas de schema)
 - requirements.txt     (dependencias - pode quebrar deploy)
 ```
 
-## Mudancas Pendentes de Merge
+## Mensagens Pendentes
 
-| Branch | Arquivos Modificados | Conflitos Potenciais | Status |
-|--------|---------------------|---------------------|--------|
-| feature/linkedin-email | gmail.py, google_contacts.py, main.py | - | **MERGED** |
-| feature/whatsapp-improvements | whatsapp.py, rap_whatsapp.html, main.py | - | **MERGED** |
-| feature/scoring-icp | app/scoring.py | - | **MERGED** |
-| feature/contact-enrichment | services/enrichment.py, templates, main.py | - | **MERGED** |
+```
+[2026-03-25 ARCH] **NOVA FEATURE: Sistema de Circulos**
+Arquitetura definida em docs/CIRCULOS_ARCHITECTURE.md
+
+[2026-03-25 INTEL] **PRONTO PARA REVIEW: circulos.py**
+Branch: feature/circulos-intel
+Commit: 7d64aba
+Arquivo: app/services/circulos.py (762 linhas)
+
+Funcoes implementadas:
+  - calcular_score_circulo: Classificacao baseada em tags, interacoes, recencia
+  - calcular_health_score: Saude do relacionamento (0-100)
+  - recalcular_circulo_contato: Recalcula um contato
+  - recalcular_todos_circulos: Recalculo em lote
+  - get_contatos_precisando_atencao: Lista contatos com health baixo
+  - get_aniversarios_proximos: Lista aniversarios proximos
+  - get_dashboard_circulos: Dados do dashboard
+  - definir_circulo_manual: Override manual
+  - get_contatos_por_circulo: Lista paginada por circulo
+
+Testes realizados:
+  ✓ Tag familia -> Circulo 1
+  ✓ Tag conselho -> Circulo 2
+  ✓ 30 interacoes + recente -> Circulo 3
+  ✓ Sem dados -> Circulo 5
+  ✓ Health score calculado corretamente
+  ✓ VIP + cliente bonus funcionando
+
+[2026-03-25 ARCH] **APROVADO E MERGED: INTEL circulos.py**
+Schema changes em database.py: commit 5d320ed
+Merge de feature/circulos-intel: concluido
+Colunas adicionadas: circulo, circulo_manual, frequencia_ideal_dias,
+                     ultimo_calculo_circulo, health_score
+Indices: idx_contacts_circulo, idx_contacts_health
+
+FLOW - Sua tarefa:
+  - Ler docs/FLOW_CIRCULOS_TASK.md
+  - Criar branch: feature/circulos-flow
+  - Implementar endpoints e UI
+  - INTEL concluiu - pode usar circulos.py
+
+[2026-03-25 ARCH] **ANALISE: ConselhoOS**
+Analise completa em docs/CONSELHOOS_ANALISE.md
+Integracao planejada para fase futura.
+ConselhoOS repo: /Users/rap/conselhoos
+```
 
 ## Protocolo de Merge (OBRIGATORIO)
 
@@ -44,14 +102,14 @@ BLOQUEADO - Coordenar antes de editar:
 
 ```
 1. INSTANCIA termina feature
-   - Atualiza COORDINATION.md: "PRONTO PARA MERGE"
+   - Atualiza COORDINATION.md: "PRONTO PARA REVIEW"
    - git push origin feature/sua-branch (NAO main!)
-   - AGUARDA aprovacao
+   - AGUARDA aprovacao do ARCH
 
-2. COORDENADOR revisa
+2. ARCH revisa
    - Verifica codigo e conflitos
    - Atualiza COORDINATION.md: "APROVADO" ou "REQUER AJUSTES"
-   - Define ORDEM se multiplas branches prontas
+   - Faz mudancas em arquivos bloqueados se necessario
 
 3. INSTANCIA executa merge (SOMENTE apos aprovacao)
    - git checkout main
@@ -64,82 +122,36 @@ BLOQUEADO - Coordenar antes de editar:
    - git fetch origin && git rebase origin/main
 ```
 
-### Por que este processo?
-- Instancia que desenvolveu conhece o codigo e resolve conflitos melhor
-- Coordenador garante revisao e ordem correta
-- Evita conflitos entre branches simultaneas
-
-## Comunicacao Entre Instancias
-
-### Para informar outra instancia:
-1. Adicione uma entrada em "Mensagens Pendentes" abaixo
-2. Faca commit: `git add docs/COORDINATION.md && git commit -m "coord: mensagem para INST-X"`
-3. A outra instancia deve ler este arquivo antes de comecar
-
-### Mensagens Pendentes
-
-```
-[2026-03-21 INST-2/COORD] **FEATURE: Busca em Conversas WhatsApp**
-Implementado:
-- Endpoint GET /api/whatsapp/search (main.py:1389)
-- UI de busca na pagina WhatsApp
-- Highlights nos resultados com <mark>
-- Click nos resultados abre contato
-Proxima feature: Agendamento de mensagens
-
-[2026-03-21 COORD/INST-2]
-AUTO-DOCUMENTACAO: Modifiquei main.py (webhook WhatsApp + search)
-Mudancas:
-- Linhas ~1136-1170: Novo handler para evento message_status
-- Linhas ~1389-1456: Endpoint de busca em mensagens WhatsApp
-Conflito: Baixo - secoes isoladas
-
-[2026-03-21 INST-1] **FEATURE CONCLUIDA: Contact Enrichment**
-Arquivos criados/modificados:
-- app/services/contact_enrichment.py (novo)
-- app/main.py (endpoint implementado)
-- app/templates/rap_contact_detail.html (UI atualizada)
-Funcionalidades: Analise AI de emails/WhatsApp, resumo, fatos, insights.
-Commits em main: 054e5e0, db017dd (com aprovacao do COORD)
-
-[2026-03-21 INST-2/COORD -> TODAS]
-FEATURE CONCLUIDA: Templates de Mensagem WhatsApp
-- 8 templates pre-definidos (saudacao, followup, lembrete, proposta, etc)
-- Renderizacao com variaveis {nome}, {empresa}, {quando}, etc
-- Endpoints: GET /api/whatsapp/templates, POST /api/whatsapp/send-template
-- UI com abas: Mensagem Livre | Usar Template
-- Preview em tempo real antes de enviar
-
-[2026-03-21 INST-2/COORD] **MERGED - WHATSAPP IMPROVEMENTS** (commit 092bbc3)
-Features merged:
-  - Templates de Mensagem (8 templates com variaveis)
-  - Indicador de Leitura/Entrega (icones de status)
-  - Busca em Conversas (GET /api/whatsapp/search)
-  - Exportar Conversas (GET /api/whatsapp/export/{contact_id})
-
-[2026-03-21 COORD] **SESSAO CONCLUIDA - TODAS FEATURES MERGED**
-Resumo:
-  - INST-1: Gmail + Contact Enrichment v2
-  - INST-2: WhatsApp 4 features
-  - INST-3: Scoring v2.0 + Contacts Scoring
-Pendentes para proxima sessao:
-  - WhatsApp: Agendamento (requer database.py)
-  - WhatsApp: Import de .txt exportados
-  - Testar endpoints scoring em producao
-```
-
-## Decisoes Arquiteturais Tomadas
+## Decisoes Arquiteturais
 
 | Data | Decisao | Contexto | Tomada Por |
 |------|---------|----------|------------|
 | 2026-03-21 | Usar docs/ para coordenacao | Comunicacao entre instancias | COORD |
-| 2026-03-21 | Protocolo merge hibrido | Instancia faz merge apos aprovacao COORD | COORD |
+| 2026-03-21 | Protocolo merge hibrido | Instancia faz merge apos aprovacao | COORD |
+| 2026-03-25 | Renomear instancias ARCH/INTEL/FLOW | Evolucao para assistente pessoal | ARCH |
+| 2026-03-25 | Circulos como primeira feature | Organizar 12k contatos | ARCH |
+| 2026-03-25 | ConselhoOS integracao via API | Manter sistemas separados | ARCH |
+
+## Historico de Sessoes
+
+### Sessao 2026-03-21 (Concluida)
+- INST-1: Gmail + Contact Enrichment v2 -> MERGED
+- INST-2: WhatsApp 4 features -> MERGED
+- INST-3: Scoring v2.0 + Contacts Scoring -> MERGED
+
+### Sessao 2026-03-25 (Em Andamento)
+- ARCH: Arquitetura Circulos + Analise ConselhoOS + Schema changes -> CONCLUIDO
+- INTEL: Implementacao logica Circulos -> **MERGED** (commits 7d64aba, 5d320ed)
+- FLOW: Implementacao UI/API Circulos -> AGUARDANDO
 
 ## Proximos Passos Globais
 
-1. [x] Definir escopo da INST-2 (COORD + WhatsApp)
-2. [x] Definir escopo da INST-3 (Scoring + ICP)
-3. [x] INST-1 confirmar recebimento da coordenacao
-4. [x] INST-3 confirmar recebimento da coordenacao
-5. [x] Cada instancia criar sua branch e comecar trabalho
-6. [x] INST-2 finalizar WhatsApp features e fazer merge
+1. [x] Definir nova estrutura de instancias (ARCH/INTEL/FLOW)
+2. [x] Criar arquitetura do sistema de Circulos
+3. [x] Criar instrucoes para INTEL e FLOW
+4. [x] Analisar ConselhoOS para integracao futura
+5. [x] INTEL implementar circulos.py
+6. [x] ARCH aprovar e fazer schema changes em database.py
+7. [ ] FLOW implementar UI e endpoints
+8. [ ] Testar sistema completo
+9. [ ] Deploy e calibragem do algoritmo
