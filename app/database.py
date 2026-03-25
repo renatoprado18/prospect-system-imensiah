@@ -249,6 +249,27 @@ def init_db():
             ADD COLUMN IF NOT EXISTS score_reasons TEXT DEFAULT '[]'
         ''')
 
+        # Adicionar colunas de Circulos à tabela contacts (se não existirem)
+        cursor.execute('''
+            ALTER TABLE contacts
+            ADD COLUMN IF NOT EXISTS circulo INTEGER DEFAULT 5,
+            ADD COLUMN IF NOT EXISTS circulo_manual BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS frequencia_ideal_dias INTEGER,
+            ADD COLUMN IF NOT EXISTS ultimo_calculo_circulo TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS health_score INTEGER DEFAULT 50
+        ''')
+
+        # Indices para Circulos
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_contacts_circulo
+            ON contacts(circulo)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_contacts_health
+            ON contacts(health_score)
+        ''')
+
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_contacts_emails
             ON contacts USING GIN(emails)
