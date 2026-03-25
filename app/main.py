@@ -32,6 +32,18 @@ from integrations.whatsapp import (
     get_all_templates, get_template, render_template, get_templates_by_category
 )
 from integrations.gmail import GmailIntegration, parse_gmail_date
+from services.circulos import (
+    recalcular_circulo_contato,
+    recalcular_todos_circulos,
+    get_dashboard_circulos,
+    get_contatos_precisando_atencao,
+    get_aniversarios_proximos,
+    get_contatos_por_circulo,
+    definir_circulo_manual,
+    calcular_score_circulo,
+    calcular_health_score,
+    CIRCULO_CONFIG
+)
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
@@ -4731,6 +4743,125 @@ async def api_contacts_scoring_stats(user: dict = Depends(require_admin)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao obter stats de contacts: {str(e)}")
+
+
+# ============== CIRCULOS ENDPOINTS ==============
+# Sistema de classificacao de contatos em niveis de proximidade
+# Implementado por: FLOW (2026-03-25)
+
+@app.get("/api/circulos")
+async def get_circulos():
+    """Retorna configuracao e estatisticas dos circulos"""
+    return get_dashboard_circulos()
+
+
+@app.get("/api/circulos/{circulo}/contacts")
+async def get_contacts_by_circulo(
+    circulo: int,
+    sort_by: str = "health",
+    limit: int = 50,
+    offset: int = 0
+):
+    """Lista contatos de um circulo especifico"""
+    if circulo < 1 or circulo > 5:
+        raise HTTPException(status_code=400, detail="Circulo deve ser entre 1 e 5")
+
+    result = get_contatos_por_circulo(circulo, sort_by=sort_by, limit=limit, offset=offset)
+    return {
+        "circulo": circulo,
+        "config": CIRCULO_CONFIG.get(circulo),
+        "total": result.get("total", 0),
+        "contacts": result.get("contacts", [])
+    }
+
+
+@app.get("/api/circulos/health")
+async def get_circulos_health():
+    """Dashboard de saude - contatos precisando atencao"""
+    return {
+        "precisam_atencao": get_contatos_precisando_atencao(20),
+        "aniversarios": get_aniversarios_proximos(30)
+    }
+
+
+@app.get("/api/contacts/{contact_id}/circulo")
+async def get_contact_circulo(contact_id: int):
+    """Detalhes do circulo de um contato especifico"""
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, tags, total_interacoes, ultimo_contato,
+                   aniversario, linkedin, empresa, contexto,
+                   circulo, circulo_manual, frequencia_ideal_dias, health_score
+            FROM contacts WHERE id = %s
+        """, (contact_id,))
+
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+        contact = dict(contact)
+
+        # Calcular score atual (para mostrar breakdown)
+        circulo_calc, score, reasons = calcular_score_circulo(contact)
+        health = calcular_health_score(contact, contact.get("circulo") or circulo_calc)
+
+        return {
+            "contact_id": contact_id,
+            "nome": contact["nome"],
+            "circulo_atual": contact.get("circulo") or 5,
+            "circulo_calculado": circulo_calc,
+            "circulo_manual": contact.get("circulo_manual", False),
+            "score": score,
+            "health_score": health,
+            "frequencia_ideal_dias": contact.get("frequencia_ideal_dias") or CIRCULO_CONFIG[contact.get("circulo") or 5]["frequencia_dias"],
+            "ultimo_contato": contact.get("ultimo_contato"),
+            "reasons": reasons,
+            "config": CIRCULO_CONFIG.get(contact.get("circulo") or 5)
+        }
+
+
+@app.post("/api/contacts/{contact_id}/circulo")
+async def update_contact_circulo(contact_id: int, data: dict):
+    """Atualiza circulo de um contato manualmente"""
+    circulo = data.get("circulo")
+    frequencia = data.get("frequencia_ideal_dias")
+
+    if circulo and (circulo < 1 or circulo > 5):
+        raise HTTPException(status_code=400, detail="Circulo deve ser entre 1 e 5")
+
+    result = definir_circulo_manual(
+        contact_id=contact_id,
+        circulo=circulo,
+        frequencia_dias=frequencia
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    return result
+
+
+@app.post("/api/circulos/recalculate")
+async def recalculate_circulos(force: bool = False, limit: int = None):
+    """Recalcula circulos de todos os contatos"""
+    result = recalcular_todos_circulos(force=force, limit=limit)
+    return result
+
+
+@app.post("/api/contacts/{contact_id}/circulo/recalculate")
+async def recalculate_contact_circulo(contact_id: int, force: bool = False):
+    """Recalcula circulo de um contato especifico"""
+    result = recalcular_circulo_contato(contact_id, force=force)
+    return result
+
+
+# ============== CIRCULOS PAGE ROUTE ==============
+
+@app.get("/rap/circulos", response_class=HTMLResponse)
+async def rap_circulos_page(request: Request):
+    """Pagina de dashboard dos Circulos"""
+    return templates.TemplateResponse("rap_circulos.html", {"request": request})
 
 
 # Vercel handler

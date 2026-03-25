@@ -94,6 +94,32 @@ FLOW - Sua tarefa:
 Analise completa em docs/CONSELHOOS_ANALISE.md
 Integracao planejada para fase futura.
 ConselhoOS repo: /Users/rap/conselhoos
+
+[2026-03-25 FLOW] **PRONTO PARA REVIEW: Circulos UI/API**
+Branch: feature/circulos-flow
+Arquivos modificados:
+  - app/main.py: Endpoints de Circulos (9 endpoints)
+    GET /api/circulos - Dashboard
+    GET /api/circulos/{n}/contacts - Contatos por circulo
+    GET /api/circulos/health - Saude dos relacionamentos
+    GET /api/contacts/{id}/circulo - Detalhes circulo contato
+    POST /api/contacts/{id}/circulo - Atualizar circulo manual
+    POST /api/circulos/recalculate - Recalcular todos
+    POST /api/contacts/{id}/circulo/recalculate - Recalcular um
+    GET /rap/circulos - Pagina HTML
+
+Arquivos criados:
+  - app/templates/rap_circulos.html (novo) - Dashboard visual
+
+Testes planejados:
+  - Dashboard carrega corretamente
+  - Filtro por circulo funciona
+  - Ordenacao (health, nome, ultimo_contato)
+  - Precisam atencao mostra contatos
+  - Recalcular funciona
+
+Depende de: INTEL circulos.py (MERGED)
+Aguardando: Aprovacao do ARCH
 ```
 
 ## Protocolo de Merge (OBRIGATORIO)
