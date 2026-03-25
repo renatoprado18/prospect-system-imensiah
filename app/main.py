@@ -59,6 +59,13 @@ from services.duplicados import (
     merge_contatos,
     get_duplicate_statistics
 )
+from services.briefing_context import (
+    get_contexto_enriquecido,
+    analisar_tom_conversas,
+    identificar_topicos_recorrentes,
+    sugerir_assuntos_retomar,
+    detectar_promessas_pendentes
+)
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
@@ -5117,6 +5124,49 @@ async def merge_duplicate_contacts(data: dict):
 async def get_duplicates_stats():
     """Retorna estatisticas sobre duplicados no sistema."""
     return get_duplicate_statistics()
+
+
+# ============== BRIEFING CONTEXT ENDPOINTS ==============
+# Sistema de contexto enriquecido para briefings
+# Implementado por: INTEL (2026-03-25)
+
+@app.get("/api/contacts/{contact_id}/briefing-context")
+async def get_contact_briefing_context(contact_id: int):
+    """
+    Retorna contexto enriquecido completo para briefing.
+
+    Inclui:
+    - Tom das conversas (positivo/negativo/neutro)
+    - Topicos recorrentes
+    - Assuntos sugeridos para retomar
+    - Promessas/compromissos pendentes
+    - Alertas importantes
+    """
+    return get_contexto_enriquecido(contact_id)
+
+
+@app.get("/api/contacts/{contact_id}/conversation-tone")
+async def get_conversation_tone(contact_id: int, dias: int = 30):
+    """Analisa o tom das ultimas conversas."""
+    return analisar_tom_conversas(contact_id, dias=dias)
+
+
+@app.get("/api/contacts/{contact_id}/topics")
+async def get_contact_topics(contact_id: int, dias: int = 90):
+    """Identifica topicos recorrentes nas conversas."""
+    return identificar_topicos_recorrentes(contact_id, dias=dias)
+
+
+@app.get("/api/contacts/{contact_id}/suggested-topics")
+async def get_suggested_topics(contact_id: int):
+    """Sugere assuntos para retomar com o contato."""
+    return sugerir_assuntos_retomar(contact_id)
+
+
+@app.get("/api/contacts/{contact_id}/pending-promises")
+async def get_pending_promises(contact_id: int, dias: int = 60):
+    """Detecta promessas/compromissos pendentes."""
+    return detectar_promessas_pendentes(contact_id, dias=dias)
 
 
 # Vercel handler
