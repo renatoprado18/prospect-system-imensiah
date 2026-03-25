@@ -4875,6 +4875,11 @@ async def api_contacts_scoring_stats(user: dict = Depends(require_admin)):
 # API unificada para o Dashboard principal
 # Implementado por: INTEL (2026-03-25)
 
+@app.get("/api/v1/test")
+async def test_endpoint():
+    """Test endpoint"""
+    return {"status": "ok", "message": "API v1 working"}
+
 @app.get("/api/v1/dashboard")
 async def get_dashboard_unified():
     """
