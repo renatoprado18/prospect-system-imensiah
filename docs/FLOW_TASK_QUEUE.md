@@ -162,8 +162,8 @@ Implementar busca que funcione em todas as paginas.
 
 ## Tarefa 6: Melhorar Pagina de Contato
 
-**Status**: PENDENTE
-**Branch**: `feature/flow-contact-detail`
+**Status**: PRONTO
+**Branch**: `feature/intel-engajamento` (commit f5f3262)
 **Prioridade**: BAIXA
 
 ### Objetivo
@@ -187,4 +187,4 @@ Adicionar info de Circulos e Health na pagina do contato.
 | 3. Configuracoes | - | PENDENTE | - |
 | 4. Notif. Aniversario | - | PENDENTE | - |
 | 5. Busca Global | - | PENDENTE | - |
-| 6. Pagina Contato | - | PENDENTE | - |
+| 6. Pagina Contato | feature/intel-engajamento (f5f3262) | PRONTO | Circulo badge, Health card, Briefing button |
