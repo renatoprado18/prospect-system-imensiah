@@ -48,6 +48,12 @@ from services.briefings import (
     generate_briefing,
     get_contacts_needing_briefing
 )
+from services.dashboard import (
+    get_dashboard_stats,
+    get_alertas,
+    get_contatos_recentes,
+    get_circulos_resumo
+)
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
@@ -4863,6 +4869,24 @@ async def api_contacts_scoring_stats(user: dict = Depends(require_admin)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao obter stats de contacts: {str(e)}")
+
+
+# ============== DASHBOARD API v1 ==============
+# API unificada para o Dashboard principal
+# Implementado por: INTEL (2026-03-25)
+
+@app.get("/api/v1/dashboard")
+async def get_dashboard_unified():
+    """
+    Retorna dados unificados para o Dashboard principal.
+    Inclui: stats, alertas, contatos recentes, resumo dos circulos.
+    """
+    return {
+        "stats": get_dashboard_stats(),
+        "alertas": get_alertas(limit=10),
+        "contatos_recentes": get_contatos_recentes(limit=5),
+        "circulos_resumo": get_circulos_resumo()
+    }
 
 
 # ============== CIRCULOS ENDPOINTS ==============
