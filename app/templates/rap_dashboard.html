@@ -512,6 +512,51 @@
             .main-content { margin-left: 0; padding: 16px; }
             .stats-grid { grid-template-columns: 1fr; }
         }
+
+        /* Birthday Banner */
+        .birthday-banner {
+            position: fixed;
+            top: 0;
+            left: var(--sidebar-width);
+            right: 0;
+            background: linear-gradient(135deg, #f472b6 0%, #ec4899 100%);
+            color: white;
+            padding: 12px 24px;
+            z-index: 99;
+            box-shadow: 0 2px 8px rgba(236, 72, 153, 0.3);
+        }
+        .birthday-banner-content {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .birthday-banner i.bi-cake2 { font-size: 1.3rem; }
+        .birthday-banner-text { flex: 1; font-weight: 500; }
+        .birthday-banner-link {
+            color: white;
+            background: rgba(255,255,255,0.2);
+            padding: 6px 16px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        .birthday-banner-link:hover { background: rgba(255,255,255,0.3); color: white; }
+        .birthday-banner-close {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            padding: 4px;
+            opacity: 0.8;
+        }
+        .birthday-banner-close:hover { opacity: 1; }
+        .main-content.with-banner { padding-top: 72px; }
+        @media (max-width: 768px) {
+            .birthday-banner { left: 0; }
+        }
     </style>
 </head>
 <body>
@@ -583,8 +628,20 @@
         </div>
     </aside>
 
+    <!-- Birthday Banner (hidden by default) -->
+    <div class="birthday-banner" id="birthdayBanner" style="display: none;">
+        <div class="birthday-banner-content">
+            <i class="bi bi-cake2"></i>
+            <span class="birthday-banner-text" id="birthdayBannerText"></span>
+            <a href="/circulos" class="birthday-banner-link">Ver aniversarios</a>
+            <button onclick="closeBirthdayBanner()" class="birthday-banner-close">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+    </div>
+
     <!-- Main Content -->
-    <main class="main-content">
+    <main class="main-content" id="mainContent">
         <div class="page-header">
             <div>
                 <h1 class="page-title">Dashboard</h1>
@@ -742,13 +799,94 @@
         // Global search
         document.getElementById('globalSearch').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
-                window.location.href = `/rap/contacts?search=${encodeURIComponent(this.value)}`;
+                window.location.href = `/contatos?search=${encodeURIComponent(this.value)}`;
             }
         });
+
+        // Birthday notification functions
+        function showBirthdayBanner(birthdays) {
+            const banner = document.getElementById('birthdayBanner');
+            const bannerText = document.getElementById('birthdayBannerText');
+            const mainContent = document.getElementById('mainContent');
+
+            if (birthdays.length === 1) {
+                bannerText.textContent = `Hoje e aniversario de ${birthdays[0].nome}! 🎂`;
+            } else {
+                const names = birthdays.slice(0, 2).map(b => b.nome).join(' e ');
+                const extra = birthdays.length > 2 ? ` e mais ${birthdays.length - 2}` : '';
+                bannerText.textContent = `Hoje e aniversario de ${names}${extra}! 🎂`;
+            }
+
+            banner.style.display = 'block';
+            mainContent.classList.add('with-banner');
+        }
+
+        function closeBirthdayBanner() {
+            const banner = document.getElementById('birthdayBanner');
+            const mainContent = document.getElementById('mainContent');
+
+            banner.style.display = 'none';
+            mainContent.classList.remove('with-banner');
+            sessionStorage.setItem('birthdayBannerClosed', 'true');
+        }
+
+        function updateRemindersWithBirthdays(aniversarios) {
+            const container = document.getElementById('reminders');
+            if (!aniversarios || aniversarios.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state" style="padding: 24px;">
+                        <i class="bi bi-bell-slash"></i>
+                        <p>Nenhum lembrete</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            aniversarios.slice(0, 5).forEach(a => {
+                const isToday = a.dias_ate_aniversario === 0;
+                const daysText = isToday ? 'Hoje!' : `em ${a.dias_ate_aniversario} dias`;
+
+                html += `
+                    <a href="/contatos/${a.id}" class="reminder-item birthday" style="text-decoration: none;">
+                        <i class="bi bi-cake2 reminder-icon text-warning"></i>
+                        <div class="reminder-content">
+                            <div class="reminder-title">${a.nome}</div>
+                            <div class="reminder-meta">${daysText}</div>
+                        </div>
+                        ${isToday ? '<span class="badge bg-warning text-dark">Hoje!</span>' : ''}
+                    </a>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        async function loadBirthdays() {
+            try {
+                const response = await fetch('/api/circulos');
+                const data = await response.json();
+
+                if (data.aniversarios && data.aniversarios.length > 0) {
+                    // Update reminders section
+                    updateRemindersWithBirthdays(data.aniversarios);
+
+                    // Show banner for today's birthdays (if not closed)
+                    if (!sessionStorage.getItem('birthdayBannerClosed')) {
+                        const todayBirthdays = data.aniversarios.filter(a => a.dias_ate_aniversario === 0);
+                        if (todayBirthdays.length > 0) {
+                            showBirthdayBanner(todayBirthdays);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading birthdays:', error);
+            }
+        }
 
         // Init
         loadStats();
         loadRecentContacts();
+        loadBirthdays();
     </script>
 </body>
 </html>
