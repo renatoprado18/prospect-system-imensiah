@@ -6,8 +6,9 @@
 
 ## Status Atual
 
-**Ultima atualizacao**: 2026-03-25
+**Ultima atualizacao**: 2026-03-25 (tarde)
 **Instancias ativas**: 3 (nova estrutura)
+**Novo dominio**: `intel.almeida-prado.com` (em implementacao)
 
 ## Nova Estrutura de Instancias (2026-03-25)
 
@@ -17,10 +18,41 @@ Nova nomenclatura:
 | ID | Nome | Responsabilidades | Branch Atual | Status |
 |----|------|-------------------|--------------|--------|
 | 1ARCH | Arquiteto/Coordenador | Coordenacao, arquitetura, revisao | main | ATIVO |
-| 2INTEL | Inteligencia | AI, scoring, algoritmos, classificacao | main | **MERGED** |
-| 3FLOW | Flow & UX | UI, API endpoints, canais, automacao | main | **MERGED** |
+| 2INTEL | Inteligencia | AI, scoring, algoritmos, classificacao | feature/dashboard-api | **NOVA TAREFA** |
+| 3FLOW | Flow & UX | UI, API endpoints, canais, automacao | feature/intel-ui | **NOVA TAREFA** |
 
-## Feature Atual: Sistema de Circulos
+---
+
+## Feature Atual: Migracao para intel.almeida-prado.com
+
+**Objetivo**: Migrar de `prospects.almeida-prado.com/rap` para `intel.almeida-prado.com`
+
+### Tarefas
+
+| Instancia | Tarefa | Documento | Status |
+|-----------|--------|-----------|--------|
+| 2INTEL | API Dashboard Unificado | `docs/INTEL_DASHBOARD_TASK.md` | PENDENTE |
+| 3FLOW | Reestruturacao UI | `docs/FLOW_REESTRUTURACAO_TASK.md` | PENDENTE |
+
+### Mudancas Principais
+
+1. **Rotas**: `/rap/*` → `/*`
+2. **Branding**: "RAP" → "INTEL"
+3. **Sidebar**: Adicionar Circulos e Briefings
+4. **Dashboard**: Novos cards com metricas de Circulos
+5. **API**: Novo endpoint `/api/v1/dashboard`
+
+### Dependencias
+```
+1. INTEL cria dashboard.py (pode rodar em paralelo)
+2. FLOW atualiza UI e rotas (pode rodar em paralelo)
+3. ARCH aprova e faz merge
+4. Configurar dominio no Vercel
+```
+
+---
+
+## Feature Concluida: Sistema de Circulos
 
 **Documentacao**: `docs/CIRCULOS_ARCHITECTURE.md`
 **Instrucoes INTEL**: `docs/INTEL_CIRCULOS_TASK.md`
@@ -177,6 +209,28 @@ Features implementadas:
 
 Depende de: INTEL briefings.py (disponivel)
 Aguardando: Aprovacao do ARCH
+
+[2026-03-25 ARCH] **DEPLOY REALIZADO**
+Circulos e Briefings deployados em producao.
+URL: https://prospect-system.vercel.app
+Testes OK: /api/circulos, /api/briefings/pending, /rap/circulos, /rap/briefings
+
+[2026-03-25 ARCH] **NOVA FEATURE: Migracao para intel.almeida-prado.com**
+Novo dominio definido: intel.almeida-prado.com
+Reestruturacao de URLs e UI necessaria.
+
+Tarefa 2INTEL:
+  - Ler docs/INTEL_DASHBOARD_TASK.md
+  - Criar branch: feature/dashboard-api
+  - Implementar app/services/dashboard.py
+  - API unificada para Dashboard
+
+Tarefa 3FLOW:
+  - Ler docs/FLOW_REESTRUTURACAO_TASK.md
+  - Criar branch: feature/intel-ui
+  - Migrar rotas /rap/* para /*
+  - Atualizar sidebar e branding
+  - Pode rodar em PARALELO com INTEL
 ```
 
 ## Protocolo de Merge (OBRIGATORIO)
@@ -253,5 +307,9 @@ Aguardando: Aprovacao do ARCH
 7. [x] FLOW implementar UI e endpoints Circulos
 8. [x] INTEL implementar briefings.py
 9. [x] FLOW implementar UI briefings
-10. [ ] Testar sistema completo
-11. [ ] Deploy em producao
+10. [x] Testar sistema completo
+11. [x] Deploy em producao
+12. [ ] **INTEL: Criar API Dashboard unificado**
+13. [ ] **FLOW: Migrar UI para intel.almeida-prado.com**
+14. [ ] Configurar dominio intel.almeida-prado.com no Vercel
+15. [ ] Recalcular circulos de todos os contatos
