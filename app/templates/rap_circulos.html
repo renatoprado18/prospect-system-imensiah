@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Circulos | RAP</title>
+    <title>Circulos | INTEL</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
@@ -42,7 +42,7 @@
     <header class="bg-white shadow-sm border-b">
         <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
             <div class="flex items-center gap-3">
-                <a href="/rap" class="text-gray-500 hover:text-gray-700">
+                <a href="/" class="text-gray-500 hover:text-gray-700">
                     <i data-lucide="arrow-left" class="w-5 h-5"></i>
                 </a>
                 <h1 class="text-xl font-bold text-gray-800">Meus Circulos</h1>
@@ -176,7 +176,7 @@
             }
 
             container.innerHTML = contacts.map(c => `
-                <a href="/rap/contatos/${c.id}" class="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg">
+                <a href="/contatos/${c.id}" class="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg">
                     <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-medium">
                         ${c.nome.charAt(0)}
                     </div>
@@ -203,7 +203,7 @@
             }
 
             container.innerHTML = aniversarios.map(a => `
-                <a href="/rap/contatos/${a.id}" class="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg">
+                <a href="/contatos/${a.id}" class="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg">
                     <div class="w-10 h-10 rounded-full bg-pink-100 flex items-center justify-center">
                         <i data-lucide="cake" class="w-5 h-5 text-pink-500"></i>
                     </div>
@@ -287,7 +287,7 @@
 
             contacts.forEach(c => {
                 container.innerHTML += `
-                    <a href="/rap/contatos/${c.id}" class="flex items-center gap-4 p-3 hover:bg-gray-50 rounded-lg border">
+                    <a href="/contatos/${c.id}" class="flex items-center gap-4 p-3 hover:bg-gray-50 rounded-lg border">
                         <div class="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-medium text-lg">
                             ${c.foto_url ? `<img src="${c.foto_url}" class="w-12 h-12 rounded-full object-cover">` : c.nome.charAt(0)}
                         </div>
