@@ -18,7 +18,7 @@ Nova nomenclatura:
 |----|------|-------------------|--------------|--------|
 | ARCH | Arquiteto/Coordenador | Coordenacao, arquitetura, revisao | main | ATIVO |
 | INTEL | Inteligencia | AI, scoring, algoritmos, classificacao | main | **MERGED** |
-| FLOW | Flow & UX | UI, API endpoints, canais, automacao | feature/circulos-flow | AGUARDANDO |
+| FLOW | Flow & UX | UI, API endpoints, canais, automacao | main | **MERGED** |
 
 ## Feature Atual: Sistema de Circulos
 
@@ -119,7 +119,17 @@ Testes planejados:
   - Recalcular funciona
 
 Depende de: INTEL circulos.py (MERGED)
-Aguardando: Aprovacao do ARCH
+
+[2026-03-25 ARCH] **APROVADO E MERGED: FLOW Circulos UI/API**
+Merge concluido em main.
+Feature Circulos 100% completa:
+  - INTEL: circulos.py (logica)
+  - ARCH: database.py (schema)
+  - FLOW: main.py + rap_circulos.html (UI/API)
+
+Proxima tarefa INTEL: Briefings Inteligentes
+  - Ler docs/INTEL_BRIEFINGS_TASK.md
+  - Implementar app/services/briefings.py
 ```
 
 ## Protocolo de Merge (OBRIGATORIO)
@@ -168,7 +178,15 @@ Aguardando: Aprovacao do ARCH
 ### Sessao 2026-03-25 (Em Andamento)
 - ARCH: Arquitetura Circulos + Analise ConselhoOS + Schema changes -> CONCLUIDO
 - INTEL: Implementacao logica Circulos -> **MERGED** (commits 7d64aba, 5d320ed)
-- FLOW: Implementacao UI/API Circulos -> AGUARDANDO
+- FLOW: Implementacao UI/API Circulos -> **MERGED** (commit b4a28e9)
+
+**Feature Circulos: 100% COMPLETA**
+
+## Proxima Feature: Briefings Inteligentes
+
+**Instrucoes**: `docs/INTEL_BRIEFINGS_TASK.md`
+**Responsavel**: INTEL
+**Branch**: `feature/briefings-intel`
 
 ## Proximos Passos Globais
 
@@ -178,6 +196,7 @@ Aguardando: Aprovacao do ARCH
 4. [x] Analisar ConselhoOS para integracao futura
 5. [x] INTEL implementar circulos.py
 6. [x] ARCH aprovar e fazer schema changes em database.py
-7. [ ] FLOW implementar UI e endpoints
-8. [ ] Testar sistema completo
-9. [ ] Deploy e calibragem do algoritmo
+7. [x] FLOW implementar UI e endpoints
+8. [ ] INTEL implementar briefings.py
+9. [ ] Testar sistema completo
+10. [ ] Deploy e calibragem do algoritmo
