@@ -311,11 +311,127 @@ async def prospect_detail_page(request: Request, prospect_id: int):
         "prospect_id": prospect_id
     })
 
-# ============== RAP Pages ==============
+
+# ============== INTEL Pages (nova estrutura) ==============
+# Rotas sem /rap para o novo dominio intel.almeida-prado.com
+
+@app.get("/", response_class=HTMLResponse)
+async def intel_home(request: Request):
+    """INTEL Dashboard - Assistente Pessoal Inteligente"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_dashboard.html", {
+        "request": request,
+        "user": user
+    })
+
+
+@app.get("/circulos", response_class=HTMLResponse)
+async def intel_circulos(request: Request):
+    """INTEL Circulos - Classificacao de contatos"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_circulos.html", {
+        "request": request,
+        "user": user
+    })
+
+
+@app.get("/briefings", response_class=HTMLResponse)
+async def intel_briefings(request: Request):
+    """INTEL Briefings - Preparacao para reunioes"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_briefings.html", {
+        "request": request,
+        "user": user
+    })
+
+
+@app.get("/contatos", response_class=HTMLResponse)
+async def intel_contatos(request: Request):
+    """INTEL Contatos - Lista de contatos"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_contacts.html", {
+        "request": request,
+        "user": user
+    })
+
+
+@app.get("/contatos/limpeza", response_class=HTMLResponse)
+async def intel_contatos_limpeza(request: Request):
+    """INTEL Contatos - Limpeza e deduplicacao"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_contacts_cleanup.html", {
+        "request": request,
+        "user": user
+    })
+
+
+@app.get("/contatos/linkedin", response_class=HTMLResponse)
+async def intel_contatos_linkedin(request: Request):
+    """INTEL Contatos - Import LinkedIn"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_linkedin_import.html", {
+        "request": request,
+        "user": user
+    })
+
+
+# NOTE: Parameterized route MUST come AFTER specific routes
+@app.get("/contatos/{contact_id}", response_class=HTMLResponse)
+async def intel_contato_detail(request: Request, contact_id: int):
+    """INTEL Contato - Detalhe do contato"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_contact_detail.html", {
+        "request": request,
+        "user": user,
+        "contact_id": contact_id
+    })
+
+
+@app.get("/inbox", response_class=HTMLResponse)
+async def intel_inbox(request: Request):
+    """INTEL Inbox - WhatsApp e mensagens"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_whatsapp.html", {
+        "request": request,
+        "user": user
+    })
+
+
+@app.get("/configuracoes", response_class=HTMLResponse)
+async def intel_settings(request: Request):
+    """INTEL Configuracoes - Contas Google"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    if user.get("role") != "admin":
+        return RedirectResponse(url="/", status_code=302)
+    return templates.TemplateResponse("rap_settings.html", {
+        "request": request,
+        "user": user
+    })
+
+
+# ============== RAP Pages (retrocompatibilidade) ==============
 
 @app.get("/rap", response_class=HTMLResponse)
 async def rap_dashboard(request: Request):
-    """RAP Dashboard - Assistente Pessoal"""
+    """RAP Dashboard - Assistente Pessoal (retrocompatibilidade)"""
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
