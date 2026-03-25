@@ -9,15 +9,15 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import json
 
-from app.database import get_db
-from app.services.circulos import (
+from database import get_db
+from services.circulos import (
     CIRCULO_CONFIG,
     get_dashboard_circulos,
     get_contatos_precisando_atencao,
     get_aniversarios_proximos,
     calcular_dias_sem_contato
 )
-from app.services.briefings import get_contacts_needing_briefing
+from services.briefings import get_contacts_needing_briefing
 
 
 def get_dashboard_stats() -> Dict:
