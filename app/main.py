@@ -243,7 +243,7 @@ async def login_page(request: Request, error: Optional[str] = None, email: Optio
     user = get_current_user(request)
     if user:
         # Already logged in, redirect
-        return RedirectResponse(url="/admin" if user["role"] == "admin" else "/", status_code=302)
+        return RedirectResponse(url="/", status_code=302)  # INTEL dashboard
     return templates.TemplateResponse("login.html", {
         "request": request,
         "error": error,

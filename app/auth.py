@@ -197,8 +197,8 @@ async def google_callback(request: Request):
 
     session_token = create_session_token(user_data)
 
-    # Redirect based on role
-    redirect_url = "/admin" if user_data["role"] == "admin" else "/"
+    # Redirect to INTEL dashboard
+    redirect_url = "/"
 
     response = RedirectResponse(url=redirect_url, status_code=302)
     response.set_cookie(
