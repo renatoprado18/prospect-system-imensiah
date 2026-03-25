@@ -31,7 +31,7 @@ def get_oauth_config():
     return {
         "client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
         "client_secret": os.getenv("GOOGLE_CLIENT_SECRET", ""),
-        "base_url": os.getenv("BASE_URL", "https://prospects.almeida-prado.com")
+        "base_url": os.getenv("BASE_URL", "https://intel.almeida-prado.com")
     }
 
 

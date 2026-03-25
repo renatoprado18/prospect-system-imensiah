@@ -1,9 +1,9 @@
 """
-Sistema de Gestão de Prospects - ImensIAH
+INTEL - Assistente Pessoal Inteligente
 API Backend com FastAPI
 
 Deploy: Vercel (Serverless)
-Domínio: prospects.almeida-prado.com
+Domínio: intel.almeida-prado.com
 """
 import os
 import json
@@ -47,6 +47,12 @@ from services.circulos import (
 from services.briefings import (
     generate_briefing,
     get_contacts_needing_briefing
+)
+from services.auto_tags import (
+    analisar_contato_para_tags,
+    aplicar_tags_contato,
+    aplicar_tags_em_lote,
+    get_tag_statistics
 )
 from services.dashboard import (
     get_dashboard_stats,

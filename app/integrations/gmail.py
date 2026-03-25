@@ -38,7 +38,7 @@ class GmailIntegration:
     def __init__(self):
         self.client_id = os.getenv("GOOGLE_CLIENT_ID", "")
         self.client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
-        self.base_url = os.getenv("BASE_URL", "https://prospects.almeida-prado.com")
+        self.base_url = os.getenv("BASE_URL", "https://intel.almeida-prado.com")
 
     def get_auth_url(self, account_type: str = "professional") -> str:
         """
