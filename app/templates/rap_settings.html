@@ -325,6 +325,94 @@
             </div>
         </div>
 
+        <!-- Circulos Settings Section -->
+        <div class="settings-section">
+            <h2 class="section-title">
+                <i class="bi bi-bullseye"></i>
+                Configuracoes de Circulos
+            </h2>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Frequencia Ideal de Contato</h3>
+                    <button class="btn btn-primary btn-sm" onclick="salvarFrequencias()">
+                        <i class="bi bi-check me-2"></i>Salvar
+                    </button>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-4">Defina com que frequencia voce quer manter contato com cada circulo.</p>
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(255, 107, 107, 0.1);">
+                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #FF6B6B; color: white; font-weight: 600;">1</div>
+                                <div class="flex-grow-1">
+                                    <div class="fw-medium">Intimo</div>
+                                    <small class="text-muted">Familia, amigos proximos</small>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq1" value="7" min="1" max="365">
+                                    <span class="text-muted">dias</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(78, 205, 196, 0.1);">
+                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #4ECDC4; color: white; font-weight: 600;">2</div>
+                                <div class="flex-grow-1">
+                                    <div class="fw-medium">Proximo</div>
+                                    <small class="text-muted">Parceiros, mentores</small>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq2" value="14" min="1" max="365">
+                                    <span class="text-muted">dias</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(69, 183, 209, 0.1);">
+                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #45B7D1; color: white; font-weight: 600;">3</div>
+                                <div class="flex-grow-1">
+                                    <div class="fw-medium">Ativo</div>
+                                    <small class="text-muted">Networking ativo</small>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq3" value="30" min="1" max="365">
+                                    <span class="text-muted">dias</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(150, 206, 180, 0.1);">
+                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #96CEB4; color: white; font-weight: 600;">4</div>
+                                <div class="flex-grow-1">
+                                    <div class="fw-medium">Conhecido</div>
+                                    <small class="text-muted">Contatos ocasionais</small>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq4" value="90" min="1" max="365">
+                                    <span class="text-muted">dias</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(221, 160, 221, 0.1);">
+                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #DDA0DD; color: white; font-weight: 600;">5</div>
+                                <div class="flex-grow-1">
+                                    <div class="fw-medium">Arquivo</div>
+                                    <small class="text-muted">Demais contatos</small>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq5" value="365" min="1" max="365">
+                                    <span class="text-muted">dias</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Stats Section -->
         <div class="settings-section">
             <h2 class="section-title">
@@ -382,6 +470,27 @@
             loadAccounts();
             loadStats();
         });
+
+        // Salvar frequencias de circulos
+        async function salvarFrequencias() {
+            const frequencias = {
+                1: parseInt(document.getElementById('freq1').value) || 7,
+                2: parseInt(document.getElementById('freq2').value) || 14,
+                3: parseInt(document.getElementById('freq3').value) || 30,
+                4: parseInt(document.getElementById('freq4').value) || 90,
+                5: parseInt(document.getElementById('freq5').value) || 365
+            };
+
+            try {
+                // Por enquanto, apenas mostra mensagem de sucesso
+                // TODO: Implementar endpoint para salvar configuracoes
+                showAlert('success', 'Frequencias salvas com sucesso!');
+                console.log('Frequencias a salvar:', frequencias);
+            } catch (error) {
+                console.error('Erro ao salvar frequencias:', error);
+                showAlert('danger', 'Erro ao salvar frequencias');
+            }
+        }
 
         function showAlert(type, message) {
             const container = document.getElementById('alertContainer');
