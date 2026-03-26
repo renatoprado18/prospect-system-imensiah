@@ -5259,5 +5259,381 @@ async def get_tags_stats():
     return get_tag_statistics()
 
 
+# ============== Gmail Sync Service Endpoints ==============
+
+from services.gmail_sync import get_gmail_sync_service
+
+
+@app.post("/api/gmail/sync-all")
+async def gmail_sync_all_contacts(
+    request: Request,
+    months_back: int = 12,
+    background: bool = True
+):
+    """
+    Inicia sincronizacao de emails de todos os contatos.
+
+    Args:
+        months_back: Meses para buscar (default 12)
+        background: Se True, executa em background
+
+    Returns:
+        Status do sync ou confirmacao de inicio
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin pode sincronizar")
+
+    service = get_gmail_sync_service()
+
+    if background:
+        import asyncio
+        asyncio.create_task(service.sync_all_contacts(months_back=months_back))
+        return {"status": "started", "message": "Sync iniciado em background"}
+    else:
+        result = await service.sync_all_contacts(months_back=months_back)
+        return result
+
+
+@app.get("/api/gmail/sync-status")
+async def gmail_sync_status():
+    """
+    Retorna status atual da sincronizacao Gmail.
+    """
+    service = get_gmail_sync_service()
+    return service.get_sync_status()
+
+
+@app.post("/api/gmail/sync-contact/{contact_id}")
+async def gmail_sync_single_contact(
+    request: Request,
+    contact_id: int,
+    months_back: int = 12
+):
+    """
+    Sincroniza emails de um contato especifico.
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin pode sincronizar")
+
+    # Get contact email
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT emails FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato não encontrado")
+
+        # Get first Gmail account
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+        if not account:
+            raise HTTPException(status_code=400, detail="Nenhuma conta Gmail conectada")
+
+    # Parse email
+    emails_data = contact["emails"]
+    if isinstance(emails_data, str):
+        import json
+        emails_data = json.loads(emails_data)
+
+    if not emails_data:
+        raise HTTPException(status_code=400, detail="Contato não tem email")
+
+    email = emails_data[0].get("email", "") if isinstance(emails_data[0], dict) else str(emails_data[0])
+
+    service = get_gmail_sync_service()
+    access_token = await service.get_valid_token(dict(account))
+
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Token Gmail inválido")
+
+    result = await service.sync_contact_emails(
+        contact_id=contact_id,
+        email=email,
+        access_token=access_token,
+        months_back=months_back
+    )
+
+    return result
+
+
+@app.post("/api/gmail/recalculate-circles")
+async def gmail_recalculate_after_sync(request: Request):
+    """
+    Recalcula circulos de todos os contatos apos sync Gmail.
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin pode recalcular")
+
+    service = get_gmail_sync_service()
+    result = await service.recalculate_circles_after_sync()
+    return result
+
+
+# ============== WhatsApp Sync Service Endpoints ==============
+
+from services.whatsapp_sync import get_whatsapp_sync_service
+
+
+@app.post("/api/whatsapp/webhook")
+async def whatsapp_webhook(request: Request):
+    """
+    Webhook do Evolution API para mensagens WhatsApp em tempo real.
+    Processa mensagens recebidas e atualiza interacoes dos contatos.
+    """
+    try:
+        payload = await request.json()
+        service = get_whatsapp_sync_service()
+        result = await service.process_webhook(payload)
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.error(f"Erro no webhook WhatsApp: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/whatsapp/sync-all")
+async def whatsapp_sync_all_chats(
+    request: Request,
+    include_groups: bool = False,
+    background: bool = True
+):
+    """
+    Sincroniza todos os chats do WhatsApp com contatos.
+
+    Args:
+        include_groups: Se True, inclui grupos
+        background: Se True, executa em background
+
+    Returns:
+        Status do sync
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin pode sincronizar")
+
+    service = get_whatsapp_sync_service()
+
+    if background:
+        import asyncio
+        asyncio.create_task(service.sync_all_chats(include_groups=include_groups))
+        return {"status": "started", "message": "Sync iniciado em background"}
+    else:
+        result = await service.sync_all_chats(include_groups=include_groups)
+        return result
+
+
+@app.get("/api/whatsapp/sync-status")
+async def whatsapp_sync_status():
+    """
+    Retorna status atual da sincronizacao WhatsApp.
+    """
+    service = get_whatsapp_sync_service()
+    return service.get_sync_status()
+
+
+@app.post("/api/whatsapp/sync-chat/{phone}")
+async def whatsapp_sync_single_chat(request: Request, phone: str):
+    """
+    Sincroniza chat de um numero especifico.
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Apenas admin pode sincronizar")
+
+    service = get_whatsapp_sync_service()
+    result = await service.sync_single_chat(phone)
+    return result
+
+
+# ============== Google Calendar Endpoints ==============
+
+from integrations.google_calendar import get_calendar_integration
+
+
+@app.get("/api/calendar/today")
+async def calendar_today(request: Request):
+    """
+    Retorna eventos de hoje.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    # Buscar token da primeira conta Google conectada
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
+        return {"events": [], "error": "Nenhuma conta Google conectada"}
+
+    # Refresh token
+    from integrations.gmail import GmailIntegration
+    gmail = GmailIntegration()
+    tokens = await gmail.refresh_access_token(account["refresh_token"])
+
+    if "error" in tokens:
+        return {"events": [], "error": "Token invalido"}
+
+    access_token = tokens.get("access_token")
+    calendar = get_calendar_integration()
+    events = await calendar.get_today_events(access_token)
+
+    return {"events": events}
+
+
+@app.get("/api/calendar/events")
+async def calendar_events(request: Request, days: int = 7):
+    """
+    Retorna proximos eventos.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
+        return {"events": [], "error": "Nenhuma conta Google conectada"}
+
+    from integrations.gmail import GmailIntegration
+    gmail = GmailIntegration()
+    tokens = await gmail.refresh_access_token(account["refresh_token"])
+
+    if "error" in tokens:
+        return {"events": [], "error": "Token invalido"}
+
+    access_token = tokens.get("access_token")
+    calendar = get_calendar_integration()
+    events = await calendar.get_upcoming_events(access_token, days=days)
+
+    return {"events": events, "days": days}
+
+
+# ============== Google Tasks Endpoints ==============
+
+from integrations.google_tasks import get_tasks_integration
+
+
+@app.get("/api/tasks")
+async def list_tasks(request: Request, show_completed: bool = False):
+    """
+    Lista tarefas do Google Tasks.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
+        return {"tasks": [], "error": "Nenhuma conta Google conectada"}
+
+    from integrations.gmail import GmailIntegration
+    gmail = GmailIntegration()
+    tokens = await gmail.refresh_access_token(account["refresh_token"])
+
+    if "error" in tokens:
+        return {"tasks": [], "error": "Token invalido"}
+
+    access_token = tokens.get("access_token")
+    tasks_api = get_tasks_integration()
+    tasks = await tasks_api.list_tasks(access_token, show_completed=show_completed)
+
+    return {"tasks": tasks}
+
+
+@app.post("/api/tasks")
+async def create_task(request: Request):
+    """
+    Cria nova tarefa no Google Tasks.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = await request.json()
+    title = data.get("title")
+    notes = data.get("notes")
+    due = data.get("due")
+
+    if not title:
+        raise HTTPException(status_code=400, detail="Titulo obrigatorio")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
+        raise HTTPException(status_code=400, detail="Nenhuma conta Google conectada")
+
+    from integrations.gmail import GmailIntegration
+    gmail = GmailIntegration()
+    tokens = await gmail.refresh_access_token(account["refresh_token"])
+
+    if "error" in tokens:
+        raise HTTPException(status_code=401, detail="Token invalido")
+
+    access_token = tokens.get("access_token")
+    tasks_api = get_tasks_integration()
+
+    due_datetime = None
+    if due:
+        try:
+            due_datetime = datetime.fromisoformat(due.replace("Z", "+00:00"))
+        except:
+            pass
+
+    result = await tasks_api.create_task(
+        access_token=access_token,
+        title=title,
+        notes=notes,
+        due=due_datetime
+    )
+
+    return result
+
+
+@app.put("/api/tasks/{task_id}/complete")
+async def complete_task(request: Request, task_id: str):
+    """
+    Marca tarefa como concluida.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
+        raise HTTPException(status_code=400, detail="Nenhuma conta Google conectada")
+
+    from integrations.gmail import GmailIntegration
+    gmail = GmailIntegration()
+    tokens = await gmail.refresh_access_token(account["refresh_token"])
+
+    if "error" in tokens:
+        raise HTTPException(status_code=401, detail="Token invalido")
+
+    access_token = tokens.get("access_token")
+    tasks_api = get_tasks_integration()
+    result = await tasks_api.complete_task(access_token, task_id)
+
+    return result
+
+
 # Vercel handler
 app_handler = app

@@ -1,341 +1,169 @@
 """
-Integração com Google Calendar API
+Google Calendar Integration for INTEL
+Busca eventos do calendario para exibir no dashboard
 
-Permite agendar reuniões diretamente do sistema de prospects
+Autor: INTEL
+Data: 2026-03-26
 """
 import os
+import httpx
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List
-import json
+from typing import Dict, List, Any, Optional
+import logging
 
-# Google Calendar API imports
-try:
-    from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from google.auth.transport.requests import Request
-    from googleapiclient.discovery import build
-    GOOGLE_API_AVAILABLE = True
-except ImportError:
-    GOOGLE_API_AVAILABLE = False
+logger = logging.getLogger(__name__)
 
-SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 class GoogleCalendarIntegration:
-    """Gerencia integração com Google Calendar"""
+    """
+    Integration with Google Calendar API
+    Uses same OAuth credentials as Gmail
+    """
 
-    def __init__(self, credentials_path: str = "credentials/google_credentials.json",
-                 token_path: str = "credentials/google_token.json"):
-        self.credentials_path = credentials_path
-        self.token_path = token_path
-        self.service = None
-        self.calendar_id = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+    CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
 
-    def authenticate(self) -> bool:
+    # Scope necessario (adicionar ao OAuth existente)
+    SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+
+    def __init__(self):
+        self.client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+        self.client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+
+    async def list_events(
+        self,
+        access_token: str,
+        calendar_id: str = "primary",
+        time_min: datetime = None,
+        time_max: datetime = None,
+        max_results: int = 10,
+        single_events: bool = True,
+        order_by: str = "startTime"
+    ) -> Dict[str, Any]:
         """
-        Autentica com Google Calendar API
-
-        Returns:
-            True se autenticado com sucesso
+        Lista eventos do calendario.
         """
-        if not GOOGLE_API_AVAILABLE:
-            print("Google API libraries not installed. Run: pip install google-api-python-client google-auth-oauthlib")
-            return False
+        params = {
+            "maxResults": max_results,
+            "singleEvents": str(single_events).lower(),
+            "orderBy": order_by
+        }
 
-        creds = None
+        if time_min:
+            params["timeMin"] = time_min.isoformat() + "Z"
+        if time_max:
+            params["timeMax"] = time_max.isoformat() + "Z"
 
-        # Carregar token existente
-        if os.path.exists(self.token_path):
-            creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
-
-        # Se não há credenciais válidas, autenticar
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                if not os.path.exists(self.credentials_path):
-                    print(f"Credentials file not found: {self.credentials_path}")
-                    return False
-
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    self.credentials_path, SCOPES
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params=params,
+                    timeout=30.0
                 )
-                creds = flow.run_local_server(port=0)
 
-            # Salvar token
-            os.makedirs(os.path.dirname(self.token_path), exist_ok=True)
-            with open(self.token_path, 'w') as token:
-                token.write(creds.to_json())
+                if response.status_code == 401:
+                    return {"error": "token_expired"}
+                elif response.status_code != 200:
+                    return {"error": response.text}
 
-        self.service = build('calendar', 'v3', credentials=creds)
-        return True
+                return response.json()
 
-    def create_meeting(
+            except Exception as e:
+                logger.error(f"Erro ao listar eventos: {e}")
+                return {"error": str(e)}
+
+    async def get_today_events(self, access_token: str) -> List[Dict[str, Any]]:
+        """Retorna eventos de hoje para o dashboard."""
+        now = datetime.utcnow()
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day = start_of_day + timedelta(days=1)
+
+        result = await self.list_events(
+            access_token=access_token,
+            time_min=start_of_day,
+            time_max=end_of_day,
+            max_results=20
+        )
+
+        if "error" in result:
+            return []
+
+        events = result.get("items", [])
+        return [self._format_event(e) for e in events]
+
+    async def get_upcoming_events(
         self,
-        prospect_name: str,
-        prospect_email: Optional[str],
-        date_time: datetime,
-        duration_minutes: int = 30,
-        meeting_type: str = "discovery",
-        notes: str = ""
-    ) -> Optional[Dict]:
-        """
-        Cria reunião no Google Calendar
-
-        Args:
-            prospect_name: Nome do prospect
-            prospect_email: Email para enviar convite
-            date_time: Data/hora da reunião
-            duration_minutes: Duração em minutos
-            meeting_type: Tipo da reunião (discovery, demo, negociacao)
-            notes: Notas adicionais
-
-        Returns:
-            Dados do evento criado ou None se falhar
-        """
-        if not self.service:
-            if not self.authenticate():
-                return None
-
-        # Definir título baseado no tipo
-        titles = {
-            "discovery": f"Discovery Call - {prospect_name} | ImensIAH",
-            "demo": f"Demo ImensIAH - {prospect_name}",
-            "negociacao": f"Negociação - {prospect_name} | ImensIAH",
-            "fechamento": f"Fechamento - {prospect_name} | ImensIAH"
-        }
-
-        title = titles.get(meeting_type, f"Reunião - {prospect_name}")
-
-        # Preparar evento
-        end_time = date_time + timedelta(minutes=duration_minutes)
-
-        event = {
-            'summary': title,
-            'description': f"""
-Reunião de {meeting_type} com prospect
-
-Prospect: {prospect_name}
-Tipo: {meeting_type}
-
-{notes}
-
----
-Gerado pelo Sistema de Prospects ImensIAH
-            """.strip(),
-            'start': {
-                'dateTime': date_time.isoformat(),
-                'timeZone': 'America/Sao_Paulo',
-            },
-            'end': {
-                'dateTime': end_time.isoformat(),
-                'timeZone': 'America/Sao_Paulo',
-            },
-            'reminders': {
-                'useDefault': False,
-                'overrides': [
-                    {'method': 'email', 'minutes': 24 * 60},
-                    {'method': 'popup', 'minutes': 30},
-                ],
-            },
-        }
-
-        # Adicionar convidado se tiver email
-        if prospect_email:
-            event['attendees'] = [
-                {'email': prospect_email},
-            ]
-            event['sendUpdates'] = 'all'
-
-        # Adicionar Google Meet
-        event['conferenceData'] = {
-            'createRequest': {
-                'requestId': f"imensiah-{datetime.now().timestamp()}",
-                'conferenceSolutionKey': {'type': 'hangoutsMeet'}
-            }
-        }
-
-        try:
-            created_event = self.service.events().insert(
-                calendarId=self.calendar_id,
-                body=event,
-                conferenceDataVersion=1
-            ).execute()
-
-            return {
-                'id': created_event.get('id'),
-                'link': created_event.get('htmlLink'),
-                'meet_link': created_event.get('hangoutLink'),
-                'start': created_event.get('start'),
-                'end': created_event.get('end')
-            }
-
-        except Exception as e:
-            print(f"Error creating event: {e}")
-            return None
-
-    def get_available_slots(
-        self,
-        start_date: datetime,
+        access_token: str,
         days: int = 7,
-        slot_duration: int = 30
-    ) -> List[Dict]:
-        """
-        Retorna horários disponíveis para reunião
+        max_results: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Retorna proximos eventos."""
+        now = datetime.utcnow()
+        end_date = now + timedelta(days=days)
 
-        Args:
-            start_date: Data inicial
-            days: Número de dias para buscar
-            slot_duration: Duração do slot em minutos
+        result = await self.list_events(
+            access_token=access_token,
+            time_min=now,
+            time_max=end_date,
+            max_results=max_results
+        )
 
-        Returns:
-            Lista de slots disponíveis
-        """
-        if not self.service:
-            if not self.authenticate():
-                return []
+        if "error" in result:
+            return []
 
-        end_date = start_date + timedelta(days=days)
+        events = result.get("items", [])
+        return [self._format_event(e) for e in events]
 
-        # Buscar eventos existentes
-        try:
-            events_result = self.service.events().list(
-                calendarId=self.calendar_id,
-                timeMin=start_date.isoformat() + 'Z',
-                timeMax=end_date.isoformat() + 'Z',
-                singleEvents=True,
-                orderBy='startTime'
-            ).execute()
+    def _format_event(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        """Formata evento para exibicao na UI."""
+        start = event.get("start", {})
+        start_datetime = start.get("dateTime") or start.get("date")
+        is_all_day = "date" in start and "dateTime" not in start
 
-            busy_times = []
-            for event in events_result.get('items', []):
-                start = event['start'].get('dateTime', event['start'].get('date'))
-                end = event['end'].get('dateTime', event['end'].get('date'))
-                busy_times.append((
-                    datetime.fromisoformat(start.replace('Z', '+00:00')),
-                    datetime.fromisoformat(end.replace('Z', '+00:00'))
-                ))
+        end = event.get("end", {})
+        end_datetime = end.get("dateTime") or end.get("date")
 
-        except Exception as e:
-            print(f"Error fetching events: {e}")
-            busy_times = []
+        attendees = []
+        for attendee in event.get("attendees", []):
+            attendees.append({
+                "email": attendee.get("email"),
+                "name": attendee.get("displayName"),
+                "response": attendee.get("responseStatus"),
+            })
 
-        # Gerar slots disponíveis (9h-18h, seg-sex)
-        available = []
-        current = start_date.replace(hour=9, minute=0, second=0, microsecond=0)
+        conference = None
+        conference_data = event.get("conferenceData", {})
+        entry_points = conference_data.get("entryPoints", [])
+        for ep in entry_points:
+            if ep.get("entryPointType") == "video":
+                conference = {
+                    "type": conference_data.get("conferenceSolution", {}).get("name", "Video"),
+                    "url": ep.get("uri"),
+                }
+                break
 
-        while current < end_date:
-            # Pular finais de semana
-            if current.weekday() < 5:  # Seg-Sex
-                # Horário comercial
-                if 9 <= current.hour < 18:
-                    slot_end = current + timedelta(minutes=slot_duration)
-
-                    # Verificar se não está ocupado
-                    is_busy = any(
-                        (busy_start <= current < busy_end) or
-                        (busy_start < slot_end <= busy_end)
-                        for busy_start, busy_end in busy_times
-                    )
-
-                    if not is_busy:
-                        available.append({
-                            'start': current.isoformat(),
-                            'end': slot_end.isoformat(),
-                            'formatted': current.strftime('%d/%m/%Y %H:%M')
-                        })
-
-            current += timedelta(minutes=slot_duration)
-
-            # Pular para próximo dia se passou das 18h
-            if current.hour >= 18:
-                current = (current + timedelta(days=1)).replace(hour=9, minute=0)
-
-        return available[:20]  # Limitar a 20 slots
-
-    def update_meeting(self, event_id: str, updates: Dict) -> bool:
-        """Atualiza uma reunião existente"""
-        if not self.service:
-            if not self.authenticate():
-                return False
-
-        try:
-            event = self.service.events().get(
-                calendarId=self.calendar_id,
-                eventId=event_id
-            ).execute()
-
-            # Aplicar atualizações
-            if 'summary' in updates:
-                event['summary'] = updates['summary']
-            if 'description' in updates:
-                event['description'] = updates['description']
-            if 'start' in updates:
-                event['start']['dateTime'] = updates['start']
-            if 'end' in updates:
-                event['end']['dateTime'] = updates['end']
-
-            self.service.events().update(
-                calendarId=self.calendar_id,
-                eventId=event_id,
-                body=event
-            ).execute()
-
-            return True
-
-        except Exception as e:
-            print(f"Error updating event: {e}")
-            return False
-
-    def delete_meeting(self, event_id: str) -> bool:
-        """Cancela uma reunião"""
-        if not self.service:
-            if not self.authenticate():
-                return False
-
-        try:
-            self.service.events().delete(
-                calendarId=self.calendar_id,
-                eventId=event_id
-            ).execute()
-            return True
-
-        except Exception as e:
-            print(f"Error deleting event: {e}")
-            return False
+        return {
+            "id": event.get("id"),
+            "summary": event.get("summary", "Sem titulo"),
+            "description": event.get("description"),
+            "location": event.get("location"),
+            "start": start_datetime,
+            "end": end_datetime,
+            "is_all_day": is_all_day,
+            "status": event.get("status"),
+            "html_link": event.get("htmlLink"),
+            "attendees": attendees,
+            "conference": conference,
+        }
 
 
-# Função helper para uso sem autenticação (modo demo)
-def create_calendar_link(
-    prospect_name: str,
-    date_time: datetime,
-    duration_minutes: int = 30,
-    meeting_type: str = "discovery"
-) -> str:
-    """
-    Gera link para adicionar evento ao Google Calendar (sem API)
+_calendar_integration = None
 
-    Útil para modo demo ou quando não há autenticação
-    """
-    titles = {
-        "discovery": f"Discovery Call - {prospect_name} | ImensIAH",
-        "demo": f"Demo ImensIAH - {prospect_name}",
-        "negociacao": f"Negociação - {prospect_name}",
-    }
 
-    title = titles.get(meeting_type, f"Reunião - {prospect_name}")
-    end_time = date_time + timedelta(minutes=duration_minutes)
-
-    # Formato Google Calendar
-    start_str = date_time.strftime('%Y%m%dT%H%M%S')
-    end_str = end_time.strftime('%Y%m%dT%H%M%S')
-
-    import urllib.parse
-    params = {
-        'action': 'TEMPLATE',
-        'text': title,
-        'dates': f'{start_str}/{end_str}',
-        'details': f'Reunião de {meeting_type} com prospect via ImensIAH',
-        'ctz': 'America/Sao_Paulo'
-    }
-
-    return f"https://calendar.google.com/calendar/render?{urllib.parse.urlencode(params)}"
+def get_calendar_integration() -> GoogleCalendarIntegration:
+    """Retorna instancia singleton."""
+    global _calendar_integration
+    if _calendar_integration is None:
+        _calendar_integration = GoogleCalendarIntegration()
+    return _calendar_integration
