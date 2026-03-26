@@ -606,6 +606,135 @@
             min-width: 45px;
             text-align: right;
         }
+
+        /* Task Item Styles */
+        .task-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--gray-100);
+        }
+        .task-item:last-child { border-bottom: none; }
+        .task-checkbox {
+            width: 20px;
+            height: 20px;
+            border-radius: 6px;
+            border: 2px solid var(--gray-300);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            margin-top: 2px;
+            transition: all 0.2s;
+        }
+        .task-checkbox:hover { border-color: var(--primary); }
+        .task-checkbox.completed {
+            background: var(--success);
+            border-color: var(--success);
+            color: white;
+        }
+        .task-content { flex: 1; }
+        .task-title {
+            font-weight: 500;
+            color: var(--dark);
+            margin-bottom: 4px;
+        }
+        .task-item.completed .task-title {
+            text-decoration: line-through;
+            color: var(--gray-400);
+        }
+        .task-meta {
+            font-size: 0.8rem;
+            color: var(--gray-500);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .task-priority {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+        .task-priority.high { background: rgba(239,68,68,0.1); color: #dc2626; }
+        .task-priority.medium { background: rgba(245,158,11,0.1); color: #d97706; }
+        .task-priority.low { background: rgba(16,185,129,0.1); color: #059669; }
+
+        /* Global Search Dropdown */
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid var(--gray-200);
+            border-radius: 12px;
+            margin-top: 8px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.15);
+            max-height: 400px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+        .search-results.active { display: block; }
+        .search-result-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            cursor: pointer;
+            text-decoration: none;
+            color: inherit;
+            transition: background 0.15s;
+        }
+        .search-result-item:hover,
+        .search-result-item.selected { background: var(--gray-100); }
+        .search-result-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.8rem;
+        }
+        .search-result-info { flex: 1; }
+        .search-result-name { font-weight: 500; color: var(--dark); }
+        .search-result-detail { font-size: 0.8rem; color: var(--gray-500); }
+        .search-hint {
+            padding: 8px 16px;
+            background: var(--gray-100);
+            font-size: 0.75rem;
+            color: var(--gray-500);
+            display: flex;
+            justify-content: space-between;
+        }
+        .search-hint kbd {
+            background: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        .search-empty {
+            padding: 24px;
+            text-align: center;
+            color: var(--gray-500);
+        }
+
+        /* Inbox badge pulse */
+        .badge-pulse {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
     </style>
 </head>
 <body>
@@ -653,7 +782,7 @@
             <a href="/inbox" class="nav-item">
                 <i class="bi bi-inbox"></i>
                 <span>Inbox</span>
-                <span class="badge">0</span>
+                <span class="badge" id="inboxBadge" style="display: none;">0</span>
             </a>
 
             <div class="nav-section">Ferramentas</div>
@@ -705,9 +834,15 @@
                 <p class="page-subtitle">Bem-vindo de volta, Renato</p>
             </div>
             <div class="header-actions">
-                <div class="search-box">
+                <div class="search-box" style="position: relative;">
                     <i class="bi bi-search"></i>
-                    <input type="text" placeholder="Buscar contatos, empresas..." id="globalSearch">
+                    <input type="text" placeholder="Buscar contatos... (⌘K)" id="globalSearch" autocomplete="off">
+                    <div class="search-results" id="searchResults">
+                        <div class="search-hint">
+                            <span>Digite para buscar</span>
+                            <span><kbd>↑↓</kbd> navegar <kbd>Enter</kbd> selecionar <kbd>Esc</kbd> fechar</span>
+                        </div>
+                    </div>
                 </div>
                 <button class="btn btn-primary">
                     <i class="bi bi-plus me-2"></i>Novo Contato
@@ -743,16 +878,33 @@
 
         <!-- Content Grid -->
         <div class="content-grid">
-            <!-- Today's Agenda -->
-            <div class="card">
-                <div class="card-header">
-                    <h2 class="card-title"><i class="bi bi-calendar-event me-2"></i>Agenda de Hoje</h2>
-                    <a href="/calendario" class="btn btn-sm btn-outline-secondary">Ver tudo</a>
+            <!-- Left Column -->
+            <div>
+                <!-- Today's Agenda -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="bi bi-calendar-event me-2"></i>Agenda de Hoje</h2>
+                        <a href="/calendario" class="btn btn-sm btn-outline-secondary">Ver tudo</a>
+                    </div>
+                    <div class="card-body" id="todayAgenda">
+                        <div class="loading">
+                            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                            <span class="ms-2 text-muted">Carregando agenda...</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="card-body" id="todayAgenda">
-                    <div class="empty-state">
-                        <i class="bi bi-calendar-x"></i>
-                        <p>Nenhum compromisso para hoje</p>
+
+                <!-- Tasks -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="bi bi-check2-square me-2"></i>Tarefas</h2>
+                        <a href="/tarefas" class="btn btn-sm btn-outline-secondary">Ver todas</a>
+                    </div>
+                    <div class="card-body" id="tasksList">
+                        <div class="loading">
+                            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                            <span class="ms-2 text-muted">Carregando tarefas...</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -936,10 +1088,271 @@
             }
         }
 
-        // Global search
-        document.getElementById('globalSearch').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                window.location.href = `/contatos?search=${encodeURIComponent(this.value)}`;
+        // ============== Agenda Functions ==============
+        async function loadTodayAgenda() {
+            const container = document.getElementById('todayAgenda');
+            try {
+                const response = await fetch('/api/calendar/today');
+                if (!response.ok) throw new Error('API indisponivel');
+                const events = await response.json();
+
+                if (!events || events.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <i class="bi bi-calendar-check"></i>
+                            <p>Nenhum compromisso para hoje</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let html = '';
+                events.slice(0, 5).forEach(event => {
+                    const time = event.time || event.start_time || '';
+                    html += `
+                        <div class="agenda-item">
+                            <div class="agenda-time">${time}</div>
+                            <div class="agenda-content">
+                                <div class="agenda-title">${event.title || event.summary || 'Evento'}</div>
+                                <div class="agenda-meta">
+                                    ${event.location ? `<i class="bi bi-geo-alt"></i> ${event.location}` : ''}
+                                    ${event.contact_name ? `<i class="bi bi-person"></i> ${event.contact_name}` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            } catch (error) {
+                // Fallback - show empty state gracefully
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="bi bi-calendar-x"></i>
+                        <p>Nenhum compromisso para hoje</p>
+                    </div>
+                `;
+            }
+        }
+
+        // ============== Tasks Functions ==============
+        async function loadTasks() {
+            const container = document.getElementById('tasksList');
+            try {
+                const response = await fetch('/api/tasks?limit=5&status=pending');
+                if (!response.ok) throw new Error('API indisponivel');
+                const data = await response.json();
+                const tasks = data.tasks || data || [];
+
+                if (!tasks || tasks.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <i class="bi bi-check-circle"></i>
+                            <p>Nenhuma tarefa pendente</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let html = '';
+                tasks.slice(0, 5).forEach(task => {
+                    const isCompleted = task.status === 'completed' || task.completed;
+                    const priorityClass = task.priority === 'high' ? 'high' : (task.priority === 'low' ? 'low' : 'medium');
+                    html += `
+                        <div class="task-item ${isCompleted ? 'completed' : ''}" data-task-id="${task.id}">
+                            <div class="task-checkbox ${isCompleted ? 'completed' : ''}" onclick="toggleTask(${task.id}, ${!isCompleted})">
+                                ${isCompleted ? '<i class="bi bi-check"></i>' : ''}
+                            </div>
+                            <div class="task-content">
+                                <div class="task-title">${task.title || task.description || 'Tarefa'}</div>
+                                <div class="task-meta">
+                                    ${task.priority ? `<span class="task-priority ${priorityClass}">${task.priority}</span>` : ''}
+                                    ${task.due_date ? `<span><i class="bi bi-clock"></i> ${formatDate(task.due_date)}</span>` : ''}
+                                    ${task.contact_name ? `<span><i class="bi bi-person"></i> ${task.contact_name}</span>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            } catch (error) {
+                // Fallback - show empty state gracefully
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="bi bi-list-check"></i>
+                        <p>Nenhuma tarefa pendente</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function toggleTask(taskId, completed) {
+            try {
+                await fetch(`/api/tasks/${taskId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ completed, status: completed ? 'completed' : 'pending' })
+                });
+                loadTasks(); // Reload
+            } catch (error) {
+                console.error('Error toggling task:', error);
+            }
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '';
+            const d = new Date(dateStr);
+            const today = new Date();
+            if (d.toDateString() === today.toDateString()) return 'Hoje';
+            const tomorrow = new Date(today);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            if (d.toDateString() === tomorrow.toDateString()) return 'Amanha';
+            return d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'short' });
+        }
+
+        // ============== Inbox Badge ==============
+        async function loadInboxCount() {
+            try {
+                const response = await fetch('/api/inbox/unread');
+                if (!response.ok) throw new Error('API indisponivel');
+                const data = await response.json();
+                const count = data.total || data.count || 0;
+
+                const badge = document.getElementById('inboxBadge');
+                if (badge) {
+                    if (count > 0) {
+                        badge.textContent = count > 99 ? '99+' : count;
+                        badge.style.display = 'inline';
+                        badge.classList.add('badge-pulse');
+                    } else {
+                        badge.style.display = 'none';
+                    }
+                }
+            } catch (error) {
+                // Silently fail - inbox badge is not critical
+            }
+        }
+
+        // ============== Global Search with Cmd+K ==============
+        let searchTimeout = null;
+        let searchResults = [];
+        let selectedIndex = -1;
+
+        const searchInput = document.getElementById('globalSearch');
+        const searchResultsEl = document.getElementById('searchResults');
+
+        async function performSearch(query) {
+            if (!query || query.length < 2) {
+                hideSearchResults();
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/contacts?search=${encodeURIComponent(query)}&limit=8`);
+                const data = await response.json();
+                searchResults = data.contacts || [];
+                renderSearchResults(query);
+            } catch (error) {
+                searchResultsEl.innerHTML = '<div class="search-empty">Erro ao buscar</div>';
+            }
+        }
+
+        function renderSearchResults(query) {
+            if (searchResults.length === 0) {
+                searchResultsEl.innerHTML = `
+                    <div class="search-empty">
+                        <i class="bi bi-search mb-2"></i>
+                        <p>Nenhum resultado para "${query}"</p>
+                    </div>
+                `;
+                searchResultsEl.classList.add('active');
+                return;
+            }
+
+            let html = '';
+            searchResults.forEach((contact, idx) => {
+                const initials = (contact.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+                const highlighted = highlightMatch(contact.nome, query);
+                html += `
+                    <a href="/contatos/${contact.id}" class="search-result-item ${idx === selectedIndex ? 'selected' : ''}" data-index="${idx}">
+                        <div class="search-result-avatar">${initials}</div>
+                        <div class="search-result-info">
+                            <div class="search-result-name">${highlighted}</div>
+                            <div class="search-result-detail">${contact.empresa || contact.cargo || ''}</div>
+                        </div>
+                    </a>
+                `;
+            });
+            html += `
+                <div class="search-hint">
+                    <span>${searchResults.length} resultado${searchResults.length !== 1 ? 's' : ''}</span>
+                    <span><kbd>Enter</kbd> abrir <kbd>Esc</kbd> fechar</span>
+                </div>
+            `;
+            searchResultsEl.innerHTML = html;
+            searchResultsEl.classList.add('active');
+        }
+
+        function highlightMatch(text, query) {
+            if (!text || !query) return text || '';
+            const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+            return text.replace(regex, '<strong>$1</strong>');
+        }
+
+        function hideSearchResults() {
+            searchResultsEl.classList.remove('active');
+            selectedIndex = -1;
+        }
+
+        searchInput.addEventListener('input', function(e) {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => performSearch(e.target.value), 300);
+        });
+
+        searchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                selectedIndex = Math.min(selectedIndex + 1, searchResults.length - 1);
+                renderSearchResults(searchInput.value);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                selectedIndex = Math.max(selectedIndex - 1, 0);
+                renderSearchResults(searchInput.value);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (selectedIndex >= 0 && searchResults[selectedIndex]) {
+                    window.location.href = `/contatos/${searchResults[selectedIndex].id}`;
+                } else if (searchInput.value) {
+                    window.location.href = `/contatos?search=${encodeURIComponent(searchInput.value)}`;
+                }
+            } else if (e.key === 'Escape') {
+                hideSearchResults();
+                searchInput.blur();
+            }
+        });
+
+        searchInput.addEventListener('focus', function() {
+            if (searchInput.value.length >= 2) {
+                performSearch(searchInput.value);
+            }
+        });
+
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.search-box')) {
+                hideSearchResults();
+            }
+        });
+
+        // Cmd+K / Ctrl+K shortcut
+        document.addEventListener('keydown', function(e) {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            }
+            // Also support "/" key when not in input
+            if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+                e.preventDefault();
+                searchInput.focus();
             }
         });
 
@@ -1027,6 +1440,12 @@
         loadDashboardData();
         loadRecentContacts();
         loadBirthdays();
+        loadTodayAgenda();
+        loadTasks();
+        loadInboxCount();
+
+        // Update inbox count every 60 seconds
+        setInterval(loadInboxCount, 60000);
     </script>
 </body>
 </html>

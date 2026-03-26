@@ -14,103 +14,98 @@
 | Birthday Notif | 00d12e6 | Birthday banner + reminders |
 | Pagina Contato | merged | Circulo badge, Health card |
 | Sidebar Prospeccao | d55dd7b | Link /prospeccao no sidebar FERRAMENTAS |
-| Pagina Duplicados | pendente | Pagina /duplicados com merge |
-| Card Estatisticas | pendente | Distribuicao por circulo no dashboard |
+| Pagina Duplicados | edab6ef | Pagina /duplicados com merge |
+| Card Estatisticas | edab6ef | Distribuicao por circulo no dashboard |
+| UI Agenda | pendente | Conecta /api/calendar/today com fallback |
+| UI Tarefas | pendente | Card tarefas com /api/tasks + checkbox |
+| Badge Inbox | pendente | Contador nao lidos com polling 60s |
+| Busca Global | pendente | Cmd+K, debounce 300ms, dropdown |
 
 ---
 
 ## NOVAS TAREFAS
 
-### Tarefa 1: Adicionar Prospeccao ao Sidebar
+### Tarefa 1: UI Agenda no Dashboard
+
+**Status**: CONCLUIDO
+**Prioridade**: CRITICA
+
+**Objetivo**: Conectar secao "Agenda de Hoje" com /api/calendar/today
+
+**Implementacao**:
+- Funcao loadTodayAgenda() no script
+- Tenta chamar /api/calendar/today
+- Se API indisponivel, mostra "Nenhum compromisso"
+- Exibe ate 5 eventos com hora, titulo, local
+
+**Criterios**:
+- [x] Funcao loadTodayAgenda() criada
+- [x] Chamada no init
+- [x] Fallback gracioso se API nao disponivel
+
+---
+
+### Tarefa 2: UI Lista de Tarefas
 
 **Status**: CONCLUIDO
 **Prioridade**: ALTA
 
-**Objetivo**: A rota /prospeccao foi criada mas nao aparece no menu. Adicionar link no sidebar do INTEL.
-
-**Arquivo**: `app/templates/rap_dashboard.html`
+**Objetivo**: Card de tarefas no dashboard integrado com /api/tasks
 
 **Implementacao**:
-```html
-<!-- Adicionar no sidebar, secao FERRAMENTAS -->
-<div class="nav-section">FERRAMENTAS</div>
-
-<a href="/prospeccao" class="nav-item">
-    <i class="bi bi-funnel"></i>
-    <span>Prospeccao</span>
-</a>
-```
+- Card "Tarefas" na coluna esquerda
+- Funcao loadTasks() chama /api/tasks?limit=5&status=pending
+- Checkbox para marcar como concluida (toggleTask)
+- Prioridade com cores: high (vermelho), medium (amarelo), low (verde)
 
 **Criterios**:
-- [x] Link Prospeccao aparece no sidebar
-- [x] Icone de funil
-- [x] Redireciona para /prospeccao
+- [x] Card de tarefas adicionado
+- [x] Integra com /api/tasks
+- [x] Checkbox funcional
+- [x] Fallback se API indisponivel
 
 ---
 
-### Tarefa 2: Pagina de Duplicados
+### Tarefa 3: Badges Inbox
 
 **Status**: CONCLUIDO
 **Prioridade**: MEDIA
 
-**Objetivo**: Criar interface para visualizar e fazer merge de duplicados.
-
-**Arquivo**: `app/templates/intel_duplicados.html` (novo)
+**Objetivo**: Contador de emails/WhatsApp nao lidos no sidebar
 
 **Implementacao**:
-- Lista de pares duplicados com score
-- Botao "Merge" para cada par
-- Preview dos dados de ambos contatos
-- Confirmar qual manter
-
-**Endpoint**: `GET /api/contacts/duplicates`
+- Badge no nav-item do Inbox (#inboxBadge)
+- Funcao loadInboxCount() chama /api/inbox/unread
+- setInterval a cada 60 segundos
+- Badge com animacao pulse se > 0
 
 **Criterios**:
-- [x] Pagina /duplicados criada
-- [x] Lista duplicados da API
-- [x] Permite merge com confirmacao
+- [x] Badge no sidebar
+- [x] Atualiza a cada 60s
+- [x] Animacao pulse
+- [x] Esconde se count == 0
 
 ---
 
-### Tarefa 3: Card de Estatisticas no Dashboard
+### Tarefa 4: Busca Global Cmd+K
 
 **Status**: CONCLUIDO
-**Prioridade**: MEDIA
-
-**Objetivo**: Adicionar card mostrando distribuicao dos circulos visualmente.
-
-**Implementacao**:
-```html
-<!-- Card com barras de progresso por circulo -->
-<div class="card">
-    <h6>Distribuicao por Circulo</h6>
-    <div class="circulo-bar c1" style="width: 0.1%">C1: 5</div>
-    <div class="circulo-bar c2" style="width: 0.1%">C2: 6</div>
-    <div class="circulo-bar c3" style="width: 0.7%">C3: 44</div>
-    <div class="circulo-bar c4" style="width: 5.6%">C4: 378</div>
-    <div class="circulo-bar c5" style="width: 93.5%">C5: 6266</div>
-</div>
-```
-
-**Criterios**:
-- [x] Barras proporcionais
-- [x] Cores por circulo
-- [x] Dados da API /api/v1/dashboard
-
----
-
-### Tarefa 4: Busca Global no Header
-
-**Status**: PENDENTE
 **Prioridade**: BAIXA
 
-**Objetivo**: Campo de busca que funciona em todas as paginas.
+**Objetivo**: Campo de busca que funciona em todas as paginas
 
 **Implementacao**:
-- Input no header
-- Busca em tempo real (debounce 300ms)
-- Dropdown com resultados
-- Atalho Cmd+K
+- Dropdown com resultados em tempo real
+- Debounce 300ms
+- Atalhos: Cmd+K, "/", Arrow Up/Down, Enter, Esc
+- Highlight do termo buscado
+- Navegacao por teclado
+
+**Criterios**:
+- [x] Dropdown de resultados
+- [x] Debounce 300ms
+- [x] Atalho Cmd+K
+- [x] Navegacao teclado
 
 ---
 
@@ -118,6 +113,10 @@
 
 | Data | Tarefa | Status |
 |------|--------|--------|
+| 2026-03-26 | UI Agenda Dashboard | **CONCLUIDO** |
+| 2026-03-26 | UI Tarefas Dashboard | **CONCLUIDO** |
+| 2026-03-26 | Badge Inbox | **CONCLUIDO** |
+| 2026-03-26 | Busca Global Cmd+K | **CONCLUIDO** |
 | 2026-03-26 | Pagina Duplicados | **CONCLUIDO** |
 | 2026-03-26 | Card Estatisticas Dashboard | **CONCLUIDO** |
 | 2026-03-26 | Sidebar Prospeccao | **CONCLUIDO** |
