@@ -4915,20 +4915,31 @@ async def get_dashboard_unified():
     Retorna dados unificados para o Dashboard principal.
     Inclui: stats, alertas, contatos recentes, resumo dos circulos.
     """
+    result = {}
     try:
-        stats = get_dashboard_stats()
-        alertas = get_alertas(limit=10)
-        contatos = get_contatos_recentes(limit=5)
-        circulos = get_circulos_resumo()
-        return {
-            "stats": stats,
-            "alertas": alertas,
-            "contatos_recentes": contatos,
-            "circulos_resumo": circulos
-        }
+        result["stats"] = get_dashboard_stats()
     except Exception as e:
-        import traceback
-        return {"error": str(e), "traceback": traceback.format_exc()}
+        result["stats_error"] = str(e)
+
+    try:
+        result["alertas"] = get_alertas(limit=10)
+    except Exception as e:
+        result["alertas_error"] = str(e)
+        result["alertas"] = []
+
+    try:
+        result["contatos_recentes"] = get_contatos_recentes(limit=5)
+    except Exception as e:
+        result["contatos_recentes_error"] = str(e)
+        result["contatos_recentes"] = []
+
+    try:
+        result["circulos_resumo"] = get_circulos_resumo()
+    except Exception as e:
+        result["circulos_resumo_error"] = str(e)
+        result["circulos_resumo"] = {}
+
+    return result
 
 
 # ============== CIRCULOS ENDPOINTS ==============
