@@ -1,7 +1,7 @@
 # TAREFA URGENTE: Atualizar Branding para INTEL
 
-**Status**: URGENTE - Executar imediatamente
-**Branch**: `feature/flow-intel-branding`
+**Status**: PRONTO - Commit 78dd717 em main
+**Branch**: `main`
 **Prioridade**: CRITICA
 
 ## Problema
@@ -180,11 +180,11 @@ document.addEventListener('DOMContentLoaded', loadDashboardData);
 
 ## Criterio de Aceite
 
-- [ ] Header mostra "INTEL" em vez de "Prospects ImensIAH"
-- [ ] Sidebar tem: Dashboard, Contatos, Circulos, Briefings, Configuracoes
-- [ ] Cards do dashboard mostram: Circulos, Alertas, Aniversarios, Briefings
-- [ ] Dados carregam de /api/v1/dashboard
-- [ ] Remover completamente referencias a "Prospects", "Tier", "Funil", "Reunioes"
+- [x] Header mostra "INTEL" em vez de "Prospects ImensIAH"
+- [x] Sidebar tem: Dashboard, Contatos, Circulos, Briefings, Configuracoes
+- [x] Cards do dashboard mostram: Circulos, Alertas, Aniversarios, Briefings
+- [x] Dados carregam de /api/v1/dashboard
+- [x] Remover completamente referencias a "Prospects", "Tier", "Funil", "Reunioes"
 
 ## Comando para Testar
 
