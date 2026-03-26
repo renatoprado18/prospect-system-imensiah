@@ -103,28 +103,45 @@ def get_dashboard_stats() -> Dict:
 def get_circulos_resumo() -> Dict:
     """
     Retorna resumo dos circulos para o dashboard.
+    Versao otimizada com query unica.
 
     Returns:
         Dict com total e health medio por circulo
     """
-    circulos_data = get_dashboard_circulos()
-    por_circulo = circulos_data.get("por_circulo", {})
+    with get_db() as conn:
+        cursor = conn.cursor()
 
-    # Simplificar para formato da API
-    resumo = {}
-    for c in range(1, 6):
-        data = por_circulo.get(c, {"total": 0, "health_medio": 50})
-        resumo[str(c)] = {
-            "total": data["total"],
-            "health_medio": round(data.get("health_medio", 50), 1)
-        }
+        # Query unica otimizada
+        cursor.execute("""
+            SELECT
+                COALESCE(circulo, 5) as circulo,
+                COUNT(*) as total,
+                ROUND(AVG(COALESCE(health_score, 50))::numeric, 1) as health_medio
+            FROM contacts
+            GROUP BY COALESCE(circulo, 5)
+            ORDER BY circulo
+        """)
 
-    return resumo
+        resumo = {}
+        for row in cursor.fetchall():
+            c = row["circulo"]
+            resumo[str(c)] = {
+                "total": row["total"],
+                "health_medio": float(row["health_medio"] or 50)
+            }
+
+        # Preencher circulos vazios
+        for c in range(1, 6):
+            if str(c) not in resumo:
+                resumo[str(c)] = {"total": 0, "health_medio": 50.0}
+
+        return resumo
 
 
 def get_alertas(limit: int = 10) -> List[Dict]:
     """
     Retorna alertas priorizados para o dashboard.
+    Versao otimizada com queries diretas no banco.
 
     Prioridade:
     1. Aniversarios proximos (3 dias) - prioridade alta
@@ -143,110 +160,104 @@ def get_alertas(limit: int = 10) -> List[Dict]:
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # 1. Aniversarios proximos (3 dias) - ALTA prioridade
-        hoje = datetime.now().date()
+        # 1. Aniversarios proximos (3 dias) - calculado no banco
         cursor.execute("""
-            SELECT id, nome, empresa, circulo, aniversario, foto_url
-            FROM contacts
-            WHERE aniversario IS NOT NULL
-              AND COALESCE(circulo, 5) <= 4
-        """)
+            WITH aniv_calc AS (
+                SELECT
+                    id, nome, empresa, circulo, aniversario, foto_url,
+                    CASE
+                        WHEN EXTRACT(DOY FROM aniversario::date) >= EXTRACT(DOY FROM CURRENT_DATE)
+                        THEN EXTRACT(DOY FROM aniversario::date) - EXTRACT(DOY FROM CURRENT_DATE)
+                        ELSE 365 + EXTRACT(DOY FROM aniversario::date) - EXTRACT(DOY FROM CURRENT_DATE)
+                    END as dias_ate
+                FROM contacts
+                WHERE aniversario IS NOT NULL
+                  AND COALESCE(circulo, 5) <= 4
+            )
+            SELECT * FROM aniv_calc
+            WHERE dias_ate <= 3
+            ORDER BY dias_ate
+            LIMIT %s
+        """, (limit,))
 
         for row in cursor.fetchall():
-            contact = dict(row)
-            aniv = contact['aniversario']
-            try:
-                if isinstance(aniv, str):
-                    aniv = datetime.fromisoformat(aniv).date()
-                elif hasattr(aniv, 'date') and callable(getattr(aniv, 'date')):
-                    aniv = aniv.date()
-
-                aniv_este_ano = aniv.replace(year=hoje.year)
-                if aniv_este_ano < hoje:
-                    aniv_este_ano = aniv.replace(year=hoje.year + 1)
-
-                dias_ate = (aniv_este_ano - hoje).days
-
-                if 0 <= dias_ate <= 3:
-                    alertas.append({
-                        "tipo": "aniversario",
-                        "contato_id": contact['id'],
-                        "nome": contact['nome'],
-                        "empresa": contact.get('empresa'),
-                        "foto_url": contact.get('foto_url'),
-                        "mensagem": f"Aniversario {'HOJE!' if dias_ate == 0 else f'em {dias_ate} dia(s)'}",
-                        "prioridade": "alta",
-                        "dias": dias_ate
-                    })
-                    seen_ids.add(contact['id'])
-            except:
-                continue
+            dias_ate = int(row['dias_ate'])
+            alertas.append({
+                "tipo": "aniversario",
+                "contato_id": row['id'],
+                "nome": row['nome'],
+                "empresa": row.get('empresa'),
+                "foto_url": row.get('foto_url'),
+                "mensagem": f"Aniversario {'HOJE!' if dias_ate == 0 else f'em {dias_ate} dia(s)'}",
+                "prioridade": "alta",
+                "dias": dias_ate
+            })
+            seen_ids.add(row['id'])
 
         # 2. Health critico (< 30) em circulos 1-3 - ALTA prioridade
-        cursor.execute("""
-            SELECT id, nome, empresa, circulo, health_score, ultimo_contato, foto_url
-            FROM contacts
-            WHERE COALESCE(circulo, 5) <= 3
-              AND COALESCE(health_score, 50) < 30
-            ORDER BY circulo ASC, health_score ASC
-            LIMIT %s
-        """, (limit,))
+        if len(alertas) < limit:
+            cursor.execute("""
+                SELECT id, nome, empresa, circulo, health_score, ultimo_contato, foto_url,
+                       EXTRACT(DAY FROM NOW() - ultimo_contato)::int as dias_sem_contato
+                FROM contacts
+                WHERE COALESCE(circulo, 5) <= 3
+                  AND COALESCE(health_score, 50) < 30
+                ORDER BY circulo ASC, health_score ASC
+                LIMIT %s
+            """, (limit - len(alertas),))
 
-        for row in cursor.fetchall():
-            contact = dict(row)
-            if contact['id'] in seen_ids:
-                continue
+            for row in cursor.fetchall():
+                if row['id'] in seen_ids:
+                    continue
 
-            dias = calcular_dias_sem_contato(contact.get('ultimo_contato'))
-            dias_str = f", sem contato ha {dias} dias" if dias else ""
+                dias = row.get('dias_sem_contato')
+                dias_str = f", sem contato ha {dias} dias" if dias else ""
 
-            alertas.append({
-                "tipo": "health_critico",
-                "contato_id": contact['id'],
-                "nome": contact['nome'],
-                "empresa": contact.get('empresa'),
-                "foto_url": contact.get('foto_url'),
-                "mensagem": f"Circulo {contact['circulo']}, health {contact['health_score']}%{dias_str}",
-                "prioridade": "alta",
-                "health_score": contact['health_score'],
-                "circulo": contact['circulo']
-            })
-            seen_ids.add(contact['id'])
+                alertas.append({
+                    "tipo": "health_critico",
+                    "contato_id": row['id'],
+                    "nome": row['nome'],
+                    "empresa": row.get('empresa'),
+                    "foto_url": row.get('foto_url'),
+                    "mensagem": f"Circulo {row['circulo']}, health {row['health_score']}%{dias_str}",
+                    "prioridade": "alta",
+                    "health_score": row['health_score'],
+                    "circulo": row['circulo']
+                })
+                seen_ids.add(row['id'])
 
         # 3. Health baixo (< 50) em circulos 1-3 - MEDIA prioridade
-        cursor.execute("""
-            SELECT id, nome, empresa, circulo, health_score, ultimo_contato, foto_url
-            FROM contacts
-            WHERE COALESCE(circulo, 5) <= 3
-              AND COALESCE(health_score, 50) >= 30
-              AND COALESCE(health_score, 50) < 50
-            ORDER BY circulo ASC, health_score ASC
-            LIMIT %s
-        """, (limit,))
+        if len(alertas) < limit:
+            cursor.execute("""
+                SELECT id, nome, empresa, circulo, health_score, ultimo_contato, foto_url,
+                       EXTRACT(DAY FROM NOW() - ultimo_contato)::int as dias_sem_contato
+                FROM contacts
+                WHERE COALESCE(circulo, 5) <= 3
+                  AND COALESCE(health_score, 50) >= 30
+                  AND COALESCE(health_score, 50) < 50
+                ORDER BY circulo ASC, health_score ASC
+                LIMIT %s
+            """, (limit - len(alertas),))
 
-        for row in cursor.fetchall():
-            contact = dict(row)
-            if contact['id'] in seen_ids:
-                continue
+            for row in cursor.fetchall():
+                if row['id'] in seen_ids:
+                    continue
 
-            dias = calcular_dias_sem_contato(contact.get('ultimo_contato'))
-            dias_str = f", sem contato ha {dias} dias" if dias else ""
+                dias = row.get('dias_sem_contato')
+                dias_str = f", sem contato ha {dias} dias" if dias else ""
 
-            alertas.append({
-                "tipo": "health_baixo",
-                "contato_id": contact['id'],
-                "nome": contact['nome'],
-                "empresa": contact.get('empresa'),
-                "foto_url": contact.get('foto_url'),
-                "mensagem": f"Circulo {contact['circulo']}, health {contact['health_score']}%{dias_str}",
-                "prioridade": "media",
-                "health_score": contact['health_score'],
-                "circulo": contact['circulo']
-            })
-            seen_ids.add(contact['id'])
-
-        # Nota: Aniversarios proximos ja foram processados acima (item 1)
-        # com prioridade alta para <= 3 dias
+                alertas.append({
+                    "tipo": "health_baixo",
+                    "contato_id": row['id'],
+                    "nome": row['nome'],
+                    "empresa": row.get('empresa'),
+                    "foto_url": row.get('foto_url'),
+                    "mensagem": f"Circulo {row['circulo']}, health {row['health_score']}%{dias_str}",
+                    "prioridade": "media",
+                    "health_score": row['health_score'],
+                    "circulo": row['circulo']
+                })
+                seen_ids.add(row['id'])
 
     # Ordenar: alta primeiro, depois media
     prioridade_ordem = {"alta": 0, "media": 1, "baixa": 2}
