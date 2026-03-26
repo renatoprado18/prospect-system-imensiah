@@ -1,179 +1,92 @@
 # Fila de Tarefas 2INTEL
 
-**Atualizacao**: 2026-03-25
+**Atualizacao**: 2026-03-26
 **Modo**: Autonomo - sinalizar conclusao e continuar
 
-## Como Trabalhar
+---
 
-1. Pegue a proxima tarefa PENDENTE
-2. Crie branch: `feature/intel-{nome-curto}`
-3. Implemente e teste
-4. Commit e push para a branch
-5. Atualize status para PRONTO e adicione resumo
-6. **Continue para a proxima tarefa** (nao espere aprovacao)
-7. ARCH fara review e merge em paralelo
+## TAREFAS CONCLUIDAS
+
+| Tarefa | Commit | Resumo |
+|--------|--------|--------|
+| Recalcular Circulos | 620de30 | 6647 contatos, C1=5, C2=6, C3=44, C4=378, C5=6266 |
+| Auto-Tags | 620de30 | 1242 contatos, 1526 tags (c-level, diretor, gerente, etc) |
+| Verificar Duplicados | 620de30 | 15 email, 4 phone, 20 name groups |
+| Briefing Context | 698214e | briefing_context.py + 5 endpoints |
+| Engajamento | merged | engajamento.py + 4 endpoints |
+| Duplicados Service | 8c93930 | duplicados.py + Levenshtein + 3 endpoints |
 
 ---
 
-## Tarefa 1: Recalcular Circulos (URGENTE)
+## NOVAS TAREFAS
+
+### Tarefa 1: Sincronizar Gmail para Popular Interacoes
 
 **Status**: PENDENTE
-**Branch**: `feature/intel-recalc-circulos`
 **Prioridade**: ALTA
 
-### Objetivo
-Todos os 6699 contatos estao em Circulo 5. Precisamos recalcular.
+**Objetivo**: A maioria dos contatos (93.5%) esta em C5 porque nao tem dados de interacao. Precisamos sincronizar emails do Gmail para popular `ultimo_contato` e `total_interacoes`.
 
-### Implementacao
-Criar script/endpoint para recalculo em lote:
-
+**Implementacao**:
 ```python
-# app/services/circulos.py - adicionar ou melhorar
-
-def recalcular_todos_circulos_batch(batch_size: int = 100) -> Dict:
-    """
-    Recalcula circulos em lotes para evitar timeout.
-    Retorna progresso para chamadas subsequentes.
-    """
-    # Implementar com offset/limit
-    # Atualizar circulo, health_score, ultimo_calculo_circulo
-    # Retornar: {"processados": X, "total": Y, "concluido": bool}
+# Usar app/integrations/gmail.py existente
+# Para cada contato com email:
+#   1. Buscar mensagens trocadas
+#   2. Atualizar ultimo_contato
+#   3. Atualizar total_interacoes
+#   4. Recalcular circulo
 ```
 
-### Criterio de Aceite
-- [ ] Endpoint POST /api/circulos/recalculate-batch
-- [ ] Processa em lotes de 100
-- [ ] Retorna progresso
-- [ ] Log de quantos mudaram de circulo
+**Criterios**:
+- [ ] Sincronizar ultimos 12 meses de emails
+- [ ] Atualizar campo ultimo_contato
+- [ ] Atualizar campo total_interacoes
+- [ ] Re-executar recalculo de circulos
 
 ---
 
-## Tarefa 2: Tags Automaticas por Contexto
+### Tarefa 2: Resolver Duplicados Encontrados
 
 **Status**: PENDENTE
-**Branch**: `feature/intel-auto-tags`
 **Prioridade**: MEDIA
 
-### Objetivo
-Analisar dados do contato e sugerir/aplicar tags automaticamente.
+**Objetivo**: 42 duplicados identificados. Criar script para merge automatico ou semi-automatico.
 
-### Implementacao
-```python
-# app/services/auto_tags.py
+**Implementacao**:
+```bash
+# Ver duplicados
+curl "https://intel.almeida-prado.com/api/contacts/duplicates?threshold=0.7"
 
-def analisar_contato_para_tags(contact_id: int) -> List[str]:
-    """
-    Analisa:
-    - Empresa (se banco -> tag 'financeiro')
-    - Cargo (se CEO/Diretor -> tag 'c-level')
-    - Email domain (se @gov -> tag 'governo')
-    - Historico de mensagens (keywords)
-    """
-
-def aplicar_tags_em_lote(limit: int = 100) -> Dict:
-    """Aplica tags sugeridas em lote"""
+# Merge automatico (keep mais completo)
+curl -X POST "https://intel.almeida-prado.com/api/contacts/merge" \
+  -H "Content-Type: application/json" \
+  -d '{"keep_id": 123, "merge_id": 456}'
 ```
 
-### Criterio de Aceite
-- [ ] Detecta pelo menos 10 categorias
-- [ ] Endpoint GET /api/contacts/{id}/suggested-tags
-- [ ] Endpoint POST /api/contacts/apply-auto-tags
+**Criterios**:
+- [ ] Listar todos os 42 duplicados
+- [ ] Merge automatico onde score > 0.9
+- [ ] Relatorio de merges realizados
 
 ---
 
-## Tarefa 3: Deteccao de Duplicados
+### Tarefa 3: Melhorar Scoring para Distribuicao
 
 **Status**: PENDENTE
-**Branch**: `feature/intel-duplicados`
-**Prioridade**: MEDIA
-
-### Objetivo
-Identificar contatos duplicados usando fuzzy matching.
-
-### Implementacao
-```python
-# app/services/duplicados.py
-
-def encontrar_duplicados(threshold: float = 0.85) -> List[Dict]:
-    """
-    Compara:
-    - Nome (fuzzy match)
-    - Email (exato)
-    - Telefone (normalizado)
-    Retorna pares de possiveis duplicados com score
-    """
-
-def merge_contatos(keep_id: int, merge_id: int) -> Dict:
-    """Merge dois contatos, mantendo dados mais completos"""
-```
-
-### Criterio de Aceite
-- [ ] Algoritmo de similaridade funcionando
-- [ ] Endpoint GET /api/contacts/duplicates
-- [ ] Endpoint POST /api/contacts/merge
-
----
-
-## Tarefa 4: Analise de Engajamento
-
-**Status**: PENDENTE
-**Branch**: `feature/intel-engajamento`
 **Prioridade**: BAIXA
 
-### Objetivo
-Calcular score de engajamento baseado em interacoes.
+**Objetivo**: Ajustar algoritmo de scoring em circulos.py para melhor distribuicao (menos contatos em C5).
 
-### Implementacao
-```python
-# app/services/engajamento.py
-
-def calcular_engajamento(contact_id: int) -> Dict:
-    """
-    Fatores:
-    - Frequencia de mensagens
-    - Taxa de resposta
-    - Tempo medio de resposta
-    - Diversidade de canais (email, whatsapp)
-
-    Retorna: score 0-100 e breakdown
-    """
-```
-
-### Criterio de Aceite
-- [ ] Score calculado corretamente
-- [ ] Coluna engagement_score na tabela contacts
-- [ ] Endpoint GET /api/contacts/{id}/engagement
-
----
-
-## Tarefa 5: Contexto Enriquecido para Briefings
-
-**Status**: **PRONTO**
-**Branch**: `feature/intel-briefing-context`
-**Commit**: 698214e
-**Prioridade**: BAIXA
-
-### Objetivo
-Melhorar briefings com mais contexto automatico.
-
-### Implementacao
-- Detectar tom das ultimas mensagens
-- Identificar topicos recorrentes
-- Sugerir assuntos para retomar
-- Alertar sobre promessas/compromissos pendentes
+**Sugestoes**:
+- Dar mais peso para tags c-level/diretor
+- Considerar empresa conhecida como fator
+- Ajustar thresholds de score
 
 ---
 
 ## Registro de Conclusao
 
-| Tarefa | Branch | Status | Resumo |
-|--------|--------|--------|--------|
-| 1. Recalcular Circulos | feature/intel-recalc-circulos | **MERGED** | recalcular_todos_circulos_batch() + POST /api/circulos/recalculate-batch |
-| 2. Tags Automaticas | feature/intel-auto-tags | **MERGED** | auto_tags.py (16 categorias) + 4 endpoints |
-| 3. Duplicados | feature/intel-duplicados | **MERGED** | duplicados.py + Levenshtein + 3 endpoints |
-| 4. Engajamento | feature/intel-engajamento | **MERGED** | engajamento.py + 4 fatores + 4 endpoints |
-| 5. Briefing Context | feature/intel-briefing-context | **MERGED** | briefing_context.py + tom/topicos/promessas + 5 endpoints |
-
----
-
-## FILA COMPLETA - Todas as tarefas MERGED em main (e7dd4b5)
+| Data | Tarefa | Status |
+|------|--------|--------|
+| 2026-03-26 | Recalculo + Tags + Duplicados | **CONCLUIDO** |
+| 2026-03-25 | Todas 5 tarefas INTEL | **MERGED** |

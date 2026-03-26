@@ -1,197 +1,119 @@
 # Fila de Tarefas 3FLOW
 
-**Atualizacao**: 2026-03-25
+**Atualizacao**: 2026-03-26
 **Modo**: Autonomo - sinalizar conclusao e continuar
 
-## Como Trabalhar
+---
 
-1. Pegue a proxima tarefa PENDENTE
-2. Crie branch: `feature/flow-{nome-curto}`
-3. Implemente e teste
-4. Commit e push para a branch
-5. Atualize status para PRONTO e adicione resumo
-6. **Continue para a proxima tarefa** (nao espere aprovacao)
-7. ARCH fara review e merge em paralelo
+## TAREFAS CONCLUIDAS
+
+| Tarefa | Commit | Resumo |
+|--------|--------|--------|
+| Branding INTEL | 78dd717 | Dashboard com cards Circulos, Alertas, Briefings |
+| Configuracoes | b48f774 | Circulos frequency settings |
+| Birthday Notif | 00d12e6 | Birthday banner + reminders |
+| Pagina Contato | merged | Circulo badge, Health card |
 
 ---
 
-## Tarefa 1: Atualizar Sidebar INTEL
+## NOVAS TAREFAS
+
+### Tarefa 1: Adicionar Prospeccao ao Sidebar
 
 **Status**: PENDENTE
-**Branch**: `feature/flow-sidebar-intel`
 **Prioridade**: ALTA
 
-### Objetivo
-Completar a migracao visual do sidebar para o novo branding.
+**Objetivo**: A rota /prospeccao foi criada mas nao aparece no menu. Adicionar link no sidebar do INTEL.
 
-### Implementacao
+**Arquivo**: `app/templates/rap_dashboard.html`
 
-1. **Mudar logo "RAP" para "INTEL"** em todos os templates
-2. **Adicionar badges dinamicos**:
-   - Circulos: mostrar "X precisam atencao"
-   - Inbox: mostrar contagem de nao lidos
-3. **Destacar Circulos e Briefings** como features novas
-4. **Remover ou ocultar** secao "Prospects" (sistema antigo)
-
-### Arquivos
-- `app/templates/rap_dashboard.html`
-- `app/templates/components/sidebar.html` (se existir)
-- Todos os templates que tem sidebar
-
-### Criterio de Aceite
-- [ ] Logo mostra "INTEL" em todas as paginas
-- [ ] Badge de atencao no menu Circulos
-- [ ] Secao Prospects removida/oculta
-
----
-
-## Tarefa 2: Widget de Circulos no Dashboard
-
-**Status**: PENDENTE
-**Branch**: `feature/flow-dashboard-circulos`
-**Prioridade**: ALTA
-
-### Objetivo
-Adicionar visualizacao rapida dos circulos no dashboard principal.
-
-### Implementacao
-
+**Implementacao**:
 ```html
-<!-- Widget de Circulos -->
-<div class="circulos-widget">
-    <h3>Saude dos Relacionamentos</h3>
+<!-- Adicionar no sidebar, secao FERRAMENTAS -->
+<div class="nav-section">FERRAMENTAS</div>
 
-    <!-- Barras por circulo -->
-    <div class="circulo-row circulo-1">
-        <span>Intimo</span>
-        <div class="bar" style="width: 85%"></div>
-        <span>12 contatos</span>
-    </div>
-    <!-- ... circulos 2-5 -->
+<a href="/prospeccao" class="nav-item">
+    <i class="bi bi-funnel"></i>
+    <span>Prospeccao</span>
+</a>
+```
 
-    <!-- Alertas -->
-    <div class="alertas">
-        <span class="badge warning">5 precisam atencao</span>
-        <span class="badge info">2 aniversarios esta semana</span>
-    </div>
+**Criterios**:
+- [ ] Link Prospeccao aparece no sidebar
+- [ ] Icone de funil
+- [ ] Redireciona para /prospeccao
 
-    <a href="/circulos">Ver detalhes</a>
+---
+
+### Tarefa 2: Pagina de Duplicados
+
+**Status**: PENDENTE
+**Prioridade**: MEDIA
+
+**Objetivo**: Criar interface para visualizar e fazer merge de duplicados.
+
+**Arquivo**: `app/templates/intel_duplicados.html` (novo)
+
+**Implementacao**:
+- Lista de pares duplicados com score
+- Botao "Merge" para cada par
+- Preview dos dados de ambos contatos
+- Confirmar qual manter
+
+**Endpoint**: `GET /api/contacts/duplicates`
+
+**Criterios**:
+- [ ] Pagina /duplicados criada
+- [ ] Lista duplicados da API
+- [ ] Permite merge com confirmacao
+
+---
+
+### Tarefa 3: Card de Estatisticas no Dashboard
+
+**Status**: PENDENTE
+**Prioridade**: MEDIA
+
+**Objetivo**: Adicionar card mostrando distribuicao dos circulos visualmente.
+
+**Implementacao**:
+```html
+<!-- Card com barras de progresso por circulo -->
+<div class="card">
+    <h6>Distribuicao por Circulo</h6>
+    <div class="circulo-bar c1" style="width: 0.1%">C1: 5</div>
+    <div class="circulo-bar c2" style="width: 0.1%">C2: 6</div>
+    <div class="circulo-bar c3" style="width: 0.7%">C3: 44</div>
+    <div class="circulo-bar c4" style="width: 5.6%">C4: 378</div>
+    <div class="circulo-bar c5" style="width: 93.5%">C5: 6266</div>
 </div>
 ```
 
-### Criterio de Aceite
-- [ ] Widget exibe resumo dos 5 circulos
-- [ ] Mostra health medio por circulo
-- [ ] Link para pagina de circulos
-- [ ] Cores corretas por circulo
+**Criterios**:
+- [ ] Barras proporcionais
+- [ ] Cores por circulo
+- [ ] Dados da API /api/v1/dashboard
 
 ---
 
-## Tarefa 3: Pagina de Configuracoes
+### Tarefa 4: Busca Global no Header
 
 **Status**: PENDENTE
-**Branch**: `feature/flow-settings`
-**Prioridade**: MEDIA
-
-### Objetivo
-Criar pagina /config para ajustes do sistema.
-
-### Implementacao
-
-Secoes:
-1. **Perfil**: Nome, email, foto
-2. **Circulos**: Ajustar frequencias ideais
-3. **Notificacoes**: Email de alertas, lembretes
-4. **Integracao**: Status Google, WhatsApp
-
-### Arquivos
-- `app/templates/intel_settings.html` (novo)
-- `app/main.py`: Rota GET /config
-
-### Criterio de Aceite
-- [ ] Pagina acessivel em /config
-- [ ] Exibe configuracoes atuais
-- [ ] Permite editar frequencia dos circulos
-
----
-
-## Tarefa 4: Notificacoes de Aniversario
-
-**Status**: PENDENTE
-**Branch**: `feature/flow-birthday-notifications`
-**Prioridade**: MEDIA
-
-### Objetivo
-Mostrar alertas de aniversarios de forma mais visivel.
-
-### Implementacao
-
-1. **Banner no topo** quando ha aniversarios hoje
-2. **Card especial** para aniversarios da semana
-3. **Acao rapida**: "Enviar mensagem" direto do alerta
-
-### Criterio de Aceite
-- [ ] Banner aparece quando aniversario hoje
-- [ ] Lista aniversarios proximos 7 dias
-- [ ] Botao para enviar WhatsApp/Email
-
----
-
-## Tarefa 5: Busca Global
-
-**Status**: PENDENTE
-**Branch**: `feature/flow-search`
-**Prioridade**: MEDIA
-
-### Objetivo
-Implementar busca que funcione em todas as paginas.
-
-### Implementacao
-
-1. **Campo de busca no header** (ja existe parcialmente)
-2. **Busca em tempo real** (debounce 300ms)
-3. **Resultados**: contatos, empresas, tags
-4. **Atalho de teclado**: Cmd+K ou /
-
-### Criterio de Aceite
-- [ ] Busca funciona de qualquer pagina
-- [ ] Mostra resultados em dropdown
-- [ ] Navega para contato ao clicar
-
----
-
-## Tarefa 6: Melhorar Pagina de Contato
-
-**Status**: PRONTO
-**Branch**: `feature/intel-engajamento` (commit f5f3262)
 **Prioridade**: BAIXA
 
-### Objetivo
-Adicionar info de Circulos e Health na pagina do contato.
+**Objetivo**: Campo de busca que funciona em todas as paginas.
 
-### Implementacao
-
-- Mostrar circulo atual com badge colorido
-- Mostrar health score com barra visual
-- Historico de mudancas de circulo
-- Botao para gerar briefing
+**Implementacao**:
+- Input no header
+- Busca em tempo real (debounce 300ms)
+- Dropdown com resultados
+- Atalho Cmd+K
 
 ---
 
 ## Registro de Conclusao
 
-| Tarefa | Branch | Status | Resumo |
-|--------|--------|--------|--------|
-| 1. Sidebar INTEL | feature/flow-sidebar-intel | PRECISA REBASE | Branch desatualizada |
-| 2. Widget Circulos | feature/flow-dashboard-circulos | PRECISA REBASE | Branch desatualizada |
-| 3. Configuracoes | b48f774 | **MERGED** | Circulos frequency settings |
-| 4. Notif. Aniversario | 00d12e6 | **MERGED** | Birthday banner + reminders |
-| 5. Busca Global | feature/flow-search | PRECISA REBASE | Branch desatualizada |
-| 6. Pagina Contato | feature/intel-engajamento | **MERGED** | Circulo badge, Health card |
-
----
-
-## NOTA: Branches Desatualizadas
-
-As branches 1, 2 e 5 precisam de rebase para incorporar mudancas de main.
-Use: `git checkout <branch> && git rebase main`
+| Data | Tarefa | Status |
+|------|--------|--------|
+| 2026-03-26 | Branding INTEL | **CONCLUIDO** |
+| 2026-03-25 | Birthday + Settings + Contact | **MERGED** |
