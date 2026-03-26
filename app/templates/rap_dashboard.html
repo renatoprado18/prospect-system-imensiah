@@ -577,7 +577,7 @@
             <a href="/circulos" class="nav-item">
                 <i class="bi bi-bullseye"></i>
                 <span>Circulos</span>
-                <span class="badge" style="background: #4ECDC4;">Novo</span>
+                <span class="badge" id="badgeAtencao" style="background: #4ECDC4; display: none;"></span>
             </a>
             <a href="/contatos" class="nav-item">
                 <i class="bi bi-people"></i>
@@ -665,20 +665,22 @@
                 <div class="stat-value" id="statContacts">-</div>
                 <div class="stat-label">Contatos</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-icon messages"><i class="bi bi-chat-dots"></i></div>
-                <div class="stat-value" id="statConversations">0</div>
-                <div class="stat-label">Conversas Ativas</div>
+            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/circulos'">
+                <div class="stat-icon" style="background: rgba(255, 107, 107, 0.1); color: #FF6B6B;"><i class="bi bi-bullseye"></i></div>
+                <div id="circulosBadges" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                    <span style="font-size: 0.8rem; color: var(--gray-400);">Carregando...</span>
+                </div>
+                <div class="stat-label">Circulos</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-icon meetings"><i class="bi bi-calendar-check"></i></div>
-                <div class="stat-value" id="statMeetings">0</div>
-                <div class="stat-label">Reuniões Hoje</div>
+            <div class="stat-card" style="border-left: 3px solid var(--warning);">
+                <div class="stat-icon" style="background: rgba(245, 158, 11, 0.1); color: var(--warning);"><i class="bi bi-exclamation-triangle"></i></div>
+                <div class="stat-value" id="statAtencao">-</div>
+                <div class="stat-label">Precisam Atencao</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-icon tasks"><i class="bi bi-list-check"></i></div>
-                <div class="stat-value" id="statTasks">0</div>
-                <div class="stat-label">Tarefas Pendentes</div>
+            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/briefings'">
+                <div class="stat-icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;"><i class="bi bi-file-text"></i></div>
+                <div class="stat-value" id="statBriefings">-</div>
+                <div class="stat-label">Briefings Pendentes</div>
             </div>
         </div>
 
@@ -735,16 +737,52 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Load stats
-        async function loadStats() {
+        // Load dashboard data from unified API
+        async function loadDashboardData() {
             try {
-                const response = await fetch('/api/contacts/stats');
-                const stats = await response.json();
+                const response = await fetch('/api/v1/dashboard');
+                const data = await response.json();
 
-                document.getElementById('statContacts').textContent = stats.total.toLocaleString();
-                document.getElementById('contactsCount').textContent = stats.total.toLocaleString();
+                // Total contacts
+                document.getElementById('statContacts').textContent = (data.stats?.total_contatos || 0).toLocaleString();
+                document.getElementById('contactsCount').textContent = (data.stats?.total_contatos || 0).toLocaleString();
+
+                // Circulos badges
+                const circulosContainer = document.getElementById('circulosBadges');
+                if (data.circulos_resumo) {
+                    const colors = {1: '#FF6B6B', 2: '#4ECDC4', 3: '#45B7D1', 4: '#96CEB4', 5: '#DDA0DD'};
+                    let html = '';
+                    for (let i = 1; i <= 5; i++) {
+                        const circulo = data.circulos_resumo[i] || {total: 0};
+                        html += `<span style="background: ${colors[i]}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 600;">C${i}: ${circulo.total}</span>`;
+                    }
+                    circulosContainer.innerHTML = html;
+                }
+
+                // Alertas - precisam atencao
+                const totalAtencao = data.alertas?.total || 0;
+                document.getElementById('statAtencao').textContent = totalAtencao;
+
+                // Sidebar badge for Circulos - show attention count
+                const sidebarBadge = document.getElementById('badgeAtencao');
+                if (sidebarBadge && totalAtencao > 0) {
+                    sidebarBadge.textContent = totalAtencao;
+                    sidebarBadge.style.background = '#f59e0b';
+                    sidebarBadge.style.display = 'inline';
+                }
+
+                // Briefings pendentes
+                document.getElementById('statBriefings').textContent = data.briefings_pendentes || 0;
+
             } catch (error) {
-                console.error('Error loading stats:', error);
+                console.error('Error loading dashboard:', error);
+                // Fallback to old stats API
+                try {
+                    const resp = await fetch('/api/contacts/stats');
+                    const stats = await resp.json();
+                    document.getElementById('statContacts').textContent = stats.total.toLocaleString();
+                    document.getElementById('contactsCount').textContent = stats.total.toLocaleString();
+                } catch (e) {}
             }
         }
 
@@ -884,7 +922,7 @@
         }
 
         // Init
-        loadStats();
+        loadDashboardData();
         loadRecentContacts();
         loadBirthdays();
     </script>
