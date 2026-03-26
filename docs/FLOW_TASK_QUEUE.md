@@ -13,6 +13,7 @@
 | Configuracoes | b48f774 | Circulos frequency settings |
 | Birthday Notif | 00d12e6 | Birthday banner + reminders |
 | Pagina Contato | merged | Circulo badge, Health card |
+| Sidebar Prospeccao | pendente | Link /prospeccao no sidebar FERRAMENTAS |
 
 ---
 
@@ -20,7 +21,7 @@
 
 ### Tarefa 1: Adicionar Prospeccao ao Sidebar
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: ALTA
 
 **Objetivo**: A rota /prospeccao foi criada mas nao aparece no menu. Adicionar link no sidebar do INTEL.
@@ -39,9 +40,9 @@
 ```
 
 **Criterios**:
-- [ ] Link Prospeccao aparece no sidebar
-- [ ] Icone de funil
-- [ ] Redireciona para /prospeccao
+- [x] Link Prospeccao aparece no sidebar
+- [x] Icone de funil
+- [x] Redireciona para /prospeccao
 
 ---
 
@@ -115,5 +116,6 @@
 
 | Data | Tarefa | Status |
 |------|--------|--------|
+| 2026-03-26 | Sidebar Prospeccao | **CONCLUIDO** |
 | 2026-03-26 | Branding INTEL | **CONCLUIDO** |
 | 2026-03-25 | Birthday + Settings + Contact | **MERGED** |
