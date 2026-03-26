@@ -362,5 +362,13 @@ async def complete_task(task_id: str, request: Request):
 
 | Data | Tarefa | Status |
 |------|--------|--------|
+| 2026-03-26 | Gmail Sync Service | **CONCLUIDO** |
+| 2026-03-26 | WhatsApp Sync Service | **CONCLUIDO** |
+| 2026-03-26 | Google Calendar Integration | **CONCLUIDO** |
+| 2026-03-26 | Google Tasks Integration | **CONCLUIDO** |
+| 2026-03-26 | Merge Duplicados (3 merged) | **CONCLUIDO** |
 | 2026-03-26 | Recalculo + Tags + Duplicados | **CONCLUIDO** |
 | 2026-03-25 | Todas 5 tarefas INTEL | **MERGED** |
+
+Branch: `feature/intel-integrations`
+Commit: 2f1dfa8
