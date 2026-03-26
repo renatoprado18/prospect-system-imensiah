@@ -167,3 +167,47 @@ def get_calendar_integration() -> GoogleCalendarIntegration:
     if _calendar_integration is None:
         _calendar_integration = GoogleCalendarIntegration()
     return _calendar_integration
+
+
+def create_calendar_link(
+    title: str,
+    start_datetime: datetime,
+    duration_minutes: int = 60,
+    meeting_type: str = "reuniao"
+) -> str:
+    """
+    Cria link para adicionar evento ao Google Calendar (fallback quando API nao disponivel).
+
+    Args:
+        title: Nome do contato/prospect
+        start_datetime: Data e hora de inicio
+        duration_minutes: Duracao em minutos
+        meeting_type: Tipo de reuniao (reuniao, call, cafe, etc)
+
+    Returns:
+        URL para abrir Google Calendar com evento pre-preenchido
+    """
+    from urllib.parse import quote
+
+    # Formatar titulo
+    event_title = f"{meeting_type.title()} com {title}"
+
+    # Calcular data/hora fim
+    end_datetime = start_datetime + timedelta(minutes=duration_minutes)
+
+    # Formatar datas no formato Google Calendar (YYYYMMDDTHHmmss)
+    date_format = "%Y%m%dT%H%M%S"
+    start_str = start_datetime.strftime(date_format)
+    end_str = end_datetime.strftime(date_format)
+
+    # Construir URL
+    base_url = "https://calendar.google.com/calendar/render"
+    params = {
+        "action": "TEMPLATE",
+        "text": quote(event_title),
+        "dates": f"{start_str}/{end_str}",
+        "details": quote(f"Reuniao agendada via INTEL"),
+    }
+
+    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    return f"{base_url}?{query_string}"
