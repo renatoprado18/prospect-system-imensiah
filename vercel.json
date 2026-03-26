@@ -15,7 +15,7 @@
       "dest": "api/index.py"
     }
   ],
-  "regions": ["gru1"],
+  "regions": ["iad1"],
   "crons": [
     {
       "path": "/api/cron/sync-contacts",
