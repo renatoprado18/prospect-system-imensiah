@@ -290,6 +290,36 @@ Executar AGORA:
 4. Reportar distribuicao final dos circulos
 
 3FLOW ja concluiu branding. Falta apenas o recalculo.
+
+[2026-03-26 2INTEL] **RECALCULO DE CIRCULOS CONCLUIDO**
+Tarefa urgente executada com sucesso.
+
+Resultados:
+- Total processados: 6647 contatos (52 manuais preservados)
+- Mudaram de circulo: 220 contatos
+- Distribuicao final:
+  - C1: 5 (0.1%) - familia imediata
+  - C2: 6 (0.1%) - familia proxima
+  - C3: 44 (0.7%) - networking ativo
+  - C4: 378 (5.6%) - conhecidos engajados
+  - C5: 6266 (93.5%) - arquivo
+
+Tags automaticas aplicadas:
+- 1242 contatos receberam novas tags
+- 1526 tags aplicadas no total
+- Top: c-level (633), diretor (287), gerente (231)
+
+Duplicados verificados:
+- 15 grupos por email
+- 4 grupos por telefone
+- 20 grupos por nome exato
+- Total: ~42 potenciais duplicados
+
+Scripts criados: scripts/recalc_v2.py, apply_tags_simple.py, check_duplicates.py
+Relatorio completo: docs/INTEL_RECALC_RESULTADO.md
+
+NOTA: Concentracao em C5 (93.5%) e esperada - 6690/6699 contatos nao tem
+interacoes registradas. Apos sync Gmail/WhatsApp, distribuicao se ajustara.
 ```
 
 ## Protocolo de Merge (OBRIGATORIO)
@@ -373,4 +403,7 @@ Executar AGORA:
 12. [x] **INTEL: Criar API Dashboard unificado**
 13. [x] **FLOW: Migrar UI para intel.almeida-prado.com**
 14. [ ] Configurar dominio intel.almeida-prado.com no Vercel
-15. [ ] Recalcular circulos de todos os contatos
+15. [x] Recalcular circulos de todos os contatos
+16. [x] Aplicar tags automaticas em lote
+17. [x] Verificar duplicados
+18. [ ] Importar interacoes Gmail/WhatsApp para melhorar distribuicao
