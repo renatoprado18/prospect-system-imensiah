@@ -9,351 +9,235 @@
 
 | Tarefa | Commit | Resumo |
 |--------|--------|--------|
-| Recalcular Circulos | 620de30 | 6647 contatos, C1=5, C2=6, C3=44, C4=378, C5=6266 |
-| Auto-Tags | 620de30 | 1242 contatos, 1526 tags (c-level, diretor, gerente, etc) |
-| Verificar Duplicados | 620de30 | 15 email, 4 phone, 20 name groups |
+| Recalcular Circulos | 620de30 | 6647 contatos distribuidos em 5 circulos |
+| Auto-Tags | 620de30 | 1242 contatos, 1526 tags aplicadas |
+| Verificar Duplicados | 620de30 | 42 duplicados identificados |
 | Briefing Context | 698214e | briefing_context.py + 5 endpoints |
 | Engajamento | merged | engajamento.py + 4 endpoints |
 | Duplicados Service | 8c93930 | duplicados.py + Levenshtein + 3 endpoints |
+| Gmail Sync | 2f1dfa8 | gmail_sync.py + endpoints |
+| WhatsApp Sync | 2f1dfa8 | whatsapp_sync.py + webhook |
+| Google Calendar | 2f1dfa8 | google_calendar.py + /api/calendar |
+| Google Tasks | 2f1dfa8 | google_tasks.py + /api/tasks |
+| Merge Duplicados | 2f1dfa8 | 3 duplicados mergeados |
 
 ---
 
 ## NOVAS TAREFAS (Executar em ordem)
 
-### Tarefa 1: Gmail Sync Automatico
+### Tarefa 1: API Inbox Unificado
 
 **Status**: PENDENTE
 **Prioridade**: CRITICA
 
-**Objetivo**: Sincronizar emails do Gmail para popular interacoes dos contatos. 93.5% dos contatos estao em C5 por falta de dados.
+**Objetivo**: Endpoints para o Inbox unificado que 3FLOW criou na UI.
 
-**Arquivos existentes**:
-- `app/integrations/gmail.py` - GmailIntegration class (OAuth, list_messages, get_message)
-- `app/database.py` - get_db()
-
-**Criar**: `app/services/gmail_sync.py`
+**Criar/Atualizar**: `app/services/inbox.py`
 
 ```python
 """
-Gmail Sync Service
-Sincroniza emails do Gmail com contatos do INTEL
+Inbox Service - Unifica emails e WhatsApp
 """
-from datetime import datetime, timedelta
-from app.integrations.gmail import GmailIntegration
-from app.database import get_db
-
-class GmailSyncService:
-    def __init__(self):
-        self.gmail = GmailIntegration()
-
-    async def sync_contact_emails(self, contact_id: int, email: str, access_token: str):
-        """Busca emails trocados com um contato e atualiza interacoes"""
-        # 1. Buscar mensagens de/para o email
-        # 2. Contar total de interacoes
-        # 3. Pegar data do ultimo email
-        # 4. Atualizar contact: ultimo_contato, total_interacoes
+class InboxService:
+    async def get_conversations(self, limit=50, filter_type=None):
+        """Lista conversas (email + whatsapp) ordenadas por data"""
+        # Combinar dados de conversations table
+        # Retornar: id, contact_id, contact_name, channel, last_message, unread_count, timestamp
         pass
 
-    async def sync_all_contacts(self, access_token: str, months: int = 12):
-        """Sincroniza todos os contatos que tem email"""
-        # 1. SELECT id, emails FROM contacts WHERE emails IS NOT NULL
-        # 2. Para cada contato, chamar sync_contact_emails
-        # 3. Retornar relatorio
+    async def get_messages(self, conversation_id: int):
+        """Mensagens de uma conversa especifica"""
+        pass
+
+    async def get_unread_count(self):
+        """Total de nao lidos (para badge)"""
+        pass
+
+    async def mark_as_read(self, conversation_id: int):
+        """Marca conversa como lida"""
         pass
 ```
 
-**Endpoints a criar** em `app/main.py`:
+**Endpoints**:
+- `GET /api/inbox/conversations` - lista conversas
+- `GET /api/inbox/conversations/{id}/messages` - mensagens
+- `GET /api/inbox/unread` - contador nao lidos
+- `POST /api/inbox/conversations/{id}/read` - marcar como lido
 
-```python
-@app.post("/api/gmail/sync")
-async def gmail_sync_all(request: Request):
-    """Inicia sync de todos os contatos"""
-    # Pegar access_token da sessao ou DB
-    # Chamar GmailSyncService.sync_all_contacts()
-    pass
-
-@app.post("/api/gmail/sync/{contact_id}")
-async def gmail_sync_contact(contact_id: int, request: Request):
-    """Sync emails de um contato especifico"""
-    pass
-
-@app.get("/api/gmail/status")
-async def gmail_sync_status():
-    """Status da ultima sincronizacao"""
-    pass
-```
-
-**Tabela para criar** (se nao existir):
-
-```sql
-CREATE TABLE IF NOT EXISTS email_interactions (
-    id SERIAL PRIMARY KEY,
-    contact_id INTEGER REFERENCES contacts(id),
-    message_id VARCHAR(255) UNIQUE,
-    direction VARCHAR(20), -- 'incoming' ou 'outgoing'
-    subject TEXT,
-    snippet TEXT,
-    email_date TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-**Criterios de aceite**:
-- [ ] Service gmail_sync.py criado
+**Criterios**:
+- [ ] InboxService criado
 - [ ] Endpoints funcionando
-- [ ] Atualiza ultimo_contato e total_interacoes
-- [ ] Recalcula circulos apos sync
+- [ ] Combina email + WhatsApp
+- [ ] Badge do sidebar funciona
 
 ---
 
-### Tarefa 2: WhatsApp Sync Automatico
-
-**Status**: PENDENTE
-**Prioridade**: CRITICA
-
-**Objetivo**: Processar mensagens do WhatsApp (Evolution API) e atualizar interacoes.
-
-**Arquivos existentes**:
-- `app/integrations/whatsapp.py` - WhatsAppIntegration class
-  - `get_all_chats()` - lista todas conversas
-  - `get_messages_for_chat(phone)` - mensagens de um numero
-  - `parse_stored_message()` - parser de mensagem
-
-**Criar**: `app/services/whatsapp_sync.py`
-
-```python
-"""
-WhatsApp Sync Service
-Sincroniza mensagens do WhatsApp com contatos do INTEL
-"""
-from app.integrations.whatsapp import WhatsAppIntegration
-from app.database import get_db
-
-class WhatsAppSyncService:
-    def __init__(self):
-        self.wa = WhatsAppIntegration()
-
-    async def sync_all_chats(self):
-        """
-        1. Buscar todos os chats via get_all_chats()
-        2. Para cada chat com _phone:
-           - Buscar contato pelo telefone
-           - Se encontrar, atualizar ultimo_contato e total_interacoes
-           - Salvar mensagens na tabela whatsapp_messages
-        """
-        pass
-
-    async def process_webhook(self, payload: dict):
-        """
-        Processar webhook do Evolution API em tempo real
-        Chamado quando nova mensagem chega
-        """
-        pass
-```
-
-**Endpoint de webhook** (verificar se existe em main.py):
-
-```python
-@app.post("/api/whatsapp/webhook")
-async def whatsapp_webhook(request: Request):
-    """Webhook do Evolution API para mensagens em tempo real"""
-    payload = await request.json()
-    service = WhatsAppSyncService()
-    await service.process_webhook(payload)
-    return {"status": "ok"}
-```
-
-**Tabela para criar**:
-
-```sql
-CREATE TABLE IF NOT EXISTS whatsapp_messages (
-    id SERIAL PRIMARY KEY,
-    contact_id INTEGER REFERENCES contacts(id),
-    phone VARCHAR(20),
-    message_id VARCHAR(255) UNIQUE,
-    direction VARCHAR(20),
-    content TEXT,
-    message_type VARCHAR(20),
-    message_date TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-**Criterios de aceite**:
-- [ ] Service whatsapp_sync.py criado
-- [ ] Endpoint webhook funcionando
-- [ ] Sync manual de chats existentes
-- [ ] Atualiza ultimo_contato e total_interacoes
-
----
-
-### Tarefa 3: Google Calendar Integration
+### Tarefa 2: API Timeline de Contato
 
 **Status**: PENDENTE
 **Prioridade**: ALTA
 
-**Objetivo**: Integrar com Google Calendar para mostrar agenda no dashboard.
+**Objetivo**: Endpoint para timeline unificada na pagina de contato.
 
-**Criar**: `app/integrations/google_calendar.py`
+**Criar**: `app/services/timeline.py`
 
 ```python
 """
-Google Calendar Integration
-OAuth ja configurado - usar mesmo client_id/secret
+Timeline Service - Historico unificado de interacoes
 """
-import os
-import httpx
-from datetime import datetime, timedelta
-from typing import Dict, List, Any
+class TimelineService:
+    async def get_contact_timeline(self, contact_id: int, limit=50):
+        """
+        Retorna timeline unificada:
+        - Emails enviados/recebidos
+        - Mensagens WhatsApp
+        - Reunioes (calendar events)
+        - Notas manuais
+        - Mudancas de circulo
+        """
+        # Query contact_memories + messages + calendar
+        # Ordenar por data DESC
+        # Retornar: type, title, content, timestamp, metadata
+        pass
+```
 
-class GoogleCalendarIntegration:
-    CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
+**Endpoint**:
+- `GET /api/contacts/{id}/timeline` - timeline do contato
 
-    # Adicionar scope ao OAuth existente:
-    # "https://www.googleapis.com/auth/calendar.readonly"
+**Criterios**:
+- [ ] TimelineService criado
+- [ ] Combina todas as fontes
+- [ ] Ordenado por data
+- [ ] Paginacao funciona
 
-    def __init__(self):
-        self.client_id = os.getenv("GOOGLE_CLIENT_ID")
-        self.client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+---
 
-    async def list_events(
-        self,
-        access_token: str,
-        time_min: datetime = None,
-        time_max: datetime = None,
-        max_results: int = 10
-    ) -> List[Dict]:
-        """Lista eventos do calendario"""
+### Tarefa 3: API Notificacoes
+
+**Status**: PENDENTE
+**Prioridade**: ALTA
+
+**Objetivo**: Sistema de notificacoes para o sino no header.
+
+**Criar**: `app/services/notifications.py`
+
+```python
+"""
+Notifications Service
+"""
+class NotificationService:
+    async def get_notifications(self, limit=20):
+        """
+        Tipos:
+        - birthday_today: Aniversarios de hoje
+        - birthday_upcoming: Proximos 7 dias
+        - low_health: Contatos precisando atencao
+        - new_message: Novas mensagens
+        - task_due: Tarefas vencendo
+        """
         pass
 
-    async def get_today_events(self, access_token: str) -> List[Dict]:
-        """Eventos de hoje para o dashboard"""
+    async def get_unread_count(self):
+        """Total de notificacoes nao lidas"""
         pass
 
-    async def get_upcoming_events(self, access_token: str, days: int = 7) -> List[Dict]:
-        """Proximos eventos"""
+    async def mark_all_read(self):
+        """Marca todas como lidas"""
         pass
 ```
 
 **Endpoints**:
+- `GET /api/notifications` - lista notificacoes
+- `GET /api/notifications/count` - contador
+- `POST /api/notifications/read-all` - marcar todas lidas
 
-```python
-@app.get("/api/calendar/events")
-async def calendar_events(request: Request, days: int = 7):
-    """Lista eventos dos proximos X dias"""
-    pass
-
-@app.get("/api/calendar/today")
-async def calendar_today(request: Request):
-    """Eventos de hoje (para dashboard)"""
-    pass
-```
-
-**Atualizar OAuth** em `app/auth.py`:
-- Adicionar scope: `https://www.googleapis.com/auth/calendar.readonly`
-
-**Criterios de aceite**:
-- [ ] Integration google_calendar.py criado
-- [ ] Endpoints funcionando
-- [ ] Retorna eventos formatados para UI
+**Criterios**:
+- [ ] NotificationService criado
+- [ ] Todos os tipos implementados
+- [ ] Polling funciona (3FLOW chama a cada 2min)
 
 ---
 
-### Tarefa 4: Google Tasks Integration
+### Tarefa 4: Background Jobs
 
 **Status**: PENDENTE
 **Prioridade**: MEDIA
 
-**Objetivo**: Sincronizar tarefas com Google Tasks (bi-direcional).
+**Objetivo**: Jobs periodicos para sync automatico.
 
-**Criar**: `app/integrations/google_tasks.py`
+**Criar**: `app/services/background_jobs.py`
 
 ```python
 """
-Google Tasks Integration
-Sync bi-direcional de tarefas
+Background Jobs - Executar periodicamente
 """
-import os
-import httpx
-from typing import Dict, List, Any
+import asyncio
+from datetime import datetime, timedelta
 
-class GoogleTasksIntegration:
-    TASKS_API_BASE = "https://tasks.googleapis.com/tasks/v1"
-
-    # Scope: "https://www.googleapis.com/auth/tasks"
-
-    async def list_task_lists(self, access_token: str) -> List[Dict]:
-        """Lista todas as listas de tarefas"""
+class BackgroundJobsService:
+    async def sync_gmail_periodic(self):
+        """Sync Gmail a cada 15 minutos"""
         pass
 
-    async def list_tasks(self, access_token: str, tasklist_id: str = "@default") -> List[Dict]:
-        """Lista tarefas de uma lista"""
+    async def sync_whatsapp_periodic(self):
+        """Processar webhooks pendentes"""
         pass
 
-    async def create_task(self, access_token: str, title: str, notes: str = None, due: datetime = None) -> Dict:
-        """Cria nova tarefa"""
+    async def recalculate_health_scores(self):
+        """Recalcular health scores diariamente"""
         pass
 
-    async def complete_task(self, access_token: str, task_id: str) -> Dict:
-        """Marca tarefa como concluida"""
+    async def generate_daily_briefings(self):
+        """Gerar briefings para reunioes do dia"""
         pass
 ```
 
-**Endpoints**:
+**Implementar usando**:
+- APScheduler ou
+- Celery (se precisar mais robusto) ou
+- Simples asyncio com sleep
 
-```python
-@app.get("/api/tasks")
-async def list_tasks(request: Request):
-    pass
-
-@app.post("/api/tasks")
-async def create_task(request: Request):
-    pass
-
-@app.put("/api/tasks/{task_id}/complete")
-async def complete_task(task_id: str, request: Request):
-    pass
-```
-
-**Criterios de aceite**:
-- [ ] Integration google_tasks.py criado
-- [ ] CRUD de tarefas funcionando
-- [ ] Sync bi-direcional
+**Criterios**:
+- [ ] Jobs configurados
+- [ ] Gmail sync periodico
+- [ ] Health score recalculo
+- [ ] Logs de execucao
 
 ---
 
-### Tarefa 5: Resolver Duplicados
+### Tarefa 5: Melhorar Distribuicao de Circulos
 
 **Status**: PENDENTE
 **Prioridade**: BAIXA
 
-**Objetivo**: Merge automatico dos 42 duplicados com score > 0.9
+**Objetivo**: 93.5% dos contatos ainda em C5. Melhorar algoritmo.
 
-**Script**: `scripts/merge_duplicates.py`
+**Atualizar**: `app/services/circulos.py`
 
-```python
-# 1. GET /api/contacts/duplicates?threshold=0.9
-# 2. Para cada par com score > 0.9:
-#    - Manter o mais completo (mais campos preenchidos)
-#    - POST /api/contacts/merge {keep_id, merge_id}
-# 3. Gerar relatorio
-```
+**Sugestoes**:
+1. Dar mais peso para contatos com LinkedIn conectado
+2. Considerar tags (c-level, diretor = +pontos)
+3. Considerar empresa conhecida
+4. Usar dados do Gmail/WhatsApp sync para interacoes
+
+**Criterios**:
+- [ ] Algoritmo revisado
+- [ ] Distribuicao mais equilibrada
+- [ ] Recalculo executado
 
 ---
 
 ## INSTRUCOES DE EXECUCAO
 
-1. **Criar branch**: `git checkout -b feature/intel-integrations`
-2. **Executar tarefas em ordem** (1 -> 5)
-3. **Testar cada uma** antes de prosseguir
-4. **Commit por tarefa**: `git commit -m "feat(intel): Gmail sync service"`
-5. **Ao finalizar**: Push e criar PR ou merge direto
+1. **Branch**: `git checkout -b feature/intel-apis-v2`
+2. **Executar em ordem** (1 -> 5)
+3. **Commit por tarefa**
+4. **Merge direto em main**
 
 ## AUTONOMIA
 
-- NAO aguardar aprovacao entre tarefas
-- Se encontrar erro, tentar resolver e continuar
-- Documentar decisoes no commit
+- NAO aguardar aprovacao
+- Se encontrar erro, resolver e continuar
 - Atualizar este arquivo conforme progresso
 
 ---
@@ -362,13 +246,6 @@ async def complete_task(task_id: str, request: Request):
 
 | Data | Tarefa | Status |
 |------|--------|--------|
-| 2026-03-26 | Gmail Sync Service | **CONCLUIDO** |
-| 2026-03-26 | WhatsApp Sync Service | **CONCLUIDO** |
-| 2026-03-26 | Google Calendar Integration | **CONCLUIDO** |
-| 2026-03-26 | Google Tasks Integration | **CONCLUIDO** |
-| 2026-03-26 | Merge Duplicados (3 merged) | **CONCLUIDO** |
+| 2026-03-26 | Gmail/WhatsApp/Calendar/Tasks | **CONCLUIDO** |
 | 2026-03-26 | Recalculo + Tags + Duplicados | **CONCLUIDO** |
-| 2026-03-25 | Todas 5 tarefas INTEL | **MERGED** |
-
-Branch: `feature/intel-integrations`
-Commit: 2f1dfa8
+| 2026-03-25 | Services anteriores | **MERGED** |

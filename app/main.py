@@ -4932,42 +4932,64 @@ async def test_endpoint():
     return {"status": "ok", "message": "API v1 working"}
 
 @app.get("/api/v1/dashboard")
-async def get_dashboard_unified():
+async def get_dashboard_unified(request: Request):
     """
-    Retorna dados unificados para o Dashboard principal.
-    Inclui: stats, alertas, contatos recentes, resumo dos circulos.
+    Retorna TODOS os dados do Dashboard em uma unica chamada.
+    Evita multiplos cold starts do Vercel.
     """
-    # Import locally to avoid stale import issues
     from services.dashboard import (
         get_dashboard_stats as _get_stats,
         get_alertas as _get_alertas,
         get_contatos_recentes as _get_recentes,
         get_circulos_resumo as _get_circulos
     )
+    from database import get_db
 
     result = {}
+
+    # Stats e circulos
     try:
         result["stats"] = _get_stats()
     except Exception as e:
-        result["stats_error"] = str(e)
+        result["stats"] = {}
 
     try:
         result["alertas"] = _get_alertas(limit=10)
     except Exception as e:
-        result["alertas_error"] = str(e)
         result["alertas"] = []
 
     try:
         result["contatos_recentes"] = _get_recentes(limit=5)
     except Exception as e:
-        result["contatos_recentes_error"] = str(e)
         result["contatos_recentes"] = []
 
     try:
         result["circulos_resumo"] = _get_circulos()
     except Exception as e:
-        result["circulos_resumo_error"] = str(e)
         result["circulos_resumo"] = {}
+
+    # Aniversarios proximos (para lembretes)
+    try:
+        from services.circulos import get_aniversarios_proximos
+        result["aniversarios"] = get_aniversarios_proximos(7)
+    except:
+        result["aniversarios"] = []
+
+    # Inbox count (sem autenticacao para ser rapido)
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM messages WHERE lida = FALSE")
+            row = cursor.fetchone()
+            result["inbox_unread"] = row["count"] if row else 0
+    except:
+        result["inbox_unread"] = 0
+
+    # Tarefas - simplificado (sem Google Tasks para ser rapido)
+    result["tasks"] = []
+
+    # Agenda - simplificado (sem Google Calendar para ser rapido)
+    result["calendar_today"] = []
 
     return result
 

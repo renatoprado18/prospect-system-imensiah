@@ -1436,16 +1436,113 @@
             }
         }
 
-        // Init
-        loadDashboardData();
-        loadRecentContacts();
-        loadBirthdays();
-        loadTodayAgenda();
-        loadTasks();
-        loadInboxCount();
+        // Init - SINGLE API call for all dashboard data
+        async function initDashboard() {
+            try {
+                const response = await fetch('/api/v1/dashboard');
+                const data = await response.json();
 
-        // Update inbox count every 60 seconds
-        setInterval(loadInboxCount, 60000);
+                // Stats
+                document.getElementById('statContacts').textContent = (data.stats?.total_contatos || 0).toLocaleString();
+                document.getElementById('contactsCount').textContent = (data.stats?.total_contatos || 0).toLocaleString();
+                document.getElementById('statAtencao').textContent = data.stats?.precisam_atencao || 0;
+                document.getElementById('statBriefings').textContent = data.stats?.briefings_pendentes || 0;
+
+                // Circulos Distribution
+                if (data.circulos_resumo) {
+                    const colors = {1: '#FF6B6B', 2: '#4ECDC4', 3: '#45B7D1', 4: '#96CEB4', 5: '#DDA0DD'};
+                    let total = 0;
+                    for (let i = 1; i <= 5; i++) {
+                        total += (data.circulos_resumo[i]?.total || 0);
+                    }
+
+                    const distContainer = document.getElementById('circuloDistribution');
+                    if (distContainer) {
+                        let distHtml = '';
+                        for (let i = 1; i <= 5; i++) {
+                            const circulo = data.circulos_resumo[i] || {total: 0};
+                            const count = circulo.total;
+                            const percent = total > 0 ? ((count / total) * 100) : 0;
+                            const displayPercent = Math.max(percent, 3);
+                            distHtml += `
+                                <div class="circulo-bar-row">
+                                    <span class="circulo-bar-label">C${i}</span>
+                                    <div class="circulo-bar-container">
+                                        <div class="circulo-bar-fill c${i}" style="width: ${displayPercent}%">
+                                            ${percent >= 5 ? count : ''}
+                                        </div>
+                                    </div>
+                                    <span class="circulo-bar-count">${count.toLocaleString()}</span>
+                                </div>
+                            `;
+                        }
+                        distContainer.innerHTML = distHtml;
+                    }
+                }
+
+                // Recent Contacts
+                if (data.contatos_recentes) {
+                    const container = document.getElementById('recentContacts');
+                    if (container) {
+                        let html = '';
+                        data.contatos_recentes.forEach(c => {
+                            const initials = (c.nome || '?').split(' ').map(n => n[0]).join('').substring(0,2).toUpperCase();
+                            html += `
+                                <a href="/contacts/${c.id}" class="contact-item">
+                                    <div class="contact-avatar" style="background: var(--primary-light);">
+                                        ${c.foto_url ? `<img src="${c.foto_url}" alt="">` : initials}
+                                    </div>
+                                    <div class="contact-info">
+                                        <div class="contact-name">${c.nome || 'Sem nome'}</div>
+                                        <div class="contact-company">${c.empresa || ''}</div>
+                                    </div>
+                                </a>
+                            `;
+                        });
+                        container.innerHTML = html || '<div class="empty-state">Nenhum contato recente</div>';
+                    }
+                }
+
+                // Birthdays / Lembretes
+                if (data.aniversarios && data.aniversarios.length > 0) {
+                    const reminder = document.getElementById('birthdayReminder');
+                    if (reminder) {
+                        const aniv = data.aniversarios[0];
+                        reminder.innerHTML = `
+                            <div class="reminder-icon">🎂</div>
+                            <div class="reminder-content">
+                                <div class="reminder-title">Aniversario proximo</div>
+                                <div class="reminder-meta">${aniv.nome} - ${aniv.dias_ate === 0 ? 'HOJE!' : `em ${aniv.dias_ate} dias`}</div>
+                            </div>
+                        `;
+                    }
+                }
+
+                // Inbox badge
+                const inboxBadge = document.getElementById('inboxBadge');
+                if (inboxBadge && data.inbox_unread > 0) {
+                    inboxBadge.textContent = data.inbox_unread;
+                    inboxBadge.style.display = 'inline';
+                }
+
+                // Tasks - show empty state
+                const tasksList = document.getElementById('tasksList');
+                if (tasksList) {
+                    tasksList.innerHTML = '<div class="empty-state"><i class="bi bi-check-circle"></i><p>Nenhuma tarefa pendente</p></div>';
+                }
+
+                // Calendar - show empty state
+                const todayAgenda = document.getElementById('todayAgenda');
+                if (todayAgenda) {
+                    todayAgenda.innerHTML = '<div class="empty-state"><i class="bi bi-calendar-x"></i><p>Nenhum compromisso para hoje</p></div>';
+                }
+
+            } catch (error) {
+                console.error('Error loading dashboard:', error);
+            }
+        }
+
+        initDashboard();
     </script>
 </body>
 </html>

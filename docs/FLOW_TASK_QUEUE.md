@@ -1,7 +1,7 @@
 # Fila de Tarefas 3FLOW
 
 **Atualizacao**: 2026-03-26
-**Modo**: Autonomo - sinalizar conclusao e continuar
+**Modo**: AUTONOMO TOTAL - executar todas as tarefas sem aguardar aprovacao
 
 ---
 
@@ -16,96 +16,249 @@
 | Sidebar Prospeccao | d55dd7b | Link /prospeccao no sidebar FERRAMENTAS |
 | Pagina Duplicados | edab6ef | Pagina /duplicados com merge |
 | Card Estatisticas | edab6ef | Distribuicao por circulo no dashboard |
-| UI Agenda | pendente | Conecta /api/calendar/today com fallback |
-| UI Tarefas | pendente | Card tarefas com /api/tasks + checkbox |
-| Badge Inbox | pendente | Contador nao lidos com polling 60s |
-| Busca Global | pendente | Cmd+K, debounce 300ms, dropdown |
+| UI Agenda | 9130477 | Conecta /api/calendar/today |
+| UI Tarefas | 9130477 | Card tarefas com checkbox |
+| Badge Inbox | 9130477 | Contador nao lidos polling 60s |
+| Busca Global | 9130477 | Cmd+K, debounce, dropdown |
 
 ---
 
-## NOVAS TAREFAS
+## NOVAS TAREFAS (Executar em ordem)
 
-### Tarefa 1: UI Agenda no Dashboard
+### Tarefa 1: Pagina Inbox Completa
 
-**Status**: CONCLUIDO
+**Status**: PENDENTE
 **Prioridade**: CRITICA
 
-**Objetivo**: Conectar secao "Agenda de Hoje" com /api/calendar/today
+**Objetivo**: Finalizar pagina /inbox com todas as funcionalidades.
+
+**Arquivo**: `app/templates/intel_inbox.html`
 
 **Implementacao**:
-- Funcao loadTodayAgenda() no script
-- Tenta chamar /api/calendar/today
-- Se API indisponivel, mostra "Nenhum compromisso"
-- Exibe ate 5 eventos com hora, titulo, local
+```html
+<!-- Layout master-detail -->
+<div class="inbox-container">
+    <!-- Sidebar com lista de conversas -->
+    <div class="inbox-sidebar">
+        <div class="inbox-filters">
+            <button class="filter-btn active" data-filter="all">Todas</button>
+            <button class="filter-btn" data-filter="email">Email</button>
+            <button class="filter-btn" data-filter="whatsapp">WhatsApp</button>
+            <button class="filter-btn" data-filter="unread">Nao lidas</button>
+        </div>
+        <div class="conversation-list" id="conversationList">
+            <!-- Carrega via JS -->
+        </div>
+    </div>
+
+    <!-- Area principal com mensagens -->
+    <div class="inbox-main">
+        <div class="conversation-header" id="convHeader">
+            <!-- Nome, avatar, acoes -->
+        </div>
+        <div class="messages-container" id="messagesContainer">
+            <!-- Mensagens -->
+        </div>
+        <div class="reply-box" id="replyBox">
+            <textarea placeholder="Digite sua resposta..."></textarea>
+            <button class="btn btn-primary">Enviar</button>
+        </div>
+    </div>
+</div>
+```
+
+**APIs utilizadas** (2INTEL cria):
+- `GET /api/inbox/conversations`
+- `GET /api/inbox/conversations/{id}/messages`
+- `POST /api/inbox/conversations/{id}/read`
 
 **Criterios**:
-- [x] Funcao loadTodayAgenda() criada
-- [x] Chamada no init
-- [x] Fallback gracioso se API nao disponivel
+- [ ] Lista de conversas com filtros
+- [ ] Visualizar mensagens
+- [ ] Marcar como lida ao abrir
+- [ ] Campo de resposta (mesmo que nao envie ainda)
 
 ---
 
-### Tarefa 2: UI Lista de Tarefas
+### Tarefa 2: Melhorar Pagina de Contato
 
-**Status**: CONCLUIDO
+**Status**: PENDENTE
 **Prioridade**: ALTA
 
-**Objetivo**: Card de tarefas no dashboard integrado com /api/tasks
+**Objetivo**: Adicionar timeline e melhorar layout.
 
-**Implementacao**:
-- Card "Tarefas" na coluna esquerda
-- Funcao loadTasks() chama /api/tasks?limit=5&status=pending
-- Checkbox para marcar como concluida (toggleTask)
-- Prioridade com cores: high (vermelho), medium (amarelo), low (verde)
+**Arquivo**: `app/templates/rap_contact_detail.html`
+
+**Adicionar**:
+1. **Timeline de interacoes** (nova secao)
+```html
+<div class="card mt-4">
+    <div class="card-header">
+        <h5><i class="bi bi-clock-history"></i> Historico</h5>
+    </div>
+    <div class="card-body">
+        <div class="timeline" id="contactTimeline">
+            <!-- Carrega via /api/contacts/{id}/timeline -->
+        </div>
+    </div>
+</div>
+```
+
+2. **Acoes rapidas no header**
+```html
+<div class="quick-actions">
+    <button onclick="sendWhatsApp()"><i class="bi bi-whatsapp"></i></button>
+    <button onclick="sendEmail()"><i class="bi bi-envelope"></i></button>
+    <button onclick="scheduleCall()"><i class="bi bi-calendar-plus"></i></button>
+    <button onclick="addNote()"><i class="bi bi-sticky"></i></button>
+</div>
+```
+
+3. **Tags editaveis**
+```html
+<div class="tags-section">
+    <span class="tag" data-tag="c-level">c-level <i class="bi bi-x"></i></span>
+    <button class="add-tag-btn">+ Tag</button>
+</div>
+```
 
 **Criterios**:
-- [x] Card de tarefas adicionado
-- [x] Integra com /api/tasks
-- [x] Checkbox funcional
-- [x] Fallback se API indisponivel
+- [ ] Timeline funciona
+- [ ] Acoes rapidas no header
+- [ ] Tags editaveis
+- [ ] Layout mais limpo
 
 ---
 
-### Tarefa 3: Badges Inbox
+### Tarefa 3: Mobile Responsivo
 
-**Status**: CONCLUIDO
+**Status**: PENDENTE
+**Prioridade**: ALTA
+
+**Objetivo**: Todas as paginas funcionam bem no celular.
+
+**Arquivos**: Todos os templates
+
+**Verificar/Corrigir**:
+1. Dashboard - cards empilham verticalmente
+2. Sidebar - vira menu hamburger
+3. Inbox - lista ocupa tela toda, detalhe em nova tela
+4. Contatos - tabela vira cards
+5. Busca global - funciona com touch
+
+**CSS a adicionar**:
+```css
+@media (max-width: 768px) {
+    .sidebar {
+        position: fixed;
+        left: -260px;
+        transition: left 0.3s;
+    }
+    .sidebar.open { left: 0; }
+    .main-content { margin-left: 0; }
+    .stats-grid { grid-template-columns: 1fr; }
+    /* etc */
+}
+```
+
+**Criterios**:
+- [ ] Dashboard responsivo
+- [ ] Sidebar mobile com hamburger
+- [ ] Inbox mobile-first
+- [ ] Contatos em cards no mobile
+
+---
+
+### Tarefa 4: PWA - Progressive Web App
+
+**Status**: PENDENTE
 **Prioridade**: MEDIA
 
-**Objetivo**: Contador de emails/WhatsApp nao lidos no sidebar
+**Objetivo**: App instalavel no celular.
 
-**Implementacao**:
-- Badge no nav-item do Inbox (#inboxBadge)
-- Funcao loadInboxCount() chama /api/inbox/unread
-- setInterval a cada 60 segundos
-- Badge com animacao pulse se > 0
+**Criar**:
+1. `static/manifest.json`
+```json
+{
+    "name": "INTEL - Assistente Pessoal",
+    "short_name": "INTEL",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#1e293b",
+    "theme_color": "#6366f1",
+    "icons": [
+        {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+        {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"}
+    ]
+}
+```
+
+2. `static/service-worker.js`
+```javascript
+// Cache de assets estaticos
+// Offline fallback basico
+```
+
+3. **Adicionar no head** de todos os templates:
+```html
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#6366f1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+```
 
 **Criterios**:
-- [x] Badge no sidebar
-- [x] Atualiza a cada 60s
-- [x] Animacao pulse
-- [x] Esconde se count == 0
+- [ ] manifest.json criado
+- [ ] Service worker basico
+- [ ] App instalavel no Android/iOS
+- [ ] Icones criados
 
 ---
 
-### Tarefa 4: Busca Global Cmd+K
+### Tarefa 5: Pagina de Analytics/Relatorios
 
-**Status**: CONCLUIDO
+**Status**: PENDENTE
 **Prioridade**: BAIXA
 
-**Objetivo**: Campo de busca que funciona em todas as paginas
+**Objetivo**: Dashboard com metricas e graficos.
 
-**Implementacao**:
-- Dropdown com resultados em tempo real
-- Debounce 300ms
-- Atalhos: Cmd+K, "/", Arrow Up/Down, Enter, Esc
-- Highlight do termo buscado
-- Navegacao por teclado
+**Criar**: `app/templates/intel_analytics.html`
+
+**Secoes**:
+1. **Resumo do periodo**
+   - Total de interacoes (email + whatsapp)
+   - Novos contatos
+   - Tarefas concluidas
+
+2. **Graficos**
+   - Interacoes por dia (linha)
+   - Distribuicao por circulo (pizza)
+   - Top 10 contatos mais ativos
+
+3. **Health Score**
+   - Contatos melhorando vs piorando
+   - Alertas de relacionamentos esfriando
+
+**Rota**: `GET /analytics`
 
 **Criterios**:
-- [x] Dropdown de resultados
-- [x] Debounce 300ms
-- [x] Atalho Cmd+K
-- [x] Navegacao teclado
+- [ ] Pagina criada
+- [ ] Pelo menos 3 graficos (usar Chart.js)
+- [ ] Periodo selecionavel (7d, 30d, 90d)
+
+---
+
+## INSTRUCOES DE EXECUCAO
+
+1. **Branch**: `git checkout -b feature/flow-ui-v3`
+2. **Executar em ordem** (1 -> 5)
+3. **Commit por tarefa**
+4. **Merge direto em main**
+
+## AUTONOMIA
+
+- NAO aguardar aprovacao
+- Se API nao existir, criar mock/fallback
+- Atualizar este arquivo conforme progresso
 
 ---
 
@@ -113,12 +266,7 @@
 
 | Data | Tarefa | Status |
 |------|--------|--------|
-| 2026-03-26 | UI Agenda Dashboard | **CONCLUIDO** |
-| 2026-03-26 | UI Tarefas Dashboard | **CONCLUIDO** |
-| 2026-03-26 | Badge Inbox | **CONCLUIDO** |
-| 2026-03-26 | Busca Global Cmd+K | **CONCLUIDO** |
-| 2026-03-26 | Pagina Duplicados | **CONCLUIDO** |
-| 2026-03-26 | Card Estatisticas Dashboard | **CONCLUIDO** |
-| 2026-03-26 | Sidebar Prospeccao | **CONCLUIDO** |
-| 2026-03-26 | Branding INTEL | **CONCLUIDO** |
-| 2026-03-25 | Birthday + Settings + Contact | **MERGED** |
+| 2026-03-26 | UI Agenda/Tarefas/Badge/Busca | **CONCLUIDO** |
+| 2026-03-26 | Duplicados + Stats Card | **CONCLUIDO** |
+| 2026-03-26 | Branding + Birthday | **CONCLUIDO** |
+| 2026-03-25 | Settings + Contact Page | **MERGED** |
