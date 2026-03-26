@@ -131,6 +131,28 @@ linkedin = LinkedInIntegration()
 whatsapp = WhatsAppIntegration()
 
 
+# Debug endpoint
+@app.get("/api/debug/dashboard")
+async def debug_dashboard():
+    """Debug endpoint to test dashboard functions individually."""
+    import traceback
+    results = {}
+
+    try:
+        from services.dashboard import get_dashboard_stats
+        results["stats"] = get_dashboard_stats()
+    except Exception as e:
+        results["stats_error"] = {"error": str(e), "tb": traceback.format_exc()}
+
+    try:
+        from services.dashboard import get_circulos_resumo
+        results["circulos"] = get_circulos_resumo()
+    except Exception as e:
+        results["circulos_error"] = {"error": str(e), "tb": traceback.format_exc()}
+
+    return results
+
+
 # ============== Pydantic Models ==============
 
 class ProspectCreate(BaseModel):
