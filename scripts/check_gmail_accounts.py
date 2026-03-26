@@ -2,6 +2,19 @@
 """Verifica contas Gmail conectadas."""
 import os
 import sys
+from pathlib import Path
+
+# Load .env file BEFORE importing database
+env_path = Path(__file__).parent.parent / '.env'
+if env_path.exists():
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                key, value = line.split('=', 1)
+                value = value.strip('"').strip("'")
+                os.environ.setdefault(key, value)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'app'))
 sys.stdout.reconfigure(line_buffering=True)
 
