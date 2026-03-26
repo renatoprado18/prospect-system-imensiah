@@ -273,6 +273,23 @@ Features deployadas:
   - UI reestruturada
 
 **Feature Migracao intel.almeida-prado.com: EM FINALIZACAO**
+
+[2026-03-25 3FLOW] **CONCLUIDO: Branding INTEL**
+Commit: 78dd717
+- Dashboard atualizado com cards de Circulos, Alertas, Briefings
+- Carrega dados de /api/v1/dashboard
+- Badge dinamico no sidebar
+
+[2026-03-25 1ARCH] **MENSAGEM PARA 2INTEL - TAREFA PENDENTE**
+Ler: docs/INTEL_URGENTE_RECALC.md
+
+Executar AGORA:
+1. POST /api/circulos/recalculate-batch (em lotes de 500)
+2. POST /api/contacts/apply-auto-tags?auto_apply=true
+3. GET /api/contacts/duplicates/stats
+4. Reportar distribuicao final dos circulos
+
+3FLOW ja concluiu branding. Falta apenas o recalculo.
 ```
 
 ## Protocolo de Merge (OBRIGATORIO)
