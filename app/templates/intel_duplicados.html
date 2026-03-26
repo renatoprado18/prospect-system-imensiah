@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>INTEL - Duplicados</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #0ea5e9;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --dark: #1e293b;
+            --light: #f8fafc;
+            --gray-100: #f1f5f9;
+            --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1;
+            --gray-400: #94a3b8;
+            --gray-500: #64748b;
+            --gray-600: #475569;
+            --sidebar-width: 260px;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--gray-100);
+            margin: 0;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: var(--sidebar-width);
+            background: linear-gradient(180deg, var(--dark) 0%, #0f172a 100%);
+            color: white;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 24px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .sidebar-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .sidebar-logo .icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sidebar-nav {
+            flex: 1;
+            padding: 16px 0;
+            overflow-y: auto;
+        }
+
+        .nav-section {
+            padding: 8px 16px;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--gray-400);
+            margin-top: 16px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 24px;
+            color: var(--gray-300);
+            text-decoration: none;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-item:hover {
+            background: rgba(255,255,255,0.05);
+            color: white;
+        }
+
+        .nav-item.active {
+            background: rgba(99, 102, 241, 0.15);
+            color: white;
+            border-left-color: var(--primary);
+        }
+
+        .nav-item i {
+            font-size: 1.2rem;
+            width: 24px;
+            text-align: center;
+        }
+
+        .nav-item .badge {
+            margin-left: auto;
+            background: var(--primary);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+        }
+
+        .sidebar-footer {
+            padding: 16px 24px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+        }
+
+        .user-name { font-weight: 500; font-size: 0.9rem; }
+        .user-role { font-size: 0.75rem; color: var(--gray-400); }
+
+        /* Main Content */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            padding: 24px 32px;
+            min-height: 100vh;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+        }
+
+        .page-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--dark);
+            margin: 0;
+        }
+
+        .page-subtitle {
+            color: var(--gray-500);
+            font-size: 0.9rem;
+            margin-top: 4px;
+        }
+
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--dark);
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: var(--gray-500);
+            margin-top: 4px;
+        }
+
+        /* Duplicate Cards */
+        .duplicate-card {
+            background: white;
+            border-radius: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            overflow: hidden;
+        }
+
+        .duplicate-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            background: var(--gray-100);
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .score-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .score-high { background: rgba(239, 68, 68, 0.1); color: #dc2626; }
+        .score-medium { background: rgba(245, 158, 11, 0.1); color: #d97706; }
+        .score-low { background: rgba(16, 185, 129, 0.1); color: #059669; }
+
+        .duplicate-body {
+            padding: 20px;
+        }
+
+        .contacts-comparison {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 20px;
+            align-items: start;
+        }
+
+        .contact-preview {
+            background: var(--gray-100);
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        .contact-preview.selected {
+            background: rgba(99, 102, 241, 0.1);
+            border: 2px solid var(--primary);
+        }
+
+        .contact-name {
+            font-weight: 600;
+            font-size: 1rem;
+            color: var(--dark);
+            margin-bottom: 8px;
+        }
+
+        .contact-detail {
+            font-size: 0.85rem;
+            color: var(--gray-500);
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .contact-detail i {
+            width: 16px;
+            color: var(--gray-400);
+        }
+
+        .merge-arrow {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--gray-400);
+        }
+
+        .merge-arrow i {
+            font-size: 1.5rem;
+        }
+
+        .reasons-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--gray-200);
+        }
+
+        .reason-tag {
+            background: var(--gray-100);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            color: var(--gray-600);
+        }
+
+        .duplicate-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            padding: 16px 20px;
+            background: var(--gray-100);
+            border-top: 1px solid var(--gray-200);
+        }
+
+        /* Buttons */
+        .btn-merge {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-merge:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-skip {
+            background: var(--gray-200);
+            color: var(--gray-600);
+            border: none;
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-skip:hover {
+            background: var(--gray-300);
+        }
+
+        .btn-view {
+            background: transparent;
+            color: var(--primary);
+            border: 1px solid var(--primary);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .btn-view:hover {
+            background: var(--primary);
+            color: white;
+        }
+
+        /* Modal */
+        .modal-backdrop-custom {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            display: none;
+        }
+
+        .modal-custom {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border-radius: 20px;
+            padding: 32px;
+            max-width: 500px;
+            width: 90%;
+            z-index: 1001;
+            display: none;
+        }
+
+        .modal-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--dark);
+            margin-bottom: 16px;
+        }
+
+        .modal-body {
+            color: var(--gray-600);
+            margin-bottom: 24px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        /* Loading */
+        .loading-state {
+            text-align: center;
+            padding: 60px;
+            color: var(--gray-500);
+        }
+
+        .loading-state .spinner-border {
+            width: 3rem;
+            height: 3rem;
+            margin-bottom: 16px;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 60px;
+            background: white;
+            border-radius: 16px;
+        }
+
+        .empty-state i {
+            font-size: 4rem;
+            color: var(--gray-300);
+            margin-bottom: 16px;
+        }
+
+        .empty-state h3 {
+            color: var(--dark);
+            margin-bottom: 8px;
+        }
+
+        .empty-state p {
+            color: var(--gray-500);
+        }
+
+        /* Toast */
+        .toast-container {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 2000;
+        }
+
+        .toast-custom {
+            background: var(--dark);
+            color: white;
+            padding: 16px 24px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+            display: none;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .toast-custom.success { background: var(--success); }
+        .toast-custom.error { background: var(--danger); }
+
+        @media (max-width: 1200px) {
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .contacts-comparison { grid-template-columns: 1fr; gap: 12px; }
+            .merge-arrow { transform: rotate(90deg); padding: 8px 0; }
+        }
+
+        @media (max-width: 768px) {
+            .sidebar { display: none; }
+            .main-content { margin-left: 0; padding: 16px; }
+            .stats-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-logo">
+                <div class="icon"><i class="bi bi-cpu"></i></div>
+                <span>INTEL</span>
+            </div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a href="/" class="nav-item">
+                <i class="bi bi-grid-1x2"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="/circulos" class="nav-item">
+                <i class="bi bi-bullseye"></i>
+                <span>Circulos</span>
+            </a>
+            <a href="/contatos" class="nav-item">
+                <i class="bi bi-people"></i>
+                <span>Contatos</span>
+            </a>
+            <a href="/contatos/limpeza" class="nav-item">
+                <i class="bi bi-magic"></i>
+                <span>Limpeza</span>
+            </a>
+            <a href="/duplicados" class="nav-item active">
+                <i class="bi bi-copy"></i>
+                <span>Duplicados</span>
+            </a>
+            <a href="/briefings" class="nav-item">
+                <i class="bi bi-file-text"></i>
+                <span>Briefings</span>
+            </a>
+
+            <div class="nav-section">Ferramentas</div>
+            <a href="/prospeccao" class="nav-item">
+                <i class="bi bi-funnel"></i>
+                <span>Prospeccao</span>
+            </a>
+
+            <div class="nav-section">Sistema</div>
+            <a href="/configuracoes" class="nav-item">
+                <i class="bi bi-gear"></i>
+                <span>Configuracoes</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-info">
+                <div class="user-avatar">R</div>
+                <div>
+                    <div class="user-name">Renato</div>
+                    <div class="user-role">Admin</div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">Duplicados</h1>
+                <p class="page-subtitle">Identifique e mescle contatos duplicados</p>
+            </div>
+            <div>
+                <button class="btn btn-outline-secondary" onclick="loadDuplicates()">
+                    <i class="bi bi-arrow-clockwise me-2"></i>Atualizar
+                </button>
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" id="statTotal">-</div>
+                <div class="stat-label">Duplicados Encontrados</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value text-danger" id="statHigh">-</div>
+                <div class="stat-label">Alta Confianca (>80%)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value text-warning" id="statMedium">-</div>
+                <div class="stat-label">Media Confianca (60-80%)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value text-success" id="statLow">-</div>
+                <div class="stat-label">Baixa Confianca (<60%)</div>
+            </div>
+        </div>
+
+        <!-- Threshold Filter -->
+        <div class="mb-4 d-flex align-items-center gap-3">
+            <label class="text-muted">Filtrar por confianca minima:</label>
+            <select id="thresholdSelect" class="form-select" style="width: auto;" onchange="loadDuplicates()">
+                <option value="0.5">50% ou mais</option>
+                <option value="0.6">60% ou mais</option>
+                <option value="0.7">70% ou mais</option>
+                <option value="0.8" selected>80% ou mais</option>
+            </select>
+        </div>
+
+        <!-- Loading State -->
+        <div class="loading-state" id="loadingState">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p>Analisando contatos duplicados...</p>
+        </div>
+
+        <!-- Empty State -->
+        <div class="empty-state" id="emptyState" style="display: none;">
+            <i class="bi bi-check-circle"></i>
+            <h3>Nenhum duplicado encontrado</h3>
+            <p>Todos os seus contatos parecem ser unicos!</p>
+        </div>
+
+        <!-- Duplicates List -->
+        <div id="duplicatesList"></div>
+
+        <!-- Pagination -->
+        <div id="pagination" class="d-flex justify-content-center gap-2 mt-4" style="display: none;"></div>
+    </main>
+
+    <!-- Confirmation Modal -->
+    <div class="modal-backdrop-custom" id="modalBackdrop" onclick="closeModal()"></div>
+    <div class="modal-custom" id="mergeModal">
+        <h3 class="modal-title">Confirmar Merge</h3>
+        <div class="modal-body" id="modalBody">
+            <p>Voce esta prestes a mesclar dois contatos. O contato selecionado sera mantido e o outro sera excluido.</p>
+            <p class="text-muted mt-3"><strong>Mantendo:</strong> <span id="keepName">-</span></p>
+            <p class="text-muted"><strong>Excluindo:</strong> <span id="mergeName">-</span></p>
+        </div>
+        <div class="modal-actions">
+            <button class="btn-skip" onclick="closeModal()">Cancelar</button>
+            <button class="btn-merge" onclick="executeMerge()">
+                <i class="bi bi-check-lg"></i>
+                Confirmar Merge
+            </button>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast-container">
+        <div class="toast-custom" id="toast">
+            <i class="bi bi-check-circle"></i>
+            <span id="toastMessage">Operacao concluida</span>
+        </div>
+    </div>
+
+    <script>
+        let duplicatesData = [];
+        let currentPage = 0;
+        let pendingMerge = null;
+
+        async function loadDuplicates() {
+            const threshold = document.getElementById('thresholdSelect').value;
+            document.getElementById('loadingState').style.display = 'block';
+            document.getElementById('duplicatesList').innerHTML = '';
+            document.getElementById('emptyState').style.display = 'none';
+
+            try {
+                const response = await fetch(`/api/contacts/duplicates?threshold=${threshold}&limit=100`);
+                const data = await response.json();
+
+                duplicatesData = data.duplicates || [];
+
+                // Update stats
+                document.getElementById('statTotal').textContent = data.total || 0;
+
+                let high = 0, medium = 0, low = 0;
+                duplicatesData.forEach(d => {
+                    if (d.score > 0.8) high++;
+                    else if (d.score > 0.6) medium++;
+                    else low++;
+                });
+
+                document.getElementById('statHigh').textContent = high;
+                document.getElementById('statMedium').textContent = medium;
+                document.getElementById('statLow').textContent = low;
+
+                document.getElementById('loadingState').style.display = 'none';
+
+                if (duplicatesData.length === 0) {
+                    document.getElementById('emptyState').style.display = 'block';
+                    return;
+                }
+
+                renderDuplicates();
+
+            } catch (error) {
+                console.error('Erro ao carregar duplicados:', error);
+                document.getElementById('loadingState').style.display = 'none';
+                showToast('Erro ao carregar duplicados', 'error');
+            }
+        }
+
+        function renderDuplicates() {
+            const container = document.getElementById('duplicatesList');
+            container.innerHTML = '';
+
+            duplicatesData.forEach((dup, index) => {
+                const scoreClass = dup.score > 0.8 ? 'score-high' : (dup.score > 0.6 ? 'score-medium' : 'score-low');
+                const scorePercent = Math.round(dup.score * 100);
+
+                const c1 = dup.contact1;
+                const c2 = dup.contact2;
+
+                const emails1 = parseJsonField(c1.emails);
+                const emails2 = parseJsonField(c2.emails);
+                const phones1 = parseJsonField(c1.telefones);
+                const phones2 = parseJsonField(c2.telefones);
+
+                container.innerHTML += `
+                    <div class="duplicate-card" id="dup-${index}">
+                        <div class="duplicate-header">
+                            <span class="score-badge ${scoreClass}">
+                                <i class="bi bi-shield-check"></i>
+                                ${scorePercent}% confianca
+                            </span>
+                            <small class="text-muted">Par #${index + 1}</small>
+                        </div>
+                        <div class="duplicate-body">
+                            <div class="contacts-comparison">
+                                <div class="contact-preview" id="preview1-${index}" onclick="selectContact(${index}, 1)">
+                                    <div class="contact-name">${c1.nome || 'Sem nome'}</div>
+                                    <div class="contact-detail">
+                                        <i class="bi bi-building"></i>
+                                        ${c1.empresa || '-'}
+                                    </div>
+                                    <div class="contact-detail">
+                                        <i class="bi bi-envelope"></i>
+                                        ${emails1[0]?.email || '-'}
+                                    </div>
+                                    <div class="contact-detail">
+                                        <i class="bi bi-telephone"></i>
+                                        ${phones1[0]?.number || '-'}
+                                    </div>
+                                    <a href="/contatos/${c1.id}" class="btn-view mt-3 d-inline-block" target="_blank">
+                                        <i class="bi bi-eye me-1"></i>Ver contato
+                                    </a>
+                                </div>
+
+                                <div class="merge-arrow">
+                                    <i class="bi bi-arrow-left-right"></i>
+                                    <small class="text-muted mt-2">clique para manter</small>
+                                </div>
+
+                                <div class="contact-preview" id="preview2-${index}" onclick="selectContact(${index}, 2)">
+                                    <div class="contact-name">${c2.nome || 'Sem nome'}</div>
+                                    <div class="contact-detail">
+                                        <i class="bi bi-building"></i>
+                                        ${c2.empresa || '-'}
+                                    </div>
+                                    <div class="contact-detail">
+                                        <i class="bi bi-envelope"></i>
+                                        ${emails2[0]?.email || '-'}
+                                    </div>
+                                    <div class="contact-detail">
+                                        <i class="bi bi-telephone"></i>
+                                        ${phones2[0]?.number || '-'}
+                                    </div>
+                                    <a href="/contatos/${c2.id}" class="btn-view mt-3 d-inline-block" target="_blank">
+                                        <i class="bi bi-eye me-1"></i>Ver contato
+                                    </a>
+                                </div>
+                            </div>
+
+                            <div class="reasons-list">
+                                ${dup.reasons.map(r => `<span class="reason-tag">${r}</span>`).join('')}
+                            </div>
+                        </div>
+                        <div class="duplicate-actions">
+                            <button class="btn-skip" onclick="skipDuplicate(${index})">
+                                <i class="bi bi-x me-1"></i>Ignorar
+                            </button>
+                            <button class="btn-merge" onclick="openMergeModal(${index})" id="mergeBtn-${index}" disabled>
+                                <i class="bi bi-arrow-repeat me-1"></i>Mesclar
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        function parseJsonField(field) {
+            if (!field) return [];
+            if (typeof field === 'string') {
+                try {
+                    return JSON.parse(field);
+                } catch {
+                    return [];
+                }
+            }
+            return Array.isArray(field) ? field : [];
+        }
+
+        function selectContact(index, contactNum) {
+            const preview1 = document.getElementById(`preview1-${index}`);
+            const preview2 = document.getElementById(`preview2-${index}`);
+            const mergeBtn = document.getElementById(`mergeBtn-${index}`);
+
+            preview1.classList.remove('selected');
+            preview2.classList.remove('selected');
+
+            if (contactNum === 1) {
+                preview1.classList.add('selected');
+                duplicatesData[index].selected = 1;
+            } else {
+                preview2.classList.add('selected');
+                duplicatesData[index].selected = 2;
+            }
+
+            mergeBtn.disabled = false;
+        }
+
+        function openMergeModal(index) {
+            const dup = duplicatesData[index];
+            if (!dup.selected) {
+                showToast('Selecione qual contato manter clicando nele', 'error');
+                return;
+            }
+
+            const keepContact = dup.selected === 1 ? dup.contact1 : dup.contact2;
+            const mergeContact = dup.selected === 1 ? dup.contact2 : dup.contact1;
+
+            document.getElementById('keepName').textContent = keepContact.nome || 'Sem nome';
+            document.getElementById('mergeName').textContent = mergeContact.nome || 'Sem nome';
+
+            pendingMerge = {
+                index: index,
+                keepId: keepContact.id,
+                mergeId: mergeContact.id
+            };
+
+            document.getElementById('modalBackdrop').style.display = 'block';
+            document.getElementById('mergeModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('modalBackdrop').style.display = 'none';
+            document.getElementById('mergeModal').style.display = 'none';
+            pendingMerge = null;
+        }
+
+        async function executeMerge() {
+            if (!pendingMerge) return;
+
+            const { index, keepId, mergeId } = pendingMerge;
+            closeModal();
+
+            try {
+                const response = await fetch('/api/contacts/merge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        keep_id: keepId,
+                        merge_id: mergeId
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Erro ao mesclar');
+                }
+
+                const result = await response.json();
+
+                // Remove from list
+                document.getElementById(`dup-${index}`).remove();
+                duplicatesData.splice(index, 1);
+
+                // Update stats
+                const totalEl = document.getElementById('statTotal');
+                totalEl.textContent = parseInt(totalEl.textContent) - 1;
+
+                showToast(`Contatos mesclados com sucesso! ${result.merged_fields?.length || 0} campos combinados.`, 'success');
+
+                if (duplicatesData.length === 0) {
+                    document.getElementById('emptyState').style.display = 'block';
+                }
+
+            } catch (error) {
+                console.error('Erro ao mesclar:', error);
+                showToast(error.message, 'error');
+            }
+        }
+
+        function skipDuplicate(index) {
+            document.getElementById(`dup-${index}`).remove();
+            duplicatesData.splice(index, 1);
+
+            if (duplicatesData.length === 0) {
+                document.getElementById('emptyState').style.display = 'block';
+            }
+        }
+
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toastMessage');
+
+            toast.className = 'toast-custom ' + type;
+            toastMessage.textContent = message;
+            toast.style.display = 'flex';
+
+            setTimeout(() => {
+                toast.style.display = 'none';
+            }, 3000);
+        }
+
+        // Load on page load
+        document.addEventListener('DOMContentLoaded', loadDuplicates);
+    </script>
+</body>
+</html>

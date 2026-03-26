@@ -13,7 +13,9 @@
 | Configuracoes | b48f774 | Circulos frequency settings |
 | Birthday Notif | 00d12e6 | Birthday banner + reminders |
 | Pagina Contato | merged | Circulo badge, Health card |
-| Sidebar Prospeccao | pendente | Link /prospeccao no sidebar FERRAMENTAS |
+| Sidebar Prospeccao | d55dd7b | Link /prospeccao no sidebar FERRAMENTAS |
+| Pagina Duplicados | pendente | Pagina /duplicados com merge |
+| Card Estatisticas | pendente | Distribuicao por circulo no dashboard |
 
 ---
 
@@ -48,7 +50,7 @@
 
 ### Tarefa 2: Pagina de Duplicados
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: MEDIA
 
 **Objetivo**: Criar interface para visualizar e fazer merge de duplicados.
@@ -64,15 +66,15 @@
 **Endpoint**: `GET /api/contacts/duplicates`
 
 **Criterios**:
-- [ ] Pagina /duplicados criada
-- [ ] Lista duplicados da API
-- [ ] Permite merge com confirmacao
+- [x] Pagina /duplicados criada
+- [x] Lista duplicados da API
+- [x] Permite merge com confirmacao
 
 ---
 
 ### Tarefa 3: Card de Estatisticas no Dashboard
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: MEDIA
 
 **Objetivo**: Adicionar card mostrando distribuicao dos circulos visualmente.
@@ -91,9 +93,9 @@
 ```
 
 **Criterios**:
-- [ ] Barras proporcionais
-- [ ] Cores por circulo
-- [ ] Dados da API /api/v1/dashboard
+- [x] Barras proporcionais
+- [x] Cores por circulo
+- [x] Dados da API /api/v1/dashboard
 
 ---
 
@@ -116,6 +118,8 @@
 
 | Data | Tarefa | Status |
 |------|--------|--------|
+| 2026-03-26 | Pagina Duplicados | **CONCLUIDO** |
+| 2026-03-26 | Card Estatisticas Dashboard | **CONCLUIDO** |
 | 2026-03-26 | Sidebar Prospeccao | **CONCLUIDO** |
 | 2026-03-26 | Branding INTEL | **CONCLUIDO** |
 | 2026-03-25 | Birthday + Settings + Contact | **MERGED** |

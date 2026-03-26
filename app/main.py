@@ -410,6 +410,18 @@ async def intel_contatos_linkedin(request: Request):
     })
 
 
+@app.get("/duplicados", response_class=HTMLResponse)
+async def intel_duplicados(request: Request):
+    """INTEL - Pagina de duplicados"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("intel_duplicados.html", {
+        "request": request,
+        "user": user
+    })
+
+
 # NOTE: Parameterized route MUST come AFTER specific routes
 @app.get("/contatos/{contact_id}", response_class=HTMLResponse)
 async def intel_contato_detail(request: Request, contact_id: int):

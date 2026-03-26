@@ -557,6 +557,55 @@
         @media (max-width: 768px) {
             .birthday-banner { left: 0; }
         }
+
+        /* Circulo Distribution Bars */
+        .circulo-distribution {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .circulo-bar-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .circulo-bar-label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            min-width: 32px;
+            color: var(--gray-600);
+        }
+        .circulo-bar-container {
+            flex: 1;
+            height: 24px;
+            background: var(--gray-100);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .circulo-bar-fill {
+            height: 100%;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 8px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: white;
+            transition: width 0.5s ease;
+            min-width: fit-content;
+        }
+        .circulo-bar-fill.c1 { background: #FF6B6B; }
+        .circulo-bar-fill.c2 { background: #4ECDC4; }
+        .circulo-bar-fill.c3 { background: #45B7D1; }
+        .circulo-bar-fill.c4 { background: #96CEB4; }
+        .circulo-bar-fill.c5 { background: #DDA0DD; }
+        .circulo-bar-count {
+            font-size: 0.75rem;
+            color: var(--gray-500);
+            min-width: 45px;
+            text-align: right;
+        }
     </style>
 </head>
 <body>
@@ -591,6 +640,10 @@
             <a href="/contatos/linkedin" class="nav-item" style="padding-left: 2.5rem; font-size: 0.9rem;">
                 <i class="bi bi-linkedin"></i>
                 <span>LinkedIn</span>
+            </a>
+            <a href="/duplicados" class="nav-item" style="padding-left: 2.5rem; font-size: 0.9rem;">
+                <i class="bi bi-copy"></i>
+                <span>Duplicados</span>
             </a>
             <a href="/briefings" class="nav-item">
                 <i class="bi bi-file-text"></i>
@@ -706,6 +759,21 @@
 
             <!-- Right Column -->
             <div>
+                <!-- Circulo Distribution -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="bi bi-pie-chart me-2"></i>Distribuicao por Circulo</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="circulo-distribution" id="circuloDistribution">
+                            <div class="text-center text-muted py-3">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                                <span class="ms-2">Carregando...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Reminders -->
                 <div class="card mb-4">
                     <div class="card-header">
@@ -761,6 +829,36 @@
                         html += `<span style="background: ${colors[i]}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 600;">C${i}: ${circulo.total}</span>`;
                     }
                     circulosContainer.innerHTML = html;
+
+                    // Circulo Distribution Bars
+                    const distContainer = document.getElementById('circuloDistribution');
+                    if (distContainer) {
+                        let total = 0;
+                        for (let i = 1; i <= 5; i++) {
+                            total += (data.circulos_resumo[i]?.total || 0);
+                        }
+
+                        let distHtml = '';
+                        for (let i = 1; i <= 5; i++) {
+                            const circulo = data.circulos_resumo[i] || {total: 0};
+                            const count = circulo.total;
+                            const percent = total > 0 ? ((count / total) * 100) : 0;
+                            const displayPercent = Math.max(percent, 3); // Min 3% for visibility
+
+                            distHtml += `
+                                <div class="circulo-bar-row">
+                                    <span class="circulo-bar-label">C${i}</span>
+                                    <div class="circulo-bar-container">
+                                        <div class="circulo-bar-fill c${i}" style="width: ${displayPercent}%">
+                                            ${percent >= 5 ? count : ''}
+                                        </div>
+                                    </div>
+                                    <span class="circulo-bar-count">${count.toLocaleString()}</span>
+                                </div>
+                            `;
+                        }
+                        distContainer.innerHTML = distHtml;
+                    }
                 }
 
                 // Alertas - precisam atencao
