@@ -294,14 +294,13 @@ async def get_me(request: Request):
 
 # ============== API Routes - Pages ==============
 
-@app.get("/", response_class=HTMLResponse)
-async def root(request: Request):
-    """Dashboard - requer autenticação"""
+@app.get("/prospeccao", response_class=HTMLResponse)
+async def prospeccao_dashboard(request: Request):
+    """Dashboard de Prospecção (sistema legado)"""
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    # Admin e operador podem ver o dashboard
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "user": user
