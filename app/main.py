@@ -5547,6 +5547,105 @@ async def whatsapp_sync_single_chat(request: Request, phone: str):
     return result
 
 
+# ============== WhatsApp Import Endpoints ==============
+
+from services.whatsapp_import import get_whatsapp_import_service
+
+
+@app.post("/api/whatsapp/import/parse")
+async def parse_whatsapp_file(request: Request, file: UploadFile = File(...)):
+    """
+    Parse WhatsApp export file and return preview.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    try:
+        content = await file.read()
+        content_str = content.decode('utf-8', errors='ignore')
+
+        service = get_whatsapp_import_service()
+        result = service.parse_file(content_str, file.filename)
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/whatsapp/import/confirm")
+async def confirm_whatsapp_import(request: Request):
+    """
+    Confirm import of parsed messages to a contact.
+
+    Body:
+    {
+        "messages": [...],
+        "contact_id": 123,
+        "my_name": "Renato"
+    }
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    try:
+        data = await request.json()
+        messages = data.get("messages", [])
+        contact_id = data.get("contact_id")
+        my_name = data.get("my_name", "Renato")
+
+        if not contact_id:
+            raise HTTPException(status_code=400, detail="contact_id obrigatorio")
+
+        # Convert timestamp strings back to datetime
+        for msg in messages:
+            if isinstance(msg.get("timestamp"), str):
+                msg["timestamp"] = datetime.fromisoformat(msg["timestamp"])
+
+        service = get_whatsapp_import_service()
+        result = service.import_to_contact(messages, contact_id, my_name)
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/whatsapp/import/status")
+async def get_import_status(request: Request):
+    """Get current import status."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_whatsapp_import_service()
+    return service.get_import_status()
+
+
+@app.get("/api/whatsapp/messages/{contact_id}")
+async def get_whatsapp_messages(request: Request, contact_id: int, limit: int = 100):
+    """Get WhatsApp messages for a contact."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, direction, content, message_type, message_date, imported_from
+            FROM whatsapp_messages
+            WHERE contact_id = %s
+            ORDER BY message_date DESC
+            LIMIT %s
+        """, (contact_id, limit))
+
+        messages = cursor.fetchall()
+        return {"messages": [dict(m) for m in messages]}
+
+
 # ============== Google Calendar Endpoints ==============
 
 from integrations.google_calendar import get_calendar_integration
