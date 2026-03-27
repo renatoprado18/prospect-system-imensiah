@@ -101,6 +101,63 @@ async def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
         return response.json()
 
 
+async def get_valid_token(email: str) -> Optional[str]:
+    """
+    Get a valid access token for a Google account by email.
+    Refreshes the token if expired.
+
+    Args:
+        email: The Google account email
+
+    Returns:
+        Valid access token or None
+    """
+    from database import get_db
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT access_token, refresh_token, token_expiry
+            FROM google_accounts
+            WHERE email = %s
+        """, (email,))
+
+        account = cursor.fetchone()
+        if not account:
+            return None
+
+        access_token = account["access_token"]
+        refresh_token = account["refresh_token"]
+        token_expiry = account["token_expiry"]
+
+        # Check if token is expired or will expire in 5 minutes
+        if token_expiry:
+            expiry_buffer = datetime.now() + timedelta(minutes=5)
+            if token_expiry < expiry_buffer and refresh_token:
+                # Refresh the token
+                try:
+                    new_tokens = await refresh_access_token(refresh_token)
+                    access_token = new_tokens.get("access_token")
+
+                    # Calculate new expiry
+                    expires_in = new_tokens.get("expires_in", 3600)
+                    new_expiry = datetime.now() + timedelta(seconds=expires_in)
+
+                    # Update database
+                    cursor.execute("""
+                        UPDATE google_accounts
+                        SET access_token = %s, token_expiry = %s
+                        WHERE email = %s
+                    """, (access_token, new_expiry, email))
+                    conn.commit()
+
+                except Exception as e:
+                    print(f"Error refreshing token for {email}: {e}")
+                    return None
+
+        return access_token
+
+
 async def get_user_email(access_token: str) -> str:
     """Get email address of the authenticated user"""
     async with httpx.AsyncClient() as client:
