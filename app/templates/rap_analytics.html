@@ -1,0 +1,278 @@
+{% extends "rap_base.html" %}
+{% block title %}Analytics - INTEL{% endblock %}
+{% block page_title %}Analytics{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stat-card-large {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .stat-card-large h3 {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: var(--dark);
+        margin: 0;
+    }
+    .stat-card-large small {
+        color: var(--gray-500);
+        font-size: 0.9rem;
+    }
+    .period-buttons .btn.active {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div></div>
+    <div class="btn-group period-buttons">
+        <button class="btn btn-outline-secondary btn-sm" onclick="loadAnalytics(7)">7 dias</button>
+        <button class="btn btn-outline-secondary btn-sm active" onclick="loadAnalytics(30)">30 dias</button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="loadAnalytics(90)">90 dias</button>
+    </div>
+</div>
+
+<!-- Cards de Resumo -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="stat-card-large">
+            <h3 id="stat-contacts">-</h3>
+            <small>Contatos Ativos</small>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-large">
+            <h3 id="stat-messages">-</h3>
+            <small>Mensagens</small>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-large">
+            <h3 id="stat-health">-</h3>
+            <small>Health Medio</small>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="stat-card-large">
+            <h3 id="stat-new">-</h3>
+            <small>Novos Contatos</small>
+        </div>
+    </div>
+</div>
+
+<!-- Graficos -->
+<div class="row g-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Contatos por Circulo</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="chart-circulos" height="250"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Health por Circulo</h5>
+            </div>
+            <div class="card-body" id="health-bars">
+                <div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tabela de Top Contatos -->
+<div class="card mt-4">
+    <div class="card-header">
+        <h5 class="card-title mb-0">Top Contatos por Interacoes</h5>
+    </div>
+    <div class="card-body" id="top-contacts">
+        <div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></div>
+    </div>
+</div>
+
+<!-- Exportar -->
+<div class="mt-4">
+    <a href="/api/export/contacts?format=csv" class="btn btn-outline-primary btn-sm">
+        <i class="bi bi-download"></i> Exportar Contatos (CSV)
+    </a>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let chartCirculos = null;
+
+async function loadAnalytics(days = 30) {
+    // Update button states
+    document.querySelectorAll('.period-buttons .btn').forEach(b => b.classList.remove('active'));
+    event?.target?.classList.add('active');
+
+    try {
+        // Load from multiple endpoints for comprehensive analytics
+        const [dashResponse, circulosResponse] = await Promise.all([
+            fetch('/api/v1/dashboard').catch(() => ({ ok: false })),
+            fetch('/api/circulos').catch(() => ({ ok: false }))
+        ]);
+
+        let dashData = {};
+        let circulosData = { circulos: [] };
+
+        if (dashResponse.ok) {
+            dashData = await dashResponse.json();
+        }
+        if (circulosResponse.ok) {
+            circulosData = await circulosResponse.json();
+        }
+
+        // Calculate stats from circulos
+        const porCirculo = {};
+        let totalContatos = 0;
+        circulosData.circulos?.forEach(c => {
+            porCirculo[c.circulo] = c.total || 0;
+            totalContatos += c.total || 0;
+        });
+
+        // Count active contacts (C1-C4)
+        let totalAtivos = 0;
+        for (let i = 1; i <= 4; i++) totalAtivos += porCirculo[i] || 0;
+
+        // Update stats
+        document.getElementById('stat-contacts').textContent = totalAtivos.toLocaleString();
+        document.getElementById('stat-messages').textContent = (dashData.unread_messages || 0).toLocaleString();
+        document.getElementById('stat-health').textContent = (dashData.avg_health || 65) + '%';
+        document.getElementById('stat-new').textContent = (dashData.new_contacts || 0).toLocaleString();
+
+        // Render chart
+        const ctx = document.getElementById('chart-circulos').getContext('2d');
+        if (chartCirculos) chartCirculos.destroy();
+
+        chartCirculos = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['C1 Intimo', 'C2 Proximo', 'C3 Ativo', 'C4 Conhecidos', 'C5 Arquivo'],
+                datasets: [{
+                    data: [porCirculo[1]||0, porCirculo[2]||0, porCirculo[3]||0, porCirculo[4]||0, porCirculo[5]||0],
+                    backgroundColor: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#DDA0DD']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+
+        // Health bars - calculate from circulos data
+        let healthHtml = '';
+        const circuloColors = { 1: '#FF6B6B', 2: '#4ECDC4', 3: '#45B7D1', 4: '#96CEB4' };
+
+        circulosData.circulos?.filter(c => c.circulo <= 4).forEach(c => {
+            const avgHealth = c.avg_health || 50;
+            const colorClass = avgHealth >= 70 ? 'bg-success' : avgHealth >= 40 ? 'bg-warning' : 'bg-danger';
+            healthHtml += `
+                <div class="d-flex align-items-center mb-3">
+                    <span class="me-2" style="width: 100px; font-weight: 500;">
+                        <span class="badge" style="background: ${circuloColors[c.circulo]}">C${c.circulo}</span>
+                        ${c.nome || ''}
+                    </span>
+                    <div class="progress flex-grow-1 me-2" style="height: 24px;">
+                        <div class="progress-bar ${colorClass}" style="width: ${avgHealth}%"></div>
+                    </div>
+                    <span class="fw-bold" style="width: 50px;">${avgHealth}%</span>
+                </div>
+            `;
+        });
+
+        if (!healthHtml) {
+            healthHtml = `
+                <div class="text-muted text-center py-3">
+                    Dados de health nao disponiveis
+                </div>
+            `;
+        }
+        document.getElementById('health-bars').innerHTML = healthHtml;
+
+        // Load top contacts
+        await loadTopContacts(days);
+
+    } catch (error) {
+        console.error('Error loading analytics:', error);
+    }
+}
+
+async function loadTopContacts(days) {
+    const container = document.getElementById('top-contacts');
+
+    try {
+        const response = await fetch(`/api/contacts?sort=interactions&limit=10`);
+        const data = await response.json();
+
+        if (!data.contacts || data.contacts.length === 0) {
+            container.innerHTML = '<div class="text-muted text-center py-3">Nenhum contato encontrado</div>';
+            return;
+        }
+
+        let html = `
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Contato</th>
+                        <th>Empresa</th>
+                        <th>Circulo</th>
+                        <th>Health</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        const circuloColors = { 1: '#FF6B6B', 2: '#4ECDC4', 3: '#45B7D1', 4: '#96CEB4', 5: '#DDA0DD' };
+
+        data.contacts.forEach(c => {
+            const health = c.relationship_health || 50;
+            const healthClass = health >= 70 ? 'text-success' : health >= 40 ? 'text-warning' : 'text-danger';
+
+            html += `
+                <tr style="cursor: pointer;" onclick="window.location.href='/contatos/${c.id}'">
+                    <td>
+                        <div class="d-flex align-items-center">
+                            <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white me-2" style="width: 32px; height: 32px; font-size: 0.8rem;">
+                                ${(c.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                            </div>
+                            ${c.nome}
+                        </div>
+                    </td>
+                    <td class="text-muted">${c.empresa || '-'}</td>
+                    <td><span class="badge" style="background: ${circuloColors[c.circulo] || '#6b7280'}">C${c.circulo || 5}</span></td>
+                    <td class="${healthClass} fw-bold">${health}%</td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+
+    } catch (error) {
+        container.innerHTML = '<div class="text-danger text-center py-3">Erro ao carregar contatos</div>';
+    }
+}
+
+// Load on page ready
+loadAnalytics(30);
+</script>
+{% endblock %}

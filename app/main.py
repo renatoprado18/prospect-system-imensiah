@@ -470,6 +470,18 @@ async def intel_inbox(request: Request):
     })
 
 
+@app.get("/analytics", response_class=HTMLResponse)
+async def analytics_page(request: Request):
+    """INTEL Analytics - Metricas e graficos"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_analytics.html", {
+        "request": request,
+        "user": user
+    })
+
+
 @app.get("/configuracoes", response_class=HTMLResponse)
 async def intel_settings(request: Request):
     """INTEL Configuracoes - Contas Google"""
