@@ -6053,5 +6053,33 @@ async def mark_inbox_conversation_read(
     return {"success": True}
 
 
+# =============================================================================
+# BATCH OPERATIONS ENDPOINTS
+# =============================================================================
+
+@app.post("/api/contacts/enrich-linkedin-batch")
+async def enrich_linkedin_batch(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    limit: int = 20,
+    circulo_max: int = 3
+):
+    """Inicia enriquecimento LinkedIn em batch (background)"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    import sys
+    sys.path.insert(0, os.path.join(BASE_DIR, '..', 'scripts'))
+    from enrich_linkedin_batch import enrich_batch
+
+    background_tasks.add_task(enrich_batch, limit, circulo_max)
+
+    return {
+        "status": "started",
+        "message": f"Enriquecimento iniciado para ate {limit} contatos (circulos 1-{circulo_max})"
+    }
+
+
 # Vercel handler
 app_handler = app
