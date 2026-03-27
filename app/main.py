@@ -495,6 +495,18 @@ async def automations_page(request: Request):
     })
 
 
+@app.get("/calendario", response_class=HTMLResponse)
+async def calendario_page(request: Request):
+    """INTEL Calendario - Eventos e reunioes"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_calendario.html", {
+        "request": request,
+        "user": user
+    })
+
+
 @app.get("/configuracoes", response_class=HTMLResponse)
 async def intel_settings(request: Request):
     """INTEL Configuracoes - Contas Google"""
