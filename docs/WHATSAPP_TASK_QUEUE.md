@@ -27,7 +27,7 @@ Ja existe:
 
 ## TAREFA 1: Parser WhatsApp .txt
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: CRITICA
 
 ### Criar `app/services/whatsapp_import.py`
@@ -439,7 +439,7 @@ def get_whatsapp_import_service() -> WhatsAppImportService:
 
 ## TAREFA 2: Endpoints de Import
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: ALTA
 
 ### Adicionar endpoints em `app/main.py`
@@ -549,7 +549,7 @@ async def get_whatsapp_messages(request: Request, contact_id: int, limit: int = 
 
 ## TAREFA 3: Pagina de Configuracoes WhatsApp
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: ALTA
 
 ### Criar `app/templates/rap_whatsapp.html`
@@ -1194,7 +1194,7 @@ async def whatsapp_page(request: Request):
 
 ## TAREFA 4: Endpoints de Status e QR Code
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO (ja existia)
 **Prioridade**: ALTA
 
 ### Adicionar em main.py
@@ -1275,7 +1275,7 @@ async def get_whatsapp_templates(request: Request):
 
 ## TAREFA 5: Modal de Envio no Contato
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: MEDIA
 
 ### Modificar `app/templates/rap_contact_detail.html`
@@ -1484,8 +1484,8 @@ Atualizar este arquivo marcando todas como **CONCLUIDAS**.
 
 | Data | Tarefa | Status |
 |------|--------|--------|
-| - | Parser WhatsApp .txt | PENDENTE |
-| - | Endpoints de Import | PENDENTE |
-| - | Pagina de Configuracoes | PENDENTE |
-| - | Endpoints Status/QR | PENDENTE |
-| - | Modal de Envio | PENDENTE |
+| 2026-03-27 | Parser WhatsApp .txt | CONCLUIDO |
+| 2026-03-27 | Endpoints de Import | CONCLUIDO |
+| 2026-03-27 | Pagina de Configuracoes | CONCLUIDO |
+| 2026-03-27 | Endpoints Status/QR | CONCLUIDO |
+| 2026-03-27 | Modal de Envio | CONCLUIDO |
