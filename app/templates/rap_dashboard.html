@@ -29,10 +29,14 @@
         * { box-sizing: border-box; }
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f1f5f9; /* fallback */
             background: var(--gray-100);
             margin: 0;
             min-height: 100vh;
         }
+        /* Debug: ensure content is visible */
+        html, body { min-height: 100vh; }
+        .main-content { background: #f1f5f9; min-height: 100vh; }
 
         /* Sidebar */
         .sidebar {
