@@ -18,7 +18,7 @@
 
 ## TAREFA 1: Criar Tabelas do Calendar
 
-**Status**: PENDENTE
+**Status**: ✅ CONCLUIDO (2026-03-27)
 **Prioridade**: CRITICA
 
 ### 1.1 Executar no Neon (SQL)
@@ -80,7 +80,7 @@ Adicionar criação das tabelas na função `init_db()`.
 
 ## TAREFA 2: Atualizar OAuth Scope
 
-**Status**: PENDENTE
+**Status**: ✅ CONCLUIDO (2026-03-27)
 **Prioridade**: CRITICA
 
 ### Modificar `app/integrations/google_contacts.py`
@@ -104,7 +104,7 @@ CONTACTS_SCOPES = [
 
 ## TAREFA 3: Adicionar Métodos de Escrita no google_calendar.py
 
-**Status**: PENDENTE
+**Status**: ✅ CONCLUIDO (2026-03-27)
 **Prioridade**: CRITICA
 
 ### Modificar `app/integrations/google_calendar.py`
@@ -268,7 +268,7 @@ async def list_events_incremental(
 
 ## TAREFA 4: Criar CalendarSyncService
 
-**Status**: PENDENTE
+**Status**: ✅ CONCLUIDO (2026-03-27)
 **Prioridade**: ALTA
 
 ### Criar `app/services/calendar_sync.py`
@@ -514,7 +514,7 @@ def get_calendar_sync() -> CalendarSyncService:
 
 ## TAREFA 5: Criar CalendarEventsService
 
-**Status**: PENDENTE
+**Status**: ✅ CONCLUIDO (2026-03-27)
 **Prioridade**: ALTA
 
 ### Criar `app/services/calendar_events.py`
@@ -715,7 +715,7 @@ def get_calendar_events() -> CalendarEventsService:
 
 ## TAREFA 6: Endpoints de Calendar em main.py
 
-**Status**: PENDENTE
+**Status**: ✅ CONCLUIDO (2026-03-27)
 **Prioridade**: ALTA
 
 ### Adicionar em main.py
@@ -844,7 +844,7 @@ async def get_calendar_sync_status(request: Request):
 
 ## TAREFA 7: Criar CalendarAIService
 
-**Status**: PENDENTE
+**Status**: ✅ CONCLUIDO (2026-03-27)
 **Prioridade**: MEDIA
 
 ### Criar `app/services/calendar_ai.py`
@@ -1100,10 +1100,18 @@ Atualizar este arquivo marcando todas como **CONCLUIDAS**.
 
 | Data | Tarefa | Status |
 |------|--------|--------|
-| - | Criar tabelas calendar | PENDENTE |
-| - | Atualizar OAuth scope | PENDENTE |
-| - | Métodos de escrita Google Calendar | PENDENTE |
-| - | CalendarSyncService | PENDENTE |
-| - | CalendarEventsService | PENDENTE |
-| - | Endpoints Calendar | PENDENTE |
-| - | CalendarAIService | PENDENTE |
+| 2026-03-27 | Criar tabelas calendar | CONCLUIDO |
+| 2026-03-27 | Atualizar OAuth scope | CONCLUIDO |
+| 2026-03-27 | Métodos de escrita Google Calendar | CONCLUIDO |
+| 2026-03-27 | CalendarSyncService | CONCLUIDO |
+| 2026-03-27 | CalendarEventsService | CONCLUIDO |
+| 2026-03-27 | Endpoints Calendar | CONCLUIDO |
+| 2026-03-27 | CalendarAIService | CONCLUIDO |
+
+---
+
+## FILA ATUAL: VAZIA
+
+**Todas as 7 tarefas foram concluídas com sucesso.**
+
+Aguardando nova fila do ARCH.
