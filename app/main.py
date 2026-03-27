@@ -7117,5 +7117,170 @@ async def verify_past_predictions(
     return result
 
 
+# =============================================================================
+# MESSAGE TEMPLATES ENDPOINTS
+# =============================================================================
+
+from services.message_suggestions import get_message_suggestions
+
+class TemplateCreate(BaseModel):
+    nome: str
+    categoria: str
+    corpo: str
+    canal: Optional[str] = None
+    assunto: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+@app.get("/api/templates")
+async def get_templates(
+    request: Request,
+    categoria: str = None,
+    canal: str = None
+):
+    """Lista templates de mensagens"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_message_suggestions()
+    templates = service.get_templates(categoria=categoria, canal=canal)
+
+    return {"templates": templates, "total": len(templates)}
+
+
+@app.post("/api/templates")
+async def create_template(
+    request: Request,
+    data: TemplateCreate
+):
+    """Cria novo template"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_message_suggestions()
+    template_id = service.create_template(
+        nome=data.nome,
+        categoria=data.categoria,
+        corpo=data.corpo,
+        canal=data.canal,
+        assunto=data.assunto,
+        tags=data.tags
+    )
+
+    return {"id": template_id, "status": "created"}
+
+
+@app.get("/api/templates/{template_id}")
+async def get_template(
+    request: Request,
+    template_id: int
+):
+    """Obtem template especifico"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_message_suggestions()
+    template = service.get_template(template_id)
+
+    if not template:
+        raise HTTPException(status_code=404, detail="Template nao encontrado")
+
+    return template
+
+
+@app.delete("/api/templates/{template_id}")
+async def delete_template(
+    request: Request,
+    template_id: int
+):
+    """Remove template"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_message_suggestions()
+    success = service.delete_template(template_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Template nao encontrado")
+
+    return {"id": template_id, "status": "deleted"}
+
+
+@app.post("/api/templates/{template_id}/render")
+async def render_template(
+    request: Request,
+    template_id: int,
+    contact_id: int = None,
+    variables: Dict = None
+):
+    """Renderiza template com variaveis"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_message_suggestions()
+
+    if contact_id:
+        result = service.render_for_contact(template_id, contact_id)
+    else:
+        result = service.render_template(template_id, variables or {})
+
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    return result
+
+
+@app.get("/api/templates/categories")
+async def get_template_categories(request: Request):
+    """Lista categorias de templates"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_message_suggestions()
+    categories = service.get_categories()
+
+    return {"categories": categories}
+
+
+@app.post("/api/templates/setup-defaults")
+async def setup_default_templates(request: Request):
+    """Configura templates padrao"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_message_suggestions()
+    created = service.setup_default_templates()
+
+    return {"created": created, "message": f"{created} templates padrao criados"}
+
+
+@app.post("/api/ai/suggest-message/{contact_id}")
+async def suggest_message_for_contact(
+    request: Request,
+    contact_id: int,
+    contexto: str = None,
+    canal: str = "whatsapp"
+):
+    """Sugere mensagem personalizada usando IA"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_message_suggestions()
+    result = await service.suggest_message(contact_id, contexto, canal)
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return result
+
+
 # Vercel handler
 app_handler = app
