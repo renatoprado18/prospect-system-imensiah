@@ -9,7 +9,7 @@ import os
 import json
 import asyncio
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request, Depends
