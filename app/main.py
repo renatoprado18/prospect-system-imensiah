@@ -5698,6 +5698,46 @@ async def complete_task(request: Request, task_id: str):
     return result
 
 
+# ============== TIMELINE API ==============
+
+from services.timeline import get_timeline_service
+
+@app.get("/api/contacts/{contact_id}/timeline")
+async def get_contact_timeline(
+    request: Request,
+    contact_id: int,
+    limit: int = 50
+):
+    """
+    Retorna timeline unificada do contato.
+    Inclui mensagens, memorias e fatos.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_timeline_service()
+    timeline = service.get_contact_timeline(contact_id, limit)
+    return {"timeline": timeline, "contact_id": contact_id, "total": len(timeline)}
+
+
+@app.get("/api/contacts/{contact_id}/timeline/summary")
+async def get_contact_timeline_summary(
+    request: Request,
+    contact_id: int
+):
+    """Retorna resumo do contato para o timeline"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_timeline_service()
+    summary = service.get_contact_summary(contact_id)
+    if not summary:
+        raise HTTPException(status_code=404, detail="Contato nao encontrado")
+    return summary
+
+
 # ============== INBOX API ==============
 
 from services.inbox import get_inbox_service
