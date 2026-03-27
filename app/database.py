@@ -640,6 +640,72 @@ def init_db():
             ON ai_digests(tipo)
         ''')
 
+        # =========================================================================
+        # CALENDAR EVENTS TABLES
+        # =========================================================================
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS calendar_events (
+                id SERIAL PRIMARY KEY,
+                google_event_id TEXT UNIQUE,
+                summary TEXT NOT NULL,
+                description TEXT,
+                location TEXT,
+                start_datetime TIMESTAMP NOT NULL,
+                end_datetime TIMESTAMP NOT NULL,
+                all_day BOOLEAN DEFAULT FALSE,
+                timezone TEXT DEFAULT 'America/Sao_Paulo',
+                recurring_event_id TEXT,
+                recurrence_rule TEXT,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+                prospect_id INTEGER REFERENCES prospects(id) ON DELETE SET NULL,
+                ai_suggestion_id INTEGER,
+                conference_url TEXT,
+                conference_type TEXT,
+                attendees JSONB DEFAULT '[]',
+                status TEXT DEFAULT 'confirmed',
+                etag TEXT,
+                source TEXT DEFAULT 'google',
+                last_synced_at TIMESTAMP,
+                local_only BOOLEAN DEFAULT FALSE,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_calendar_events_google_id
+            ON calendar_events(google_event_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_calendar_events_contact
+            ON calendar_events(contact_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_calendar_events_start
+            ON calendar_events(start_datetime)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_calendar_events_source
+            ON calendar_events(source)
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS calendar_sync_state (
+                id SERIAL PRIMARY KEY,
+                google_account_email TEXT UNIQUE NOT NULL,
+                calendar_id TEXT DEFAULT 'primary',
+                sync_token TEXT,
+                last_full_sync TIMESTAMP,
+                last_incremental_sync TIMESTAMP,
+                events_synced INTEGER DEFAULT 0,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True
