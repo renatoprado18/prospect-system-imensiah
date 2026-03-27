@@ -22,8 +22,8 @@ class GoogleCalendarIntegration:
 
     CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3"
 
-    # Scope necessario (adicionar ao OAuth existente)
-    SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+    # Scope necessario (full access para leitura e escrita)
+    SCOPE = "https://www.googleapis.com/auth/calendar"
 
     def __init__(self):
         self.client_id = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -157,6 +157,171 @@ class GoogleCalendarIntegration:
             "conference": conference,
         }
 
+    async def create_event(
+        self,
+        access_token: str,
+        summary: str,
+        start_datetime: datetime,
+        end_datetime: datetime,
+        description: str = None,
+        attendees: List[str] = None,
+        create_meet: bool = True,
+        calendar_id: str = "primary"
+    ) -> Dict[str, Any]:
+        """Cria evento no Google Calendar."""
+        event_body = {
+            "summary": summary,
+            "start": {
+                "dateTime": start_datetime.isoformat(),
+                "timeZone": "America/Sao_Paulo"
+            },
+            "end": {
+                "dateTime": end_datetime.isoformat(),
+                "timeZone": "America/Sao_Paulo"
+            }
+        }
+
+        if description:
+            event_body["description"] = description
+
+        if attendees:
+            event_body["attendees"] = [{"email": email} for email in attendees]
+
+        if create_meet:
+            event_body["conferenceData"] = {
+                "createRequest": {
+                    "requestId": f"meet-{datetime.now().timestamp()}",
+                    "conferenceSolutionKey": {"type": "hangoutsMeet"}
+                }
+            }
+
+        params = {}
+        if create_meet:
+            params["conferenceDataVersion"] = 1
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(
+                    f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events",
+                    params=params,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json"
+                    },
+                    json=event_body,
+                    timeout=30.0
+                )
+
+                if response.status_code in [200, 201]:
+                    return response.json()
+                else:
+                    logger.error(f"Erro ao criar evento: {response.status_code} - {response.text}")
+                    return {"error": f"Erro ao criar evento: {response.status_code}"}
+
+            except Exception as e:
+                logger.error(f"Erro ao criar evento: {e}")
+                return {"error": str(e)}
+
+    async def update_event(
+        self,
+        access_token: str,
+        event_id: str,
+        updates: Dict[str, Any],
+        calendar_id: str = "primary"
+    ) -> Dict[str, Any]:
+        """Atualiza evento existente."""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.patch(
+                    f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events/{event_id}",
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json"
+                    },
+                    json=updates,
+                    timeout=30.0
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    logger.error(f"Erro ao atualizar evento: {response.status_code}")
+                    return {"error": f"Erro ao atualizar evento: {response.status_code}"}
+
+            except Exception as e:
+                logger.error(f"Erro ao atualizar evento: {e}")
+                return {"error": str(e)}
+
+    async def delete_event(
+        self,
+        access_token: str,
+        event_id: str,
+        calendar_id: str = "primary"
+    ) -> bool:
+        """Deleta evento do Google Calendar."""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.delete(
+                    f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events/{event_id}",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=30.0
+                )
+
+                return response.status_code == 204
+
+            except Exception as e:
+                logger.error(f"Erro ao deletar evento: {e}")
+                return False
+
+    async def list_events_incremental(
+        self,
+        access_token: str,
+        sync_token: str = None,
+        calendar_id: str = "primary",
+        max_results: int = 100
+    ) -> Dict[str, Any]:
+        """Lista eventos com sync incremental."""
+        params = {
+            "maxResults": max_results,
+            "singleEvents": "true",
+            "orderBy": "startTime"
+        }
+
+        if sync_token:
+            params["syncToken"] = sync_token
+        else:
+            # Full sync - eventos dos últimos 30 dias até 90 dias no futuro
+            params["timeMin"] = (datetime.utcnow() - timedelta(days=30)).isoformat() + "Z"
+            params["timeMax"] = (datetime.utcnow() + timedelta(days=90)).isoformat() + "Z"
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events",
+                    params=params,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=30.0
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    return {
+                        "events": data.get("items", []),
+                        "nextSyncToken": data.get("nextSyncToken"),
+                        "nextPageToken": data.get("nextPageToken"),
+                        "fullSyncRequired": False
+                    }
+                elif response.status_code == 410:
+                    # Sync token inválido - precisa full sync
+                    return {"events": [], "fullSyncRequired": True}
+                else:
+                    logger.error(f"Erro ao listar eventos: {response.status_code}")
+                    return {"error": f"Erro ao listar eventos: {response.status_code}"}
+
+            except Exception as e:
+                logger.error(f"Erro ao listar eventos: {e}")
+                return {"error": str(e)}
+
 
 _calendar_integration = None
 
@@ -211,3 +376,77 @@ def create_calendar_link(
 
     query_string = "&".join(f"{k}={v}" for k, v in params.items())
     return f"{base_url}?{query_string}"
+
+
+# =========================================================================
+# STANDALONE ASYNC FUNCTIONS FOR DIRECT USE
+# =========================================================================
+
+async def create_calendar_event(
+    access_token: str,
+    summary: str,
+    start_datetime: datetime,
+    end_datetime: datetime,
+    description: str = None,
+    attendees: List[str] = None,
+    create_meet: bool = True,
+    calendar_id: str = "primary"
+) -> Dict[str, Any]:
+    """Cria evento no Google Calendar (standalone function)."""
+    integration = get_calendar_integration()
+    return await integration.create_event(
+        access_token=access_token,
+        summary=summary,
+        start_datetime=start_datetime,
+        end_datetime=end_datetime,
+        description=description,
+        attendees=attendees,
+        create_meet=create_meet,
+        calendar_id=calendar_id
+    )
+
+
+async def update_calendar_event(
+    access_token: str,
+    event_id: str,
+    updates: Dict[str, Any],
+    calendar_id: str = "primary"
+) -> Dict[str, Any]:
+    """Atualiza evento existente (standalone function)."""
+    integration = get_calendar_integration()
+    return await integration.update_event(
+        access_token=access_token,
+        event_id=event_id,
+        updates=updates,
+        calendar_id=calendar_id
+    )
+
+
+async def delete_calendar_event(
+    access_token: str,
+    event_id: str,
+    calendar_id: str = "primary"
+) -> bool:
+    """Deleta evento do Google Calendar (standalone function)."""
+    integration = get_calendar_integration()
+    return await integration.delete_event(
+        access_token=access_token,
+        event_id=event_id,
+        calendar_id=calendar_id
+    )
+
+
+async def list_events_incremental(
+    access_token: str,
+    sync_token: str = None,
+    calendar_id: str = "primary",
+    max_results: int = 100
+) -> Dict[str, Any]:
+    """Lista eventos com sync incremental (standalone function)."""
+    integration = get_calendar_integration()
+    return await integration.list_events_incremental(
+        access_token=access_token,
+        sync_token=sync_token,
+        calendar_id=calendar_id,
+        max_results=max_results
+    )
