@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}INTEL{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #0ea5e9;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --dark: #1e293b;
+            --light: #f8fafc;
+            --gray-100: #f1f5f9;
+            --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1;
+            --gray-400: #94a3b8;
+            --gray-500: #64748b;
+            --gray-600: #475569;
+            --sidebar-width: 260px;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--gray-100);
+            margin: 0;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: fixed;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: var(--sidebar-width);
+            background: linear-gradient(180deg, var(--dark) 0%, #0f172a 100%);
+            color: white;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 24px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .sidebar-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            text-decoration: none;
+            color: white;
+        }
+
+        .sidebar-logo .icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sidebar-nav {
+            flex: 1;
+            padding: 16px 0;
+            overflow-y: auto;
+        }
+
+        .nav-section {
+            padding: 8px 16px;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--gray-400);
+            margin-top: 16px;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 24px;
+            color: var(--gray-300);
+            text-decoration: none;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+        }
+
+        .nav-item:hover {
+            background: rgba(255,255,255,0.05);
+            color: white;
+        }
+
+        .nav-item.active {
+            background: rgba(99, 102, 241, 0.15);
+            color: white;
+            border-left-color: var(--primary);
+        }
+
+        .nav-item i {
+            font-size: 1.2rem;
+            width: 24px;
+            text-align: center;
+        }
+
+        .nav-item .badge {
+            margin-left: auto;
+            background: var(--primary);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+        }
+
+        .sidebar-footer {
+            padding: 16px 24px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+        }
+
+        .user-name { font-weight: 500; font-size: 0.9rem; }
+        .user-role { font-size: 0.75rem; color: var(--gray-400); }
+
+        /* Main Content */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            padding: 24px 32px;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+        }
+
+        .page-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--dark);
+            margin: 0;
+        }
+
+        .page-subtitle {
+            color: var(--gray-500);
+            font-size: 0.9rem;
+            margin-top: 4px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        /* Search Box */
+        .search-box {
+            position: relative;
+            width: 280px;
+        }
+        .search-box i {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--gray-400);
+        }
+        .search-box input {
+            width: 100%;
+            padding: 10px 16px 10px 40px;
+            border: 1px solid var(--gray-200);
+            border-radius: 10px;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            background: white;
+        }
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.15);
+            margin-top: 8px;
+            display: none;
+            z-index: 1000;
+            overflow: hidden;
+        }
+        .search-results.active { display: block; }
+
+        .search-result-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            text-decoration: none;
+            transition: background 0.15s;
+            border-bottom: 1px solid var(--gray-100);
+        }
+        .search-result-item:hover, .search-result-item.selected { background: var(--gray-100); }
+
+        .search-result-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.8rem;
+        }
+        .search-result-info { flex: 1; }
+        .search-result-name { font-weight: 500; color: var(--dark); }
+        .search-result-detail { font-size: 0.8rem; color: var(--gray-500); }
+
+        .search-hint {
+            padding: 8px 16px;
+            background: var(--gray-100);
+            font-size: 0.75rem;
+            color: var(--gray-500);
+            display: flex;
+            justify-content: space-between;
+        }
+        .search-hint kbd {
+            background: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        .search-empty {
+            padding: 24px;
+            text-align: center;
+            color: var(--gray-500);
+        }
+
+        /* Cards */
+        .card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            border: none;
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--gray-200);
+            background: transparent;
+        }
+        .card-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--dark);
+            margin: 0;
+        }
+        .card-body { padding: 24px; }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: -260px;
+                top: 0;
+                height: 100vh;
+                z-index: 1040;
+                transition: left 0.3s;
+            }
+            .sidebar.show { left: 0; }
+            .main-content {
+                margin-left: 0 !important;
+                padding: 1rem;
+            }
+            .page-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
+            .search-box { width: 100%; }
+            .card-body { padding: 1rem; }
+        }
+
+        .sidebar-toggle {
+            display: none;
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            z-index: 1050;
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.5rem 0.75rem;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        @media (max-width: 768px) {
+            .sidebar-toggle { display: block; }
+        }
+
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1030;
+        }
+        .sidebar-overlay.show { display: block; }
+
+        {% block extra_css %}{% endblock %}
+    </style>
+</head>
+<body>
+    <!-- Mobile Toggle -->
+    <button class="sidebar-toggle" onclick="toggleMobileSidebar()">
+        <i class="bi bi-list"></i>
+    </button>
+    <div class="sidebar-overlay" onclick="toggleMobileSidebar()"></div>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <a href="/" class="sidebar-logo">
+                <div class="icon"><i class="bi bi-cpu"></i></div>
+                <span>INTEL</span>
+            </a>
+        </div>
+
+        <nav class="sidebar-nav">
+            <a href="/" class="nav-item {% if request.path == '/' %}active{% endif %}">
+                <i class="bi bi-grid-1x2"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="/circulos" class="nav-item {% if '/circulos' in request.path %}active{% endif %}">
+                <i class="bi bi-bullseye"></i>
+                <span>Circulos</span>
+            </a>
+            <a href="/contatos" class="nav-item {% if request.path == '/contatos' %}active{% endif %}">
+                <i class="bi bi-people"></i>
+                <span>Contatos</span>
+            </a>
+            <a href="/contatos/limpeza" class="nav-item" style="padding-left: 2.5rem; font-size: 0.9rem;">
+                <i class="bi bi-magic"></i>
+                <span>Limpeza</span>
+            </a>
+            <a href="/contatos/linkedin" class="nav-item" style="padding-left: 2.5rem; font-size: 0.9rem;">
+                <i class="bi bi-linkedin"></i>
+                <span>LinkedIn</span>
+            </a>
+            <a href="/duplicados" class="nav-item {% if '/duplicados' in request.path %}active{% endif %}" style="padding-left: 2.5rem; font-size: 0.9rem;">
+                <i class="bi bi-copy"></i>
+                <span>Duplicados</span>
+            </a>
+            <a href="/briefings" class="nav-item {% if '/briefings' in request.path %}active{% endif %}">
+                <i class="bi bi-file-text"></i>
+                <span>Briefings</span>
+            </a>
+            <a href="/inbox" class="nav-item {% if '/inbox' in request.path %}active{% endif %}">
+                <i class="bi bi-inbox"></i>
+                <span>Inbox</span>
+                <span class="badge" id="inboxBadge" style="display: none;">0</span>
+            </a>
+            <a href="/analytics" class="nav-item {% if '/analytics' in request.path %}active{% endif %}">
+                <i class="bi bi-graph-up"></i>
+                <span>Analytics</span>
+            </a>
+
+            <div class="nav-section">Ferramentas</div>
+            <a href="/prospeccao" class="nav-item {% if '/prospeccao' in request.path %}active{% endif %}">
+                <i class="bi bi-funnel"></i>
+                <span>Prospeccao</span>
+            </a>
+            <a href="https://conselhoos.vercel.app" target="_blank" class="nav-item">
+                <i class="bi bi-briefcase"></i>
+                <span>ConselhoOS</span>
+                <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem; margin-left: auto;"></i>
+            </a>
+
+            <div class="nav-section">Sistema</div>
+            <a href="/configuracoes" class="nav-item {% if '/configuracoes' in request.path %}active{% endif %}">
+                <i class="bi bi-gear"></i>
+                <span>Configuracoes</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-info">
+                <div class="user-avatar">{{ user.nome[0] if user and user.nome else 'U' }}</div>
+                <div>
+                    <div class="user-name">{{ user.nome if user else 'Usuario' }}</div>
+                    <div class="user-role">{{ user.role if user and user.role else 'Admin' }}</div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="page-header">
+            <div>
+                <h1 class="page-title">{% block page_title %}{% endblock %}</h1>
+                {% block page_subtitle %}{% endblock %}
+            </div>
+            <div class="header-actions">
+                <!-- Global Search -->
+                <div class="search-box">
+                    <i class="bi bi-search"></i>
+                    <input type="text" placeholder="Buscar contatos... (Cmd+K)" id="globalSearch" autocomplete="off">
+                    <div class="search-results" id="searchResults">
+                        <div class="search-hint">
+                            <span>Digite para buscar</span>
+                            <span><kbd>Enter</kbd> buscar <kbd>Esc</kbd> fechar</span>
+                        </div>
+                    </div>
+                </div>
+                {% block header_actions %}{% endblock %}
+            </div>
+        </div>
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Mobile Sidebar Toggle
+        function toggleMobileSidebar() {
+            document.querySelector('.sidebar')?.classList.toggle('show');
+            document.querySelector('.sidebar-overlay')?.classList.toggle('show');
+        }
+
+        // Global Search
+        let searchTimeout = null;
+        let searchResults = [];
+        let selectedIndex = -1;
+
+        const searchInput = document.getElementById('globalSearch');
+        const searchResultsEl = document.getElementById('searchResults');
+
+        async function performSearch(query) {
+            if (!query || query.length < 2) {
+                hideSearchResults();
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/contacts?search=${encodeURIComponent(query)}&limit=8`);
+                const data = await response.json();
+                searchResults = data.contacts || [];
+                renderSearchResults(query);
+            } catch (error) {
+                searchResultsEl.innerHTML = '<div class="search-empty">Erro ao buscar</div>';
+                searchResultsEl.classList.add('active');
+            }
+        }
+
+        function renderSearchResults(query) {
+            if (searchResults.length === 0) {
+                searchResultsEl.innerHTML = `
+                    <div class="search-empty">
+                        <i class="bi bi-search mb-2"></i>
+                        <p>Nenhum resultado para "${query}"</p>
+                    </div>
+                `;
+                searchResultsEl.classList.add('active');
+                return;
+            }
+
+            let html = '';
+            searchResults.forEach((contact, idx) => {
+                const initials = (contact.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+                html += `
+                    <a href="/contatos/${contact.id}" class="search-result-item ${idx === selectedIndex ? 'selected' : ''}" data-index="${idx}">
+                        <div class="search-result-avatar">${initials}</div>
+                        <div class="search-result-info">
+                            <div class="search-result-name">${contact.nome || ''}</div>
+                            <div class="search-result-detail">${contact.empresa || contact.cargo || ''}</div>
+                        </div>
+                    </a>
+                `;
+            });
+            html += `
+                <div class="search-hint">
+                    <span>${searchResults.length} resultado${searchResults.length !== 1 ? 's' : ''}</span>
+                    <span><kbd>Enter</kbd> abrir</span>
+                </div>
+            `;
+            searchResultsEl.innerHTML = html;
+            searchResultsEl.classList.add('active');
+        }
+
+        function hideSearchResults() {
+            searchResultsEl.classList.remove('active');
+            selectedIndex = -1;
+        }
+
+        if (searchInput) {
+            searchInput.addEventListener('input', function(e) {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => performSearch(e.target.value), 300);
+            });
+
+            searchInput.addEventListener('keydown', function(e) {
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    selectedIndex = Math.min(selectedIndex + 1, searchResults.length - 1);
+                    renderSearchResults(searchInput.value);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    selectedIndex = Math.max(selectedIndex - 1, 0);
+                    renderSearchResults(searchInput.value);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (selectedIndex >= 0 && searchResults[selectedIndex]) {
+                        window.location.href = `/contatos/${searchResults[selectedIndex].id}`;
+                    } else if (searchInput.value) {
+                        window.location.href = `/contatos?search=${encodeURIComponent(searchInput.value)}`;
+                    }
+                } else if (e.key === 'Escape') {
+                    hideSearchResults();
+                    searchInput.blur();
+                }
+            });
+
+            searchInput.addEventListener('focus', function() {
+                if (searchInput.value.length >= 2) {
+                    performSearch(searchInput.value);
+                }
+            });
+        }
+
+        // Cmd+K / Ctrl+K shortcut
+        document.addEventListener('keydown', function(e) {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                searchInput?.focus();
+                searchInput?.select();
+            }
+            if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+                e.preventDefault();
+                searchInput?.focus();
+            }
+        });
+
+        // Click outside to close
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.search-box')) {
+                hideSearchResults();
+            }
+        });
+
+        // Load inbox unread count
+        async function loadInboxCount() {
+            try {
+                const response = await fetch('/api/inbox/unread');
+                const data = await response.json();
+                const badge = document.getElementById('inboxBadge');
+                if (badge && data.unread > 0) {
+                    badge.textContent = data.unread;
+                    badge.style.display = 'block';
+                }
+            } catch (error) {}
+        }
+        loadInboxCount();
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,58 +1,59 @@
 {% extends "rap_base.html" %}
 {% block title %}Inbox - INTEL{% endblock %}
+{% block page_title %}Inbox{% endblock %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <div class="row">
-        <!-- Lista de Conversas -->
-        <div class="col-md-4 col-lg-3">
-            <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">Conversas</h5>
-                    <span class="badge bg-primary" id="unread-badge">0</span>
+<div class="row">
+    <!-- Lista de Conversas -->
+    <div class="col-md-4 col-lg-3">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Conversas</h5>
+                <span class="badge bg-primary" id="unread-badge">0</span>
+            </div>
+            <div class="card-body p-0">
+                <!-- Filtros -->
+                <div class="btn-group w-100 p-2" role="group">
+                    <button type="button" class="btn btn-sm btn-outline-secondary active" data-filter="all">Todos</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="unread">Pendentes</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="email">Email</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="whatsapp">WhatsApp</button>
                 </div>
-                <div class="card-body p-0">
-                    <!-- Filtros -->
-                    <div class="btn-group w-100 p-2" role="group">
-                        <button type="button" class="btn btn-sm btn-outline-secondary active" data-filter="all">Todos</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="unread">Pendentes</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="email">Email</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="whatsapp">WhatsApp</button>
-                    </div>
-                    <!-- Lista -->
-                    <div class="list-group list-group-flush" id="conversation-list" style="max-height: 70vh; overflow-y: auto;">
-                        <div class="text-center py-4 text-muted">Carregando...</div>
-                    </div>
+                <!-- Lista -->
+                <div class="list-group list-group-flush" id="conversation-list" style="max-height: 70vh; overflow-y: auto;">
+                    <div class="text-center py-4 text-muted">Carregando...</div>
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- Detalhe da Conversa -->
-        <div class="col-md-8 col-lg-9">
-            <div class="card" id="conversation-detail">
-                <div class="card-header" id="detail-header" style="display: none;">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div class="d-flex align-items-center">
-                            <img src="" id="contact-photo" class="rounded-circle me-2" width="40" height="40" style="display: none;">
-                            <div>
-                                <h6 class="mb-0" id="contact-name">-</h6>
-                                <small class="text-muted" id="contact-channel">-</small>
-                            </div>
+    <!-- Detalhe da Conversa -->
+    <div class="col-md-8 col-lg-9">
+        <div class="card" id="conversation-detail">
+            <div class="card-header" id="detail-header" style="display: none;">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div class="d-flex align-items-center">
+                        <img src="" id="contact-photo" class="rounded-circle me-2" width="40" height="40" style="display: none;">
+                        <div>
+                            <h6 class="mb-0" id="contact-name">-</h6>
+                            <small class="text-muted" id="contact-channel">-</small>
                         </div>
-                        <a href="#" id="contact-link" class="btn btn-sm btn-outline-primary">Ver Contato</a>
                     </div>
+                    <a href="#" id="contact-link" class="btn btn-sm btn-outline-primary">Ver Contato</a>
                 </div>
-                <div class="card-body" id="messages-container" style="max-height: 60vh; overflow-y: auto;">
-                    <div class="text-center text-muted py-5">
-                        <i class="bi bi-chat-dots" style="font-size: 3rem;"></i>
-                        <p class="mt-3">Selecione uma conversa para ver as mensagens</p>
-                    </div>
+            </div>
+            <div class="card-body" id="messages-container" style="max-height: 60vh; overflow-y: auto;">
+                <div class="text-center text-muted py-5">
+                    <i class="bi bi-chat-dots" style="font-size: 3rem;"></i>
+                    <p class="mt-3">Selecione uma conversa para ver as mensagens</p>
                 </div>
             </div>
         </div>
     </div>
 </div>
+{% endblock %}
 
+{% block extra_js %}
 <script>
 let currentFilter = 'all';
 let currentConversationId = null;
