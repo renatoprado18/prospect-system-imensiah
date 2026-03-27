@@ -1,244 +1,467 @@
 # Fila de Tarefas 2INTEL
 
-**Atualizacao**: 2026-03-26
-**Modo**: AUTONOMO TOTAL - executar todas as tarefas sem aguardar aprovacao
+**Atualizacao**: 2026-03-27
+**Modo**: AUTONOMO TOTAL - executar TODAS as tarefas sem parar
 
 ---
 
-## TAREFAS CONCLUIDAS
+## INSTRUCOES GERAIS
 
-| Tarefa | Commit | Resumo |
-|--------|--------|--------|
-| Recalcular Circulos | 620de30 | 6647 contatos distribuidos em 5 circulos |
-| Auto-Tags | 620de30 | 1242 contatos, 1526 tags aplicadas |
-| Verificar Duplicados | 620de30 | 42 duplicados identificados |
-| Briefing Context | 698214e | briefing_context.py + 5 endpoints |
-| Engajamento | merged | engajamento.py + 4 endpoints |
-| Duplicados Service | 8c93930 | duplicados.py + Levenshtein + 3 endpoints |
-| Gmail Sync | 2f1dfa8 | gmail_sync.py + endpoints |
-| WhatsApp Sync | 2f1dfa8 | whatsapp_sync.py + webhook |
-| Google Calendar | 2f1dfa8 | google_calendar.py + /api/calendar |
-| Google Tasks | 2f1dfa8 | google_tasks.py + /api/tasks |
-| Merge Duplicados | 2f1dfa8 | 3 duplicados mergeados |
+- NAO perguntar nada, apenas executar
+- Se encontrar erro, resolver e continuar
+- Commit apos cada tarefa concluida
+- Push direto em main
+- Atualizar este arquivo marcando tarefas como CONCLUIDAS
 
 ---
 
-## NOVAS TAREFAS (Executar em ordem)
+## TAREFA 1: API Inbox Unificado
 
-### Tarefa 1: API Inbox Unificado
-
-**Status**: PENDENTE
+**Status**: EXECUTAR AGORA
 **Prioridade**: CRITICA
 
-**Objetivo**: Endpoints para o Inbox unificado que 3FLOW criou na UI.
-
-**Criar/Atualizar**: `app/services/inbox.py`
+**Criar arquivo**: `app/services/inbox.py`
 
 ```python
 """
 Inbox Service - Unifica emails e WhatsApp
 """
+from typing import List, Dict, Optional
+from database import get_db
+
 class InboxService:
-    async def get_conversations(self, limit=50, filter_type=None):
-        """Lista conversas (email + whatsapp) ordenadas por data"""
-        # Combinar dados de conversations table
-        # Retornar: id, contact_id, contact_name, channel, last_message, unread_count, timestamp
-        pass
+    def get_conversations(self, limit: int = 50, filter_type: str = None) -> List[Dict]:
+        """Lista conversas ordenadas por data"""
+        with get_db() as conn:
+            cursor = conn.cursor()
 
-    async def get_messages(self, conversation_id: int):
-        """Mensagens de uma conversa especifica"""
-        pass
+            query = """
+                SELECT
+                    c.id,
+                    c.contact_id,
+                    ct.nome as contact_name,
+                    ct.foto_url,
+                    c.channel,
+                    c.last_message_preview,
+                    c.unread_count,
+                    c.updated_at
+                FROM conversations c
+                LEFT JOIN contacts ct ON ct.id = c.contact_id
+                WHERE 1=1
+            """
+            params = []
 
-    async def get_unread_count(self):
-        """Total de nao lidos (para badge)"""
-        pass
+            if filter_type and filter_type != 'all':
+                if filter_type == 'unread':
+                    query += " AND c.unread_count > 0"
+                else:
+                    query += " AND c.channel = %s"
+                    params.append(filter_type)
 
-    async def mark_as_read(self, conversation_id: int):
+            query += " ORDER BY c.updated_at DESC LIMIT %s"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_messages(self, conversation_id: int, limit: int = 100) -> List[Dict]:
+        """Mensagens de uma conversa"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, conversation_id, direction, content,
+                       enviado_em, lida, metadata
+                FROM messages
+                WHERE conversation_id = %s
+                ORDER BY enviado_em DESC
+                LIMIT %s
+            """, (conversation_id, limit))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_unread_count(self) -> int:
+        """Total de nao lidos"""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COALESCE(SUM(unread_count), 0) as count FROM conversations")
+            row = cursor.fetchone()
+            return row["count"] if row else 0
+
+    def mark_as_read(self, conversation_id: int) -> bool:
         """Marca conversa como lida"""
-        pass
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE conversations SET unread_count = 0 WHERE id = %s
+            """, (conversation_id,))
+            cursor.execute("""
+                UPDATE messages SET lida = TRUE WHERE conversation_id = %s
+            """, (conversation_id,))
+            conn.commit()
+            return True
+
+_inbox_service = None
+
+def get_inbox_service() -> InboxService:
+    global _inbox_service
+    if _inbox_service is None:
+        _inbox_service = InboxService()
+    return _inbox_service
 ```
 
-**Endpoints**:
-- `GET /api/inbox/conversations` - lista conversas
-- `GET /api/inbox/conversations/{id}/messages` - mensagens
-- `GET /api/inbox/unread` - contador nao lidos
-- `POST /api/inbox/conversations/{id}/read` - marcar como lido
+**Adicionar em main.py** (apos imports existentes):
 
-**Criterios**:
-- [ ] InboxService criado
-- [ ] Endpoints funcionando
-- [ ] Combina email + WhatsApp
-- [ ] Badge do sidebar funciona
+```python
+from services.inbox import get_inbox_service
+
+@app.get("/api/inbox/conversations")
+async def list_conversations(limit: int = 50, filter_type: str = None):
+    service = get_inbox_service()
+    conversations = service.get_conversations(limit, filter_type)
+    return {"conversations": conversations}
+
+@app.get("/api/inbox/conversations/{conversation_id}/messages")
+async def get_conversation_messages(conversation_id: int, limit: int = 100):
+    service = get_inbox_service()
+    messages = service.get_messages(conversation_id, limit)
+    return {"messages": messages}
+
+@app.get("/api/inbox/unread")
+async def get_inbox_unread():
+    service = get_inbox_service()
+    count = service.get_unread_count()
+    return {"unread": count}
+
+@app.post("/api/inbox/conversations/{conversation_id}/read")
+async def mark_conversation_read(conversation_id: int):
+    service = get_inbox_service()
+    service.mark_as_read(conversation_id)
+    return {"success": True}
+```
+
+**Commit**: `git commit -m "Add Inbox API endpoints"`
 
 ---
 
-### Tarefa 2: API Timeline de Contato
+## TAREFA 2: API Timeline de Contato
 
 **Status**: PENDENTE
 **Prioridade**: ALTA
 
-**Objetivo**: Endpoint para timeline unificada na pagina de contato.
-
-**Criar**: `app/services/timeline.py`
+**Criar arquivo**: `app/services/timeline.py`
 
 ```python
 """
 Timeline Service - Historico unificado de interacoes
 """
+from typing import List, Dict
+from datetime import datetime
+from database import get_db
+
 class TimelineService:
-    async def get_contact_timeline(self, contact_id: int, limit=50):
-        """
-        Retorna timeline unificada:
-        - Emails enviados/recebidos
-        - Mensagens WhatsApp
-        - Reunioes (calendar events)
-        - Notas manuais
-        - Mudancas de circulo
-        """
-        # Query contact_memories + messages + calendar
-        # Ordenar por data DESC
-        # Retornar: type, title, content, timestamp, metadata
-        pass
+    def get_contact_timeline(self, contact_id: int, limit: int = 50) -> List[Dict]:
+        """Retorna timeline unificada do contato"""
+        timeline = []
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Mensagens (email + whatsapp)
+            cursor.execute("""
+                SELECT
+                    'message' as type,
+                    m.id,
+                    CASE WHEN m.direction = 'inbound' THEN 'Mensagem recebida' ELSE 'Mensagem enviada' END as title,
+                    LEFT(m.content, 200) as content,
+                    m.enviado_em as timestamp,
+                    c.channel as metadata
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE c.contact_id = %s
+                ORDER BY m.enviado_em DESC
+                LIMIT %s
+            """, (contact_id, limit))
+
+            for row in cursor.fetchall():
+                timeline.append(dict(row))
+
+            # Memorias/Notas
+            cursor.execute("""
+                SELECT
+                    'note' as type,
+                    id,
+                    'Nota' as title,
+                    content,
+                    created_at as timestamp,
+                    category as metadata
+                FROM contact_memories
+                WHERE contact_id = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (contact_id, limit))
+
+            for row in cursor.fetchall():
+                timeline.append(dict(row))
+
+        # Ordenar por timestamp
+        timeline.sort(key=lambda x: x.get('timestamp') or datetime.min, reverse=True)
+        return timeline[:limit]
+
+_timeline_service = None
+
+def get_timeline_service() -> TimelineService:
+    global _timeline_service
+    if _timeline_service is None:
+        _timeline_service = TimelineService()
+    return _timeline_service
 ```
 
-**Endpoint**:
-- `GET /api/contacts/{id}/timeline` - timeline do contato
+**Adicionar em main.py**:
 
-**Criterios**:
-- [ ] TimelineService criado
-- [ ] Combina todas as fontes
-- [ ] Ordenado por data
-- [ ] Paginacao funciona
+```python
+from services.timeline import get_timeline_service
+
+@app.get("/api/contacts/{contact_id}/timeline")
+async def get_contact_timeline(contact_id: int, limit: int = 50):
+    service = get_timeline_service()
+    timeline = service.get_contact_timeline(contact_id, limit)
+    return {"timeline": timeline, "contact_id": contact_id}
+```
+
+**Commit**: `git commit -m "Add Timeline API for contacts"`
 
 ---
 
-### Tarefa 3: API Notificacoes
+## TAREFA 3: API Notificacoes
 
 **Status**: PENDENTE
 **Prioridade**: ALTA
 
-**Objetivo**: Sistema de notificacoes para o sino no header.
-
-**Criar**: `app/services/notifications.py`
+**Criar arquivo**: `app/services/notifications.py`
 
 ```python
 """
 Notifications Service
 """
+from typing import List, Dict
+from datetime import datetime, timedelta
+from database import get_db
+
 class NotificationService:
-    async def get_notifications(self, limit=20):
-        """
-        Tipos:
-        - birthday_today: Aniversarios de hoje
-        - birthday_upcoming: Proximos 7 dias
-        - low_health: Contatos precisando atencao
-        - new_message: Novas mensagens
-        - task_due: Tarefas vencendo
-        """
-        pass
+    def get_notifications(self, limit: int = 20) -> List[Dict]:
+        """Retorna notificacoes priorizadas"""
+        notifications = []
 
-    async def get_unread_count(self):
-        """Total de notificacoes nao lidas"""
-        pass
+        with get_db() as conn:
+            cursor = conn.cursor()
 
-    async def mark_all_read(self):
-        """Marca todas como lidas"""
-        pass
+            # Aniversarios hoje
+            cursor.execute("""
+                SELECT id, nome, foto_url, aniversario
+                FROM contacts
+                WHERE aniversario IS NOT NULL
+                AND EXTRACT(MONTH FROM aniversario) = EXTRACT(MONTH FROM CURRENT_DATE)
+                AND EXTRACT(DAY FROM aniversario) = EXTRACT(DAY FROM CURRENT_DATE)
+                AND COALESCE(circulo, 5) <= 4
+            """)
+            for row in cursor.fetchall():
+                notifications.append({
+                    "type": "birthday_today",
+                    "title": f"Aniversario de {row['nome']}",
+                    "contact_id": row["id"],
+                    "foto_url": row.get("foto_url"),
+                    "priority": "high",
+                    "timestamp": datetime.now().isoformat()
+                })
+
+            # Health baixo
+            cursor.execute("""
+                SELECT id, nome, foto_url, health_score, circulo
+                FROM contacts
+                WHERE COALESCE(circulo, 5) <= 3
+                AND COALESCE(health_score, 50) < 30
+                ORDER BY health_score ASC
+                LIMIT 5
+            """)
+            for row in cursor.fetchall():
+                notifications.append({
+                    "type": "low_health",
+                    "title": f"{row['nome']} precisa de atencao",
+                    "contact_id": row["id"],
+                    "foto_url": row.get("foto_url"),
+                    "priority": "medium",
+                    "health_score": row["health_score"],
+                    "timestamp": datetime.now().isoformat()
+                })
+
+            # Mensagens nao lidas
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM messages WHERE lida = FALSE
+            """)
+            unread = cursor.fetchone()["count"]
+            if unread > 0:
+                notifications.append({
+                    "type": "unread_messages",
+                    "title": f"{unread} mensagens nao lidas",
+                    "priority": "medium",
+                    "count": unread,
+                    "timestamp": datetime.now().isoformat()
+                })
+
+        return notifications[:limit]
+
+    def get_unread_count(self) -> int:
+        """Total de notificacoes"""
+        notifications = self.get_notifications(100)
+        return len(notifications)
+
+_notification_service = None
+
+def get_notification_service() -> NotificationService:
+    global _notification_service
+    if _notification_service is None:
+        _notification_service = NotificationService()
+    return _notification_service
 ```
 
-**Endpoints**:
-- `GET /api/notifications` - lista notificacoes
-- `GET /api/notifications/count` - contador
-- `POST /api/notifications/read-all` - marcar todas lidas
+**Adicionar em main.py**:
 
-**Criterios**:
-- [ ] NotificationService criado
-- [ ] Todos os tipos implementados
-- [ ] Polling funciona (3FLOW chama a cada 2min)
+```python
+from services.notifications import get_notification_service
+
+@app.get("/api/notifications")
+async def list_notifications(limit: int = 20):
+    service = get_notification_service()
+    notifications = service.get_notifications(limit)
+    return {"notifications": notifications, "total": len(notifications)}
+
+@app.get("/api/notifications/count")
+async def get_notification_count():
+    service = get_notification_service()
+    count = service.get_unread_count()
+    return {"count": count}
+```
+
+**Commit**: `git commit -m "Add Notifications API"`
 
 ---
 
-### Tarefa 4: Background Jobs
+## TAREFA 4: Recalcular Health Scores
 
 **Status**: PENDENTE
 **Prioridade**: MEDIA
 
-**Objetivo**: Jobs periodicos para sync automatico.
-
-**Criar**: `app/services/background_jobs.py`
+**Criar script**: `scripts/recalc_health.py`
 
 ```python
-"""
-Background Jobs - Executar periodicamente
-"""
-import asyncio
+#!/usr/bin/env python3
+"""Recalcula health scores de todos os contatos"""
+import sys
+sys.path.insert(0, 'app')
+from dotenv import load_dotenv
+load_dotenv()
+
+from database import get_db
 from datetime import datetime, timedelta
 
-class BackgroundJobsService:
-    async def sync_gmail_periodic(self):
-        """Sync Gmail a cada 15 minutos"""
-        pass
+def recalc_health():
+    with get_db() as conn:
+        cursor = conn.cursor()
 
-    async def sync_whatsapp_periodic(self):
-        """Processar webhooks pendentes"""
-        pass
+        # Buscar todos os contatos dos circulos 1-4
+        cursor.execute("""
+            SELECT id, circulo, ultimo_contato, frequencia_ideal_dias
+            FROM contacts
+            WHERE COALESCE(circulo, 5) <= 4
+        """)
 
-    async def recalculate_health_scores(self):
-        """Recalcular health scores diariamente"""
-        pass
+        updated = 0
+        for row in cursor.fetchall():
+            contact_id = row["id"]
+            circulo = row["circulo"] or 5
+            ultimo = row["ultimo_contato"]
+            freq = row["frequencia_ideal_dias"] or 30
 
-    async def generate_daily_briefings(self):
-        """Gerar briefings para reunioes do dia"""
-        pass
+            # Calcular health baseado em dias sem contato
+            if ultimo:
+                dias = (datetime.now() - ultimo).days
+                health = max(0, min(100, 100 - (dias / freq * 50)))
+            else:
+                health = 20  # Sem contato registrado
+
+            cursor.execute("""
+                UPDATE contacts SET health_score = %s WHERE id = %s
+            """, (int(health), contact_id))
+            updated += 1
+
+        conn.commit()
+        print(f"Health scores atualizados: {updated} contatos")
+
+if __name__ == "__main__":
+    recalc_health()
 ```
 
-**Implementar usando**:
-- APScheduler ou
-- Celery (se precisar mais robusto) ou
-- Simples asyncio com sleep
+**Executar**: `python scripts/recalc_health.py`
 
-**Criterios**:
-- [ ] Jobs configurados
-- [ ] Gmail sync periodico
-- [ ] Health score recalculo
-- [ ] Logs de execucao
+**Commit**: `git commit -m "Add health score recalculation script"`
 
 ---
 
-### Tarefa 5: Melhorar Distribuicao de Circulos
+## TAREFA 5: Criar Endpoint de Estatisticas
 
 **Status**: PENDENTE
 **Prioridade**: BAIXA
 
-**Objetivo**: 93.5% dos contatos ainda em C5. Melhorar algoritmo.
+**Adicionar em main.py**:
 
-**Atualizar**: `app/services/circulos.py`
+```python
+@app.get("/api/analytics/summary")
+async def get_analytics_summary(days: int = 30):
+    """Estatisticas para dashboard de analytics"""
+    from database import get_db
 
-**Sugestoes**:
-1. Dar mais peso para contatos com LinkedIn conectado
-2. Considerar tags (c-level, diretor = +pontos)
-3. Considerar empresa conhecida
-4. Usar dados do Gmail/WhatsApp sync para interacoes
+    with get_db() as conn:
+        cursor = conn.cursor()
 
-**Criterios**:
-- [ ] Algoritmo revisado
-- [ ] Distribuicao mais equilibrada
-- [ ] Recalculo executado
+        # Total contatos por circulo
+        cursor.execute("""
+            SELECT COALESCE(circulo, 5) as circulo, COUNT(*) as total
+            FROM contacts GROUP BY COALESCE(circulo, 5)
+        """)
+        por_circulo = {row["circulo"]: row["total"] for row in cursor.fetchall()}
+
+        # Interacoes no periodo
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM messages
+            WHERE enviado_em > NOW() - INTERVAL '%s days'
+        """, (days,))
+        interacoes = cursor.fetchone()["total"]
+
+        # Health medio
+        cursor.execute("""
+            SELECT AVG(COALESCE(health_score, 50)) as avg
+            FROM contacts WHERE COALESCE(circulo, 5) <= 4
+        """)
+        health_medio = cursor.fetchone()["avg"] or 50
+
+        return {
+            "periodo_dias": days,
+            "por_circulo": por_circulo,
+            "total_interacoes": interacoes,
+            "health_medio": round(float(health_medio), 1)
+        }
+```
+
+**Commit**: `git commit -m "Add analytics summary endpoint"`
 
 ---
 
-## INSTRUCOES DE EXECUCAO
+## APOS COMPLETAR TODAS
 
-1. **Branch**: `git checkout -b feature/intel-apis-v2`
-2. **Executar em ordem** (1 -> 5)
-3. **Commit por tarefa**
-4. **Merge direto em main**
+```bash
+git push origin main
+```
 
-## AUTONOMIA
-
-- NAO aguardar aprovacao
-- Se encontrar erro, resolver e continuar
-- Atualizar este arquivo conforme progresso
+Atualizar este arquivo marcando todas como **CONCLUIDAS**.
 
 ---
 
@@ -246,6 +469,9 @@ class BackgroundJobsService:
 
 | Data | Tarefa | Status |
 |------|--------|--------|
-| 2026-03-26 | Gmail/WhatsApp/Calendar/Tasks | **CONCLUIDO** |
-| 2026-03-26 | Recalculo + Tags + Duplicados | **CONCLUIDO** |
-| 2026-03-25 | Services anteriores | **MERGED** |
+| 2026-03-26 | Gmail/WhatsApp/Calendar/Tasks | CONCLUIDO |
+| 2026-03-27 | API Inbox | _aguardando_ |
+| 2026-03-27 | API Timeline | _aguardando_ |
+| 2026-03-27 | API Notifications | _aguardando_ |
+| 2026-03-27 | Recalc Health | _aguardando_ |
+| 2026-03-27 | Analytics | _aguardando_ |

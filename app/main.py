@@ -5698,5 +5698,85 @@ async def complete_task(request: Request, task_id: str):
     return result
 
 
+# ============== INBOX API ==============
+
+from services.inbox import get_inbox_service
+
+@app.get("/api/inbox/conversations")
+async def list_inbox_conversations(
+    request: Request,
+    limit: int = 50,
+    filter_type: str = None
+):
+    """Lista conversas do inbox unificado (email + whatsapp)"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_inbox_service()
+    conversations = service.get_conversations(limit, filter_type)
+    return {"conversations": conversations, "total": len(conversations)}
+
+
+@app.get("/api/inbox/conversations/{conversation_id}")
+async def get_inbox_conversation(
+    request: Request,
+    conversation_id: int
+):
+    """Detalhes de uma conversa"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_inbox_service()
+    conversation = service.get_conversation_by_id(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversa nao encontrada")
+    return conversation
+
+
+@app.get("/api/inbox/conversations/{conversation_id}/messages")
+async def get_inbox_conversation_messages(
+    request: Request,
+    conversation_id: int,
+    limit: int = 100
+):
+    """Mensagens de uma conversa"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_inbox_service()
+    messages = service.get_messages(conversation_id, limit)
+    return {"messages": messages, "total": len(messages)}
+
+
+@app.get("/api/inbox/unread")
+async def get_inbox_unread_count(request: Request):
+    """Total de conversas que requerem resposta"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_inbox_service()
+    count = service.get_unread_count()
+    return {"unread": count}
+
+
+@app.post("/api/inbox/conversations/{conversation_id}/read")
+async def mark_inbox_conversation_read(
+    request: Request,
+    conversation_id: int
+):
+    """Marca conversa como lida"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_inbox_service()
+    service.mark_as_read(conversation_id)
+    return {"success": True}
+
+
 # Vercel handler
 app_handler = app
