@@ -706,6 +706,30 @@ def init_db():
             )
         ''')
 
+        # ConselhoOS Links - vincula contatos INTEL com empresas do ConselhoOS
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS conselhoos_links (
+                id SERIAL PRIMARY KEY,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                conselhoos_empresa_id UUID,
+                conselhoos_empresa_nome VARCHAR(255),
+                role VARCHAR(100),
+                notes TEXT,
+                synced_at TIMESTAMP,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_conselhoos_links_contact
+            ON conselhoos_links(contact_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_conselhoos_links_empresa
+            ON conselhoos_links(conselhoos_empresa_id)
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True
