@@ -5698,6 +5698,207 @@ async def complete_task(request: Request, task_id: str):
     return result
 
 
+# ============== ANALYTICS API ==============
+
+@app.get("/api/analytics/summary")
+async def get_analytics_summary(
+    request: Request,
+    days: int = 30
+):
+    """
+    Estatisticas para dashboard de analytics.
+
+    Args:
+        days: Periodo para analisar (default 30 dias)
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Total contatos por circulo
+        cursor.execute("""
+            SELECT COALESCE(circulo, 5) as circulo, COUNT(*) as total
+            FROM contacts GROUP BY COALESCE(circulo, 5)
+            ORDER BY circulo
+        """)
+        por_circulo = {row["circulo"]: row["total"] for row in cursor.fetchall()}
+
+        # Interacoes no periodo (mensagens)
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM messages
+            WHERE enviado_em > NOW() - INTERVAL '%s days'
+        """, (days,))
+        total_mensagens = cursor.fetchone()["total"]
+
+        # Mensagens por direcao
+        cursor.execute("""
+            SELECT
+                direcao,
+                COUNT(*) as total
+            FROM messages
+            WHERE enviado_em > NOW() - INTERVAL '%s days'
+            GROUP BY direcao
+        """, (days,))
+        por_direcao = {row["direcao"]: row["total"] for row in cursor.fetchall()}
+
+        # Health medio por circulo
+        cursor.execute("""
+            SELECT
+                COALESCE(circulo, 5) as circulo,
+                AVG(COALESCE(health_score, 50)) as avg_health,
+                MIN(COALESCE(health_score, 50)) as min_health,
+                MAX(COALESCE(health_score, 50)) as max_health
+            FROM contacts
+            WHERE COALESCE(circulo, 5) <= 4
+            GROUP BY COALESCE(circulo, 5)
+            ORDER BY circulo
+        """)
+        health_por_circulo = {}
+        for row in cursor.fetchall():
+            health_por_circulo[row["circulo"]] = {
+                "avg": round(float(row["avg_health"]), 1),
+                "min": int(row["min_health"]),
+                "max": int(row["max_health"])
+            }
+
+        # Health medio geral
+        cursor.execute("""
+            SELECT AVG(COALESCE(health_score, 50)) as avg
+            FROM contacts WHERE COALESCE(circulo, 5) <= 4
+        """)
+        health_medio = cursor.fetchone()["avg"] or 50
+
+        # Contatos por contexto
+        cursor.execute("""
+            SELECT
+                COALESCE(contexto, 'professional') as contexto,
+                COUNT(*) as total
+            FROM contacts
+            GROUP BY COALESCE(contexto, 'professional')
+        """)
+        por_contexto = {row["contexto"]: row["total"] for row in cursor.fetchall()}
+
+        # Mensagens por canal
+        cursor.execute("""
+            SELECT
+                c.canal,
+                COUNT(*) as total
+            FROM messages m
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE m.enviado_em > NOW() - INTERVAL '%s days'
+            GROUP BY c.canal
+        """, (days,))
+        por_canal = {row["canal"]: row["total"] for row in cursor.fetchall()}
+
+        # Contatos adicionados no periodo
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM contacts
+            WHERE criado_em > NOW() - INTERVAL '%s days'
+        """, (days,))
+        novos_contatos = cursor.fetchone()["total"]
+
+        # Top tags
+        cursor.execute("""
+            SELECT tag, COUNT(*) as count
+            FROM (
+                SELECT jsonb_array_elements_text(tags) as tag
+                FROM contacts
+                WHERE tags IS NOT NULL AND tags != '[]'::jsonb
+            ) t
+            GROUP BY tag
+            ORDER BY count DESC
+            LIMIT 10
+        """)
+        top_tags = [{"tag": row["tag"], "count": row["count"]} for row in cursor.fetchall()]
+
+        return {
+            "periodo_dias": days,
+            "contatos": {
+                "total": sum(por_circulo.values()),
+                "por_circulo": por_circulo,
+                "por_contexto": por_contexto,
+                "novos_periodo": novos_contatos
+            },
+            "mensagens": {
+                "total_periodo": total_mensagens,
+                "por_direcao": por_direcao,
+                "por_canal": por_canal
+            },
+            "health": {
+                "medio_geral": round(float(health_medio), 1),
+                "por_circulo": health_por_circulo
+            },
+            "top_tags": top_tags,
+            "gerado_em": datetime.now().isoformat()
+        }
+
+
+@app.get("/api/analytics/trends")
+async def get_analytics_trends(
+    request: Request,
+    days: int = 30
+):
+    """
+    Tendencias de interacoes ao longo do tempo.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Mensagens por dia
+        cursor.execute("""
+            SELECT
+                DATE(enviado_em) as data,
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE direcao = 'outbound') as enviadas,
+                COUNT(*) FILTER (WHERE direcao = 'inbound') as recebidas
+            FROM messages
+            WHERE enviado_em > NOW() - INTERVAL '%s days'
+            GROUP BY DATE(enviado_em)
+            ORDER BY data
+        """, (days,))
+
+        mensagens_por_dia = []
+        for row in cursor.fetchall():
+            mensagens_por_dia.append({
+                "data": row["data"].isoformat() if row["data"] else None,
+                "total": row["total"],
+                "enviadas": row["enviadas"],
+                "recebidas": row["recebidas"]
+            })
+
+        # Contatos contatados por semana
+        cursor.execute("""
+            SELECT
+                DATE_TRUNC('week', ultimo_contato) as semana,
+                COUNT(*) as contatados
+            FROM contacts
+            WHERE ultimo_contato > NOW() - INTERVAL '%s days'
+            GROUP BY DATE_TRUNC('week', ultimo_contato)
+            ORDER BY semana
+        """, (days,))
+
+        contatos_por_semana = []
+        for row in cursor.fetchall():
+            contatos_por_semana.append({
+                "semana": row["semana"].isoformat() if row["semana"] else None,
+                "contatados": row["contatados"]
+            })
+
+        return {
+            "periodo_dias": days,
+            "mensagens_por_dia": mensagens_por_dia,
+            "contatos_por_semana": contatos_por_semana,
+            "gerado_em": datetime.now().isoformat()
+        }
+
+
 # ============== NOTIFICATIONS API ==============
 
 from services.notifications import get_notification_service
