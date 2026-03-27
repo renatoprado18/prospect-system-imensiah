@@ -5698,6 +5698,40 @@ async def complete_task(request: Request, task_id: str):
     return result
 
 
+# ============== NOTIFICATIONS API ==============
+
+from services.notifications import get_notification_service
+
+@app.get("/api/notifications")
+async def list_notifications(
+    request: Request,
+    limit: int = 20
+):
+    """
+    Lista notificacoes priorizadas.
+    Inclui aniversarios, health baixo, mensagens pendentes, tarefas.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_notification_service()
+    notifications = service.get_notifications(limit)
+    return {"notifications": notifications, "total": len(notifications)}
+
+
+@app.get("/api/notifications/count")
+async def get_notifications_count(request: Request):
+    """Retorna contagem de notificacoes por tipo"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_notification_service()
+    counts = service.get_notification_count()
+    return counts
+
+
 # ============== TIMELINE API ==============
 
 from services.timeline import get_timeline_service
