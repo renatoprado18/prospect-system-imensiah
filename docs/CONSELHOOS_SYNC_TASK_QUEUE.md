@@ -40,7 +40,7 @@
 
 ## TAREFA 1: Tabela de Vinculo
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: ALTA
 
 ### Adicionar em `app/database.py`
@@ -72,7 +72,7 @@ Adicionar migracao na funcao `init_db()`.
 
 ## TAREFA 2: ConselhoOS Sync Service
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: ALTA
 
 ### Criar `app/services/conselhoos_sync.py`
@@ -393,7 +393,7 @@ def get_conselhoos_sync_service() -> ConselhoOSSyncService:
 
 ## TAREFA 3: Endpoints ConselhoOS
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: ALTA
 
 ### Adicionar em main.py
@@ -489,7 +489,7 @@ async def get_contact_conselhoos(request: Request, contact_id: int):
 
 ## TAREFA 4: Widget ConselhoOS no Dashboard
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: MEDIA
 
 ### Modificar `app/templates/rap_dashboard.html`
@@ -716,7 +716,7 @@ loadConselhoOSWidget();
 
 ## TAREFA 5: Secao ConselhoOS no Contato
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: MEDIA
 
 ### Modificar `app/templates/rap_contact_detail.html`
@@ -794,8 +794,8 @@ Adicionar `CONSELHOOS_DATABASE_URL` ao .env com a connection string do banco Con
 
 | Data | Tarefa | Status |
 |------|--------|--------|
-| - | Tabela de Vinculo | PENDENTE |
-| - | Sync Service | PENDENTE |
-| - | Endpoints API | PENDENTE |
-| - | Widget Dashboard | PENDENTE |
-| - | Secao no Contato | PENDENTE |
+| 2026-03-27 | Tabela de Vinculo | CONCLUIDO |
+| 2026-03-27 | Sync Service | CONCLUIDO |
+| 2026-03-27 | Endpoints API | CONCLUIDO |
+| 2026-03-27 | Widget Dashboard | CONCLUIDO |
+| 2026-03-27 | Secao no Contato | CONCLUIDO |
