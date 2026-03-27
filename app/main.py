@@ -6569,5 +6569,277 @@ async def get_recent_activity(
     return {"activities": service.get_recent_activity(limit)}
 
 
+# =============================================================================
+# AI SUGGESTIONS ENDPOINTS
+# =============================================================================
+
+class AISuggestionCreate(BaseModel):
+    contact_id: int
+    tipo: str
+    titulo: str
+    descricao: Optional[str] = None
+    razao: Optional[str] = None
+    dados: Optional[dict] = None
+    prioridade: Optional[int] = 5
+    validade: Optional[str] = None
+    confianca: Optional[float] = 0.8
+
+
+@app.get("/api/ai/suggestions")
+async def get_ai_suggestions(
+    request: Request,
+    status: str = "pending",
+    tipo: str = None,
+    contact_id: int = None,
+    limit: int = 50
+):
+    """Lista sugestoes da IA"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+
+        conditions = ["1=1"]
+        params = []
+
+        if status:
+            conditions.append("s.status = %s")
+            params.append(status)
+
+        if tipo:
+            conditions.append("s.tipo = %s")
+            params.append(tipo)
+
+        if contact_id:
+            conditions.append("s.contact_id = %s")
+            params.append(contact_id)
+
+        where_clause = " AND ".join(conditions)
+
+        cursor.execute(f"""
+            SELECT s.*, c.nome as contact_name, c.foto_url, c.circulo
+            FROM ai_suggestions s
+            LEFT JOIN contacts c ON c.id = s.contact_id
+            WHERE {where_clause}
+            AND (s.validade IS NULL OR s.validade > NOW())
+            ORDER BY s.prioridade DESC, s.criado_em DESC
+            LIMIT %s
+        """, params + [limit])
+
+        suggestions = []
+        for row in cursor.fetchall():
+            s = dict(row)
+            if s.get("criado_em"):
+                s["criado_em"] = s["criado_em"].isoformat()
+            if s.get("validade"):
+                s["validade"] = s["validade"].isoformat()
+            suggestions.append(s)
+
+        return {"suggestions": suggestions, "total": len(suggestions)}
+
+
+@app.post("/api/ai/suggestions")
+async def create_ai_suggestion(
+    request: Request,
+    data: AISuggestionCreate
+):
+    """Cria uma nova sugestao da IA"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO ai_suggestions
+            (contact_id, tipo, titulo, descricao, razao, dados, prioridade, validade, confianca)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            data.contact_id,
+            data.tipo,
+            data.titulo,
+            data.descricao,
+            data.razao,
+            json.dumps(data.dados) if data.dados else '{}',
+            data.prioridade,
+            data.validade,
+            data.confianca
+        ))
+
+        suggestion_id = cursor.fetchone()["id"]
+        conn.commit()
+
+        return {"id": suggestion_id, "status": "created"}
+
+
+@app.get("/api/ai/suggestions/{suggestion_id}")
+async def get_ai_suggestion(
+    request: Request,
+    suggestion_id: int
+):
+    """Detalhes de uma sugestao"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT s.*, c.nome as contact_name, c.foto_url, c.empresa, c.circulo
+            FROM ai_suggestions s
+            LEFT JOIN contacts c ON c.id = s.contact_id
+            WHERE s.id = %s
+        """, (suggestion_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Sugestao nao encontrada")
+
+        s = dict(row)
+        for key in ["criado_em", "aceita_em", "descartada_em", "executada_em", "validade"]:
+            if s.get(key) and hasattr(s[key], "isoformat"):
+                s[key] = s[key].isoformat()
+
+        return s
+
+
+@app.post("/api/ai/suggestions/{suggestion_id}/accept")
+async def accept_ai_suggestion(
+    request: Request,
+    suggestion_id: int
+):
+    """Aceita uma sugestao da IA"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE ai_suggestions
+            SET status = 'accepted', aceita_em = NOW()
+            WHERE id = %s AND status = 'pending'
+            RETURNING id
+        """, (suggestion_id,))
+
+        result = cursor.fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="Sugestao nao encontrada ou ja processada")
+
+        conn.commit()
+        return {"id": suggestion_id, "status": "accepted"}
+
+
+@app.post("/api/ai/suggestions/{suggestion_id}/dismiss")
+async def dismiss_ai_suggestion(
+    request: Request,
+    suggestion_id: int,
+    motivo: str = None
+):
+    """Descarta uma sugestao da IA"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE ai_suggestions
+            SET status = 'dismissed', descartada_em = NOW(), motivo_descarte = %s
+            WHERE id = %s AND status = 'pending'
+            RETURNING id
+        """, (motivo, suggestion_id))
+
+        result = cursor.fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="Sugestao nao encontrada ou ja processada")
+
+        conn.commit()
+        return {"id": suggestion_id, "status": "dismissed"}
+
+
+@app.post("/api/ai/suggestions/{suggestion_id}/execute")
+async def mark_suggestion_executed(
+    request: Request,
+    suggestion_id: int,
+    resultado: str = None
+):
+    """Marca uma sugestao como executada"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE ai_suggestions
+            SET status = 'executed', executada_em = NOW(), resultado = %s
+            WHERE id = %s AND status = 'accepted'
+            RETURNING id
+        """, (resultado, suggestion_id))
+
+        result = cursor.fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="Sugestao nao encontrada ou nao aceita")
+
+        conn.commit()
+        return {"id": suggestion_id, "status": "executed"}
+
+
+@app.get("/api/ai/suggestions/stats")
+async def get_ai_suggestions_stats(request: Request):
+    """Estatisticas de sugestoes da IA"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+
+        stats = {}
+
+        # By status
+        cursor.execute("""
+            SELECT status, COUNT(*) as count
+            FROM ai_suggestions
+            GROUP BY status
+        """)
+        stats["by_status"] = {row["status"]: row["count"] for row in cursor.fetchall()}
+
+        # By type
+        cursor.execute("""
+            SELECT tipo, COUNT(*) as count
+            FROM ai_suggestions
+            WHERE status = 'pending'
+            GROUP BY tipo
+        """)
+        stats["pending_by_type"] = {row["tipo"]: row["count"] for row in cursor.fetchall()}
+
+        # Acceptance rate
+        cursor.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'accepted' OR status = 'executed') as accepted,
+                COUNT(*) FILTER (WHERE status = 'dismissed') as dismissed,
+                COUNT(*) as total
+            FROM ai_suggestions
+            WHERE status != 'pending'
+        """)
+        rates = cursor.fetchone()
+        if rates["total"] > 0:
+            stats["acceptance_rate"] = round(rates["accepted"] / rates["total"] * 100, 1)
+        else:
+            stats["acceptance_rate"] = 0
+
+        return stats
+
+
 # Vercel handler
 app_handler = app

@@ -515,6 +515,131 @@ def init_db():
             )
         ''')
 
+        # ============== AI ADVANCED Tables ==============
+
+        # AI Suggestions - Sugestoes geradas pela IA
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_suggestions (
+                id SERIAL PRIMARY KEY,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                tipo TEXT NOT NULL,
+                titulo TEXT NOT NULL,
+                descricao TEXT,
+                razao TEXT,
+                dados JSONB DEFAULT '{}',
+                prioridade INTEGER DEFAULT 5,
+                status TEXT DEFAULT 'pending',
+                aceita_em TIMESTAMP,
+                descartada_em TIMESTAMP,
+                motivo_descarte TEXT,
+                executada_em TIMESTAMP,
+                resultado TEXT,
+                validade TIMESTAMP,
+                confianca FLOAT DEFAULT 0.8,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_ai_suggestions_contact
+            ON ai_suggestions(contact_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_ai_suggestions_status
+            ON ai_suggestions(status)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_ai_suggestions_tipo
+            ON ai_suggestions(tipo)
+        ''')
+
+        # AI Automations - Regras de automacao
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_automations (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                descricao TEXT,
+                trigger_type TEXT NOT NULL,
+                trigger_config JSONB DEFAULT '{}',
+                action_type TEXT NOT NULL,
+                action_config JSONB DEFAULT '{}',
+                ativo BOOLEAN DEFAULT TRUE,
+                ultima_execucao TIMESTAMP,
+                total_execucoes INTEGER DEFAULT 0,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Health Predictions - Previsoes de saude do relacionamento
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS health_predictions (
+                id SERIAL PRIMARY KEY,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                health_atual INTEGER,
+                health_previsto INTEGER,
+                tendencia TEXT,
+                dias_previsao INTEGER DEFAULT 30,
+                fatores JSONB DEFAULT '[]',
+                recomendacoes JSONB DEFAULT '[]',
+                data_previsao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                acerto BOOLEAN
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_health_predictions_contact
+            ON health_predictions(contact_id)
+        ''')
+
+        # Message Templates - Templates de mensagens
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS message_templates (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                categoria TEXT NOT NULL,
+                canal TEXT,
+                assunto TEXT,
+                corpo TEXT NOT NULL,
+                variaveis JSONB DEFAULT '[]',
+                tags JSONB DEFAULT '[]',
+                uso_count INTEGER DEFAULT 0,
+                ultima_uso TIMESTAMP,
+                ativo BOOLEAN DEFAULT TRUE,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_message_templates_categoria
+            ON message_templates(categoria)
+        ''')
+
+        # AI Digests - Resumos periodicos
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_digests (
+                id SERIAL PRIMARY KEY,
+                tipo TEXT NOT NULL,
+                periodo_inicio TIMESTAMP NOT NULL,
+                periodo_fim TIMESTAMP NOT NULL,
+                titulo TEXT,
+                resumo TEXT,
+                highlights JSONB DEFAULT '[]',
+                metricas JSONB DEFAULT '{}',
+                sugestoes JSONB DEFAULT '[]',
+                contatos_destaque JSONB DEFAULT '[]',
+                enviado BOOLEAN DEFAULT FALSE,
+                enviado_em TIMESTAMP,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_ai_digests_tipo
+            ON ai_digests(tipo)
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True
