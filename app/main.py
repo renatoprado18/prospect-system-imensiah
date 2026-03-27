@@ -6302,5 +6302,120 @@ async def export_statistics(request: Request):
     return service.export_statistics()
 
 
+# =============================================================================
+# BATCH OPERATIONS API ENDPOINTS
+# =============================================================================
+
+from services.batch_operations import get_batch_service
+
+class BatchTagsRequest(BaseModel):
+    contact_ids: List[int]
+    add_tags: Optional[List[str]] = None
+    remove_tags: Optional[List[str]] = None
+
+class BatchCircleRequest(BaseModel):
+    contact_ids: List[int]
+    circulo: int
+
+class BatchContextRequest(BaseModel):
+    contact_ids: List[int]
+    contexto: str
+
+class MergeContactsRequest(BaseModel):
+    primary_id: int
+    secondary_ids: List[int]
+
+class DeleteContactsRequest(BaseModel):
+    contact_ids: List[int]
+    confirm: bool = False
+
+
+@app.post("/api/batch/tags")
+async def batch_update_tags(
+    request: Request,
+    data: BatchTagsRequest
+):
+    """Adiciona ou remove tags de multiplos contatos"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_batch_service()
+    return service.update_tags_batch(data.contact_ids, data.add_tags, data.remove_tags)
+
+
+@app.post("/api/batch/circle")
+async def batch_update_circle(
+    request: Request,
+    data: BatchCircleRequest
+):
+    """Atualiza circulo de multiplos contatos"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_batch_service()
+    return service.update_circle_batch(data.contact_ids, data.circulo)
+
+
+@app.post("/api/batch/context")
+async def batch_update_context(
+    request: Request,
+    data: BatchContextRequest
+):
+    """Atualiza contexto de multiplos contatos"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_batch_service()
+    return service.update_context_batch(data.contact_ids, data.contexto)
+
+
+@app.post("/api/batch/merge")
+async def batch_merge_contacts(
+    request: Request,
+    data: MergeContactsRequest
+):
+    """Merge multiplos contatos em um principal"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_batch_service()
+    return service.merge_contacts(data.primary_id, data.secondary_ids)
+
+
+@app.post("/api/batch/delete")
+async def batch_delete_contacts(
+    request: Request,
+    data: DeleteContactsRequest
+):
+    """Deleta multiplos contatos"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_batch_service()
+    return service.delete_contacts_batch(data.contact_ids, data.confirm)
+
+
+@app.post("/api/batch/recalculate-health")
+async def batch_recalculate_health(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    circulo_max: int = 5
+):
+    """Recalcula health score para contatos"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_batch_service()
+    background_tasks.add_task(service.recalculate_health_batch, None, circulo_max)
+
+    return {"status": "started", "message": f"Recalculando health para circulos 1-{circulo_max}"}
+
+
 # Vercel handler
 app_handler = app
