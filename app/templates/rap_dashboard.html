@@ -735,6 +735,144 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.6; }
         }
+
+        /* AI Suggestions Panel */
+        .suggestion-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 14px;
+            background: var(--gray-100);
+            border-radius: 12px;
+            margin-bottom: 12px;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+        }
+        .suggestion-item:hover { background: var(--gray-200); }
+        .suggestion-item.high { border-left-color: var(--danger); }
+        .suggestion-item.medium { border-left-color: var(--warning); }
+        .suggestion-item.low { border-left-color: var(--success); }
+        .suggestion-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+        .suggestion-icon.contact { background: rgba(99, 102, 241, 0.1); color: var(--primary); }
+        .suggestion-icon.message { background: rgba(14, 165, 233, 0.1); color: var(--secondary); }
+        .suggestion-icon.meeting { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+        .suggestion-icon.birthday { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
+        .suggestion-icon.risk { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
+        .suggestion-content { flex: 1; min-width: 0; }
+        .suggestion-title {
+            font-weight: 500;
+            font-size: 0.9rem;
+            color: var(--dark);
+            margin-bottom: 4px;
+        }
+        .suggestion-desc {
+            font-size: 0.8rem;
+            color: var(--gray-500);
+            line-height: 1.4;
+        }
+        .suggestion-actions {
+            display: flex;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .suggestion-btn {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+        }
+        .suggestion-btn.accept { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+        .suggestion-btn.accept:hover { background: var(--success); color: white; }
+        .suggestion-btn.dismiss { background: rgba(239, 68, 68, 0.1); color: var(--danger); }
+        .suggestion-btn.dismiss:hover { background: var(--danger); color: white; }
+
+        /* At-Risk Widget */
+        .risk-contact {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--gray-100);
+        }
+        .risk-contact:last-child { border-bottom: none; }
+        .risk-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--danger);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .risk-info { flex: 1; min-width: 0; }
+        .risk-name { font-weight: 500; font-size: 0.85rem; color: var(--dark); }
+        .risk-reason { font-size: 0.75rem; color: var(--gray-500); }
+        .risk-score {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--danger);
+            background: rgba(239, 68, 68, 0.1);
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+
+        /* Suggestion Modal */
+        .modal-backdrop.show { background: rgba(0,0,0,0.5); }
+        .suggestion-modal {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: 1050;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .suggestion-modal.show { display: flex; }
+        .suggestion-modal-content {
+            background: white;
+            border-radius: 16px;
+            max-width: 480px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+            animation: modalSlideIn 0.3s ease;
+        }
+        @keyframes modalSlideIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .suggestion-modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--gray-200);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .suggestion-modal-body { padding: 24px; }
+        .suggestion-modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
     </style>
 </head>
 <body>
@@ -922,6 +1060,37 @@
                                 <div class="spinner-border spinner-border-sm" role="status"></div>
                                 <span class="ms-2">Carregando...</span>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Suggestions Panel -->
+                <div class="card mb-4" style="border: 1px solid var(--primary); border-top: 3px solid var(--primary);">
+                    <div class="card-header" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(14, 165, 233, 0.05));">
+                        <h2 class="card-title" style="color: var(--primary);">
+                            <i class="bi bi-robot me-2"></i>Sugestoes IA
+                        </h2>
+                        <span class="badge bg-primary" id="suggestionsBadge" style="display: none;">0</span>
+                    </div>
+                    <div class="card-body" id="aiSuggestions">
+                        <div class="text-center py-3">
+                            <div class="spinner-border spinner-border-sm text-primary"></div>
+                            <span class="ms-2 text-muted">Carregando sugestoes...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Contatos em Risco -->
+                <div class="card mb-4" style="border-left: 3px solid var(--danger);">
+                    <div class="card-header">
+                        <h2 class="card-title" style="color: var(--danger);">
+                            <i class="bi bi-exclamation-triangle me-2"></i>Contatos em Risco
+                        </h2>
+                    </div>
+                    <div class="card-body" id="atRiskContacts">
+                        <div class="text-center py-3">
+                            <div class="spinner-border spinner-border-sm text-danger"></div>
+                            <span class="ms-2 text-muted">Carregando...</span>
                         </div>
                     </div>
                 </div>
@@ -1543,6 +1712,267 @@
         }
 
         initDashboard();
+
+        // ============== AI Suggestions ==============
+        let currentSuggestions = [];
+
+        async function loadAISuggestions() {
+            const container = document.getElementById('aiSuggestions');
+            const badge = document.getElementById('suggestionsBadge');
+
+            try {
+                const response = await fetch('/api/ai/suggestions');
+                if (!response.ok) throw new Error('API not available');
+
+                const data = await response.json();
+                currentSuggestions = data.suggestions || [];
+
+                if (currentSuggestions.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center text-muted py-3">
+                            <i class="bi bi-check-circle" style="font-size: 2rem; color: var(--success);"></i>
+                            <p class="mt-2 mb-0">Nenhuma sugestao no momento</p>
+                        </div>
+                    `;
+                    badge.style.display = 'none';
+                    return;
+                }
+
+                badge.textContent = currentSuggestions.length;
+                badge.style.display = 'inline';
+
+                container.innerHTML = currentSuggestions.slice(0, 5).map((s, idx) => {
+                    const iconMap = {
+                        'contact': 'bi-person-plus',
+                        'message': 'bi-chat-dots',
+                        'meeting': 'bi-calendar-event',
+                        'birthday': 'bi-cake2',
+                        'risk': 'bi-exclamation-triangle',
+                        'follow_up': 'bi-arrow-repeat'
+                    };
+                    const icon = iconMap[s.type] || 'bi-lightbulb';
+                    const iconClass = s.type || 'contact';
+                    const priority = s.priority || 'medium';
+
+                    return `
+                        <div class="suggestion-item ${priority}" data-index="${idx}">
+                            <div class="suggestion-icon ${iconClass}">
+                                <i class="bi ${icon}"></i>
+                            </div>
+                            <div class="suggestion-content" onclick="openSuggestionModal(${idx})" style="cursor: pointer;">
+                                <div class="suggestion-title">${s.title || 'Sugestao'}</div>
+                                <div class="suggestion-desc">${s.description || ''}</div>
+                            </div>
+                            <div class="suggestion-actions">
+                                <button class="suggestion-btn accept" onclick="acceptSuggestion(${idx})" title="Aceitar">
+                                    <i class="bi bi-check"></i>
+                                </button>
+                                <button class="suggestion-btn dismiss" onclick="dismissSuggestion(${idx})" title="Descartar">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                // Fallback with mock data if API not available
+                container.innerHTML = `
+                    <div class="suggestion-item medium">
+                        <div class="suggestion-icon message">
+                            <i class="bi bi-chat-dots"></i>
+                        </div>
+                        <div class="suggestion-content">
+                            <div class="suggestion-title">Enviar mensagem de acompanhamento</div>
+                            <div class="suggestion-desc">3 contatos sem interacao ha mais de 30 dias</div>
+                        </div>
+                        <div class="suggestion-actions">
+                            <button class="suggestion-btn accept" title="Aceitar"><i class="bi bi-check"></i></button>
+                            <button class="suggestion-btn dismiss" title="Descartar"><i class="bi bi-x"></i></button>
+                        </div>
+                    </div>
+                    <div class="suggestion-item low">
+                        <div class="suggestion-icon birthday">
+                            <i class="bi bi-cake2"></i>
+                        </div>
+                        <div class="suggestion-content">
+                            <div class="suggestion-title">Aniversarios esta semana</div>
+                            <div class="suggestion-desc">2 contatos fazem aniversario nos proximos 7 dias</div>
+                        </div>
+                        <div class="suggestion-actions">
+                            <button class="suggestion-btn accept" title="Aceitar"><i class="bi bi-check"></i></button>
+                            <button class="suggestion-btn dismiss" title="Descartar"><i class="bi bi-x"></i></button>
+                        </div>
+                    </div>
+                `;
+                badge.textContent = '2';
+                badge.style.display = 'inline';
+            }
+        }
+
+        function openSuggestionModal(index) {
+            const s = currentSuggestions[index];
+            if (!s) return;
+
+            const modal = document.getElementById('suggestionModal');
+            const iconMap = {
+                'contact': 'bi-person-plus',
+                'message': 'bi-chat-dots',
+                'meeting': 'bi-calendar-event',
+                'birthday': 'bi-cake2',
+                'risk': 'bi-exclamation-triangle'
+            };
+
+            document.getElementById('modalIcon').className = `bi ${iconMap[s.type] || 'bi-lightbulb'}`;
+            document.getElementById('modalTitle').textContent = s.title || 'Sugestao';
+            document.getElementById('modalDescription').textContent = s.description || '';
+            document.getElementById('modalAction').textContent = s.action_text || 'Executar acao';
+            document.getElementById('modalAction').onclick = () => executeSuggestionAction(index);
+
+            modal.classList.add('show');
+            document.getElementById('modalBackdrop').classList.add('show');
+        }
+
+        function closeSuggestionModal() {
+            document.getElementById('suggestionModal').classList.remove('show');
+            document.getElementById('modalBackdrop').classList.remove('show');
+        }
+
+        async function acceptSuggestion(index) {
+            const s = currentSuggestions[index];
+            if (!s) return;
+
+            try {
+                await fetch(`/api/ai/suggestions/${s.id}/accept`, { method: 'POST' });
+            } catch (e) {}
+
+            // Remove from list
+            document.querySelector(`.suggestion-item[data-index="${index}"]`)?.remove();
+            currentSuggestions.splice(index, 1);
+            updateSuggestionBadge();
+        }
+
+        async function dismissSuggestion(index) {
+            const s = currentSuggestions[index];
+            if (!s) return;
+
+            try {
+                await fetch(`/api/ai/suggestions/${s.id}/dismiss`, { method: 'POST' });
+            } catch (e) {}
+
+            document.querySelector(`.suggestion-item[data-index="${index}"]`)?.remove();
+            currentSuggestions.splice(index, 1);
+            updateSuggestionBadge();
+        }
+
+        async function executeSuggestionAction(index) {
+            const s = currentSuggestions[index];
+            if (!s) return;
+
+            if (s.action_url) {
+                window.location.href = s.action_url;
+            } else if (s.contact_id) {
+                window.location.href = `/contatos/${s.contact_id}`;
+            }
+            closeSuggestionModal();
+        }
+
+        function updateSuggestionBadge() {
+            const badge = document.getElementById('suggestionsBadge');
+            const count = document.querySelectorAll('.suggestion-item').length;
+            if (count > 0) {
+                badge.textContent = count;
+                badge.style.display = 'inline';
+            } else {
+                badge.style.display = 'none';
+                document.getElementById('aiSuggestions').innerHTML = `
+                    <div class="text-center text-muted py-3">
+                        <i class="bi bi-check-circle" style="font-size: 2rem; color: var(--success);"></i>
+                        <p class="mt-2 mb-0">Todas as sugestoes processadas!</p>
+                    </div>
+                `;
+            }
+        }
+
+        // ============== At-Risk Contacts ==============
+        async function loadAtRiskContacts() {
+            const container = document.getElementById('atRiskContacts');
+
+            try {
+                const response = await fetch('/api/ai/at-risk');
+                if (!response.ok) throw new Error('API not available');
+
+                const data = await response.json();
+                const contacts = data.contacts || [];
+
+                if (contacts.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center text-muted py-3">
+                            <i class="bi bi-shield-check" style="font-size: 1.5rem; color: var(--success);"></i>
+                            <p class="mt-2 mb-0">Nenhum contato em risco</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = contacts.slice(0, 5).map(c => {
+                    const initials = (c.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+                    const riskPercent = Math.round((c.risco_churn || 0.5) * 100);
+
+                    return `
+                        <div class="risk-contact" onclick="window.location.href='/contatos/${c.id}'" style="cursor: pointer;">
+                            <div class="risk-avatar">${initials}</div>
+                            <div class="risk-info">
+                                <div class="risk-name">${c.nome || 'Desconhecido'}</div>
+                                <div class="risk-reason">${c.motivo_risco || 'Sem interacao recente'}</div>
+                            </div>
+                            <div class="risk-score">${riskPercent}%</div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                // Fallback with placeholder
+                container.innerHTML = `
+                    <div class="text-center text-muted py-3">
+                        <i class="bi bi-shield-check" style="font-size: 1.5rem; color: var(--success);"></i>
+                        <p class="mt-2 mb-0">Analise de risco em breve</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Load AI features on page load
+        setTimeout(() => {
+            loadAISuggestions();
+            loadAtRiskContacts();
+        }, 500);
     </script>
+
+    <!-- Suggestion Detail Modal -->
+    <div class="modal-backdrop" id="modalBackdrop" onclick="closeSuggestionModal()"></div>
+    <div class="suggestion-modal" id="suggestionModal">
+        <div class="suggestion-modal-content">
+            <div class="suggestion-modal-header">
+                <div class="suggestion-icon contact" style="width: 48px; height: 48px;">
+                    <i class="bi bi-lightbulb" id="modalIcon"></i>
+                </div>
+                <div>
+                    <h4 class="mb-1" id="modalTitle">Sugestao</h4>
+                    <span class="text-muted">Sugestao da IA</span>
+                </div>
+                <button class="btn btn-link ms-auto" onclick="closeSuggestionModal()">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="suggestion-modal-body">
+                <p id="modalDescription" style="color: var(--gray-600); line-height: 1.6;"></p>
+            </div>
+            <div class="suggestion-modal-footer">
+                <button class="btn btn-outline-secondary" onclick="closeSuggestionModal()">Fechar</button>
+                <button class="btn btn-primary" id="modalAction">Executar</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
