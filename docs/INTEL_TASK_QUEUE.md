@@ -17,7 +17,7 @@
 
 ## TAREFA 1: API Inbox Unificado
 
-**Status**: EXECUTAR AGORA
+**Status**: CONCLUIDO
 **Prioridade**: CRITICA
 
 **Criar arquivo**: `app/services/inbox.py`
@@ -144,7 +144,7 @@ async def mark_conversation_read(conversation_id: int):
 
 ## TAREFA 2: API Timeline de Contato
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: ALTA
 
 **Criar arquivo**: `app/services/timeline.py`
@@ -233,7 +233,7 @@ async def get_contact_timeline(contact_id: int, limit: int = 50):
 
 ## TAREFA 3: API Notificacoes
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: ALTA
 
 **Criar arquivo**: `app/services/notifications.py`
@@ -347,7 +347,7 @@ async def get_notification_count():
 
 ## TAREFA 4: Recalcular Health Scores
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: MEDIA
 
 **Criar script**: `scripts/recalc_health.py`
@@ -408,7 +408,7 @@ if __name__ == "__main__":
 
 ## TAREFA 5: Criar Endpoint de Estatisticas
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: BAIXA
 
 **Adicionar em main.py**:
@@ -470,8 +470,8 @@ Atualizar este arquivo marcando todas como **CONCLUIDAS**.
 | Data | Tarefa | Status |
 |------|--------|--------|
 | 2026-03-26 | Gmail/WhatsApp/Calendar/Tasks | CONCLUIDO |
-| 2026-03-27 | API Inbox | _aguardando_ |
-| 2026-03-27 | API Timeline | _aguardando_ |
-| 2026-03-27 | API Notifications | _aguardando_ |
-| 2026-03-27 | Recalc Health | _aguardando_ |
-| 2026-03-27 | Analytics | _aguardando_ |
+| 2026-03-27 | API Inbox | CONCLUIDO |
+| 2026-03-27 | API Timeline | CONCLUIDO |
+| 2026-03-27 | API Notifications | CONCLUIDO |
+| 2026-03-27 | Recalc Health | CONCLUIDO |
+| 2026-03-27 | Analytics | CONCLUIDO |
