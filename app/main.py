@@ -6216,5 +6216,79 @@ async def get_stale_contacts_api(
     return {"contacts": service.get_stale_contacts(days, circulo_max)}
 
 
+# =============================================================================
+# EXPORT API ENDPOINTS
+# =============================================================================
+
+from services.export import get_export_service
+from fastapi.responses import StreamingResponse
+
+@app.get("/api/export/contacts/csv")
+async def export_contacts_csv(
+    request: Request,
+    circulo: int = None,
+    tags: str = None,
+    empresa: str = None
+):
+    """Exporta contatos para CSV"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_export_service()
+    tags_list = [t.strip() for t in tags.split(",")] if tags else None
+
+    csv_content = service.export_contacts_csv(
+        circulo=circulo,
+        tags=tags_list,
+        empresa=empresa
+    )
+
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=contacts_{datetime.now().strftime('%Y%m%d')}.csv"}
+    )
+
+
+@app.get("/api/export/contacts/json")
+async def export_contacts_json(
+    request: Request,
+    circulo: int = None,
+    tags: str = None,
+    empresa: str = None,
+    include_messages: bool = False,
+    include_insights: bool = True
+):
+    """Exporta contatos para JSON"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_export_service()
+    tags_list = [t.strip() for t in tags.split(",")] if tags else None
+
+    contacts = service.export_contacts_json(
+        circulo=circulo,
+        tags=tags_list,
+        empresa=empresa,
+        include_messages=include_messages,
+        include_insights=include_insights
+    )
+
+    return {"contacts": contacts, "total": len(contacts), "exported_at": datetime.now().isoformat()}
+
+
+@app.get("/api/export/statistics")
+async def export_statistics(request: Request):
+    """Exporta estatisticas gerais do sistema"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_export_service()
+    return service.export_statistics()
+
+
 # Vercel handler
 app_handler = app
