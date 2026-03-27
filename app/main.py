@@ -7282,5 +7282,147 @@ async def suggest_message_for_contact(
     return result
 
 
+# =========================================================================
+# DIGEST GENERATOR ENDPOINTS
+# =========================================================================
+
+from services.digest_generator import get_digest_generator
+
+
+@app.get("/api/digests")
+def list_digests(
+    request: Request,
+    tipo: str = None,
+    limit: int = 10
+):
+    """Lista digests recentes"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_digest_generator()
+    return service.get_recent_digests(tipo=tipo, limit=limit)
+
+
+@app.get("/api/digests/latest/{tipo}")
+def get_latest_digest(
+    request: Request,
+    tipo: str
+):
+    """Obtem digest mais recente de um tipo"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_digest_generator()
+    digest = service.get_latest_digest(tipo)
+
+    if not digest:
+        raise HTTPException(status_code=404, detail="Nenhum digest encontrado")
+
+    return digest
+
+
+@app.get("/api/digests/{digest_id}")
+def get_digest(
+    request: Request,
+    digest_id: int
+):
+    """Obtem digest por ID"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_digest_generator()
+    digest = service.get_digest(digest_id)
+
+    if not digest:
+        raise HTTPException(status_code=404, detail="Digest nao encontrado")
+
+    return digest
+
+
+@app.post("/api/digests/daily")
+def generate_daily_digest(
+    request: Request,
+    date: str = None
+):
+    """Gera digest diario"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_digest_generator()
+
+    target_date = None
+    if date:
+        try:
+            target_date = datetime.fromisoformat(date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de data invalido")
+
+    return service.generate_daily_digest(date=target_date)
+
+
+@app.post("/api/digests/weekly")
+def generate_weekly_digest(
+    request: Request,
+    week_start: str = None
+):
+    """Gera digest semanal"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_digest_generator()
+
+    target_date = None
+    if week_start:
+        try:
+            target_date = datetime.fromisoformat(week_start)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Formato de data invalido")
+
+    return service.generate_weekly_digest(week_start=target_date)
+
+
+@app.post("/api/digests/{digest_id}/send")
+def mark_digest_sent(
+    request: Request,
+    digest_id: int
+):
+    """Marca digest como enviado"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_digest_generator()
+    success = service.mark_as_sent(digest_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Digest nao encontrado")
+
+    return {"status": "sent", "digest_id": digest_id}
+
+
+@app.post("/api/digests/{digest_id}/ai-summary")
+async def generate_digest_ai_summary(
+    request: Request,
+    digest_id: int
+):
+    """Gera resumo com IA para um digest"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_digest_generator()
+    summary = await service.generate_ai_summary(digest_id)
+
+    if not summary:
+        raise HTTPException(status_code=400, detail="Nao foi possivel gerar resumo")
+
+    return {"digest_id": digest_id, "summary": summary}
+
+
 # Vercel handler
 app_handler = app
