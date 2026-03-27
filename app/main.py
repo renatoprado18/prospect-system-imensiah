@@ -6109,5 +6109,112 @@ async def generate_insights_batch_endpoint(
     }
 
 
+# =============================================================================
+# SEARCH API ENDPOINTS
+# =============================================================================
+
+from services.search import get_search_service
+
+@app.get("/api/contacts/search")
+async def search_contacts_api(
+    request: Request,
+    q: str = None,
+    circulo: int = None,
+    tags: str = None,
+    health_min: int = None,
+    health_max: int = None,
+    has_email: bool = None,
+    has_whatsapp: bool = None,
+    empresa: str = None,
+    contexto: str = None,
+    ordem: str = "nome",
+    limit: int = 50,
+    offset: int = 0
+):
+    """Busca avancada de contatos com multiplos filtros"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_search_service()
+
+    # Parse tags from comma-separated string
+    tags_list = [t.strip() for t in tags.split(",")] if tags else None
+
+    return service.search_contacts(
+        query=q,
+        circulo=circulo,
+        tags=tags_list,
+        health_min=health_min,
+        health_max=health_max,
+        has_email=has_email,
+        has_whatsapp=has_whatsapp,
+        empresa=empresa,
+        contexto=contexto,
+        ordem=ordem,
+        limit=limit,
+        offset=offset
+    )
+
+
+@app.get("/api/contacts/suggestions")
+async def get_contact_suggestions(
+    request: Request,
+    q: str,
+    limit: int = 10
+):
+    """Sugestoes de autocomplete para busca"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_search_service()
+    return {"suggestions": service.get_search_suggestions(q, limit)}
+
+
+@app.get("/api/contacts/by-company/{empresa}")
+async def get_contacts_by_company(
+    request: Request,
+    empresa: str,
+    limit: int = 50
+):
+    """Busca contatos por empresa"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_search_service()
+    return {"contacts": service.get_contacts_by_company(empresa, limit)}
+
+
+@app.get("/api/contacts/birthdays")
+async def get_upcoming_birthdays(
+    request: Request,
+    days: int = 30
+):
+    """Busca contatos com aniversario nos proximos N dias"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_search_service()
+    return {"contacts": service.get_nearby_birthdays(days)}
+
+
+@app.get("/api/contacts/stale")
+async def get_stale_contacts_api(
+    request: Request,
+    days: int = 90,
+    circulo_max: int = 3
+):
+    """Busca contatos importantes sem interacao recente"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_search_service()
+    return {"contacts": service.get_stale_contacts(days, circulo_max)}
+
+
 # Vercel handler
 app_handler = app
