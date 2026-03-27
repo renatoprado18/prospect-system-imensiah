@@ -17,7 +17,7 @@
 
 ## TAREFA 1: Enriquecimento LinkedIn em Batch
 
-**Status**: EXECUTAR AGORA
+**Status**: CONCLUIDO
 **Prioridade**: CRITICA
 
 **Criar script**: `scripts/enrich_linkedin_batch.py`
@@ -242,7 +242,7 @@ async def enrich_linkedin_batch(
 
 ## TAREFA 2: Geracao de Insights AI em Batch
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: CRITICA
 
 **Criar script**: `scripts/generate_insights_batch.py`
@@ -551,7 +551,7 @@ async def generate_insights_batch_endpoint(
 
 ## TAREFA 3: API de Busca Avancada de Contatos
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: ALTA
 
 **Criar arquivo**: `app/services/search.py`
@@ -686,7 +686,7 @@ def get_search_service() -> SearchService:
 
 ## TAREFA 4: API de Exportacao de Dados
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: ALTA
 
 _(codigo igual ao anterior)_
@@ -697,7 +697,7 @@ _(codigo igual ao anterior)_
 
 ## TAREFA 5: API de Acoes em Lote
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: MEDIA
 
 _(codigo igual ao anterior)_
@@ -708,7 +708,7 @@ _(codigo igual ao anterior)_
 
 ## TAREFA 6: Cron de Manutencao Diaria
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: MEDIA
 
 _(codigo igual ao anterior)_
@@ -719,7 +719,7 @@ _(codigo igual ao anterior)_
 
 ## TAREFA 7: SSE para Notificacoes
 
-**Status**: PENDENTE
+**Status**: CONCLUIDO
 **Prioridade**: BAIXA
 
 _(codigo igual ao anterior)_
@@ -743,10 +743,10 @@ Atualizar este arquivo marcando todas como **CONCLUIDAS**.
 | Data | Tarefa | Status |
 |------|--------|--------|
 | 2026-03-27 | API Inbox/Timeline/Notifications/Analytics | CONCLUIDO |
-| 2026-03-27 | Enriquecimento LinkedIn Batch | _aguardando_ |
-| 2026-03-27 | Geracao Insights AI Batch | _aguardando_ |
-| 2026-03-27 | API Busca Avancada | _aguardando_ |
-| 2026-03-27 | API Exportacao | _aguardando_ |
-| 2026-03-27 | API Batch Operations | _aguardando_ |
-| 2026-03-27 | Cron Manutencao | _aguardando_ |
-| 2026-03-27 | SSE Notifications | _aguardando_ |
+| 2026-03-27 | Enriquecimento LinkedIn Batch | CONCLUIDO |
+| 2026-03-27 | Geracao Insights AI Batch | CONCLUIDO |
+| 2026-03-27 | API Busca Avancada | CONCLUIDO |
+| 2026-03-27 | API Exportacao | CONCLUIDO |
+| 2026-03-27 | API Batch Operations | CONCLUIDO |
+| 2026-03-27 | Cron Manutencao | CONCLUIDO |
+| 2026-03-27 | SSE Notifications | CONCLUIDO |
