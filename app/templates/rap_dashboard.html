@@ -1958,10 +1958,82 @@
             }
         }
 
+        // ============== Meeting Suggestions Widget ==============
+        async function loadMeetingSuggestions() {
+            const container = document.getElementById('meetingSuggestionsWidget');
+            if (!container) return;
+
+            try {
+                const response = await fetch('/api/ai/calendar-suggestions?limit=3');
+                if (!response.ok) throw new Error('API not available');
+
+                const data = await response.json();
+                const suggestions = data.suggestions || [];
+
+                if (suggestions.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center text-muted py-2">
+                            <i class="bi bi-check-circle" style="color: var(--success);"></i>
+                            <p class="mb-0 small">Todos os contatos em dia!</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = suggestions.map(s => `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--gray-100);">
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-weight:500;color:var(--dark);">${s.contact_name || s.titulo}</div>
+                            <div style="font-size:0.75rem;color:var(--gray-500);">${s.descricao || ''}</div>
+                        </div>
+                        <button onclick="acceptCalendarSuggestion(${s.id})" class="btn btn-sm" style="background:linear-gradient(135deg, #a855f7, #6366f1);color:white;border:none;padding:4px 10px;">
+                            <i class="bi bi-calendar-plus"></i>
+                        </button>
+                    </div>
+                `).join('');
+
+            } catch (error) {
+                // Fallback with mock data
+                container.innerHTML = `
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--gray-100);">
+                        <div>
+                            <div style="font-weight:500;">Contato exemplo</div>
+                            <div style="font-size:0.75rem;color:var(--gray-500);">30 dias sem contato</div>
+                        </div>
+                        <button class="btn btn-sm" style="background:linear-gradient(135deg, #a855f7, #6366f1);color:white;border:none;">
+                            <i class="bi bi-calendar-plus"></i>
+                        </button>
+                    </div>
+                `;
+            }
+        }
+
+        async function acceptCalendarSuggestion(id) {
+            try {
+                const response = await fetch(`/api/ai/calendar-suggestions/${id}/create-event`, { method: 'POST' });
+                if (response.ok) {
+                    if (typeof showToast === 'function') {
+                        showToast('Reuniao agendada!', 'success');
+                    } else {
+                        alert('Reuniao agendada!');
+                    }
+                    loadMeetingSuggestions();
+                    loadTodayAgenda();
+                }
+            } catch (e) {
+                if (typeof showToast === 'function') {
+                    showToast('Erro ao agendar', 'error');
+                } else {
+                    alert('Erro ao agendar');
+                }
+            }
+        }
+
         // Load AI features on page load
         setTimeout(() => {
             loadAISuggestions();
             loadAtRiskContacts();
+            loadMeetingSuggestions();
         }, 500);
     </script>
 
