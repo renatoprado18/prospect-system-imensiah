@@ -237,6 +237,88 @@ class NotificationService:
             return counts
 
 
+    async def stream_notifications(self, interval: int = 30):
+        """
+        Generator para SSE (Server-Sent Events).
+        Produz notificacoes a cada intervalo de segundos.
+        """
+        import asyncio
+        import json
+
+        while True:
+            notifications = self.get_notifications(limit=10)
+            counts = self.get_notification_count()
+
+            yield {
+                "event": "notifications",
+                "data": json.dumps({
+                    "notifications": notifications,
+                    "counts": counts,
+                    "timestamp": datetime.now().isoformat()
+                })
+            }
+
+            await asyncio.sleep(interval)
+
+    def get_recent_activity(self, limit: int = 20) -> List[Dict]:
+        """Retorna atividades recentes para feed"""
+        activities = []
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Recent messages received
+            cursor.execute("""
+                SELECT
+                    m.id,
+                    m.contact_id,
+                    ct.nome as contact_name,
+                    ct.foto_url,
+                    c.canal,
+                    m.enviado_em,
+                    LEFT(m.conteudo, 100) as preview
+                FROM messages m
+                JOIN contacts ct ON ct.id = m.contact_id
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE m.direcao = 'inbound'
+                ORDER BY m.enviado_em DESC
+                LIMIT %s
+            """, (limit,))
+
+            for row in cursor.fetchall():
+                activities.append({
+                    "type": "message_received",
+                    "contact_id": row["contact_id"],
+                    "contact_name": row["contact_name"],
+                    "foto_url": row.get("foto_url"),
+                    "channel": row.get("canal"),
+                    "preview": row.get("preview"),
+                    "timestamp": row["enviado_em"].isoformat() if row.get("enviado_em") else None
+                })
+
+            # Recent contacts updated
+            cursor.execute("""
+                SELECT id, nome, foto_url, atualizado_em
+                FROM contacts
+                WHERE atualizado_em > NOW() - INTERVAL '24 hours'
+                ORDER BY atualizado_em DESC
+                LIMIT %s
+            """, (limit // 2,))
+
+            for row in cursor.fetchall():
+                activities.append({
+                    "type": "contact_updated",
+                    "contact_id": row["id"],
+                    "contact_name": row["nome"],
+                    "foto_url": row.get("foto_url"),
+                    "timestamp": row["atualizado_em"].isoformat() if row.get("atualizado_em") else None
+                })
+
+        # Sort by timestamp
+        activities.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+        return activities[:limit]
+
+
 _notification_service = None
 
 

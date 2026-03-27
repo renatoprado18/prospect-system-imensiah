@@ -7,6 +7,7 @@ Domínio: intel.almeida-prado.com
 """
 import os
 import json
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, List
 from contextlib import asynccontextmanager
@@ -6496,6 +6497,76 @@ async def get_maintenance_status(request: Request):
         status["stats"]["with_interactions"] = cursor.fetchone()["total"]
 
         return status
+
+
+# =============================================================================
+# SSE (SERVER-SENT EVENTS) ENDPOINTS
+# =============================================================================
+
+from sse_starlette.sse import EventSourceResponse
+from services.notifications import get_notification_service
+
+async def notification_event_generator(request: Request, interval: int = 30):
+    """Generator para SSE de notificacoes"""
+    import json
+
+    service = get_notification_service()
+
+    while True:
+        if await request.is_disconnected():
+            break
+
+        notifications = service.get_notifications(limit=10)
+        counts = service.get_notification_count()
+
+        yield {
+            "event": "notifications",
+            "data": json.dumps({
+                "notifications": notifications,
+                "counts": counts,
+                "timestamp": datetime.now().isoformat()
+            })
+        }
+
+        await asyncio.sleep(interval)
+
+
+@app.get("/api/notifications/stream")
+async def notifications_stream(
+    request: Request,
+    interval: int = 30
+):
+    """
+    SSE endpoint para notificacoes em tempo real.
+
+    Uso no frontend:
+    ```javascript
+    const eventSource = new EventSource('/api/notifications/stream?interval=30');
+    eventSource.addEventListener('notifications', (e) => {
+        const data = JSON.parse(e.data);
+        console.log(data.notifications);
+        console.log(data.counts);
+    });
+    ```
+    """
+    import asyncio
+
+    # Note: SSE may not work well on Vercel serverless, better for local dev
+    return EventSourceResponse(notification_event_generator(request, interval))
+
+
+@app.get("/api/activity/recent")
+async def get_recent_activity(
+    request: Request,
+    limit: int = 20
+):
+    """Retorna atividades recentes para feed"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_notification_service()
+    return {"activities": service.get_recent_activity(limit)}
 
 
 # Vercel handler
