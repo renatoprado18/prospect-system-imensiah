@@ -1002,6 +1002,22 @@
                             </div>
                         </div>
 
+                        <!-- ConselhoOS Section -->
+                        <div class="card" id="conselhoosSection" style="display: none; border: 1px solid rgba(26, 26, 46, 0.2);">
+                            <div class="card-header" style="background: linear-gradient(135deg, #1a1a2e, #16213e); color: white;">
+                                <h2 class="card-title" style="color: white;">
+                                    <i class="bi bi-briefcase me-2"></i>
+                                    ConselhoOS
+                                </h2>
+                                <button class="btn btn-sm btn-outline-light" onclick="openLinkConselhoOSModal()">
+                                    <i class="bi bi-link"></i> Vincular
+                                </button>
+                            </div>
+                            <div class="card-body" id="conselhoosLinks">
+                                <p class="text-muted mb-0">Nenhuma empresa vinculada</p>
+                            </div>
+                        </div>
+
                         <!-- Birthday -->
                         ${contact.aniversario ? `
                             <div class="card">
@@ -1551,6 +1567,57 @@
                 alert('Erro ao enviar: ' + e.message);
             }
         }
+
+        // ============== ConselhoOS Functions ==============
+        async function loadConselhoOSLinks() {
+            const section = document.getElementById('conselhoosSection');
+            const container = document.getElementById('conselhoosLinks');
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/conselhoos`);
+                if (!response.ok) return;
+
+                const data = await response.json();
+                const empresas = data.empresas || [];
+
+                if (empresas.length > 0) {
+                    section.style.display = 'block';
+                    container.innerHTML = empresas.map(e => `
+                        <div class="d-flex justify-content-between align-items-center p-2 rounded mb-2" style="background: rgba(26, 26, 46, 0.05);">
+                            <div>
+                                <strong>${e.conselhoos_empresa_nome}</strong>
+                                <div class="text-muted small">${e.role || 'Stakeholder'}</div>
+                            </div>
+                            <a href="https://conselhoos.vercel.app/empresa/${e.conselhoos_empresa_id}" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                        </div>
+                    `).join('');
+                } else {
+                    section.style.display = 'block';
+                    container.innerHTML = `
+                        <div class="text-center py-3">
+                            <p class="text-muted mb-2">Nenhuma empresa vinculada</p>
+                            <button class="btn btn-sm btn-primary" onclick="openLinkConselhoOSModal()">
+                                <i class="bi bi-link me-1"></i> Vincular Empresa
+                            </button>
+                        </div>
+                    `;
+                }
+
+            } catch (e) {
+                console.error('Error loading ConselhoOS links:', e);
+            }
+        }
+
+        function openLinkConselhoOSModal() {
+            // For now, open ConselhoOS in a new tab - modal can be added later
+            window.open('https://conselhoos.vercel.app', '_blank');
+            showToast('Vincule o contato pelo ConselhoOS');
+        }
+
+        // Load ConselhoOS links when page loads
+        setTimeout(() => loadConselhoOSLinks(), 500);
 
         // LinkedIn Modal functions
         document.getElementById('editLinkedInModal').addEventListener('show.bs.modal', function() {
