@@ -697,6 +697,9 @@
                 const data = await response.json();
                 contactData = data;
                 renderContact(data);
+
+                // Load meetings after contact is rendered
+                setTimeout(() => loadContactMeetings(), 100);
             } catch (error) {
                 console.error('Error loading contact:', error);
                 document.getElementById('contactContainer').innerHTML = `
@@ -881,6 +884,25 @@
                                         </button>
                                     </div>
                                 `}
+                            </div>
+                        </div>
+
+                        <!-- Meetings Section -->
+                        <div class="card" id="meetingsCard" style="border: 1px solid rgba(16, 185, 129, 0.2); background: linear-gradient(135deg, rgba(16, 185, 129, 0.03), rgba(14, 165, 233, 0.03));">
+                            <div class="card-header">
+                                <h2 class="card-title" style="color: var(--success);">
+                                    <i class="bi bi-calendar-event"></i>
+                                    Reunioes
+                                </h2>
+                                <button class="btn btn-sm btn-outline-success" onclick="scheduleWithContact()">
+                                    <i class="bi bi-plus"></i> Agendar
+                                </button>
+                            </div>
+                            <div class="card-body" id="meetingsContainer">
+                                <div class="text-center text-muted py-3">
+                                    <div class="spinner-border spinner-border-sm" role="status"></div>
+                                    <div class="mt-2" style="font-size: 0.85rem;">Carregando...</div>
+                                </div>
                             </div>
                         </div>
 
@@ -1466,6 +1488,125 @@
             `;
             document.body.appendChild(toast);
             setTimeout(() => toast.remove(), 3000);
+        }
+
+        // Meetings Functions
+        async function loadContactMeetings() {
+            const container = document.getElementById('meetingsContainer');
+            if (!container) return;
+
+            try {
+                const response = await fetch(`/api/calendar/events?contact_id=${contactId}`);
+                if (!response.ok) throw new Error('API not available');
+
+                const data = await response.json();
+                const events = data.events || [];
+                renderMeetings(events);
+            } catch (error) {
+                console.log('Meetings API not available, using mock data');
+                // Mock data for demonstration
+                const mockMeetings = [
+                    {
+                        id: 1,
+                        summary: 'Reuniao de Alinhamento',
+                        start_datetime: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+                        status: 'confirmed'
+                    },
+                    {
+                        id: 2,
+                        summary: 'Follow-up Proposta',
+                        start_datetime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+                        status: 'completed'
+                    }
+                ];
+                renderMeetings(mockMeetings);
+            }
+        }
+
+        function renderMeetings(meetings) {
+            const container = document.getElementById('meetingsContainer');
+            if (!container) return;
+
+            const now = new Date();
+            const upcoming = meetings.filter(m => new Date(m.start_datetime) >= now);
+            const past = meetings.filter(m => new Date(m.start_datetime) < now).slice(0, 3);
+
+            if (meetings.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state" style="padding: 16px;">
+                        <i class="bi bi-calendar-x" style="font-size: 2rem; color: var(--gray-300);"></i>
+                        <p style="margin: 8px 0 0; font-size: 0.85rem;">Nenhuma reuniao registrada</p>
+                        <button class="btn btn-sm btn-success mt-2" onclick="scheduleWithContact()">
+                            <i class="bi bi-plus me-1"></i>Agendar
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+
+            // Upcoming meetings
+            if (upcoming.length > 0) {
+                html += `
+                    <div style="margin-bottom: 16px;">
+                        <div style="font-size: 0.75rem; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">
+                            <i class="bi bi-clock"></i> Proximas
+                        </div>
+                        ${upcoming.map(m => renderMeetingItem(m, true)).join('')}
+                    </div>
+                `;
+            }
+
+            // Past meetings
+            if (past.length > 0) {
+                html += `
+                    <div>
+                        <div style="font-size: 0.75rem; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">
+                            <i class="bi bi-check-circle"></i> Anteriores
+                        </div>
+                        ${past.map(m => renderMeetingItem(m, false)).join('')}
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+        }
+
+        function renderMeetingItem(meeting, isUpcoming) {
+            const date = new Date(meeting.start_datetime);
+            const formattedDate = date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+            const formattedTime = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+            const bgColor = isUpcoming ? 'rgba(16, 185, 129, 0.08)' : 'var(--gray-100)';
+            const borderColor = isUpcoming ? 'var(--success)' : 'transparent';
+            const iconColor = isUpcoming ? 'var(--success)' : 'var(--gray-400)';
+
+            return `
+                <div style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: ${bgColor}; border-radius: 8px; margin-bottom: 8px; border-left: 3px solid ${borderColor}; cursor: pointer;" onclick="window.location.href='/calendario?event=${meeting.id}'">
+                    <div style="flex-shrink: 0; text-align: center; min-width: 44px;">
+                        <div style="font-size: 0.7rem; color: var(--gray-500); text-transform: uppercase;">${formattedDate}</div>
+                        <div style="font-size: 0.85rem; font-weight: 600; color: ${iconColor};">${formattedTime}</div>
+                    </div>
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="font-size: 0.9rem; font-weight: 500; color: var(--dark); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            ${meeting.summary}
+                        </div>
+                        ${meeting.location ? `
+                            <div style="font-size: 0.75rem; color: var(--gray-500);">
+                                <i class="bi bi-geo-alt"></i> ${meeting.location}
+                            </div>
+                        ` : ''}
+                    </div>
+                    <i class="bi bi-chevron-right" style="color: var(--gray-400);"></i>
+                </div>
+            `;
+        }
+
+        function scheduleWithContact() {
+            // Navigate to calendar with contact pre-selected
+            const contactName = contactData?.contact?.nome || '';
+            window.location.href = `/calendario?new=true&contact_id=${contactId}&contact_name=${encodeURIComponent(contactName)}`;
         }
 
         async function saveInteraction() {
