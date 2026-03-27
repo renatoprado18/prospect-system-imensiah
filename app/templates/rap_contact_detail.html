@@ -682,6 +682,48 @@
         </div>
     </div>
 
+    <!-- WhatsApp Send Modal -->
+    <div class="modal fade" id="whatsappModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-whatsapp me-2" style="color: #25D366;"></i>
+                        Enviar WhatsApp
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Telefone</label>
+                        <select id="waPhoneSelect" class="form-select">
+                            <!-- Populated by JS -->
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Template (opcional)</label>
+                        <select id="waTemplateSelect" class="form-select" onchange="applyWaTemplate()">
+                            <option value="">Mensagem livre</option>
+                            <!-- Populated by JS -->
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Mensagem</label>
+                        <textarea id="waMessage" class="form-control" rows="5" placeholder="Digite sua mensagem..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn text-white" style="background: #25D366;" onclick="sendWhatsAppMessage()">
+                        <i class="bi bi-send me-1"></i> Enviar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         const contactId = {{ contact_id }};
@@ -1404,14 +1446,109 @@
             }
         }
 
-        function openWhatsApp() {
+        let waTemplates = [];
+
+        async function openWhatsApp() {
             const telefones = parseJsonField(contactData.contact.telefones);
-            const whatsapp = telefones.find(t => t.whatsapp) || telefones[0];
-            if (whatsapp) {
-                const number = whatsapp.number.replace(/\D/g, '');
-                window.open(`https://wa.me/${number}`, '_blank');
-            } else {
+
+            if (!telefones || telefones.length === 0) {
                 alert('Contato sem telefone cadastrado');
+                return;
+            }
+
+            // Populate phones
+            const phoneSelect = document.getElementById('waPhoneSelect');
+            phoneSelect.innerHTML = '';
+            telefones.forEach((tel, i) => {
+                const number = tel.number || tel.phone || tel;
+                const label = tel.label || tel.type || 'Telefone';
+                const option = document.createElement('option');
+                option.value = number;
+                option.textContent = `${label}: ${number}`;
+                phoneSelect.appendChild(option);
+            });
+
+            // Load templates if not loaded
+            if (waTemplates.length === 0) {
+                try {
+                    const response = await fetch('/api/whatsapp/templates');
+                    const data = await response.json();
+                    waTemplates = data.templates || [];
+                } catch (e) {
+                    console.error('Error loading templates:', e);
+                }
+            }
+
+            // Populate templates
+            const templateSelect = document.getElementById('waTemplateSelect');
+            templateSelect.innerHTML = '<option value="">Mensagem livre</option>';
+            waTemplates.forEach(t => {
+                const option = document.createElement('option');
+                option.value = t.id;
+                option.textContent = t.nome;
+                templateSelect.appendChild(option);
+            });
+
+            // Clear message
+            document.getElementById('waMessage').value = '';
+
+            // Show modal
+            const modal = new bootstrap.Modal(document.getElementById('whatsappModal'));
+            modal.show();
+        }
+
+        function applyWaTemplate() {
+            const templateId = document.getElementById('waTemplateSelect').value;
+            if (!templateId) {
+                document.getElementById('waMessage').value = '';
+                return;
+            }
+
+            const template = waTemplates.find(t => t.id === templateId);
+            if (template) {
+                let msg = template.mensagem || template.message || '';
+                // Replace variables
+                const firstName = (contactData.contact.nome || '').split(' ')[0];
+                msg = msg.replace(/{nome}/g, firstName);
+                msg = msg.replace(/{empresa}/g, contactData.contact.empresa || '');
+                document.getElementById('waMessage').value = msg;
+            }
+        }
+
+        async function sendWhatsAppMessage() {
+            const phone = document.getElementById('waPhoneSelect').value;
+            const message = document.getElementById('waMessage').value;
+
+            if (!phone || !message) {
+                alert('Preencha telefone e mensagem');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/whatsapp/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        phone: phone,
+                        message: message,
+                        contact_id: contactId
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.error) {
+                    alert('Erro: ' + result.error);
+                } else {
+                    showToast('Mensagem enviada!');
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('whatsappModal'));
+                    modal.hide();
+
+                    // Reload contact to update last interaction
+                    setTimeout(() => loadContact(), 1000);
+                }
+            } catch (e) {
+                alert('Erro ao enviar: ' + e.message);
             }
         }
 
