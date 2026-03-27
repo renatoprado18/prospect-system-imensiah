@@ -7424,5 +7424,261 @@ async def generate_digest_ai_summary(
     return {"digest_id": digest_id, "summary": summary}
 
 
+# =========================================================================
+# CALENDAR EVENTS ENDPOINTS
+# =========================================================================
+
+from services.calendar_events import get_calendar_events
+from services.calendar_sync import get_calendar_sync
+
+
+@app.post("/api/calendar/events")
+async def create_calendar_event_endpoint(request: Request):
+    """Cria evento no calendario"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = await request.json()
+
+    if "summary" not in data or "start_datetime" not in data or "end_datetime" not in data:
+        raise HTTPException(status_code=400, detail="summary, start_datetime e end_datetime sao obrigatorios")
+
+    service = get_calendar_events()
+
+    event = service.create_event(
+        summary=data["summary"],
+        start_datetime=datetime.fromisoformat(data["start_datetime"]),
+        end_datetime=datetime.fromisoformat(data["end_datetime"]),
+        description=data.get("description"),
+        location=data.get("location"),
+        contact_id=data.get("contact_id"),
+        prospect_id=data.get("prospect_id"),
+        attendees=data.get("attendees"),
+        create_in_google=data.get("create_in_google", True)
+    )
+    return event
+
+
+@app.get("/api/calendar/events")
+def list_calendar_events(
+    request: Request,
+    start: str = None,
+    end: str = None,
+    days: int = 7,
+    limit: int = 50
+):
+    """Lista eventos do calendario"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_events()
+
+    if start and end:
+        events = service.get_events_for_period(
+            start=datetime.fromisoformat(start),
+            end=datetime.fromisoformat(end)
+        )
+    else:
+        events = service.get_upcoming_events(days=days, limit=limit)
+
+    return {"events": events, "total": len(events)}
+
+
+@app.get("/api/calendar/events/today")
+def get_today_calendar_events(request: Request):
+    """Lista eventos de hoje"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_events()
+    events = service.get_today_events()
+    return {"events": events, "total": len(events)}
+
+
+@app.get("/api/calendar/events/{event_id}")
+def get_calendar_event_endpoint(request: Request, event_id: int):
+    """Busca evento por ID"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_events()
+    event = service.get_event(event_id)
+
+    if not event:
+        raise HTTPException(status_code=404, detail="Evento nao encontrado")
+
+    return event
+
+
+@app.put("/api/calendar/events/{event_id}")
+async def update_calendar_event_endpoint(request: Request, event_id: int):
+    """Atualiza evento"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = await request.json()
+    service = get_calendar_events()
+
+    # Converter datetime strings se presentes
+    if "start_datetime" in data:
+        data["start_datetime"] = datetime.fromisoformat(data["start_datetime"])
+    if "end_datetime" in data:
+        data["end_datetime"] = datetime.fromisoformat(data["end_datetime"])
+
+    event = service.update_event(event_id, data)
+
+    if not event:
+        raise HTTPException(status_code=404, detail="Evento nao encontrado")
+
+    return event
+
+
+@app.delete("/api/calendar/events/{event_id}")
+def delete_calendar_event_endpoint(
+    request: Request,
+    event_id: int,
+    delete_from_google: bool = True
+):
+    """Deleta evento"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_events()
+    success = service.delete_event(event_id, delete_from_google=delete_from_google)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Evento nao encontrado")
+
+    return {"deleted": True, "event_id": event_id}
+
+
+@app.post("/api/calendar/events/{event_id}/link-contact/{contact_id}")
+def link_event_to_contact(request: Request, event_id: int, contact_id: int):
+    """Vincula evento a um contato"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_events()
+    event = service.link_to_contact(event_id, contact_id)
+
+    if not event:
+        raise HTTPException(status_code=404, detail="Evento nao encontrado")
+
+    return event
+
+
+@app.post("/api/calendar/events/{event_id}/link-prospect/{prospect_id}")
+def link_event_to_prospect(request: Request, event_id: int, prospect_id: int):
+    """Vincula evento a um prospect"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_events()
+    event = service.link_to_prospect(event_id, prospect_id)
+
+    if not event:
+        raise HTTPException(status_code=404, detail="Evento nao encontrado")
+
+    return event
+
+
+@app.get("/api/contacts/{contact_id}/calendar")
+def get_contact_calendar_events(request: Request, contact_id: int, limit: int = 20):
+    """Lista eventos de um contato"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_events()
+    events = service.get_events_for_contact(contact_id, limit=limit)
+    return {"events": events, "total": len(events)}
+
+
+@app.get("/api/prospects/{prospect_id}/calendar")
+def get_prospect_calendar_events(request: Request, prospect_id: int, limit: int = 20):
+    """Lista eventos de um prospect"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_events()
+    events = service.get_events_for_prospect(prospect_id, limit=limit)
+    return {"events": events, "total": len(events)}
+
+
+@app.post("/api/calendar/sync")
+async def trigger_calendar_sync(request: Request):
+    """Dispara sincronizacao manual do calendario"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    # Buscar conta Google
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
+        raise HTTPException(status_code=400, detail="Nenhuma conta Google configurada")
+
+    sync = get_calendar_sync()
+    stats = await sync.incremental_sync(account["email"])
+
+    return {"status": "completed", "stats": stats}
+
+
+@app.post("/api/calendar/sync/full")
+async def trigger_full_calendar_sync(request: Request):
+    """Dispara sincronizacao completa do calendario"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    # Buscar conta Google
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
+        raise HTTPException(status_code=400, detail="Nenhuma conta Google configurada")
+
+    sync = get_calendar_sync()
+    stats = await sync.full_sync(account["email"])
+
+    return {"status": "completed", "stats": stats}
+
+
+@app.get("/api/calendar/sync/status")
+def get_calendar_sync_status(request: Request):
+    """Retorna status da sincronizacao"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    sync = get_calendar_sync()
+    return sync.get_sync_status()
+
+
+@app.get("/api/calendar/stats")
+def get_calendar_stats(request: Request, days: int = 30):
+    """Retorna estatisticas do calendario"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_events()
+    return service.get_events_count(days=days)
+
+
 # Vercel handler
 app_handler = app
