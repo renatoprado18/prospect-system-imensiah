@@ -5646,6 +5646,91 @@ async def get_whatsapp_messages(request: Request, contact_id: int, limit: int = 
         return {"messages": [dict(m) for m in messages]}
 
 
+# ============== ConselhoOS Sync Endpoints ==============
+
+from services.conselhoos_sync import get_conselhoos_sync_service
+
+
+@app.get("/api/conselhoos/empresas")
+async def get_conselhoos_empresas(request: Request):
+    """Get empresas from ConselhoOS."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_conselhoos_sync_service()
+    empresas = service.get_empresas()
+    return {"empresas": empresas}
+
+
+@app.get("/api/conselhoos/reunioes")
+async def get_conselhoos_reunioes(request: Request, limit: int = 10):
+    """Get upcoming meetings from ConselhoOS."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_conselhoos_sync_service()
+    reunioes = service.get_proximas_reunioes(limit=limit)
+    return {"reunioes": reunioes}
+
+
+@app.get("/api/conselhoos/raci")
+async def get_conselhoos_raci(request: Request, limit: int = 20):
+    """Get pending RACI items from ConselhoOS."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_conselhoos_sync_service()
+    raci = service.get_raci_pendentes(limit=limit)
+    return {"raci": raci}
+
+
+@app.get("/api/conselhoos/dashboard")
+async def get_conselhoos_dashboard(request: Request):
+    """Get ConselhoOS summary for INTEL dashboard."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_conselhoos_sync_service()
+    summary = service.get_dashboard_summary()
+    return summary
+
+
+@app.post("/api/contacts/{contact_id}/conselhoos/link")
+async def link_contact_to_conselhoos(request: Request, contact_id: int):
+    """Link a contact to a ConselhoOS empresa."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = await request.json()
+    empresa_id = data.get("empresa_id")
+    empresa_nome = data.get("empresa_nome")
+    role = data.get("role", "stakeholder")
+
+    if not empresa_id or not empresa_nome:
+        raise HTTPException(status_code=400, detail="empresa_id e empresa_nome obrigatorios")
+
+    service = get_conselhoos_sync_service()
+    result = service.link_contact_to_empresa(contact_id, empresa_id, empresa_nome, role)
+    return result
+
+
+@app.get("/api/contacts/{contact_id}/conselhoos")
+async def get_contact_conselhoos(request: Request, contact_id: int):
+    """Get ConselhoOS empresas linked to a contact."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_conselhoos_sync_service()
+    empresas = service.get_contact_empresas(contact_id)
+    return {"empresas": empresas}
+
+
 # ============== Google Calendar Endpoints ==============
 
 from integrations.google_calendar import get_calendar_integration
