@@ -6081,5 +6081,33 @@ async def enrich_linkedin_batch(
     }
 
 
+@app.post("/api/contacts/generate-insights-batch")
+async def generate_insights_batch_endpoint(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    limit: int = 10,
+    circulo_max: int = 3
+):
+    """Inicia geracao de insights AI em batch (background)"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    import sys
+    import asyncio
+    sys.path.insert(0, os.path.join(BASE_DIR, '..', 'scripts'))
+    from generate_insights_batch import generate_insights_batch
+
+    async def run_task():
+        await generate_insights_batch(limit, circulo_max)
+
+    background_tasks.add_task(asyncio.run, run_task())
+
+    return {
+        "status": "started",
+        "message": f"Geracao de insights iniciada para ate {limit} contatos (circulos 1-{circulo_max})"
+    }
+
+
 # Vercel handler
 app_handler = app
