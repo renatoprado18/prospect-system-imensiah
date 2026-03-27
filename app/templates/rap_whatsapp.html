@@ -401,6 +401,62 @@
             </div>
         </div>
 
+        <!-- Import History from .txt -->
+        <div class="card" id="importCard" style="display: none;">
+            <div class="card-header">
+                <h5 class="card-title"><i class="bi bi-file-text"></i> Importar Historico (.txt)</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">Importe conversas exportadas do WhatsApp em formato .txt</p>
+
+                <div id="uploadArea" class="border border-2 border-dashed rounded-3 p-5 text-center mb-3" style="cursor: pointer; border-color: var(--gray-300);">
+                    <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--whatsapp);"></i>
+                    <p class="mt-2 mb-1"><strong>Clique ou arraste o arquivo .txt</strong></p>
+                    <small class="text-muted">Exportado do WhatsApp (iOS ou Android)</small>
+                    <input type="file" id="fileInput" accept=".txt" style="display: none;">
+                </div>
+
+                <div id="importPreview" style="display: none;">
+                    <h6 class="mb-3">Preview da Importacao</h6>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <div class="stat-card">
+                                <div class="stat-value" id="previewMessages">0</div>
+                                <div class="stat-label">Mensagens</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="stat-card">
+                                <div class="stat-value" id="previewParticipants">0</div>
+                                <div class="stat-label">Participantes</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="stat-card">
+                                <div class="stat-value" id="previewDays">0</div>
+                                <div class="stat-label">Dias</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="participantsList" class="mb-3"></div>
+
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-6">
+                            <label class="form-label">Seu nome no chat</label>
+                            <input type="text" id="myNameInput" class="form-control" value="Renato" placeholder="Seu nome no chat">
+                        </div>
+                        <div class="col-md-6">
+                            <button class="btn btn-whatsapp w-100" onclick="confirmImport()">
+                                <i class="bi bi-check-circle me-2"></i> Importar Mensagens
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Send Test Message -->
         <div class="card" id="sendCard" style="display: none;">
             <div class="card-header">
@@ -503,6 +559,146 @@
         let connectionState = 'checking';
         let autoSyncRunning = false;
         let autoSyncAbort = false;
+        let parsedImportData = null;
+        let contactsList = [];
+
+        // Setup file drag and drop
+        document.addEventListener('DOMContentLoaded', function() {
+            const uploadArea = document.getElementById('uploadArea');
+            const fileInput = document.getElementById('fileInput');
+
+            if (uploadArea && fileInput) {
+                uploadArea.addEventListener('click', () => fileInput.click());
+                uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadArea.style.borderColor = 'var(--whatsapp)';
+                    uploadArea.style.background = 'rgba(37, 211, 102, 0.05)';
+                });
+                uploadArea.addEventListener('dragleave', () => {
+                    uploadArea.style.borderColor = 'var(--gray-300)';
+                    uploadArea.style.background = '';
+                });
+                uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadArea.style.borderColor = 'var(--gray-300)';
+                    uploadArea.style.background = '';
+                    if (e.dataTransfer.files.length) processImportFile(e.dataTransfer.files[0]);
+                });
+                fileInput.addEventListener('change', (e) => {
+                    if (e.target.files.length) processImportFile(e.target.files[0]);
+                });
+            }
+        });
+
+        async function loadContactsForImport() {
+            try {
+                const response = await fetch('/api/contacts?limit=500');
+                const data = await response.json();
+                contactsList = data.contacts || [];
+            } catch (e) {
+                console.error('Error loading contacts:', e);
+            }
+        }
+
+        async function processImportFile(file) {
+            if (!file.name.endsWith('.txt')) {
+                showToast('Por favor selecione um arquivo .txt');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                showToast('Analisando arquivo...');
+
+                const response = await fetch('/api/whatsapp/import/parse', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) throw new Error('Erro ao processar arquivo');
+
+                parsedImportData = await response.json();
+                showImportPreview(parsedImportData);
+
+            } catch (e) {
+                showToast('Erro ao processar arquivo');
+                console.error(e);
+            }
+        }
+
+        function showImportPreview(data) {
+            document.getElementById('importPreview').style.display = 'block';
+            document.getElementById('previewMessages').textContent = data.total_messages || 0;
+            document.getElementById('previewParticipants').textContent = (data.participants || []).length;
+
+            if (data.date_range && data.date_range.start && data.date_range.end) {
+                const start = new Date(data.date_range.start);
+                const end = new Date(data.date_range.end);
+                const days = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+                document.getElementById('previewDays').textContent = days;
+            }
+
+            // Show participants with contact selector
+            const participantsList = document.getElementById('participantsList');
+            participantsList.innerHTML = (data.participants || []).map(p => `
+                <div class="d-flex align-items-center justify-content-between p-2 bg-light rounded mb-2">
+                    <span><strong>${p}</strong></span>
+                    <select class="form-select form-select-sm" style="width: auto; min-width: 200px;" data-participant="${p}">
+                        <option value="">Selecionar contato...</option>
+                        ${contactsList.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}
+                    </select>
+                </div>
+            `).join('');
+        }
+
+        async function confirmImport() {
+            if (!parsedImportData) return;
+
+            const selects = document.querySelectorAll('#participantsList select');
+            let selectedContactId = null;
+
+            selects.forEach(select => {
+                if (select.value) selectedContactId = parseInt(select.value);
+            });
+
+            if (!selectedContactId) {
+                showToast('Selecione um contato para importar');
+                return;
+            }
+
+            const myName = document.getElementById('myNameInput').value || 'Renato';
+
+            try {
+                showToast('Importando mensagens...');
+
+                const response = await fetch('/api/whatsapp/import/confirm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: parsedImportData.messages,
+                        contact_id: selectedContactId,
+                        my_name: myName
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.error) {
+                    showToast('Erro: ' + result.error);
+                } else {
+                    showToast(`Importado: ${result.imported} mensagens`);
+                    document.getElementById('importPreview').style.display = 'none';
+                    parsedImportData = null;
+                    checkStatus(); // Refresh stats
+                }
+
+            } catch (e) {
+                showToast('Erro ao importar');
+                console.error(e);
+            }
+        }
 
         async function checkStatus() {
             try {
@@ -580,6 +776,7 @@
             const syncCard = document.getElementById('syncCard');
             const searchCard = document.getElementById('searchCard');
             const exportCard = document.getElementById('exportCard');
+            const importCard = document.getElementById('importCard');
 
             if (state === 'open') {
                 // Connected
@@ -597,7 +794,9 @@
                 syncCard.style.display = 'block';
                 searchCard.style.display = 'block';
                 exportCard.style.display = 'block';
+                if (importCard) importCard.style.display = 'block';
                 loadContactsForExport();
+                loadContactsForImport();
             } else if (state === 'connecting') {
                 // Connecting - show QR
                 statusBadge.innerHTML = `
@@ -614,6 +813,8 @@
                 syncCard.style.display = 'none';
                 searchCard.style.display = 'none';
                 exportCard.style.display = 'none';
+                if (importCard) importCard.style.display = 'block'; // Import always visible
+                loadContactsForImport();
                 refreshQR();
             } else {
                 // Disconnected
@@ -631,6 +832,8 @@
                 syncCard.style.display = 'none';
                 searchCard.style.display = 'none';
                 exportCard.style.display = 'none';
+                if (importCard) importCard.style.display = 'block'; // Import always visible
+                loadContactsForImport();
                 refreshQR();
             }
         }
