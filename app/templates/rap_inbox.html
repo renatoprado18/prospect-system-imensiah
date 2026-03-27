@@ -2,10 +2,75 @@
 {% block title %}Inbox - INTEL{% endblock %}
 {% block page_title %}Inbox{% endblock %}
 
+{% block extra_css %}
+<style>
+    /* Message Suggestion Sidebar */
+    .suggestion-sidebar {
+        background: white;
+        border-radius: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .suggestion-sidebar .card-header {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(14, 165, 233, 0.05));
+        border-bottom: 1px solid var(--gray-200);
+    }
+    .suggested-message {
+        padding: 14px;
+        background: var(--gray-100);
+        border-radius: 12px;
+        margin-bottom: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+        border: 2px solid transparent;
+    }
+    .suggested-message:hover {
+        background: white;
+        border-color: var(--primary);
+    }
+    .suggested-message.selected {
+        background: rgba(99, 102, 241, 0.1);
+        border-color: var(--primary);
+    }
+    .suggested-message-text {
+        font-size: 0.9rem;
+        color: var(--dark);
+        line-height: 1.5;
+        white-space: pre-wrap;
+    }
+    .suggested-message-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 10px;
+        font-size: 0.75rem;
+        color: var(--gray-500);
+    }
+    .tone-badge {
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.7rem;
+        font-weight: 500;
+    }
+    .tone-badge.formal { background: rgba(99, 102, 241, 0.1); color: var(--primary); }
+    .tone-badge.casual { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+    .tone-badge.friendly { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
+
+    .use-suggestion-btn {
+        margin-top: 16px;
+        width: 100%;
+    }
+
+    .regenerate-btn {
+        margin-top: 8px;
+        width: 100%;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="row">
     <!-- Lista de Conversas -->
-    <div class="col-md-4 col-lg-3">
+    <div class="col-lg-3 col-md-4">
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="mb-0">Conversas</h5>
@@ -28,7 +93,7 @@
     </div>
 
     <!-- Detalhe da Conversa -->
-    <div class="col-md-8 col-lg-9">
+    <div class="col-lg-6 col-md-8">
         <div class="card" id="conversation-detail">
             <div class="card-header" id="detail-header" style="display: none;">
                 <div class="d-flex justify-content-between align-items-center">
@@ -39,13 +104,44 @@
                             <small class="text-muted" id="contact-channel">-</small>
                         </div>
                     </div>
-                    <a href="#" id="contact-link" class="btn btn-sm btn-outline-primary">Ver Contato</a>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-primary" onclick="loadMessageSuggestions()" id="suggestBtn" style="display: none;">
+                            <i class="bi bi-robot me-1"></i>Sugerir
+                        </button>
+                        <a href="#" id="contact-link" class="btn btn-sm btn-outline-secondary">Ver Contato</a>
+                    </div>
                 </div>
             </div>
-            <div class="card-body" id="messages-container" style="max-height: 60vh; overflow-y: auto;">
+            <div class="card-body" id="messages-container" style="max-height: 55vh; overflow-y: auto;">
                 <div class="text-center text-muted py-5">
                     <i class="bi bi-chat-dots" style="font-size: 3rem;"></i>
                     <p class="mt-3">Selecione uma conversa para ver as mensagens</p>
+                </div>
+            </div>
+            <!-- Reply Box -->
+            <div class="card-footer" id="reply-box" style="display: none;">
+                <div class="d-flex gap-2">
+                    <textarea class="form-control" id="replyText" rows="2" placeholder="Digite sua mensagem..."></textarea>
+                    <button class="btn btn-primary" onclick="sendReply()">
+                        <i class="bi bi-send"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Message Suggestions Sidebar -->
+    <div class="col-lg-3 d-none d-lg-block">
+        <div class="card suggestion-sidebar">
+            <div class="card-header">
+                <h5 class="mb-0" style="color: var(--primary);">
+                    <i class="bi bi-robot me-2"></i>Sugestoes IA
+                </h5>
+            </div>
+            <div class="card-body" id="messageSuggestions">
+                <div class="text-center text-muted py-4">
+                    <i class="bi bi-chat-square-text" style="font-size: 2rem;"></i>
+                    <p class="mt-2 mb-0 small">Selecione uma conversa para receber sugestoes de mensagem</p>
                 </div>
             </div>
         </div>
@@ -57,6 +153,8 @@
 <script>
 let currentFilter = 'all';
 let currentConversationId = null;
+let currentContactId = null;
+let selectedSuggestion = null;
 
 async function loadConversations(filter = 'all') {
     currentFilter = filter;
@@ -74,13 +172,13 @@ async function loadConversations(filter = 'all') {
 
         list.innerHTML = data.conversations.map(conv => `
             <a href="#" class="list-group-item list-group-item-action ${conv.requer_resposta ? 'border-start border-3 border-primary' : ''}"
-               onclick="loadMessages(${conv.id}); return false;" data-id="${conv.id}">
+               onclick="loadMessages(${conv.id}, ${conv.contact_id || 'null'}); return false;" data-id="${conv.id}">
                 <div class="d-flex w-100 justify-content-between align-items-center">
                     <div class="d-flex align-items-center">
                         ${conv.foto_url ? `<img src="${conv.foto_url}" class="rounded-circle me-2" width="36" height="36">` : '<div class="rounded-circle bg-secondary me-2 d-flex align-items-center justify-content-center" style="width:36px;height:36px;"><i class="bi bi-person text-white"></i></div>'}
                         <div>
                             <h6 class="mb-0 ${conv.requer_resposta ? 'fw-bold' : ''}">${conv.contact_name || 'Desconhecido'}</h6>
-                            <small class="text-muted text-truncate d-block" style="max-width: 200px;">${conv.subject || ''}</small>
+                            <small class="text-muted text-truncate d-block" style="max-width: 150px;">${conv.subject || ''}</small>
                         </div>
                     </div>
                     <div class="text-end">
@@ -96,8 +194,9 @@ async function loadConversations(filter = 'all') {
     }
 }
 
-async function loadMessages(conversationId) {
+async function loadMessages(conversationId, contactId) {
     currentConversationId = conversationId;
+    currentContactId = contactId;
 
     document.querySelectorAll('#conversation-list a').forEach(a => a.classList.remove('active'));
     document.querySelector(`#conversation-list a[data-id="${conversationId}"]`)?.classList.add('active');
@@ -114,10 +213,14 @@ async function loadMessages(conversationId) {
         const conversation = await convResponse.json();
         const messagesData = await msgResponse.json();
 
+        currentContactId = conversation.contact_id || contactId;
+
         document.getElementById('detail-header').style.display = 'block';
+        document.getElementById('reply-box').style.display = 'block';
+        document.getElementById('suggestBtn').style.display = 'inline-block';
         document.getElementById('contact-name').textContent = conversation.contact_name || 'Desconhecido';
         document.getElementById('contact-channel').textContent = `Via ${conversation.channel}`;
-        document.getElementById('contact-link').href = `/contato/${conversation.contact_id}`;
+        document.getElementById('contact-link').href = `/contato/${currentContactId}`;
 
         if (conversation.foto_url) {
             document.getElementById('contact-photo').src = conversation.foto_url;
@@ -128,24 +231,141 @@ async function loadMessages(conversationId) {
 
         if (!messagesData.messages || messagesData.messages.length === 0) {
             container.innerHTML = '<div class="text-center text-muted py-5">Nenhuma mensagem</div>';
-            return;
+        } else {
+            container.innerHTML = messagesData.messages.reverse().map(msg => `
+                <div class="mb-3 ${msg.direction === 'outbound' ? 'text-end' : ''}">
+                    <div class="d-inline-block p-3 rounded ${msg.direction === 'outbound' ? 'bg-primary text-white' : 'bg-light'}" style="max-width: 70%;">
+                        <div style="white-space: pre-wrap;">${escapeHtml(msg.content || '')}</div>
+                        <small class="${msg.direction === 'outbound' ? 'text-white-50' : 'text-muted'}">${formatDateTime(msg.sent_at)}</small>
+                    </div>
+                </div>
+            `).join('');
+
+            container.scrollTop = container.scrollHeight;
         }
 
-        container.innerHTML = messagesData.messages.reverse().map(msg => `
-            <div class="mb-3 ${msg.direction === 'outbound' ? 'text-end' : ''}">
-                <div class="d-inline-block p-3 rounded ${msg.direction === 'outbound' ? 'bg-primary text-white' : 'bg-light'}" style="max-width: 70%;">
-                    <div style="white-space: pre-wrap;">${escapeHtml(msg.content || '')}</div>
-                    <small class="${msg.direction === 'outbound' ? 'text-white-50' : 'text-muted'}">${formatDateTime(msg.sent_at)}</small>
-                </div>
-            </div>
-        `).join('');
-
-        container.scrollTop = container.scrollHeight;
         await fetch(`/api/inbox/conversations/${conversationId}/read`, { method: 'POST' });
         loadUnreadCount();
 
+        // Auto-load message suggestions
+        loadMessageSuggestions();
+
     } catch (error) {
         container.innerHTML = '<div class="text-center text-danger py-5">Erro ao carregar mensagens</div>';
+    }
+}
+
+async function loadMessageSuggestions() {
+    const container = document.getElementById('messageSuggestions');
+    if (!currentContactId) {
+        container.innerHTML = '<div class="text-center text-muted py-4"><p class="small">Selecione uma conversa</p></div>';
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <div class="spinner-border spinner-border-sm text-primary"></div>
+            <p class="mt-2 mb-0 small text-muted">Gerando sugestoes...</p>
+        </div>
+    `;
+
+    try {
+        const response = await fetch(`/api/ai/message-suggest/${currentContactId}`);
+        if (!response.ok) throw new Error('API not available');
+
+        const data = await response.json();
+        const suggestions = data.suggestions || [];
+
+        if (suggestions.length === 0) {
+            container.innerHTML = `
+                <div class="text-center text-muted py-4">
+                    <i class="bi bi-chat-square-text" style="font-size: 1.5rem;"></i>
+                    <p class="mt-2 mb-0 small">Nenhuma sugestao disponivel</p>
+                </div>
+            `;
+            return;
+        }
+
+        renderSuggestions(suggestions);
+
+    } catch (error) {
+        // Fallback with mock suggestions
+        const mockSuggestions = [
+            {
+                text: "Ola! Como voce esta? Gostaria de agendar uma conversa para atualizarmos sobre o projeto.",
+                tone: "formal",
+                context: "Follow-up profissional"
+            },
+            {
+                text: "Oi! Tudo bem? Estava lembrando de voce e queria saber como andam as coisas.",
+                tone: "casual",
+                context: "Mensagem amigavel"
+            },
+            {
+                text: "Bom dia! Vi que faz um tempo que nao conversamos. Podemos marcar um cafe esta semana?",
+                tone: "friendly",
+                context: "Reconexao"
+            }
+        ];
+        renderSuggestions(mockSuggestions);
+    }
+}
+
+function renderSuggestions(suggestions) {
+    const container = document.getElementById('messageSuggestions');
+    selectedSuggestion = null;
+
+    let html = suggestions.map((s, idx) => `
+        <div class="suggested-message" onclick="selectSuggestion(${idx}, this)" data-index="${idx}">
+            <div class="suggested-message-text">${escapeHtml(s.text)}</div>
+            <div class="suggested-message-meta">
+                <span class="tone-badge ${s.tone || 'formal'}">${s.tone || 'formal'}</span>
+                <span>${s.context || ''}</span>
+            </div>
+        </div>
+    `).join('');
+
+    html += `
+        <button class="btn btn-primary use-suggestion-btn" onclick="useSuggestion()" id="useSuggestionBtn" disabled>
+            <i class="bi bi-check me-1"></i>Usar Sugestao
+        </button>
+        <button class="btn btn-outline-secondary regenerate-btn" onclick="loadMessageSuggestions()">
+            <i class="bi bi-arrow-repeat me-1"></i>Gerar Novas
+        </button>
+    `;
+
+    container.innerHTML = html;
+    window.currentSuggestions = suggestions;
+}
+
+function selectSuggestion(index, element) {
+    document.querySelectorAll('.suggested-message').forEach(el => el.classList.remove('selected'));
+    element.classList.add('selected');
+    selectedSuggestion = window.currentSuggestions[index];
+    document.getElementById('useSuggestionBtn').disabled = false;
+}
+
+function useSuggestion() {
+    if (!selectedSuggestion) return;
+    document.getElementById('replyText').value = selectedSuggestion.text;
+    document.getElementById('replyText').focus();
+}
+
+async function sendReply() {
+    const text = document.getElementById('replyText').value.trim();
+    if (!text || !currentConversationId) return;
+
+    try {
+        await fetch(`/api/inbox/conversations/${currentConversationId}/reply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: text })
+        });
+
+        document.getElementById('replyText').value = '';
+        loadMessages(currentConversationId, currentContactId);
+    } catch (error) {
+        alert('Erro ao enviar mensagem');
     }
 }
 
@@ -186,6 +406,14 @@ document.querySelectorAll('[data-filter]').forEach(btn => {
         this.classList.add('active');
         loadConversations(this.dataset.filter);
     });
+});
+
+// Enter to send
+document.getElementById('replyText')?.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendReply();
+    }
 });
 
 loadConversations();
