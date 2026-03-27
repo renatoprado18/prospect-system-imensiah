@@ -1,0 +1,193 @@
+{% extends "rap_base.html" %}
+{% block title %}Inbox - INTEL{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <!-- Lista de Conversas -->
+        <div class="col-md-4 col-lg-3">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Conversas</h5>
+                    <span class="badge bg-primary" id="unread-badge">0</span>
+                </div>
+                <div class="card-body p-0">
+                    <!-- Filtros -->
+                    <div class="btn-group w-100 p-2" role="group">
+                        <button type="button" class="btn btn-sm btn-outline-secondary active" data-filter="all">Todos</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="unread">Pendentes</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="email">Email</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="whatsapp">WhatsApp</button>
+                    </div>
+                    <!-- Lista -->
+                    <div class="list-group list-group-flush" id="conversation-list" style="max-height: 70vh; overflow-y: auto;">
+                        <div class="text-center py-4 text-muted">Carregando...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detalhe da Conversa -->
+        <div class="col-md-8 col-lg-9">
+            <div class="card" id="conversation-detail">
+                <div class="card-header" id="detail-header" style="display: none;">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div class="d-flex align-items-center">
+                            <img src="" id="contact-photo" class="rounded-circle me-2" width="40" height="40" style="display: none;">
+                            <div>
+                                <h6 class="mb-0" id="contact-name">-</h6>
+                                <small class="text-muted" id="contact-channel">-</small>
+                            </div>
+                        </div>
+                        <a href="#" id="contact-link" class="btn btn-sm btn-outline-primary">Ver Contato</a>
+                    </div>
+                </div>
+                <div class="card-body" id="messages-container" style="max-height: 60vh; overflow-y: auto;">
+                    <div class="text-center text-muted py-5">
+                        <i class="bi bi-chat-dots" style="font-size: 3rem;"></i>
+                        <p class="mt-3">Selecione uma conversa para ver as mensagens</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let currentFilter = 'all';
+let currentConversationId = null;
+
+async function loadConversations(filter = 'all') {
+    currentFilter = filter;
+    const list = document.getElementById('conversation-list');
+    list.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div></div>';
+
+    try {
+        const response = await fetch(`/api/inbox/conversations?filter_type=${filter}&limit=50`);
+        const data = await response.json();
+
+        if (!data.conversations || data.conversations.length === 0) {
+            list.innerHTML = '<div class="text-center py-4 text-muted">Nenhuma conversa</div>';
+            return;
+        }
+
+        list.innerHTML = data.conversations.map(conv => `
+            <a href="#" class="list-group-item list-group-item-action ${conv.requer_resposta ? 'border-start border-3 border-primary' : ''}"
+               onclick="loadMessages(${conv.id}); return false;" data-id="${conv.id}">
+                <div class="d-flex w-100 justify-content-between align-items-center">
+                    <div class="d-flex align-items-center">
+                        ${conv.foto_url ? `<img src="${conv.foto_url}" class="rounded-circle me-2" width="36" height="36">` : '<div class="rounded-circle bg-secondary me-2 d-flex align-items-center justify-content-center" style="width:36px;height:36px;"><i class="bi bi-person text-white"></i></div>'}
+                        <div>
+                            <h6 class="mb-0 ${conv.requer_resposta ? 'fw-bold' : ''}">${conv.contact_name || 'Desconhecido'}</h6>
+                            <small class="text-muted text-truncate d-block" style="max-width: 200px;">${conv.subject || ''}</small>
+                        </div>
+                    </div>
+                    <div class="text-end">
+                        <small class="text-muted">${formatDate(conv.last_message_at)}</small>
+                        <div><span class="badge ${conv.channel === 'email' ? 'bg-info' : 'bg-success'}">${conv.channel}</span></div>
+                    </div>
+                </div>
+            </a>
+        `).join('');
+
+    } catch (error) {
+        list.innerHTML = '<div class="text-center py-4 text-danger">Erro ao carregar</div>';
+    }
+}
+
+async function loadMessages(conversationId) {
+    currentConversationId = conversationId;
+
+    document.querySelectorAll('#conversation-list a').forEach(a => a.classList.remove('active'));
+    document.querySelector(`#conversation-list a[data-id="${conversationId}"]`)?.classList.add('active');
+
+    const container = document.getElementById('messages-container');
+    container.innerHTML = '<div class="text-center py-4"><div class="spinner-border"></div></div>';
+
+    try {
+        const [convResponse, msgResponse] = await Promise.all([
+            fetch(`/api/inbox/conversations/${conversationId}`),
+            fetch(`/api/inbox/conversations/${conversationId}/messages?limit=100`)
+        ]);
+
+        const conversation = await convResponse.json();
+        const messagesData = await msgResponse.json();
+
+        document.getElementById('detail-header').style.display = 'block';
+        document.getElementById('contact-name').textContent = conversation.contact_name || 'Desconhecido';
+        document.getElementById('contact-channel').textContent = `Via ${conversation.channel}`;
+        document.getElementById('contact-link').href = `/contato/${conversation.contact_id}`;
+
+        if (conversation.foto_url) {
+            document.getElementById('contact-photo').src = conversation.foto_url;
+            document.getElementById('contact-photo').style.display = 'block';
+        } else {
+            document.getElementById('contact-photo').style.display = 'none';
+        }
+
+        if (!messagesData.messages || messagesData.messages.length === 0) {
+            container.innerHTML = '<div class="text-center text-muted py-5">Nenhuma mensagem</div>';
+            return;
+        }
+
+        container.innerHTML = messagesData.messages.reverse().map(msg => `
+            <div class="mb-3 ${msg.direction === 'outbound' ? 'text-end' : ''}">
+                <div class="d-inline-block p-3 rounded ${msg.direction === 'outbound' ? 'bg-primary text-white' : 'bg-light'}" style="max-width: 70%;">
+                    <div style="white-space: pre-wrap;">${escapeHtml(msg.content || '')}</div>
+                    <small class="${msg.direction === 'outbound' ? 'text-white-50' : 'text-muted'}">${formatDateTime(msg.sent_at)}</small>
+                </div>
+            </div>
+        `).join('');
+
+        container.scrollTop = container.scrollHeight;
+        await fetch(`/api/inbox/conversations/${conversationId}/read`, { method: 'POST' });
+        loadUnreadCount();
+
+    } catch (error) {
+        container.innerHTML = '<div class="text-center text-danger py-5">Erro ao carregar mensagens</div>';
+    }
+}
+
+async function loadUnreadCount() {
+    try {
+        const response = await fetch('/api/inbox/unread');
+        const data = await response.json();
+        document.getElementById('unread-badge').textContent = data.unread || 0;
+    } catch (error) {}
+}
+
+function formatDate(dateStr) {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const today = new Date();
+    if (date.toDateString() === today.toDateString()) {
+        return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    }
+    return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+}
+
+function formatDateTime(dateStr) {
+    if (!dateStr) return '';
+    return new Date(dateStr).toLocaleString('pt-BR', {
+        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+document.querySelectorAll('[data-filter]').forEach(btn => {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('[data-filter]').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        loadConversations(this.dataset.filter);
+    });
+});
+
+loadConversations();
+loadUnreadCount();
+</script>
+{% endblock %}

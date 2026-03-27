@@ -460,11 +460,11 @@ async def intel_contato_detail(request: Request, contact_id: int):
 
 @app.get("/inbox", response_class=HTMLResponse)
 async def intel_inbox(request: Request):
-    """INTEL Inbox - WhatsApp e mensagens"""
+    """INTEL Inbox - Email e WhatsApp unificados"""
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    return templates.TemplateResponse("rap_whatsapp.html", {
+    return templates.TemplateResponse("rap_inbox.html", {
         "request": request,
         "user": user
     })
