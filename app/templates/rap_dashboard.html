@@ -1143,6 +1143,87 @@
             justify-content: flex-end;
             gap: 12px;
         }
+
+        /* ConselhoOS Widget */
+        .conselhoos-widget {
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            border-radius: 16px;
+            padding: 20px;
+            color: white;
+        }
+        .conselhoos-widget h3 {
+            display: flex;
+            align-items: center;
+            margin-bottom: 16px;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+        .conselhoos-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .conselhoos-stat {
+            text-align: center;
+            padding: 12px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+        }
+        .conselhoos-stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        .conselhoos-stat-label {
+            font-size: 0.75rem;
+            opacity: 0.8;
+        }
+        .conselhoos-next-meeting {
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+        .conselhoos-next-meeting .date {
+            font-size: 0.875rem;
+            opacity: 0.8;
+        }
+        .conselhoos-next-meeting .title {
+            font-weight: 500;
+        }
+        .conselhoos-next-meeting .empresa {
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .conselhoos-next-meeting .empresa-color {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        .conselhoos-raci-alert {
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 0.875rem;
+            margin-bottom: 12px;
+        }
+        .conselhoos-link {
+            display: block;
+            text-align: center;
+            padding: 12px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            color: white;
+            text-decoration: none;
+            transition: background 0.2s;
+        }
+        .conselhoos-link:hover {
+            background: rgba(255,255,255,0.2);
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -1420,7 +1501,50 @@
                     </div>
                 </div>
 
-                <!-- 6. Circulo Distribution -->
+                <!-- 6. ConselhoOS Widget -->
+                <div class="conselhoos-widget mb-4" id="conselhoosWidget" style="display: none;">
+                    <h3>
+                        <i class="bi bi-briefcase me-2"></i>
+                        ConselhoOS
+                    </h3>
+
+                    <div class="conselhoos-stats">
+                        <div class="conselhoos-stat">
+                            <div class="conselhoos-stat-value" id="cosEmpresas">0</div>
+                            <div class="conselhoos-stat-label">Empresas</div>
+                        </div>
+                        <div class="conselhoos-stat">
+                            <div class="conselhoos-stat-value" id="cosReunioes">0</div>
+                            <div class="conselhoos-stat-label">Reunioes</div>
+                        </div>
+                        <div class="conselhoos-stat">
+                            <div class="conselhoos-stat-value" id="cosRaci">0</div>
+                            <div class="conselhoos-stat-label">RACI</div>
+                        </div>
+                    </div>
+
+                    <div id="cosNextMeeting" style="display: none;">
+                        <div class="conselhoos-next-meeting">
+                            <div class="date" id="cosNextDate">-</div>
+                            <div class="title" id="cosNextTitle">-</div>
+                            <div class="empresa">
+                                <span class="empresa-color" id="cosNextColor"></span>
+                                <span id="cosNextEmpresa">-</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="cosRaciAlert" class="conselhoos-raci-alert" style="display: none;">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <span id="cosRaciAlertText">-</span>
+                    </div>
+
+                    <a href="https://conselhoos.vercel.app" target="_blank" class="conselhoos-link">
+                        Abrir ConselhoOS <i class="bi bi-box-arrow-up-right ms-1"></i>
+                    </a>
+                </div>
+
+                <!-- 7. Circulo Distribution -->
                 <div class="card">
                     <div class="card-header">
                         <h2 class="card-title"><i class="bi bi-pie-chart me-2"></i>Distribuicao por Circulo</h2>
@@ -2531,12 +2655,71 @@
             }
         }
 
+        // ============== ConselhoOS Widget ==============
+        async function loadConselhoOSWidget() {
+            const widget = document.getElementById('conselhoosWidget');
+            if (!widget) return;
+
+            try {
+                const response = await fetch('/api/conselhoos/dashboard');
+                if (!response.ok) {
+                    widget.style.display = 'none';
+                    return;
+                }
+
+                const data = await response.json();
+
+                if (data.error || data.total_empresas === 0) {
+                    widget.style.display = 'none';
+                    return;
+                }
+
+                widget.style.display = 'block';
+
+                // Stats
+                document.getElementById('cosEmpresas').textContent = data.total_empresas;
+                document.getElementById('cosReunioes').textContent = data.proximas_reunioes;
+                document.getElementById('cosRaci').textContent = data.raci_pendentes;
+
+                // Next meeting
+                if (data.proxima_reuniao) {
+                    const nextMeeting = document.getElementById('cosNextMeeting');
+                    nextMeeting.style.display = 'block';
+
+                    const date = new Date(data.proxima_reuniao.data);
+                    document.getElementById('cosNextDate').textContent = date.toLocaleDateString('pt-BR', {
+                        weekday: 'short',
+                        day: 'numeric',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                    document.getElementById('cosNextTitle').textContent = data.proxima_reuniao.titulo || 'Reuniao do Conselho';
+                    document.getElementById('cosNextEmpresa').textContent = data.proxima_reuniao.empresa_nome;
+                    document.getElementById('cosNextColor').style.background = data.proxima_reuniao.cor_hex || '#B89C60';
+                }
+
+                // RACI alert
+                if (data.raci_atrasados > 0) {
+                    const alert = document.getElementById('cosRaciAlert');
+                    alert.style.display = 'block';
+                    document.getElementById('cosRaciAlertText').textContent =
+                        `${data.raci_atrasados} tarefa${data.raci_atrasados > 1 ? 's' : ''} RACI atrasada${data.raci_atrasados > 1 ? 's' : ''}`;
+                }
+
+            } catch (e) {
+                console.error('Error loading ConselhoOS widget:', e);
+                widget.style.display = 'none';
+            }
+        }
+
         // Load AI features on page load
         setTimeout(() => {
             loadMorningBriefing();
             loadAISuggestions();
             loadContactToday();
             loadMeetingSuggestions();
+            loadConselhoOSWidget();
         }, 500);
     </script>
 
