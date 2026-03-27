@@ -6880,5 +6880,131 @@ async def cleanup_expired_suggestions(request: Request):
     return {"deleted": deleted, "message": f"{deleted} sugestoes expiradas removidas"}
 
 
+# =============================================================================
+# SMART TRIGGERS / AUTOMATIONS ENDPOINTS
+# =============================================================================
+
+from services.smart_triggers import get_smart_triggers
+
+class AutomationCreate(BaseModel):
+    nome: str
+    descricao: Optional[str] = None
+    trigger_type: str
+    trigger_config: dict
+    action_type: str
+    action_config: dict
+
+
+@app.get("/api/ai/automations")
+async def get_automations(
+    request: Request,
+    active_only: bool = True
+):
+    """Lista automacoes"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_smart_triggers()
+    automations = service.get_automations(active_only=active_only)
+
+    return {"automations": automations, "total": len(automations)}
+
+
+@app.post("/api/ai/automations")
+async def create_automation(
+    request: Request,
+    data: AutomationCreate
+):
+    """Cria nova automacao"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_smart_triggers()
+    automation_id = service.create_automation(
+        nome=data.nome,
+        descricao=data.descricao,
+        trigger_type=data.trigger_type,
+        trigger_config=data.trigger_config,
+        action_type=data.action_type,
+        action_config=data.action_config
+    )
+
+    return {"id": automation_id, "status": "created"}
+
+
+@app.post("/api/ai/automations/{automation_id}/toggle")
+async def toggle_automation(
+    request: Request,
+    automation_id: int,
+    ativo: bool = True
+):
+    """Ativa/desativa automacao"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_smart_triggers()
+    success = service.toggle_automation(automation_id, ativo)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Automacao nao encontrada")
+
+    return {"id": automation_id, "ativo": ativo}
+
+
+@app.delete("/api/ai/automations/{automation_id}")
+async def delete_automation(
+    request: Request,
+    automation_id: int
+):
+    """Remove automacao"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_smart_triggers()
+    success = service.delete_automation(automation_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Automacao nao encontrada")
+
+    return {"id": automation_id, "status": "deleted"}
+
+
+@app.post("/api/ai/automations/run")
+async def run_automations(
+    request: Request,
+    background_tasks: BackgroundTasks
+):
+    """Executa todas as automacoes ativas"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_smart_triggers()
+
+    def run_task():
+        return service.run_automations()
+
+    background_tasks.add_task(run_task)
+
+    return {"status": "started", "message": "Execucao de automacoes iniciada"}
+
+
+@app.post("/api/ai/automations/setup-defaults")
+async def setup_default_automations(request: Request):
+    """Configura automacoes padrao"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_smart_triggers()
+    created = service.setup_default_automations()
+
+    return {"created": created, "message": f"{created} automacoes padrao criadas"}
+
+
 # Vercel handler
 app_handler = app
