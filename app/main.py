@@ -6841,5 +6841,44 @@ async def get_ai_suggestions_stats(request: Request):
         return stats
 
 
+# =============================================================================
+# AI AGENT ENDPOINTS
+# =============================================================================
+
+from services.ai_agent import get_ai_agent
+
+@app.post("/api/ai/generate-suggestions")
+async def generate_ai_suggestions(
+    request: Request,
+    background_tasks: BackgroundTasks
+):
+    """Dispara geracao de sugestoes da IA em background"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    agent = get_ai_agent()
+
+    async def run_generation():
+        await agent.run_daily_generation()
+
+    background_tasks.add_task(asyncio.run, run_generation())
+
+    return {"status": "started", "message": "Geracao de sugestoes iniciada em background"}
+
+
+@app.post("/api/ai/cleanup-expired")
+async def cleanup_expired_suggestions(request: Request):
+    """Remove sugestoes expiradas"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    agent = get_ai_agent()
+    deleted = agent.cleanup_expired_suggestions()
+
+    return {"deleted": deleted, "message": f"{deleted} sugestoes expiradas removidas"}
+
+
 # Vercel handler
 app_handler = app
