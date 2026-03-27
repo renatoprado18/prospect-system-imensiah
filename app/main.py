@@ -7018,5 +7018,104 @@ async def setup_default_automations(request: Request):
     return {"created": created, "message": f"{created} automacoes padrao criadas"}
 
 
+# =============================================================================
+# HEALTH PREDICTIONS ENDPOINTS
+# =============================================================================
+
+from services.health_predictions import get_health_predictions
+
+@app.get("/api/ai/at-risk")
+async def get_at_risk_contacts(
+    request: Request,
+    threshold: int = 40,
+    circulo_max: int = 3,
+    limit: int = 50
+):
+    """Retorna contatos em risco de queda de health"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_health_predictions()
+    contacts = service.get_at_risk_contacts(threshold, circulo_max, limit)
+
+    return {"contacts": contacts, "total": len(contacts)}
+
+
+@app.get("/api/ai/predict-health/{contact_id}")
+async def predict_contact_health(
+    request: Request,
+    contact_id: int,
+    dias: int = 30
+):
+    """Preve health futuro de um contato"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_health_predictions()
+    prediction = service.predict_health(contact_id, dias)
+
+    if "error" in prediction:
+        raise HTTPException(status_code=404, detail=prediction["error"])
+
+    return prediction
+
+
+@app.get("/api/ai/prediction-history/{contact_id}")
+async def get_prediction_history(
+    request: Request,
+    contact_id: int,
+    limit: int = 10
+):
+    """Historico de previsoes para um contato"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_health_predictions()
+    history = service.get_prediction_history(contact_id, limit)
+
+    return {"predictions": history, "total": len(history)}
+
+
+@app.post("/api/ai/run-predictions")
+async def run_batch_predictions(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    circulo_max: int = 3,
+    dias: int = 30
+):
+    """Executa previsoes em batch"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_health_predictions()
+
+    def run_task():
+        return service.run_batch_predictions(circulo_max, dias, limit=100)
+
+    background_tasks.add_task(run_task)
+
+    return {"status": "started", "message": "Previsoes em batch iniciadas"}
+
+
+@app.post("/api/ai/verify-predictions")
+async def verify_past_predictions(
+    request: Request,
+    days_back: int = 30
+):
+    """Verifica acuracia de previsoes passadas"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_health_predictions()
+    result = service.verify_past_predictions(days_back)
+
+    return result
+
+
 # Vercel handler
 app_handler = app
