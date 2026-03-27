@@ -7692,5 +7692,109 @@ def get_calendar_stats(request: Request, days: int = 30):
     return service.get_events_count(days=days)
 
 
+# =========================================================================
+# CALENDAR AI ENDPOINTS
+# =========================================================================
+
+from services.calendar_ai import get_calendar_ai
+
+
+@app.get("/api/ai/calendar-suggestions")
+def list_calendar_suggestions(request: Request, limit: int = 20):
+    """Lista sugestoes de reuniao da AI"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_ai()
+    suggestions = service.get_calendar_suggestions(limit=limit)
+    return {"suggestions": suggestions, "total": len(suggestions)}
+
+
+@app.post("/api/ai/calendar-suggestions/generate")
+def generate_calendar_suggestions(request: Request, limit: int = 10):
+    """Gera novas sugestoes de reuniao"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_ai()
+    suggestions = service.generate_calendar_suggestions(limit=limit)
+    return {"generated": len(suggestions), "suggestions": suggestions}
+
+
+@app.post("/api/ai/calendar-suggestions/{suggestion_id}/accept")
+async def accept_calendar_suggestion(
+    request: Request,
+    suggestion_id: int,
+    custom_datetime: str = None,
+    duration_minutes: int = None
+):
+    """Aceita sugestao e cria evento"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_ai()
+
+    dt = None
+    if custom_datetime:
+        dt = datetime.fromisoformat(custom_datetime)
+
+    result = await service.accept_and_create_event(
+        suggestion_id=suggestion_id,
+        custom_datetime=dt,
+        duration_minutes=duration_minutes
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return result
+
+
+@app.post("/api/ai/calendar-suggestions/{suggestion_id}/dismiss")
+async def dismiss_calendar_suggestion(
+    request: Request,
+    suggestion_id: int,
+    motivo: str = None
+):
+    """Descarta sugestao de reuniao"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_ai()
+    success = service.dismiss_suggestion(suggestion_id, motivo)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Sugestao nao encontrada ou ja processada")
+
+    return {"dismissed": True, "suggestion_id": suggestion_id}
+
+
+@app.get("/api/ai/calendar-suggestions/stats")
+def get_calendar_suggestions_stats(request: Request):
+    """Retorna estatisticas das sugestoes de calendario"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_ai()
+    return service.get_suggestion_stats()
+
+
+@app.get("/api/ai/contacts-needing-meeting")
+def get_contacts_needing_meeting(request: Request, limit: int = 20):
+    """Lista contatos que precisam de reuniao"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_calendar_ai()
+    contacts = service.get_contacts_needing_meeting(limit=limit)
+    return {"contacts": contacts, "total": len(contacts)}
+
+
 # Vercel handler
 app_handler = app
