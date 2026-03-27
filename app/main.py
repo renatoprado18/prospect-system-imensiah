@@ -6417,5 +6417,86 @@ async def batch_recalculate_health(
     return {"status": "started", "message": f"Recalculando health para circulos 1-{circulo_max}"}
 
 
+# =============================================================================
+# MAINTENANCE CRON ENDPOINTS
+# =============================================================================
+
+@app.post("/api/maintenance/daily")
+async def run_daily_maintenance(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    full: bool = False
+):
+    """Executa manutencao diaria em background"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    import sys
+    import asyncio
+    sys.path.insert(0, os.path.join(BASE_DIR, '..', 'scripts'))
+    from daily_maintenance import run_maintenance
+
+    async def run_task():
+        await run_maintenance(full=full)
+
+    background_tasks.add_task(asyncio.run, run_task())
+
+    return {
+        "status": "started",
+        "message": f"Manutencao {'completa' if full else 'rapida'} iniciada em background"
+    }
+
+
+@app.get("/api/maintenance/status")
+async def get_maintenance_status(request: Request):
+    """Retorna status e alertas do sistema"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+
+        status = {"alerts": [], "stats": {}}
+
+        # Stale contacts alert
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM contacts
+            WHERE COALESCE(circulo, 5) <= 2
+            AND ultimo_contato < NOW() - INTERVAL '30 days'
+        """)
+        stale_count = cursor.fetchone()["count"]
+        if stale_count > 0:
+            status["alerts"].append({
+                "type": "stale_contacts",
+                "message": f"{stale_count} contatos importantes sem contato ha mais de 30 dias",
+                "severity": "warning"
+            })
+
+        # Low health contacts alert
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM contacts
+            WHERE COALESCE(circulo, 5) <= 2
+            AND health_score < 40
+        """)
+        low_health_count = cursor.fetchone()["count"]
+        if low_health_count > 0:
+            status["alerts"].append({
+                "type": "low_health",
+                "message": f"{low_health_count} contatos importantes com health baixo",
+                "severity": "warning"
+            })
+
+        # Stats
+        cursor.execute("SELECT COUNT(*) as total FROM contacts")
+        status["stats"]["total_contacts"] = cursor.fetchone()["total"]
+
+        cursor.execute("SELECT COUNT(*) as total FROM contacts WHERE total_interacoes > 0")
+        status["stats"]["with_interactions"] = cursor.fetchone()["total"]
+
+        return status
+
+
 # Vercel handler
 app_handler = app
