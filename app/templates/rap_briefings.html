@@ -92,11 +92,155 @@
                 </div>
                 <div id="briefingContent" class="briefing-content prose prose-sm max-w-none">
                 </div>
-                <div class="mt-4 pt-4 border-t flex items-center justify-between text-sm text-gray-500">
+                <!-- Meta -->
+                <div class="mt-4 pt-4 border-t text-sm text-gray-500">
                     <span id="briefingMeta"></span>
-                    <button onclick="copyBriefing()" class="text-blue-600 hover:underline">
-                        <i data-lucide="copy" class="w-4 h-4 inline mr-1"></i>
-                        Copiar
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="mt-4 pt-4 border-t">
+                    <h3 class="text-sm font-medium text-gray-700 mb-3">Acoes</h3>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <button onclick="openCreateTaskModal()" class="flex items-center justify-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition">
+                            <i data-lucide="check-square" class="w-4 h-4"></i>
+                            <span class="text-sm">Criar Tarefa</span>
+                        </button>
+                        <button onclick="openScheduleModal()" class="flex items-center justify-center gap-2 px-3 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition">
+                            <i data-lucide="calendar-plus" class="w-4 h-4"></i>
+                            <span class="text-sm">Agendar</span>
+                        </button>
+                        <button onclick="generateEmailDraft()" class="flex items-center justify-center gap-2 px-3 py-2 bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 transition">
+                            <i data-lucide="mail" class="w-4 h-4"></i>
+                            <span class="text-sm">Email</span>
+                        </button>
+                        <button onclick="openWhatsAppAction()" class="flex items-center justify-center gap-2 px-3 py-2 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 transition">
+                            <i data-lucide="message-circle" class="w-4 h-4"></i>
+                            <span class="text-sm">WhatsApp</span>
+                        </button>
+                    </div>
+                    <div class="mt-3 flex justify-end">
+                        <button onclick="copyBriefing()" class="text-gray-500 hover:text-gray-700 text-sm">
+                            <i data-lucide="copy" class="w-4 h-4 inline mr-1"></i>
+                            Copiar Texto
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Task Modal -->
+        <div id="taskModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-semibold text-gray-800">Criar Tarefa</h3>
+                    <button onclick="closeTaskModal()" class="text-gray-400 hover:text-gray-600">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Titulo</label>
+                        <input type="text" id="taskTitle" class="w-full border rounded-lg px-3 py-2" placeholder="Ex: Follow-up com contato">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Data</label>
+                        <input type="date" id="taskDate" class="w-full border rounded-lg px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Notas</label>
+                        <textarea id="taskNotes" class="w-full border rounded-lg px-3 py-2" rows="3" placeholder="Notas adicionais..."></textarea>
+                    </div>
+                    <button onclick="createTask()" class="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700">
+                        Criar Tarefa
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Schedule Meeting Modal -->
+        <div id="scheduleModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-semibold text-gray-800">Agendar Reuniao</h3>
+                    <button onclick="closeScheduleModal()" class="text-gray-400 hover:text-gray-600">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Titulo</label>
+                        <input type="text" id="meetingTitle" class="w-full border rounded-lg px-3 py-2" placeholder="Ex: Reuniao de alinhamento">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">Data</label>
+                            <input type="date" id="meetingDate" class="w-full border rounded-lg px-3 py-2">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-600 mb-1">Hora</label>
+                            <input type="time" id="meetingTime" class="w-full border rounded-lg px-3 py-2" value="10:00">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Notas</label>
+                        <textarea id="meetingNotes" class="w-full border rounded-lg px-3 py-2" rows="2" placeholder="Pauta ou contexto..."></textarea>
+                    </div>
+                    <button onclick="scheduleMeeting()" class="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700">
+                        Agendar Reuniao
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Email Draft Modal -->
+        <div id="emailModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-semibold text-gray-800">Rascunho de Email</h3>
+                    <button onclick="closeEmailModal()" class="text-gray-400 hover:text-gray-600">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Assunto</label>
+                        <input type="text" id="emailSubject" class="w-full border rounded-lg px-3 py-2">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Mensagem</label>
+                        <textarea id="emailBody" class="w-full border rounded-lg px-3 py-2" rows="8"></textarea>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="copyEmail()" class="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg hover:bg-gray-200">
+                            <i data-lucide="copy" class="w-4 h-4 inline mr-1"></i> Copiar
+                        </button>
+                        <button onclick="openMailClient()" class="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700">
+                            <i data-lucide="send" class="w-4 h-4 inline mr-1"></i> Abrir Email
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- WhatsApp Modal -->
+        <div id="whatsappModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="font-semibold text-gray-800">Enviar WhatsApp</h3>
+                    <button onclick="closeWhatsAppModal()" class="text-gray-400 hover:text-gray-600">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-gray-600 mb-1">Mensagem</label>
+                        <textarea id="whatsappMessage" class="w-full border rounded-lg px-3 py-2" rows="5" placeholder="Digite sua mensagem..."></textarea>
+                    </div>
+                    <div class="text-sm text-gray-500">
+                        <span id="whatsappPhone">-</span>
+                    </div>
+                    <button onclick="sendWhatsApp()" class="w-full py-2 rounded-lg text-white" style="background-color: #25D366;">
+                        <i data-lucide="send" class="w-4 h-4 inline mr-1"></i> Abrir WhatsApp
                     </button>
                 </div>
             </div>
@@ -270,6 +414,212 @@
             if (!currentBriefing || !currentBriefing.briefing) return;
             navigator.clipboard.writeText(currentBriefing.briefing);
             alert('Briefing copiado!');
+        }
+
+        // ============== Action Functions ==============
+
+        // Task Modal
+        function openCreateTaskModal() {
+            if (!currentBriefing) return;
+            document.getElementById('taskTitle').value = `Follow-up com ${currentBriefing.nome}`;
+            document.getElementById('taskDate').valueAsDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000); // +2 days
+            document.getElementById('taskNotes').value = `Baseado no briefing gerado.\n\nContexto: ${currentBriefing.briefing?.substring(0, 200)}...`;
+            document.getElementById('taskModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function closeTaskModal() {
+            document.getElementById('taskModal').classList.add('hidden');
+        }
+
+        async function createTask() {
+            const title = document.getElementById('taskTitle').value;
+            const date = document.getElementById('taskDate').value;
+            const notes = document.getElementById('taskNotes').value;
+
+            if (!title || !date) {
+                alert('Preencha titulo e data');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: title,
+                        due_date: date,
+                        notes: notes,
+                        contact_id: selectedContactId,
+                        status: 'pending'
+                    })
+                });
+
+                if (response.ok) {
+                    alert('Tarefa criada com sucesso!');
+                    closeTaskModal();
+                } else {
+                    // Fallback: save to localStorage
+                    const tasks = JSON.parse(localStorage.getItem('intel_tasks') || '[]');
+                    tasks.push({ title, date, notes, contact_id: selectedContactId, created_at: new Date().toISOString() });
+                    localStorage.setItem('intel_tasks', JSON.stringify(tasks));
+                    alert('Tarefa salva localmente!');
+                    closeTaskModal();
+                }
+            } catch (error) {
+                // Fallback: save to localStorage
+                const tasks = JSON.parse(localStorage.getItem('intel_tasks') || '[]');
+                tasks.push({ title, date, notes, contact_id: selectedContactId, created_at: new Date().toISOString() });
+                localStorage.setItem('intel_tasks', JSON.stringify(tasks));
+                alert('Tarefa salva localmente!');
+                closeTaskModal();
+            }
+        }
+
+        // Schedule Meeting Modal
+        function openScheduleModal() {
+            if (!currentBriefing) return;
+            document.getElementById('meetingTitle').value = `Reuniao com ${currentBriefing.nome}`;
+            document.getElementById('meetingDate').valueAsDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // +3 days
+            document.getElementById('meetingNotes').value = '';
+            document.getElementById('scheduleModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function closeScheduleModal() {
+            document.getElementById('scheduleModal').classList.add('hidden');
+        }
+
+        async function scheduleMeeting() {
+            const title = document.getElementById('meetingTitle').value;
+            const date = document.getElementById('meetingDate').value;
+            const time = document.getElementById('meetingTime').value;
+            const notes = document.getElementById('meetingNotes').value;
+
+            if (!title || !date) {
+                alert('Preencha titulo e data');
+                return;
+            }
+
+            const startDatetime = `${date}T${time}:00`;
+
+            try {
+                const response = await fetch('/api/calendar/events', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        summary: title,
+                        start_datetime: startDatetime,
+                        contact_id: selectedContactId,
+                        contact_name: currentBriefing.nome,
+                        description: notes
+                    })
+                });
+
+                if (response.ok) {
+                    alert('Reuniao agendada com sucesso!');
+                    closeScheduleModal();
+                } else {
+                    // Fallback: redirect to calendar
+                    window.location.href = `/calendario?new=true&contact_id=${selectedContactId}&contact_name=${encodeURIComponent(currentBriefing.nome)}`;
+                }
+            } catch (error) {
+                // Fallback: redirect to calendar
+                window.location.href = `/calendario?new=true&contact_id=${selectedContactId}&contact_name=${encodeURIComponent(currentBriefing.nome)}`;
+            }
+        }
+
+        // Email Draft
+        async function generateEmailDraft() {
+            if (!currentBriefing) return;
+
+            document.getElementById('emailModal').classList.remove('hidden');
+            document.getElementById('emailSubject').value = 'Carregando...';
+            document.getElementById('emailBody').value = 'Gerando rascunho com IA...';
+            lucide.createIcons();
+
+            try {
+                const response = await fetch(`/api/ai/email-draft`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contact_id: selectedContactId,
+                        briefing: currentBriefing.briefing,
+                        contact_name: currentBriefing.nome
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('emailSubject').value = data.subject || `Oi ${currentBriefing.nome?.split(' ')[0]}`;
+                    document.getElementById('emailBody').value = data.body || '';
+                } else {
+                    // Fallback: generate simple draft
+                    const firstName = currentBriefing.nome?.split(' ')[0] || 'Voce';
+                    document.getElementById('emailSubject').value = `Oi ${firstName}`;
+                    document.getElementById('emailBody').value = `Oi ${firstName},\n\nEspero que esteja tudo bem!\n\n[Sua mensagem aqui]\n\nAbraco,\nRenato`;
+                }
+            } catch (error) {
+                // Fallback
+                const firstName = currentBriefing.nome?.split(' ')[0] || 'Voce';
+                document.getElementById('emailSubject').value = `Oi ${firstName}`;
+                document.getElementById('emailBody').value = `Oi ${firstName},\n\nEspero que esteja tudo bem!\n\n[Sua mensagem aqui]\n\nAbraco,\nRenato`;
+            }
+        }
+
+        function closeEmailModal() {
+            document.getElementById('emailModal').classList.add('hidden');
+        }
+
+        function copyEmail() {
+            const subject = document.getElementById('emailSubject').value;
+            const body = document.getElementById('emailBody').value;
+            navigator.clipboard.writeText(`Assunto: ${subject}\n\n${body}`);
+            alert('Email copiado!');
+        }
+
+        function openMailClient() {
+            const subject = encodeURIComponent(document.getElementById('emailSubject').value);
+            const body = encodeURIComponent(document.getElementById('emailBody').value);
+            // Try to get email from current briefing data
+            const email = currentBriefing.email || '';
+            window.open(`mailto:${email}?subject=${subject}&body=${body}`, '_blank');
+            closeEmailModal();
+        }
+
+        // WhatsApp
+        function openWhatsAppAction() {
+            if (!currentBriefing) return;
+
+            const firstName = currentBriefing.nome?.split(' ')[0] || '';
+            document.getElementById('whatsappMessage').value = `Oi ${firstName}! Tudo bem?\n\n`;
+            document.getElementById('whatsappPhone').textContent = currentBriefing.telefone || 'Telefone nao disponivel';
+            document.getElementById('whatsappModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function closeWhatsAppModal() {
+            document.getElementById('whatsappModal').classList.add('hidden');
+        }
+
+        function sendWhatsApp() {
+            const message = document.getElementById('whatsappMessage').value;
+            const phone = currentBriefing.telefone?.replace(/\D/g, '') || '';
+
+            if (!phone) {
+                alert('Telefone nao disponivel para este contato');
+                return;
+            }
+
+            // Format phone for WhatsApp (add country code if missing)
+            let formattedPhone = phone;
+            if (!formattedPhone.startsWith('55')) {
+                formattedPhone = '55' + formattedPhone;
+            }
+
+            const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
+            window.open(url, '_blank');
+            closeWhatsAppModal();
         }
 
         function escapeHtml(str) {
