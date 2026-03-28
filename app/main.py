@@ -8256,5 +8256,454 @@ def get_contacts_needing_meeting(request: Request, limit: int = 20):
     return {"contacts": contacts, "total": len(contacts)}
 
 
+# =============================================================================
+# BRIEFING ACTIONS API - Quick actions from the morning briefing
+# Implemented by: INTEL (2026-03-28)
+# =============================================================================
+
+class BriefingTaskCreate(BaseModel):
+    """Create task from briefing"""
+    contact_id: int
+    title: Optional[str] = None  # Auto-generated if not provided
+    notes: Optional[str] = None
+    due_date: Optional[str] = None  # ISO date string
+    action_type: str = "followup"  # followup, birthday, reconnect
+
+
+class BriefingMeetingCreate(BaseModel):
+    """Schedule meeting from briefing"""
+    contact_id: int
+    title: Optional[str] = None  # Auto-generated if not provided
+    date: str  # ISO date string (YYYY-MM-DD)
+    time: str = "10:00"  # HH:MM
+    duration_minutes: int = 30
+    create_meet: bool = True
+    notes: Optional[str] = None
+
+
+class BriefingMessageDraft(BaseModel):
+    """Draft message for contact"""
+    contact_id: int
+    channel: str = "email"  # email, whatsapp
+    context: str = "followup"  # followup, birthday, reconnect, custom
+    custom_prompt: Optional[str] = None
+
+
+@app.post("/api/briefing/create-task")
+async def briefing_create_task(request: Request, data: BriefingTaskCreate):
+    """
+    Cria tarefa rapida a partir do briefing.
+    Auto-gera titulo baseado no tipo de acao e dados do contato.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    # Get contact info
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, empresa, cargo, aniversario
+            FROM contacts WHERE id = %s
+        """, (data.contact_id,))
+        contact = cursor.fetchone()
+
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+    # Auto-generate title if not provided
+    title = data.title
+    if not title:
+        action_titles = {
+            "followup": f"Follow-up com {contact['nome']}",
+            "birthday": f"Parabenizar {contact['nome']} - Aniversario",
+            "reconnect": f"Reconectar com {contact['nome']}",
+        }
+        title = action_titles.get(data.action_type, f"Contatar {contact['nome']}")
+
+    # Auto-generate notes if not provided
+    notes = data.notes
+    if not notes:
+        empresa_info = f" - {contact['empresa']}" if contact.get('empresa') else ""
+        cargo_info = f" ({contact['cargo']})" if contact.get('cargo') else ""
+        notes = f"Contato: {contact['nome']}{cargo_info}{empresa_info}\nCriado via Briefing RAP"
+
+    # Get Google account for Tasks API
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
+        raise HTTPException(status_code=400, detail="Nenhuma conta Google conectada")
+
+    from integrations.gmail import GmailIntegration
+    gmail = GmailIntegration()
+    tokens = await gmail.refresh_access_token(account["refresh_token"])
+
+    if "error" in tokens:
+        raise HTTPException(status_code=401, detail="Token invalido")
+
+    access_token = tokens.get("access_token")
+    tasks_api = get_tasks_integration()
+
+    # Parse due date
+    due_datetime = None
+    if data.due_date:
+        try:
+            due_datetime = datetime.fromisoformat(data.due_date.replace("Z", "+00:00"))
+        except:
+            pass
+
+    result = await tasks_api.create_task(
+        access_token=access_token,
+        title=title,
+        notes=notes,
+        due=due_datetime
+    )
+
+    return {
+        "status": "success",
+        "task": result,
+        "contact_name": contact['nome'],
+        "action_type": data.action_type
+    }
+
+
+@app.post("/api/briefing/schedule-meeting")
+async def briefing_schedule_meeting(request: Request, data: BriefingMeetingCreate):
+    """
+    Agenda reuniao rapida a partir do briefing.
+    Cria evento no Google Calendar com link do Meet.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    # Get contact info
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, empresa, cargo, emails
+            FROM contacts WHERE id = %s
+        """, (data.contact_id,))
+        contact = cursor.fetchone()
+
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+    # Auto-generate title
+    title = data.title or f"Reuniao com {contact['nome']}"
+
+    # Parse datetime
+    try:
+        date_obj = datetime.strptime(data.date, "%Y-%m-%d")
+        time_parts = data.time.split(":")
+        start_datetime = date_obj.replace(hour=int(time_parts[0]), minute=int(time_parts[1]))
+        end_datetime = start_datetime + timedelta(minutes=data.duration_minutes)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Formato de data/hora invalido: {e}")
+
+    # Get attendee email
+    attendees = []
+    emails = contact.get("emails") or []
+    if isinstance(emails, str):
+        import json
+        try:
+            emails = json.loads(emails)
+        except:
+            emails = []
+    if emails:
+        primary_email = next((e.get("email") for e in emails if e.get("primary")), None)
+        if not primary_email and emails:
+            primary_email = emails[0].get("email") if isinstance(emails[0], dict) else emails[0]
+        if primary_email:
+            attendees.append(primary_email)
+
+    # Build description
+    description = data.notes or ""
+    if contact.get("empresa"):
+        description = f"Contato: {contact['nome']} - {contact['empresa']}\n\n{description}"
+    description += "\n\nAgendado via Briefing RAP"
+
+    # Create calendar event
+    service = get_calendar_events()
+    event = service.create_event(
+        summary=title,
+        start_datetime=start_datetime,
+        end_datetime=end_datetime,
+        description=description,
+        contact_id=data.contact_id,
+        attendees=attendees if attendees else None,
+        create_in_google=True
+    )
+
+    return {
+        "status": "success",
+        "event": event,
+        "contact_name": contact['nome'],
+        "start": start_datetime.isoformat(),
+        "end": end_datetime.isoformat()
+    }
+
+
+@app.post("/api/briefing/draft-message")
+async def briefing_draft_message(request: Request, data: BriefingMessageDraft):
+    """
+    Gera rascunho de mensagem (email ou WhatsApp) para o contato.
+    Usa IA para personalizar baseado no contexto e historico.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    # Get contact info with context
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT c.id, c.nome, c.empresa, c.cargo, c.emails, c.telefones,
+                   c.aniversario, c.circulo, c.ultimo_contato, c.health_score,
+                   c.resumo_ai
+            FROM contacts c WHERE c.id = %s
+        """, (data.contact_id,))
+        contact = cursor.fetchone()
+
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+        # Get recent interactions
+        cursor.execute("""
+            SELECT canal, assunto, ultimo_mensagem
+            FROM conversations
+            WHERE contact_id = %s
+            ORDER BY ultimo_mensagem DESC
+            LIMIT 3
+        """, (data.contact_id,))
+        recent_convs = cursor.fetchall()
+
+    # Build context for AI
+    nome = contact["nome"].split()[0]  # First name
+    empresa = contact.get("empresa") or ""
+    cargo = contact.get("cargo") or ""
+    circulo = contact.get("circulo") or 5
+    dias_sem_contato = 0
+    if contact.get("ultimo_contato"):
+        dias_sem_contato = (datetime.now() - contact["ultimo_contato"]).days
+
+    # Context templates
+    context_prompts = {
+        "followup": f"Escreva uma mensagem cordial de follow-up para {nome}. Mantenha um tom profissional mas amigavel.",
+        "birthday": f"Escreva uma mensagem de aniversario sincera e calorosa para {nome}. Seja genuino e evite cliches.",
+        "reconnect": f"Escreva uma mensagem para reconectar com {nome} apos {dias_sem_contato} dias sem contato. Seja natural e demonstre interesse genuino.",
+        "custom": data.custom_prompt or f"Escreva uma mensagem para {nome}."
+    }
+
+    context_text = context_prompts.get(data.context, context_prompts["followup"])
+
+    # Add contact details
+    prompt = f"""
+{context_text}
+
+Informacoes do contato:
+- Nome: {contact['nome']}
+- Empresa: {empresa}
+- Cargo: {cargo}
+- Circulo de proximidade: {circulo} (1=muito proximo, 5=distante)
+- Dias desde ultimo contato: {dias_sem_contato}
+{"- Resumo do relacionamento: " + contact['resumo_ai'] if contact.get('resumo_ai') else ""}
+
+Canal: {data.channel.upper()}
+{"(Mensagem de WhatsApp deve ser curta e direta)" if data.channel == "whatsapp" else "(Email pode ser mais elaborado)"}
+
+Responda APENAS com a mensagem, sem explicacoes ou comentarios.
+"""
+
+    # Call Claude API
+    agent = get_ai_agent()
+    message_draft = await agent.call_claude(prompt, max_tokens=500)
+
+    if not message_draft:
+        # Fallback templates
+        fallbacks = {
+            "followup": f"Ola {nome}, espero que esteja bem! Gostaria de retomar nosso contato. Podemos marcar uma conversa?",
+            "birthday": f"Feliz aniversario, {nome}! Desejo um dia especial e um ano cheio de realizacoes.",
+            "reconnect": f"Ola {nome}, faz tempo que nao conversamos! Como voce esta? Gostaria de saber das novidades.",
+        }
+        message_draft = fallbacks.get(data.context, f"Ola {nome}, tudo bem?")
+
+    # Get contact info for sending
+    contact_info = {}
+    emails = contact.get("emails") or []
+    if isinstance(emails, str):
+        import json
+        try:
+            emails = json.loads(emails)
+        except:
+            emails = []
+    if emails:
+        contact_info["email"] = next((e.get("email") for e in emails if e.get("primary")), emails[0].get("email") if isinstance(emails[0], dict) else emails[0])
+
+    telefones = contact.get("telefones") or []
+    if isinstance(telefones, str):
+        import json
+        try:
+            telefones = json.loads(telefones)
+        except:
+            telefones = []
+    if telefones:
+        contact_info["phone"] = next((t.get("number") for t in telefones if t.get("whatsapp")), telefones[0].get("number") if isinstance(telefones[0], dict) else telefones[0])
+
+    return {
+        "status": "success",
+        "channel": data.channel,
+        "context": data.context,
+        "contact_name": contact["nome"],
+        "contact_info": contact_info,
+        "draft": message_draft.strip()
+    }
+
+
+@app.get("/api/briefing/quick-actions/{contact_id}")
+async def get_briefing_quick_actions(request: Request, contact_id: int):
+    """
+    Retorna acoes rapidas disponiveis para um contato no briefing.
+    Inclui sugestoes contextuais baseadas no estado do relacionamento.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, empresa, cargo, emails, telefones,
+                   aniversario, circulo, ultimo_contato, health_score
+            FROM contacts WHERE id = %s
+        """, (contact_id,))
+        contact = cursor.fetchone()
+
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+    actions = []
+
+    # Check if birthday is today or soon
+    if contact.get("aniversario"):
+        aniv = contact["aniversario"]
+        today = datetime.now().date()
+        this_year_birthday = aniv.replace(year=today.year)
+        days_until = (this_year_birthday - today).days
+        if days_until < 0:
+            this_year_birthday = aniv.replace(year=today.year + 1)
+            days_until = (this_year_birthday - today).days
+
+        if days_until == 0:
+            actions.append({
+                "type": "birthday",
+                "label": "Enviar parabens",
+                "icon": "bi-cake2",
+                "priority": 10,
+                "reason": "Aniversario HOJE!"
+            })
+        elif days_until <= 7:
+            actions.append({
+                "type": "birthday",
+                "label": f"Preparar parabens ({days_until} dias)",
+                "icon": "bi-cake2",
+                "priority": 7,
+                "reason": f"Aniversario em {days_until} dias"
+            })
+
+    # Check days since last contact
+    dias_sem_contato = 0
+    if contact.get("ultimo_contato"):
+        dias_sem_contato = (datetime.now() - contact["ultimo_contato"]).days
+
+    circulo = contact.get("circulo") or 5
+    needs_reconnect = (circulo <= 2 and dias_sem_contato > 30) or (circulo == 3 and dias_sem_contato > 60)
+
+    if needs_reconnect:
+        actions.append({
+            "type": "reconnect",
+            "label": "Reconectar",
+            "icon": "bi-arrow-repeat",
+            "priority": 8,
+            "reason": f"{dias_sem_contato} dias sem contato"
+        })
+
+    # Check health score
+    health = contact.get("health_score") or 50
+    if health < 40:
+        actions.append({
+            "type": "followup",
+            "label": "Follow-up urgente",
+            "icon": "bi-exclamation-triangle",
+            "priority": 9,
+            "reason": f"Health {health}% - relacionamento em risco"
+        })
+
+    # Standard actions always available
+    actions.append({
+        "type": "task",
+        "label": "Criar tarefa",
+        "icon": "bi-check2-square",
+        "priority": 3
+    })
+
+    actions.append({
+        "type": "meeting",
+        "label": "Agendar reuniao",
+        "icon": "bi-calendar-plus",
+        "priority": 4
+    })
+
+    # Check available channels
+    emails = contact.get("emails") or []
+    telefones = contact.get("telefones") or []
+    if isinstance(emails, str):
+        import json
+        try:
+            emails = json.loads(emails)
+        except:
+            emails = []
+    if isinstance(telefones, str):
+        import json
+        try:
+            telefones = json.loads(telefones)
+        except:
+            telefones = []
+
+    if emails:
+        actions.append({
+            "type": "email",
+            "label": "Enviar email",
+            "icon": "bi-envelope",
+            "priority": 5
+        })
+
+    if telefones:
+        has_whatsapp = any(t.get("whatsapp") for t in telefones if isinstance(t, dict))
+        actions.append({
+            "type": "whatsapp",
+            "label": "Enviar WhatsApp",
+            "icon": "bi-whatsapp",
+            "priority": 5 if has_whatsapp else 6
+        })
+
+    # Sort by priority (higher first)
+    actions.sort(key=lambda x: x.get("priority", 0), reverse=True)
+
+    return {
+        "contact_id": contact_id,
+        "contact_name": contact["nome"],
+        "actions": actions,
+        "context": {
+            "circulo": circulo,
+            "dias_sem_contato": dias_sem_contato,
+            "health_score": health
+        }
+    }
+
+
 # Vercel handler
 app_handler = app
