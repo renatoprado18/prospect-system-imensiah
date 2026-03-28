@@ -4203,6 +4203,156 @@ async def enrich_contact(contact_id: int, request: Request):
         conn.close()
 
 
+@app.put("/api/contacts/{contact_id}/enrichment-data")
+async def update_contact_enrichment_data(contact_id: int, request: Request):
+    """
+    Atualiza dados manuais de enriquecimento do contato.
+
+    Body JSON:
+    {
+        "relationship_context": "Como conheci esta pessoa...",
+        "linkedin_url": "https://linkedin.com/in/...",
+        "company_website": "https://empresa.com.br",
+        "empresa": "Nome da Empresa",
+        "cargo": "Cargo da Pessoa",
+        "manual_notes": "Notas adicionais..."
+    }
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    try:
+        data = await request.json()
+    except:
+        raise HTTPException(status_code=400, detail="JSON invalido")
+
+    conn = get_db()
+
+    try:
+        from services.contact_enrichment import update_manual_enrichment
+
+        result = await update_manual_enrichment(
+            contact_id=contact_id,
+            db_connection=conn,
+            relationship_context=data.get('relationship_context'),
+            linkedin_url=data.get('linkedin_url'),
+            company_website=data.get('company_website'),
+            empresa=data.get('empresa'),
+            cargo=data.get('cargo'),
+            manual_notes=data.get('manual_notes')
+        )
+
+        return result
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/contacts/{contact_id}/enrich-with-context")
+async def enrich_contact_with_context(contact_id: int, request: Request):
+    """
+    Enriquece contato usando o contexto do relacionamento informado pelo usuario.
+
+    Body JSON:
+    {
+        "relationship_context": "Participa comigo do Conselho Consultivo..."
+    }
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = {}
+    try:
+        data = await request.json()
+    except:
+        pass
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT id, nome FROM contacts WHERE id = %s', (contact_id,))
+    contact = cursor.fetchone()
+    if not contact:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+    cursor.execute('''
+        UPDATE contacts SET enriquecimento_status = 'pending'
+        WHERE id = %s
+    ''', (contact_id,))
+    conn.commit()
+
+    try:
+        from services.contact_enrichment import enrich_with_context
+
+        result = await enrich_with_context(
+            contact_id=contact_id,
+            db_connection=conn,
+            relationship_context=data.get('relationship_context')
+        )
+
+        if result.get("status") == "success":
+            return {
+                "status": "success",
+                "resumo": result.get("enrichment", {}).get("resumo", ""),
+                "fatos": result.get("enrichment", {}).get("fatos", []),
+                "insights": result.get("enrichment", {}).get("insights", {}),
+                "sugestoes": result.get("enrichment", {}).get("sugestoes", [])
+            }
+        else:
+            cursor.execute('''
+                UPDATE contacts SET enriquecimento_status = 'failed'
+                WHERE id = %s
+            ''', (contact_id,))
+            conn.commit()
+            return result
+
+    except Exception as e:
+        cursor.execute('''
+            UPDATE contacts SET enriquecimento_status = 'failed'
+            WHERE id = %s
+        ''', (contact_id,))
+        conn.commit()
+        return {"status": "error", "error": str(e)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/contacts/auto-enrich-priority")
+async def auto_enrich_priority_contacts_endpoint(
+    request: Request,
+    limit: int = 10,
+    circulo_max: int = 2
+):
+    """
+    Enriquece automaticamente contatos prioritarios (circulos 1 e 2).
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    conn = get_db()
+
+    try:
+        from services.contact_enrichment import auto_enrich_priority_contacts
+
+        result = await auto_enrich_priority_contacts(
+            db_connection=conn,
+            circulo_max=circulo_max,
+            limit=limit
+        )
+        return result
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+    finally:
+        conn.close()
+
+
 # ============== Google Accounts Integration ==============
 
 from integrations.google_contacts import (
@@ -7136,6 +7286,82 @@ async def cleanup_expired_suggestions(request: Request):
     deleted = agent.cleanup_expired_suggestions()
 
     return {"deleted": deleted, "message": f"{deleted} sugestoes expiradas removidas"}
+
+
+@app.post("/api/ai/auto-enrich")
+async def auto_enrich_priority_contacts(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    limit: int = 10
+):
+    """
+    Enriquece automaticamente contatos dos circulos 1 e 2.
+    Busca contatos sem resumo_ai ou com enriquecimento desatualizado (>30 dias).
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    agent = get_ai_agent()
+
+    async def run_enrichment():
+        return await agent.auto_enrich_priority_contacts(limit=limit)
+
+    background_tasks.add_task(asyncio.run, run_enrichment())
+
+    return {
+        "status": "started",
+        "message": f"Enriquecimento de ate {limit} contatos C1-C2 iniciado em background"
+    }
+
+
+@app.get("/api/ai/auto-enrich/status")
+async def get_auto_enrich_status(request: Request):
+    """
+    Retorna contatos C1-C2 que precisam de enriquecimento.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Contatos que precisam enriquecimento
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM contacts
+            WHERE COALESCE(circulo, 5) <= 2
+            AND (
+                resumo_ai IS NULL
+                OR ultimo_enriquecimento IS NULL
+                OR ultimo_enriquecimento < NOW() - INTERVAL '30 days'
+            )
+        """)
+        needs_enrichment = cursor.fetchone()["total"]
+
+        # Contatos ja enriquecidos
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM contacts
+            WHERE COALESCE(circulo, 5) <= 2
+            AND resumo_ai IS NOT NULL
+            AND ultimo_enriquecimento IS NOT NULL
+            AND ultimo_enriquecimento >= NOW() - INTERVAL '30 days'
+        """)
+        already_enriched = cursor.fetchone()["total"]
+
+        # Total C1-C2
+        cursor.execute("""
+            SELECT COUNT(*) as total FROM contacts
+            WHERE COALESCE(circulo, 5) <= 2
+        """)
+        total_priority = cursor.fetchone()["total"]
+
+    return {
+        "total_priority_contacts": total_priority,
+        "needs_enrichment": needs_enrichment,
+        "already_enriched": already_enriched,
+        "enrichment_rate": round(already_enriched / total_priority * 100, 1) if total_priority > 0 else 0
+    }
 
 
 # =============================================================================

@@ -332,7 +332,7 @@ class AIAgentService:
         return saved
 
     async def run_daily_generation(self) -> Dict:
-        """Executa geracao diaria de todas as sugestoes"""
+        """Executa geracao diaria de todas as sugestoes + enriquecimento"""
         print("=" * 60)
         print("AI AGENT - GERACAO DIARIA DE SUGESTOES")
         print("=" * 60)
@@ -341,36 +341,47 @@ class AIAgentService:
 
         results = {
             "started_at": datetime.now().isoformat(),
-            "suggestions": {}
+            "suggestions": {},
+            "enrichment": {}
         }
 
         # 1. Reconnect suggestions
-        print("[1/4] Gerando sugestoes de reconexao...", flush=True)
+        print("[1/5] Gerando sugestoes de reconexao...", flush=True)
         reconnect = self.generate_reconnect_suggestions(limit=30)
         saved = self.save_suggestions(reconnect)
         results["suggestions"]["reconnect"] = {"generated": len(reconnect), "saved": saved}
         print(f"  -> {saved} sugestoes salvas", flush=True)
 
         # 2. Birthday suggestions
-        print("[2/4] Gerando lembretes de aniversario...", flush=True)
+        print("[2/5] Gerando lembretes de aniversario...", flush=True)
         birthday = self.generate_birthday_suggestions(days_ahead=7)
         saved = self.save_suggestions(birthday)
         results["suggestions"]["birthday"] = {"generated": len(birthday), "saved": saved}
         print(f"  -> {saved} sugestoes salvas", flush=True)
 
         # 3. Followup suggestions
-        print("[3/4] Gerando sugestoes de follow-up...", flush=True)
+        print("[3/5] Gerando sugestoes de follow-up...", flush=True)
         followup = self.generate_followup_suggestions(limit=30)
         saved = self.save_suggestions(followup)
         results["suggestions"]["followup"] = {"generated": len(followup), "saved": saved}
         print(f"  -> {saved} sugestoes salvas", flush=True)
 
         # 4. Health alert suggestions
-        print("[4/4] Gerando alertas de health...", flush=True)
+        print("[4/5] Gerando alertas de health...", flush=True)
         health = self.generate_health_alert_suggestions(threshold=30, limit=20)
         saved = self.save_suggestions(health)
         results["suggestions"]["health_alert"] = {"generated": len(health), "saved": saved}
         print(f"  -> {saved} sugestoes salvas", flush=True)
+
+        # 5. Auto-enrich priority contacts (C1-C2)
+        print("[5/5] Enriquecendo contatos prioritarios (C1-C2)...", flush=True)
+        try:
+            enrich_results = await self.auto_enrich_priority_contacts(limit=5)
+            results["enrichment"] = enrich_results
+            print(f"  -> {enrich_results.get('success', 0)}/{enrich_results.get('processed', 0)} contatos enriquecidos", flush=True)
+        except Exception as e:
+            print(f"  -> Erro no enriquecimento: {e}", flush=True)
+            results["enrichment"] = {"error": str(e)}
 
         results["completed_at"] = datetime.now().isoformat()
         total = sum(r["saved"] for r in results["suggestions"].values())
@@ -398,6 +409,81 @@ class AIAgentService:
             conn.commit()
 
             return deleted
+
+
+    async def auto_enrich_priority_contacts(self, limit: int = 10) -> Dict:
+        """
+        Enriquece automaticamente contatos dos circulos 1 e 2 que ainda
+        nao foram enriquecidos ou cujo enriquecimento esta desatualizado.
+
+        Args:
+            limit: Numero maximo de contatos a enriquecer por execucao
+
+        Returns:
+            Dict com estatisticas de enriquecimento
+        """
+        from services.contact_enrichment import enrich_and_save
+
+        results = {
+            "processed": 0,
+            "success": 0,
+            "errors": [],
+            "contacts": []
+        }
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Buscar contatos C1-C2 que precisam de enriquecimento
+            cursor.execute("""
+                SELECT id, nome, circulo
+                FROM contacts
+                WHERE COALESCE(circulo, 5) <= 2
+                AND (
+                    resumo_ai IS NULL
+                    OR ultimo_enriquecimento IS NULL
+                    OR ultimo_enriquecimento < NOW() - INTERVAL '30 days'
+                )
+                ORDER BY circulo ASC, ultimo_contato DESC NULLS LAST
+                LIMIT %s
+            """, (limit,))
+
+            contacts = cursor.fetchall()
+
+            for contact in contacts:
+                contact_id = contact["id"]
+                contact_name = contact["nome"]
+                circulo = contact["circulo"]
+
+                print(f"Enriching C{circulo} contact: {contact_name}...")
+                results["processed"] += 1
+
+                try:
+                    result = await enrich_and_save(contact_id, conn)
+
+                    if result.get("status") == "success":
+                        results["success"] += 1
+                        results["contacts"].append({
+                            "id": contact_id,
+                            "nome": contact_name,
+                            "circulo": circulo,
+                            "status": "success"
+                        })
+                    else:
+                        results["errors"].append({
+                            "contact_id": contact_id,
+                            "nome": contact_name,
+                            "error": result.get("error", "Unknown error")
+                        })
+
+                except Exception as e:
+                    results["errors"].append({
+                        "contact_id": contact_id,
+                        "nome": contact_name,
+                        "error": str(e)
+                    })
+
+        return results
 
 
 _ai_agent = None
