@@ -414,6 +414,8 @@ async def enrich_and_save(contact_id: int, db_connection) -> Dict[str, Any]:
 async def update_manual_enrichment(
     contact_id: int,
     db_connection,
+    nome: str = None,
+    contexto: str = None,
     relationship_context: str = None,
     linkedin_url: str = None,
     company_website: str = None,
@@ -429,6 +431,14 @@ async def update_manual_enrichment(
 
     updates = []
     values = []
+
+    if nome is not None and nome.strip():
+        updates.append("nome = %s")
+        values.append(nome.strip())
+
+    if contexto is not None and contexto in ['professional', 'personal']:
+        updates.append("contexto = %s")
+        values.append(contexto)
 
     if relationship_context is not None:
         updates.append("relationship_context = %s")

@@ -4235,6 +4235,8 @@ async def update_contact_enrichment_data(contact_id: int, request: Request):
         result = await update_manual_enrichment(
             contact_id=contact_id,
             db_connection=conn,
+            nome=data.get('nome'),
+            contexto=data.get('contexto'),
             relationship_context=data.get('relationship_context'),
             linkedin_url=data.get('linkedin_url'),
             company_website=data.get('company_website'),

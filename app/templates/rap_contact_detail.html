@@ -881,6 +881,26 @@
                         Adicione informacoes sobre este contato para gerar um resumo mais completo e util.
                     </p>
 
+                    <!-- Nome e Contexto -->
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-8">
+                            <label class="form-label fw-semibold">
+                                <i class="bi bi-person me-1"></i> Nome Completo
+                            </label>
+                            <input type="text" class="form-control" id="enrichNome"
+                                placeholder="Nome completo da pessoa">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">
+                                <i class="bi bi-tag me-1"></i> Contexto
+                            </label>
+                            <select class="form-select" id="enrichContexto">
+                                <option value="professional">Profissional</option>
+                                <option value="personal">Pessoal</option>
+                            </select>
+                        </div>
+                    </div>
+
                     <div class="mb-4">
                         <label class="form-label fw-semibold">
                             <i class="bi bi-people me-1"></i> Como voce conhece esta pessoa?
@@ -1130,7 +1150,7 @@
                                 <div class="card-body">
                                     ${facts && facts.length > 0 ? `
                                         <ul class="list-unstyled mb-0" style="font-size: 0.9rem;">
-                                            ${facts.slice(0, 5).map(f => `<li class="mb-2"><i class="bi bi-dot"></i> ${f.content || f}</li>`).join('')}
+                                            ${facts.slice(0, 5).map(f => `<li class="mb-2"><i class="bi bi-dot"></i> ${f.fato || f.content || (typeof f === 'string' ? f : 'Fato sem descricao')}</li>`).join('')}
                                         </ul>
                                     ` : `
                                         <div class="text-center text-muted py-2">
@@ -1629,6 +1649,8 @@
             // Preencher modal com dados existentes do contato
             if (contactData && contactData.contact) {
                 const c = contactData.contact;
+                document.getElementById('enrichNome').value = c.nome || '';
+                document.getElementById('enrichContexto').value = c.contexto || 'professional';
                 document.getElementById('enrichRelationshipContext').value = c.relationship_context || '';
                 document.getElementById('enrichLinkedIn').value = c.linkedin || '';
                 document.getElementById('enrichCompanyWebsite').value = c.company_website || '';
@@ -1644,6 +1666,8 @@
 
         async function saveEnrichmentDataOnly() {
             const data = {
+                nome: document.getElementById('enrichNome').value,
+                contexto: document.getElementById('enrichContexto').value,
                 relationship_context: document.getElementById('enrichRelationshipContext').value,
                 linkedin_url: document.getElementById('enrichLinkedIn').value,
                 company_website: document.getElementById('enrichCompanyWebsite').value,
@@ -1681,6 +1705,8 @@
             btn.disabled = true;
 
             const data = {
+                nome: document.getElementById('enrichNome').value,
+                contexto: document.getElementById('enrichContexto').value,
                 relationship_context: document.getElementById('enrichRelationshipContext').value,
                 linkedin_url: document.getElementById('enrichLinkedIn').value,
                 company_website: document.getElementById('enrichCompanyWebsite').value,
