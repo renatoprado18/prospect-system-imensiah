@@ -20,7 +20,7 @@ Feedback do usuario sobre UX:
 ## Tasks
 
 ### Task 1: Tornar Badges Clicaveis no Morning Briefing
-**Status**: [ ] Pendente
+**Status**: [x] CONCLUIDO - Commit b0ea66a
 **Arquivo**: `app/templates/rap_dashboard.html`
 
 **Problema**:
@@ -42,7 +42,7 @@ Feedback do usuario sobre UX:
 ---
 
 ### Task 2: Tornar Stat Cards Clicaveis
-**Status**: [ ] Pendente
+**Status**: [x] CONCLUIDO - Commit b0ea66a
 **Arquivo**: `app/templates/rap_dashboard.html`
 
 **Problema**:
@@ -137,7 +137,7 @@ Feedback do usuario sobre UX:
 ---
 
 ### Task 6: Tooltip para Health Score
-**Status**: [ ] Pendente
+**Status**: [x] CONCLUIDO - Commit b0ea66a
 **Arquivo**: `app/templates/rap_dashboard.html`, `app/templates/rap_contact_detail.html`
 
 **Problema**:
