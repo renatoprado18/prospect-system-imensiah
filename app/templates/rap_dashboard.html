@@ -583,10 +583,48 @@
             border-radius: 20px;
             font-size: 0.85rem;
             font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .briefing-stat:hover {
+            transform: scale(1.05);
+            background: rgba(255,255,255,0.25);
         }
 
         .briefing-stat i {
             font-size: 1rem;
+        }
+
+        /* Tooltip for briefing stats */
+        .briefing-stat[data-tooltip]:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.9);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            max-width: 220px;
+            white-space: normal;
+            text-align: center;
+            z-index: 100;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            line-height: 1.4;
+        }
+
+        .briefing-stat[data-tooltip]:hover::before {
+            content: '';
+            position: absolute;
+            bottom: calc(100% + 2px);
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: rgba(0,0,0,0.9);
         }
 
         .morning-briefing-focus {
@@ -1377,9 +1415,9 @@
             </div>
         </div>
 
-        <!-- Stats -->
+        <!-- Stats - All clickable -->
         <div class="stats-grid">
-            <div class="stat-card">
+            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/contatos'">
                 <div class="stat-icon contacts"><i class="bi bi-people"></i></div>
                 <div class="stat-value" id="statContacts">-</div>
                 <div class="stat-label">Contatos</div>
@@ -1391,7 +1429,7 @@
                 </div>
                 <div class="stat-label">Circulos</div>
             </div>
-            <div class="stat-card" style="border-left: 3px solid var(--warning);">
+            <div class="stat-card" style="cursor: pointer; border-left: 3px solid var(--warning);" onclick="window.location.href='/contatos?filter=needs_attention'">
                 <div class="stat-icon" style="background: rgba(245, 158, 11, 0.1); color: var(--warning);"><i class="bi bi-exclamation-triangle"></i></div>
                 <div class="stat-value" id="statAtencao">-</div>
                 <div class="stat-label">Precisam Atencao</div>
@@ -2494,16 +2532,16 @@
                 }
                 summaryEl.textContent = summaryText;
 
-                // Stats badges
+                // Stats badges - now clickable with tooltips
                 let statsHtml = '';
                 if (reunioesHoje > 0) {
-                    statsHtml += `<div class="briefing-stat"><i class="bi bi-calendar-event"></i> ${reunioesHoje} reuniao${reunioesHoje > 1 ? 'oes' : ''}</div>`;
+                    statsHtml += `<div class="briefing-stat" onclick="window.location.href='/calendario'" data-tooltip="Ver agenda de hoje"><i class="bi bi-calendar-event"></i> ${reunioesHoje} reuniao${reunioesHoje > 1 ? 'oes' : ''}</div>`;
                 }
                 if (aniversariosHoje.length > 0) {
-                    statsHtml += `<div class="briefing-stat"><i class="bi bi-cake2"></i> ${aniversariosHoje.length} aniversario${aniversariosHoje.length > 1 ? 's' : ''}</div>`;
+                    statsHtml += `<div class="briefing-stat" onclick="window.location.href='/circulos'" data-tooltip="Ver aniversariantes"><i class="bi bi-cake2"></i> ${aniversariosHoje.length} aniversario${aniversariosHoje.length > 1 ? 's' : ''}</div>`;
                 }
                 if (precisamAtencao > 0) {
-                    statsHtml += `<div class="briefing-stat"><i class="bi bi-exclamation-circle"></i> ${precisamAtencao} precisam atencao</div>`;
+                    statsHtml += `<div class="briefing-stat" onclick="window.location.href='/contatos?filter=needs_attention'" data-tooltip="Ver contatos que precisam de atencao"><i class="bi bi-exclamation-circle"></i> ${precisamAtencao} precisam atencao</div>`;
                 }
 
                 // Health medio
@@ -2519,7 +2557,8 @@
                 const avgHealth = countHealth > 0 ? Math.round(totalHealth / countHealth) : null;
                 if (avgHealth) {
                     const healthColor = avgHealth >= 70 ? '#10b981' : (avgHealth >= 40 ? '#f59e0b' : '#ef4444');
-                    statsHtml += `<div class="briefing-stat" style="background: ${healthColor}33;"><i class="bi bi-heart-pulse"></i> Health ${avgHealth}%</div>`;
+                    const healthTooltip = 'Health Score medio dos seus contatos prioritarios. Baseado em frequencia de contato e interacoes.';
+                    statsHtml += `<div class="briefing-stat" onclick="window.location.href='/analytics'" style="background: ${healthColor}33;" data-tooltip="${healthTooltip}"><i class="bi bi-heart-pulse"></i> Health ${avgHealth}%</div>`;
                 }
 
                 statsEl.innerHTML = statsHtml || '<div class="briefing-stat"><i class="bi bi-check-circle"></i> Tudo em dia!</div>';
