@@ -25,14 +25,16 @@ class GmailIntegration:
     # Gmail API endpoints
     GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
 
-    # OAuth scopes for Gmail
+    # OAuth scopes for Gmail + Calendar + Tasks
     SCOPES = [
         "openid",
         "email",
         "profile",
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/gmail.send",
-        "https://www.googleapis.com/auth/gmail.modify"
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/tasks.readonly"
     ]
 
     def __init__(self):

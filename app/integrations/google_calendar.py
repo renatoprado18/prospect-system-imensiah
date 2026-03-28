@@ -74,19 +74,28 @@ class GoogleCalendarIntegration:
                 return {"error": str(e)}
 
     async def get_today_events(self, access_token: str) -> List[Dict[str, Any]]:
-        """Retorna eventos de hoje para o dashboard."""
-        now = datetime.utcnow()
-        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_of_day = start_of_day + timedelta(days=1)
+        """Retorna eventos de hoje para o dashboard (timezone America/Sao_Paulo)."""
+        from zoneinfo import ZoneInfo
+
+        # Usar timezone de São Paulo para definir "hoje"
+        sp_tz = ZoneInfo("America/Sao_Paulo")
+        now_sp = datetime.now(sp_tz)
+        start_of_day_sp = now_sp.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day_sp = start_of_day_sp + timedelta(days=1)
+
+        # Converter para UTC para a API
+        start_of_day_utc = start_of_day_sp.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+        end_of_day_utc = end_of_day_sp.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
 
         result = await self.list_events(
             access_token=access_token,
-            time_min=start_of_day,
-            time_max=end_of_day,
+            time_min=start_of_day_utc,
+            time_max=end_of_day_utc,
             max_results=20
         )
 
         if "error" in result:
+            logger.error(f"Erro ao buscar eventos de hoje: {result.get('error')}")
             return []
 
         events = result.get("items", [])
