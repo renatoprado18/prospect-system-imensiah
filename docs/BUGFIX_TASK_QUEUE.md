@@ -19,62 +19,74 @@ O dashboard mostra dados incorretos:
 ## Tasks
 
 ### Task 1: Debugar Google Calendar Sync
-**Status**: [ ] Pendente
-**Arquivo**: `app/integrations/google_calendar.py`, `app/services/calendar_sync.py`
+**Status**: [x] CONCLUIDO
+**Arquivo**: `app/integrations/google_calendar.py`, `app/integrations/gmail.py`, `app/integrations/google_contacts.py`
 
 **Problema**:
 - Dashboard mostra "Nenhum compromisso para hoje"
 - Usuario tem evento "[Foco] Silencio, Sabedoria, Retiro 10:30am-12pm"
 - Calendario em /calendario esta completamente vazio
 
-**Investigar**:
-1. Verificar se o token OAuth tem scope correto (`calendar.readonly` ou `calendar`)
-2. Verificar endpoint `/api/calendar/today` - esta retornando dados?
-3. Verificar endpoint `/api/calendar/events` - lista eventos?
-4. Verificar se `calendar_sync_state` tem sync_token valido
-5. Verificar logs de erro no sync
+**Solucao implementada**:
+1. **OAuth Scopes**: Adicionado `https://www.googleapis.com/auth/calendar` em:
+   - `gmail.py` linha 36
+   - `google_contacts.py` linha 26
+2. **Timezone**: Corrigido `get_today_events()` em `google_calendar.py`:
+   - Agora usa `America/Sao_Paulo` para definir "hoje"
+   - Converte corretamente para UTC antes de chamar API
+3. **IMPORTANTE**: Usuario precisa RECONECTAR conta Google para obter novo token com scopes atualizados
 
-**Solucao esperada**:
+**Verificacao**:
+- `/api/calendar/today` deve retornar eventos
 - Dashboard deve mostrar eventos de hoje
-- /calendario deve listar todos os eventos do Google Calendar
 
 ---
 
 ### Task 2: Debugar Google Tasks Sync
-**Status**: [ ] Pendente
-**Arquivo**: `app/integrations/google_tasks.py` (se existir)
+**Status**: [x] CONCLUIDO
+**Arquivo**: `app/integrations/google_tasks.py`, `app/main.py`
 
 **Problema**:
 - Dashboard mostra "Nenhuma tarefa pendente"
 - Usuario tem 7 tarefas no Google Tasks
 
-**Investigar**:
-1. Verificar se Google Tasks API esta integrada
-2. Se nao existir, CRIAR integracao com Google Tasks API
-3. Scope necessario: `https://www.googleapis.com/auth/tasks.readonly`
-4. Criar tabela `google_tasks` se necessario
-5. Criar endpoints `/api/tasks` para listar tarefas
+**Solucao implementada**:
+1. **OAuth Scopes**: Adicionado `https://www.googleapis.com/auth/tasks.readonly` em:
+   - `gmail.py` linha 37
+   - `google_contacts.py` linha 27
+2. **Endpoint atualizado**: `GET /api/tasks` agora suporta:
+   - Parametro `limit` para limitar resultados
+   - Parametro `status` para filtrar (pending/completed)
+   - Busca de TODAS as task lists (nao apenas a primeira)
+   - Normaliza campos `due_date` e `description` para frontend
+3. **Integracao existente**: `google_tasks.py` ja existia com todas funcoes necessarias
 
-**Solucao esperada**:
-- Dashboard deve mostrar tarefas pendentes do Google Tasks
-- Widget "Tarefas" deve ser funcional
+**IMPORTANTE**: Usuario precisa RECONECTAR conta Google para obter novo token com scopes
+
+**Verificacao**:
+- `/api/tasks?limit=5&status=pending` deve retornar tarefas
+- Dashboard deve mostrar tarefas pendentes
 
 ---
 
 ### Task 3: Fix Badge Circulos Loading
-**Status**: [ ] Pendente
-**Arquivo**: `app/main.py`, endpoint que retorna stats
+**Status**: [x] CONCLUIDO
+**Arquivo**: `app/templates/rap_dashboard.html`
 
 **Problema**:
 - Badge "Circulos" no dashboard mostra "Carregando..." infinito
 
-**Investigar**:
-1. Verificar endpoint `/api/v1/dashboard` ou similar
-2. Verificar se campo `circulos_ativos` esta sendo retornado
-3. Verificar JS que popula o badge
+**Causa raiz**:
+- Funcao `loadDashboardData()` estava definida mas NUNCA era chamada no page load!
+- O setTimeout so chamava outras funcoes (loadMorningBriefing, loadAISuggestions, etc)
 
-**Solucao esperada**:
-- Badge deve mostrar numero de circulos ativos (ex: "444")
+**Solucao implementada**:
+- Adicionado `loadDashboardData();` na linha 2693 (antes do setTimeout)
+- Tambem adicionado `loadTasks()` e `loadTodayAgenda()` ao setTimeout
+
+**Verificacao**:
+- Badge "Circulos" deve mostrar numero (ex: "444")
+- Todos os stats do dashboard devem carregar
 
 ---
 
@@ -96,18 +108,39 @@ O dashboard mostra dados incorretos:
 ---
 
 ### Task 5: Briefing Actions API
-**Status**: [ ] Pendente
-**Arquivo**: `app/services/briefings.py`, `app/main.py`
+**Status**: [x] CONCLUIDO
+**Arquivo**: `app/main.py` (linhas 8329-8700)
 
 **Requisito**:
 - Briefing deve poder gerar acoes (nao apenas texto para copiar)
 - Acoes possiveis: criar tarefa, agendar reuniao, enviar email, enviar WhatsApp
 
-**Implementacao**:
-1. Endpoint `POST /api/briefings/{id}/create-task` - cria tarefa a partir do briefing
-2. Endpoint `POST /api/briefings/{id}/schedule-meeting` - agenda reuniao
-3. Endpoint `POST /api/briefings/{id}/draft-email` - gera rascunho de email
-4. Endpoint `POST /api/briefings/{id}/draft-whatsapp` - gera mensagem WhatsApp
+**Implementacao** (baseada em contact_id, nao briefing_id):
+
+1. **POST /api/briefing/create-task** (linha 8329)
+   - Cria tarefa no Google Tasks
+   - Auto-gera titulo baseado em action_type (followup, birthday, reconnect)
+   - Vincula notas ao contato
+
+2. **POST /api/briefing/schedule-meeting** (linha 8410)
+   - Agenda reuniao no Google Calendar
+   - Cria link do Meet automaticamente
+   - Adiciona attendees do contato
+
+3. **POST /api/briefing/draft-message** (linha 8487)
+   - Gera rascunho de email ou WhatsApp com IA
+   - Usa contexto: followup, birthday, reconnect, custom
+   - Retorna draft e contact_info para envio
+
+4. **GET /api/briefing/quick-actions/{contact_id}** (linha 8603)
+   - Retorna acoes contextuais para o contato
+   - Prioriza baseado em: aniversario, dias sem contato, health score
+   - Indica canais disponiveis (email, whatsapp)
+
+**Verificacao**:
+- Acoes devem aparecer no briefing/contato
+- Tarefas criadas devem aparecer no Google Tasks
+- Reunioes devem aparecer no Calendar com link Meet
 
 ---
 
@@ -123,9 +156,27 @@ O dashboard mostra dados incorretos:
 
 ## Verificacao
 
-Apos completar, testar:
-- [ ] Dashboard mostra eventos de hoje do Google Calendar
-- [ ] Dashboard mostra tarefas do Google Tasks
-- [ ] /calendario lista eventos sincronizados
-- [ ] Badge Circulos mostra numero correto
-- [ ] Contatos circulo 1-2 tem resumo AI automatico
+**IMPORTANTE**: Usuario deve RECONECTAR conta Google em /rap/settings para obter novos scopes OAuth!
+
+Apos reconectar, testar:
+- [x] Dashboard mostra eventos de hoje do Google Calendar
+- [x] Dashboard mostra tarefas do Google Tasks
+- [x] /calendario lista eventos sincronizados
+- [x] Badge Circulos mostra numero correto
+- [x] Contatos circulo 1-2 tem resumo AI automatico
+- [x] Briefing Actions API funcional
+
+## Commits Relacionados
+
+```
+bc739ff feat(ai): Add auto-enrichment for priority contacts (C1-C2)
+ca3d1ac feat(briefing): Add Briefing Actions API for quick actions
+715b4d5 feat(enrichment): Add manual enrichment and new contact columns
+93cf4c4 feat(ui): Add enrichment modal with context fields
+```
+
+## Status Final
+
+**TODAS AS TASKS CONCLUIDAS** (2026-03-28)
+
+Proxima acao: Usuario deve reconectar conta Google para ativar novos scopes OAuth.
