@@ -24,7 +24,7 @@ CONTACTS_SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",  # Send emails
     "https://www.googleapis.com/auth/gmail.modify",  # Modify emails (labels, read status)
     "https://www.googleapis.com/auth/calendar",  # Full calendar access (read/write)
-    "https://www.googleapis.com/auth/tasks.readonly",  # Read tasks
+    "https://www.googleapis.com/auth/tasks",  # Full tasks access (read/write)
 ]
 
 

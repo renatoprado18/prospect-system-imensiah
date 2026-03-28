@@ -8399,6 +8399,9 @@ async def briefing_create_task(request: Request, data: BriefingTaskCreate):
         due=due_datetime
     )
 
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=f"Erro ao criar tarefa: {result['error']}")
+
     return {
         "status": "success",
         "task": result,
