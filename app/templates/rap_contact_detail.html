@@ -1625,12 +1625,112 @@
             return html;
         }
 
-        async function enrichContact() {
+        function enrichContact() {
+            // Preencher modal com dados existentes do contato
+            if (contactData && contactData.contact) {
+                const c = contactData.contact;
+                document.getElementById('enrichRelationshipContext').value = c.relationship_context || '';
+                document.getElementById('enrichLinkedIn').value = c.linkedin || '';
+                document.getElementById('enrichCompanyWebsite').value = c.company_website || '';
+                document.getElementById('enrichEmpresa').value = c.empresa || '';
+                document.getElementById('enrichCargo').value = c.cargo || '';
+                document.getElementById('enrichNotes').value = c.manual_notes || '';
+            }
+
+            // Abrir modal de enriquecimento
+            const modal = new bootstrap.Modal(document.getElementById('enrichmentModal'));
+            modal.show();
+        }
+
+        async function saveEnrichmentDataOnly() {
+            const data = {
+                relationship_context: document.getElementById('enrichRelationshipContext').value,
+                linkedin_url: document.getElementById('enrichLinkedIn').value,
+                company_website: document.getElementById('enrichCompanyWebsite').value,
+                empresa: document.getElementById('enrichEmpresa').value,
+                cargo: document.getElementById('enrichCargo').value,
+                manual_notes: document.getElementById('enrichNotes').value
+            };
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/enrichment-data`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showNotification('Dados salvos com sucesso!', 'success');
+                    bootstrap.Modal.getInstance(document.getElementById('enrichmentModal')).hide();
+                    setTimeout(() => window.location.reload(), 1000);
+                } else {
+                    showNotification('Erro: ' + (result.error || 'Falha ao salvar'), 'error');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showNotification('Erro ao conectar com servidor', 'error');
+            }
+        }
+
+        async function enrichWithContext() {
+            const btn = document.getElementById('enrichWithContextBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="bi bi-hourglass-split spinning"></i> Enriquecendo...';
+            btn.disabled = true;
+
+            const data = {
+                relationship_context: document.getElementById('enrichRelationshipContext').value,
+                linkedin_url: document.getElementById('enrichLinkedIn').value,
+                company_website: document.getElementById('enrichCompanyWebsite').value,
+                empresa: document.getElementById('enrichEmpresa').value,
+                cargo: document.getElementById('enrichCargo').value,
+                manual_notes: document.getElementById('enrichNotes').value
+            };
+
+            try {
+                // Primeiro salvar os dados
+                await fetch(`/api/contacts/${contactId}/enrichment-data`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                // Depois enriquecer com contexto
+                const response = await fetch(`/api/contacts/${contactId}/enrich-with-context`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ relationship_context: data.relationship_context })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    showNotification('Enriquecimento concluido com sucesso!', 'success');
+                    bootstrap.Modal.getInstance(document.getElementById('enrichmentModal')).hide();
+                    setTimeout(() => window.location.reload(), 1500);
+                } else {
+                    showNotification('Erro: ' + (result.error || 'Falha no enriquecimento'), 'error');
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showNotification('Erro ao conectar com servidor', 'error');
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        // Funcao antiga mantida para compatibilidade
+        async function enrichContactDirect() {
             const enrichBadge = document.querySelector('.enrich-badge');
+            if (!enrichBadge) return;
+
             const originalContent = enrichBadge.innerHTML;
 
             try {
-                // Show loading state
                 enrichBadge.innerHTML = '<i class="bi bi-hourglass-split spinning"></i>';
                 enrichBadge.style.pointerEvents = 'none';
 
@@ -1641,18 +1741,15 @@
                 const result = await response.json();
 
                 if (result.status === 'success') {
-                    // Update the page with new data
                     contactData.contact.resumo_ai = result.resumo;
                     contactData.contact.insights_ai = result.insights;
 
-                    // Show success notification
-                    let msg = 'Enriquecimento concluído!';
+                    let msg = 'Enriquecimento concluido!';
                     if (result.save_stats && result.save_stats.facts_added > 0) {
-                        msg += ` ${result.save_stats.facts_added} novos fatos extraídos.`;
+                        msg += ` ${result.save_stats.facts_added} novos fatos extraidos.`;
                     }
                     showNotification(msg, 'success');
 
-                    // Reload to show updated data
                     setTimeout(() => {
                         window.location.reload();
                     }, 1500);
