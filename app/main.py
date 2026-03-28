@@ -5806,9 +5806,19 @@ from integrations.google_tasks import get_tasks_integration
 
 
 @app.get("/api/tasks")
-async def list_tasks(request: Request, show_completed: bool = False):
+async def list_tasks(
+    request: Request,
+    show_completed: bool = False,
+    limit: int = 20,
+    status: str = None  # 'pending', 'completed', or None for all
+):
     """
     Lista tarefas do Google Tasks.
+
+    Params:
+        show_completed: Include completed tasks
+        limit: Max number of tasks to return
+        status: Filter by status ('pending' or 'completed')
     """
     user = get_current_user(request)
     if not user:
@@ -5831,9 +5841,49 @@ async def list_tasks(request: Request, show_completed: bool = False):
 
     access_token = tokens.get("access_token")
     tasks_api = get_tasks_integration()
-    tasks = await tasks_api.list_tasks(access_token, show_completed=show_completed)
 
-    return {"tasks": tasks}
+    # If status=pending, don't show completed
+    include_completed = show_completed or (status == "completed")
+
+    # Fetch from all task lists
+    all_tasks = []
+    task_lists = await tasks_api.list_task_lists(access_token)
+
+    if not task_lists:
+        task_lists = [{"id": "@default", "title": "Minhas tarefas"}]
+
+    for tl in task_lists:
+        tasks = await tasks_api.list_tasks(
+            access_token,
+            tasklist_id=tl.get("id", "@default"),
+            show_completed=include_completed
+        )
+        for task in tasks:
+            task["tasklist_title"] = tl.get("title", "Tarefas")
+            # Normalize field names for frontend compatibility
+            task["due_date"] = task.get("due")
+            task["description"] = task.get("notes")
+            all_tasks.append(task)
+
+    # Filter by status if specified
+    if status == "pending":
+        all_tasks = [t for t in all_tasks if t.get("status") != "completed"]
+    elif status == "completed":
+        all_tasks = [t for t in all_tasks if t.get("status") == "completed"]
+
+    # Sort by due date (tasks without due date at the end)
+    def sort_key(task):
+        due = task.get("due_date") or task.get("due")
+        if due:
+            return (0, due)
+        return (1, "9999-12-31")
+
+    all_tasks.sort(key=sort_key)
+
+    # Apply limit
+    all_tasks = all_tasks[:limit]
+
+    return {"tasks": all_tasks}
 
 
 @app.post("/api/tasks")
