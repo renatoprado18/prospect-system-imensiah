@@ -2689,13 +2689,18 @@
             }
         }
 
-        // Load AI features on page load
+        // Load all dashboard data on page load
+        loadDashboardData();  // Stats, circulos, alertas
+
+        // Load AI features and data after short delay
         setTimeout(() => {
             loadMorningBriefing();
             loadAISuggestions();
             loadContactToday();
             loadMeetingSuggestions();
             loadConselhoOSWidget();
+            loadTasks();
+            loadTodayAgenda();
         }, 500);
     </script>
 
