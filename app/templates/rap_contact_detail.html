@@ -922,8 +922,28 @@
                             <label class="form-label fw-semibold">
                                 <i class="bi bi-globe me-1"></i> Website da Empresa
                             </label>
-                            <input type="url" class="form-control" id="enrichCompanyWebsite"
-                                placeholder="https://empresa.com.br">
+                            <div class="input-group">
+                                <input type="url" class="form-control" id="enrichCompanyWebsite"
+                                    placeholder="https://empresa.com.br">
+                                <button type="button" class="btn btn-outline-primary" id="webSearchBtn" onclick="searchCompanyOnWeb()" title="Buscar informacoes da empresa na web">
+                                    <i class="bi bi-search"></i> Buscar
+                                </button>
+                            </div>
+                            <small class="text-muted">Deixe vazio para usar o dominio do email corporativo</small>
+                        </div>
+                    </div>
+
+                    <!-- Web Search Results -->
+                    <div class="row g-3 mb-4" id="webSearchResultsContainer" style="display: none;">
+                        <div class="col-12">
+                            <div class="alert alert-info" id="webSearchResults">
+                                <h6 class="alert-heading"><i class="bi bi-info-circle me-1"></i> Informacoes da Empresa</h6>
+                                <div id="webSearchContent"></div>
+                                <hr>
+                                <button type="button" class="btn btn-sm btn-primary" onclick="applyWebSearchResults()">
+                                    <i class="bi bi-check-lg me-1"></i> Aplicar Dados
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -1747,6 +1767,111 @@
                 btn.innerHTML = originalText;
                 btn.disabled = false;
             }
+        }
+
+        // Web Search Functions
+        let webSearchData = null;
+
+        async function searchCompanyOnWeb() {
+            const btn = document.getElementById('webSearchBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="bi bi-hourglass-split spinning"></i>';
+            btn.disabled = true;
+
+            // Primeiro salvar o website se foi preenchido
+            const websiteUrl = document.getElementById('enrichCompanyWebsite').value;
+            if (websiteUrl) {
+                await fetch(`/api/contacts/${contactId}/enrichment-data`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ company_website: websiteUrl })
+                });
+            }
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/web-search-company`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success' && result.company_info) {
+                    webSearchData = result.company_info;
+                    displayWebSearchResults(result.company_info);
+                    showNotification('Informacoes da empresa encontradas!', 'success');
+                } else if (result.status === 'partial') {
+                    webSearchData = result;
+                    displayWebSearchResults(result);
+                    showNotification('Informacoes parciais encontradas', 'info');
+                } else {
+                    showNotification('Erro: ' + (result.error || 'Nenhuma informacao encontrada'), 'error');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showNotification('Erro ao buscar informacoes', 'error');
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        function displayWebSearchResults(info) {
+            const container = document.getElementById('webSearchResultsContainer');
+            const content = document.getElementById('webSearchContent');
+
+            let html = '<dl class="row mb-0">';
+
+            if (info.nome_empresa) {
+                html += `<dt class="col-sm-4">Empresa:</dt><dd class="col-sm-8"><strong>${info.nome_empresa}</strong></dd>`;
+            }
+            if (info.descricao) {
+                html += `<dt class="col-sm-4">Descricao:</dt><dd class="col-sm-8">${info.descricao}</dd>`;
+            }
+            if (info.setor) {
+                html += `<dt class="col-sm-4">Setor:</dt><dd class="col-sm-8">${info.setor}</dd>`;
+            }
+            if (info.localizacao) {
+                html += `<dt class="col-sm-4">Localizacao:</dt><dd class="col-sm-8">${info.localizacao}</dd>`;
+            }
+            if (info.tamanho) {
+                html += `<dt class="col-sm-4">Tamanho:</dt><dd class="col-sm-8">${info.tamanho}</dd>`;
+            }
+            if (info.potencial_governanca) {
+                const badge = info.potencial_governanca === 'alto' ? 'success' :
+                              info.potencial_governanca === 'medio' ? 'warning' : 'secondary';
+                html += `<dt class="col-sm-4">Potencial:</dt><dd class="col-sm-8"><span class="badge bg-${badge}">${info.potencial_governanca}</span></dd>`;
+            }
+            if (info.palavras_chave && info.palavras_chave.length > 0) {
+                const tags = info.palavras_chave.map(k => `<span class="badge bg-light text-dark me-1">${k}</span>`).join('');
+                html += `<dt class="col-sm-4">Tags:</dt><dd class="col-sm-8">${tags}</dd>`;
+            }
+            if (info.source_url) {
+                html += `<dt class="col-sm-4">Fonte:</dt><dd class="col-sm-8"><a href="${info.source_url}" target="_blank">${info.source_url}</a></dd>`;
+            }
+
+            html += '</dl>';
+
+            content.innerHTML = html;
+            container.style.display = 'block';
+        }
+
+        function applyWebSearchResults() {
+            if (!webSearchData) return;
+
+            if (webSearchData.nome_empresa) {
+                const empresaField = document.getElementById('enrichEmpresa');
+                if (!empresaField.value) {
+                    empresaField.value = webSearchData.nome_empresa;
+                }
+            }
+            if (webSearchData.source_url) {
+                const websiteField = document.getElementById('enrichCompanyWebsite');
+                if (!websiteField.value) {
+                    websiteField.value = webSearchData.source_url;
+                }
+            }
+
+            showNotification('Dados aplicados ao formulario', 'success');
         }
 
         // Funcao antiga mantida para compatibilidade

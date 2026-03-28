@@ -79,18 +79,19 @@ O dashboard mostra dados incorretos:
 ---
 
 ### Task 4: AI Auto-Enrich para Circulos 1 e 2
-**Status**: [ ] Pendente
-**Arquivo**: `app/services/ai_agent.py`, `app/main.py`
+**Status**: [x] CONCLUIDO - Implementado em contact_enrichment.py
+**Arquivo**: `app/services/contact_enrichment.py`, `app/main.py`
 
-**Requisito**:
-- Contatos nos circulos 1 (Intimo) e 2 (Proximo) devem ser automaticamente enriquecidos com AI
-- Quando um contato entra no circulo 1 ou 2, trigger enriquecimento automatico
-- Gerar: resumo_ai, insights_ai, fatos importantes
-
-**Implementacao**:
-1. Criar funcao `auto_enrich_priority_contacts()`
-2. Chamar apos sync de contatos ou mudanca de circulo
-3. Ou criar cron job para enriquecer contatos prioritarios
+**Implementado**:
+- `auto_enrich_priority_contacts()` em contact_enrichment.py
+- Endpoint `POST /api/contacts/auto-enrich-priority`
+- Enriquece contatos circulo 1-2 que nao tem resumo_ai ou tem resumo antigo (>30 dias)
+- Tambem implementado:
+  - `update_manual_enrichment()` - atualiza dados manuais (nome, contexto, linkedin, empresa, etc)
+  - `enrich_with_context()` - enriquece usando contexto do relacionamento
+  - `search_company_info()` - busca info da empresa na web
+  - `enrich_contact_with_web_search()` - enriquece usando web search
+- UI: Modal de enriquecimento na pagina de contato com campos manuais + botao "Buscar" para empresa
 
 ---
 

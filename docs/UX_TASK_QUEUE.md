@@ -58,10 +58,15 @@ Feedback do usuario sobre UX:
 ---
 
 ### Task 3: Redesign Pagina de Contato
-**Status**: [x] CONCLUIDO - Commit 5f181df
+**Status**: [x] CONCLUIDO - Commit 5f181df + Enrichment Modal
 **Arquivo**: `app/templates/rap_contact_detail.html`
 
-**Problema**:
+**Adicoes Posteriores (3MAIN)**:
+- Modal de enriquecimento com campos manuais (nome, contexto, linkedin, empresa)
+- Botao "Buscar" para pesquisar info da empresa na web automaticamente
+- Selecao de contexto (Profissional/Pessoal)
+
+**Problema Original**:
 - Pagina muito longa
 - Muitas secoes vazias (Timeline, Resumo IA, Reunioes, Fatos)
 - UI confusa

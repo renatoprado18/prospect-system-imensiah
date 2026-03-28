@@ -744,6 +744,271 @@ Responda APENAS com JSON valido:
         }
 
 
+# ============================================================
+# WEB SEARCH - Buscar informacoes da empresa na web
+# ============================================================
+
+async def search_company_info(
+    company_name: str = None,
+    domain: str = None,
+    website_url: str = None
+) -> Dict[str, Any]:
+    """
+    Busca informacoes da empresa na web.
+
+    Estrategia:
+    1. Se tiver website_url, busca metadados da pagina
+    2. Se tiver domain (do email), tenta acessar www.domain
+    3. Usa AI para extrair informacoes do conteudo
+    """
+    if not ANTHROPIC_API_KEY:
+        return {"status": "error", "error": "ANTHROPIC_API_KEY not configured"}
+
+    url_to_fetch = None
+
+    if website_url:
+        url_to_fetch = website_url if website_url.startswith('http') else f"https://{website_url}"
+    elif domain:
+        # Ignorar dominios pessoais
+        personal_domains = [
+            'gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com',
+            'icloud.com', 'live.com', 'msn.com', 'uol.com.br',
+            'bol.com.br', 'terra.com.br', 'ig.com.br', 'globo.com'
+        ]
+        if domain.lower() not in personal_domains:
+            url_to_fetch = f"https://www.{domain}"
+
+    if not url_to_fetch:
+        return {"status": "error", "error": "No URL to fetch"}
+
+    # Buscar conteudo da pagina
+    page_content = ""
+    page_title = ""
+    page_description = ""
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            response = await client.get(
+                url_to_fetch,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                }
+            )
+
+            if response.status_code == 200:
+                html = response.text
+
+                # Extrair title
+                import re
+                title_match = re.search(r'<title[^>]*>([^<]+)</title>', html, re.IGNORECASE)
+                if title_match:
+                    page_title = title_match.group(1).strip()
+
+                # Extrair meta description
+                desc_match = re.search(
+                    r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
+                    html, re.IGNORECASE
+                )
+                if not desc_match:
+                    desc_match = re.search(
+                        r'<meta[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']description["\']',
+                        html, re.IGNORECASE
+                    )
+                if desc_match:
+                    page_description = desc_match.group(1).strip()
+
+                # Extrair texto limpo (primeiros 5000 chars)
+                # Remover scripts, styles, etc
+                clean_html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+                clean_html = re.sub(r'<style[^>]*>.*?</style>', '', clean_html, flags=re.DOTALL | re.IGNORECASE)
+                clean_html = re.sub(r'<[^>]+>', ' ', clean_html)
+                clean_html = re.sub(r'\s+', ' ', clean_html)
+                page_content = clean_html[:5000].strip()
+            else:
+                return {
+                    "status": "error",
+                    "error": f"Failed to fetch {url_to_fetch}: HTTP {response.status_code}"
+                }
+
+    except Exception as e:
+        return {"status": "error", "error": f"Failed to fetch website: {str(e)}"}
+
+    # Se nao tem conteudo, retornar erro
+    if not page_content and not page_title:
+        return {"status": "error", "error": "No content found on page"}
+
+    # Usar AI para extrair informacoes estruturadas
+    prompt = f"""Analise o conteudo deste website empresarial e extraia informacoes da empresa.
+
+URL: {url_to_fetch}
+Titulo: {page_title}
+Descricao: {page_description}
+
+Conteudo da pagina:
+{page_content[:3000]}
+
+Extraia as seguintes informacoes (se disponiveis):
+
+1. **nome_empresa**: Nome oficial da empresa
+2. **descricao**: O que a empresa faz (1-2 frases)
+3. **setor**: Setor de atuacao (tech, financas, saude, etc)
+4. **tamanho**: Se mencionado (startup, PME, grande empresa)
+5. **localizacao**: Cidade/Pais da sede
+6. **fundacao**: Ano de fundacao se mencionado
+7. **palavras_chave**: Lista de 3-5 palavras-chave do negocio
+8. **potencial_governanca**: "alto", "medio", "baixo" - se a empresa parece precisar de servicos de governanca/conselho
+
+Responda APENAS com JSON valido:
+{{
+    "nome_empresa": "...",
+    "descricao": "...",
+    "setor": "...",
+    "tamanho": "...",
+    "localizacao": "...",
+    "fundacao": "...",
+    "palavras_chave": [...],
+    "potencial_governanca": "..."
+}}
+
+Se alguma informacao nao estiver disponivel, use null.
+"""
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": CLAUDE_MODEL,
+                    "max_tokens": 500,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ]
+                }
+            )
+
+            if response.status_code != 200:
+                return {"status": "error", "error": f"AI API error: {response.status_code}"}
+
+            result = response.json()
+            content = result.get("content", [{}])[0].get("text", "")
+
+            # Parse JSON
+            content = content.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+
+            company_info = json.loads(content)
+            company_info["status"] = "success"
+            company_info["source_url"] = url_to_fetch
+            company_info["page_title"] = page_title
+
+            return company_info
+
+    except json.JSONDecodeError:
+        return {
+            "status": "partial",
+            "page_title": page_title,
+            "page_description": page_description,
+            "source_url": url_to_fetch
+        }
+    except Exception as e:
+        return {"status": "error", "error": f"AI extraction failed: {str(e)}"}
+
+
+async def enrich_contact_with_web_search(
+    contact_id: int,
+    db_connection
+) -> Dict[str, Any]:
+    """
+    Enriquece contato buscando informacoes da empresa na web.
+    Usa o email corporativo ou website cadastrado.
+    """
+    cursor = db_connection.cursor()
+
+    cursor.execute("""
+        SELECT id, nome, empresa, emails, company_website
+        FROM contacts WHERE id = %s
+    """, (contact_id,))
+    contact = cursor.fetchone()
+
+    if not contact:
+        return {"status": "error", "error": "Contato nao encontrado"}
+
+    contact = dict(contact)
+
+    # Determinar URL para buscar
+    website_url = contact.get('company_website')
+    domain = None
+
+    if not website_url:
+        emails = contact.get('emails', [])
+        if emails:
+            first_email = emails[0].get('email', '') if isinstance(emails[0], dict) else emails[0]
+            domain_info = lookup_company_from_email_domain(first_email)
+            if domain_info.get('type') == 'corporate':
+                domain = domain_info.get('domain')
+
+    if not website_url and not domain:
+        return {"status": "error", "error": "Sem website ou email corporativo para buscar"}
+
+    # Buscar informacoes
+    company_info = await search_company_info(
+        company_name=contact.get('empresa'),
+        domain=domain,
+        website_url=website_url
+    )
+
+    if company_info.get('status') == 'error':
+        return company_info
+
+    # Atualizar contato com informacoes encontradas
+    updates = []
+    values = []
+
+    if company_info.get('nome_empresa') and not contact.get('empresa'):
+        updates.append("empresa = %s")
+        values.append(company_info['nome_empresa'])
+
+    if company_info.get('source_url') and not contact.get('company_website'):
+        updates.append("company_website = %s")
+        values.append(company_info['source_url'])
+
+    # Salvar info completa em enrichment_sources
+    updates.append("enrichment_sources = COALESCE(enrichment_sources, '[]'::jsonb) || %s::jsonb")
+    values.append(json.dumps([{
+        "source": "web_search",
+        "date": datetime.now().isoformat(),
+        "data": company_info
+    }]))
+
+    updates.append("last_web_enrichment = CURRENT_TIMESTAMP")
+    values.append(contact_id)
+
+    if updates:
+        cursor.execute(f"""
+            UPDATE contacts
+            SET {', '.join(updates)}
+            WHERE id = %s
+        """, values)
+        db_connection.commit()
+
+    return {
+        "status": "success",
+        "company_info": company_info,
+        "contact_id": contact_id
+    }
+
+
 async def auto_enrich_priority_contacts(
     db_connection,
     circulo_max: int = 2,

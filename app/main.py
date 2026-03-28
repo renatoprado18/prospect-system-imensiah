@@ -4324,6 +4324,41 @@ async def enrich_contact_with_context(contact_id: int, request: Request):
         conn.close()
 
 
+@app.post("/api/contacts/{contact_id}/web-search-company")
+async def web_search_company_info(contact_id: int, request: Request):
+    """
+    Busca informacoes da empresa na web usando o email corporativo ou website cadastrado.
+    Usa AI para extrair informacoes estruturadas da pagina da empresa.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT id, nome, empresa FROM contacts WHERE id = %s', (contact_id,))
+    contact = cursor.fetchone()
+    if not contact:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+    try:
+        from services.contact_enrichment import enrich_contact_with_web_search
+
+        result = await enrich_contact_with_web_search(
+            contact_id=contact_id,
+            db_connection=conn
+        )
+
+        return result
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+    finally:
+        conn.close()
+
+
 @app.post("/api/contacts/auto-enrich-priority")
 async def auto_enrich_priority_contacts_endpoint(
     request: Request,
