@@ -58,7 +58,7 @@ Feedback do usuario sobre UX:
 ---
 
 ### Task 3: Redesign Pagina de Contato
-**Status**: [ ] Pendente
+**Status**: [x] CONCLUIDO - Commit 5f181df
 **Arquivo**: `app/templates/rap_contact_detail.html`
 
 **Problema**:
@@ -90,7 +90,7 @@ Feedback do usuario sobre UX:
 ---
 
 ### Task 4: Dashboard Mais Compacto
-**Status**: [ ] Pendente
+**Status**: [x] CONCLUIDO - Commit 7912432
 **Arquivo**: `app/templates/rap_dashboard.html`
 
 **Problema**:
@@ -108,7 +108,7 @@ Feedback do usuario sobre UX:
 ---
 
 ### Task 5: Briefing Actions UI
-**Status**: [ ] Pendente
+**Status**: [x] CONCLUIDO - Commit 334da1a
 **Arquivo**: `app/templates/rap_briefings.html`
 
 **Problema**:
