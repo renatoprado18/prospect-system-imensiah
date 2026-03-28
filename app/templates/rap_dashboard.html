@@ -1109,7 +1109,16 @@
         }
 
         /* Suggestion Modal */
-        .modal-backdrop.show { background: rgba(0,0,0,0.5); }
+        .modal-backdrop {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: 1040;
+        }
+        .modal-backdrop.show {
+            display: block;
+            background: rgba(0,0,0,0.5);
+        }
         .suggestion-modal {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
