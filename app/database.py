@@ -259,6 +259,16 @@ def init_db():
             ADD COLUMN IF NOT EXISTS health_score INTEGER DEFAULT 50
         ''')
 
+        # Adicionar colunas de Enriquecimento Avancado
+        cursor.execute('''
+            ALTER TABLE contacts
+            ADD COLUMN IF NOT EXISTS relationship_context TEXT,
+            ADD COLUMN IF NOT EXISTS company_website TEXT,
+            ADD COLUMN IF NOT EXISTS enrichment_sources JSONB DEFAULT '[]',
+            ADD COLUMN IF NOT EXISTS last_web_enrichment TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS manual_notes TEXT
+        ''')
+
         # Indices para Circulos
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_contacts_circulo

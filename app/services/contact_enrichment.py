@@ -405,3 +405,381 @@ async def enrich_and_save(contact_id: int, db_connection) -> Dict[str, Any]:
         "enrichment": enrichment,
         "save_stats": save_result
     }
+
+
+# ============================================================
+# MANUAL ENRICHMENT - Dados fornecidos pelo usuario
+# ============================================================
+
+async def update_manual_enrichment(
+    contact_id: int,
+    db_connection,
+    relationship_context: str = None,
+    linkedin_url: str = None,
+    company_website: str = None,
+    empresa: str = None,
+    cargo: str = None,
+    manual_notes: str = None
+) -> Dict[str, Any]:
+    """
+    Atualiza dados manuais do contato fornecidos pelo usuario.
+    Estes dados serao usados no enriquecimento com AI.
+    """
+    cursor = db_connection.cursor()
+
+    updates = []
+    values = []
+
+    if relationship_context is not None:
+        updates.append("relationship_context = %s")
+        values.append(relationship_context)
+
+    if linkedin_url is not None:
+        updates.append("linkedin = %s")
+        values.append(linkedin_url)
+
+    if company_website is not None:
+        updates.append("company_website = %s")
+        values.append(company_website)
+
+    if empresa is not None:
+        updates.append("empresa = %s")
+        values.append(empresa)
+
+    if cargo is not None:
+        updates.append("cargo = %s")
+        values.append(cargo)
+
+    if manual_notes is not None:
+        updates.append("manual_notes = %s")
+        values.append(manual_notes)
+
+    if not updates:
+        return {"status": "error", "error": "Nenhum dado para atualizar"}
+
+    updates.append("atualizado_em = CURRENT_TIMESTAMP")
+    values.append(contact_id)
+
+    try:
+        cursor.execute(f"""
+            UPDATE contacts
+            SET {', '.join(updates)}
+            WHERE id = %s
+        """, values)
+        db_connection.commit()
+
+        return {
+            "status": "success",
+            "updated_fields": [u.split(" = ")[0] for u in updates[:-1]],
+            "contact_id": contact_id
+        }
+    except Exception as e:
+        db_connection.rollback()
+        return {"status": "error", "error": str(e)}
+
+
+def lookup_company_from_email_domain(email: str) -> Dict[str, Any]:
+    """
+    Identifica se o email e corporativo e extrai o dominio.
+    """
+    if not email:
+        return {"type": "unknown"}
+
+    domain = email.split('@')[-1].lower()
+
+    personal_domains = [
+        'gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com',
+        'icloud.com', 'live.com', 'msn.com', 'uol.com.br',
+        'bol.com.br', 'terra.com.br', 'ig.com.br', 'globo.com',
+        'yahoo.com.br', 'outlook.com.br'
+    ]
+
+    if domain in personal_domains:
+        return {"type": "personal", "domain": domain}
+
+    return {
+        "type": "corporate",
+        "domain": domain,
+        "suggested_website": f"https://www.{domain}"
+    }
+
+
+async def enrich_with_context(
+    contact_id: int,
+    db_connection,
+    relationship_context: str = None
+) -> Dict[str, Any]:
+    """
+    Enriquece contato incluindo o contexto do relacionamento informado pelo usuario.
+
+    Exemplo de relationship_context:
+    "Participa comigo do Conselho Consultivo da Associacao Despertar.
+     Conheci em 2023. Interesse em governanca corporativa."
+    """
+    cursor = db_connection.cursor()
+
+    # Se foi fornecido contexto, salvar primeiro
+    if relationship_context:
+        cursor.execute("""
+            UPDATE contacts
+            SET relationship_context = %s, atualizado_em = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (relationship_context, contact_id))
+        db_connection.commit()
+
+    # Buscar dados atualizados do contato
+    cursor.execute("""
+        SELECT id, nome, apelido, empresa, cargo, emails, telefones,
+               linkedin, linkedin_headline, contexto, resumo_ai,
+               ultimo_contato, total_interacoes, relationship_context,
+               company_website, manual_notes, circulo
+        FROM contacts WHERE id = %s
+    """, (contact_id,))
+    contact = cursor.fetchone()
+
+    if not contact:
+        return {"status": "error", "error": "Contato nao encontrado"}
+
+    contact = dict(contact)
+    contact_name = contact.get("nome", "Contato")
+
+    # Buscar contexto completo (mensagens, fatos, etc)
+    context = await get_contact_context(contact_id, db_connection)
+
+    whatsapp_text = format_messages_for_ai(
+        context.get("whatsapp_messages", []),
+        contact_name,
+        "WhatsApp"
+    )
+
+    email_text = format_messages_for_ai(
+        context.get("email_messages", []),
+        contact_name,
+        "Email"
+    )
+
+    existing_facts_text = ""
+    if context.get("existing_facts"):
+        existing_facts_text = "\n".join([
+            f"- [{f['categoria']}] {f['fato']}"
+            for f in context["existing_facts"]
+        ])
+    else:
+        existing_facts_text = "Nenhum fato registrado anteriormente."
+
+    # Verificar email corporativo
+    emails = contact.get("emails", [])
+    email_domain_info = ""
+    if emails:
+        first_email = emails[0].get('email', '') if isinstance(emails[0], dict) else emails[0]
+        domain_check = lookup_company_from_email_domain(first_email)
+        if domain_check.get("type") == "corporate":
+            email_domain_info = f"Email corporativo detectado: {domain_check.get('domain')}"
+
+    # PROMPT APRIMORADO COM CONTEXTO DO RELACIONAMENTO
+    prompt = f"""Voce e um assistente de relacionamento profissional para Renato Almeida Prado.
+
+## SOBRE RENATO (para contexto)
+
+Renato e fundador da **ImensIAH**, uma plataforma de Governanca Estrategica que ajuda empresas com:
+- Gestao de conselhos (administrativo, consultivo, fiscal)
+- Governanca corporativa
+- Planejamento estrategico com IA
+
+Renato tambem atua como:
+- Conselheiro em diversas empresas
+- Mentor de startups e scale-ups
+- Investidor anjo
+- Advisor estrategico
+
+## DADOS DO CONTATO
+
+Nome: {contact_name}
+Apelido: {contact.get('apelido') or 'N/A'}
+Empresa: {contact.get('empresa') or 'N/A'}
+Cargo: {contact.get('cargo') or 'N/A'}
+LinkedIn: {contact.get('linkedin') or 'N/A'}
+LinkedIn Headline: {contact.get('linkedin_headline') or 'N/A'}
+Website Empresa: {contact.get('company_website') or 'N/A'}
+Contexto: {contact.get('contexto') or 'N/A'}
+Circulo: {contact.get('circulo', 5)} (1=Intimo, 2=Proximo, 3=Ativo, 4=Conhecido, 5=Arquivo)
+Total de interacoes: {contact.get('total_interacoes') or 0}
+Ultimo contato: {contact.get('ultimo_contato') or 'N/A'}
+{email_domain_info}
+
+## CONTEXTO DO RELACIONAMENTO (INFORMADO POR RENATO)
+
+{contact.get('relationship_context') or 'Nenhum contexto adicional informado.'}
+
+## NOTAS MANUAIS
+
+{contact.get('manual_notes') or 'Nenhuma nota adicional.'}
+
+## FATOS JA CONHECIDOS
+
+{existing_facts_text}
+
+## MENSAGENS WHATSAPP (mais recentes)
+
+{whatsapp_text}
+
+## MENSAGENS EMAIL (mais recentes)
+
+{email_text}
+
+## TAREFA
+
+Analise TODAS as informacoes disponiveis e gere insights ACIONAVEIS.
+
+**IMPORTANTE**: Use o CONTEXTO DO RELACIONAMENTO informado por Renato como base principal.
+Se Renato disse que conhece a pessoa de algum lugar especifico, use isso!
+
+1. **RESUMO** (2-3 paragrafos): Perfil estrategico da pessoa:
+   - Quem e profissionalmente (cargo, empresa, influencia)
+   - Natureza do relacionamento com Renato (use o contexto informado!)
+   - POTENCIAL para negocios/parcerias/conselhos
+   - Sinais de oportunidade nas conversas
+
+2. **NOVOS FATOS** (lista): Extraia informacoes valiosas:
+   - categoria: "professional", "personal", "preference", "relationship", "opportunity"
+   - fato: informacao especifica e util
+   - confianca: 0.5 a 1.0
+
+3. **INSIGHTS** (objeto JSON):
+   - forca_relacionamento: "forte", "medio", "fraco"
+   - sentimento_geral: "positivo", "neutro", "negativo"
+   - topicos_frequentes: assuntos discutidos
+   - ultima_interacao_relevante: resumo breve
+   - potencial_negocio: "alto", "medio", "baixo", "nenhum"
+   - perfil_decisor: true/false
+   - conexoes_estrategicas: pessoas/empresas mencionadas
+
+4. **SUGESTOES** (lista): Acoes para AGORA:
+   - tipo: "follow_up", "agendar_reuniao", "enviar_proposta", "reconexao", "apresentar_imensiah"
+   - descricao: acao especifica e contextualizada
+   - prioridade: "alta", "media", "baixa"
+   - timing: "imediato", "esta_semana", "este_mes"
+
+Responda APENAS com JSON valido:
+{{
+    "resumo": "...",
+    "fatos": [...],
+    "insights": {{...}},
+    "sugestoes": [...]
+}}
+"""
+
+    # Call Claude API
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": CLAUDE_MODEL,
+                    "max_tokens": 2000,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ]
+                }
+            )
+
+            if response.status_code != 200:
+                return {
+                    "status": "error",
+                    "error": f"API error: {response.status_code}"
+                }
+
+            result = response.json()
+            content = result.get("content", [{}])[0].get("text", "")
+
+            # Parse JSON response
+            try:
+                content = content.strip()
+                if content.startswith("```json"):
+                    content = content[7:]
+                if content.startswith("```"):
+                    content = content[3:]
+                if content.endswith("```"):
+                    content = content[:-3]
+                content = content.strip()
+
+                enrichment = json.loads(content)
+                enrichment["status"] = "success"
+
+                # Salvar resultados
+                save_result = await save_enrichment_results(contact_id, enrichment, db_connection)
+
+                return {
+                    "status": "success",
+                    "enrichment": enrichment,
+                    "save_stats": save_result
+                }
+
+            except json.JSONDecodeError as e:
+                return {
+                    "status": "error",
+                    "error": f"Failed to parse AI response: {str(e)}",
+                    "raw_response": content[:500]
+                }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": f"API call failed: {str(e)}"
+        }
+
+
+async def auto_enrich_priority_contacts(
+    db_connection,
+    circulo_max: int = 2,
+    limit: int = 10
+) -> Dict[str, Any]:
+    """
+    Enriquece automaticamente contatos prioritarios (circulos 1 e 2)
+    que ainda nao tem resumo_ai ou tem resumo antigo (>30 dias).
+    """
+    cursor = db_connection.cursor()
+
+    cursor.execute("""
+        SELECT id, nome, empresa, circulo
+        FROM contacts
+        WHERE circulo <= %s
+          AND (
+              resumo_ai IS NULL
+              OR resumo_ai = ''
+              OR ultimo_enriquecimento < NOW() - INTERVAL '30 days'
+          )
+        ORDER BY circulo ASC, ultimo_contato DESC NULLS LAST
+        LIMIT %s
+    """, (circulo_max, limit))
+
+    contacts = cursor.fetchall()
+
+    results = []
+    for contact in contacts:
+        try:
+            result = await enrich_with_context(contact['id'], db_connection)
+            results.append({
+                "id": contact['id'],
+                "nome": contact['nome'],
+                "circulo": contact['circulo'],
+                "success": result.get('status') == 'success'
+            })
+        except Exception as e:
+            results.append({
+                "id": contact['id'],
+                "nome": contact['nome'],
+                "success": False,
+                "error": str(e)
+            })
+
+    return {
+        "enriched_count": len([r for r in results if r.get('success')]),
+        "total_processed": len(results),
+        "results": results
+    }
