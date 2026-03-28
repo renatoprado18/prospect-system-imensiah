@@ -119,6 +119,148 @@
         .user-name { font-weight: 500; font-size: 0.9rem; }
         .user-role { font-size: 0.75rem; color: var(--gray-400); }
 
+        /* Contact Tabs */
+        .contact-tabs {
+            display: flex;
+            gap: 4px;
+            background: white;
+            padding: 8px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+
+        .contact-tab {
+            flex: 1;
+            padding: 12px 16px;
+            border: none;
+            background: transparent;
+            color: var(--gray-500);
+            font-size: 0.9rem;
+            font-weight: 500;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .contact-tab:hover {
+            background: var(--gray-100);
+            color: var(--dark);
+        }
+
+        .contact-tab.active {
+            background: var(--primary);
+            color: white;
+        }
+
+        .contact-tab i {
+            font-size: 1rem;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Compact Profile Header */
+        .profile-header-compact {
+            background: white;
+            border-radius: 16px;
+            padding: 20px 24px;
+            margin-bottom: 16px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+
+        .profile-avatar-sm {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .profile-avatar-sm img {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        .profile-info-compact {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .profile-info-compact h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin: 0 0 4px 0;
+            color: var(--dark);
+        }
+
+        .profile-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            font-size: 0.85rem;
+            color: var(--gray-500);
+        }
+
+        .profile-meta-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .profile-badges {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .profile-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .profile-badge.circulo {
+            background: var(--primary);
+            color: white;
+        }
+
+        .profile-badge.context {
+            background: var(--gray-100);
+            color: var(--gray-600);
+        }
+
+        .profile-actions-compact {
+            display: flex;
+            gap: 8px;
+        }
+
+        .profile-actions-compact .btn {
+            padding: 8px 12px;
+            font-size: 0.85rem;
+        }
+
         /* Main Content */
         .main-content {
             margin-left: var(--sidebar-width);
@@ -774,287 +916,308 @@
             const contextLabel = contact.contexto === 'personal' ? 'Pessoal' : 'Profissional';
 
             const container = document.getElementById('contactContainer');
+
+            // Get primary email and phone
+            const primaryEmail = emails[0]?.email || '';
+            const primaryPhone = telefones[0]?.number || '';
+            const hasWhatsApp = telefones.some(t => t.whatsapp);
+
             container.innerHTML = `
-                <!-- Profile Header -->
-                <div class="profile-header">
-                    <div class="profile-avatar">
+                <!-- Compact Profile Header -->
+                <div class="profile-header-compact">
+                    <div class="profile-avatar-sm">
                         ${contact.foto_url
                             ? `<img src="${contact.foto_url}" alt="${contact.nome}">`
                             : initials
                         }
-                        <div class="enrich-badge" onclick="enrichContact()" title="Enriquecer dados">
-                            <i class="bi bi-magic"></i>
+                    </div>
+
+                    <div class="profile-info-compact">
+                        <h1>${contact.nome}</h1>
+                        <div class="profile-meta">
+                            ${contact.empresa ? `<span class="profile-meta-item"><i class="bi bi-building"></i> ${contact.empresa}</span>` : ''}
+                            ${contact.cargo ? `<span class="profile-meta-item"><i class="bi bi-briefcase"></i> ${contact.cargo}</span>` : ''}
+                            ${primaryEmail ? `<span class="profile-meta-item"><i class="bi bi-envelope"></i> ${primaryEmail}</span>` : ''}
+                            ${primaryPhone ? `<span class="profile-meta-item"><i class="bi bi-telephone"></i> ${primaryPhone}</span>` : ''}
+                        </div>
+                        <div class="profile-badges">
+                            <span class="profile-badge circulo">Circulo ${contact.circulo || 3}</span>
+                            <span class="profile-badge context">${contextLabel}</span>
+                            ${contact.linkedin ? '<span class="profile-badge" style="background: #0077b5; color: white;"><i class="bi bi-linkedin"></i></span>' : ''}
                         </div>
                     </div>
 
-                    <div class="profile-info">
-                        <h1 class="profile-name">${contact.nome}</h1>
-                        ${contact.cargo ? `<p class="profile-role">${contact.cargo}</p>` : ''}
-                        ${contact.empresa ? `
-                            <div class="profile-company">
-                                <i class="bi bi-building"></i>
-                                ${contact.empresa}
-                            </div>
+                    <div class="profile-actions-compact">
+                        <button class="btn btn-sm btn-primary" onclick="composeEmail()" title="Email">
+                            <i class="bi bi-envelope"></i>
+                        </button>
+                        ${hasWhatsApp ? `
+                            <button class="btn btn-sm btn-success" onclick="openWhatsApp()" title="WhatsApp">
+                                <i class="bi bi-whatsapp"></i>
+                            </button>
                         ` : ''}
-
-                        <div class="profile-tags">
-                            <span class="tag ${contextClass}">${contextLabel}</span>
-                            ${contact.linkedin ? '<span class="tag"><i class="bi bi-linkedin"></i> LinkedIn</span>' : ''}
-                            ${categorias.map(c => `<span class="tag">${c}</span>`).join('')}
-                        </div>
-
-                        <div class="contact-cards">
-                            ${emails.map(e => `
-                                <a href="mailto:${e.email}" class="contact-card-mini">
-                                    <i class="bi bi-envelope"></i>
-                                    <div>
-                                        <div class="label">${e.type || 'Email'}</div>
-                                        <div class="value">${e.email}</div>
-                                    </div>
-                                </a>
-                            `).join('')}
-
-                            ${telefones.map(t => `
-                                <a href="tel:${t.number}" class="contact-card-mini">
-                                    <i class="bi bi-${t.whatsapp ? 'whatsapp' : 'telephone'}"></i>
-                                    <div>
-                                        <div class="label">${t.type || 'Telefone'}</div>
-                                        <div class="value">${t.number}</div>
-                                    </div>
-                                </a>
-                            `).join('')}
-
-                            ${contact.linkedin ? `
-                                <a href="${contact.linkedin}" target="_blank" class="contact-card-mini">
-                                    <i class="bi bi-linkedin"></i>
-                                    <div>
-                                        <div class="label">LinkedIn</div>
-                                        <div class="value">Perfil</div>
-                                    </div>
-                                </a>
-                            ` : ''}
-                        </div>
-                    </div>
-
-                    <div class="profile-actions">
-                        <button class="btn btn-primary" onclick="composeEmail()">
-                            <i class="bi bi-envelope me-2"></i>Email
+                        <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addInteractionModal" title="Nova Interacao">
+                            <i class="bi bi-plus"></i>
                         </button>
-                        <button class="btn btn-outline-secondary" onclick="openWhatsApp()">
-                            <i class="bi bi-whatsapp me-2"></i>WhatsApp
-                        </button>
-                        <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editLinkedInModal">
-                            <i class="bi bi-linkedin me-2"></i>LinkedIn
-                        </button>
-                        <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
-                            <i class="bi bi-plus me-2"></i>Interacao
+                        <button class="btn btn-sm btn-outline-primary" onclick="enrichContact()" title="Enriquecer com IA">
+                            <i class="bi bi-magic"></i>
                         </button>
                     </div>
                 </div>
 
-                <!-- Content Grid -->
-                <div class="content-grid">
-                    <!-- Timeline -->
-                    <div>
-                        <div class="card">
-                            <div class="card-header">
-                                <h2 class="card-title">
-                                    <i class="bi bi-clock-history"></i>
-                                    Timeline de Interacoes
-                                </h2>
-                                <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
-                                    <i class="bi bi-plus"></i> Adicionar
-                                </button>
-                            </div>
-                            <div class="card-body">
-                                ${memories.length > 0 ? `
-                                    <div class="timeline">
-                                        ${memories.map(m => renderTimelineItem(m)).join('')}
-                                    </div>
-                                ` : `
-                                    <div class="empty-state">
-                                        <i class="bi bi-clock"></i>
-                                        <p>Nenhuma interacao registrada</p>
-                                    </div>
-                                `}
-                            </div>
-                        </div>
+                <!-- Tabs Navigation -->
+                <div class="contact-tabs">
+                    <button class="contact-tab active" onclick="switchTab('resumo')">
+                        <i class="bi bi-person-vcard"></i>
+                        <span>Resumo</span>
+                    </button>
+                    <button class="contact-tab" onclick="switchTab('timeline')">
+                        <i class="bi bi-clock-history"></i>
+                        <span>Timeline</span>
+                    </button>
+                    <button class="contact-tab" onclick="switchTab('ai')">
+                        <i class="bi bi-robot"></i>
+                        <span>IA</span>
+                    </button>
+                    <button class="contact-tab" onclick="switchTab('reunioes')">
+                        <i class="bi bi-calendar-event"></i>
+                        <span>Reunioes</span>
+                    </button>
+                </div>
 
-                        <!-- Conversations -->
-                        ${conversations.length > 0 ? `
-                            <div class="card">
+                <!-- Tab: Resumo -->
+                <div class="tab-content active" id="tab-resumo">
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <!-- Contact Details -->
+                            <div class="card mb-3">
                                 <div class="card-header">
-                                    <h2 class="card-title">
-                                        <i class="bi bi-chat-dots"></i>
-                                        Conversas Recentes
-                                    </h2>
+                                    <h2 class="card-title"><i class="bi bi-person-lines-fill"></i> Informacoes</h2>
                                 </div>
                                 <div class="card-body">
-                                    ${conversations.map(c => renderConversation(c)).join('')}
+                                    <div class="row g-3">
+                                        ${emails.length > 0 ? `
+                                            <div class="col-md-6">
+                                                <label class="text-muted small">Emails</label>
+                                                ${emails.map(e => `<div><a href="mailto:${e.email}">${e.email}</a> <small class="text-muted">(${e.type || 'Email'})</small></div>`).join('')}
+                                            </div>
+                                        ` : ''}
+                                        ${telefones.length > 0 ? `
+                                            <div class="col-md-6">
+                                                <label class="text-muted small">Telefones</label>
+                                                ${telefones.map(t => `<div><a href="tel:${t.number}">${t.number}</a> ${t.whatsapp ? '<i class="bi bi-whatsapp text-success"></i>' : ''}</div>`).join('')}
+                                            </div>
+                                        ` : ''}
+                                        ${contact.linkedin ? `
+                                            <div class="col-12">
+                                                <label class="text-muted small">LinkedIn</label>
+                                                <div><a href="${contact.linkedin}" target="_blank">${contact.linkedin}</a></div>
+                                            </div>
+                                        ` : ''}
+                                        ${categorias.length > 0 ? `
+                                            <div class="col-12">
+                                                <label class="text-muted small">Categorias</label>
+                                                <div>${categorias.map(c => `<span class="badge bg-secondary me-1">${c}</span>`).join('')}</div>
+                                            </div>
+                                        ` : ''}
+                                    </div>
                                 </div>
                             </div>
-                        ` : ''}
+
+                            <!-- Quick AI Summary -->
+                            ${contact.resumo_ai ? `
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h2 class="card-title"><i class="bi bi-robot"></i> Resumo IA</h2>
+                                    </div>
+                                    <div class="card-body">
+                                        <p style="font-size: 0.9rem; line-height: 1.6; white-space: pre-line; margin: 0;">${contact.resumo_ai}</p>
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+
+                        <div class="col-md-4">
+                            <!-- Facts -->
+                            <div class="card mb-3">
+                                <div class="card-header">
+                                    <h2 class="card-title"><i class="bi bi-lightbulb"></i> Fatos</h2>
+                                </div>
+                                <div class="card-body">
+                                    ${facts && facts.length > 0 ? `
+                                        <ul class="list-unstyled mb-0" style="font-size: 0.9rem;">
+                                            ${facts.slice(0, 5).map(f => `<li class="mb-2"><i class="bi bi-dot"></i> ${f.content || f}</li>`).join('')}
+                                        </ul>
+                                    ` : `
+                                        <div class="text-center text-muted py-2">
+                                            <i class="bi bi-lightbulb" style="font-size: 1.5rem;"></i>
+                                            <p class="mb-0 mt-2 small">Nenhum fato registrado</p>
+                                        </div>
+                                    `}
+                                </div>
+                            </div>
+
+                            <!-- Recent Activity -->
+                            <div class="card">
+                                <div class="card-header">
+                                    <h2 class="card-title"><i class="bi bi-activity"></i> Atividade</h2>
+                                </div>
+                                <div class="card-body">
+                                    ${memories.length > 0 ? `
+                                        <ul class="list-unstyled mb-0" style="font-size: 0.85rem;">
+                                            ${memories.slice(0, 3).map(m => `
+                                                <li class="mb-2 pb-2 border-bottom">
+                                                    <div class="fw-medium">${m.type || 'Interacao'}</div>
+                                                    <small class="text-muted">${formatDateTime(m.created_at)}</small>
+                                                </li>
+                                            `).join('')}
+                                        </ul>
+                                        <a href="#" onclick="switchTab('timeline'); return false;" class="small">Ver timeline completa →</a>
+                                    ` : `
+                                        <div class="text-center text-muted py-2">
+                                            <p class="mb-0 small">Nenhuma atividade</p>
+                                        </div>
+                                    `}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Timeline -->
+                <div class="tab-content" id="tab-timeline">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title"><i class="bi bi-clock-history"></i> Timeline de Interacoes</h2>
+                            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
+                                <i class="bi bi-plus"></i> Adicionar
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            ${memories.length > 0 ? `
+                                <div class="timeline">
+                                    ${memories.map(m => renderTimelineItem(m)).join('')}
+                                </div>
+                            ` : `
+                                <div class="empty-state">
+                                    <i class="bi bi-clock"></i>
+                                    <p>Nenhuma interacao registrada</p>
+                                    <button class="btn btn-sm btn-primary mt-2" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
+                                        <i class="bi bi-plus me-1"></i>Adicionar primeira interacao
+                                    </button>
+                                </div>
+                            `}
+                        </div>
                     </div>
 
-                    <!-- Sidebar -->
-                    <div>
-                        <!-- AI Summary -->
-                        <div class="card">
+                    ${conversations.length > 0 ? `
+                        <div class="card mt-3">
                             <div class="card-header">
-                                <h2 class="card-title">
-                                    <i class="bi bi-robot"></i>
-                                    Resumo IA
-                                </h2>
-                                <button class="btn btn-sm btn-outline-primary" onclick="enrichContact()" id="enrichBtn" title="Enriquecer com IA">
-                                    <i class="bi bi-magic"></i> Enriquecer
-                                </button>
+                                <h2 class="card-title"><i class="bi bi-chat-dots"></i> Conversas Recentes</h2>
                             </div>
-                            <div class="card-body" id="aiSummaryBody">
-                                ${contact.resumo_ai ? `
-                                    <p style="font-size: 0.9rem; color: var(--gray-600); line-height: 1.6; white-space: pre-line;">
-                                        ${contact.resumo_ai}
-                                    </p>
-                                    ${contact.ultimo_enriquecimento ? `
-                                        <small class="text-muted">Atualizado: ${formatDateTime(contact.ultimo_enriquecimento)}</small>
-                                    ` : ''}
-                                ` : `
-                                    <div class="empty-state">
-                                        <i class="bi bi-robot"></i>
-                                        <p>Nenhum resumo gerado</p>
-                                        <button class="btn btn-sm btn-primary mt-2" onclick="enrichContact()">
-                                            <i class="bi bi-magic me-1"></i>Gerar com IA
-                                        </button>
-                                    </div>
-                                `}
-                            </div>
-                        </div>
-
-                        <!-- Meetings Section -->
-                        <div class="card" id="meetingsCard" style="border: 1px solid rgba(16, 185, 129, 0.2); background: linear-gradient(135deg, rgba(16, 185, 129, 0.03), rgba(14, 165, 233, 0.03));">
-                            <div class="card-header">
-                                <h2 class="card-title" style="color: var(--success);">
-                                    <i class="bi bi-calendar-event"></i>
-                                    Reunioes
-                                </h2>
-                                <button class="btn btn-sm btn-outline-success" onclick="scheduleWithContact()">
-                                    <i class="bi bi-plus"></i> Agendar
-                                </button>
-                            </div>
-                            <div class="card-body" id="meetingsContainer">
-                                <div class="text-center text-muted py-3">
-                                    <div class="spinner-border spinner-border-sm" role="status"></div>
-                                    <div class="mt-2" style="font-size: 0.85rem;">Carregando...</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- AI Insights -->
-                        ${contact.insights_ai && Object.keys(contact.insights_ai).length > 0 ? `
-                            <div class="card">
-                                <div class="card-header">
-                                    <h2 class="card-title">
-                                        <i class="bi bi-graph-up"></i>
-                                        Insights
-                                    </h2>
-                                </div>
-                                <div class="card-body">
-                                    ${renderInsights(contact.insights_ai)}
-                                </div>
-                            </div>
-                        ` : ''}
-
-                        <!-- Oportunidades (from AI enrichment) -->
-                        ${contact.insights_ai?.oportunidades?.length > 0 ? `
-                            <div class="card" style="border: 1px solid var(--success); border-top: 3px solid var(--success);">
-                                <div class="card-header" style="background: linear-gradient(135deg, #10b98110, #10b98105);">
-                                    <h2 class="card-title" style="color: var(--success);">
-                                        <i class="bi bi-rocket-takeoff"></i>
-                                        Oportunidades
-                                    </h2>
-                                </div>
-                                <div class="card-body">
-                                    ${renderOportunidades(contact.insights_ai.oportunidades)}
-                                </div>
-                            </div>
-                        ` : ''}
-
-                        <!-- Facts -->
-                        <div class="card">
-                            <div class="card-header">
-                                <h2 class="card-title">
-                                    <i class="bi bi-lightbulb"></i>
-                                    Fatos Importantes
-                                </h2>
-                                <button class="btn btn-sm btn-outline-primary" onclick="extractFacts()" id="extractFactsBtn" title="Extrair fatos das mensagens com IA">
-                                    <i class="bi bi-magic"></i>
-                                </button>
-                            </div>
-                            <div class="card-body" style="padding: 12px;" id="factsContainer">
-                                ${facts.length > 0 ? facts.map(f => renderFact(f)).join('') : `
-                                    <div class="empty-state">
-                                        <i class="bi bi-lightbulb"></i>
-                                        <p>Nenhum fato registrado</p>
-                                        <button class="btn btn-sm btn-primary mt-2" onclick="extractFacts()">
-                                            <i class="bi bi-magic me-1"></i>Extrair com IA
-                                        </button>
-                                    </div>
-                                `}
-                            </div>
-                        </div>
-
-                        <!-- ConselhoOS Section -->
-                        <div class="card" id="conselhoosSection" style="display: none; border: 1px solid rgba(26, 26, 46, 0.2);">
-                            <div class="card-header" style="background: linear-gradient(135deg, #1a1a2e, #16213e); color: white;">
-                                <h2 class="card-title" style="color: white;">
-                                    <i class="bi bi-briefcase me-2"></i>
-                                    ConselhoOS
-                                </h2>
-                                <button class="btn btn-sm btn-outline-light" onclick="openLinkConselhoOSModal()">
-                                    <i class="bi bi-link"></i> Vincular
-                                </button>
-                            </div>
-                            <div class="card-body" id="conselhoosLinks">
-                                <p class="text-muted mb-0">Nenhuma empresa vinculada</p>
-                            </div>
-                        </div>
-
-                        <!-- Birthday -->
-                        ${contact.aniversario ? `
-                            <div class="card">
-                                <div class="card-body" style="display: flex; align-items: center; gap: 16px;">
-                                    <div style="width: 48px; height: 48px; background: rgba(245, 158, 11, 0.1); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
-                                        <i class="bi bi-cake2" style="font-size: 1.5rem; color: var(--warning);"></i>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 0.8rem; color: var(--gray-500);">Aniversario</div>
-                                        <div style="font-weight: 600; color: var(--dark);">${formatDate(contact.aniversario)}</div>
-                                    </div>
-                                </div>
-                            </div>
-                        ` : ''}
-
-                        <!-- Stats -->
-                        <div class="card">
                             <div class="card-body">
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; text-align: center;">
-                                    <div>
-                                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary);">
-                                            ${contact.total_interacoes || 0}
-                                        </div>
-                                        <div style="font-size: 0.8rem; color: var(--gray-500);">Interacoes</div>
-                                    </div>
-                                    <div>
-                                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--success);">
-                                            ${facts.length}
-                                        </div>
-                                        <div style="font-size: 0.8rem; color: var(--gray-500);">Fatos</div>
-                                    </div>
+                                ${conversations.map(c => renderConversation(c)).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+
+                <!-- Tab: AI -->
+                <div class="tab-content" id="tab-ai">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <!-- AI Summary -->
+                            <div class="card h-100">
+                                <div class="card-header">
+                                    <h2 class="card-title"><i class="bi bi-robot"></i> Resumo IA</h2>
+                                    <button class="btn btn-sm btn-outline-primary" onclick="enrichContact()" id="enrichBtn">
+                                        <i class="bi bi-magic"></i> Atualizar
+                                    </button>
                                 </div>
+                                <div class="card-body" id="aiSummaryBody">
+                                    ${contact.resumo_ai ? `
+                                        <p style="font-size: 0.9rem; line-height: 1.6; white-space: pre-line;">${contact.resumo_ai}</p>
+                                        ${contact.ultimo_enriquecimento ? `<small class="text-muted">Atualizado: ${formatDateTime(contact.ultimo_enriquecimento)}</small>` : ''}
+                                    ` : `
+                                        <div class="empty-state">
+                                            <i class="bi bi-robot"></i>
+                                            <p>Nenhum resumo gerado</p>
+                                            <button class="btn btn-sm btn-primary mt-2" onclick="enrichContact()">
+                                                <i class="bi bi-magic me-1"></i>Gerar com IA
+                                            </button>
+                                        </div>
+                                    `}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <!-- AI Insights -->
+                            <div class="card h-100">
+                                <div class="card-header">
+                                    <h2 class="card-title"><i class="bi bi-graph-up"></i> Insights</h2>
+                                </div>
+                                <div class="card-body">
+                                    ${contact.insights_ai && Object.keys(contact.insights_ai).length > 0 ? `
+                                        ${renderInsights(contact.insights_ai)}
+                                    ` : `
+                                        <div class="empty-state">
+                                            <i class="bi bi-graph-up"></i>
+                                            <p>Nenhum insight disponivel</p>
+                                        </div>
+                                    `}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    ${contact.insights_ai?.oportunidades?.length > 0 ? `
+                        <div class="card mt-3" style="border: 1px solid var(--success);">
+                            <div class="card-header" style="background: rgba(16, 185, 129, 0.05);">
+                                <h2 class="card-title" style="color: var(--success);"><i class="bi bi-rocket-takeoff"></i> Oportunidades</h2>
+                            </div>
+                            <div class="card-body">
+                                <ul class="list-unstyled mb-0">
+                                    ${contact.insights_ai.oportunidades.map(o => `<li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i>${o}</li>`).join('')}
+                                </ul>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+
+                <!-- Tab: Reunioes -->
+                <div class="tab-content" id="tab-reunioes">
+                    <div class="card" id="meetingsCard">
+                        <div class="card-header">
+                            <h2 class="card-title" style="color: var(--success);"><i class="bi bi-calendar-event"></i> Reunioes</h2>
+                            <button class="btn btn-sm btn-success" onclick="scheduleWithContact()">
+                                <i class="bi bi-plus"></i> Agendar Nova
+                            </button>
+                        </div>
+                        <div class="card-body" id="meetingsContainer">
+                            <div class="text-center text-muted py-3">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                                <div class="mt-2" style="font-size: 0.85rem;">Carregando...</div>
                             </div>
                         </div>
                     </div>
                 </div>
             `;
+        }
+
+        // Tab switching function
+        function switchTab(tabName) {
+            // Remove active class from all tabs and content
+            document.querySelectorAll('.contact-tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            // Add active class to selected tab and content
+            document.querySelector(`.contact-tab[onclick="switchTab('${tabName}')"]`)?.classList.add('active');
+            document.getElementById(`tab-${tabName}`)?.classList.add('active');
+
+            // Load meetings when reunioes tab is selected
+            if (tabName === 'reunioes') {
+                loadContactMeetings();
+            }
         }
 
         function renderTimelineItem(memory) {
