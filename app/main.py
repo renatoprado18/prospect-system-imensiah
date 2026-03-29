@@ -3976,7 +3976,8 @@ async def update_contact(contact_id: int, request: Request):
 
     # Build update query dynamically
     allowed_fields = ['nome', 'apelido', 'empresa', 'cargo', 'emails', 'telefones',
-                      'linkedin', 'contexto', 'categorias', 'tags', 'aniversario']
+                      'linkedin', 'contexto', 'categorias', 'tags', 'aniversario',
+                      'circulo', 'circulo_manual', 'foto_url']
 
     updates = []
     values = []
