@@ -8,312 +8,386 @@
     .circulo-2 { --cor: #4ECDC4; }
     .circulo-3 { --cor: #45B7D1; }
     .circulo-4 { --cor: #96CEB4; }
-    .circulo-5 { --cor: #DDA0DD; }
+    .circulo-5 { --cor: #9CA3AF; }
 
-    .circulo-badge {
-        background-color: var(--cor);
-        color: white;
-        padding: 2px 10px;
-        border-radius: 9999px;
-        font-size: 0.75rem;
-        font-weight: 600;
+    /* Circle Tabs - horizontal, compact */
+    .circulo-tabs {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        overflow-x: auto;
+        padding-bottom: 0.5rem;
     }
-
-    .health-bar {
-        height: 6px;
-        border-radius: 3px;
-        background: var(--gray-200);
-    }
-    .health-bar-fill {
-        height: 100%;
-        border-radius: 3px;
-        transition: width 0.3s ease;
-    }
-    .health-high { background: var(--success); }
-    .health-medium { background: #eab308; }
-    .health-low { background: var(--danger); }
-
-    .circulo-cards {
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 16px;
-        margin-bottom: 24px;
-    }
-
-    .circulo-card {
-        background: white;
-        border-radius: 16px;
-        padding: 16px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    .circulo-tab {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem 1.25rem;
+        background: var(--card-bg);
+        border-radius: 12px;
         cursor: pointer;
         transition: all 0.2s;
         border: 2px solid transparent;
+        white-space: nowrap;
+        box-shadow: var(--shadow-sm);
     }
-
-    .circulo-card:hover {
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        transform: translateY(-2px);
+    .circulo-tab:hover {
+        box-shadow: var(--shadow-md);
     }
-
-    .circulo-card.active {
+    .circulo-tab.active {
         border-color: var(--cor);
+        background: linear-gradient(135deg, var(--cor)08 0%, var(--cor)15 100%);
     }
-
-    .circulo-card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 8px;
-    }
-
-    .circulo-card-number {
-        font-size: 2rem;
+    .circulo-tab .number {
+        font-size: 1.5rem;
         font-weight: 700;
-        color: var(--dark);
+        color: var(--gray-800);
     }
-
-    .circulo-card-name {
-        font-size: 0.875rem;
+    .circulo-tab.active .number {
+        color: var(--cor);
+    }
+    .circulo-tab .info {
+        display: flex;
+        flex-direction: column;
+    }
+    .circulo-tab .name {
+        font-size: 0.8rem;
+        font-weight: 500;
         color: var(--gray-600);
-        margin-bottom: 8px;
     }
-
-    .circulo-card-health {
+    .circulo-tab .health {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 0.35rem;
+        font-size: 0.7rem;
+        color: var(--gray-500);
     }
+    .circulo-tab .health-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+    }
+    .health-dot.high { background: var(--success); }
+    .health-dot.medium { background: #eab308; }
+    .health-dot.low { background: var(--danger); }
 
-    .two-columns {
+    /* Main content area */
+    .main-content-grid {
         display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 24px;
-        margin-bottom: 24px;
+        grid-template-columns: 1fr 320px;
+        gap: 1.5rem;
     }
-
-    .section-card {
-        background: white;
-        border-radius: 16px;
-        padding: 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-    }
-
-    .section-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 16px;
-    }
-
-    .section-title {
-        font-weight: 600;
-        color: var(--dark);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-
-    .contact-row {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 10px;
-        border-radius: 10px;
-        transition: background 0.2s;
-        text-decoration: none;
-        color: inherit;
-    }
-
-    .contact-row:hover {
-        background: var(--gray-100);
-    }
-
-    .contact-avatar {
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        background: var(--gray-200);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--gray-600);
-        font-weight: 500;
-    }
-
-    .contact-avatar.pink {
-        background: rgba(236, 72, 153, 0.1);
-        color: #ec4899;
-    }
-
-    .contact-info {
-        flex: 1;
-        min-width: 0;
-    }
-
-    .contact-name {
-        font-weight: 500;
-        color: var(--dark);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .contact-meta {
-        font-size: 0.75rem;
-        color: var(--gray-500);
-    }
-
-    .contacts-list-card {
-        background: white;
-        border-radius: 16px;
-        padding: 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-    }
-
-    .list-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 16px;
-    }
-
-    .contact-list-item {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        padding: 12px;
-        border: 1px solid var(--gray-200);
-        border-radius: 10px;
-        margin-bottom: 8px;
-        text-decoration: none;
-        color: inherit;
-        transition: all 0.2s;
-    }
-
-    .contact-list-item:hover {
-        background: var(--gray-100);
-        transform: translateX(4px);
-    }
-
-    .contact-list-avatar {
-        width: 48px;
-        height: 48px;
-        border-radius: 50%;
-        background: var(--gray-200);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: var(--gray-600);
-        font-weight: 500;
-        font-size: 1.1rem;
-    }
-
-    .contact-list-avatar img {
-        width: 100%;
-        height: 100%;
-        border-radius: 50%;
-        object-fit: cover;
-    }
-
-    .contact-list-details {
-        flex: 1;
-        min-width: 0;
-    }
-
-    .contact-list-name {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-
-    .contact-list-title {
-        font-size: 0.875rem;
-        color: var(--gray-500);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .contact-list-health {
-        text-align: right;
-    }
-
     @media (max-width: 1024px) {
-        .circulo-cards {
-            grid-template-columns: repeat(3, 1fr);
+        .main-content-grid {
+            grid-template-columns: 1fr;
         }
-        .two-columns {
+        .sidebar-panels {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+    }
+    @media (max-width: 768px) {
+        .sidebar-panels {
             grid-template-columns: 1fr;
         }
     }
 
-    @media (max-width: 768px) {
-        .circulo-cards {
-            grid-template-columns: repeat(2, 1fr);
-        }
+    /* Contacts List Panel */
+    .contacts-panel {
+        background: var(--card-bg);
+        border-radius: 16px;
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+    }
+    .panel-header {
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid var(--gray-100);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .panel-title {
+        font-size: 1rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .panel-title .badge {
+        background: var(--cor);
+        color: white;
+        padding: 0.15rem 0.5rem;
+        border-radius: 6px;
+        font-size: 0.7rem;
+    }
+    .sort-select {
+        padding: 0.4rem 0.75rem;
+        border: 1px solid var(--gray-200);
+        border-radius: 8px;
+        font-size: 0.8rem;
+        background: white;
+    }
+
+    .contacts-list {
+        max-height: 600px;
+        overflow-y: auto;
+    }
+    .contact-item {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.875rem 1.25rem;
+        border-bottom: 1px solid var(--gray-50);
+        text-decoration: none;
+        color: inherit;
+        transition: background 0.15s;
+    }
+    .contact-item:hover {
+        background: var(--gray-50);
+    }
+    .contact-item:last-child {
+        border-bottom: none;
+    }
+    .contact-avatar {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        background: var(--gray-200);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 500;
+        color: var(--gray-600);
+        flex-shrink: 0;
+        overflow: hidden;
+    }
+    .contact-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    .contact-details {
+        flex: 1;
+        min-width: 0;
+    }
+    .contact-name {
+        font-weight: 500;
+        color: var(--gray-800);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .contact-meta {
+        font-size: 0.8rem;
+        color: var(--gray-500);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .contact-health {
+        text-align: right;
+        flex-shrink: 0;
+    }
+    .health-bar {
+        width: 60px;
+        height: 6px;
+        background: var(--gray-200);
+        border-radius: 3px;
+        margin-bottom: 0.25rem;
+    }
+    .health-fill {
+        height: 100%;
+        border-radius: 3px;
+    }
+    .health-fill.high { background: var(--success); }
+    .health-fill.medium { background: #eab308; }
+    .health-fill.low { background: var(--danger); }
+    .health-text {
+        font-size: 0.7rem;
+        color: var(--gray-500);
+    }
+    .health-text.urgent {
+        color: var(--danger);
+        font-weight: 500;
+    }
+
+    .load-more-btn {
+        display: block;
+        width: 100%;
+        padding: 0.75rem;
+        background: var(--gray-50);
+        border: none;
+        color: var(--primary);
+        font-weight: 500;
+        cursor: pointer;
+    }
+    .load-more-btn:hover {
+        background: var(--gray-100);
+    }
+
+    /* Sidebar Panels */
+    .sidebar-panel {
+        background: var(--card-bg);
+        border-radius: 12px;
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+        margin-bottom: 1rem;
+    }
+    .sidebar-header {
+        padding: 0.875rem 1rem;
+        border-bottom: 1px solid var(--gray-100);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .sidebar-title {
+        font-size: 0.9rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .sidebar-title i {
+        font-size: 1rem;
+    }
+    .sidebar-list {
+        max-height: 280px;
+        overflow-y: auto;
+    }
+    .sidebar-item {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.625rem 1rem;
+        text-decoration: none;
+        color: inherit;
+        transition: background 0.15s;
+    }
+    .sidebar-item:hover {
+        background: var(--gray-50);
+    }
+    .sidebar-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: var(--gray-200);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        font-weight: 500;
+        flex-shrink: 0;
+    }
+    .sidebar-avatar.pink {
+        background: #fce7f3;
+        color: #ec4899;
+    }
+    .sidebar-info {
+        flex: 1;
+        min-width: 0;
+    }
+    .sidebar-name {
+        font-size: 0.85rem;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .sidebar-meta {
+        font-size: 0.7rem;
+        color: var(--gray-500);
+    }
+    .sidebar-badge {
+        font-size: 0.75rem;
+        font-weight: 500;
+        white-space: nowrap;
+    }
+    .sidebar-badge.urgent {
+        color: var(--danger);
+    }
+    .sidebar-badge.soon {
+        color: #ec4899;
+    }
+
+    .empty-state {
+        padding: 2rem;
+        text-align: center;
+        color: var(--gray-500);
+    }
+    .empty-state i {
+        font-size: 2rem;
+        color: var(--gray-300);
+        margin-bottom: 0.5rem;
     }
 </style>
 {% endblock %}
 
 {% block header_actions %}
-<button class="btn btn-outline-secondary" onclick="recalcularTodos()">
+<button class="btn btn-outline-secondary btn-sm" onclick="recalcularTodos()">
     <i class="bi bi-arrow-clockwise me-1"></i>Recalcular
 </button>
 {% endblock %}
 
 {% block content %}
-<!-- Circulo Cards -->
-<div class="circulo-cards" id="circuloCards">
+<!-- Circle Tabs -->
+<div class="circulo-tabs" id="circuloTabs">
     <!-- Populated by JS -->
 </div>
 
-<!-- Two columns: Precisam Atencao + Aniversarios -->
-<div class="two-columns">
-    <!-- Precisam Atencao -->
-    <div class="section-card">
-        <div class="section-header">
-            <h3 class="section-title">
-                <i class="bi bi-exclamation-circle text-warning"></i>
-                Precisam Atencao
+<!-- Main Content Grid -->
+<div class="main-content-grid">
+    <!-- Contacts Panel -->
+    <div class="contacts-panel" id="contactsPanel">
+        <div class="panel-header">
+            <h3 class="panel-title" id="panelTitle">
+                Todos os Contatos
             </h3>
-            <a href="/contatos?filter=needs_attention" class="text-primary">Ver todos</a>
+            <select class="sort-select" id="sortBy" onchange="loadContacts()">
+                <option value="health">Prioridade (Health)</option>
+                <option value="ultimo_contato">Ultimo Contato</option>
+                <option value="nome">Nome A-Z</option>
+            </select>
         </div>
-        <div id="precisamAtencao">
-            <!-- Populated by JS -->
+        <div class="contacts-list" id="contactsList">
+            <div class="empty-state">
+                <div class="spinner-border spinner-border-sm text-primary"></div>
+                <p class="mt-2 mb-0">Carregando...</p>
+            </div>
         </div>
-    </div>
-
-    <!-- Aniversarios -->
-    <div class="section-card">
-        <div class="section-header">
-            <h3 class="section-title">
-                <i class="bi bi-gift text-pink"></i>
-                Aniversarios Proximos
-            </h3>
-        </div>
-        <div id="aniversarios">
-            <!-- Populated by JS -->
-        </div>
-    </div>
-</div>
-
-<!-- Contacts List -->
-<div class="contacts-list-card">
-    <div class="list-header">
-        <h3 id="contactsTitle">Todos os Contatos</h3>
-        <select id="sortBy" onchange="loadContacts()" class="form-select" style="width: auto;">
-            <option value="health">Ordenar por Health</option>
-            <option value="nome">Ordenar por Nome</option>
-            <option value="ultimo_contato">Ordenar por Ultimo Contato</option>
-        </select>
-    </div>
-    <div id="contactsList">
-        <!-- Populated by JS -->
-    </div>
-    <div class="text-center mt-3">
-        <button onclick="loadMoreContacts()" id="loadMoreBtn" class="btn btn-link">
+        <button class="load-more-btn" id="loadMoreBtn" onclick="loadMoreContacts()" style="display: none;">
             Carregar mais
         </button>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar-panels">
+        <!-- Precisam Atencao -->
+        <div class="sidebar-panel">
+            <div class="sidebar-header">
+                <h4 class="sidebar-title">
+                    <i class="bi bi-exclamation-triangle text-warning"></i>
+                    Precisam Atencao
+                </h4>
+                <a href="/contatos?filter=needs_attention" style="font-size: 0.75rem;">Ver todos</a>
+            </div>
+            <div class="sidebar-list" id="precisamAtencao">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+
+        <!-- Aniversarios -->
+        <div class="sidebar-panel">
+            <div class="sidebar-header">
+                <h4 class="sidebar-title">
+                    <i class="bi bi-gift" style="color: #ec4899;"></i>
+                    Aniversarios
+                </h4>
+            </div>
+            <div class="sidebar-list" id="aniversarios">
+                <!-- Populated by JS -->
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -322,17 +396,18 @@
 <script>
 let currentCirculo = null;
 let currentOffset = 0;
-const LIMIT = 20;
+const LIMIT = 25;
+let circuloConfig = {};
 
 async function loadDashboard() {
     try {
         const response = await fetch('/api/circulos');
         const data = await response.json();
 
-        renderCirculoCards(data.por_circulo, data.config);
+        circuloConfig = data.config || {};
+        renderCirculoTabs(data.por_circulo, data.config);
         renderPrecisamAtencao(data.precisam_atencao);
         renderAniversarios(data.aniversarios);
-
         loadContacts();
 
     } catch (error) {
@@ -340,29 +415,26 @@ async function loadDashboard() {
     }
 }
 
-function renderCirculoCards(porCirculo, config) {
-    const container = document.getElementById('circuloCards');
+function renderCirculoTabs(porCirculo, config) {
+    const container = document.getElementById('circuloTabs');
     container.innerHTML = '';
 
     for (let i = 1; i <= 5; i++) {
-        const stats = porCirculo[i] || { total: 0, health_medio: 0 };
-        const cfg = config[i];
+        const stats = porCirculo[i] || { total: 0, health_medio: 50 };
+        const cfg = config[i] || { nome: 'Circulo ' + i };
         const isActive = currentCirculo === i;
+        const healthClass = getHealthClass(stats.health_medio);
 
         container.innerHTML += `
             <div onclick="selectCirculo(${i})"
-                 class="circulo-card circulo-${i} ${isActive ? 'active' : ''}">
-                <div class="circulo-card-header">
-                    <span class="circulo-badge circulo-${i}">${i}</span>
-                    <span class="circulo-card-number">${formatNumber(stats.total)}</span>
-                </div>
-                <div class="circulo-card-name">${cfg.nome}</div>
-                <div class="circulo-card-health">
-                    <div class="health-bar" style="flex: 1;">
-                        <div class="health-bar-fill ${getHealthClass(stats.health_medio)}"
-                             style="width: ${stats.health_medio}%"></div>
-                    </div>
-                    <span style="font-size: 0.75rem; color: var(--gray-500);">${Math.round(stats.health_medio)}%</span>
+                 class="circulo-tab circulo-${i} ${isActive ? 'active' : ''}">
+                <span class="number">${formatNumber(stats.total)}</span>
+                <div class="info">
+                    <span class="name">${cfg.nome}</span>
+                    <span class="health">
+                        <span class="health-dot ${healthClass}"></span>
+                        ${Math.round(stats.health_medio)}%
+                    </span>
                 </div>
             </div>
         `;
@@ -373,21 +445,18 @@ function renderPrecisamAtencao(contacts) {
     const container = document.getElementById('precisamAtencao');
 
     if (!contacts || contacts.length === 0) {
-        container.innerHTML = '<p class="text-muted">Nenhum contato precisa de atencao urgente</p>';
+        container.innerHTML = '<div class="empty-state"><i class="bi bi-check-circle"></i><p>Todos em dia!</p></div>';
         return;
     }
 
-    container.innerHTML = contacts.map(c => `
-        <a href="/contatos/${c.id}" class="contact-row">
-            <div class="contact-avatar">${c.nome.charAt(0)}</div>
-            <div class="contact-info">
-                <div class="contact-name">${c.nome}</div>
-                <div class="contact-meta">Circulo ${c.circulo} - ${formatDaysAgo(c.ultimo_contato)}</div>
+    container.innerHTML = contacts.slice(0, 8).map(c => `
+        <a href="/contatos/${c.id}" class="sidebar-item">
+            <div class="sidebar-avatar">${c.nome.charAt(0)}</div>
+            <div class="sidebar-info">
+                <div class="sidebar-name">${c.nome}</div>
+                <div class="sidebar-meta">C${c.circulo} - ${c.health_score}%</div>
             </div>
-            <div class="health-bar" style="width: 60px;">
-                <div class="health-bar-fill ${getHealthClass(c.health_score)}"
-                     style="width: ${c.health_score}%"></div>
-            </div>
+            <span class="sidebar-badge urgent">${formatDaysAgo(c.ultimo_contato)}</span>
         </a>
     `).join('');
 }
@@ -396,22 +465,18 @@ function renderAniversarios(aniversarios) {
     const container = document.getElementById('aniversarios');
 
     if (!aniversarios || aniversarios.length === 0) {
-        container.innerHTML = '<p class="text-muted">Nenhum aniversario nos proximos dias</p>';
+        container.innerHTML = '<div class="empty-state"><i class="bi bi-calendar-x"></i><p>Nenhum proximo</p></div>';
         return;
     }
 
-    container.innerHTML = aniversarios.map(a => `
-        <a href="/contatos/${a.id}" class="contact-row">
-            <div class="contact-avatar pink">
-                <i class="bi bi-gift"></i>
+    container.innerHTML = aniversarios.slice(0, 8).map(a => `
+        <a href="/contatos/${a.id}" class="sidebar-item">
+            <div class="sidebar-avatar pink"><i class="bi bi-gift"></i></div>
+            <div class="sidebar-info">
+                <div class="sidebar-name">${a.nome}</div>
+                <div class="sidebar-meta">${formatDate(a.aniversario)}</div>
             </div>
-            <div class="contact-info">
-                <div class="contact-name">${a.nome}</div>
-                <div class="contact-meta">${formatDate(a.aniversario)}</div>
-            </div>
-            <div style="font-weight: 500; ${a.dias_ate_aniversario <= 3 ? 'color: #ec4899;' : 'color: var(--gray-600);'}">
-                ${a.dias_ate_aniversario === 0 ? 'Hoje!' : `${a.dias_ate_aniversario} dias`}
-            </div>
+            <span class="sidebar-badge soon">${a.dias_ate_aniversario === 0 ? 'Hoje!' : a.dias_ate_aniversario + 'd'}</span>
         </a>
     `).join('');
 }
@@ -419,12 +484,21 @@ function renderAniversarios(aniversarios) {
 function selectCirculo(circulo) {
     currentCirculo = currentCirculo === circulo ? null : circulo;
     currentOffset = 0;
-    loadDashboard();
+
+    // Update tabs
+    document.querySelectorAll('.circulo-tab').forEach((tab, i) => {
+        tab.classList.toggle('active', (i + 1) === currentCirculo);
+    });
+
+    loadContacts();
 }
 
 async function loadContacts() {
     currentOffset = 0;
     const sortBy = document.getElementById('sortBy').value;
+    const container = document.getElementById('contactsList');
+
+    container.innerHTML = '<div class="empty-state"><div class="spinner-border spinner-border-sm text-primary"></div><p class="mt-2 mb-0">Carregando...</p></div>';
 
     let url = currentCirculo
         ? `/api/circulos/${currentCirculo}/contacts?sort_by=${sortBy}&limit=${LIMIT}`
@@ -435,15 +509,17 @@ async function loadContacts() {
         const data = await response.json();
 
         const contacts = data.contacts || data;
+        const cfg = circuloConfig[currentCirculo] || {};
         const title = currentCirculo
-            ? `Circulo ${currentCirculo} - ${data.config?.nome || ''}`
+            ? `<span class="badge circulo-${currentCirculo}">${currentCirculo}</span> ${cfg.nome || ''}`
             : 'Todos os Contatos';
 
-        document.getElementById('contactsTitle').textContent = title;
+        document.getElementById('panelTitle').innerHTML = title;
         renderContacts(contacts, false);
 
     } catch (error) {
         console.error('Erro ao carregar contatos:', error);
+        container.innerHTML = '<div class="empty-state text-danger">Erro ao carregar</div>';
     }
 }
 
@@ -458,74 +534,61 @@ async function loadMoreContacts() {
     try {
         const response = await fetch(url);
         const data = await response.json();
-
-        const contacts = data.contacts || data;
-        renderContacts(contacts, true);
-
+        renderContacts(data.contacts || data, true);
     } catch (error) {
-        console.error('Erro ao carregar mais contatos:', error);
+        console.error('Erro ao carregar mais:', error);
     }
 }
 
 function renderContacts(contacts, append) {
     const container = document.getElementById('contactsList');
 
-    if (!append) {
-        container.innerHTML = '';
-    }
+    if (!append) container.innerHTML = '';
 
     if (contacts.length === 0 && !append) {
-        container.innerHTML = '<p class="text-muted text-center py-4">Nenhum contato encontrado</p>';
+        container.innerHTML = '<div class="empty-state"><i class="bi bi-people"></i><p>Nenhum contato</p></div>';
+        document.getElementById('loadMoreBtn').style.display = 'none';
         return;
     }
 
     contacts.forEach(c => {
+        const health = c.health_score || 50;
+        const healthClass = getHealthClass(health);
+        const daysAgo = formatDaysAgo(c.ultimo_contato);
+        const isUrgent = health < 40;
+
         container.innerHTML += `
-            <a href="/contatos/${c.id}" class="contact-list-item">
-                <div class="contact-list-avatar">
+            <a href="/contatos/${c.id}" class="contact-item">
+                <div class="contact-avatar">
                     ${c.foto_url ? `<img src="${c.foto_url}">` : c.nome.charAt(0)}
                 </div>
-                <div class="contact-list-details">
-                    <div class="contact-list-name">
-                        <span style="font-weight: 500;">${c.nome}</span>
-                        <span class="circulo-badge circulo-${c.circulo || 5}">${c.circulo || 5}</span>
-                        ${c.circulo_manual ? '<i class="bi bi-lock text-muted" style="font-size: 0.7rem;" title="Circulo manual"></i>' : ''}
-                    </div>
-                    <div class="contact-list-title">
-                        ${c.cargo ? c.cargo + (c.empresa ? ' @ ' + c.empresa : '') : c.empresa || 'Sem empresa'}
-                    </div>
+                <div class="contact-details">
+                    <div class="contact-name">${c.nome}</div>
+                    <div class="contact-meta">${c.cargo ? c.cargo + (c.empresa ? ' @ ' + c.empresa : '') : c.empresa || ''}</div>
                 </div>
-                <div class="contact-list-health">
-                    <div class="health-bar" style="width: 80px; margin-bottom: 4px;">
-                        <div class="health-bar-fill ${getHealthClass(c.health_score || 50)}"
-                             style="width: ${c.health_score || 50}%"></div>
+                <div class="contact-health">
+                    <div class="health-bar">
+                        <div class="health-fill ${healthClass}" style="width: ${health}%"></div>
                     </div>
-                    <div style="font-size: 0.75rem; color: var(--gray-500);">
-                        ${c.ultimo_contato ? formatDaysAgo(c.ultimo_contato) : 'Sem contato'}
-                    </div>
+                    <div class="health-text ${isUrgent ? 'urgent' : ''}">${daysAgo}</div>
                 </div>
             </a>
         `;
     });
 
-    document.getElementById('loadMoreBtn').style.display = contacts.length < LIMIT ? 'none' : 'inline';
+    document.getElementById('loadMoreBtn').style.display = contacts.length < LIMIT ? 'none' : 'block';
 }
 
 async function recalcularTodos() {
-    if (!confirm('Recalcular circulos de todos os contatos? Isso pode levar alguns minutos.')) {
-        return;
-    }
+    if (!confirm('Recalcular circulos de todos os contatos?')) return;
 
     try {
         const response = await fetch('/api/circulos/recalculate', { method: 'POST' });
         const data = await response.json();
-
-        alert(`Recalculo concluido!\n\nContatos atualizados: ${data.atualizados}\nMudancas de circulo: ${data.mudancas?.length || 0}`);
+        alert(`Recalculo concluido!\nAtualizados: ${data.atualizados}\nMudancas: ${data.mudancas?.length || 0}`);
         loadDashboard();
-
     } catch (error) {
-        console.error('Erro ao recalcular:', error);
-        alert('Erro ao recalcular circulos');
+        alert('Erro ao recalcular');
     }
 }
 
@@ -536,9 +599,9 @@ function formatNumber(n) {
 }
 
 function getHealthClass(health) {
-    if (health >= 70) return 'health-high';
-    if (health >= 40) return 'health-medium';
-    return 'health-low';
+    if (health >= 70) return 'high';
+    if (health >= 40) return 'medium';
+    return 'low';
 }
 
 function formatDaysAgo(date) {
@@ -546,7 +609,7 @@ function formatDaysAgo(date) {
     const days = Math.floor((new Date() - new Date(date)) / (1000 * 60 * 60 * 24));
     if (days === 0) return 'Hoje';
     if (days === 1) return 'Ontem';
-    return `${days} dias atras`;
+    return days + 'd atras';
 }
 
 function formatDate(date) {
@@ -554,7 +617,6 @@ function formatDate(date) {
     return new Date(date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 }
 
-// Init
 document.addEventListener('DOMContentLoaded', loadDashboard);
 </script>
 {% endblock %}
