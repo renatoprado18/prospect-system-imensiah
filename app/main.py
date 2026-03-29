@@ -5924,7 +5924,7 @@ from integrations.google_calendar import get_calendar_integration
 
 
 @app.get("/api/calendar/today")
-async def calendar_today(request: Request):
+async def calendar_today(request: Request, debug: bool = False):
     """
     Retorna eventos de hoje.
     """
@@ -5939,7 +5939,9 @@ async def calendar_today(request: Request):
         account = cursor.fetchone()
 
     if not account:
-        return []  # Return empty array for JS compatibility
+        if debug:
+            return {"error": "no_account", "events": []}
+        return []
 
     # Refresh token
     from integrations.gmail import GmailIntegration
@@ -5947,13 +5949,44 @@ async def calendar_today(request: Request):
     tokens = await gmail.refresh_access_token(account["refresh_token"])
 
     if "error" in tokens:
-        return []  # Return empty array for JS compatibility
+        if debug:
+            return {"error": "token_refresh_failed", "details": tokens, "events": []}
+        return []
 
     access_token = tokens.get("access_token")
     calendar = get_calendar_integration()
-    events = await calendar.get_today_events(access_token)
 
-    return events  # Return array directly for JS
+    if debug:
+        # Debug mode - return raw API response
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        sp_tz = ZoneInfo("America/Sao_Paulo")
+        now_sp = datetime.now(sp_tz)
+        start_of_day_sp = now_sp.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_of_day_sp = start_of_day_sp + timedelta(days=1)
+        start_utc = start_of_day_sp.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+        end_utc = end_of_day_sp.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+        raw_result = await calendar.list_events(
+            access_token=access_token,
+            time_min=start_utc,
+            time_max=end_utc,
+            max_results=20
+        )
+
+        return {
+            "debug": True,
+            "now_sp": now_sp.isoformat(),
+            "start_of_day_sp": start_of_day_sp.isoformat(),
+            "end_of_day_sp": end_of_day_sp.isoformat(),
+            "start_utc": start_utc.isoformat(),
+            "end_utc": end_utc.isoformat(),
+            "raw_api_response": raw_result,
+            "formatted_events": await calendar.get_today_events(access_token)
+        }
+
+    events = await calendar.get_today_events(access_token)
+    return events
 
 
 @app.get("/api/calendar/events")
