@@ -47,7 +47,9 @@ from services.circulos import (
 )
 from services.briefings import (
     generate_briefing,
-    get_contacts_needing_briefing
+    get_contacts_needing_briefing,
+    get_current_briefing,
+    record_briefing_action
 )
 from services.auto_tags import (
     analisar_contato_para_tags,
@@ -5927,6 +5929,7 @@ from integrations.google_calendar import get_calendar_integration
 async def calendar_today(request: Request, debug: bool = False):
     """
     Retorna eventos de hoje.
+    Formato compativel com 3FLOW: start_datetime, end_datetime, contact_name
     """
     user = get_current_user(request)
     if not user:
@@ -5986,39 +5989,51 @@ async def calendar_today(request: Request, debug: bool = False):
         }
 
     events = await calendar.get_today_events(access_token)
-    return events
+
+    # Transform to 3FLOW format: start_datetime, end_datetime, contact_name
+    formatted_events = []
+    for event in events:
+        formatted = {
+            "id": event.get("id"),
+            "summary": event.get("summary", "Sem titulo"),
+            "description": event.get("description"),
+            "location": event.get("location"),
+            "start_datetime": event.get("start"),  # Rename start -> start_datetime
+            "end_datetime": event.get("end"),      # Rename end -> end_datetime
+            "is_all_day": event.get("is_all_day", False),
+            "html_link": event.get("html_link"),
+            "conference": event.get("conference"),
+            "contact_name": None  # Will be filled if we find matching contact
+        }
+
+        # Try to match attendees to contacts
+        attendees = event.get("attendees", [])
+        if attendees:
+            attendee_emails = [a.get("email") for a in attendees if a.get("email")]
+            if attendee_emails:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    # Search for contacts matching attendee emails
+                    placeholders = ", ".join(["%s"] * len(attendee_emails))
+                    cursor.execute(f"""
+                        SELECT nome, emails FROM contacts
+                        WHERE EXISTS (
+                            SELECT 1 FROM jsonb_array_elements(emails) AS e
+                            WHERE LOWER(e->>'email') = ANY(ARRAY[{placeholders}])
+                        )
+                        LIMIT 1
+                    """, [e.lower() for e in attendee_emails])
+                    contact = cursor.fetchone()
+                    if contact:
+                        formatted["contact_name"] = contact["nome"]
+
+        formatted_events.append(formatted)
+
+    return formatted_events
 
 
-@app.get("/api/calendar/events")
-async def calendar_events(request: Request, days: int = 7):
-    """
-    Retorna proximos eventos.
-    """
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Nao autenticado")
-
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
-        account = cursor.fetchone()
-
-    if not account:
-        return {"events": [], "error": "Nenhuma conta Google conectada"}
-
-    from integrations.gmail import GmailIntegration
-    gmail = GmailIntegration()
-    tokens = await gmail.refresh_access_token(account["refresh_token"])
-
-    if "error" in tokens:
-        return {"events": [], "error": "Token invalido"}
-
-    access_token = tokens.get("access_token")
-    calendar = get_calendar_integration()
-    events = await calendar.get_upcoming_events(access_token, days=days)
-
-    return {"events": events, "days": days}
-
+# NOTE: /api/calendar/events endpoint is defined later in the file (CalendarEventsService)
+# It returns events from local DB with contact_name field
 
 # ============== Google Tasks Endpoints ==============
 

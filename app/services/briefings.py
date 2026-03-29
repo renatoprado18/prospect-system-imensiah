@@ -17,10 +17,220 @@ from services.circulos import (
     calcular_health_score,
     calcular_dias_sem_contato
 )
+import re
 
 # Configuracao AI
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
+
+
+# ============== PERSISTENCIA DE BRIEFINGS ==============
+
+def parse_briefing_sections(briefing_text: str) -> Dict:
+    """
+    Extrai secoes estruturadas do texto do briefing.
+
+    Returns:
+        Dict com summary, opportunities, next_steps, talking_points
+    """
+    result = {
+        "summary": "",
+        "opportunities": [],
+        "next_steps": [],
+        "talking_points": []
+    }
+
+    if not briefing_text:
+        return result
+
+    # Padroes para encontrar secoes
+    sections = {
+        "RESUMO": "summary",
+        "OPORTUNIDADES": "opportunities",
+        "SUGESTOES DE PAUTA": "talking_points",
+        "PONTOS DE ATENCAO": "next_steps"
+    }
+
+    text = briefing_text
+
+    # Extrair resumo (primeira secao geralmente)
+    resumo_match = re.search(r'\*\*RESUMO\*\*[:\s]*(.+?)(?=\*\*[A-Z]|\Z)', text, re.DOTALL | re.IGNORECASE)
+    if resumo_match:
+        result["summary"] = resumo_match.group(1).strip()[:500]
+
+    # Extrair oportunidades
+    oport_match = re.search(r'\*\*OPORTUNIDADES?\*\*[:\s]*(.+?)(?=\*\*[A-Z]|\Z)', text, re.DOTALL | re.IGNORECASE)
+    if oport_match:
+        items = re.findall(r'[-•]\s*(.+?)(?=[-•]|\Z)', oport_match.group(1), re.DOTALL)
+        result["opportunities"] = [item.strip()[:200] for item in items if item.strip()][:5]
+
+    # Extrair sugestoes de pauta / talking points
+    pauta_match = re.search(r'\*\*SUGEST[ÕO]ES DE PAUTA\*\*[:\s]*(.+?)(?=\*\*[A-Z]|\Z)', text, re.DOTALL | re.IGNORECASE)
+    if pauta_match:
+        items = re.findall(r'[-•\d\.]\s*(.+?)(?=[-•\d\.]|\Z)', pauta_match.group(1), re.DOTALL)
+        result["talking_points"] = [item.strip()[:200] for item in items if item.strip()][:5]
+
+    # Extrair pontos de atencao como next_steps
+    atencao_match = re.search(r'\*\*PONTOS DE ATEN[ÇC][ÃA]O\*\*[:\s]*(.+?)(?=\*\*[A-Z]|\Z)', text, re.DOTALL | re.IGNORECASE)
+    if atencao_match:
+        items = re.findall(r'[-•]\s*(.+?)(?=[-•]|\Z)', atencao_match.group(1), re.DOTALL)
+        result["next_steps"] = [item.strip()[:200] for item in items if item.strip()][:5]
+
+    return result
+
+
+def save_briefing_to_db(
+    contact_id: int,
+    briefing_text: str,
+    health_score: int = None,
+    circulo: int = None
+) -> Optional[int]:
+    """
+    Salva briefing no banco de dados.
+    Marca briefings anteriores como nao-atuais.
+
+    Returns:
+        ID do briefing criado ou None se erro
+    """
+    try:
+        parsed = parse_briefing_sections(briefing_text)
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Marcar briefings anteriores como nao-atuais
+            cursor.execute("""
+                UPDATE contact_briefings
+                SET is_current = FALSE
+                WHERE contact_id = %s AND is_current = TRUE
+            """, (contact_id,))
+
+            # Inserir novo briefing
+            cursor.execute("""
+                INSERT INTO contact_briefings (
+                    contact_id, content, summary, opportunities,
+                    next_steps, talking_points, health_at_generation,
+                    circulo_at_generation, is_current
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TRUE)
+                RETURNING id
+            """, (
+                contact_id,
+                briefing_text,
+                parsed["summary"],
+                json.dumps(parsed["opportunities"]),
+                json.dumps(parsed["next_steps"]),
+                json.dumps(parsed["talking_points"]),
+                health_score,
+                circulo
+            ))
+
+            result = cursor.fetchone()
+            conn.commit()
+            return result['id'] if result else None
+
+    except Exception as e:
+        print(f"Erro ao salvar briefing: {e}")
+        return None
+
+
+def get_current_briefing(contact_id: int) -> Optional[Dict]:
+    """
+    Retorna o briefing atual (mais recente) de um contato.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, content, summary, opportunities, next_steps,
+                   talking_points, generated_at, feedback, actions_taken,
+                   health_at_generation, circulo_at_generation
+            FROM contact_briefings
+            WHERE contact_id = %s AND is_current = TRUE
+            ORDER BY generated_at DESC
+            LIMIT 1
+        """, (contact_id,))
+
+        row = cursor.fetchone()
+        if row:
+            briefing = dict(row)
+            # Parse JSONB fields
+            for field in ['opportunities', 'next_steps', 'talking_points', 'actions_taken']:
+                if briefing.get(field) and isinstance(briefing[field], str):
+                    try:
+                        briefing[field] = json.loads(briefing[field])
+                    except:
+                        briefing[field] = []
+            return briefing
+        return None
+
+
+def get_briefing_history(contact_id: int, limit: int = 5) -> List[Dict]:
+    """
+    Retorna historico de briefings de um contato.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, summary, generated_at, health_at_generation,
+                   circulo_at_generation, feedback, is_current
+            FROM contact_briefings
+            WHERE contact_id = %s
+            ORDER BY generated_at DESC
+            LIMIT %s
+        """, (contact_id, limit))
+
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def add_briefing_feedback(briefing_id: int, feedback: str) -> bool:
+    """
+    Adiciona feedback a um briefing (util para melhorar AI).
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE contact_briefings
+                SET feedback = %s
+                WHERE id = %s
+            """, (feedback, briefing_id))
+            conn.commit()
+            return True
+    except:
+        return False
+
+
+def record_briefing_action(briefing_id: int, action: Dict) -> bool:
+    """
+    Registra uma acao tomada baseada no briefing.
+
+    action = {"type": "whatsapp", "timestamp": "...", "result": "sent"}
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Buscar acoes existentes
+            cursor.execute("""
+                SELECT actions_taken FROM contact_briefings WHERE id = %s
+            """, (briefing_id,))
+            row = cursor.fetchone()
+
+            if row:
+                actions = row['actions_taken'] or []
+                if isinstance(actions, str):
+                    actions = json.loads(actions)
+                actions.append(action)
+
+                cursor.execute("""
+                    UPDATE contact_briefings
+                    SET actions_taken = %s
+                    WHERE id = %s
+                """, (json.dumps(actions), briefing_id))
+                conn.commit()
+                return True
+        return False
+    except:
+        return False
 
 
 def get_contact_data(contact_id: int) -> Optional[Dict]:
@@ -357,20 +567,41 @@ Se nao houver dados suficientes em alguma secao, indique "Sem dados suficientes"
             except:
                 pass
 
+    # Extrair dados estruturados do briefing
+    parsed_sections = parse_briefing_sections(briefing_text)
+
+    # Salvar briefing no banco de dados
+    health = contact.get('health_score') or 50
+    circulo = contact.get('circulo') or 5
+
+    briefing_id = save_briefing_to_db(
+        contact_id=contact_id,
+        briefing_text=briefing_text,
+        health_score=health,
+        circulo=circulo
+    )
+
     # Montar resposta estruturada
     return {
         "contact_id": contact_id,
+        "briefing_id": briefing_id,  # ID do briefing salvo
         "nome": contact['nome'],
         "empresa": contact.get('empresa'),
         "cargo": contact.get('cargo'),
-        "circulo": contact.get('circulo') or 5,
-        "circulo_nome": CIRCULO_CONFIG.get(contact.get('circulo') or 5, {}).get('nome', 'Arquivo'),
-        "health_score": contact.get('health_score') or 50,
+        "circulo": circulo,
+        "circulo_nome": CIRCULO_CONFIG.get(circulo, {}).get('nome', 'Arquivo'),
+        "health_score": health,
         "dias_sem_contato": dias_sem_contato,
         "aniversario_proximo": aniversario_proximo,
         "briefing": briefing_text,
         "gerado_em": datetime.now().isoformat(),
         "contexto_reuniao": contexto_reuniao,
+        # Dados estruturados extraidos
+        "summary": parsed_sections.get("summary", ""),
+        "opportunities": parsed_sections.get("opportunities", []),
+        "talking_points": parsed_sections.get("talking_points", []),
+        "next_steps": parsed_sections.get("next_steps", []),
+        "persisted": briefing_id is not None,  # Indica se foi salvo
         # Dados extras para UI
         "foto_url": contact.get('foto_url'),
         "linkedin": contact.get('linkedin'),

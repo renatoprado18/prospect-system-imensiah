@@ -407,6 +407,35 @@ def init_db():
             ON contact_facts(contact_id)
         ''')
 
+        # Contact Briefings - AI-generated briefings persistidos
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS contact_briefings (
+                id SERIAL PRIMARY KEY,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                content TEXT NOT NULL,
+                summary TEXT,
+                opportunities JSONB DEFAULT '[]',
+                next_steps JSONB DEFAULT '[]',
+                talking_points JSONB DEFAULT '[]',
+                generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                feedback TEXT,
+                actions_taken JSONB DEFAULT '[]',
+                is_current BOOLEAN DEFAULT TRUE,
+                health_at_generation INTEGER,
+                circulo_at_generation INTEGER
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_briefings_contact
+            ON contact_briefings(contact_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_briefings_current
+            ON contact_briefings(contact_id, is_current) WHERE is_current = TRUE
+        ''')
+
         # Tasks
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tasks (
