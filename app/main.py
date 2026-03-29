@@ -8631,41 +8631,61 @@ async def briefing_draft_message(request: Request, data: BriefingMessageDraft):
     briefing_context = ""
     briefing_id = None
     hook_suggestion = ""
+    opportunities_text = ""
 
     if current_briefing:
         briefing_id = current_briefing.get("id")
         parts = []
 
-        # Usar o conteudo completo do briefing se disponivel
+        # Usar o conteudo completo do briefing
         briefing_content = current_briefing.get("content", "")
+
+        # Extrair secao de oportunidades do briefing completo
+        if briefing_content:
+            import re
+            # Procurar secao de oportunidades no texto completo
+            oport_match = re.search(
+                r'(?:##\s*\d*\.?\s*)?OPORTUNIDADES?\s*\n(.*?)(?=\n##|\n\*\*[A-Z]|\Z)',
+                briefing_content, re.DOTALL | re.IGNORECASE
+            )
+            if oport_match:
+                opportunities_text = oport_match.group(1).strip()[:800]
+
+            # Procurar sugestoes de pauta
+            pauta_match = re.search(
+                r'(?:##\s*\d*\.?\s*)?SUGEST[ÕO]ES?\s*(?:DE PAUTA)?\s*\n(.*?)(?=\n##|\n\*\*[A-Z]|\Z)',
+                briefing_content, re.DOTALL | re.IGNORECASE
+            )
+            if pauta_match:
+                pauta_text = pauta_match.group(1).strip()[:500]
+                if pauta_text:
+                    parts.append(f"Sugestoes de pauta:\n{pauta_text}")
+
+            # Extrair primeira sugestao concreta como hook
+            hook_match = re.search(
+                r'(?:Propor|Convidar|Agendar|Levar|Criar)[^\n.!?]*',
+                briefing_content, re.IGNORECASE
+            )
+            if hook_match:
+                hook_suggestion = hook_match.group(0).strip()[:150]
 
         # Adicionar resumo do briefing
         if current_briefing.get("summary"):
             parts.append(f"Contexto: {current_briefing['summary']}")
 
-        # Adicionar oportunidades identificadas
+        # Usar dados estruturados se disponiveis
         opportunities = current_briefing.get("opportunities") or []
         if opportunities:
             parts.append(f"Oportunidades: {'; '.join(opportunities[:3])}")
-            hook_suggestion = opportunities[0]  # Usar primeira oportunidade como gancho
-
-        # Adicionar sugestoes de pauta/conversa
-        talking_points = current_briefing.get("talking_points") or []
-        if talking_points:
-            parts.append(f"Assuntos sugeridos: {'; '.join(talking_points[:3])}")
             if not hook_suggestion:
-                hook_suggestion = talking_points[0]  # Usar primeiro assunto como gancho
+                hook_suggestion = opportunities[0]
+
+        talking_points = current_briefing.get("talking_points") or []
+        if talking_points and not hook_suggestion:
+            hook_suggestion = talking_points[0]
 
         if parts:
             briefing_context = "\n- ".join([""] + parts)
-
-        # Se nao extraiu dados estruturados, usar resumo do briefing
-        if not hook_suggestion and briefing_content:
-            # Extrair uma sugestao do briefing completo
-            import re
-            sugestao_match = re.search(r'(?:sugestao|propor|convidar|agendar)[^\n.]*([^\n.]+)', briefing_content, re.IGNORECASE)
-            if sugestao_match:
-                hook_suggestion = sugestao_match.group(0)[:100]
 
     # Context templates com gancho especifico
     context_prompts = {
@@ -8689,17 +8709,22 @@ INFORMACOES DO CONTATO:
 - Dias desde ultimo contato: {dias_sem_contato}
 {f"- Relacionamento: {contact['resumo_ai'][:300]}" if contact.get('resumo_ai') else ""}{briefing_context}
 
-{f"GANCHO SUGERIDO: {hook_suggestion}" if hook_suggestion else ""}
+{f'''OPORTUNIDADES IDENTIFICADAS NO BRIEFING:
+{opportunities_text}
+''' if opportunities_text else ""}
+
+{f"USE ESTE GANCHO NA MENSAGEM: {hook_suggestion}" if hook_suggestion else ""}
 
 CANAL: {data.channel.upper()}
 {'''REGRAS PARA WHATSAPP:
-- Maximo 2-3 frases curtas
-- Inclua um MOTIVO CONCRETO para o contato (ex: "vi que a Despertar esta com projeto X", "lembrei de voce por causa de Y")
-- Proponha uma acao clara (cafe, call, trocar ideia sobre algo especifico)
-- Sem emojis excessivos (maximo 1)
-- Tom casual mas profissional''' if data.channel == "whatsapp" else "(Email pode ser mais elaborado)"}
+- Maximo 2-3 frases curtas e diretas
+- OBRIGATORIO: Mencione uma oportunidade especifica do briefing acima (ex: "levar metodologia ImensIAH", "parceria estrategica", "mentoria cruzada")
+- Proponha acao clara: cafe, call, ou encontro no proximo conselho
+- Maximo 1 emoji
+- Tom casual mas profissional
+- NAO use frases genericas como "trocar ideias" sem especificar o que''' if data.channel == "whatsapp" else "(Email pode ser mais elaborado)"}
 
-IMPORTANTE: A mensagem DEVE ter um gancho/motivo especifico. NAO use frases genericas como "espero que esteja bem" ou "como vai?" sem um proposito claro.
+IMPORTANTE: A mensagem DEVE mencionar uma OPORTUNIDADE ESPECIFICA do briefing. Seja direto sobre o que voce quer propor.
 
 Responda APENAS com a mensagem, sem explicacoes.
 """
