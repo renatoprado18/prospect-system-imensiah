@@ -8067,27 +8067,109 @@ async def create_calendar_event_endpoint(request: Request):
 
 
 @app.get("/api/calendar/events")
-def list_calendar_events(
+async def list_calendar_events(
     request: Request,
     start: str = None,
     end: str = None,
     days: int = 7,
     limit: int = 50
 ):
-    """Lista eventos do calendario"""
+    """Lista eventos do calendario - busca direto do Google Calendar"""
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
-    service = get_calendar_events()
+    # Buscar token da conta Google conectada
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
+        return {"events": [], "total": 0, "error": "no_google_account"}
+
+    # Refresh token
+    from integrations.gmail import GmailIntegration
+    gmail = GmailIntegration()
+    tokens = await gmail.refresh_access_token(account["refresh_token"])
+
+    if "error" in tokens:
+        return {"events": [], "total": 0, "error": "token_refresh_failed"}
+
+    access_token = tokens.get("access_token")
+    calendar = get_calendar_integration()
+
+    # Calcular periodo
+    from zoneinfo import ZoneInfo
+    sp_tz = ZoneInfo("America/Sao_Paulo")
 
     if start and end:
-        events = service.get_events_for_period(
-            start=datetime.fromisoformat(start),
-            end=datetime.fromisoformat(end)
-        )
+        # Parse das datas (formato YYYY-MM-DD)
+        try:
+            start_dt = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=sp_tz)
+            end_dt = datetime.strptime(end, "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=sp_tz)
+        except ValueError:
+            # Tentar formato ISO
+            start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+            end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
     else:
-        events = service.get_upcoming_events(days=days, limit=limit)
+        # Proximos N dias
+        now = datetime.now(sp_tz)
+        start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt = start_dt + timedelta(days=days)
+
+    # Converter para UTC
+    start_utc = start_dt.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+    end_utc = end_dt.astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+
+    # Buscar eventos do Google Calendar
+    result = await calendar.list_events(
+        access_token=access_token,
+        time_min=start_utc,
+        time_max=end_utc,
+        max_results=limit
+    )
+
+    if "error" in result:
+        return {"events": [], "total": 0, "error": result.get("error")}
+
+    # Formatar eventos para o frontend
+    events = []
+    for item in result.get("items", []):
+        start_info = item.get("start", {})
+        end_info = item.get("end", {})
+
+        # Determinar se e all-day
+        is_all_day = "date" in start_info and "dateTime" not in start_info
+
+        if is_all_day:
+            event_start = start_info.get("date") + "T00:00:00"
+            event_end = end_info.get("date") + "T23:59:59"
+        else:
+            event_start = start_info.get("dateTime", "")
+            event_end = end_info.get("dateTime", "")
+
+        # Extrair link de conferencia
+        conference = None
+        if item.get("conferenceData"):
+            entry_points = item["conferenceData"].get("entryPoints", [])
+            for ep in entry_points:
+                if ep.get("entryPointType") == "video":
+                    conference = ep.get("uri")
+                    break
+
+        events.append({
+            "id": item.get("id"),
+            "summary": item.get("summary", "Sem titulo"),
+            "description": item.get("description"),
+            "location": item.get("location"),
+            "start_datetime": event_start,
+            "end_datetime": event_end,
+            "is_all_day": is_all_day,
+            "html_link": item.get("htmlLink"),
+            "conference": conference,
+            "contact_name": None  # TODO: match with contacts
+        })
 
     return {"events": events, "total": len(events)}
 
