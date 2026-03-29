@@ -648,9 +648,11 @@
         let autoSyncAbort = false;
         let parsedImportData = null;
         let contactsList = [];
+        let batchFiles = []; // Para batch import
 
         // Setup file drag and drop
         document.addEventListener('DOMContentLoaded', function() {
+            // Single file upload
             const uploadArea = document.getElementById('uploadArea');
             const fileInput = document.getElementById('fileInput');
 
@@ -675,7 +677,209 @@
                     if (e.target.files.length) processImportFile(e.target.files[0]);
                 });
             }
+
+            // Batch file upload
+            const batchUploadArea = document.getElementById('batchUploadArea');
+            const batchFileInput = document.getElementById('batchFileInput');
+
+            if (batchUploadArea && batchFileInput) {
+                batchUploadArea.addEventListener('click', () => batchFileInput.click());
+                batchUploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    batchUploadArea.style.borderColor = 'var(--whatsapp)';
+                    batchUploadArea.style.background = 'rgba(37, 211, 102, 0.05)';
+                });
+                batchUploadArea.addEventListener('dragleave', () => {
+                    batchUploadArea.style.borderColor = 'var(--gray-300)';
+                    batchUploadArea.style.background = '';
+                });
+                batchUploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    batchUploadArea.style.borderColor = 'var(--gray-300)';
+                    batchUploadArea.style.background = '';
+                    if (e.dataTransfer.files.length) processBatchFiles(e.dataTransfer.files);
+                });
+                batchFileInput.addEventListener('change', (e) => {
+                    if (e.target.files.length) processBatchFiles(e.target.files);
+                });
+            }
         });
+
+        // =============== BATCH IMPORT ===============
+
+        async function processBatchFiles(files) {
+            const txtFiles = Array.from(files).filter(f => f.name.endsWith('.txt'));
+            if (txtFiles.length === 0) {
+                showToast('Selecione arquivos .txt');
+                return;
+            }
+
+            showToast(`Analisando ${txtFiles.length} arquivos...`);
+
+            const formData = new FormData();
+            txtFiles.forEach(f => formData.append('files', f));
+
+            try {
+                const response = await fetch('/api/whatsapp/batch-import/preview', {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'include'
+                });
+
+                if (!response.ok) throw new Error('Erro ao analisar arquivos');
+
+                const data = await response.json();
+                batchFiles = data.files || [];
+
+                // Read file contents for later import
+                for (let i = 0; i < txtFiles.length; i++) {
+                    const content = await txtFiles[i].text();
+                    if (batchFiles[i]) {
+                        batchFiles[i].content = content;
+                    }
+                }
+
+                renderBatchPreview();
+            } catch (e) {
+                showToast('Erro ao processar arquivos');
+                console.error(e);
+            }
+        }
+
+        function renderBatchPreview() {
+            document.getElementById('batchPreview').style.display = 'block';
+            document.getElementById('batchFileCount').textContent = batchFiles.length;
+
+            const totalMsgs = batchFiles.reduce((sum, f) => sum + (f.messages_count || 0), 0);
+            document.getElementById('batchTotalMessages').textContent = `${totalMsgs.toLocaleString()} mensagens`;
+
+            const list = document.getElementById('batchFilesList');
+            list.innerHTML = batchFiles.map((file, idx) => {
+                const hasContact = file.contact_found;
+                const statusClass = hasContact ? 'bg-success' : 'bg-warning';
+                const statusIcon = hasContact ? 'bi-check-circle' : 'bi-question-circle';
+                const contactName = file.contact ? file.contact.nome : file.contact_name || 'Desconhecido';
+
+                return `
+                <div class="d-flex align-items-center gap-3 p-3 border rounded mb-2" data-idx="${idx}">
+                    <div class="flex-shrink-0">
+                        <span class="badge ${statusClass}"><i class="bi ${statusIcon}"></i></span>
+                    </div>
+                    <div class="flex-grow-1 min-width-0">
+                        <div class="fw-medium text-truncate">${file.filename}</div>
+                        <small class="text-muted">
+                            ${file.messages_count || 0} msgs
+                            ${file.date_range?.start ? '• ' + new Date(file.date_range.start).toLocaleDateString('pt-BR') : ''}
+                        </small>
+                    </div>
+                    <div class="flex-shrink-0" style="min-width: 200px;">
+                        ${hasContact
+                            ? `<span class="text-success"><i class="bi bi-person-check me-1"></i>${contactName}</span>`
+                            : `<select class="form-select form-select-sm" onchange="setBatchContact(${idx}, this.value)">
+                                    <option value="">Selecionar contato...</option>
+                                    ${contactsList.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}
+                               </select>`
+                        }
+                    </div>
+                    <div class="flex-shrink-0">
+                        <button class="btn btn-sm btn-outline-danger" onclick="removeBatchFile(${idx})">
+                            <i class="bi bi-x"></i>
+                        </button>
+                    </div>
+                </div>
+                `;
+            }).join('');
+
+            updateBatchImportButton();
+        }
+
+        function setBatchContact(idx, contactId) {
+            if (batchFiles[idx] && contactId) {
+                batchFiles[idx].contact_id = parseInt(contactId);
+                batchFiles[idx].contact_found = true;
+                const contact = contactsList.find(c => c.id == contactId);
+                if (contact) {
+                    batchFiles[idx].contact = contact;
+                }
+            }
+            updateBatchImportButton();
+        }
+
+        function removeBatchFile(idx) {
+            batchFiles.splice(idx, 1);
+            if (batchFiles.length === 0) {
+                clearBatchFiles();
+            } else {
+                renderBatchPreview();
+            }
+        }
+
+        function clearBatchFiles() {
+            batchFiles = [];
+            document.getElementById('batchPreview').style.display = 'none';
+            document.getElementById('batchResult').style.display = 'none';
+            document.getElementById('batchFileInput').value = '';
+        }
+
+        function updateBatchImportButton() {
+            const btn = document.getElementById('batchImportBtn');
+            const validFiles = batchFiles.filter(f => f.contact_found || f.contact_id);
+            btn.disabled = validFiles.length === 0;
+            btn.innerHTML = `<i class="bi bi-check-circle me-2"></i> Importar ${validFiles.length} de ${batchFiles.length}`;
+        }
+
+        async function confirmBatchImport() {
+            const filesToImport = batchFiles.filter(f => f.contact_found || f.contact_id);
+            if (filesToImport.length === 0) {
+                showToast('Selecione contatos para os arquivos');
+                return;
+            }
+
+            const btn = document.getElementById('batchImportBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Importando...';
+
+            try {
+                const payload = {
+                    files: filesToImport.map(f => ({
+                        filename: f.filename,
+                        content: f.content,
+                        contact_id: f.contact?.id || f.contact_id
+                    }))
+                };
+
+                const response = await fetch('/api/whatsapp/batch-import/confirm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    credentials: 'include'
+                });
+
+                const result = await response.json();
+
+                // Show result
+                document.getElementById('batchPreview').style.display = 'none';
+                document.getElementById('batchResult').style.display = 'block';
+                document.getElementById('batchResultText').innerHTML = `
+                    <strong>${result.successful}</strong> arquivos importados com sucesso<br>
+                    <strong>${result.total_messages_imported?.toLocaleString() || 0}</strong> mensagens adicionadas ao Inbox
+                    ${result.failed > 0 ? `<br><span class="text-warning">${result.failed} arquivos com erro</span>` : ''}
+                `;
+
+                showToast(`Importado: ${result.total_messages_imported} mensagens`);
+                checkStatus();
+
+            } catch (e) {
+                showToast('Erro ao importar');
+                console.error(e);
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check-circle me-2"></i> Importar Todos';
+            }
+        }
+
+        function resetBatchImport() {
+            clearBatchFiles();
+        }
 
         async function loadContactsForImport() {
             try {
@@ -1257,6 +1461,7 @@
 
         // Check status on load and periodically
         checkStatus();
+        loadContactsForImport(); // Pre-load contacts for batch import
         setInterval(checkStatus, 30000);  // Check every 30 seconds
     </script>
 </body>

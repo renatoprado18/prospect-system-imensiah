@@ -6576,6 +6576,139 @@ async def get_whatsapp_messages(request: Request, contact_id: int, limit: int = 
         return {"messages": [dict(m) for m in messages]}
 
 
+# ============== Evolution API Integration ==============
+
+from integrations.evolution_api import get_evolution_client, handle_evolution_webhook
+
+@app.post("/api/webhooks/whatsapp")
+async def whatsapp_webhook(request: Request):
+    """
+    Webhook para receber eventos da Evolution API.
+    Configura este URL na Evolution API: POST /webhook/set/{instance}
+    """
+    try:
+        payload = await request.json()
+        result = await handle_evolution_webhook(payload)
+        return result
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return {"error": str(e)}
+
+
+@app.get("/api/evolution/status")
+async def evolution_status(request: Request):
+    """Status da conexão com Evolution API"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    client = get_evolution_client()
+
+    if not client.is_configured:
+        return {
+            "configured": False,
+            "message": "Evolution API não configurada. Configure EVOLUTION_API_URL e EVOLUTION_API_KEY"
+        }
+
+    status = await client.check_connection()
+    return {
+        "configured": True,
+        "instance": client.instance_name,
+        **status
+    }
+
+
+@app.get("/api/evolution/qrcode")
+async def evolution_qrcode(request: Request):
+    """Obtém QR Code para conexão"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    client = get_evolution_client()
+
+    if not client.is_configured:
+        raise HTTPException(status_code=400, detail="Evolution API não configurada")
+
+    result = await client.get_qr_code()
+    return result
+
+
+@app.post("/api/evolution/create-instance")
+async def evolution_create_instance(request: Request):
+    """Cria instância do WhatsApp na Evolution API"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    client = get_evolution_client()
+
+    if not client.is_configured:
+        raise HTTPException(status_code=400, detail="Evolution API não configurada")
+
+    result = await client.create_instance()
+    return result
+
+
+@app.post("/api/evolution/disconnect")
+async def evolution_disconnect(request: Request):
+    """Desconecta a instância do WhatsApp"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    client = get_evolution_client()
+
+    if not client.is_configured:
+        raise HTTPException(status_code=400, detail="Evolution API não configurada")
+
+    result = await client.logout_instance()
+    return result
+
+
+@app.post("/api/evolution/setup-webhook")
+async def evolution_setup_webhook(request: Request):
+    """Configura webhook na Evolution API"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    client = get_evolution_client()
+
+    if not client.is_configured:
+        raise HTTPException(status_code=400, detail="Evolution API não configurada")
+
+    # URL do webhook deste sistema
+    base_url = os.getenv("BASE_URL", "https://intel.almeida-prado.com")
+    webhook_url = f"{base_url}/api/webhooks/whatsapp"
+
+    result = await client.set_webhook(webhook_url)
+    return {"webhook_url": webhook_url, "result": result}
+
+
+@app.post("/api/evolution/send")
+async def evolution_send_message(request: Request):
+    """Envia mensagem via Evolution API"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    client = get_evolution_client()
+
+    if not client.is_configured:
+        raise HTTPException(status_code=400, detail="Evolution API não configurada")
+
+    data = await request.json()
+    phone = data.get("phone")
+    message = data.get("message")
+
+    if not phone or not message:
+        raise HTTPException(status_code=400, detail="phone e message são obrigatórios")
+
+    result = await client.send_text(phone, message)
+    return result
+
+
 # ============== ConselhoOS Sync Endpoints ==============
 
 from services.conselhoos_sync import get_conselhoos_sync_service
