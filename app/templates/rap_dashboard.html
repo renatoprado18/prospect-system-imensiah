@@ -1551,11 +1551,41 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // ============== Shared Data Cache ==============
+        const dataCache = {
+            dashboard: null,
+            calendar: null,
+            atRisk: null,
+            loaded: false
+        };
+
+        // Load all critical data in parallel once
+        async function loadAllData() {
+            if (dataCache.loaded) return;
+
+            try {
+                const [dashRes, calRes, riskRes] = await Promise.all([
+                    fetch('/api/v1/dashboard'),
+                    fetch('/api/calendar/today'),
+                    fetch('/api/ai/at-risk?limit=6')
+                ]);
+
+                dataCache.dashboard = dashRes.ok ? await dashRes.json() : {};
+                dataCache.calendar = calRes.ok ? await calRes.json() : [];
+                dataCache.atRisk = riskRes.ok ? await riskRes.json() : { contacts: [] };
+                dataCache.loaded = true;
+            } catch (e) {
+                console.error('Error loading data:', e);
+                dataCache.loaded = true; // Prevent retry loop
+            }
+        }
+
         // Load dashboard data from unified API
         async function loadDashboardData() {
             try {
-                const response = await fetch('/api/v1/dashboard');
-                const data = await response.json();
+                // Usar dados do cache
+                await loadAllData();
+                const data = dataCache.dashboard || {};
 
                 // Total contacts
                 document.getElementById('statContacts').textContent = (data.stats?.total_contatos || 0).toLocaleString();
@@ -1682,10 +1712,10 @@
         async function loadTodayAgenda() {
             const container = document.getElementById('todayAgenda');
             try {
-                const response = await fetch('/api/calendar/today');
-                if (!response.ok) throw new Error('API indisponivel');
-                const data = await response.json();
-                const events = data.events || data || [];
+                // Usar dados do cache
+                await loadAllData();
+                const data = dataCache.calendar || [];
+                const events = Array.isArray(data) ? data : (data.events || []);
 
                 if (!events || events.length === 0) {
                     container.innerHTML = `
@@ -2433,14 +2463,12 @@
             dateEl.textContent = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
 
             try {
-                // Buscar dados para o briefing
-                const [dashResponse, atRiskResponse] = await Promise.all([
-                    fetch('/api/v1/dashboard'),
-                    fetch('/api/ai/at-risk?limit=1')
-                ]);
+                // Usar dados do cache (já carregados em paralelo)
+                await loadAllData();
 
-                const dashData = await dashResponse.json();
-                const atRiskData = await atRiskResponse.json().catch(() => ({ contacts: [] }));
+                const dashData = dataCache.dashboard || {};
+                const atRiskData = dataCache.atRisk || { contacts: [] };
+                const calData = dataCache.calendar || [];
 
                 // Construir resumo
                 const stats = dashData.stats || {};
@@ -2449,28 +2477,17 @@
                 const atRiskContacts = atRiskData.contacts || [];
 
                 // Contagem de eventos hoje (filtrar marcadores pessoais)
-                let reunioesHoje = 0;
-                let eventosHoje = [];
-                try {
-                    const calResp = await fetch('/api/calendar/today');
-                    if (calResp.ok) {
-                        const calData = await calResp.json();
-                        eventosHoje = Array.isArray(calData) ? calData : [];
-                        // Filtrar apenas reunioes reais (excluir marcadores pessoais)
-                        const reunioes = eventosHoje.filter(e => {
-                            const titulo = (e.summary || e.title || '').toLowerCase();
-                            // Excluir marcadores pessoais
-                            if (titulo.startsWith('[foco]')) return false;
-                            if (titulo.includes('cama') || titulo.includes('dormir')) return false;
-                            if (titulo.includes('acordar') || titulo.includes('despertar')) return false;
-                            if (titulo.includes('almoco') || titulo.includes('jantar')) return false;
-                            if (titulo.includes('lembrete:')) return false;
-                            // E um evento real (provavelmente reuniao)
-                            return true;
-                        });
-                        reunioesHoje = reunioes.length;
-                    }
-                } catch (e) {}
+                let eventosHoje = Array.isArray(calData) ? calData : [];
+                const reunioes = eventosHoje.filter(e => {
+                    const titulo = (e.summary || e.title || '').toLowerCase();
+                    if (titulo.startsWith('[foco]')) return false;
+                    if (titulo.includes('cama') || titulo.includes('dormir')) return false;
+                    if (titulo.includes('acordar') || titulo.includes('despertar')) return false;
+                    if (titulo.includes('almoco') || titulo.includes('jantar')) return false;
+                    if (titulo.includes('lembrete:')) return false;
+                    return true;
+                });
+                const reunioesHoje = reunioes.length;
 
                 // Montar frase de resumo
                 let summaryParts = [];
@@ -2565,16 +2582,12 @@
             const countBadge = document.getElementById('contactTodayCount');
 
             try {
-                // Buscar dados de multiplas fontes
-                const [dashResponse, atRiskResponse, calendarResponse] = await Promise.all([
-                    fetch('/api/v1/dashboard'),
-                    fetch('/api/ai/at-risk?limit=10'),
-                    fetch('/api/calendar/today').catch(() => ({ json: () => [] }))
-                ]);
+                // Usar dados do cache
+                await loadAllData();
 
-                const dashData = await dashResponse.json();
-                const atRiskData = await atRiskResponse.json().catch(() => ({ contacts: [] }));
-                const calendarData = await calendarResponse.json().catch(() => []);
+                const dashData = dataCache.dashboard || {};
+                const atRiskData = dataCache.atRisk || { contacts: [] };
+                const calendarData = dataCache.calendar || [];
 
                 const priorityContacts = [];
 
@@ -2740,18 +2753,21 @@
         }
 
         // Load all dashboard data on page load
-        loadDashboardData();  // Stats, circulos, alertas
-
-        // Load AI features and data after short delay
-        setTimeout(() => {
+        // Pre-load all shared data in parallel, then render UI
+        loadAllData().then(() => {
+            loadDashboardData();
             loadMorningBriefing();
-            loadAISuggestions();
             loadContactToday();
+            loadTodayAgenda();
+        });
+
+        // Load secondary features after short delay (lower priority)
+        setTimeout(() => {
+            loadAISuggestions();
             loadMeetingSuggestions();
             loadConselhoOSWidget();
             loadTasks();
-            loadTodayAgenda();
-        }, 500);
+        }, 300);
     </script>
 
     <!-- Suggestion Detail Modal -->
