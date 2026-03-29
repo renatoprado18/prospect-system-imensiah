@@ -1591,8 +1591,8 @@
                     }
                 }
 
-                // Alertas - precisam atencao
-                const totalAtencao = data.alertas?.total || 0;
+                // Alertas - precisam atencao (usar stats, não alertas)
+                const totalAtencao = data.stats?.precisam_atencao || 0;
                 document.getElementById('statAtencao').textContent = totalAtencao;
 
                 // Sidebar badge for Circulos - show attention count
