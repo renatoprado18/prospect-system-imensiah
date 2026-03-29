@@ -5363,6 +5363,54 @@ async def create_contact_briefing(contact_id: int, data: dict = None):
     return result
 
 
+@app.get("/api/contacts/{contact_id}/briefing/current")
+async def get_contact_current_briefing(contact_id: int):
+    """
+    Retorna o briefing atual (mais recente) de um contato.
+
+    Returns:
+        O briefing atual ou null se nao existir
+    """
+    briefing = get_current_briefing(contact_id)
+    if not briefing:
+        return {"briefing": None, "exists": False}
+
+    return {
+        "exists": True,
+        "briefing": briefing
+    }
+
+
+@app.get("/api/contacts/{contact_id}/briefings")
+async def get_contact_briefings_history(contact_id: int, limit: int = 5):
+    """
+    Retorna historico de briefings de um contato.
+    """
+    from services.briefings import get_briefing_history
+    history = get_briefing_history(contact_id, limit=limit)
+    return {
+        "contact_id": contact_id,
+        "total": len(history),
+        "briefings": history
+    }
+
+
+@app.post("/api/briefings/{briefing_id}/feedback")
+async def add_feedback_to_briefing(briefing_id: int, data: dict):
+    """
+    Adiciona feedback a um briefing (util para melhorar AI).
+
+    Body: {"feedback": "O briefing foi util, a sugestao de cafe funcionou"}
+    """
+    from services.briefings import add_briefing_feedback
+    feedback = data.get("feedback", "")
+    if not feedback:
+        raise HTTPException(status_code=400, detail="feedback e obrigatorio")
+
+    success = add_briefing_feedback(briefing_id, feedback)
+    return {"status": "success" if success else "error", "briefing_id": briefing_id}
+
+
 # ============== BRIEFINGS PAGE ROUTE ==============
 
 @app.get("/rap/briefings", response_class=HTMLResponse)
@@ -8578,6 +8626,32 @@ async def briefing_draft_message(request: Request, data: BriefingMessageDraft):
     if contact.get("ultimo_contato"):
         dias_sem_contato = (datetime.now() - contact["ultimo_contato"]).days
 
+    # Buscar briefing atual do contato para enriquecer contexto
+    current_briefing = get_current_briefing(data.contact_id)
+    briefing_context = ""
+    briefing_id = None
+
+    if current_briefing:
+        briefing_id = current_briefing.get("id")
+        parts = []
+
+        # Adicionar resumo do briefing
+        if current_briefing.get("summary"):
+            parts.append(f"Contexto do relacionamento: {current_briefing['summary']}")
+
+        # Adicionar oportunidades identificadas
+        opportunities = current_briefing.get("opportunities") or []
+        if opportunities:
+            parts.append(f"Oportunidades identificadas: {'; '.join(opportunities[:3])}")
+
+        # Adicionar sugestoes de pauta/conversa
+        talking_points = current_briefing.get("talking_points") or []
+        if talking_points:
+            parts.append(f"Assuntos sugeridos: {'; '.join(talking_points[:3])}")
+
+        if parts:
+            briefing_context = "\n- ".join([""] + parts)
+
     # Context templates
     context_prompts = {
         "followup": f"Escreva uma mensagem cordial de follow-up para {nome}. Mantenha um tom profissional mas amigavel.",
@@ -8598,10 +8672,12 @@ Informacoes do contato:
 - Cargo: {cargo}
 - Circulo de proximidade: {circulo} (1=muito proximo, 5=distante)
 - Dias desde ultimo contato: {dias_sem_contato}
-{"- Resumo do relacionamento: " + contact['resumo_ai'] if contact.get('resumo_ai') else ""}
+{"- Resumo do relacionamento: " + contact['resumo_ai'] if contact.get('resumo_ai') else ""}{briefing_context}
 
 Canal: {data.channel.upper()}
-{"(Mensagem de WhatsApp deve ser curta e direta)" if data.channel == "whatsapp" else "(Email pode ser mais elaborado)"}
+{"(Mensagem de WhatsApp deve ser curta e direta, maximo 2-3 frases)" if data.channel == "whatsapp" else "(Email pode ser mais elaborado)"}
+
+{"Se houver oportunidades ou sugestoes de pauta acima, incorpore de forma natural na mensagem." if briefing_context else ""}
 
 Responda APENAS com a mensagem, sem explicacoes ou comentarios.
 """
@@ -8641,13 +8717,23 @@ Responda APENAS com a mensagem, sem explicacoes ou comentarios.
     if telefones:
         contact_info["phone"] = next((t.get("number") for t in telefones if t.get("whatsapp")), telefones[0].get("number") if isinstance(telefones[0], dict) else telefones[0])
 
+    # Registrar acao no briefing se existir
+    if briefing_id:
+        record_briefing_action(briefing_id, {
+            "type": f"draft_{data.channel}",
+            "context": data.context,
+            "timestamp": datetime.now().isoformat()
+        })
+
     return {
         "status": "success",
         "channel": data.channel,
         "context": data.context,
         "contact_name": contact["nome"],
         "contact_info": contact_info,
-        "draft": message_draft.strip()
+        "draft": message_draft.strip(),
+        "briefing_used": briefing_id is not None,
+        "briefing_id": briefing_id
     }
 
 
