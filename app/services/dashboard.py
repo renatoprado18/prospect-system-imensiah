@@ -17,7 +17,7 @@ from services.circulos import (
     get_aniversarios_proximos,
     calcular_dias_sem_contato
 )
-from services.briefings import get_contacts_needing_briefing
+# get_contacts_needing_briefing removido - usamos COUNT direto para performance
 
 
 def get_dashboard_stats() -> Dict:
@@ -48,12 +48,30 @@ def get_dashboard_stats() -> Dict:
         """)
         precisam_atencao_health = cursor.fetchone()["count"]
 
-        # Aniversarios proximos (7 dias)
-        aniversarios = get_aniversarios_proximos(7)
-        precisam_atencao = precisam_atencao_health + len(aniversarios)
+        # Aniversarios proximos (7 dias) - COUNT direto, mais rapido
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM contacts
+            WHERE aniversario IS NOT NULL
+              AND COALESCE(circulo, 5) <= 4
+              AND (
+                  (EXTRACT(MONTH FROM aniversario) = EXTRACT(MONTH FROM CURRENT_DATE)
+                   AND EXTRACT(DAY FROM aniversario) >= EXTRACT(DAY FROM CURRENT_DATE)
+                   AND EXTRACT(DAY FROM aniversario) <= EXTRACT(DAY FROM CURRENT_DATE) + 7)
+                  OR
+                  (EXTRACT(MONTH FROM aniversario) = EXTRACT(MONTH FROM CURRENT_DATE + INTERVAL '7 days')
+                   AND EXTRACT(DAY FROM aniversario) <= EXTRACT(DAY FROM CURRENT_DATE + INTERVAL '7 days'))
+              )
+        """)
+        aniversarios_count = cursor.fetchone()["count"]
+        precisam_atencao = precisam_atencao_health + aniversarios_count
 
-        # Briefings pendentes (contatos que precisam de briefing)
-        briefings_pendentes = len(get_contacts_needing_briefing(20))
+        # Briefings pendentes - COUNT direto em vez de carregar lista completa
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM contacts
+            WHERE COALESCE(circulo, 5) <= 3
+              AND COALESCE(health_score, 50) < 50
+        """)
+        briefings_pendentes = cursor.fetchone()["count"]
 
         # Conversas ativas (mensagens nos ultimos 7 dias)
         cursor.execute("""

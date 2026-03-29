@@ -1,27 +1,57 @@
 """
 PostgreSQL Database Module for Vercel Postgres
+Com connection pooling para melhor performance
 """
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2 import pool
 from contextlib import contextmanager
+import threading
 
 # Vercel Postgres connection string
 DATABASE_URL = os.getenv("POSTGRES_URL", os.getenv("DATABASE_URL", ""))
 
-def get_connection():
-    """Get a PostgreSQL connection"""
+# Connection pool (singleton)
+_connection_pool = None
+_pool_lock = threading.Lock()
+
+def _get_conn_string():
+    """Get formatted connection string"""
     if not DATABASE_URL:
         raise Exception("POSTGRES_URL environment variable not set")
-
     # Vercel uses postgres:// but psycopg2 needs postgresql://
-    conn_string = DATABASE_URL.replace("postgres://", "postgresql://")
+    return DATABASE_URL.replace("postgres://", "postgresql://")
 
-    return psycopg2.connect(conn_string, cursor_factory=RealDictCursor)
+def get_pool():
+    """Get or create connection pool (thread-safe singleton)"""
+    global _connection_pool
+    if _connection_pool is None:
+        with _pool_lock:
+            if _connection_pool is None:
+                conn_string = _get_conn_string()
+                _connection_pool = pool.ThreadedConnectionPool(
+                    minconn=2,
+                    maxconn=10,
+                    dsn=conn_string,
+                    cursor_factory=RealDictCursor
+                )
+    return _connection_pool
+
+def get_connection():
+    """Get a PostgreSQL connection from pool"""
+    return get_pool().getconn()
+
+def return_connection(conn):
+    """Return connection to pool"""
+    try:
+        get_pool().putconn(conn)
+    except:
+        pass
 
 @contextmanager
 def get_db():
-    """Context manager for database connections"""
+    """Context manager for database connections with pooling"""
     conn = get_connection()
     try:
         yield conn
@@ -30,7 +60,7 @@ def get_db():
         conn.rollback()
         raise
     finally:
-        conn.close()
+        return_connection(conn)
 
 def init_db():
     """Initialize PostgreSQL database tables"""

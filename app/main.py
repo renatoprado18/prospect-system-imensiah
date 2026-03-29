@@ -5692,10 +5692,39 @@ async def get_dashboard_unified(request: Request):
     except Exception as e:
         result["circulos_resumo"] = {}
 
-    # Aniversarios proximos (para lembretes)
+    # Aniversarios proximos (para lembretes) - query otimizada
     try:
-        from services.circulos import get_aniversarios_proximos
-        result["aniversarios"] = get_aniversarios_proximos(7)
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, nome, empresa, cargo, foto_url, circulo, health_score, aniversario
+                FROM contacts
+                WHERE aniversario IS NOT NULL
+                  AND COALESCE(circulo, 5) <= 4
+                ORDER BY
+                    EXTRACT(MONTH FROM aniversario),
+                    EXTRACT(DAY FROM aniversario)
+                LIMIT 10
+            """)
+            from datetime import datetime
+            hoje = datetime.now().date()
+            aniversarios = []
+            for row in cursor.fetchall():
+                contact = dict(row)
+                aniv = contact.get("aniversario")
+                if aniv:
+                    try:
+                        aniv_este_ano = aniv.replace(year=hoje.year)
+                        if aniv_este_ano < hoje:
+                            aniv_este_ano = aniv.replace(year=hoje.year + 1)
+                        dias_ate = (aniv_este_ano - hoje).days
+                        if 0 <= dias_ate <= 7:
+                            contact["dias_ate"] = dias_ate
+                            contact["aniversario"] = aniv.strftime("%d/%m")
+                            aniversarios.append(contact)
+                    except:
+                        pass
+            result["aniversarios"] = aniversarios[:5]
     except:
         result["aniversarios"] = []
 
