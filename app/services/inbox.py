@@ -7,7 +7,20 @@ Endpoint: GET /api/inbox/unread
 Endpoint: POST /api/inbox/conversations/{id}/read
 """
 from typing import List, Dict, Optional
+from datetime import datetime
 from database import get_db
+
+
+def serialize_datetime(obj):
+    """Converte datetime para string ISO para serialização JSON"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return obj
+
+
+def serialize_row(row: Dict) -> Dict:
+    """Serializa uma row do banco para garantir compatibilidade JSON"""
+    return {k: serialize_datetime(v) for k, v in row.items()}
 
 
 class InboxService:
@@ -51,7 +64,7 @@ class InboxService:
             params.append(limit)
 
             cursor.execute(query, params)
-            return [dict(row) for row in cursor.fetchall()]
+            return [serialize_row(dict(row)) for row in cursor.fetchall()]
 
     def get_messages(self, conversation_id: int, limit: int = 100) -> List[Dict]:
         """Mensagens de uma conversa"""
@@ -66,7 +79,7 @@ class InboxService:
                 ORDER BY enviado_em DESC
                 LIMIT %s
             """, (conversation_id, limit))
-            return [dict(row) for row in cursor.fetchall()]
+            return [serialize_row(dict(row)) for row in cursor.fetchall()]
 
     def get_unread_count(self) -> int:
         """Total de conversas que requerem resposta"""
@@ -124,7 +137,7 @@ class InboxService:
                 WHERE c.id = %s
             """, (conversation_id,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            return serialize_row(dict(row)) if row else None
 
 
 _inbox_service = None
