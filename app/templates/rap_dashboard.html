@@ -1672,7 +1672,8 @@
             try {
                 const response = await fetch('/api/calendar/today');
                 if (!response.ok) throw new Error('API indisponivel');
-                const events = await response.json();
+                const data = await response.json();
+                const events = data.events || data || [];
 
                 if (!events || events.length === 0) {
                     container.innerHTML = `

@@ -5939,7 +5939,7 @@ async def calendar_today(request: Request):
         account = cursor.fetchone()
 
     if not account:
-        return {"events": [], "error": "Nenhuma conta Google conectada"}
+        return []  # Return empty array for JS compatibility
 
     # Refresh token
     from integrations.gmail import GmailIntegration
@@ -5947,13 +5947,13 @@ async def calendar_today(request: Request):
     tokens = await gmail.refresh_access_token(account["refresh_token"])
 
     if "error" in tokens:
-        return {"events": [], "error": "Token invalido"}
+        return []  # Return empty array for JS compatibility
 
     access_token = tokens.get("access_token")
     calendar = get_calendar_integration()
     events = await calendar.get_today_events(access_token)
 
-    return {"events": events}
+    return events  # Return array directly for JS
 
 
 @app.get("/api/calendar/events")
