@@ -326,6 +326,31 @@ def init_db():
             )
         ''')
 
+        # Contact interactions (timeline de interações manuais)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS contact_interactions (
+                id SERIAL PRIMARY KEY,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                tipo TEXT NOT NULL,
+                titulo TEXT,
+                descricao TEXT,
+                data_interacao TIMESTAMP,
+                tags JSONB DEFAULT '[]',
+                sentimento TEXT,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_contact_interactions_contact
+            ON contact_interactions(contact_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_contact_interactions_data
+            ON contact_interactions(data_interacao DESC)
+        ''')
+
         # Conversations (unified email + whatsapp threads)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS conversations (

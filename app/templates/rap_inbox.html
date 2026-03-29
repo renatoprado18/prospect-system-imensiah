@@ -162,7 +162,17 @@ async function loadConversations(filter = 'all') {
     list.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div></div>';
 
     try {
-        const response = await fetch(`/api/inbox/conversations?filter_type=${filter}&limit=50`);
+        const response = await fetch(`/api/inbox/conversations?filter_type=${filter}&limit=50`, {
+            credentials: 'include'
+        });
+
+        if (!response.ok) {
+            console.error('Inbox API error:', response.status, response.statusText);
+            const errorText = await response.text();
+            console.error('Error details:', errorText);
+            throw new Error(`API error: ${response.status}`);
+        }
+
         const data = await response.json();
 
         if (!data.conversations || data.conversations.length === 0) {
@@ -206,8 +216,8 @@ async function loadMessages(conversationId, contactId) {
 
     try {
         const [convResponse, msgResponse] = await Promise.all([
-            fetch(`/api/inbox/conversations/${conversationId}`),
-            fetch(`/api/inbox/conversations/${conversationId}/messages?limit=100`)
+            fetch(`/api/inbox/conversations/${conversationId}`, { credentials: 'include' }),
+            fetch(`/api/inbox/conversations/${conversationId}/messages?limit=100`, { credentials: 'include' })
         ]);
 
         const conversation = await convResponse.json();
@@ -244,7 +254,7 @@ async function loadMessages(conversationId, contactId) {
             container.scrollTop = container.scrollHeight;
         }
 
-        await fetch(`/api/inbox/conversations/${conversationId}/read`, { method: 'POST' });
+        await fetch(`/api/inbox/conversations/${conversationId}/read`, { method: 'POST', credentials: 'include' });
         loadUnreadCount();
 
         // Auto-load message suggestions
@@ -359,7 +369,8 @@ async function sendReply() {
         await fetch(`/api/inbox/conversations/${currentConversationId}/reply`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: text })
+            body: JSON.stringify({ content: text }),
+            credentials: 'include'
         });
 
         document.getElementById('replyText').value = '';
@@ -371,7 +382,7 @@ async function sendReply() {
 
 async function loadUnreadCount() {
     try {
-        const response = await fetch('/api/inbox/unread');
+        const response = await fetch('/api/inbox/unread', { credentials: 'include' });
         const data = await response.json();
         document.getElementById('unread-badge').textContent = data.unread || 0;
     } catch (error) {}

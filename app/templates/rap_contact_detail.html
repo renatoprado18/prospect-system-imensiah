@@ -2873,12 +2873,31 @@
                 data_interacao: formData.get('data_interacao') || null
             };
 
-            // TODO: Create interaction endpoint for contacts
-            alert('Interacao salva (em desenvolvimento)');
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/interactions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(interaction)
+                });
 
-            const modal = bootstrap.Modal.getInstance(document.getElementById('addInteractionModal'));
-            modal.hide();
-            form.reset();
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Erro ao salvar');
+                }
+
+                const result = await response.json();
+                alert(`Interacao registrada para ${result.contact_name}!`);
+
+                const modal = bootstrap.Modal.getInstance(document.getElementById('addInteractionModal'));
+                modal.hide();
+                form.reset();
+
+                // Reload timeline to show new interaction
+                loadTimeline();
+            } catch (error) {
+                console.error('Error saving interaction:', error);
+                alert('Erro ao salvar interacao: ' + error.message);
+            }
         }
 
         // ============ PROJECT FUNCTIONS ============

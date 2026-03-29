@@ -7103,6 +7103,108 @@ async def get_contact_timeline_summary(
     return summary
 
 
+# ============== CONTACT INTERACTIONS ==============
+
+class InteractionCreate(BaseModel):
+    tipo: str
+    titulo: Optional[str] = None
+    descricao: Optional[str] = None
+    data_interacao: Optional[str] = None
+
+
+@app.post("/api/contacts/{contact_id}/interactions")
+async def create_contact_interaction(contact_id: int, interaction: InteractionCreate):
+    """Cria uma nova interação manual para o contato."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Verify contact exists
+        cursor.execute("SELECT id, nome FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+        # Parse date
+        data_interacao = None
+        if interaction.data_interacao:
+            try:
+                # Handle datetime-local format: "2026-03-26T14:52"
+                data_interacao = datetime.fromisoformat(interaction.data_interacao.replace('Z', '+00:00'))
+            except:
+                data_interacao = datetime.now()
+        else:
+            data_interacao = datetime.now()
+
+        # Insert interaction
+        cursor.execute("""
+            INSERT INTO contact_interactions (contact_id, tipo, titulo, descricao, data_interacao)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id, criado_em
+        """, (
+            contact_id,
+            interaction.tipo,
+            interaction.titulo,
+            interaction.descricao,
+            data_interacao
+        ))
+
+        result = cursor.fetchone()
+
+        # Update ultimo_contato on contact
+        cursor.execute("""
+            UPDATE contacts
+            SET ultimo_contato = %s,
+                total_interacoes = COALESCE(total_interacoes, 0) + 1,
+                atualizado_em = NOW()
+            WHERE id = %s
+        """, (data_interacao, contact_id))
+
+        conn.commit()
+
+        return {
+            "status": "success",
+            "interaction_id": result['id'],
+            "contact_id": contact_id,
+            "contact_name": contact['nome'],
+            "criado_em": result['criado_em'].isoformat()
+        }
+
+
+@app.get("/api/contacts/{contact_id}/interactions")
+async def get_contact_interactions(contact_id: int, limit: int = 50):
+    """Retorna interações manuais do contato."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, tipo, titulo, descricao, data_interacao, tags, sentimento, criado_em
+            FROM contact_interactions
+            WHERE contact_id = %s
+            ORDER BY data_interacao DESC
+            LIMIT %s
+        """, (contact_id, limit))
+
+        interactions = [dict(row) for row in cursor.fetchall()]
+        return {"interactions": interactions, "total": len(interactions)}
+
+
+@app.delete("/api/contacts/{contact_id}/interactions/{interaction_id}")
+async def delete_contact_interaction(contact_id: int, interaction_id: int):
+    """Remove uma interação do contato."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM contact_interactions
+            WHERE id = %s AND contact_id = %s
+        """, (interaction_id, contact_id))
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Interacao nao encontrada")
+
+        return {"status": "success", "deleted_id": interaction_id}
+
+
 # ============== INBOX API ==============
 
 from services.inbox import get_inbox_service
@@ -9640,6 +9742,31 @@ async def api_create_project(request: Request):
         raise HTTPException(status_code=400, detail="Nome e obrigatorio")
     project = create_project(data)
     return {"status": "success", "project": project}
+
+
+@app.post("/api/projects/enrich")
+async def api_enrich_project(request: Request):
+    """
+    Enriquece descrição de projeto usando IA.
+    Busca emails, WhatsApp e informações públicas para sugerir campos.
+    """
+    from services.project_enrichment import enrich_project_from_description
+
+    data = await request.json()
+    descricao = data.get('descricao', '')
+
+    if not descricao or len(descricao.strip()) < 10:
+        raise HTTPException(
+            status_code=400,
+            detail="Forneça uma descrição com pelo menos 10 caracteres"
+        )
+
+    result = await enrich_project_from_description(descricao)
+
+    if result.get('status') == 'error':
+        raise HTTPException(status_code=500, detail=result.get('error', 'Erro ao enriquecer'))
+
+    return result
 
 
 @app.put("/api/projects/{project_id}")

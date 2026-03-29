@@ -94,6 +94,28 @@ class TimelineService:
                     item['timestamp'] = item['timestamp'].isoformat() if hasattr(item['timestamp'], 'isoformat') else str(item['timestamp'])
                 timeline.append(item)
 
+            # Interacoes manuais
+            cursor.execute("""
+                SELECT
+                    'interaction' as type,
+                    id,
+                    COALESCE(titulo, tipo) as title,
+                    descricao as content,
+                    data_interacao as timestamp,
+                    tipo as interaction_type,
+                    sentimento as sentiment
+                FROM contact_interactions
+                WHERE contact_id = %s
+                ORDER BY data_interacao DESC
+                LIMIT %s
+            """, (contact_id, limit))
+
+            for row in cursor.fetchall():
+                item = dict(row)
+                if item.get('timestamp'):
+                    item['timestamp'] = item['timestamp'].isoformat() if hasattr(item['timestamp'], 'isoformat') else str(item['timestamp'])
+                timeline.append(item)
+
         # Ordenar por timestamp (mais recente primeiro)
         def get_timestamp(x):
             ts = x.get('timestamp')

@@ -402,7 +402,7 @@
 
 <!-- New Project Modal -->
 <div class="modal fade" id="newProjectModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
+    <div class="modal-dialog modal-xl">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title"><i class="bi bi-folder-plus me-2"></i>Novo Projeto</h5>
@@ -425,8 +425,42 @@
                     </div>
                     <div class="col-12">
                         <label class="form-label fw-semibold">Descricao</label>
-                        <textarea class="form-control" id="projectDescricao" rows="3" placeholder="Descreva o projeto..."></textarea>
+                        <div class="d-flex gap-2">
+                            <textarea class="form-control" id="projectDescricao" rows="5"
+                                placeholder="Descreva o projeto em detalhes...&#10;&#10;Ex: Emma Sakamoto, minha namorada, fez um investimento com a Fictor que entrou em recuperacao judicial. Quero ajuda-la a acompanhar o processo, encontrar um advogado e garantir que recupere o maximo possivel."></textarea>
+                            <button type="button" class="btn btn-outline-primary align-self-start" onclick="enrichProject()" id="btnEnrich" style="white-space: nowrap;">
+                                <i class="bi bi-stars me-1"></i> Enriquecer com IA
+                            </button>
+                        </div>
+                        <small class="text-muted">Descreva o contexto completo para que a IA possa buscar emails, WhatsApp e informacoes relevantes.</small>
                     </div>
+
+                    <!-- AI Suggestions Panel -->
+                    <div class="col-12" id="aiSuggestionsPanel" style="display: none;">
+                        <div class="card border-primary">
+                            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                                <span><i class="bi bi-magic me-2"></i>Sugestoes da IA</span>
+                                <small id="aiContext"></small>
+                            </div>
+                            <div class="card-body">
+                                <div id="aiSuggestionsContent">
+                                    <!-- Suggestions will be inserted here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Loading State -->
+                    <div class="col-12" id="aiLoadingPanel" style="display: none;">
+                        <div class="card">
+                            <div class="card-body text-center py-4">
+                                <div class="spinner-border text-primary mb-3" role="status"></div>
+                                <p class="mb-1 fw-semibold">Analisando com IA...</p>
+                                <small class="text-muted" id="aiLoadingStatus">Extraindo entidades da descricao...</small>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="col-md-4">
                         <label class="form-label fw-semibold">Prioridade</label>
                         <select class="form-select" id="projectPrioridade">
@@ -455,11 +489,19 @@
                             <input type="number" class="form-control" id="projectValor" placeholder="0,00">
                         </div>
                     </div>
+
+                    <!-- Suggested Items to Add After Creation -->
+                    <div class="col-12" id="pendingSuggestionsPanel" style="display: none;">
+                        <div class="alert alert-info mb-0">
+                            <i class="bi bi-info-circle me-2"></i>
+                            <span id="pendingSuggestionsText">Apos criar o projeto, serao adicionados automaticamente os itens selecionados.</span>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-primary" onclick="saveNewProject()">
+                <button type="button" class="btn btn-primary" onclick="saveNewProject()" id="btnCreate">
                     <i class="bi bi-check-lg me-1"></i> Criar Projeto
                 </button>
             </div>
@@ -752,6 +794,12 @@
         btn.classList.add('active');
     }
 
+    // Store AI suggestions globally for use when creating project
+    let aiSuggestions = null;
+    let selectedContacts = [];
+    let selectedMarcos = [];
+    let selectedTarefas = [];
+
     function openNewProjectModal() {
         document.getElementById('projectNome').value = '';
         document.getElementById('projectTipo').value = 'negocio';
@@ -762,8 +810,332 @@
         document.getElementById('projectEmpresa').value = '';
         document.getElementById('projectValor').value = '';
 
+        // Reset AI state
+        aiSuggestions = null;
+        selectedContacts = [];
+        selectedMarcos = [];
+        selectedTarefas = [];
+        document.getElementById('aiSuggestionsPanel').style.display = 'none';
+        document.getElementById('aiLoadingPanel').style.display = 'none';
+        document.getElementById('pendingSuggestionsPanel').style.display = 'none';
+        document.getElementById('btnEnrich').disabled = false;
+
         const modal = new bootstrap.Modal(document.getElementById('newProjectModal'));
         modal.show();
+    }
+
+    async function enrichProject() {
+        const descricao = document.getElementById('projectDescricao').value.trim();
+
+        if (descricao.length < 10) {
+            alert('Por favor, descreva o projeto com mais detalhes (minimo 10 caracteres).');
+            return;
+        }
+
+        // Show loading
+        document.getElementById('btnEnrich').disabled = true;
+        document.getElementById('aiLoadingPanel').style.display = 'block';
+        document.getElementById('aiSuggestionsPanel').style.display = 'none';
+
+        const loadingStatus = document.getElementById('aiLoadingStatus');
+
+        try {
+            // Update loading status
+            loadingStatus.textContent = 'Buscando emails relevantes...';
+
+            const response = await fetch('/api/projects/enrich', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ descricao })
+            });
+
+            loadingStatus.textContent = 'Analisando com IA...';
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || 'Erro ao enriquecer');
+            }
+
+            aiSuggestions = await response.json();
+            renderAISuggestions(aiSuggestions);
+
+        } catch (error) {
+            console.error('Enrich error:', error);
+            alert('Erro ao enriquecer projeto: ' + error.message);
+        } finally {
+            document.getElementById('btnEnrich').disabled = false;
+            document.getElementById('aiLoadingPanel').style.display = 'none';
+        }
+    }
+
+    function renderAISuggestions(suggestions) {
+        const panel = document.getElementById('aiSuggestionsPanel');
+        const content = document.getElementById('aiSuggestionsContent');
+        const context = document.getElementById('aiContext');
+
+        // Show context info
+        const ctx = suggestions.contexto_encontrado || {};
+        context.innerHTML = `<i class="bi bi-envelope me-1"></i>${ctx.emails_count || 0} emails | ` +
+                           `<i class="bi bi-whatsapp me-1"></i>${ctx.whatsapp_count || 0} msgs | ` +
+                           `<i class="bi bi-people me-1"></i>${ctx.contacts_count || 0} contatos`;
+
+        // Reset selections
+        selectedContacts = suggestions.contatos_sugeridos || [];
+        selectedMarcos = suggestions.marcos_sugeridos || [];
+        selectedTarefas = suggestions.tarefas_sugeridas || [];
+
+        let html = '<div class="row g-3">';
+
+        // Basic fields suggestions
+        html += `
+            <div class="col-md-6">
+                <div class="suggestion-item p-2 border rounded">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <strong>Nome sugerido</strong>
+                        <button class="btn btn-sm btn-outline-success" onclick="acceptSuggestion('nome', '${escapeHtml(suggestions.nome_sugerido || '')}')">
+                            <i class="bi bi-check"></i> Aceitar
+                        </button>
+                    </div>
+                    <div class="text-muted">${suggestions.nome_sugerido || 'N/A'}</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="suggestion-item p-2 border rounded">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <strong>Tipo</strong>
+                        <button class="btn btn-sm btn-outline-success" onclick="acceptSuggestion('tipo', '${suggestions.tipo_sugerido || 'pessoal'}')">
+                            <i class="bi bi-check"></i>
+                        </button>
+                    </div>
+                    <div class="text-muted">${suggestions.tipo_sugerido || 'N/A'}</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="suggestion-item p-2 border rounded">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <strong>Prioridade</strong>
+                        <button class="btn btn-sm btn-outline-success" onclick="acceptSuggestion('prioridade', '${suggestions.prioridade_sugerida || 5}')">
+                            <i class="bi bi-check"></i>
+                        </button>
+                    </div>
+                    <div class="text-muted">${suggestions.prioridade_sugerida || 5}</div>
+                </div>
+            </div>
+        `;
+
+        // Empresa
+        if (suggestions.empresa_relacionada) {
+            html += `
+                <div class="col-md-6">
+                    <div class="suggestion-item p-2 border rounded">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong>Empresa</strong>
+                            <button class="btn btn-sm btn-outline-success" onclick="acceptSuggestion('empresa', '${escapeHtml(suggestions.empresa_relacionada)}')">
+                                <i class="bi bi-check"></i> Aceitar
+                            </button>
+                        </div>
+                        <div class="text-muted">${suggestions.empresa_relacionada}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Description
+        if (suggestions.descricao_expandida) {
+            html += `
+                <div class="col-12">
+                    <div class="suggestion-item p-2 border rounded">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong>Descricao expandida</strong>
+                            <button class="btn btn-sm btn-outline-success" onclick="acceptSuggestion('descricao', \`${escapeHtml(suggestions.descricao_expandida)}\`)">
+                                <i class="bi bi-check"></i> Aceitar
+                            </button>
+                        </div>
+                        <div class="text-muted small">${suggestions.descricao_expandida}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Contacts
+        if (suggestions.contatos_sugeridos && suggestions.contatos_sugeridos.length > 0) {
+            html += `
+                <div class="col-12">
+                    <div class="suggestion-item p-2 border rounded">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong><i class="bi bi-people me-1"></i>Contatos sugeridos</strong>
+                            <small class="text-muted">Serao adicionados como participantes</small>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2">
+            `;
+            suggestions.contatos_sugeridos.forEach((c, idx) => {
+                html += `
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="contact${idx}" checked
+                               onchange="toggleContact(${idx}, this.checked)">
+                        <label class="form-check-label" for="contact${idx}">
+                            ${c.nome} <small class="text-muted">(${c.papel || 'Participante'})</small>
+                        </label>
+                    </div>
+                `;
+            });
+            html += `</div></div></div>`;
+        }
+
+        // Milestones
+        if (suggestions.marcos_sugeridos && suggestions.marcos_sugeridos.length > 0) {
+            html += `
+                <div class="col-12">
+                    <div class="suggestion-item p-2 border rounded">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong><i class="bi bi-flag me-1"></i>Marcos sugeridos</strong>
+                        </div>
+                        <div class="list-group list-group-flush">
+            `;
+            suggestions.marcos_sugeridos.forEach((m, idx) => {
+                html += `
+                    <label class="list-group-item d-flex align-items-center gap-2 border-0 px-0">
+                        <input class="form-check-input flex-shrink-0" type="checkbox" id="marco${idx}" checked
+                               onchange="toggleMarco(${idx}, this.checked)">
+                        <span class="flex-grow-1">
+                            <strong>${m.titulo}</strong>
+                            ${m.descricao ? `<br><small class="text-muted">${m.descricao}</small>` : ''}
+                        </span>
+                        ${m.data_prevista ? `<small class="text-muted">${formatDateBR(m.data_prevista)}</small>` : ''}
+                    </label>
+                `;
+            });
+            html += `</div></div></div>`;
+        }
+
+        // Tasks
+        if (suggestions.tarefas_sugeridas && suggestions.tarefas_sugeridas.length > 0) {
+            html += `
+                <div class="col-12">
+                    <div class="suggestion-item p-2 border rounded">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong><i class="bi bi-check2-square me-1"></i>Tarefas sugeridas</strong>
+                        </div>
+                        <div class="list-group list-group-flush">
+            `;
+            suggestions.tarefas_sugeridas.forEach((t, idx) => {
+                const prioClass = t.prioridade <= 3 ? 'text-danger' : (t.prioridade <= 5 ? 'text-warning' : 'text-muted');
+                html += `
+                    <label class="list-group-item d-flex align-items-center gap-2 border-0 px-0">
+                        <input class="form-check-input flex-shrink-0" type="checkbox" id="tarefa${idx}" checked
+                               onchange="toggleTarefa(${idx}, this.checked)">
+                        <span class="flex-grow-1">
+                            <strong>${t.titulo}</strong>
+                            ${t.descricao ? `<br><small class="text-muted">${t.descricao}</small>` : ''}
+                        </span>
+                        <span class="badge ${prioClass}">P${t.prioridade || 5}</span>
+                    </label>
+                `;
+            });
+            html += `</div></div></div>`;
+        }
+
+        // Insights
+        if (suggestions.insights) {
+            html += `
+                <div class="col-12">
+                    <div class="alert alert-secondary mb-0">
+                        <strong><i class="bi bi-lightbulb me-1"></i>Insights:</strong>
+                        <p class="mb-0 mt-1">${suggestions.insights}</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        html += '</div>';
+
+        content.innerHTML = html;
+        panel.style.display = 'block';
+        updatePendingInfo();
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        return text.replace(/[&<>"'`]/g, char => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;',
+            '"': '&quot;', "'": '&#39;', '`': '&#96;'
+        })[char]);
+    }
+
+    function formatDateBR(dateStr) {
+        if (!dateStr) return '';
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('pt-BR');
+    }
+
+    function acceptSuggestion(field, value) {
+        switch(field) {
+            case 'nome':
+                document.getElementById('projectNome').value = value;
+                break;
+            case 'tipo':
+                document.getElementById('projectTipo').value = value;
+                break;
+            case 'prioridade':
+                document.getElementById('projectPrioridade').value = value;
+                break;
+            case 'empresa':
+                document.getElementById('projectEmpresa').value = value;
+                break;
+            case 'descricao':
+                document.getElementById('projectDescricao').value = value;
+                break;
+        }
+    }
+
+    function toggleContact(idx, checked) {
+        if (checked && aiSuggestions?.contatos_sugeridos?.[idx]) {
+            if (!selectedContacts.find(c => c.contact_id === aiSuggestions.contatos_sugeridos[idx].contact_id)) {
+                selectedContacts.push(aiSuggestions.contatos_sugeridos[idx]);
+            }
+        } else {
+            selectedContacts = selectedContacts.filter((_, i) => i !== idx);
+        }
+        updatePendingInfo();
+    }
+
+    function toggleMarco(idx, checked) {
+        if (checked && aiSuggestions?.marcos_sugeridos?.[idx]) {
+            if (!selectedMarcos.includes(aiSuggestions.marcos_sugeridos[idx])) {
+                selectedMarcos.push(aiSuggestions.marcos_sugeridos[idx]);
+            }
+        } else {
+            selectedMarcos = selectedMarcos.filter((_, i) => i !== idx);
+        }
+        updatePendingInfo();
+    }
+
+    function toggleTarefa(idx, checked) {
+        if (checked && aiSuggestions?.tarefas_sugeridas?.[idx]) {
+            if (!selectedTarefas.includes(aiSuggestions.tarefas_sugeridas[idx])) {
+                selectedTarefas.push(aiSuggestions.tarefas_sugeridas[idx]);
+            }
+        } else {
+            selectedTarefas = selectedTarefas.filter((_, i) => i !== idx);
+        }
+        updatePendingInfo();
+    }
+
+    function updatePendingInfo() {
+        const panel = document.getElementById('pendingSuggestionsPanel');
+        const text = document.getElementById('pendingSuggestionsText');
+
+        const total = selectedContacts.length + selectedMarcos.length + selectedTarefas.length;
+        if (total > 0) {
+            const parts = [];
+            if (selectedContacts.length > 0) parts.push(`${selectedContacts.length} participante(s)`);
+            if (selectedMarcos.length > 0) parts.push(`${selectedMarcos.length} marco(s)`);
+            if (selectedTarefas.length > 0) parts.push(`${selectedTarefas.length} tarefa(s)`);
+            text.textContent = `Apos criar o projeto, serao adicionados: ${parts.join(', ')}`;
+            panel.style.display = 'block';
+        } else {
+            panel.style.display = 'none';
+        }
     }
 
     async function saveNewProject() {
@@ -772,6 +1144,10 @@
             alert('Nome do projeto e obrigatorio');
             return;
         }
+
+        const btnCreate = document.getElementById('btnCreate');
+        btnCreate.disabled = true;
+        btnCreate.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Criando...';
 
         const data = {
             nome: nome,
@@ -793,14 +1169,63 @@
 
             const result = await response.json();
             if (result.project) {
+                const projectId = result.project.id;
+
+                // Add selected contacts as members
+                for (const contact of selectedContacts) {
+                    try {
+                        await fetch(`/api/projects/${projectId}/members`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contact_id: contact.contact_id,
+                                papel: contact.papel || 'Participante'
+                            })
+                        });
+                    } catch (e) { console.warn('Error adding member:', e); }
+                }
+
+                // Add selected milestones
+                for (const marco of selectedMarcos) {
+                    try {
+                        await fetch(`/api/projects/${projectId}/milestones`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                titulo: marco.titulo,
+                                descricao: marco.descricao || null,
+                                data_prevista: marco.data_prevista || null
+                            })
+                        });
+                    } catch (e) { console.warn('Error adding milestone:', e); }
+                }
+
+                // Add selected tasks
+                for (const tarefa of selectedTarefas) {
+                    try {
+                        await fetch(`/api/projects/${projectId}/tasks`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                titulo: tarefa.titulo,
+                                descricao: tarefa.descricao || null,
+                                prioridade: tarefa.prioridade || 5
+                            })
+                        });
+                    } catch (e) { console.warn('Error adding task:', e); }
+                }
+
                 bootstrap.Modal.getInstance(document.getElementById('newProjectModal')).hide();
-                openProject(result.project.id);
+                openProject(projectId);
             } else {
                 alert('Erro ao criar projeto: ' + (result.detail || 'Erro desconhecido'));
             }
         } catch (error) {
             console.error('Error:', error);
             alert('Erro ao criar projeto');
+        } finally {
+            btnCreate.disabled = false;
+            btnCreate.innerHTML = '<i class="bi bi-check-lg me-1"></i> Criar Projeto';
         }
     }
 
