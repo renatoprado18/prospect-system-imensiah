@@ -4,6 +4,120 @@
 
 {% block extra_css %}
 <style>
+    /* Conversation List */
+    .conversation-item {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--gray-200);
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .conversation-item:hover {
+        background: var(--gray-100);
+    }
+    .conversation-item.active {
+        background: var(--primary);
+        color: white;
+    }
+    .conversation-item.active .text-muted,
+    .conversation-item.active .badge {
+        color: rgba(255,255,255,0.8) !important;
+    }
+    .conversation-item.active .badge.bg-success {
+        background: rgba(255,255,255,0.2) !important;
+    }
+    .conversation-item.active .badge.bg-info {
+        background: rgba(255,255,255,0.2) !important;
+    }
+    .conv-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 600;
+        font-size: 14px;
+        flex-shrink: 0;
+    }
+    .conv-name {
+        font-weight: 500;
+        font-size: 0.9rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 180px;
+    }
+    .conv-preview {
+        font-size: 0.8rem;
+        color: var(--gray-500);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 180px;
+    }
+    .conv-meta {
+        font-size: 0.75rem;
+        color: var(--gray-400);
+        white-space: nowrap;
+    }
+    .channel-badge {
+        font-size: 0.65rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
+
+    /* Filter buttons */
+    .filter-btn {
+        font-size: 0.75rem;
+        padding: 4px 10px;
+        border-radius: 20px;
+        border: 1px solid var(--gray-300);
+        background: white;
+        color: var(--gray-600);
+    }
+    .filter-btn:hover {
+        background: var(--gray-100);
+        border-color: var(--gray-400);
+    }
+    .filter-btn.active {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: white;
+    }
+
+    /* Messages area */
+    .message-bubble {
+        max-width: 75%;
+        padding: 10px 14px;
+        border-radius: 16px;
+        margin-bottom: 8px;
+    }
+    .message-bubble.incoming {
+        background: var(--gray-100);
+        border-bottom-left-radius: 4px;
+    }
+    .message-bubble.outgoing {
+        background: var(--primary);
+        color: white;
+        border-bottom-right-radius: 4px;
+        margin-left: auto;
+    }
+    .message-time {
+        font-size: 0.7rem;
+        opacity: 0.7;
+        margin-top: 4px;
+    }
+
+    /* Empty state */
+    .empty-messages {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 300px;
+        color: var(--gray-400);
+    }
+
     /* Message Suggestion Sidebar */
     .suggestion-sidebar {
         background: white;
@@ -13,15 +127,17 @@
     .suggestion-sidebar .card-header {
         background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(14, 165, 233, 0.05));
         border-bottom: 1px solid var(--gray-200);
+        padding: 12px 16px;
     }
     .suggested-message {
-        padding: 14px;
+        padding: 12px;
         background: var(--gray-100);
-        border-radius: 12px;
-        margin-bottom: 12px;
+        border-radius: 10px;
+        margin-bottom: 10px;
         cursor: pointer;
         transition: all 0.2s;
         border: 2px solid transparent;
+        font-size: 0.85rem;
     }
     .suggested-message:hover {
         background: white;
@@ -32,23 +148,22 @@
         border-color: var(--primary);
     }
     .suggested-message-text {
-        font-size: 0.9rem;
         color: var(--dark);
-        line-height: 1.5;
+        line-height: 1.4;
         white-space: pre-wrap;
     }
     .suggested-message-meta {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-top: 10px;
-        font-size: 0.75rem;
+        margin-top: 8px;
+        font-size: 0.7rem;
         color: var(--gray-500);
     }
     .tone-badge {
-        padding: 2px 8px;
-        border-radius: 10px;
-        font-size: 0.7rem;
+        padding: 2px 6px;
+        border-radius: 8px;
+        font-size: 0.65rem;
         font-weight: 500;
     }
     .tone-badge.formal { background: rgba(99, 102, 241, 0.1); color: var(--primary); }
@@ -56,72 +171,73 @@
     .tone-badge.friendly { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
 
     .use-suggestion-btn {
-        margin-top: 16px;
+        margin-top: 12px;
         width: 100%;
+        font-size: 0.85rem;
     }
-
     .regenerate-btn {
-        margin-top: 8px;
+        margin-top: 6px;
         width: 100%;
+        font-size: 0.8rem;
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="row">
+<div class="row g-3">
     <!-- Lista de Conversas -->
-    <div class="col-lg-3 col-md-4">
+    <div class="col-lg-4 col-md-5">
         <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">Conversas</h5>
-                <span class="badge bg-primary" id="unread-badge">0</span>
+            <div class="card-header py-2">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">Conversas</h6>
+                    <span class="badge bg-primary" id="unread-badge">0</span>
+                </div>
+                <!-- Filtros -->
+                <div class="d-flex gap-1 flex-wrap">
+                    <button type="button" class="filter-btn active" data-filter="all">Todos</button>
+                    <button type="button" class="filter-btn" data-filter="unread">Pendentes</button>
+                    <button type="button" class="filter-btn" data-filter="email">Email</button>
+                    <button type="button" class="filter-btn" data-filter="whatsapp">WhatsApp</button>
+                </div>
             </div>
             <div class="card-body p-0">
-                <!-- Filtros -->
-                <div class="btn-group w-100 p-2" role="group">
-                    <button type="button" class="btn btn-sm btn-outline-secondary active" data-filter="all">Todos</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="unread">Pendentes</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="email">Email</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" data-filter="whatsapp">WhatsApp</button>
-                </div>
-                <!-- Lista -->
-                <div class="list-group list-group-flush" id="conversation-list" style="max-height: 70vh; overflow-y: auto;">
-                    <div class="text-center py-4 text-muted">Carregando...</div>
+                <div id="conversation-list" style="max-height: 72vh; overflow-y: auto;">
+                    <div class="text-center py-4 text-muted">
+                        <div class="spinner-border spinner-border-sm"></div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- Detalhe da Conversa -->
-    <div class="col-lg-6 col-md-8">
+    <div class="col-lg-5 col-md-7">
         <div class="card" id="conversation-detail">
-            <div class="card-header" id="detail-header" style="display: none;">
+            <div class="card-header py-2" id="detail-header" style="display: none;">
                 <div class="d-flex justify-content-between align-items-center">
-                    <div class="d-flex align-items-center">
-                        <img src="" id="contact-photo" class="rounded-circle me-2" width="40" height="40" style="display: none;">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="conv-avatar" id="contact-avatar" style="background: var(--primary); color: white;">?</div>
                         <div>
-                            <h6 class="mb-0" id="contact-name">-</h6>
+                            <div class="fw-medium" id="contact-name">-</div>
                             <small class="text-muted" id="contact-channel">-</small>
                         </div>
                     </div>
-                    <div class="d-flex gap-2">
-                        <button class="btn btn-sm btn-outline-primary" onclick="loadMessageSuggestions()" id="suggestBtn" style="display: none;">
-                            <i class="bi bi-robot me-1"></i>Sugerir
-                        </button>
-                        <a href="#" id="contact-link" class="btn btn-sm btn-outline-secondary">Ver Contato</a>
-                    </div>
+                    <a href="#" id="contact-link" class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-person me-1"></i>Perfil
+                    </a>
                 </div>
             </div>
-            <div class="card-body" id="messages-container" style="max-height: 55vh; overflow-y: auto;">
-                <div class="text-center text-muted py-5">
+            <div class="card-body" id="messages-container" style="height: 55vh; overflow-y: auto;">
+                <div class="empty-messages">
                     <i class="bi bi-chat-dots" style="font-size: 3rem;"></i>
-                    <p class="mt-3">Selecione uma conversa para ver as mensagens</p>
+                    <p class="mt-3 mb-0">Selecione uma conversa</p>
                 </div>
             </div>
             <!-- Reply Box -->
-            <div class="card-footer" id="reply-box" style="display: none;">
+            <div class="card-footer py-2" id="reply-box" style="display: none;">
                 <div class="d-flex gap-2">
-                    <textarea class="form-control" id="replyText" rows="2" placeholder="Digite sua mensagem..."></textarea>
+                    <textarea class="form-control form-control-sm" id="replyText" rows="2" placeholder="Digite sua mensagem..."></textarea>
                     <button class="btn btn-primary" onclick="sendReply()">
                         <i class="bi bi-send"></i>
                     </button>
@@ -134,14 +250,14 @@
     <div class="col-lg-3 d-none d-lg-block">
         <div class="card suggestion-sidebar">
             <div class="card-header">
-                <h5 class="mb-0" style="color: var(--primary);">
-                    <i class="bi bi-robot me-2"></i>Sugestoes IA
-                </h5>
+                <h6 class="mb-0" style="color: var(--primary);">
+                    <i class="bi bi-robot me-1"></i>Sugestoes IA
+                </h6>
             </div>
-            <div class="card-body" id="messageSuggestions">
-                <div class="text-center text-muted py-4">
-                    <i class="bi bi-chat-square-text" style="font-size: 2rem;"></i>
-                    <p class="mt-2 mb-0 small">Selecione uma conversa para receber sugestoes de mensagem</p>
+            <div class="card-body p-2" id="messageSuggestions">
+                <div class="text-center text-muted py-3">
+                    <i class="bi bi-chat-square-text" style="font-size: 1.5rem;"></i>
+                    <p class="mt-2 mb-0 small">Selecione uma conversa</p>
                 </div>
             </div>
         </div>
@@ -180,24 +296,34 @@ async function loadConversations(filter = 'all') {
             return;
         }
 
-        list.innerHTML = data.conversations.map(conv => `
-            <a href="#" class="list-group-item list-group-item-action ${conv.requer_resposta ? 'border-start border-3 border-primary' : ''}"
-               onclick="loadMessages(${conv.id}, ${conv.contact_id || 'null'}); return false;" data-id="${conv.id}">
-                <div class="d-flex w-100 justify-content-between align-items-center">
-                    <div class="d-flex align-items-center">
-                        ${conv.foto_url ? `<img src="${conv.foto_url}" class="rounded-circle me-2" width="36" height="36">` : '<div class="rounded-circle bg-secondary me-2 d-flex align-items-center justify-content-center" style="width:36px;height:36px;"><i class="bi bi-person text-white"></i></div>'}
-                        <div>
-                            <h6 class="mb-0 ${conv.requer_resposta ? 'fw-bold' : ''}">${conv.contact_name || 'Desconhecido'}</h6>
-                            <small class="text-muted text-truncate d-block" style="max-width: 150px;">${conv.subject || ''}</small>
+        list.innerHTML = data.conversations.map(conv => {
+            const name = conv.contact_name || 'Desconhecido';
+            const initials = name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+            const avatarColors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+            const colorIndex = name.charCodeAt(0) % avatarColors.length;
+            const bgColor = avatarColors[colorIndex];
+
+            return `
+            <div class="conversation-item" onclick="loadMessages(${conv.id}, ${conv.contact_id || 'null'})" data-id="${conv.id}">
+                <div class="d-flex align-items-center gap-2">
+                    ${conv.foto_url
+                        ? `<img src="${conv.foto_url}" class="conv-avatar" style="object-fit: cover;">`
+                        : `<div class="conv-avatar" style="background: ${bgColor}; color: white;">${initials}</div>`
+                    }
+                    <div class="flex-grow-1 min-width-0">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="conv-name">${name}</span>
+                            <span class="conv-meta">${formatDate(conv.last_message_at)}</span>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="conv-preview">${conv.subject || ''}</span>
+                            <span class="badge channel-badge ${conv.channel === 'email' ? 'bg-info' : 'bg-success'}">${conv.channel}</span>
                         </div>
                     </div>
-                    <div class="text-end">
-                        <small class="text-muted">${formatDate(conv.last_message_at)}</small>
-                        <div><span class="badge ${conv.channel === 'email' ? 'bg-info' : 'bg-success'}">${conv.channel}</span></div>
-                    </div>
                 </div>
-            </a>
-        `).join('');
+            </div>
+            `;
+        }).join('');
 
     } catch (error) {
         list.innerHTML = '<div class="text-center py-4 text-danger">Erro ao carregar</div>';
@@ -208,11 +334,12 @@ async function loadMessages(conversationId, contactId) {
     currentConversationId = conversationId;
     currentContactId = contactId;
 
-    document.querySelectorAll('#conversation-list a').forEach(a => a.classList.remove('active'));
-    document.querySelector(`#conversation-list a[data-id="${conversationId}"]`)?.classList.add('active');
+    // Update active state
+    document.querySelectorAll('#conversation-list .conversation-item').forEach(el => el.classList.remove('active'));
+    document.querySelector(`#conversation-list .conversation-item[data-id="${conversationId}"]`)?.classList.add('active');
 
     const container = document.getElementById('messages-container');
-    container.innerHTML = '<div class="text-center py-4"><div class="spinner-border"></div></div>';
+    container.innerHTML = '<div class="d-flex align-items-center justify-content-center h-100"><div class="spinner-border text-primary"></div></div>';
 
     try {
         const [convResponse, msgResponse] = await Promise.all([
@@ -224,32 +351,46 @@ async function loadMessages(conversationId, contactId) {
         const messagesData = await msgResponse.json();
 
         currentContactId = conversation.contact_id || contactId;
+        const name = conversation.contact_name || 'Desconhecido';
+        const initials = name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+        const avatarColors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+        const colorIndex = name.charCodeAt(0) % avatarColors.length;
 
         document.getElementById('detail-header').style.display = 'block';
         document.getElementById('reply-box').style.display = 'block';
-        document.getElementById('suggestBtn').style.display = 'inline-block';
-        document.getElementById('contact-name').textContent = conversation.contact_name || 'Desconhecido';
+        document.getElementById('contact-name').textContent = name;
         document.getElementById('contact-channel').textContent = `Via ${conversation.channel}`;
-        document.getElementById('contact-link').href = `/contato/${currentContactId}`;
+        document.getElementById('contact-link').href = `/contatos/${currentContactId}`;
 
+        // Update avatar
+        const avatarEl = document.getElementById('contact-avatar');
         if (conversation.foto_url) {
-            document.getElementById('contact-photo').src = conversation.foto_url;
-            document.getElementById('contact-photo').style.display = 'block';
+            avatarEl.innerHTML = `<img src="${conversation.foto_url}" class="conv-avatar" style="object-fit: cover; width: 100%; height: 100%;">`;
         } else {
-            document.getElementById('contact-photo').style.display = 'none';
+            avatarEl.style.background = avatarColors[colorIndex];
+            avatarEl.textContent = initials;
         }
 
         if (!messagesData.messages || messagesData.messages.length === 0) {
-            container.innerHTML = '<div class="text-center text-muted py-5">Nenhuma mensagem</div>';
+            container.innerHTML = `
+                <div class="empty-messages">
+                    <i class="bi bi-chat-square-text" style="font-size: 2.5rem;"></i>
+                    <p class="mt-3 mb-1">Sem historico de mensagens</p>
+                    <small class="text-muted">As mensagens deste contato ainda nao foram importadas</small>
+                </div>
+            `;
         } else {
-            container.innerHTML = messagesData.messages.reverse().map(msg => `
-                <div class="mb-3 ${msg.direction === 'outbound' ? 'text-end' : ''}">
-                    <div class="d-inline-block p-3 rounded ${msg.direction === 'outbound' ? 'bg-primary text-white' : 'bg-light'}" style="max-width: 70%;">
+            container.innerHTML = messagesData.messages.reverse().map(msg => {
+                const isOutgoing = msg.direction === 'outgoing' || msg.direction === 'outbound';
+                return `
+                <div class="d-flex ${isOutgoing ? 'justify-content-end' : ''}">
+                    <div class="message-bubble ${isOutgoing ? 'outgoing' : 'incoming'}">
                         <div style="white-space: pre-wrap;">${escapeHtml(msg.content || '')}</div>
-                        <small class="${msg.direction === 'outbound' ? 'text-white-50' : 'text-muted'}">${formatDateTime(msg.sent_at)}</small>
+                        <div class="message-time">${formatDateTime(msg.sent_at)}</div>
                     </div>
                 </div>
-            `).join('');
+                `;
+            }).join('');
 
             container.scrollTop = container.scrollHeight;
         }
@@ -261,7 +402,8 @@ async function loadMessages(conversationId, contactId) {
         loadMessageSuggestions();
 
     } catch (error) {
-        container.innerHTML = '<div class="text-center text-danger py-5">Erro ao carregar mensagens</div>';
+        console.error('Error loading messages:', error);
+        container.innerHTML = '<div class="empty-messages text-danger"><i class="bi bi-exclamation-circle"></i><p class="mt-2">Erro ao carregar mensagens</p></div>';
     }
 }
 
