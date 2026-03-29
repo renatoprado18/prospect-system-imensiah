@@ -2418,13 +2418,27 @@
                 const alertas = dashData.alertas || {};
                 const atRiskContacts = atRiskData.contacts || [];
 
-                // Contagem de eventos hoje
+                // Contagem de eventos hoje (filtrar marcadores pessoais)
                 let reunioesHoje = 0;
+                let eventosHoje = [];
                 try {
                     const calResp = await fetch('/api/calendar/today');
                     if (calResp.ok) {
                         const calData = await calResp.json();
-                        reunioesHoje = Array.isArray(calData) ? calData.length : 0;
+                        eventosHoje = Array.isArray(calData) ? calData : [];
+                        // Filtrar apenas reunioes reais (excluir marcadores pessoais)
+                        const reunioes = eventosHoje.filter(e => {
+                            const titulo = (e.summary || e.title || '').toLowerCase();
+                            // Excluir marcadores pessoais
+                            if (titulo.startsWith('[foco]')) return false;
+                            if (titulo.includes('cama') || titulo.includes('dormir')) return false;
+                            if (titulo.includes('acordar') || titulo.includes('despertar')) return false;
+                            if (titulo.includes('almoco') || titulo.includes('jantar')) return false;
+                            if (titulo.includes('lembrete:')) return false;
+                            // E um evento real (provavelmente reuniao)
+                            return true;
+                        });
+                        reunioesHoje = reunioes.length;
                     }
                 } catch (e) {}
 
@@ -2432,7 +2446,10 @@
                 let summaryParts = [];
 
                 if (reunioesHoje > 0) {
-                    summaryParts.push(`${reunioesHoje} reuniao${reunioesHoje > 1 ? 'oes' : ''}`);
+                    summaryParts.push(`${reunioesHoje} reuni${reunioesHoje > 1 ? 'oes' : 'ao'}`);
+                } else if (eventosHoje.length > 0) {
+                    // Tem eventos mas nao sao reunioes - mencionar agenda
+                    summaryParts.push(`${eventosHoje.length} evento${eventosHoje.length > 1 ? 's' : ''} na agenda`);
                 }
 
                 const aniversariosHoje = aniversarios.filter(a => a.dias_ate_aniversario === 0);
@@ -2460,7 +2477,9 @@
                 // Stats badges - now clickable with tooltips
                 let statsHtml = '';
                 if (reunioesHoje > 0) {
-                    statsHtml += `<div class="briefing-stat" onclick="window.location.href='/calendario'" data-tooltip="Ver agenda de hoje"><i class="bi bi-calendar-event"></i> ${reunioesHoje} reuniao${reunioesHoje > 1 ? 'oes' : ''}</div>`;
+                    statsHtml += `<div class="briefing-stat" onclick="window.location.href='/calendario'" data-tooltip="Ver agenda de hoje"><i class="bi bi-calendar-event"></i> ${reunioesHoje} reuni${reunioesHoje > 1 ? 'oes' : 'ao'}</div>`;
+                } else if (eventosHoje.length > 0) {
+                    statsHtml += `<div class="briefing-stat" onclick="window.location.href='/calendario'" data-tooltip="Ver agenda de hoje"><i class="bi bi-calendar-event"></i> ${eventosHoje.length} evento${eventosHoje.length > 1 ? 's' : ''}</div>`;
                 }
                 if (aniversariosHoje.length > 0) {
                     statsHtml += `<div class="briefing-stat" onclick="window.location.href='/circulos'" data-tooltip="Ver aniversariantes"><i class="bi bi-cake2"></i> ${aniversariosHoje.length} aniversario${aniversariosHoje.length > 1 ? 's' : ''}</div>`;
