@@ -2082,13 +2082,22 @@
 
             try {
                 const response = await fetch(`/api/contacts/${contactId}/briefing`, {
-                    method: 'POST'
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
                 });
 
                 const result = await response.json();
-                if (result.briefing || result.content) {
+
+                if (!response.ok) {
+                    // HTTPException returns {detail: "error message"}
+                    showNotification('Erro: ' + (result.detail || result.error || 'Falha ao gerar briefing'), 'error');
+                    return;
+                }
+
+                if (result.briefing || result.briefing_id) {
                     showNotification('Briefing gerado com sucesso!', 'success');
-                    // Reload the briefing card instead of redirecting
+                    // Reload the briefing card
                     loadCurrentBriefing();
                 } else {
                     showNotification('Erro: ' + (result.error || 'Falha ao gerar briefing'), 'error');
