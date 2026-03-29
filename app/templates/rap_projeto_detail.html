@@ -222,6 +222,9 @@
     .member-avatar {
         width: 40px;
         height: 40px;
+        min-width: 40px;
+        min-height: 40px;
+        flex-shrink: 0;
         border-radius: 50%;
         background: var(--gray-200);
         display: flex;
@@ -229,6 +232,7 @@
         justify-content: center;
         font-weight: 600;
         color: var(--gray-600);
+        overflow: hidden;
     }
 
     .member-avatar img {
@@ -502,8 +506,8 @@
             const initials = m.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
             return `
                 <div class="member-item">
-                    <div class="member-avatar">
-                        ${m.foto_url ? `<img src="${m.foto_url}" alt="${m.nome}">` : initials}
+                    <div class="member-avatar" data-initials="${initials}">
+                        ${m.foto_url ? `<img src="${m.foto_url}" alt="${m.nome}" onerror="this.style.display='none'; this.parentElement.textContent=this.parentElement.dataset.initials;">` : initials}
                     </div>
                     <div class="flex-grow-1">
                         <div class="fw-semibold">${m.nome}</div>
@@ -616,8 +620,8 @@
                 const escapedNome = c.nome.replace(/'/g, "\\'").replace(/"/g, "&quot;");
                 return `
                     <div class="search-result-item" onclick="selectContact(${c.id}, '${escapedNome}')">
-                        <div class="member-avatar" style="width: 36px; height: 36px;">
-                            ${c.foto_url ? `<img src="${c.foto_url}">` : initials}
+                        <div class="member-avatar" style="width: 36px; height: 36px; min-width: 36px;" data-initials="${initials}">
+                            ${c.foto_url ? `<img src="${c.foto_url}" onerror="this.style.display='none'; this.parentElement.textContent=this.parentElement.dataset.initials;">` : initials}
                         </div>
                         <div>
                             <div class="fw-semibold">${c.nome}</div>
@@ -831,18 +835,20 @@
             );
 
             if (matches.length > 0) {
-                resultsDiv.innerHTML = matches.map(m => `
+                resultsDiv.innerHTML = matches.map(m => {
+                    const initials = m.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+                    return `
                     <div class="d-flex align-items-center p-2 border-bottom" style="cursor: pointer;"
                          onclick="selectTaskResponsavel(${m.contact_id}, '${m.nome.replace(/'/g, "\\'")}')">
-                        <div class="avatar-circle me-2" style="width: 32px; height: 32px; font-size: 12px; background: #e9ecef;">
-                            ${m.nome.charAt(0).toUpperCase()}
+                        <div class="member-avatar me-2" style="width: 32px; height: 32px; min-width: 32px; font-size: 12px;" data-initials="${initials}">
+                            ${m.foto_url ? `<img src="${m.foto_url}" onerror="this.style.display='none'; this.parentElement.textContent=this.parentElement.dataset.initials;">` : initials}
                         </div>
                         <div>
                             <div class="fw-medium">${m.nome}</div>
                             <small class="text-muted">${m.papel || ''}</small>
                         </div>
                     </div>
-                `).join('');
+                `}).join('');
                 return;
             }
         }

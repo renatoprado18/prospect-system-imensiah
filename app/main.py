@@ -9720,29 +9720,27 @@ async def api_contact_tasks(contact_id: int):
 
 
 @app.get("/api/contacts/{contact_id}/messages")
-async def api_contact_messages(contact_id: int, limit: int = 10):
+async def api_contact_messages(contact_id: int, limit: int = 5):
     """Retorna mensagens recentes do contato (WhatsApp + Email)."""
-    with get_db() as conn:
-        cursor = conn.cursor()
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
 
-        # Get contact phone number for WhatsApp matching
-        cursor.execute("SELECT telefones FROM contacts WHERE id = %s", (contact_id,))
-        contact = cursor.fetchone()
-        telefones = contact['telefones'] if contact else []
+            # Quick query with index-friendly conditions
+            cursor.execute("""
+                SELECT m.id, m.conteudo, m.direcao, m.enviado_em, c.canal
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE m.contact_id = %s
+                ORDER BY m.id DESC
+                LIMIT %s
+            """, (contact_id, limit))
+            messages = [dict(row) for row in cursor.fetchall()]
 
-        # Try to get messages from messages table
-        cursor.execute("""
-            SELECT m.id, m.conteudo, m.direcao, m.enviado_em, c.canal,
-                   m.created_at
-            FROM messages m
-            JOIN conversations c ON c.id = m.conversation_id
-            WHERE m.contact_id = %s
-            ORDER BY COALESCE(m.enviado_em, m.created_at) DESC
-            LIMIT %s
-        """, (contact_id, limit))
-        messages = [dict(row) for row in cursor.fetchall()]
-
-        return {"messages": messages}
+            return {"messages": messages}
+    except Exception as e:
+        # Table might not exist or other error - return empty
+        return {"messages": []}
 
 
 @app.get("/api/projects/available")

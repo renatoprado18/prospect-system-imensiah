@@ -3323,14 +3323,17 @@
             `;
         }
 
-        // Load projects, tasks, facts, and messages when page loads
+        // Load projects, tasks, facts, and messages when page loads (in parallel)
         document.addEventListener('DOMContentLoaded', function() {
             setTimeout(() => {
-                loadContactProjects();
-                loadContactTasks();
-                loadContactFacts();
-                loadContactMessages();
-            }, 500);
+                // Load all in parallel for faster page load
+                Promise.all([
+                    loadContactProjects().catch(e => console.log('Projects error:', e)),
+                    loadContactTasks().catch(e => console.log('Tasks error:', e)),
+                    loadContactFacts().catch(e => console.log('Facts error:', e)),
+                    loadContactMessages().catch(e => console.log('Messages error:', e))
+                ]);
+            }, 300);
         });
     </script>
 </body>
