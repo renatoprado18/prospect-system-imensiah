@@ -6691,6 +6691,37 @@ async def evolution_setup_webhook(request: Request):
     return {"webhook_url": webhook_url, "result": result}
 
 
+@app.get("/api/evolution/webhook")
+async def evolution_get_webhook(request: Request):
+    """Verifica configuração atual do webhook"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    client = get_evolution_client()
+
+    if not client.is_configured:
+        return {"configured": False}
+
+    result = await client.get_webhook()
+
+    # Expected URL
+    base_url = os.getenv("BASE_URL", "https://intel.almeida-prado.com")
+    expected_url = f"{base_url}/api/webhooks/whatsapp"
+
+    current_url = result.get("url") or result.get("webhook", {}).get("url")
+    is_correct = current_url == expected_url if current_url else False
+
+    return {
+        "configured": bool(current_url),
+        "url": current_url,
+        "expected_url": expected_url,
+        "is_correct": is_correct,
+        "enabled": result.get("enabled") or result.get("webhook", {}).get("enabled", False),
+        "events": result.get("events") or result.get("webhook", {}).get("events", [])
+    }
+
+
 @app.post("/api/evolution/send")
 async def evolution_send_message(request: Request):
     """Envia mensagem via Evolution API"""

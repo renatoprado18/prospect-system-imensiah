@@ -331,9 +331,20 @@
                     <div class="whatsapp-info-label">Numero conectado</div>
                     <div class="whatsapp-info-value" id="connectedNumber">+55 11 98415-3337</div>
                 </div>
-                <button class="btn btn-outline-light btn-sm" onclick="disconnect()">
-                    <i class="bi bi-x-circle me-1"></i> Desconectar
-                </button>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-light btn-sm" id="webhookBtn" onclick="setupWebhook()">
+                        <i class="bi bi-gear me-1"></i> Webhook
+                    </button>
+                    <button class="btn btn-outline-light btn-sm" onclick="disconnect()">
+                        <i class="bi bi-x-circle me-1"></i> Desconectar
+                    </button>
+                </div>
+            </div>
+            <div id="webhookStatus" class="mt-3" style="display: none;">
+                <div class="alert alert-info mb-0 py-2" style="background: rgba(255,255,255,0.2); border: none;">
+                    <i class="bi bi-info-circle me-1"></i>
+                    <span id="webhookStatusText"></span>
+                </div>
             </div>
         </div>
 
@@ -1088,6 +1099,7 @@
                 if (importCard) importCard.style.display = 'block';
                 loadContactsForExport();
                 loadContactsForImport();
+                checkWebhookStatus();
             } else if (state === 'connecting') {
                 // Connecting - show QR
                 statusBadge.innerHTML = `
@@ -1279,6 +1291,70 @@
             } catch (error) {
                 showToast('Erro ao desconectar');
                 console.error(error);
+            }
+        }
+
+        async function checkWebhookStatus() {
+            try {
+                const response = await fetch('/api/evolution/webhook', { credentials: 'include' });
+                const data = await response.json();
+
+                const webhookStatus = document.getElementById('webhookStatus');
+                const webhookStatusText = document.getElementById('webhookStatusText');
+                const webhookBtn = document.getElementById('webhookBtn');
+
+                if (data.configured && data.is_correct) {
+                    webhookStatus.style.display = 'block';
+                    webhookStatusText.innerHTML = `<i class="bi bi-check-circle text-success me-1"></i> Webhook ativo - mensagens recebidas automaticamente`;
+                    webhookBtn.innerHTML = '<i class="bi bi-check me-1"></i> Webhook OK';
+                    webhookBtn.classList.remove('btn-outline-light');
+                    webhookBtn.classList.add('btn-success');
+                } else if (data.configured && !data.is_correct) {
+                    webhookStatus.style.display = 'block';
+                    webhookStatusText.innerHTML = `<i class="bi bi-exclamation-triangle text-warning me-1"></i> Webhook configurado para URL diferente. Clique para reconfigurar.`;
+                } else {
+                    webhookStatus.style.display = 'block';
+                    webhookStatusText.innerHTML = `<i class="bi bi-info-circle me-1"></i> Clique em "Webhook" para ativar recebimento automatico de mensagens`;
+                }
+            } catch (error) {
+                console.error('Error checking webhook:', error);
+            }
+        }
+
+        async function setupWebhook() {
+            const webhookBtn = document.getElementById('webhookBtn');
+            const webhookStatus = document.getElementById('webhookStatus');
+            const webhookStatusText = document.getElementById('webhookStatusText');
+
+            webhookBtn.disabled = true;
+            webhookBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+            try {
+                const response = await fetch('/api/evolution/setup-webhook', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+
+                webhookStatus.style.display = 'block';
+
+                if (data.result && !data.result.error) {
+                    webhookStatusText.innerHTML = `<i class="bi bi-check-circle text-success me-1"></i> Webhook configurado: ${data.webhook_url}`;
+                    showToast('Webhook configurado! Mensagens serao recebidas automaticamente.');
+                } else if (data.result?.error) {
+                    webhookStatusText.innerHTML = `<i class="bi bi-exclamation-triangle text-warning me-1"></i> ${data.result.error}`;
+                    showToast('Erro ao configurar webhook');
+                } else {
+                    webhookStatusText.innerHTML = `<i class="bi bi-check-circle text-success me-1"></i> Webhook: ${data.webhook_url}`;
+                    showToast('Webhook configurado!');
+                }
+            } catch (error) {
+                console.error('Webhook setup error:', error);
+                showToast('Erro ao configurar webhook');
+            } finally {
+                webhookBtn.disabled = false;
+                webhookBtn.innerHTML = '<i class="bi bi-gear me-1"></i> Webhook';
             }
         }
 
