@@ -1086,6 +1086,18 @@
                         <button class="btn btn-sm btn-outline-primary" onclick="enrichContact()" title="Enriquecer com IA">
                             <i class="bi bi-magic"></i>
                         </button>
+                        <div class="dropdown">
+                            <button class="btn btn-sm btn-info dropdown-toggle" type="button" data-bs-toggle="dropdown" title="Acoes Rapidas">
+                                <i class="bi bi-lightning-charge"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><a class="dropdown-item" href="#" onclick="quickCreateTask()"><i class="bi bi-check2-square me-2"></i>Criar Tarefa</a></li>
+                                <li><a class="dropdown-item" href="#" onclick="quickScheduleMeeting()"><i class="bi bi-calendar-plus me-2"></i>Agendar Reuniao</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="#" onclick="generateBriefing()"><i class="bi bi-file-text me-2"></i>Gerar Briefing</a></li>
+                                <li><a class="dropdown-item" href="#" onclick="quickDraftEmail()"><i class="bi bi-envelope-paper me-2"></i>Rascunho Email</a></li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
 
@@ -1914,6 +1926,123 @@
                 showNotification('Erro ao conectar com servidor', 'error');
                 enrichBadge.innerHTML = originalContent;
                 enrichBadge.style.pointerEvents = 'auto';
+            }
+        }
+
+        // ============== Quick Actions ==============
+
+        async function quickCreateTask() {
+            const contactName = contactData?.contact?.nome || 'Contato';
+            const title = prompt(`Titulo da tarefa para ${contactName}:`, `Follow-up com ${contactName}`);
+            if (!title) return;
+
+            try {
+                const response = await fetch('/api/briefing/create-task', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contact_id: contactId,
+                        title: title,
+                        action_type: 'followup'
+                    })
+                });
+
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showNotification(`Tarefa criada: ${title}`, 'success');
+                } else {
+                    showNotification('Erro: ' + (result.detail || result.error || 'Falha ao criar tarefa'), 'error');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showNotification('Erro ao criar tarefa', 'error');
+            }
+        }
+
+        async function quickScheduleMeeting() {
+            const contactName = contactData?.contact?.nome || 'Contato';
+            const dateStr = prompt(`Data da reuniao com ${contactName} (YYYY-MM-DD):`, new Date().toISOString().split('T')[0]);
+            if (!dateStr) return;
+
+            const timeStr = prompt('Horario (HH:MM):', '10:00');
+            if (!timeStr) return;
+
+            try {
+                const response = await fetch('/api/briefing/schedule-meeting', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contact_id: contactId,
+                        title: `Reuniao com ${contactName}`,
+                        date: dateStr,
+                        time: timeStr,
+                        duration_minutes: 30,
+                        create_meet: true
+                    })
+                });
+
+                const result = await response.json();
+                if (result.status === 'success' || result.event) {
+                    showNotification(`Reuniao agendada para ${dateStr} as ${timeStr}`, 'success');
+                } else {
+                    showNotification('Erro: ' + (result.detail || result.error || 'Falha ao agendar'), 'error');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showNotification('Erro ao agendar reuniao', 'error');
+            }
+        }
+
+        async function generateBriefing() {
+            showNotification('Gerando briefing...', 'info');
+
+            try {
+                const response = await fetch(`/api/briefings/${contactId}`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+                if (result.briefing || result.content) {
+                    // Redirecionar para pagina de briefings ou mostrar modal
+                    window.location.href = `/briefings?contact_id=${contactId}`;
+                } else {
+                    showNotification('Erro: ' + (result.error || 'Falha ao gerar briefing'), 'error');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showNotification('Erro ao gerar briefing', 'error');
+            }
+        }
+
+        async function quickDraftEmail() {
+            showNotification('Gerando rascunho de email...', 'info');
+
+            try {
+                const response = await fetch('/api/briefing/draft-message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contact_id: contactId,
+                        channel: 'email',
+                        context: 'followup'
+                    })
+                });
+
+                const result = await response.json();
+                if (result.message || result.draft) {
+                    const draft = result.message || result.draft;
+                    // Mostrar em um alert ou modal
+                    alert(`Rascunho gerado:\n\n${draft.subject || ''}\n\n${draft.body || draft}`);
+                    // Copiar para clipboard
+                    navigator.clipboard.writeText(draft.body || draft).then(() => {
+                        showNotification('Rascunho copiado para clipboard!', 'success');
+                    });
+                } else {
+                    showNotification('Erro: ' + (result.detail || result.error || 'Falha ao gerar rascunho'), 'error');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showNotification('Erro ao gerar rascunho', 'error');
             }
         }
 

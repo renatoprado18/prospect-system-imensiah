@@ -371,6 +371,231 @@
         gap: 10px;
     }
 
+    /* View Semana - Lista */
+    .week-view {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        background: var(--gray-200);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .week-day-row {
+        display: grid;
+        grid-template-columns: 100px 1fr;
+        background: white;
+        min-height: 80px;
+    }
+
+    .week-day-row.today {
+        background: rgba(99, 102, 241, 0.05);
+    }
+
+    .week-day-label {
+        padding: 16px;
+        border-right: 1px solid var(--gray-200);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+    }
+
+    .week-day-name {
+        font-size: 0.75rem;
+        color: var(--gray-500);
+        text-transform: uppercase;
+        font-weight: 600;
+    }
+
+    .week-day-number {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin-top: 4px;
+    }
+
+    .week-day-row.today .week-day-number {
+        background: var(--primary);
+        color: white;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .week-day-events {
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .week-event-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+        background: rgba(59, 130, 246, 0.1);
+        border-left: 3px solid #3b82f6;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .week-event-item:hover {
+        background: rgba(59, 130, 246, 0.15);
+        transform: translateX(4px);
+    }
+
+    .week-event-item.birthday {
+        background: rgba(236, 72, 153, 0.1);
+        border-left-color: #ec4899;
+    }
+
+    .week-event-item .event-time {
+        font-weight: 600;
+        color: var(--gray-600);
+        min-width: 50px;
+    }
+
+    .week-event-item .event-title {
+        font-weight: 500;
+        color: var(--dark);
+    }
+
+    .week-event-item .event-contact {
+        font-size: 0.85rem;
+        color: var(--gray-500);
+        margin-left: auto;
+    }
+
+    .week-empty {
+        color: var(--gray-400);
+        font-style: italic;
+        padding: 8px 0;
+    }
+
+    /* View Dia - Timeline */
+    .day-view {
+        display: flex;
+        flex-direction: column;
+        background: white;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .day-view-header {
+        padding: 20px;
+        background: var(--gray-100);
+        text-align: center;
+        border-bottom: 1px solid var(--gray-200);
+    }
+
+    .day-view-header .day-name {
+        font-size: 0.875rem;
+        color: var(--gray-500);
+        text-transform: uppercase;
+        font-weight: 600;
+    }
+
+    .day-view-header .day-number {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: var(--dark);
+    }
+
+    .day-view-header.today .day-number {
+        color: var(--primary);
+    }
+
+    .day-timeline {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .hour-row {
+        display: grid;
+        grid-template-columns: 60px 1fr;
+        min-height: 60px;
+        border-bottom: 1px solid var(--gray-100);
+    }
+
+    .hour-label {
+        padding: 8px;
+        font-size: 0.75rem;
+        color: var(--gray-500);
+        text-align: right;
+        padding-right: 12px;
+        border-right: 1px solid var(--gray-200);
+    }
+
+    .hour-content {
+        padding: 4px 12px;
+        position: relative;
+    }
+
+    .hour-event {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.9), rgba(99, 102, 241, 0.9));
+        color: white;
+        padding: 8px 12px;
+        border-radius: 8px;
+        margin-bottom: 4px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .hour-event:hover {
+        transform: scale(1.02);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
+
+    .hour-event .event-title {
+        font-weight: 600;
+        margin-bottom: 2px;
+    }
+
+    .hour-event .event-time-range {
+        font-size: 0.75rem;
+        opacity: 0.9;
+    }
+
+    .hour-event.birthday {
+        background: linear-gradient(135deg, rgba(236, 72, 153, 0.9), rgba(244, 114, 182, 0.9));
+    }
+
+    /* Day view - all day events */
+    .all-day-section {
+        padding: 12px 20px;
+        background: var(--gray-50);
+        border-bottom: 1px solid var(--gray-200);
+    }
+
+    .all-day-label {
+        font-size: 0.75rem;
+        color: var(--gray-500);
+        margin-bottom: 8px;
+        text-transform: uppercase;
+        font-weight: 600;
+    }
+
+    .all-day-events {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .all-day-event {
+        background: rgba(168, 85, 247, 0.15);
+        color: #a855f7;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
     /* Responsivo */
     @media (max-width: 1024px) {
         .calendar-container {
@@ -420,9 +645,9 @@
     <div class="calendar-main">
         <div class="calendar-header">
             <div class="calendar-nav">
-                <button onclick="previousMonth()"><i class="bi bi-chevron-left"></i></button>
+                <button onclick="previousPeriod()"><i class="bi bi-chevron-left"></i></button>
                 <span class="calendar-title" id="calendarTitle">Marco 2026</span>
-                <button onclick="nextMonth()"><i class="bi bi-chevron-right"></i></button>
+                <button onclick="nextPeriod()"><i class="bi bi-chevron-right"></i></button>
                 <button onclick="goToToday()" style="margin-left: 8px;">Hoje</button>
             </div>
             <div class="view-toggle">
@@ -540,25 +765,80 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 async function loadEvents() {
-    try {
-        const start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-        const end = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+    // Calculate date range based on view
+    let start, end;
 
+    switch (currentView) {
+        case 'week':
+            start = new Date(currentDate);
+            start.setDate(currentDate.getDate() - currentDate.getDay());
+            end = new Date(start);
+            end.setDate(start.getDate() + 6);
+            break;
+        case 'day':
+            start = new Date(currentDate);
+            start.setHours(0, 0, 0, 0);
+            end = new Date(currentDate);
+            end.setHours(23, 59, 59, 999);
+            break;
+        default: // month - load a bit more for adjacent days
+            start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+            start.setDate(start.getDate() - 7);
+            end = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+            end.setDate(end.getDate() + 7);
+    }
+
+    try {
         const response = await fetch(`/api/calendar/events?start=${start.toISOString()}&end=${end.toISOString()}`);
         if (response.ok) {
             const data = await response.json();
             events = data.events || [];
+        } else {
+            events = [];
         }
     } catch (e) {
         console.error('Erro ao carregar eventos:', e);
-        // Mock data
-        events = [
-            { id: 1, summary: 'Reuniao com Joao', start_datetime: '2026-03-27T10:00:00', contact_name: 'Joao Silva' },
-            { id: 2, summary: 'Call com Cliente', start_datetime: '2026-03-28T14:00:00', contact_name: 'Maria Santos' }
-        ];
+        events = [];
     }
+
+    // Add birthdays from contacts
+    await loadBirthdays(start, end);
+
     renderCalendar();
     renderTodayEvents();
+}
+
+async function loadBirthdays(start, end) {
+    try {
+        const response = await fetch('/api/contacts?limit=500&fields=id,nome,data_nascimento');
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const contactsWithBirthday = (data.contacts || []).filter(c => c.data_nascimento);
+
+        const year = currentDate.getFullYear();
+
+        contactsWithBirthday.forEach(c => {
+            // Parse birthday and set to current year
+            const bday = new Date(c.data_nascimento);
+            const birthdayThisYear = new Date(year, bday.getMonth(), bday.getDate());
+
+            // Check if birthday falls within the range
+            if (birthdayThisYear >= start && birthdayThisYear <= end) {
+                events.push({
+                    id: `bday-${c.id}`,
+                    summary: `Aniversario de ${c.nome}`,
+                    start_datetime: birthdayThisYear.toISOString(),
+                    contact_name: c.nome,
+                    contact_id: c.id,
+                    type: 'birthday',
+                    all_day: true
+                });
+            }
+        });
+    } catch (e) {
+        console.error('Erro ao carregar aniversarios:', e);
+    }
 }
 
 async function loadContacts() {
@@ -654,6 +934,20 @@ function renderCalendar() {
     const grid = document.getElementById('calendarGrid');
     const title = document.getElementById('calendarTitle');
 
+    // Render based on current view
+    switch (currentView) {
+        case 'week':
+            renderWeekView(grid, title);
+            break;
+        case 'day':
+            renderDayView(grid, title);
+            break;
+        default:
+            renderMonthView(grid, title);
+    }
+}
+
+function renderMonthView(grid, title) {
     title.textContent = `${MONTHS[currentDate.getMonth()]} ${currentDate.getFullYear()}`;
 
     const year = currentDate.getFullYear();
@@ -663,6 +957,7 @@ function renderCalendar() {
     const lastDay = new Date(year, month + 1, 0);
     const startDayOfWeek = firstDay.getDay();
 
+    grid.className = 'calendar-grid';
     let html = DAYS.map(d => `<div class="calendar-day-header">${d}</div>`).join('');
 
     // Dias do mes anterior
@@ -683,11 +978,14 @@ function renderCalendar() {
             <div class="calendar-day ${isToday ? 'today' : ''}" onclick="selectDate('${dateStr}')">
                 <div class="day-number">${day}</div>
                 <div class="day-events">
-                    ${dayEvents.slice(0, 2).map(e => `
-                        <div class="day-event meeting" onclick="event.stopPropagation(); openEventDetail(${e.id})">
-                            ${e.summary}
-                        </div>
-                    `).join('')}
+                    ${dayEvents.slice(0, 2).map(e => {
+                        const eventId = typeof e.id === 'string' ? `'${e.id}'` : e.id;
+                        return `
+                            <div class="day-event ${e.type === 'birthday' ? 'reminder' : 'meeting'}" onclick="event.stopPropagation(); openEventDetail(${eventId})">
+                                ${e.type === 'birthday' ? '🎂 ' : ''}${e.summary}
+                            </div>
+                        `;
+                    }).join('')}
                     ${dayEvents.length > 2 ? `<div class="day-event" style="background:var(--gray-200);color:var(--gray-600);">+${dayEvents.length - 2} mais</div>` : ''}
                 </div>
             </div>
@@ -703,6 +1001,136 @@ function renderCalendar() {
     grid.innerHTML = html;
 }
 
+function renderWeekView(grid, title) {
+    // Get start of week (Sunday)
+    const startOfWeek = new Date(currentDate);
+    startOfWeek.setDate(currentDate.getDate() - currentDate.getDay());
+
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+
+    // Title shows date range
+    const startStr = startOfWeek.getDate();
+    const endStr = endOfWeek.getDate();
+    const monthStr = MONTHS[endOfWeek.getMonth()];
+    title.textContent = `${startStr} - ${endStr} ${monthStr} ${endOfWeek.getFullYear()}`;
+
+    grid.className = 'week-view';
+    const today = new Date();
+    let html = '';
+
+    for (let i = 0; i < 7; i++) {
+        const day = new Date(startOfWeek);
+        day.setDate(startOfWeek.getDate() + i);
+
+        const isToday = day.toDateString() === today.toDateString();
+        const dateStr = day.toISOString().split('T')[0];
+        const dayEvents = events.filter(e => e.start_datetime && e.start_datetime.startsWith(dateStr));
+
+        html += `
+            <div class="week-day-row ${isToday ? 'today' : ''}">
+                <div class="week-day-label">
+                    <span class="week-day-name">${DAYS[day.getDay()]}</span>
+                    <span class="week-day-number">${day.getDate()}</span>
+                </div>
+                <div class="week-day-events" onclick="selectDate('${dateStr}')">
+                    ${dayEvents.length === 0 ? '<span class="week-empty">Sem eventos</span>' : ''}
+                    ${dayEvents.map(e => {
+                        const time = new Date(e.start_datetime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                        const eventId = typeof e.id === 'string' ? `'${e.id}'` : e.id;
+                        return `
+                            <div class="week-event-item ${e.type === 'birthday' ? 'birthday' : ''}" onclick="event.stopPropagation(); openEventDetail(${eventId})">
+                                <span class="event-time">${e.type === 'birthday' ? '🎂' : time}</span>
+                                <span class="event-title">${e.summary}</span>
+                                ${e.contact_name ? `<span class="event-contact">${e.contact_name}</span>` : ''}
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    grid.innerHTML = html;
+}
+
+function renderDayView(grid, title) {
+    const DAYS_FULL = ['Domingo', 'Segunda-feira', 'Terca-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sabado'];
+    const today = new Date();
+    const isToday = currentDate.toDateString() === today.toDateString();
+
+    title.textContent = `${DAYS_FULL[currentDate.getDay()]}, ${currentDate.getDate()} de ${MONTHS[currentDate.getMonth()]}`;
+
+    grid.className = 'day-view';
+
+    const dateStr = currentDate.toISOString().split('T')[0];
+    const dayEvents = events.filter(e => e.start_datetime && e.start_datetime.startsWith(dateStr));
+
+    // Separate all-day events and timed events
+    const allDayEvents = dayEvents.filter(e => e.all_day || e.type === 'birthday');
+    const timedEvents = dayEvents.filter(e => !e.all_day && e.type !== 'birthday');
+
+    let html = `
+        <div class="day-view-header ${isToday ? 'today' : ''}">
+            <div class="day-name">${DAYS_FULL[currentDate.getDay()]}</div>
+            <div class="day-number">${currentDate.getDate()}</div>
+        </div>
+    `;
+
+    // All-day events section
+    if (allDayEvents.length > 0) {
+        html += `
+            <div class="all-day-section">
+                <div class="all-day-label">Dia inteiro</div>
+                <div class="all-day-events">
+                    ${allDayEvents.map(e => {
+                        const eventId = typeof e.id === 'string' ? `'${e.id}'` : e.id;
+                        return `
+                            <div class="all-day-event" onclick="openEventDetail(${eventId})">
+                                ${e.type === 'birthday' ? '🎂 ' : ''}${e.summary}
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    // Timeline
+    html += '<div class="day-timeline">';
+    for (let hour = 7; hour <= 20; hour++) {
+        const hourStr = String(hour).padStart(2, '0');
+        const hourEvents = timedEvents.filter(e => {
+            const eventHour = new Date(e.start_datetime).getHours();
+            return eventHour === hour;
+        });
+
+        html += `
+            <div class="hour-row">
+                <div class="hour-label">${hourStr}:00</div>
+                <div class="hour-content">
+                    ${hourEvents.map(e => {
+                        const start = new Date(e.start_datetime);
+                        const end = e.end_datetime ? new Date(e.end_datetime) : new Date(start.getTime() + 30*60000);
+                        const startTime = start.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                        const endTime = end.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                        const eventId = typeof e.id === 'string' ? `'${e.id}'` : e.id;
+                        return `
+                            <div class="hour-event" onclick="openEventDetail(${eventId})">
+                                <div class="event-title">${e.summary}</div>
+                                <div class="event-time-range">${startTime} - ${endTime}${e.contact_name ? ' • ' + e.contact_name : ''}</div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+    }
+    html += '</div>';
+
+    grid.innerHTML = html;
+}
+
 function renderTodayEvents() {
     const container = document.getElementById('todayEvents');
     const today = new Date().toISOString().split('T')[0];
@@ -713,10 +1141,19 @@ function renderTodayEvents() {
         return;
     }
 
+    // Sort: birthdays first, then by time
+    todayEvents.sort((a, b) => {
+        if (a.type === 'birthday' && b.type !== 'birthday') return -1;
+        if (b.type === 'birthday' && a.type !== 'birthday') return 1;
+        return new Date(a.start_datetime) - new Date(b.start_datetime);
+    });
+
     container.innerHTML = todayEvents.map(e => {
-        const time = new Date(e.start_datetime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        const isBirthday = e.type === 'birthday';
+        const time = isBirthday ? '🎂' : new Date(e.start_datetime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        const eventId = typeof e.id === 'string' ? `'${e.id}'` : e.id;
         return `
-            <div class="event-item" onclick="openEventDetail(${e.id})">
+            <div class="event-item" onclick="openEventDetail(${eventId})" style="${isBirthday ? 'background: rgba(236, 72, 153, 0.1); border-left: 3px solid #ec4899;' : ''}">
                 <div class="event-time">${time}</div>
                 <div class="event-details">
                     <div class="event-title">${e.summary}</div>
@@ -727,13 +1164,31 @@ function renderTodayEvents() {
     }).join('');
 }
 
-function previousMonth() {
-    currentDate.setMonth(currentDate.getMonth() - 1);
+function previousPeriod() {
+    switch (currentView) {
+        case 'week':
+            currentDate.setDate(currentDate.getDate() - 7);
+            break;
+        case 'day':
+            currentDate.setDate(currentDate.getDate() - 1);
+            break;
+        default: // month
+            currentDate.setMonth(currentDate.getMonth() - 1);
+    }
     loadEvents();
 }
 
-function nextMonth() {
-    currentDate.setMonth(currentDate.getMonth() + 1);
+function nextPeriod() {
+    switch (currentView) {
+        case 'week':
+            currentDate.setDate(currentDate.getDate() + 7);
+            break;
+        case 'day':
+            currentDate.setDate(currentDate.getDate() + 1);
+            break;
+        default: // month
+            currentDate.setMonth(currentDate.getMonth() + 1);
+    }
     loadEvents();
 }
 
@@ -741,6 +1196,10 @@ function goToToday() {
     currentDate = new Date();
     loadEvents();
 }
+
+// Keep backwards compatibility
+function previousMonth() { previousPeriod(); }
+function nextMonth() { nextPeriod(); }
 
 function selectDate(dateStr) {
     document.getElementById('eventStart').value = dateStr + 'T10:00';
@@ -809,6 +1268,12 @@ async function saveEvent() {
 function openEventDetail(eventId) {
     const event = events.find(e => e.id === eventId);
     if (!event) return;
+
+    // Handle birthday events - redirect to contact page
+    if (event.type === 'birthday' && event.contact_id) {
+        window.location.href = `/contatos/${event.contact_id}`;
+        return;
+    }
 
     document.getElementById('eventModalTitle').textContent = 'Editar Evento';
     document.getElementById('eventId').value = event.id;
