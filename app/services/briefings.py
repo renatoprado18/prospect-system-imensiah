@@ -29,6 +29,7 @@ CLAUDE_MODEL = "claude-sonnet-4-20250514"
 def parse_briefing_sections(briefing_text: str) -> Dict:
     """
     Extrai secoes estruturadas do texto do briefing.
+    Suporta formatos: **TITULO**, ## TITULO, ## 1. TITULO
 
     Returns:
         Dict com summary, opportunities, next_steps, talking_points
@@ -43,38 +44,55 @@ def parse_briefing_sections(briefing_text: str) -> Dict:
     if not briefing_text:
         return result
 
-    # Padroes para encontrar secoes
-    sections = {
-        "RESUMO": "summary",
-        "OPORTUNIDADES": "opportunities",
-        "SUGESTOES DE PAUTA": "talking_points",
-        "PONTOS DE ATENCAO": "next_steps"
-    }
-
     text = briefing_text
 
-    # Extrair resumo (primeira secao geralmente)
-    resumo_match = re.search(r'\*\*RESUMO\*\*[:\s]*(.+?)(?=\*\*[A-Z]|\Z)', text, re.DOTALL | re.IGNORECASE)
-    if resumo_match:
-        result["summary"] = resumo_match.group(1).strip()[:500]
+    # Pattern flexivel para headers: **TITULO**, ## TITULO, ## 1. TITULO
+    def find_section(patterns, text):
+        for pattern in patterns:
+            match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+        return None
+
+    # Extrair resumo
+    resumo_patterns = [
+        r'(?:\*\*|##\s*\d*\.?\s*)RESUMO[*\s]*\n(.+?)(?=(?:\*\*|##)\s*\d*\.?\s*[A-Z]|\Z)',
+        r'RESUMO[:\s]*\n(.+?)(?=\n##|\n\*\*|\Z)'
+    ]
+    resumo = find_section(resumo_patterns, text)
+    if resumo:
+        result["summary"] = resumo[:500]
 
     # Extrair oportunidades
-    oport_match = re.search(r'\*\*OPORTUNIDADES?\*\*[:\s]*(.+?)(?=\*\*[A-Z]|\Z)', text, re.DOTALL | re.IGNORECASE)
-    if oport_match:
-        items = re.findall(r'[-•]\s*(.+?)(?=[-•]|\Z)', oport_match.group(1), re.DOTALL)
-        result["opportunities"] = [item.strip()[:200] for item in items if item.strip()][:5]
+    oport_patterns = [
+        r'(?:\*\*|##\s*\d*\.?\s*)OPORTUNIDADES?[*\s]*\n(.+?)(?=(?:\*\*|##)\s*\d*\.?\s*[A-Z]|\Z)',
+        r'OPORTUNIDADES?[:\s]*\n(.+?)(?=\n##|\n\*\*|\Z)'
+    ]
+    oport_text = find_section(oport_patterns, text)
+    if oport_text:
+        # Extrair items com bullets, asteriscos ou numeracao
+        items = re.findall(r'(?:[-•*]\s*\*?\*?|\d+\.\s*)([^\n]+)', oport_text)
+        result["opportunities"] = [item.strip().rstrip('*')[:200] for item in items if item.strip() and len(item.strip()) > 5][:5]
 
-    # Extrair sugestoes de pauta / talking points
-    pauta_match = re.search(r'\*\*SUGEST[ÕO]ES DE PAUTA\*\*[:\s]*(.+?)(?=\*\*[A-Z]|\Z)', text, re.DOTALL | re.IGNORECASE)
-    if pauta_match:
-        items = re.findall(r'[-•\d\.]\s*(.+?)(?=[-•\d\.]|\Z)', pauta_match.group(1), re.DOTALL)
-        result["talking_points"] = [item.strip()[:200] for item in items if item.strip()][:5]
+    # Extrair sugestoes de pauta
+    pauta_patterns = [
+        r'(?:\*\*|##\s*\d*\.?\s*)SUGEST[ÕO]ES DE PAUTA[*\s]*\n(.+?)(?=(?:\*\*|##)\s*\d*\.?\s*[A-Z]|\Z)',
+        r'SUGEST[ÕO]ES[:\s]*\n(.+?)(?=\n##|\n\*\*|\Z)'
+    ]
+    pauta_text = find_section(pauta_patterns, text)
+    if pauta_text:
+        items = re.findall(r'(?:[-•*]\s*\*?\*?|\d+\.\s*)([^\n]+)', pauta_text)
+        result["talking_points"] = [item.strip().rstrip('*')[:200] for item in items if item.strip() and len(item.strip()) > 5][:5]
 
-    # Extrair pontos de atencao como next_steps
-    atencao_match = re.search(r'\*\*PONTOS DE ATEN[ÇC][ÃA]O\*\*[:\s]*(.+?)(?=\*\*[A-Z]|\Z)', text, re.DOTALL | re.IGNORECASE)
-    if atencao_match:
-        items = re.findall(r'[-•]\s*(.+?)(?=[-•]|\Z)', atencao_match.group(1), re.DOTALL)
-        result["next_steps"] = [item.strip()[:200] for item in items if item.strip()][:5]
+    # Extrair pontos de atencao
+    atencao_patterns = [
+        r'(?:\*\*|##\s*\d*\.?\s*)PONTOS DE ATEN[ÇC][ÃA]O[*\s]*\n(.+?)(?=(?:\*\*|##)\s*\d*\.?\s*[A-Z]|\Z)',
+        r'ATEN[ÇC][ÃA]O[:\s]*\n(.+?)(?=\n##|\n\*\*|\Z)'
+    ]
+    atencao_text = find_section(atencao_patterns, text)
+    if atencao_text:
+        items = re.findall(r'(?:[-•*]\s*\*?\*?|\d+\.\s*)([^\n]+)', atencao_text)
+        result["next_steps"] = [item.strip().rstrip('*')[:200] for item in items if item.strip() and len(item.strip()) > 5][:5]
 
     return result
 

@@ -8630,33 +8630,48 @@ async def briefing_draft_message(request: Request, data: BriefingMessageDraft):
     current_briefing = get_current_briefing(data.contact_id)
     briefing_context = ""
     briefing_id = None
+    hook_suggestion = ""
 
     if current_briefing:
         briefing_id = current_briefing.get("id")
         parts = []
 
+        # Usar o conteudo completo do briefing se disponivel
+        briefing_content = current_briefing.get("content", "")
+
         # Adicionar resumo do briefing
         if current_briefing.get("summary"):
-            parts.append(f"Contexto do relacionamento: {current_briefing['summary']}")
+            parts.append(f"Contexto: {current_briefing['summary']}")
 
         # Adicionar oportunidades identificadas
         opportunities = current_briefing.get("opportunities") or []
         if opportunities:
-            parts.append(f"Oportunidades identificadas: {'; '.join(opportunities[:3])}")
+            parts.append(f"Oportunidades: {'; '.join(opportunities[:3])}")
+            hook_suggestion = opportunities[0]  # Usar primeira oportunidade como gancho
 
         # Adicionar sugestoes de pauta/conversa
         talking_points = current_briefing.get("talking_points") or []
         if talking_points:
             parts.append(f"Assuntos sugeridos: {'; '.join(talking_points[:3])}")
+            if not hook_suggestion:
+                hook_suggestion = talking_points[0]  # Usar primeiro assunto como gancho
 
         if parts:
             briefing_context = "\n- ".join([""] + parts)
 
-    # Context templates
+        # Se nao extraiu dados estruturados, usar resumo do briefing
+        if not hook_suggestion and briefing_content:
+            # Extrair uma sugestao do briefing completo
+            import re
+            sugestao_match = re.search(r'(?:sugestao|propor|convidar|agendar)[^\n.]*([^\n.]+)', briefing_content, re.IGNORECASE)
+            if sugestao_match:
+                hook_suggestion = sugestao_match.group(0)[:100]
+
+    # Context templates com gancho especifico
     context_prompts = {
-        "followup": f"Escreva uma mensagem cordial de follow-up para {nome}. Mantenha um tom profissional mas amigavel.",
+        "followup": f"Escreva uma mensagem de follow-up para {nome} com um MOTIVO ESPECIFICO para o contato.",
         "birthday": f"Escreva uma mensagem de aniversario sincera e calorosa para {nome}. Seja genuino e evite cliches.",
-        "reconnect": f"Escreva uma mensagem para reconectar com {nome} apos {dias_sem_contato} dias sem contato. Seja natural e demonstre interesse genuino.",
+        "reconnect": f"Escreva uma mensagem para reconectar com {nome} apos {dias_sem_contato} dias sem contato. Inclua um MOTIVO CONCRETO para retomar o contato.",
         "custom": data.custom_prompt or f"Escreva uma mensagem para {nome}."
     }
 
@@ -8666,20 +8681,27 @@ async def briefing_draft_message(request: Request, data: BriefingMessageDraft):
     prompt = f"""
 {context_text}
 
-Informacoes do contato:
-- Nome: {contact['nome']}
+INFORMACOES DO CONTATO:
+- Nome completo: {contact['nome']}
 - Empresa: {empresa}
 - Cargo: {cargo}
-- Circulo de proximidade: {circulo} (1=muito proximo, 5=distante)
+- Proximidade: Circulo {circulo} (1=muito proximo, 5=distante)
 - Dias desde ultimo contato: {dias_sem_contato}
-{"- Resumo do relacionamento: " + contact['resumo_ai'] if contact.get('resumo_ai') else ""}{briefing_context}
+{f"- Relacionamento: {contact['resumo_ai'][:300]}" if contact.get('resumo_ai') else ""}{briefing_context}
 
-Canal: {data.channel.upper()}
-{"(Mensagem de WhatsApp deve ser curta e direta, maximo 2-3 frases)" if data.channel == "whatsapp" else "(Email pode ser mais elaborado)"}
+{f"GANCHO SUGERIDO: {hook_suggestion}" if hook_suggestion else ""}
 
-{"Se houver oportunidades ou sugestoes de pauta acima, incorpore de forma natural na mensagem." if briefing_context else ""}
+CANAL: {data.channel.upper()}
+{'''REGRAS PARA WHATSAPP:
+- Maximo 2-3 frases curtas
+- Inclua um MOTIVO CONCRETO para o contato (ex: "vi que a Despertar esta com projeto X", "lembrei de voce por causa de Y")
+- Proponha uma acao clara (cafe, call, trocar ideia sobre algo especifico)
+- Sem emojis excessivos (maximo 1)
+- Tom casual mas profissional''' if data.channel == "whatsapp" else "(Email pode ser mais elaborado)"}
 
-Responda APENAS com a mensagem, sem explicacoes ou comentarios.
+IMPORTANTE: A mensagem DEVE ter um gancho/motivo especifico. NAO use frases genericas como "espero que esteja bem" ou "como vai?" sem um proposito claro.
+
+Responda APENAS com a mensagem, sem explicacoes.
 """
 
     # Call Claude API
