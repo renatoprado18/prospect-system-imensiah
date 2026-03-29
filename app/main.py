@@ -63,6 +63,24 @@ from services.dashboard import (
     get_contatos_recentes,
     get_circulos_resumo
 )
+from services.projects import (
+    list_projects,
+    get_project,
+    create_project,
+    update_project,
+    delete_project,
+    add_project_member,
+    remove_project_member,
+    add_milestone,
+    update_milestone,
+    delete_milestone,
+    add_project_note,
+    get_project_timeline,
+    get_projects_stats,
+    get_active_projects_summary,
+    PROJECT_TYPES,
+    PROJECT_STATUS
+)
 from services.duplicados import (
     encontrar_duplicados,
     merge_contatos,
@@ -4932,6 +4950,61 @@ async def cron_cleanup(request: Request):
     }
 
 
+@app.get("/api/cron/sync-gmail")
+async def cron_sync_gmail(request: Request):
+    """
+    Cron: Sincroniza emails do Gmail.
+    Schedule: 0 10 * * * (10h diario)
+
+    Sincroniza emails recentes (ultimos 7 dias) de todos os contatos.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.gmail_sync import get_gmail_sync_service
+
+    try:
+        service = get_gmail_sync_service()
+        # Sync ultimos 7 dias para cron diario
+        result = await service.sync_all_contacts(months_back=1)
+
+        return {
+            "job": "sync-gmail",
+            "timestamp": datetime.now().isoformat(),
+            "status": "success",
+            "result": result
+        }
+    except Exception as e:
+        return {"job": "sync-gmail", "status": "error", "error": str(e)}
+
+
+@app.get("/api/cron/sync-whatsapp")
+async def cron_sync_whatsapp(request: Request):
+    """
+    Cron: Sincroniza mensagens do WhatsApp.
+    Schedule: 0 11 * * * (11h diario)
+
+    Sincroniza novos chats e mensagens do WhatsApp.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.whatsapp_sync import get_whatsapp_sync_service
+
+    try:
+        service = get_whatsapp_sync_service()
+        result = await service.sync_all_chats(include_groups=False)
+
+        return {
+            "job": "sync-whatsapp",
+            "timestamp": datetime.now().isoformat(),
+            "status": "success",
+            "result": result
+        }
+    except Exception as e:
+        return {"job": "sync-whatsapp", "status": "error", "error": str(e)}
+
+
 @app.get("/api/cron/weekly-digest")
 async def cron_weekly_digest(request: Request):
     """
@@ -9276,6 +9349,167 @@ async def get_briefing_quick_actions(request: Request, contact_id: int):
             "health_score": health
         }
     }
+
+
+# =========================================================================
+# PROJECTS ENDPOINTS - Sistema de Projetos
+# =========================================================================
+
+@app.get("/api/projects")
+async def api_list_projects(
+    tipo: str = None,
+    status: str = None,
+    limit: int = 50,
+    offset: int = 0
+):
+    """Lista projetos com filtros opcionais."""
+    return {
+        "projects": list_projects(tipo=tipo, status=status, limit=limit, offset=offset),
+        "types": PROJECT_TYPES,
+        "statuses": PROJECT_STATUS
+    }
+
+
+@app.get("/api/projects/stats")
+async def api_projects_stats():
+    """Retorna estatisticas dos projetos."""
+    return get_projects_stats()
+
+
+@app.get("/api/projects/active")
+async def api_active_projects(limit: int = 5):
+    """Retorna resumo dos projetos ativos para dashboard."""
+    return {
+        "projects": get_active_projects_summary(limit=limit)
+    }
+
+
+@app.get("/api/projects/{project_id}")
+async def api_get_project(project_id: int):
+    """Retorna projeto com todos os detalhes."""
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+    return project
+
+
+@app.post("/api/projects")
+async def api_create_project(request: Request):
+    """Cria novo projeto."""
+    data = await request.json()
+    if not data.get('nome'):
+        raise HTTPException(status_code=400, detail="Nome e obrigatorio")
+    project = create_project(data)
+    return {"status": "success", "project": project}
+
+
+@app.put("/api/projects/{project_id}")
+async def api_update_project(project_id: int, request: Request):
+    """Atualiza projeto existente."""
+    data = await request.json()
+    project = update_project(project_id, data)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+    return {"status": "success", "project": project}
+
+
+@app.delete("/api/projects/{project_id}")
+async def api_delete_project(project_id: int):
+    """Deleta projeto."""
+    if delete_project(project_id):
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+
+
+# ============== PROJECT MEMBERS ==============
+
+@app.post("/api/projects/{project_id}/members")
+async def api_add_project_member(project_id: int, request: Request):
+    """Adiciona membro ao projeto."""
+    data = await request.json()
+    contact_id = data.get('contact_id')
+    if not contact_id:
+        raise HTTPException(status_code=400, detail="contact_id e obrigatorio")
+
+    member = add_project_member(project_id, contact_id, data.get('papel'))
+    if not member:
+        raise HTTPException(status_code=400, detail="Erro ao adicionar membro")
+    return {"status": "success", "member": member}
+
+
+@app.delete("/api/projects/{project_id}/members/{contact_id}")
+async def api_remove_project_member(project_id: int, contact_id: int):
+    """Remove membro do projeto."""
+    if remove_project_member(project_id, contact_id):
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="Membro nao encontrado")
+
+
+# ============== PROJECT MILESTONES ==============
+
+@app.post("/api/projects/{project_id}/milestones")
+async def api_add_milestone(project_id: int, request: Request):
+    """Adiciona marco ao projeto."""
+    data = await request.json()
+    if not data.get('titulo'):
+        raise HTTPException(status_code=400, detail="titulo e obrigatorio")
+
+    milestone = add_milestone(project_id, data)
+    return {"status": "success", "milestone": milestone}
+
+
+@app.put("/api/milestones/{milestone_id}")
+async def api_update_milestone(milestone_id: int, request: Request):
+    """Atualiza marco."""
+    data = await request.json()
+    milestone = update_milestone(milestone_id, data)
+    if not milestone:
+        raise HTTPException(status_code=404, detail="Marco nao encontrado")
+    return {"status": "success", "milestone": milestone}
+
+
+@app.delete("/api/milestones/{milestone_id}")
+async def api_delete_milestone(milestone_id: int):
+    """Deleta marco."""
+    if delete_milestone(milestone_id):
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="Marco nao encontrado")
+
+
+# ============== PROJECT NOTES ==============
+
+@app.post("/api/projects/{project_id}/notes")
+async def api_add_project_note(project_id: int, request: Request):
+    """Adiciona nota ao projeto."""
+    data = await request.json()
+    if not data.get('conteudo'):
+        raise HTTPException(status_code=400, detail="conteudo e obrigatorio")
+
+    note = add_project_note(project_id, data)
+    return {"status": "success", "note": note}
+
+
+@app.get("/api/projects/{project_id}/timeline")
+async def api_project_timeline(project_id: int, limit: int = 50):
+    """Retorna timeline do projeto."""
+    return {"timeline": get_project_timeline(project_id, limit=limit)}
+
+
+# ============== PROJECTS PAGE ==============
+
+@app.get("/rap/projetos", response_class=HTMLResponse)
+async def rap_projetos_page(request: Request):
+    """Pagina de projetos."""
+    return templates.TemplateResponse("rap_projetos.html", {"request": request})
+
+
+@app.get("/rap/projetos/{project_id}", response_class=HTMLResponse)
+async def rap_projeto_detail_page(request: Request, project_id: int):
+    """Pagina de detalhe do projeto."""
+    return templates.TemplateResponse("rap_projeto_detail.html", {
+        "request": request,
+        "project_id": project_id
+    })
 
 
 # Vercel handler

@@ -1,0 +1,526 @@
+{% extends "rap_base.html" %}
+
+{% block title %}Projetos - INTEL{% endblock %}
+
+{% block content %}
+<div class="content-header">
+    <div>
+        <h1><i class="bi bi-kanban me-2"></i>Projetos</h1>
+        <p class="text-muted mb-0">Gerencie seus projetos pessoais e profissionais</p>
+    </div>
+    <div class="d-flex gap-2">
+        <div class="btn-group" role="group">
+            <button type="button" class="btn btn-outline-secondary active" onclick="setView('grid')" id="btnGrid">
+                <i class="bi bi-grid-3x3-gap"></i>
+            </button>
+            <button type="button" class="btn btn-outline-secondary" onclick="setView('list')" id="btnList">
+                <i class="bi bi-list"></i>
+            </button>
+        </div>
+        <button class="btn btn-primary" onclick="openNewProjectModal()">
+            <i class="bi bi-plus-lg me-1"></i> Novo Projeto
+        </button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-4">
+    <div class="card-body py-2">
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            <span class="text-muted small">Filtros:</span>
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-secondary active" onclick="filterByStatus(null)">Todos</button>
+                <button type="button" class="btn btn-outline-success" onclick="filterByStatus('ativo')">Ativos</button>
+                <button type="button" class="btn btn-outline-warning" onclick="filterByStatus('pausado')">Pausados</button>
+                <button type="button" class="btn btn-outline-secondary" onclick="filterByStatus('concluido')">Concluidos</button>
+            </div>
+            <div class="vr mx-2"></div>
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-secondary active" onclick="filterByType(null)">Todos</button>
+                <button type="button" class="btn btn-outline-primary" onclick="filterByType('negocio')">
+                    <i class="bi bi-briefcase me-1"></i>Negocio
+                </button>
+                <button type="button" class="btn btn-outline-success" onclick="filterByType('pessoal')">
+                    <i class="bi bi-house-heart me-1"></i>Pessoal
+                </button>
+                <button type="button" class="btn btn-outline-warning" onclick="filterByType('patrimonio')">
+                    <i class="bi bi-building me-1"></i>Patrimonio
+                </button>
+                <button type="button" class="btn btn-outline-info" onclick="filterByType('conselho')">
+                    <i class="bi bi-people me-1"></i>Conselho
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="row g-3 mb-4" id="statsCards">
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div class="display-4 text-primary" id="statAtivos">-</div>
+                <div class="text-muted">Projetos Ativos</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div class="display-4 text-success" id="statConcluidos">-</div>
+                <div class="text-muted">Concluidos</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div class="display-4 text-warning" id="statTarefas">-</div>
+                <div class="text-muted">Com Tarefas Pendentes</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div class="display-4 text-info" id="statMarcos">-</div>
+                <div class="text-muted">Marcos Proximos</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Projects Grid -->
+<div class="row g-3" id="projectsGrid">
+    <div class="col-12 text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Carregando projetos...</p>
+    </div>
+</div>
+
+<!-- New Project Modal -->
+<div class="modal fade" id="newProjectModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content" style="border-radius: 16px; border: none;">
+            <div class="modal-header" style="border-bottom: 1px solid var(--gray-200); padding: 20px 24px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; border-radius: 16px 16px 0 0;">
+                <h5 class="modal-title" style="font-weight: 600;">
+                    <i class="bi bi-folder-plus me-2"></i>Novo Projeto
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" style="padding: 24px;">
+                <div class="row g-3">
+                    <div class="col-md-8">
+                        <label class="form-label fw-semibold">Nome do Projeto *</label>
+                        <input type="text" class="form-control" id="projectNome" placeholder="Ex: Formatura filho EUA">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">Tipo</label>
+                        <select class="form-select" id="projectTipo">
+                            <option value="negocio">Negocio</option>
+                            <option value="pessoal">Pessoal</option>
+                            <option value="patrimonio">Patrimonio</option>
+                            <option value="conselho">Conselho</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold">Descricao</label>
+                        <textarea class="form-control" id="projectDescricao" rows="3" placeholder="Descreva o projeto..."></textarea>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">Prioridade</label>
+                        <select class="form-select" id="projectPrioridade">
+                            <option value="1">1 - Urgente</option>
+                            <option value="3">3 - Alta</option>
+                            <option value="5" selected>5 - Normal</option>
+                            <option value="7">7 - Baixa</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">Data Inicio</label>
+                        <input type="date" class="form-control" id="projectDataInicio">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">Previsao Conclusao</label>
+                        <input type="date" class="form-control" id="projectDataPrevisao">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Empresa Relacionada</label>
+                        <input type="text" class="form-control" id="projectEmpresa" placeholder="Ex: Fazenda Pitangueiras">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Valor Estimado</label>
+                        <div class="input-group">
+                            <span class="input-group-text">R$</span>
+                            <input type="number" class="form-control" id="projectValor" placeholder="0,00">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="border-top: 1px solid var(--gray-200); padding: 16px 24px;">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveNewProject()">
+                    <i class="bi bi-check-lg me-1"></i> Criar Projeto
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .project-card {
+        border-radius: 16px;
+        border: none;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        transition: all 0.2s;
+        height: 100%;
+    }
+
+    .project-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+    }
+
+    .project-card .card-header {
+        border-radius: 16px 16px 0 0;
+        border: none;
+        padding: 16px;
+    }
+
+    .project-type-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+
+    .project-status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.7rem;
+        font-weight: 500;
+    }
+
+    .project-stats {
+        display: flex;
+        gap: 16px;
+        padding: 12px 16px;
+        background: var(--gray-100);
+        border-radius: 0 0 16px 16px;
+    }
+
+    .project-stat {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.85rem;
+        color: var(--gray-600);
+    }
+
+    .project-members {
+        display: flex;
+        margin-top: 12px;
+    }
+
+    .project-member-avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--gray-300);
+        border: 2px solid white;
+        margin-left: -8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: var(--gray-600);
+    }
+
+    .project-member-avatar:first-child {
+        margin-left: 0;
+    }
+
+    .project-member-avatar img {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        object-fit: cover;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+    }
+
+    .empty-state i {
+        font-size: 4rem;
+        color: var(--gray-300);
+    }
+</style>
+
+<script>
+    let projects = [];
+    let currentView = 'grid';
+    let filterStatus = null;
+    let filterType = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadProjects();
+        loadStats();
+    });
+
+    async function loadStats() {
+        try {
+            const response = await fetch('/api/projects/stats');
+            const stats = await response.json();
+
+            document.getElementById('statAtivos').textContent = stats.total_ativos || 0;
+            document.getElementById('statConcluidos').textContent = stats.total_concluidos || 0;
+            document.getElementById('statTarefas').textContent = stats.com_tarefas_pendentes || 0;
+            document.getElementById('statMarcos').textContent = stats.marcos_proximos || 0;
+        } catch (error) {
+            console.error('Error loading stats:', error);
+        }
+    }
+
+    async function loadProjects() {
+        try {
+            let url = '/api/projects?';
+            if (filterStatus) url += `status=${filterStatus}&`;
+            if (filterType) url += `tipo=${filterType}&`;
+
+            const response = await fetch(url);
+            const data = await response.json();
+            projects = data.projects || [];
+
+            renderProjects();
+        } catch (error) {
+            console.error('Error loading projects:', error);
+            document.getElementById('projectsGrid').innerHTML = `
+                <div class="col-12">
+                    <div class="alert alert-danger">Erro ao carregar projetos</div>
+                </div>
+            `;
+        }
+    }
+
+    function renderProjects() {
+        const container = document.getElementById('projectsGrid');
+
+        if (projects.length === 0) {
+            container.innerHTML = `
+                <div class="col-12">
+                    <div class="empty-state">
+                        <i class="bi bi-folder2-open"></i>
+                        <h4 class="mt-3">Nenhum projeto encontrado</h4>
+                        <p class="text-muted">Crie seu primeiro projeto clicando no botao acima</p>
+                    </div>
+                </div>
+            `;
+            return;
+        }
+
+        if (currentView === 'grid') {
+            container.innerHTML = projects.map(p => renderProjectCard(p)).join('');
+        } else {
+            container.innerHTML = `<div class="col-12">${renderProjectList()}</div>`;
+        }
+    }
+
+    function renderProjectCard(project) {
+        const typeInfo = project.tipo_info || {};
+        const statusInfo = project.status_info || {};
+
+        const membersHtml = (project.membros || []).slice(0, 4).map(m => {
+            if (m.foto_url) {
+                return `<div class="project-member-avatar"><img src="${m.foto_url}" alt="${m.nome}"></div>`;
+            }
+            const initials = m.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+            return `<div class="project-member-avatar">${initials}</div>`;
+        }).join('');
+
+        const extraMembers = (project.total_membros || 0) - 4;
+
+        return `
+            <div class="col-md-6 col-lg-4">
+                <div class="card project-card" onclick="openProject(${project.id})" style="cursor: pointer;">
+                    <div class="card-header" style="background: ${project.cor || typeInfo.color || '#6366f1'}15;">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <span class="project-type-badge" style="background: ${typeInfo.color || '#6366f1'}20; color: ${typeInfo.color || '#6366f1'};">
+                                <i class="bi bi-${typeInfo.icon || 'folder'}"></i>
+                                ${typeInfo.label || project.tipo}
+                            </span>
+                            <span class="project-status-badge" style="background: ${statusInfo.color || '#6b7280'}20; color: ${statusInfo.color || '#6b7280'};">
+                                ${statusInfo.label || project.status}
+                            </span>
+                        </div>
+                        <h5 class="mb-1" style="font-weight: 600;">${project.nome}</h5>
+                        ${project.empresa_relacionada ? `<small class="text-muted">${project.empresa_relacionada}</small>` : ''}
+                    </div>
+                    <div class="card-body">
+                        ${project.descricao ? `<p class="text-muted small mb-3">${project.descricao.substring(0, 100)}${project.descricao.length > 100 ? '...' : ''}</p>` : ''}
+                        ${membersHtml ? `
+                            <div class="project-members">
+                                ${membersHtml}
+                                ${extraMembers > 0 ? `<div class="project-member-avatar" style="background: var(--gray-200);">+${extraMembers}</div>` : ''}
+                            </div>
+                        ` : ''}
+                    </div>
+                    <div class="project-stats">
+                        <div class="project-stat">
+                            <i class="bi bi-check2-square"></i>
+                            ${project.tasks_pendentes || 0} tarefas
+                        </div>
+                        <div class="project-stat">
+                            <i class="bi bi-flag"></i>
+                            ${project.marcos_pendentes || 0} marcos
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderProjectList() {
+        return `
+            <div class="card">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Projeto</th>
+                                <th>Tipo</th>
+                                <th>Status</th>
+                                <th>Tarefas</th>
+                                <th>Membros</th>
+                                <th>Atualizado</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${projects.map(p => `
+                                <tr onclick="openProject(${p.id})" style="cursor: pointer;">
+                                    <td>
+                                        <strong>${p.nome}</strong>
+                                        ${p.empresa_relacionada ? `<br><small class="text-muted">${p.empresa_relacionada}</small>` : ''}
+                                    </td>
+                                    <td>
+                                        <span class="badge" style="background: ${p.tipo_info?.color || '#6366f1'}20; color: ${p.tipo_info?.color || '#6366f1'};">
+                                            ${p.tipo_info?.label || p.tipo}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="badge" style="background: ${p.status_info?.color || '#6b7280'}20; color: ${p.status_info?.color || '#6b7280'};">
+                                            ${p.status_info?.label || p.status}
+                                        </span>
+                                    </td>
+                                    <td>${p.tasks_pendentes || 0}</td>
+                                    <td>${p.total_membros || 0}</td>
+                                    <td><small class="text-muted">${formatDate(p.atualizado_em)}</small></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+
+    function setView(view) {
+        currentView = view;
+        document.getElementById('btnGrid').classList.toggle('active', view === 'grid');
+        document.getElementById('btnList').classList.toggle('active', view === 'list');
+        renderProjects();
+    }
+
+    function filterByStatus(status) {
+        filterStatus = status;
+        loadProjects();
+        // Update button states
+        document.querySelectorAll('[onclick^="filterByStatus"]').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        event.target.classList.add('active');
+    }
+
+    function filterByType(type) {
+        filterType = type;
+        loadProjects();
+        // Update button states
+        document.querySelectorAll('[onclick^="filterByType"]').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        event.target.classList.add('active');
+    }
+
+    function openNewProjectModal() {
+        // Reset form
+        document.getElementById('projectNome').value = '';
+        document.getElementById('projectTipo').value = 'negocio';
+        document.getElementById('projectDescricao').value = '';
+        document.getElementById('projectPrioridade').value = '5';
+        document.getElementById('projectDataInicio').value = new Date().toISOString().split('T')[0];
+        document.getElementById('projectDataPrevisao').value = '';
+        document.getElementById('projectEmpresa').value = '';
+        document.getElementById('projectValor').value = '';
+
+        const modal = new bootstrap.Modal(document.getElementById('newProjectModal'));
+        modal.show();
+    }
+
+    async function saveNewProject() {
+        const nome = document.getElementById('projectNome').value.trim();
+        if (!nome) {
+            alert('Nome do projeto e obrigatorio');
+            return;
+        }
+
+        const data = {
+            nome: nome,
+            tipo: document.getElementById('projectTipo').value,
+            descricao: document.getElementById('projectDescricao').value,
+            prioridade: parseInt(document.getElementById('projectPrioridade').value),
+            data_inicio: document.getElementById('projectDataInicio').value || null,
+            data_previsao: document.getElementById('projectDataPrevisao').value || null,
+            empresa_relacionada: document.getElementById('projectEmpresa').value || null,
+            valor_estimado: document.getElementById('projectValor').value ? parseFloat(document.getElementById('projectValor').value) : null
+        };
+
+        try {
+            const response = await fetch('/api/projects', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            const result = await response.json();
+            if (result.project) {
+                bootstrap.Modal.getInstance(document.getElementById('newProjectModal')).hide();
+                // Open the new project
+                openProject(result.project.id);
+            } else {
+                alert('Erro ao criar projeto: ' + (result.detail || 'Erro desconhecido'));
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Erro ao criar projeto');
+        }
+    }
+
+    function openProject(projectId) {
+        window.location.href = `/rap/projetos/${projectId}`;
+    }
+
+    function formatDate(dateStr) {
+        if (!dateStr) return '-';
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('pt-BR');
+    }
+</script>
+{% endblock %}

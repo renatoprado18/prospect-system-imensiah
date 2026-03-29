@@ -129,7 +129,8 @@
         color: var(--dark);
     }
 
-    .today .day-number {
+    /* Circulo do dia atual - APENAS na visao mensal */
+    .calendar-grid .today .day-number {
         background: var(--primary);
         color: white;
         width: 28px;
@@ -747,6 +748,22 @@ const MONTHS = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho',
                 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
 
+// Helper: Extract date (YYYY-MM-DD) from datetime string, handling timezone offsets
+function getDateFromDatetime(datetime) {
+    if (!datetime) return null;
+    // Try to parse as Date and format in local timezone
+    try {
+        const d = new Date(datetime);
+        if (isNaN(d.getTime())) return datetime.substring(0, 10);
+        return d.getFullYear() + '-' +
+               String(d.getMonth() + 1).padStart(2, '0') + '-' +
+               String(d.getDate()).padStart(2, '0');
+    } catch (e) {
+        // Fallback: extract first 10 chars
+        return datetime.substring(0, 10);
+    }
+}
+
 // Cache for birthdays to avoid reloading
 let birthdaysCache = null;
 let contactsLoaded = false;
@@ -798,7 +815,10 @@ async function loadEvents() {
         const startStr = start.toISOString().split('T')[0];
         const endStr = end.toISOString().split('T')[0];
 
-        const response = await fetch(`/api/calendar/events?start=${startStr}&end=${endStr}`);
+        // Monthly view needs more events (longer period)
+        const eventLimit = currentView === 'month' ? 200 : 100;
+
+        const response = await fetch(`/api/calendar/events?start=${startStr}&end=${endStr}&limit=${eventLimit}`);
         if (response.ok) {
             const data = await response.json();
             events = data.events || data || [];
@@ -990,7 +1010,7 @@ function renderMonthView(grid, title) {
     for (let day = 1; day <= lastDay.getDate(); day++) {
         const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
         const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-        const dayEvents = events.filter(e => e.start_datetime && e.start_datetime.startsWith(dateStr));
+        const dayEvents = events.filter(e => e.start_datetime && getDateFromDatetime(e.start_datetime) === dateStr);
 
         html += `
             <div class="calendar-day ${isToday ? 'today' : ''}" onclick="selectDate('${dateStr}')">
@@ -1043,7 +1063,7 @@ function renderWeekView(grid, title) {
 
         const isToday = day.toDateString() === today.toDateString();
         const dateStr = day.toISOString().split('T')[0];
-        const dayEvents = events.filter(e => e.start_datetime && e.start_datetime.startsWith(dateStr));
+        const dayEvents = events.filter(e => e.start_datetime && getDateFromDatetime(e.start_datetime) === dateStr);
 
         html += `
             <div class="week-day-row ${isToday ? 'today' : ''}">
@@ -1082,7 +1102,7 @@ function renderDayView(grid, title) {
     grid.className = 'day-view';
 
     const dateStr = currentDate.toISOString().split('T')[0];
-    const dayEvents = events.filter(e => e.start_datetime && e.start_datetime.startsWith(dateStr));
+    const dayEvents = events.filter(e => e.start_datetime && getDateFromDatetime(e.start_datetime) === dateStr);
 
     // Separate all-day events and timed events
     const allDayEvents = dayEvents.filter(e => e.all_day || e.type === 'birthday');
@@ -1152,7 +1172,7 @@ function renderDayView(grid, title) {
 function renderTodayEvents() {
     const container = document.getElementById('todayEvents');
     const today = new Date().toISOString().split('T')[0];
-    const todayEvents = events.filter(e => e.start_datetime && e.start_datetime.startsWith(today));
+    const todayEvents = events.filter(e => e.start_datetime && getDateFromDatetime(e.start_datetime) === today);
 
     if (!todayEvents.length) {
         container.innerHTML = '<p class="text-muted">Nenhum evento hoje</p>';

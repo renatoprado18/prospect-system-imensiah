@@ -769,6 +769,163 @@ def init_db():
             ON conselhoos_links(conselhoos_empresa_id)
         ''')
 
+        # =========================================================================
+        # PROJECTS TABLES - Sistema de Projetos Pessoais/Profissionais
+        # =========================================================================
+
+        # Main projects table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS projects (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                descricao TEXT,
+                tipo TEXT NOT NULL DEFAULT 'negocio',
+                status TEXT DEFAULT 'ativo',
+                prioridade INTEGER DEFAULT 5,
+                data_inicio DATE,
+                data_previsao DATE,
+                data_conclusao DATE,
+                cor TEXT DEFAULT '#6366f1',
+                icone TEXT DEFAULT 'folder',
+                owner_contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+                empresa_relacionada TEXT,
+                valor_estimado DECIMAL(15,2),
+                notas TEXT,
+                tags JSONB DEFAULT '[]',
+                metadata JSONB DEFAULT '{}',
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_projects_tipo
+            ON projects(tipo)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_projects_status
+            ON projects(status)
+        ''')
+
+        # Project members - pessoas envolvidas no projeto
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS project_members (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                papel TEXT,
+                responsabilidades TEXT,
+                adicionado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, contact_id)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_project_members_project
+            ON project_members(project_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_project_members_contact
+            ON project_members(contact_id)
+        ''')
+
+        # Project milestones - marcos importantes
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS project_milestones (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+                titulo TEXT NOT NULL,
+                descricao TEXT,
+                data_prevista DATE,
+                data_conclusao DATE,
+                status TEXT DEFAULT 'pendente',
+                ordem INTEGER DEFAULT 0,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_project_milestones_project
+            ON project_milestones(project_id)
+        ''')
+
+        # Project messages - emails/whatsapp relacionados
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS project_messages (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+                message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+                conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
+                vinculo_tipo TEXT DEFAULT 'auto',
+                relevancia INTEGER DEFAULT 5,
+                notas TEXT,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, message_id)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_project_messages_project
+            ON project_messages(project_id)
+        ''')
+
+        # Project events - reunioes/eventos do calendario
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS project_events (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+                calendar_event_id INTEGER REFERENCES calendar_events(id) ON DELETE CASCADE,
+                google_event_id TEXT,
+                vinculo_tipo TEXT DEFAULT 'auto',
+                notas TEXT,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_project_events_project
+            ON project_events(project_id)
+        ''')
+
+        # Project notes - timeline de atualizacoes/notas
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS project_notes (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+                tipo TEXT DEFAULT 'nota',
+                titulo TEXT,
+                conteudo TEXT NOT NULL,
+                autor TEXT,
+                anexos JSONB DEFAULT '[]',
+                metadata JSONB DEFAULT '{}',
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_project_notes_project
+            ON project_notes(project_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_project_notes_tipo
+            ON project_notes(tipo)
+        ''')
+
+        # Link tasks to projects
+        cursor.execute('''
+            ALTER TABLE tasks
+            ADD COLUMN IF NOT EXISTS project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_tasks_project
+            ON tasks(project_id)
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True

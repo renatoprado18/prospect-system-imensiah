@@ -1,0 +1,441 @@
+"""
+Servico de Projetos
+
+Gerencia projetos pessoais e profissionais com vinculos a contatos,
+tarefas, calendario e mensagens.
+"""
+
+from datetime import datetime, date
+from typing import Dict, List, Optional, Any
+import json
+
+from database import get_db
+
+
+# Tipos de projeto
+PROJECT_TYPES = {
+    'pessoal': {'label': 'Pessoal', 'icon': 'house-heart', 'color': '#10b981'},
+    'patrimonio': {'label': 'Patrimonio', 'icon': 'building', 'color': '#f59e0b'},
+    'negocio': {'label': 'Negocio', 'icon': 'briefcase', 'color': '#6366f1'},
+    'conselho': {'label': 'Conselho', 'icon': 'people', 'color': '#8b5cf6'},
+}
+
+# Status de projeto
+PROJECT_STATUS = {
+    'ativo': {'label': 'Ativo', 'color': '#10b981'},
+    'pausado': {'label': 'Pausado', 'color': '#f59e0b'},
+    'concluido': {'label': 'Concluido', 'color': '#6b7280'},
+    'cancelado': {'label': 'Cancelado', 'color': '#ef4444'},
+}
+
+
+def list_projects(
+    tipo: str = None,
+    status: str = None,
+    limit: int = 50,
+    offset: int = 0
+) -> List[Dict]:
+    """Lista projetos com filtros opcionais."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        query = """
+            SELECT p.*,
+                   (SELECT COUNT(*) FROM project_members WHERE project_id = p.id) as total_membros,
+                   (SELECT COUNT(*) FROM tasks WHERE project_id = p.id AND status = 'pending') as tasks_pendentes,
+                   (SELECT COUNT(*) FROM project_milestones WHERE project_id = p.id AND status = 'pendente') as marcos_pendentes
+            FROM projects p
+            WHERE 1=1
+        """
+        params = []
+
+        if tipo:
+            query += " AND p.tipo = %s"
+            params.append(tipo)
+
+        if status:
+            query += " AND p.status = %s"
+            params.append(status)
+
+        query += " ORDER BY p.prioridade ASC, p.criado_em DESC LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
+
+        cursor.execute(query, params)
+        projects = [dict(row) for row in cursor.fetchall()]
+
+        # Add type info
+        for p in projects:
+            p['tipo_info'] = PROJECT_TYPES.get(p['tipo'], PROJECT_TYPES['negocio'])
+            p['status_info'] = PROJECT_STATUS.get(p['status'], PROJECT_STATUS['ativo'])
+
+        return projects
+
+
+def get_project(project_id: int) -> Optional[Dict]:
+    """Retorna projeto com todos os detalhes."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get project
+        cursor.execute("SELECT * FROM projects WHERE id = %s", (project_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        project = dict(row)
+        project['tipo_info'] = PROJECT_TYPES.get(project['tipo'], PROJECT_TYPES['negocio'])
+        project['status_info'] = PROJECT_STATUS.get(project['status'], PROJECT_STATUS['ativo'])
+
+        # Get members with contact info
+        cursor.execute("""
+            SELECT pm.*, c.nome, c.empresa, c.cargo, c.foto_url, c.emails, c.telefones
+            FROM project_members pm
+            JOIN contacts c ON c.id = pm.contact_id
+            WHERE pm.project_id = %s
+            ORDER BY pm.adicionado_em
+        """, (project_id,))
+        project['membros'] = [dict(row) for row in cursor.fetchall()]
+
+        # Get milestones
+        cursor.execute("""
+            SELECT * FROM project_milestones
+            WHERE project_id = %s
+            ORDER BY ordem, data_prevista
+        """, (project_id,))
+        project['marcos'] = [dict(row) for row in cursor.fetchall()]
+
+        # Get tasks
+        cursor.execute("""
+            SELECT t.*, c.nome as contact_nome
+            FROM tasks t
+            LEFT JOIN contacts c ON c.id = t.contact_id
+            WHERE t.project_id = %s
+            ORDER BY t.status, t.prioridade, t.data_vencimento
+        """, (project_id,))
+        project['tarefas'] = [dict(row) for row in cursor.fetchall()]
+
+        # Get notes/timeline
+        cursor.execute("""
+            SELECT * FROM project_notes
+            WHERE project_id = %s
+            ORDER BY criado_em DESC
+            LIMIT 20
+        """, (project_id,))
+        project['notas'] = [dict(row) for row in cursor.fetchall()]
+
+        # Get linked events
+        cursor.execute("""
+            SELECT pe.*, ce.summary, ce.start_datetime, ce.end_datetime
+            FROM project_events pe
+            JOIN calendar_events ce ON ce.id = pe.calendar_event_id
+            WHERE pe.project_id = %s
+            ORDER BY ce.start_datetime DESC
+            LIMIT 10
+        """, (project_id,))
+        project['eventos'] = [dict(row) for row in cursor.fetchall()]
+
+        return project
+
+
+def create_project(data: Dict) -> Dict:
+    """Cria novo projeto."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO projects (
+                nome, descricao, tipo, status, prioridade,
+                data_inicio, data_previsao, cor, icone,
+                empresa_relacionada, valor_estimado, notas, tags
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+        """, (
+            data.get('nome'),
+            data.get('descricao'),
+            data.get('tipo', 'negocio'),
+            data.get('status', 'ativo'),
+            data.get('prioridade', 5),
+            data.get('data_inicio'),
+            data.get('data_previsao'),
+            data.get('cor', PROJECT_TYPES.get(data.get('tipo', 'negocio'), {}).get('color', '#6366f1')),
+            data.get('icone', PROJECT_TYPES.get(data.get('tipo', 'negocio'), {}).get('icon', 'folder')),
+            data.get('empresa_relacionada'),
+            data.get('valor_estimado'),
+            data.get('notas'),
+            json.dumps(data.get('tags', []))
+        ))
+
+        project = dict(cursor.fetchone())
+        conn.commit()
+
+        # Add initial members if provided
+        if data.get('membros'):
+            for membro in data['membros']:
+                add_project_member(project['id'], membro['contact_id'], membro.get('papel'))
+
+        return project
+
+
+def update_project(project_id: int, data: Dict) -> Optional[Dict]:
+    """Atualiza projeto existente."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Build update dynamically
+        allowed = ['nome', 'descricao', 'tipo', 'status', 'prioridade',
+                   'data_inicio', 'data_previsao', 'data_conclusao',
+                   'cor', 'icone', 'empresa_relacionada', 'valor_estimado', 'notas', 'tags']
+
+        updates = []
+        values = []
+        for field in allowed:
+            if field in data:
+                value = data[field]
+                if isinstance(value, (list, dict)):
+                    value = json.dumps(value)
+                updates.append(f"{field} = %s")
+                values.append(value)
+
+        if not updates:
+            return get_project(project_id)
+
+        updates.append("atualizado_em = NOW()")
+        values.append(project_id)
+
+        query = f"UPDATE projects SET {', '.join(updates)} WHERE id = %s RETURNING *"
+        cursor.execute(query, values)
+        result = cursor.fetchone()
+        conn.commit()
+
+        return dict(result) if result else None
+
+
+def delete_project(project_id: int) -> bool:
+    """Deleta projeto e dependencias."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM projects WHERE id = %s", (project_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+# ============== MEMBERS ==============
+
+def add_project_member(project_id: int, contact_id: int, papel: str = None) -> Optional[Dict]:
+    """Adiciona membro ao projeto."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO project_members (project_id, contact_id, papel)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (project_id, contact_id) DO UPDATE SET papel = EXCLUDED.papel
+                RETURNING *
+            """, (project_id, contact_id, papel))
+            result = cursor.fetchone()
+            conn.commit()
+            return dict(result) if result else None
+        except Exception as e:
+            print(f"Error adding member: {e}")
+            return None
+
+
+def remove_project_member(project_id: int, contact_id: int) -> bool:
+    """Remove membro do projeto."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM project_members
+            WHERE project_id = %s AND contact_id = %s
+        """, (project_id, contact_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+# ============== MILESTONES ==============
+
+def add_milestone(project_id: int, data: Dict) -> Dict:
+    """Adiciona marco ao projeto."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO project_milestones (project_id, titulo, descricao, data_prevista, ordem)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING *
+        """, (
+            project_id,
+            data.get('titulo'),
+            data.get('descricao'),
+            data.get('data_prevista'),
+            data.get('ordem', 0)
+        ))
+        result = cursor.fetchone()
+        conn.commit()
+        return dict(result)
+
+
+def update_milestone(milestone_id: int, data: Dict) -> Optional[Dict]:
+    """Atualiza marco."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        updates = []
+        values = []
+        for field in ['titulo', 'descricao', 'data_prevista', 'data_conclusao', 'status', 'ordem']:
+            if field in data:
+                updates.append(f"{field} = %s")
+                values.append(data[field])
+
+        if not updates:
+            return None
+
+        values.append(milestone_id)
+        query = f"UPDATE project_milestones SET {', '.join(updates)} WHERE id = %s RETURNING *"
+        cursor.execute(query, values)
+        result = cursor.fetchone()
+        conn.commit()
+        return dict(result) if result else None
+
+
+def delete_milestone(milestone_id: int) -> bool:
+    """Deleta marco."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM project_milestones WHERE id = %s", (milestone_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+# ============== NOTES ==============
+
+def add_project_note(project_id: int, data: Dict) -> Dict:
+    """Adiciona nota/atualizacao ao projeto."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO project_notes (project_id, tipo, titulo, conteudo, autor)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING *
+        """, (
+            project_id,
+            data.get('tipo', 'nota'),
+            data.get('titulo'),
+            data.get('conteudo'),
+            data.get('autor', 'Renato')
+        ))
+        result = cursor.fetchone()
+        conn.commit()
+        return dict(result)
+
+
+def get_project_timeline(project_id: int, limit: int = 50) -> List[Dict]:
+    """Retorna timeline completa do projeto (notas + eventos + tarefas)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get notes
+        cursor.execute("""
+            SELECT 'nota' as item_type, id, tipo, titulo, conteudo, criado_em as data
+            FROM project_notes
+            WHERE project_id = %s
+        """, (project_id,))
+        items = [dict(row) for row in cursor.fetchall()]
+
+        # Get task completions
+        cursor.execute("""
+            SELECT 'tarefa' as item_type, id, titulo, status, data_conclusao as data
+            FROM tasks
+            WHERE project_id = %s AND data_conclusao IS NOT NULL
+        """, (project_id,))
+        items.extend([dict(row) for row in cursor.fetchall()])
+
+        # Get milestone completions
+        cursor.execute("""
+            SELECT 'marco' as item_type, id, titulo, status, data_conclusao as data
+            FROM project_milestones
+            WHERE project_id = %s AND data_conclusao IS NOT NULL
+        """, (project_id,))
+        items.extend([dict(row) for row in cursor.fetchall()])
+
+        # Sort by date descending
+        items.sort(key=lambda x: x.get('data') or datetime.min, reverse=True)
+
+        return items[:limit]
+
+
+# ============== STATS ==============
+
+def get_projects_stats() -> Dict:
+    """Retorna estatisticas dos projetos."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Total by status
+        cursor.execute("""
+            SELECT status, COUNT(*) as total
+            FROM projects
+            GROUP BY status
+        """)
+        by_status = {row['status']: row['total'] for row in cursor.fetchall()}
+
+        # Total by type
+        cursor.execute("""
+            SELECT tipo, COUNT(*) as total
+            FROM projects
+            GROUP BY tipo
+        """)
+        by_tipo = {row['tipo']: row['total'] for row in cursor.fetchall()}
+
+        # Active with pending tasks
+        cursor.execute("""
+            SELECT COUNT(DISTINCT p.id) as total
+            FROM projects p
+            JOIN tasks t ON t.project_id = p.id
+            WHERE p.status = 'ativo' AND t.status = 'pending'
+        """)
+        with_pending_tasks = cursor.fetchone()['total']
+
+        # Upcoming milestones (next 30 days)
+        cursor.execute("""
+            SELECT COUNT(*) as total
+            FROM project_milestones pm
+            JOIN projects p ON p.id = pm.project_id
+            WHERE p.status = 'ativo'
+              AND pm.status = 'pendente'
+              AND pm.data_prevista <= CURRENT_DATE + INTERVAL '30 days'
+        """)
+        upcoming_milestones = cursor.fetchone()['total']
+
+        return {
+            'total_ativos': by_status.get('ativo', 0),
+            'total_concluidos': by_status.get('concluido', 0),
+            'by_status': by_status,
+            'by_tipo': by_tipo,
+            'com_tarefas_pendentes': with_pending_tasks,
+            'marcos_proximos': upcoming_milestones
+        }
+
+
+def get_active_projects_summary(limit: int = 5) -> List[Dict]:
+    """Retorna resumo dos projetos ativos para o dashboard."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT p.id, p.nome, p.tipo, p.cor, p.icone,
+                   (SELECT COUNT(*) FROM tasks WHERE project_id = p.id AND status = 'pending') as tasks_pendentes,
+                   (SELECT MIN(data_prevista) FROM project_milestones
+                    WHERE project_id = p.id AND status = 'pendente') as proximo_marco
+            FROM projects p
+            WHERE p.status = 'ativo'
+            ORDER BY p.prioridade ASC, p.atualizado_em DESC
+            LIMIT %s
+        """, (limit,))
+
+        projects = []
+        for row in cursor.fetchall():
+            p = dict(row)
+            p['tipo_info'] = PROJECT_TYPES.get(p['tipo'], PROJECT_TYPES['negocio'])
+            projects.append(p)
+
+        return projects
