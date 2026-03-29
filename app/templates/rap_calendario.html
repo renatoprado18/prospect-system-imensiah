@@ -794,7 +794,11 @@ async function loadEvents() {
     }
 
     try {
-        const response = await fetch(`/api/calendar/events?start=${start.toISOString()}&end=${end.toISOString()}`);
+        // Format dates as YYYY-MM-DD for API
+        const startStr = start.toISOString().split('T')[0];
+        const endStr = end.toISOString().split('T')[0];
+
+        const response = await fetch(`/api/calendar/events?start=${startStr}&end=${endStr}`);
         if (response.ok) {
             const data = await response.json();
             events = data.events || data || [];
@@ -803,7 +807,9 @@ async function loadEvents() {
                 ...e,
                 all_day: e.is_all_day || e.all_day || false
             }));
+            console.log('Eventos carregados:', events.length);
         } else {
+            console.warn('Calendar API error:', response.status);
             events = [];
         }
     } catch (e) {
@@ -822,7 +828,7 @@ async function loadBirthdays(start, end) {
     try {
         // Use cache if available
         if (!birthdaysCache) {
-            const response = await fetch('/api/contacts?limit=200&fields=id,nome,data_nascimento&has_birthday=1');
+            const response = await fetch('/api/contacts?limit=300&fields=id,nome,data_nascimento');
             if (!response.ok) return;
             const data = await response.json();
             birthdaysCache = (data.contacts || []).filter(c => c.data_nascimento);
