@@ -1224,6 +1224,9 @@ function openNewEventModal() {
     document.getElementById('eventForm').reset();
     document.getElementById('eventId').value = '';
 
+    // Load contacts lazily when modal opens
+    loadContacts();
+
     // Default times
     const now = new Date();
     now.setMinutes(0);
