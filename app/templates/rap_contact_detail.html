@@ -2118,27 +2118,39 @@
                     body: JSON.stringify({
                         contact_id: contactId,
                         channel: 'whatsapp',
-                        context: 'followup'
+                        context: 'reconnect'  // Usar 'reconnect' para mensagens mais especificas
                     })
                 });
 
                 const result = await response.json();
                 if (result.draft) {
-                    // Copy to clipboard and open WhatsApp
+                    // Copy to clipboard
                     await navigator.clipboard.writeText(result.draft);
                     showNotification('Mensagem copiada! Abrindo WhatsApp...', 'success');
 
-                    // Get phone number
-                    const telefones = parseJsonField(contactData?.contact?.telefones || []);
-                    const phone = telefones.find(t => t.whatsapp)?.number || telefones[0]?.number;
+                    // Get phone from API response or from contact data
+                    let phone = result.contact_info?.phone;
+                    if (!phone) {
+                        const telefones = parseJsonField(contactData?.contact?.telefones || []);
+                        phone = telefones.find(t => t.whatsapp)?.number || telefones[0]?.number;
+                    }
+
                     if (phone) {
-                        const cleanPhone = phone.replace(/\D/g, '');
-                        window.open(`https://wa.me/55${cleanPhone}`, '_blank');
+                        // Clean phone number - remove non-digits
+                        let cleanPhone = phone.replace(/\D/g, '');
+                        // Add Brazil code if not present
+                        if (cleanPhone.length <= 11) {
+                            cleanPhone = '55' + cleanPhone;
+                        }
+                        window.open(`https://wa.me/${cleanPhone}`, '_blank');
+                    } else {
+                        showNotification('Telefone nao encontrado', 'warning');
                     }
                 } else {
-                    showNotification('Erro: ' + (result.detail || 'Falha'), 'error');
+                    showNotification('Erro: ' + (result.detail || 'Falha ao gerar mensagem'), 'error');
                 }
             } catch (error) {
+                console.error('Error:', error);
                 showNotification('Erro ao gerar mensagem', 'error');
             }
         }

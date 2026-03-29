@@ -747,11 +747,16 @@ const MONTHS = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho',
                 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
 
+// Cache for birthdays to avoid reloading
+let birthdaysCache = null;
+let contactsLoaded = false;
+
 document.addEventListener('DOMContentLoaded', function() {
+    // Load events immediately (most important)
     loadEvents();
-    loadContacts();
-    loadAISuggestions();
-    renderCalendar();
+
+    // Load AI suggestions in background (low priority)
+    setTimeout(() => loadAISuggestions(), 500);
 
     // View toggle
     document.querySelectorAll('.view-toggle button').forEach(btn => {
@@ -759,7 +764,7 @@ document.addEventListener('DOMContentLoaded', function() {
             document.querySelectorAll('.view-toggle button').forEach(b => b.classList.remove('active'));
             this.classList.add('active');
             currentView = this.dataset.view;
-            renderCalendar();
+            loadEvents(); // Reload with new view
         });
     });
 });
@@ -815,20 +820,20 @@ async function loadEvents() {
 
 async function loadBirthdays(start, end) {
     try {
-        const response = await fetch('/api/contacts?limit=500&fields=id,nome,data_nascimento');
-        if (!response.ok) return;
-
-        const data = await response.json();
-        const contactsWithBirthday = (data.contacts || []).filter(c => c.data_nascimento);
+        // Use cache if available
+        if (!birthdaysCache) {
+            const response = await fetch('/api/contacts?limit=200&fields=id,nome,data_nascimento&has_birthday=1');
+            if (!response.ok) return;
+            const data = await response.json();
+            birthdaysCache = (data.contacts || []).filter(c => c.data_nascimento);
+        }
 
         const year = currentDate.getFullYear();
 
-        contactsWithBirthday.forEach(c => {
-            // Parse birthday and set to current year
+        birthdaysCache.forEach(c => {
             const bday = new Date(c.data_nascimento);
             const birthdayThisYear = new Date(year, bday.getMonth(), bday.getDate());
 
-            // Check if birthday falls within the range
             if (birthdayThisYear >= start && birthdayThisYear <= end) {
                 events.push({
                     id: `bday-${c.id}`,
@@ -847,12 +852,14 @@ async function loadBirthdays(start, end) {
 }
 
 async function loadContacts() {
+    if (contactsLoaded) return; // Already loaded
     try {
-        const response = await fetch('/api/contacts?limit=100');
+        const response = await fetch('/api/contacts?limit=50&fields=id,nome,empresa');
         if (response.ok) {
             const data = await response.json();
             contacts = data.contacts || [];
             populateContactSelect();
+            contactsLoaded = true;
         }
     } catch (e) {
         console.error('Erro ao carregar contatos:', e);
