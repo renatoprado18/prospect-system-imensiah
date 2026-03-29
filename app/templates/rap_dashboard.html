@@ -1522,7 +1522,21 @@
                     </div>
                 </div>
 
-                <!-- 3. Acoes Rapidas -->
+                <!-- 3. Projetos Ativos -->
+                <div class="card mb-4">
+                    <div class="card-header" style="padding: 12px 16px;">
+                        <h2 class="card-title"><i class="bi bi-folder me-2" style="color: #6366f1;"></i>Projetos Ativos</h2>
+                        <a href="/rap/projetos" class="btn btn-sm btn-outline-primary">Ver Todos</a>
+                    </div>
+                    <div class="card-body" id="projectsWidget" style="padding: 0;">
+                        <div class="text-center py-3">
+                            <div class="spinner-border spinner-border-sm text-primary"></div>
+                            <span class="ms-2 text-muted">Carregando projetos...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Acoes Rapidas -->
                 <div class="card">
                     <div class="card-header" style="padding: 12px 16px;">
                         <h2 class="card-title"><i class="bi bi-lightning me-2"></i>Acoes Rapidas</h2>
@@ -1531,6 +1545,9 @@
                         <div class="d-grid gap-2">
                             <a href="/contatos" class="btn btn-sm btn-outline-primary text-start">
                                 <i class="bi bi-people me-2"></i>Ver Contatos
+                            </a>
+                            <a href="/rap/projetos" class="btn btn-sm btn-outline-indigo text-start">
+                                <i class="bi bi-folder me-2"></i>Projetos
                             </a>
                             <a href="/calendario" class="btn btn-sm btn-outline-success text-start">
                                 <i class="bi bi-calendar-event me-2"></i>Calendario
@@ -2752,6 +2769,64 @@
             }
         }
 
+        // ============== Projects Widget ==============
+        async function loadProjectsWidget() {
+            const container = document.getElementById('projectsWidget');
+            if (!container) return;
+
+            try {
+                const response = await fetch('/api/projects/active-summary?limit=5');
+                if (!response.ok) {
+                    container.innerHTML = '<div class="text-center py-3 text-muted">Erro ao carregar projetos</div>';
+                    return;
+                }
+
+                const projects = await response.json();
+
+                if (!projects || projects.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center py-4">
+                            <i class="bi bi-folder-plus text-muted" style="font-size: 2rem;"></i>
+                            <p class="text-muted mt-2 mb-0">Nenhum projeto ativo</p>
+                            <a href="/rap/projetos" class="btn btn-sm btn-primary mt-2">Criar Projeto</a>
+                        </div>
+                    `;
+                    return;
+                }
+
+                const typeIcons = {
+                    'pessoal': 'bi-house-heart',
+                    'patrimonio': 'bi-building',
+                    'negocio': 'bi-briefcase',
+                    'conselho': 'bi-people'
+                };
+
+                container.innerHTML = `
+                    <div class="list-group list-group-flush">
+                        ${projects.map(p => `
+                            <a href="/rap/projetos/${p.id}" class="list-group-item list-group-item-action d-flex align-items-center" style="border: none; padding: 12px 16px;">
+                                <div class="me-3" style="width: 36px; height: 36px; border-radius: 8px; background: ${p.cor || '#6366f1'}22; display: flex; align-items: center; justify-content: center;">
+                                    <i class="bi ${typeIcons[p.tipo] || 'bi-folder'}" style="color: ${p.cor || '#6366f1'};"></i>
+                                </div>
+                                <div class="flex-grow-1">
+                                    <div class="fw-semibold" style="font-size: 0.9rem;">${p.nome}</div>
+                                    <small class="text-muted">
+                                        ${p.tasks_pendentes > 0 ? `<i class="bi bi-check-circle me-1"></i>${p.tasks_pendentes} tarefas` : '<span class="text-success">Sem pendencias</span>'}
+                                        ${p.proximo_marco ? ` • <i class="bi bi-flag me-1"></i>Marco: ${new Date(p.proximo_marco).toLocaleDateString('pt-BR', {day: '2-digit', month: 'short'})}` : ''}
+                                    </small>
+                                </div>
+                                <i class="bi bi-chevron-right text-muted"></i>
+                            </a>
+                        `).join('')}
+                    </div>
+                `;
+
+            } catch (e) {
+                console.error('Error loading projects widget:', e);
+                container.innerHTML = '<div class="text-center py-3 text-muted">Erro ao carregar projetos</div>';
+            }
+        }
+
         // Load all dashboard data on page load
         // Pre-load all shared data in parallel, then render UI
         loadAllData().then(() => {
@@ -2766,6 +2841,7 @@
             loadAISuggestions();
             loadMeetingSuggestions();
             loadConselhoOSWidget();
+            loadProjectsWidget();
             loadTasks();
         }, 300);
     </script>

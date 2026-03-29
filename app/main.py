@@ -4723,6 +4723,161 @@ def verify_cron_auth(request: Request) -> bool:
     )
 
 
+@app.get("/api/cron/daily-sync")
+async def cron_daily_sync(request: Request):
+    """
+    Cron: Sincronizacao diaria completa (5h da manha).
+
+    Executa sequencialmente:
+    1. Health recalc
+    2. Sync Contacts
+    3. Sync Calendar
+    4. Sync Tasks
+    5. Sync Gmail
+    6. Sync WhatsApp
+    7. AI suggestions generation
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    results = {
+        "job": "daily-sync",
+        "started_at": datetime.now().isoformat(),
+        "steps": {}
+    }
+
+    # 1. Health Recalc
+    try:
+        from services.circulos import calcular_health_score
+        updated = 0
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, nome, circulo, ultimo_contato, total_interacoes
+                FROM contacts WHERE COALESCE(circulo, 5) <= 4
+            """)
+            contacts = cursor.fetchall()
+            for contact in contacts:
+                try:
+                    health = calcular_health_score(dict(contact), contact["circulo"])
+                    cursor.execute("UPDATE contacts SET health_score = %s WHERE id = %s", (health, contact["id"]))
+                    updated += 1
+                except:
+                    pass
+            conn.commit()
+        results["steps"]["health_recalc"] = {"status": "success", "updated": updated}
+    except Exception as e:
+        results["steps"]["health_recalc"] = {"status": "error", "error": str(e)}
+
+    # 2. Sync Contacts
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE")
+            accounts = [dict(row) for row in cursor.fetchall()]
+
+        contacts_synced = 0
+        for account in accounts:
+            try:
+                stats = await sync_contacts_incremental(
+                    access_token=account["access_token"],
+                    refresh_token=account["refresh_token"],
+                    account_email=account["email"],
+                    sync_token=account.get("sync_token"),
+                    db_connection=conn
+                )
+                contacts_synced += stats.get("total_changes", 0)
+            except:
+                pass
+        results["steps"]["sync_contacts"] = {"status": "success", "changes": contacts_synced}
+    except Exception as e:
+        results["steps"]["sync_contacts"] = {"status": "error", "error": str(e)}
+
+    # 3. Sync Calendar
+    try:
+        from services.calendar_sync import get_calendar_sync
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE")
+            accounts = cursor.fetchall()
+
+        cal_results = []
+        for account in accounts:
+            try:
+                sync = get_calendar_sync()
+                stats = await sync.incremental_sync(account["email"])
+                cal_results.append(stats)
+            except:
+                pass
+        results["steps"]["sync_calendar"] = {"status": "success", "accounts": len(cal_results)}
+    except Exception as e:
+        results["steps"]["sync_calendar"] = {"status": "error", "error": str(e)}
+
+    # 4. Sync Tasks
+    try:
+        from integrations.google_tasks import get_tasks_integration
+        from integrations.gmail import GmailIntegration
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+            account = cursor.fetchone()
+
+        if account:
+            gmail = GmailIntegration()
+            tokens = await gmail.refresh_access_token(account["refresh_token"])
+            if "access_token" in tokens:
+                tasks_api = get_tasks_integration()
+                task_lists = await tasks_api.list_task_lists(tokens["access_token"])
+                results["steps"]["sync_tasks"] = {"status": "success", "task_lists": len(task_lists)}
+            else:
+                results["steps"]["sync_tasks"] = {"status": "skipped", "reason": "token_error"}
+        else:
+            results["steps"]["sync_tasks"] = {"status": "skipped", "reason": "no_account"}
+    except Exception as e:
+        results["steps"]["sync_tasks"] = {"status": "error", "error": str(e)}
+
+    # 5. Sync Gmail
+    try:
+        from services.gmail_sync import get_gmail_sync_service
+        service = get_gmail_sync_service()
+        gmail_result = await service.sync_all_contacts(months_back=1)
+        results["steps"]["sync_gmail"] = {"status": "success", "result": gmail_result}
+    except Exception as e:
+        results["steps"]["sync_gmail"] = {"status": "error", "error": str(e)}
+
+    # 6. Sync WhatsApp
+    try:
+        from services.whatsapp_sync import get_whatsapp_sync_service
+        service = get_whatsapp_sync_service()
+        wa_result = await service.sync_all_chats(include_groups=False)
+        results["steps"]["sync_whatsapp"] = {"status": "success", "result": wa_result}
+    except Exception as e:
+        results["steps"]["sync_whatsapp"] = {"status": "error", "error": str(e)}
+
+    # 7. AI Suggestions
+    try:
+        from services.ai_agent import get_ai_agent
+        agent = get_ai_agent()
+        ai_results = await agent.run_daily_generation()
+        results["steps"]["daily_ai"] = {"status": "success", "suggestions": ai_results.get("suggestions", {})}
+    except Exception as e:
+        results["steps"]["daily_ai"] = {"status": "error", "error": str(e)}
+
+    results["completed_at"] = datetime.now().isoformat()
+
+    return results
+
+
+# Individual cron endpoints (kept for manual triggering)
+
+    return (
+        is_vercel_cron or
+        auth_header == f"Bearer {cron_secret}" or
+        os.getenv("VERCEL_ENV") != "production"
+    )
+
+
 @app.get("/api/cron/sync-calendar")
 async def cron_sync_calendar(request: Request):
     """

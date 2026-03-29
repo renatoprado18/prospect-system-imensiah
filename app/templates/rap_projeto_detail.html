@@ -1,0 +1,749 @@
+{% extends "rap_base.html" %}
+
+{% block title %}Projeto - INTEL{% endblock %}
+
+{% block content %}
+<div id="projectContainer">
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="mt-2 text-muted">Carregando projeto...</p>
+    </div>
+</div>
+
+<!-- Add Member Modal -->
+<div class="modal fade" id="addMemberModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="border-radius: 16px; border: none;">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>Adicionar Participante</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Buscar Contato</label>
+                    <input type="text" class="form-control" id="searchContact" placeholder="Digite o nome..." oninput="searchContacts(this.value)">
+                </div>
+                <div id="searchResults" style="max-height: 300px; overflow-y: auto;"></div>
+                <div class="mb-3 mt-3">
+                    <label class="form-label">Papel no Projeto</label>
+                    <input type="text" class="form-control" id="memberPapel" placeholder="Ex: Responsavel, Consultor, Participante">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Milestone Modal -->
+<div class="modal fade" id="addMilestoneModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="border-radius: 16px; border: none;">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-flag me-2"></i>Novo Marco</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Titulo *</label>
+                    <input type="text" class="form-control" id="milestoneTitulo" placeholder="Ex: Entrega da proposta">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Descricao</label>
+                    <textarea class="form-control" id="milestoneDescricao" rows="2"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Data Prevista</label>
+                    <input type="date" class="form-control" id="milestoneData">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveMilestone()">Salvar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Note Modal -->
+<div class="modal fade" id="addNoteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="border-radius: 16px; border: none;">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-sticky me-2"></i>Nova Atualizacao</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Tipo</label>
+                    <select class="form-select" id="noteTipo">
+                        <option value="nota">Nota</option>
+                        <option value="atualizacao">Atualizacao</option>
+                        <option value="decisao">Decisao</option>
+                        <option value="problema">Problema</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Titulo</label>
+                    <input type="text" class="form-control" id="noteTitulo" placeholder="Opcional">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Conteudo *</label>
+                    <textarea class="form-control" id="noteConteudo" rows="4" placeholder="Descreva a atualizacao..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveNote()">Salvar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .project-header {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+
+    .project-title {
+        font-size: 1.75rem;
+        font-weight: 700;
+        margin: 0;
+    }
+
+    .project-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 12px;
+    }
+
+    .project-meta-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.9rem;
+        color: var(--gray-600);
+    }
+
+    .section-card {
+        background: white;
+        border-radius: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        margin-bottom: 16px;
+    }
+
+    .section-header {
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--gray-200);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .section-title {
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .section-body {
+        padding: 16px 20px;
+    }
+
+    .member-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--gray-100);
+    }
+
+    .member-item:last-child {
+        border-bottom: none;
+    }
+
+    .member-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: var(--gray-200);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 600;
+        color: var(--gray-600);
+    }
+
+    .member-avatar img {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        object-fit: cover;
+    }
+
+    .milestone-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--gray-100);
+    }
+
+    .milestone-item:last-child {
+        border-bottom: none;
+    }
+
+    .milestone-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .milestone-pending {
+        background: var(--warning);
+        color: white;
+    }
+
+    .milestone-done {
+        background: var(--success);
+        color: white;
+    }
+
+    .timeline-item {
+        display: flex;
+        gap: 12px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--gray-100);
+    }
+
+    .timeline-item:last-child {
+        border-bottom: none;
+    }
+
+    .timeline-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: var(--gray-200);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        color: var(--gray-600);
+    }
+
+    .search-result-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .search-result-item:hover {
+        background: var(--gray-100);
+    }
+</style>
+
+<script>
+    const projectId = {{ project_id }};
+    let project = null;
+    let selectedContactId = null;
+
+    document.addEventListener('DOMContentLoaded', loadProject);
+
+    async function loadProject() {
+        try {
+            const response = await fetch(`/api/projects/${projectId}`);
+            if (!response.ok) {
+                throw new Error('Projeto nao encontrado');
+            }
+            project = await response.json();
+            renderProject();
+        } catch (error) {
+            console.error('Error:', error);
+            document.getElementById('projectContainer').innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-circle me-2"></i>
+                    Projeto nao encontrado
+                    <a href="/rap/projetos" class="alert-link ms-2">Voltar para lista</a>
+                </div>
+            `;
+        }
+    }
+
+    function renderProject() {
+        const typeInfo = project.tipo_info || {};
+        const statusInfo = project.status_info || {};
+
+        document.getElementById('projectContainer').innerHTML = `
+            <!-- Header -->
+            <div class="project-header">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <a href="/rap/projetos" class="text-muted text-decoration-none mb-2 d-inline-block">
+                            <i class="bi bi-arrow-left me-1"></i> Voltar
+                        </a>
+                        <h1 class="project-title">${project.nome}</h1>
+                        <div class="project-meta">
+                            <span class="badge" style="background: ${typeInfo.color || '#6366f1'}20; color: ${typeInfo.color || '#6366f1'}; font-size: 0.85rem;">
+                                <i class="bi bi-${typeInfo.icon || 'folder'} me-1"></i>
+                                ${typeInfo.label || project.tipo}
+                            </span>
+                            <span class="badge" style="background: ${statusInfo.color || '#6b7280'}20; color: ${statusInfo.color || '#6b7280'}; font-size: 0.85rem;">
+                                ${statusInfo.label || project.status}
+                            </span>
+                            ${project.empresa_relacionada ? `
+                                <span class="project-meta-item">
+                                    <i class="bi bi-building"></i> ${project.empresa_relacionada}
+                                </span>
+                            ` : ''}
+                            ${project.data_previsao ? `
+                                <span class="project-meta-item">
+                                    <i class="bi bi-calendar"></i> Previsao: ${formatDate(project.data_previsao)}
+                                </span>
+                            ` : ''}
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-secondary" onclick="editProject()">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <div class="dropdown">
+                            <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+                                <i class="bi bi-three-dots-vertical"></i>
+                            </button>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                <li><a class="dropdown-item" href="#" onclick="changeStatus('ativo')">Marcar como Ativo</a></li>
+                                <li><a class="dropdown-item" href="#" onclick="changeStatus('pausado')">Pausar Projeto</a></li>
+                                <li><a class="dropdown-item" href="#" onclick="changeStatus('concluido')">Marcar como Concluido</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item text-danger" href="#" onclick="deleteProject()">Excluir Projeto</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                ${project.descricao ? `<p class="text-muted mt-3 mb-0">${project.descricao}</p>` : ''}
+            </div>
+
+            <div class="row">
+                <!-- Main Content -->
+                <div class="col-lg-8">
+                    <!-- Milestones -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h3 class="section-title">
+                                <i class="bi bi-flag text-warning"></i> Marcos
+                            </h3>
+                            <button class="btn btn-sm btn-outline-primary" onclick="openAddMilestoneModal()">
+                                <i class="bi bi-plus"></i> Adicionar
+                            </button>
+                        </div>
+                        <div class="section-body">
+                            ${renderMilestones()}
+                        </div>
+                    </div>
+
+                    <!-- Tasks -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h3 class="section-title">
+                                <i class="bi bi-check2-square text-primary"></i> Tarefas
+                            </h3>
+                            <button class="btn btn-sm btn-outline-primary" onclick="openAddTaskModal()">
+                                <i class="bi bi-plus"></i> Adicionar
+                            </button>
+                        </div>
+                        <div class="section-body">
+                            ${renderTasks()}
+                        </div>
+                    </div>
+
+                    <!-- Timeline -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h3 class="section-title">
+                                <i class="bi bi-clock-history text-secondary"></i> Timeline
+                            </h3>
+                            <button class="btn btn-sm btn-outline-primary" onclick="openAddNoteModal()">
+                                <i class="bi bi-plus"></i> Atualizacao
+                            </button>
+                        </div>
+                        <div class="section-body">
+                            ${renderTimeline()}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Sidebar -->
+                <div class="col-lg-4">
+                    <!-- Members -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h3 class="section-title">
+                                <i class="bi bi-people text-info"></i> Participantes
+                            </h3>
+                            <button class="btn btn-sm btn-outline-primary" onclick="openAddMemberModal()">
+                                <i class="bi bi-plus"></i>
+                            </button>
+                        </div>
+                        <div class="section-body">
+                            ${renderMembers()}
+                        </div>
+                    </div>
+
+                    <!-- Info -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h3 class="section-title">
+                                <i class="bi bi-info-circle text-secondary"></i> Informacoes
+                            </h3>
+                        </div>
+                        <div class="section-body">
+                            <table class="table table-sm mb-0">
+                                <tr>
+                                    <td class="text-muted">Criado em</td>
+                                    <td>${formatDate(project.criado_em)}</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-muted">Atualizado</td>
+                                    <td>${formatDate(project.atualizado_em)}</td>
+                                </tr>
+                                ${project.data_inicio ? `
+                                <tr>
+                                    <td class="text-muted">Inicio</td>
+                                    <td>${formatDate(project.data_inicio)}</td>
+                                </tr>
+                                ` : ''}
+                                ${project.valor_estimado ? `
+                                <tr>
+                                    <td class="text-muted">Valor</td>
+                                    <td>R$ ${parseFloat(project.valor_estimado).toLocaleString('pt-BR')}</td>
+                                </tr>
+                                ` : ''}
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderMembers() {
+        const members = project.membros || [];
+        if (members.length === 0) {
+            return '<p class="text-muted small mb-0">Nenhum participante adicionado</p>';
+        }
+
+        return members.map(m => {
+            const initials = m.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+            return `
+                <div class="member-item">
+                    <div class="member-avatar">
+                        ${m.foto_url ? `<img src="${m.foto_url}" alt="${m.nome}">` : initials}
+                    </div>
+                    <div class="flex-grow-1">
+                        <div class="fw-semibold">${m.nome}</div>
+                        <small class="text-muted">${m.papel || m.cargo || ''}</small>
+                    </div>
+                    <button class="btn btn-sm btn-link text-danger" onclick="removeMember(${m.contact_id})" title="Remover">
+                        <i class="bi bi-x"></i>
+                    </button>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function renderMilestones() {
+        const milestones = project.marcos || [];
+        if (milestones.length === 0) {
+            return '<p class="text-muted small mb-0">Nenhum marco definido</p>';
+        }
+
+        return milestones.map(m => {
+            const isDone = m.status === 'concluido';
+            return `
+                <div class="milestone-item">
+                    <div class="milestone-icon ${isDone ? 'milestone-done' : 'milestone-pending'}">
+                        <i class="bi bi-${isDone ? 'check' : 'flag'}"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <div class="fw-semibold ${isDone ? 'text-decoration-line-through text-muted' : ''}">${m.titulo}</div>
+                        ${m.descricao ? `<small class="text-muted">${m.descricao}</small>` : ''}
+                        ${m.data_prevista ? `<small class="text-muted d-block"><i class="bi bi-calendar me-1"></i>${formatDate(m.data_prevista)}</small>` : ''}
+                    </div>
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-link" data-bs-toggle="dropdown">
+                            <i class="bi bi-three-dots"></i>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            ${!isDone ? `<li><a class="dropdown-item" href="#" onclick="completeMilestone(${m.id})">Marcar como concluido</a></li>` : ''}
+                            <li><a class="dropdown-item text-danger" href="#" onclick="deleteMilestone(${m.id})">Excluir</a></li>
+                        </ul>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function renderTasks() {
+        const tasks = project.tarefas || [];
+        if (tasks.length === 0) {
+            return '<p class="text-muted small mb-0">Nenhuma tarefa vinculada</p>';
+        }
+
+        return tasks.map(t => `
+            <div class="d-flex align-items-center gap-2 py-2 border-bottom">
+                <input type="checkbox" class="form-check-input" ${t.status === 'completed' ? 'checked' : ''}
+                    onchange="toggleTask(${t.id}, this.checked)">
+                <span class="${t.status === 'completed' ? 'text-decoration-line-through text-muted' : ''}">${t.titulo}</span>
+                ${t.contact_nome ? `<small class="text-muted ms-auto">${t.contact_nome}</small>` : ''}
+            </div>
+        `).join('');
+    }
+
+    function renderTimeline() {
+        const notes = project.notas || [];
+        if (notes.length === 0) {
+            return '<p class="text-muted small mb-0">Nenhuma atualizacao ainda</p>';
+        }
+
+        const icons = {
+            nota: 'sticky',
+            atualizacao: 'arrow-up-circle',
+            decisao: 'check-circle',
+            problema: 'exclamation-circle'
+        };
+
+        return notes.map(n => `
+            <div class="timeline-item">
+                <div class="timeline-icon">
+                    <i class="bi bi-${icons[n.tipo] || 'sticky'}"></i>
+                </div>
+                <div class="flex-grow-1">
+                    ${n.titulo ? `<div class="fw-semibold">${n.titulo}</div>` : ''}
+                    <p class="mb-1">${n.conteudo}</p>
+                    <small class="text-muted">${formatDateTime(n.criado_em)}</small>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // Modal functions
+    function openAddMemberModal() {
+        selectedContactId = null;
+        document.getElementById('searchContact').value = '';
+        document.getElementById('memberPapel').value = '';
+        document.getElementById('searchResults').innerHTML = '';
+        new bootstrap.Modal(document.getElementById('addMemberModal')).show();
+    }
+
+    async function searchContacts(query) {
+        if (query.length < 2) {
+            document.getElementById('searchResults').innerHTML = '';
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/contacts/search?q=${encodeURIComponent(query)}&limit=10`);
+            const results = await response.json();
+
+            document.getElementById('searchResults').innerHTML = (results.contacts || results || []).map(c => {
+                const initials = c.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+                return `
+                    <div class="search-result-item" onclick="selectContact(${c.id}, '${c.nome}')">
+                        <div class="member-avatar" style="width: 36px; height: 36px;">
+                            ${c.foto_url ? `<img src="${c.foto_url}">` : initials}
+                        </div>
+                        <div>
+                            <div class="fw-semibold">${c.nome}</div>
+                            <small class="text-muted">${c.empresa || ''} ${c.cargo || ''}</small>
+                        </div>
+                    </div>
+                `;
+            }).join('') || '<p class="text-muted small p-3">Nenhum contato encontrado</p>';
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    }
+
+    async function selectContact(contactId, nome) {
+        const papel = document.getElementById('memberPapel').value;
+
+        try {
+            const response = await fetch(`/api/projects/${projectId}/members`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contact_id: contactId, papel: papel })
+            });
+
+            if (response.ok) {
+                bootstrap.Modal.getInstance(document.getElementById('addMemberModal')).hide();
+                loadProject();
+            }
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    }
+
+    async function removeMember(contactId) {
+        if (!confirm('Remover este participante?')) return;
+
+        try {
+            await fetch(`/api/projects/${projectId}/members/${contactId}`, { method: 'DELETE' });
+            loadProject();
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    }
+
+    function openAddMilestoneModal() {
+        document.getElementById('milestoneTitulo').value = '';
+        document.getElementById('milestoneDescricao').value = '';
+        document.getElementById('milestoneData').value = '';
+        new bootstrap.Modal(document.getElementById('addMilestoneModal')).show();
+    }
+
+    async function saveMilestone() {
+        const titulo = document.getElementById('milestoneTitulo').value.trim();
+        if (!titulo) return alert('Titulo e obrigatorio');
+
+        try {
+            await fetch(`/api/projects/${projectId}/milestones`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    titulo: titulo,
+                    descricao: document.getElementById('milestoneDescricao').value,
+                    data_prevista: document.getElementById('milestoneData').value || null
+                })
+            });
+            bootstrap.Modal.getInstance(document.getElementById('addMilestoneModal')).hide();
+            loadProject();
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    }
+
+    async function completeMilestone(id) {
+        try {
+            await fetch(`/api/milestones/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'concluido', data_conclusao: new Date().toISOString().split('T')[0] })
+            });
+            loadProject();
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    }
+
+    async function deleteMilestone(id) {
+        if (!confirm('Excluir este marco?')) return;
+        try {
+            await fetch(`/api/milestones/${id}`, { method: 'DELETE' });
+            loadProject();
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    }
+
+    function openAddNoteModal() {
+        document.getElementById('noteTipo').value = 'nota';
+        document.getElementById('noteTitulo').value = '';
+        document.getElementById('noteConteudo').value = '';
+        new bootstrap.Modal(document.getElementById('addNoteModal')).show();
+    }
+
+    async function saveNote() {
+        const conteudo = document.getElementById('noteConteudo').value.trim();
+        if (!conteudo) return alert('Conteudo e obrigatorio');
+
+        try {
+            await fetch(`/api/projects/${projectId}/notes`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tipo: document.getElementById('noteTipo').value,
+                    titulo: document.getElementById('noteTitulo').value,
+                    conteudo: conteudo
+                })
+            });
+            bootstrap.Modal.getInstance(document.getElementById('addNoteModal')).hide();
+            loadProject();
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    }
+
+    async function changeStatus(status) {
+        try {
+            await fetch(`/api/projects/${projectId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: status })
+            });
+            loadProject();
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    }
+
+    async function deleteProject() {
+        if (!confirm('Tem certeza que deseja excluir este projeto? Esta acao nao pode ser desfeita.')) return;
+
+        try {
+            await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
+            window.location.href = '/rap/projetos';
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    }
+
+    function editProject() {
+        alert('Funcao de edicao sera implementada');
+    }
+
+    function openAddTaskModal() {
+        alert('Redirecionar para criacao de tarefa vinculada ao projeto');
+    }
+
+    async function toggleTask(taskId, completed) {
+        try {
+            await fetch(`/api/tasks/${taskId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: completed ? 'completed' : 'pending' })
+            });
+        } catch (error) {
+            console.error('Error:', error);
+        }
+    }
+
+    function formatDate(dateStr) {
+        if (!dateStr) return '-';
+        return new Date(dateStr).toLocaleDateString('pt-BR');
+    }
+
+    function formatDateTime(dateStr) {
+        if (!dateStr) return '-';
+        const d = new Date(dateStr);
+        return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
+    }
+</script>
+{% endblock %}
