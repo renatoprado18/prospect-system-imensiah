@@ -6,33 +6,39 @@
 
 {% block extra_css %}
 <style>
-    /* Header stats - compacto */
-    .stats-bar {
+    /* Stats drops - horizontal pills */
+    .stats-drops {
         display: flex;
-        gap: 1.5rem;
-        padding: 0.75rem 1rem;
-        background: var(--card-bg);
-        border-radius: 12px;
-        margin-bottom: 1.5rem;
-        box-shadow: var(--shadow-sm);
-    }
-    .stats-bar .stat {
-        display: flex;
-        align-items: center;
+        flex-wrap: wrap;
         gap: 0.5rem;
+        margin-bottom: 1.25rem;
     }
-    .stats-bar .stat-value {
-        font-size: 1.25rem;
+    .stat-drop {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.4rem 0.75rem;
+        background: white;
+        border: 1px solid var(--gray-200);
+        border-radius: 20px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .stat-drop:hover {
+        border-color: var(--gray-300);
+        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
+    .stat-drop .value {
         font-weight: 700;
     }
-    .stats-bar .stat-label {
-        font-size: 0.8rem;
+    .stat-drop .label {
         color: var(--gray-500);
     }
-    .stats-bar .stat.active .stat-value { color: var(--primary); }
-    .stats-bar .stat.done .stat-value { color: var(--success); }
-    .stats-bar .stat.pending .stat-value { color: var(--warning); }
-    .stats-bar .stat.upcoming .stat-value { color: #8b5cf6; }
+    .stat-drop.active .value { color: var(--primary); }
+    .stat-drop.done .value { color: var(--success); }
+    .stat-drop.pending .value { color: var(--warning); }
+    .stat-drop.upcoming .value { color: #8b5cf6; }
 
     /* Filters - mais compactos */
     .filters-bar {
@@ -340,23 +346,23 @@
 {% block content %}
 <p style="color: var(--gray-500); margin-bottom: 1rem;">Gerencie seus projetos pessoais e profissionais</p>
 
-<!-- Stats Bar - Compacto -->
-<div class="stats-bar">
-    <div class="stat active">
-        <span class="stat-value" id="statAtivos">-</span>
-        <span class="stat-label">Ativos</span>
+<!-- Stats Drops -->
+<div class="stats-drops">
+    <div class="stat-drop active" onclick="filterByStatus('ativo', document.querySelector('.filter-btn'))">
+        <span class="value" id="statAtivos">-</span>
+        <span class="label">Ativos</span>
     </div>
-    <div class="stat done">
-        <span class="stat-value" id="statConcluidos">-</span>
-        <span class="stat-label">Concluidos</span>
+    <div class="stat-drop done" onclick="filterByStatus('concluido', document.querySelector('.filter-btn'))">
+        <span class="value" id="statConcluidos">-</span>
+        <span class="label">Concluidos</span>
     </div>
-    <div class="stat pending">
-        <span class="stat-value" id="statTarefas">-</span>
-        <span class="stat-label">Com Tarefas</span>
+    <div class="stat-drop pending">
+        <span class="value" id="statTarefas">-</span>
+        <span class="label">Com Tarefas</span>
     </div>
-    <div class="stat upcoming">
-        <span class="stat-value" id="statMarcos">-</span>
-        <span class="stat-label">Marcos Proximos</span>
+    <div class="stat-drop upcoming">
+        <span class="value" id="statMarcos">-</span>
+        <span class="label">Marcos Prox.</span>
     </div>
 </div>
 
