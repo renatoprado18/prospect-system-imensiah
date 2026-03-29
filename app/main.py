@@ -7411,12 +7411,17 @@ async def create_contact_interaction(contact_id: int, interaction: InteractionCr
 
         conn.commit()
 
-        return {
-            "status": "success",
-            "interaction_id": result['id'],
-            "contact_id": contact_id,
-            "contact_name": contact['nome'],
-            "criado_em": result['criado_em'].isoformat()
+    # Recalculate health score after interaction
+    health_result = recalcular_circulo_contato(contact_id)
+    new_health = health_result.get('health_score', 0)
+
+    return {
+        "status": "success",
+        "interaction_id": result['id'],
+        "contact_id": contact_id,
+        "contact_name": contact['nome'],
+        "health_score": new_health,
+        "criado_em": result['criado_em'].isoformat()
         }
 
 
