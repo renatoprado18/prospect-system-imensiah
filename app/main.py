@@ -4688,6 +4688,275 @@ async def cron_sync_contacts(request: Request):
     }
 
 
+# ============== CRON JOBS ==============
+# Vercel Cron Jobs - executados automaticamente
+# Configurados em vercel.json
+
+def verify_cron_auth(request: Request) -> bool:
+    """Verifica autorizacao de cron job"""
+    auth_header = request.headers.get("authorization", "")
+    cron_secret = os.getenv("CRON_SECRET", "")
+    is_vercel_cron = request.headers.get("x-vercel-cron") == "true"
+
+    return (
+        is_vercel_cron or
+        auth_header == f"Bearer {cron_secret}" or
+        os.getenv("VERCEL_ENV") != "production"
+    )
+
+
+@app.get("/api/cron/sync-calendar")
+async def cron_sync_calendar(request: Request):
+    """
+    Cron: Sincroniza eventos do Google Calendar.
+    Schedule: 0 8,12,18 * * * (8h, 12h, 18h)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.calendar_sync import get_calendar_sync
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE")
+        accounts = cursor.fetchall()
+
+    results = []
+    for account in accounts:
+        try:
+            sync = get_calendar_sync()
+            stats = await sync.incremental_sync(account["email"])
+            results.append({
+                "account": account["email"],
+                "status": "success",
+                "stats": stats
+            })
+        except Exception as e:
+            results.append({
+                "account": account["email"],
+                "status": "error",
+                "error": str(e)
+            })
+
+    return {
+        "job": "sync-calendar",
+        "timestamp": datetime.now().isoformat(),
+        "accounts": len(accounts),
+        "results": results
+    }
+
+
+@app.get("/api/cron/sync-tasks")
+async def cron_sync_tasks(request: Request):
+    """
+    Cron: Sincroniza tarefas do Google Tasks.
+    Schedule: 0 7,13,19 * * * (7h, 13h, 19h)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from integrations.google_tasks import get_tasks_integration
+    from integrations.gmail import GmailIntegration
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
+        return {"job": "sync-tasks", "status": "skipped", "reason": "No Google account connected"}
+
+    try:
+        gmail = GmailIntegration()
+        tokens = await gmail.refresh_access_token(account["refresh_token"])
+
+        if "error" in tokens:
+            return {"job": "sync-tasks", "status": "error", "error": "Token refresh failed"}
+
+        access_token = tokens.get("access_token")
+        tasks_api = get_tasks_integration()
+
+        # Fetch all task lists and tasks
+        task_lists = await tasks_api.list_task_lists(access_token)
+        total_tasks = 0
+
+        for tl in task_lists:
+            tasks = await tasks_api.list_tasks(access_token, tl["id"])
+            total_tasks += len(tasks)
+
+        return {
+            "job": "sync-tasks",
+            "timestamp": datetime.now().isoformat(),
+            "status": "success",
+            "task_lists": len(task_lists),
+            "total_tasks": total_tasks
+        }
+
+    except Exception as e:
+        return {"job": "sync-tasks", "status": "error", "error": str(e)}
+
+
+@app.get("/api/cron/daily-ai")
+async def cron_daily_ai(request: Request):
+    """
+    Cron: Executa geracao diaria de sugestoes AI.
+    Schedule: 0 6 * * * (6h da manha)
+
+    Inclui:
+    - Sugestoes de reconexao
+    - Lembretes de aniversario
+    - Follow-ups pendentes
+    - Alertas de health baixo
+    - Auto-enriquecimento C1-C2
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.ai_agent import get_ai_agent
+
+    agent = get_ai_agent()
+
+    try:
+        results = await agent.run_daily_generation()
+        return {
+            "job": "daily-ai",
+            "timestamp": datetime.now().isoformat(),
+            "status": "success",
+            "results": results
+        }
+    except Exception as e:
+        return {"job": "daily-ai", "status": "error", "error": str(e)}
+
+
+@app.get("/api/cron/health-recalc")
+async def cron_health_recalc(request: Request):
+    """
+    Cron: Recalcula health scores de todos os contatos.
+    Schedule: 0 5 * * * (5h da manha)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.circulos import calcular_health_score
+
+    updated = 0
+    errors = 0
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Buscar contatos com circulo definido
+        cursor.execute("""
+            SELECT id, nome, circulo, ultimo_contato, total_interacoes
+            FROM contacts
+            WHERE COALESCE(circulo, 5) <= 4
+        """)
+        contacts = cursor.fetchall()
+
+        for contact in contacts:
+            try:
+                contact_dict = dict(contact)
+                health = calcular_health_score(contact_dict, contact["circulo"])
+
+                cursor.execute("""
+                    UPDATE contacts
+                    SET health_score = %s, atualizado_em = NOW()
+                    WHERE id = %s
+                """, (health, contact["id"]))
+                updated += 1
+
+            except Exception as e:
+                errors += 1
+
+        conn.commit()
+
+    return {
+        "job": "health-recalc",
+        "timestamp": datetime.now().isoformat(),
+        "status": "success",
+        "contacts_updated": updated,
+        "errors": errors
+    }
+
+
+@app.get("/api/cron/cleanup")
+async def cron_cleanup(request: Request):
+    """
+    Cron: Limpeza de dados expirados.
+    Schedule: 0 4 * * 0 (Domingos as 4h)
+
+    Limpa:
+    - Sugestoes AI expiradas
+    - Notificacoes antigas (> 30 dias)
+    - Tokens expirados
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.ai_agent import get_ai_agent
+
+    stats = {
+        "suggestions_deleted": 0,
+        "notifications_deleted": 0,
+        "old_predictions_deleted": 0
+    }
+
+    # 1. Cleanup sugestoes expiradas
+    agent = get_ai_agent()
+    stats["suggestions_deleted"] = agent.cleanup_expired_suggestions()
+
+    # 2. Cleanup notificacoes antigas
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            DELETE FROM sse_notifications
+            WHERE criado_em < NOW() - INTERVAL '30 days'
+        """)
+        stats["notifications_deleted"] = cursor.rowcount
+
+        # 3. Cleanup predicoes antigas
+        cursor.execute("""
+            DELETE FROM health_predictions
+            WHERE data_predicao < NOW() - INTERVAL '90 days'
+        """)
+        stats["old_predictions_deleted"] = cursor.rowcount
+
+        conn.commit()
+
+    return {
+        "job": "cleanup",
+        "timestamp": datetime.now().isoformat(),
+        "status": "success",
+        "stats": stats
+    }
+
+
+@app.get("/api/cron/weekly-digest")
+async def cron_weekly_digest(request: Request):
+    """
+    Cron: Gera digest semanal.
+    Schedule: 0 8 * * 1 (Segundas as 8h)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.digest_generator import get_digest_generator
+
+    try:
+        generator = get_digest_generator()
+        digest = generator.generate_weekly_digest()
+
+        return {
+            "job": "weekly-digest",
+            "timestamp": datetime.now().isoformat(),
+            "status": "success",
+            "digest_id": digest.get("id") if digest else None
+        }
+    except Exception as e:
+        return {"job": "weekly-digest", "status": "error", "error": str(e)}
+
+
 @app.delete("/api/google/accounts/{account_id}")
 async def disconnect_google_account(request: Request, account_id: int):
     """Desconecta uma conta Google"""
