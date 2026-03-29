@@ -1037,6 +1037,42 @@
         </div>
     </div>
 
+    <!-- Add/Edit Fact Modal -->
+    <div class="modal fade" id="factModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content" style="border-radius: 16px; border: none;">
+                <div class="modal-header" style="border-bottom: 1px solid var(--gray-200); padding: 20px 24px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; border-radius: 16px 16px 0 0;">
+                    <h5 class="modal-title" style="font-weight: 600;">
+                        <i class="bi bi-lightbulb me-2"></i><span id="factModalTitle">Novo Fato</span>
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" style="padding: 24px;">
+                    <input type="hidden" id="editingFactId">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Fato</label>
+                        <textarea class="form-control" id="factText" rows="3" placeholder="Descreva o fato sobre este contato..."></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Categoria</label>
+                        <select class="form-select" id="factCategoria">
+                            <option value="general">Geral</option>
+                            <option value="professional">Profissional</option>
+                            <option value="personal">Pessoal</option>
+                            <option value="preference">Preferência</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer" style="border-top: 1px solid var(--gray-200); padding: 16px 24px;">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-warning" onclick="saveFact()">
+                        <i class="bi bi-check me-1"></i> Salvar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Edit Contact Modal -->
     <div class="modal fade" id="editContactModal" tabindex="-1">
         <div class="modal-dialog">
@@ -1269,29 +1305,17 @@
                                     <h2 class="card-title mb-0" style="font-size: 0.95rem;">
                                         <i class="bi bi-lightbulb text-warning"></i> Fatos
                                     </h2>
-                                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="extractFacts()" title="Extrair fatos com IA">
-                                        <i class="bi bi-magic"></i>
-                                    </button>
+                                    <div>
+                                        <button class="btn btn-sm btn-link p-0 text-success me-2" onclick="openAddFactModal()" title="Adicionar fato">
+                                            <i class="bi bi-plus-lg"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-link p-0 text-primary" onclick="extractFacts()" title="Extrair fatos com IA">
+                                            <i class="bi bi-magic"></i>
+                                        </button>
+                                    </div>
                                 </div>
-                                <div class="card-body py-2" style="max-height: 350px; overflow-y: auto;">
-                                    ${facts && facts.length > 0 ? `
-                                        <ul class="list-unstyled mb-0" style="font-size: 0.85rem;">
-                                            ${facts.map(f => `
-                                                <li class="mb-2 pb-2 border-bottom d-flex">
-                                                    <i class="bi bi-dot text-primary flex-shrink-0"></i>
-                                                    <span>${f.fato || f.content || (typeof f === 'string' ? f : 'Fato')}</span>
-                                                </li>
-                                            `).join('')}
-                                        </ul>
-                                    ` : `
-                                        <div class="text-center text-muted py-3">
-                                            <i class="bi bi-lightbulb-off" style="font-size: 1.5rem;"></i>
-                                            <p class="mb-0 mt-2 small">Nenhum fato</p>
-                                            <button class="btn btn-sm btn-outline-primary mt-2" onclick="extractFacts()">
-                                                <i class="bi bi-magic me-1"></i>Extrair com IA
-                                            </button>
-                                        </div>
-                                    `}
+                                <div class="card-body py-2" id="factsContainer" style="max-height: 350px; overflow-y: auto;">
+                                    <!-- Loaded dynamically -->
                                 </div>
                             </div>
                         </div>
@@ -1381,28 +1405,20 @@
                         </div>
                     </div>
 
-                    <!-- Recent Activity (compact) -->
+                    <!-- Recent Messages (WhatsApp + Email) -->
                     <div class="card mt-3">
                         <div class="card-header d-flex justify-content-between align-items-center py-2">
                             <h2 class="card-title mb-0" style="font-size: 0.95rem;">
-                                <i class="bi bi-activity text-secondary"></i> Atividade Recente
+                                <i class="bi bi-chat-dots text-info"></i> Mensagens Recentes
                             </h2>
                             <a href="#" onclick="switchTab('timeline'); return false;" class="small text-decoration-none">
-                                Ver tudo <i class="bi bi-arrow-right"></i>
+                                Ver todas <i class="bi bi-arrow-right"></i>
                             </a>
                         </div>
-                        <div class="card-body py-2">
-                            ${memories.length > 0 ? `
-                                <div class="d-flex flex-wrap gap-2">
-                                    ${memories.slice(0, 5).map(m => `
-                                        <span class="badge bg-light text-dark border" style="font-size: 0.75rem;">
-                                            ${m.type || 'Interacao'} - ${formatDate(m.created_at)}
-                                        </span>
-                                    `).join('')}
-                                </div>
-                            ` : `
-                                <p class="text-muted small mb-0">Nenhuma atividade registrada</p>
-                            `}
+                        <div class="card-body py-2" id="messagesContainer">
+                            <div class="text-center text-muted py-2">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -3111,11 +3127,209 @@
             }
         }
 
-        // Load projects and tasks when page loads
+        // ============ FACTS FUNCTIONS ============
+
+        async function loadContactFacts() {
+            const container = document.getElementById('factsContainer');
+            if (!container) return;
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/facts`);
+                if (!response.ok) throw new Error('API error');
+
+                const data = await response.json();
+                const facts = data.facts || [];
+                renderFacts(facts);
+            } catch (error) {
+                console.error('Error loading facts:', error);
+                container.innerHTML = `
+                    <div class="text-center text-muted py-3">
+                        <i class="bi bi-lightbulb-off" style="font-size: 1.5rem;"></i>
+                        <p class="mb-0 mt-2 small">Erro ao carregar</p>
+                    </div>
+                `;
+            }
+        }
+
+        function renderFacts(facts) {
+            const container = document.getElementById('factsContainer');
+            if (!container) return;
+
+            if (facts.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center text-muted py-3">
+                        <i class="bi bi-lightbulb-off" style="font-size: 1.5rem;"></i>
+                        <p class="mb-0 mt-2 small">Nenhum fato</p>
+                        <button class="btn btn-sm btn-outline-warning mt-2" onclick="extractFacts()">
+                            <i class="bi bi-magic me-1"></i>Extrair com IA
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = `
+                <ul class="list-unstyled mb-0" style="font-size: 0.85rem;">
+                    ${facts.map(f => `
+                        <li class="mb-2 pb-2 border-bottom fact-item" data-fact-id="${f.id}">
+                            <div class="d-flex align-items-start">
+                                <i class="bi bi-dot text-warning flex-shrink-0 mt-1"></i>
+                                <div class="flex-grow-1">
+                                    <span class="fact-text">${f.fato || f.content || ''}</span>
+                                </div>
+                                <div class="btn-group btn-group-sm ms-2 flex-shrink-0">
+                                    <button class="btn btn-link btn-sm p-0 text-muted" onclick="openEditFactModal(${f.id}, '${(f.fato || '').replace(/'/g, "\\'")}', '${f.categoria || 'general'}')" title="Editar">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <button class="btn btn-link btn-sm p-0 text-danger ms-2" onclick="deleteFact(${f.id})" title="Remover">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </li>
+                    `).join('')}
+                </ul>
+            `;
+        }
+
+        function openAddFactModal() {
+            document.getElementById('factModalTitle').textContent = 'Novo Fato';
+            document.getElementById('editingFactId').value = '';
+            document.getElementById('factText').value = '';
+            document.getElementById('factCategoria').value = 'general';
+            new bootstrap.Modal(document.getElementById('factModal')).show();
+        }
+
+        function openEditFactModal(factId, factText, categoria) {
+            document.getElementById('factModalTitle').textContent = 'Editar Fato';
+            document.getElementById('editingFactId').value = factId;
+            document.getElementById('factText').value = factText;
+            document.getElementById('factCategoria').value = categoria || 'general';
+            new bootstrap.Modal(document.getElementById('factModal')).show();
+        }
+
+        async function saveFact() {
+            const factId = document.getElementById('editingFactId').value;
+            const fato = document.getElementById('factText').value.trim();
+            const categoria = document.getElementById('factCategoria').value;
+
+            if (!fato) {
+                alert('Digite o fato');
+                return;
+            }
+
+            try {
+                const url = factId
+                    ? `/api/contacts/facts/${factId}`
+                    : `/api/contacts/${contactId}/facts`;
+                const method = factId ? 'PUT' : 'POST';
+
+                const response = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fato, categoria })
+                });
+
+                if (response.ok) {
+                    bootstrap.Modal.getInstance(document.getElementById('factModal')).hide();
+                    loadContactFacts();
+                    showToast(factId ? 'Fato atualizado' : 'Fato adicionado');
+                } else {
+                    const err = await response.json();
+                    alert(err.detail || 'Erro ao salvar');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Erro ao salvar fato');
+            }
+        }
+
+        async function deleteFact(factId) {
+            if (!confirm('Remover este fato?')) return;
+
+            try {
+                const response = await fetch(`/api/contacts/facts/${factId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    loadContactFacts();
+                    showToast('Fato removido');
+                } else {
+                    alert('Erro ao remover fato');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Erro ao remover fato');
+            }
+        }
+
+        // ============ MESSAGES FUNCTIONS ============
+
+        async function loadContactMessages() {
+            const container = document.getElementById('messagesContainer');
+            if (!container) return;
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/messages?limit=5`);
+                if (!response.ok) throw new Error('API error');
+
+                const data = await response.json();
+                const messages = data.messages || [];
+                renderMessages(messages);
+            } catch (error) {
+                console.error('Error loading messages:', error);
+                // Show empty state instead of error
+                container.innerHTML = `
+                    <p class="text-muted small mb-0">Nenhuma mensagem recente</p>
+                `;
+            }
+        }
+
+        function renderMessages(messages) {
+            const container = document.getElementById('messagesContainer');
+            if (!container) return;
+
+            if (messages.length === 0) {
+                container.innerHTML = `
+                    <p class="text-muted small mb-0">Nenhuma mensagem recente</p>
+                `;
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="messages-list" style="font-size: 0.85rem;">
+                    ${messages.map(m => {
+                        const isWhatsApp = m.canal === 'whatsapp';
+                        const isIncoming = m.direcao === 'incoming';
+                        const icon = isWhatsApp ? 'bi-whatsapp' : 'bi-envelope';
+                        const color = isWhatsApp ? 'text-success' : 'text-primary';
+                        const preview = (m.conteudo || '').substring(0, 80) + ((m.conteudo || '').length > 80 ? '...' : '');
+
+                        return `
+                            <div class="d-flex align-items-start py-2 border-bottom">
+                                <i class="bi ${icon} ${color} me-2 mt-1"></i>
+                                <div class="flex-grow-1 min-width-0">
+                                    <div class="d-flex justify-content-between">
+                                        <span class="fw-medium small">${isIncoming ? 'Recebida' : 'Enviada'}</span>
+                                        <small class="text-muted">${formatDateTime(m.enviado_em || m.created_at)}</small>
+                                    </div>
+                                    <p class="mb-0 text-muted small text-truncate">${preview}</p>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        }
+
+        // Load projects, tasks, facts, and messages when page loads
         document.addEventListener('DOMContentLoaded', function() {
             setTimeout(() => {
                 loadContactProjects();
                 loadContactTasks();
+                loadContactFacts();
+                loadContactMessages();
             }, 500);
         });
     </script>

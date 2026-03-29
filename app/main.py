@@ -2713,6 +2713,55 @@ async def delete_contact_fact(fact_id: int):
         conn.close()
 
 
+@app.post("/api/contacts/{contact_id}/facts")
+async def add_contact_fact(contact_id: int, request: Request):
+    """Add a new fact manually"""
+    data = await request.json()
+    fato = data.get('fato')
+    if not fato:
+        raise HTTPException(status_code=400, detail="fato e obrigatorio")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO contact_facts (contact_id, categoria, fato, fonte, confianca)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING *
+        """, (
+            contact_id,
+            data.get('categoria', 'general'),
+            fato,
+            'manual',
+            1.0
+        ))
+        fact = dict(cursor.fetchone())
+        conn.commit()
+        return {"status": "success", "fact": fact}
+
+
+@app.put("/api/contacts/facts/{fact_id}")
+async def update_contact_fact(fact_id: int, request: Request):
+    """Update an existing fact"""
+    data = await request.json()
+    fato = data.get('fato')
+    if not fato:
+        raise HTTPException(status_code=400, detail="fato e obrigatorio")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE contact_facts
+            SET fato = %s, categoria = COALESCE(%s, categoria)
+            WHERE id = %s
+            RETURNING *
+        """, (fato, data.get('categoria'), fact_id))
+        fact = cursor.fetchone()
+        if not fact:
+            raise HTTPException(status_code=404, detail="Fato nao encontrado")
+        conn.commit()
+        return {"status": "success", "fact": dict(fact)}
+
+
 @app.get("/api/fathom/sync")
 async def sync_fathom_meetings():
     """Sincroniza reuniões recentes do Fathom"""
@@ -9668,6 +9717,32 @@ async def api_contact_tasks(contact_id: int):
         """, (contact_id,))
         tasks = [dict(row) for row in cursor.fetchall()]
         return {"tasks": tasks}
+
+
+@app.get("/api/contacts/{contact_id}/messages")
+async def api_contact_messages(contact_id: int, limit: int = 10):
+    """Retorna mensagens recentes do contato (WhatsApp + Email)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get contact phone number for WhatsApp matching
+        cursor.execute("SELECT telefones FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+        telefones = contact['telefones'] if contact else []
+
+        # Try to get messages from messages table
+        cursor.execute("""
+            SELECT m.id, m.conteudo, m.direcao, m.enviado_em, c.canal,
+                   m.created_at
+            FROM messages m
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE m.contact_id = %s
+            ORDER BY COALESCE(m.enviado_em, m.created_at) DESC
+            LIMIT %s
+        """, (contact_id, limit))
+        messages = [dict(row) for row in cursor.fetchall()]
+
+        return {"messages": messages}
 
 
 @app.get("/api/projects/available")
