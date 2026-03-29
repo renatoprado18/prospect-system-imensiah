@@ -4013,7 +4013,12 @@ async def get_contact(contact_id: int):
 
     # Merge memories and interactions, sort by date
     memories = memories + interactions
-    memories.sort(key=lambda x: x.get('data_ocorrencia') or x.get('criado_em') or '', reverse=True)
+    def get_sort_date(x):
+        dt = x.get('data_ocorrencia') or x.get('criado_em')
+        if dt is None:
+            return ''
+        return str(dt) if not isinstance(dt, str) else dt
+    memories.sort(key=get_sort_date, reverse=True)
 
     # Buscar fatos
     cursor.execute('''
