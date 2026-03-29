@@ -625,15 +625,16 @@
                 <i class="bi bi-bullseye"></i>
                 <span>Circulos</span>
             </a>
-            <a href="/contatos" class="nav-item {% if request.path == '/contatos' %}active{% endif %}">
+            <a href="/contatos" class="nav-item {% if '/contatos' in request.path or '/duplicados' in request.path %}active{% endif %}">
                 <i class="bi bi-people"></i>
                 <span>Contatos</span>
             </a>
-            <a href="/contatos/limpeza" class="nav-item" style="padding-left: 2.5rem; font-size: 0.9rem;">
+            {% if '/contatos' in request.path or '/duplicados' in request.path %}
+            <a href="/contatos/limpeza" class="nav-item {% if '/limpeza' in request.path %}active{% endif %}" style="padding-left: 2.5rem; font-size: 0.9rem;">
                 <i class="bi bi-magic"></i>
                 <span>Limpeza</span>
             </a>
-            <a href="/contatos/linkedin" class="nav-item" style="padding-left: 2.5rem; font-size: 0.9rem;">
+            <a href="/contatos/linkedin" class="nav-item {% if '/linkedin' in request.path %}active{% endif %}" style="padding-left: 2.5rem; font-size: 0.9rem;">
                 <i class="bi bi-linkedin"></i>
                 <span>LinkedIn</span>
             </a>
@@ -641,6 +642,7 @@
                 <i class="bi bi-copy"></i>
                 <span>Duplicados</span>
             </a>
+            {% endif %}
             <a href="/briefings" class="nav-item {% if '/briefings' in request.path %}active{% endif %}">
                 <i class="bi bi-file-text"></i>
                 <span>Briefings</span>
