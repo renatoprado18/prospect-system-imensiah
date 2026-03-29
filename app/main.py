@@ -9656,6 +9656,99 @@ async def api_project_timeline(project_id: int, limit: int = 50):
     return {"timeline": get_project_timeline(project_id, limit=limit)}
 
 
+# ============== PROJECT TASKS ==============
+
+@app.post("/api/projects/{project_id}/tasks")
+async def api_add_project_task(project_id: int, request: Request):
+    """
+    Cria tarefa vinculada ao projeto.
+    Salva no banco local com project_id.
+    """
+    data = await request.json()
+    titulo = data.get('titulo')
+    if not titulo:
+        raise HTTPException(status_code=400, detail="titulo e obrigatorio")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Verify project exists
+        cursor.execute("SELECT id FROM projects WHERE id = %s", (project_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+
+        # Create task
+        cursor.execute("""
+            INSERT INTO tasks (
+                titulo, descricao, project_id, contact_id,
+                data_vencimento, prioridade, status, origem
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING *
+        """, (
+            titulo,
+            data.get('descricao'),
+            project_id,
+            data.get('contact_id'),
+            data.get('data_vencimento'),
+            data.get('prioridade', 5),
+            'pending',
+            'projeto'
+        ))
+
+        task = dict(cursor.fetchone())
+        conn.commit()
+
+        return {"status": "success", "task": task}
+
+
+@app.put("/api/projects/tasks/{task_id}")
+async def api_update_project_task(task_id: int, request: Request):
+    """Atualiza tarefa do projeto."""
+    data = await request.json()
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Build update dynamically
+        allowed = ['titulo', 'descricao', 'status', 'prioridade', 'data_vencimento', 'contact_id']
+        updates = []
+        values = []
+
+        for field in allowed:
+            if field in data:
+                updates.append(f"{field} = %s")
+                values.append(data[field])
+
+        if not updates:
+            raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
+
+        values.append(task_id)
+        cursor.execute(f"""
+            UPDATE tasks SET {', '.join(updates)}
+            WHERE id = %s
+            RETURNING *
+        """, values)
+
+        task = cursor.fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="Tarefa nao encontrada")
+
+        conn.commit()
+        return {"status": "success", "task": dict(task)}
+
+
+@app.delete("/api/projects/tasks/{task_id}")
+async def api_delete_project_task(task_id: int):
+    """Deleta tarefa do projeto."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tasks WHERE id = %s RETURNING id", (task_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Tarefa nao encontrada")
+        conn.commit()
+        return {"status": "success"}
+
+
 # ============== PROJECTS PAGE ==============
 
 @app.get("/rap/projetos", response_class=HTMLResponse)

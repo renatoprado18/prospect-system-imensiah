@@ -101,6 +101,54 @@
     </div>
 </div>
 
+<!-- Add Task Modal -->
+<div class="modal fade" id="addTaskModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="border-radius: 16px; border: none;">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-check2-square me-2"></i>Nova Tarefa</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Titulo *</label>
+                    <input type="text" class="form-control" id="taskTitulo" placeholder="Ex: Enviar proposta">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Descricao</label>
+                    <textarea class="form-control" id="taskDescricao" rows="2" placeholder="Detalhes da tarefa..."></textarea>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Data de Vencimento</label>
+                        <input type="date" class="form-control" id="taskDataVencimento">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Prioridade</label>
+                        <select class="form-select" id="taskPrioridade">
+                            <option value="3">Alta</option>
+                            <option value="5" selected>Media</option>
+                            <option value="7">Baixa</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Responsavel (opcional)</label>
+                    <input type="text" class="form-control" id="taskResponsavelSearch" placeholder="Buscar participante..." oninput="searchTaskResponsavel(this.value)">
+                    <div id="taskResponsavelResults" class="mt-2" style="max-height: 150px; overflow-y: auto;"></div>
+                    <input type="hidden" id="taskContactId">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveTask()">
+                    <i class="bi bi-check2 me-1"></i>Criar Tarefa
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
     .project-header {
         background: white;
@@ -720,7 +768,91 @@
     }
 
     function openAddTaskModal() {
-        alert('Redirecionar para criacao de tarefa vinculada ao projeto');
+        // Clear form
+        document.getElementById('taskTitulo').value = '';
+        document.getElementById('taskDescricao').value = '';
+        document.getElementById('taskDataVencimento').value = '';
+        document.getElementById('taskPrioridade').value = '5';
+        document.getElementById('taskResponsavelSearch').value = '';
+        document.getElementById('taskContactId').value = '';
+        document.getElementById('taskResponsavelResults').innerHTML = '';
+
+        // Show modal
+        new bootstrap.Modal(document.getElementById('addTaskModal')).show();
+    }
+
+    async function saveTask() {
+        const titulo = document.getElementById('taskTitulo').value.trim();
+        if (!titulo) {
+            alert('Titulo e obrigatorio');
+            return;
+        }
+
+        const data = {
+            titulo: titulo,
+            descricao: document.getElementById('taskDescricao').value.trim() || null,
+            data_vencimento: document.getElementById('taskDataVencimento').value || null,
+            prioridade: parseInt(document.getElementById('taskPrioridade').value),
+            contact_id: document.getElementById('taskContactId').value || null
+        };
+
+        try {
+            const response = await fetch(`/api/projects/${projectId}/tasks`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                bootstrap.Modal.getInstance(document.getElementById('addTaskModal')).hide();
+                loadProject(); // Reload project to show new task
+            } else {
+                const err = await response.json();
+                alert(err.detail || 'Erro ao criar tarefa');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Erro ao criar tarefa');
+        }
+    }
+
+    function searchTaskResponsavel(query) {
+        const resultsDiv = document.getElementById('taskResponsavelResults');
+        if (query.length < 2) {
+            resultsDiv.innerHTML = '';
+            return;
+        }
+
+        // Search in project members first
+        if (project && project.membros) {
+            const matches = project.membros.filter(m =>
+                m.nome.toLowerCase().includes(query.toLowerCase())
+            );
+
+            if (matches.length > 0) {
+                resultsDiv.innerHTML = matches.map(m => `
+                    <div class="d-flex align-items-center p-2 border-bottom" style="cursor: pointer;"
+                         onclick="selectTaskResponsavel(${m.contact_id}, '${m.nome.replace(/'/g, "\\'")}')">
+                        <div class="avatar-circle me-2" style="width: 32px; height: 32px; font-size: 12px; background: #e9ecef;">
+                            ${m.nome.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                            <div class="fw-medium">${m.nome}</div>
+                            <small class="text-muted">${m.papel || ''}</small>
+                        </div>
+                    </div>
+                `).join('');
+                return;
+            }
+        }
+
+        resultsDiv.innerHTML = '<div class="text-muted p-2">Nenhum participante encontrado</div>';
+    }
+
+    function selectTaskResponsavel(contactId, nome) {
+        document.getElementById('taskContactId').value = contactId;
+        document.getElementById('taskResponsavelSearch').value = nome;
+        document.getElementById('taskResponsavelResults').innerHTML = '';
     }
 
     async function toggleTask(taskId, completed) {
