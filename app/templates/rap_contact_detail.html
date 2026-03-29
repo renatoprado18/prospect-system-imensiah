@@ -3168,17 +3168,20 @@
                 return;
             }
 
+            // Store facts globally for edit access
+            window.contactFacts = facts;
+
             container.innerHTML = `
                 <ul class="list-unstyled mb-0" style="font-size: 0.85rem;">
-                    ${facts.map(f => `
-                        <li class="mb-2 pb-2 border-bottom fact-item" data-fact-id="${f.id}">
+                    ${facts.map((f, idx) => `
+                        <li class="mb-2 pb-2 border-bottom fact-item">
                             <div class="d-flex align-items-start">
                                 <i class="bi bi-dot text-warning flex-shrink-0 mt-1"></i>
                                 <div class="flex-grow-1">
-                                    <span class="fact-text">${f.fato || f.content || ''}</span>
+                                    <span class="fact-text">${escapeHtml(f.fato || f.content || '')}</span>
                                 </div>
                                 <div class="btn-group btn-group-sm ms-2 flex-shrink-0">
-                                    <button class="btn btn-link btn-sm p-0 text-muted" onclick="openEditFactModal(${f.id}, '${(f.fato || '').replace(/'/g, "\\'")}', '${f.categoria || 'general'}')" title="Editar">
+                                    <button class="btn btn-link btn-sm p-0 text-muted" onclick="editFactByIndex(${idx})" title="Editar">
                                         <i class="bi bi-pencil"></i>
                                     </button>
                                     <button class="btn btn-link btn-sm p-0 text-danger ms-2" onclick="deleteFact(${f.id})" title="Remover">
@@ -3190,6 +3193,19 @@
                     `).join('')}
                 </ul>
             `;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function editFactByIndex(idx) {
+            const fact = window.contactFacts[idx];
+            if (fact) {
+                openEditFactModal(fact.id, fact.fato || '', fact.categoria || 'general');
+            }
         }
 
         function openAddFactModal() {
