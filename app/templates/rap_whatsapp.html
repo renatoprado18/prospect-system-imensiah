@@ -428,50 +428,116 @@
                 <h5 class="card-title"><i class="bi bi-file-text"></i> Importar Historico (.txt)</h5>
             </div>
             <div class="card-body">
-                <p class="text-muted mb-3">Importe conversas exportadas do WhatsApp em formato .txt</p>
+                <!-- Tabs para Single vs Batch -->
+                <ul class="nav nav-tabs mb-3" role="tablist">
+                    <li class="nav-item">
+                        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#batchImport">
+                            <i class="bi bi-files me-1"></i> Import em Lote
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#singleImport">
+                            <i class="bi bi-file-text me-1"></i> Arquivo Unico
+                        </button>
+                    </li>
+                </ul>
 
-                <div id="uploadArea" class="border border-2 border-dashed rounded-3 p-5 text-center mb-3" style="cursor: pointer; border-color: var(--gray-300);">
-                    <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--whatsapp);"></i>
-                    <p class="mt-2 mb-1"><strong>Clique ou arraste o arquivo .txt</strong></p>
-                    <small class="text-muted">Exportado do WhatsApp (iOS ou Android)</small>
-                    <input type="file" id="fileInput" accept=".txt" style="display: none;">
-                </div>
+                <div class="tab-content">
+                    <!-- Batch Import Tab -->
+                    <div class="tab-pane fade show active" id="batchImport">
+                        <p class="text-muted mb-3">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Arraste multiplos arquivos .txt - o sistema detecta os contatos automaticamente
+                        </p>
 
-                <div id="importPreview" style="display: none;">
-                    <h6 class="mb-3">Preview da Importacao</h6>
+                        <div id="batchUploadArea" class="border border-2 border-dashed rounded-3 p-5 text-center mb-3" style="cursor: pointer; border-color: var(--gray-300);">
+                            <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--whatsapp);"></i>
+                            <p class="mt-2 mb-1"><strong>Arraste multiplos arquivos .txt aqui</strong></p>
+                            <small class="text-muted">Ou clique para selecionar</small>
+                            <input type="file" id="batchFileInput" accept=".txt" multiple style="display: none;">
+                        </div>
 
-                    <div class="row g-3 mb-3">
-                        <div class="col-md-4">
-                            <div class="stat-card">
-                                <div class="stat-value" id="previewMessages">0</div>
-                                <div class="stat-label">Mensagens</div>
+                        <!-- Batch Preview -->
+                        <div id="batchPreview" style="display: none;">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h6 class="mb-0">
+                                    <span id="batchFileCount">0</span> arquivos selecionados
+                                </h6>
+                                <span class="text-muted" id="batchTotalMessages">0 mensagens</span>
+                            </div>
+
+                            <div id="batchFilesList" class="mb-3" style="max-height: 400px; overflow-y: auto;"></div>
+
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-outline-secondary" onclick="clearBatchFiles()">
+                                    <i class="bi bi-x-circle me-1"></i> Limpar
+                                </button>
+                                <button class="btn btn-whatsapp flex-grow-1" onclick="confirmBatchImport()" id="batchImportBtn">
+                                    <i class="bi bi-check-circle me-2"></i> Importar Todos
+                                </button>
                             </div>
                         </div>
-                        <div class="col-md-4">
-                            <div class="stat-card">
-                                <div class="stat-value" id="previewParticipants">0</div>
-                                <div class="stat-label">Participantes</div>
-                            </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="stat-card">
-                                <div class="stat-value" id="previewDays">0</div>
-                                <div class="stat-label">Dias</div>
+
+                        <!-- Batch Result -->
+                        <div id="batchResult" style="display: none;">
+                            <div class="alert alert-success">
+                                <h6><i class="bi bi-check-circle me-2"></i>Importacao Concluida</h6>
+                                <p class="mb-2" id="batchResultText"></p>
+                                <button class="btn btn-sm btn-outline-success" onclick="resetBatchImport()">
+                                    Importar mais arquivos
+                                </button>
                             </div>
                         </div>
                     </div>
 
-                    <div id="participantsList" class="mb-3"></div>
+                    <!-- Single Import Tab -->
+                    <div class="tab-pane fade" id="singleImport">
+                        <p class="text-muted mb-3">Importe uma conversa e selecione o contato manualmente</p>
 
-                    <div class="row g-3 align-items-end">
-                        <div class="col-md-6">
-                            <label class="form-label">Seu nome no chat</label>
-                            <input type="text" id="myNameInput" class="form-control" value="Renato" placeholder="Seu nome no chat">
+                        <div id="uploadArea" class="border border-2 border-dashed rounded-3 p-5 text-center mb-3" style="cursor: pointer; border-color: var(--gray-300);">
+                            <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--whatsapp);"></i>
+                            <p class="mt-2 mb-1"><strong>Clique ou arraste o arquivo .txt</strong></p>
+                            <small class="text-muted">Exportado do WhatsApp (iOS ou Android)</small>
+                            <input type="file" id="fileInput" accept=".txt" style="display: none;">
                         </div>
-                        <div class="col-md-6">
-                            <button class="btn btn-whatsapp w-100" onclick="confirmImport()">
-                                <i class="bi bi-check-circle me-2"></i> Importar Mensagens
-                            </button>
+
+                        <div id="importPreview" style="display: none;">
+                            <h6 class="mb-3">Preview da Importacao</h6>
+
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-4">
+                                    <div class="stat-card">
+                                        <div class="stat-value" id="previewMessages">0</div>
+                                        <div class="stat-label">Mensagens</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="stat-card">
+                                        <div class="stat-value" id="previewParticipants">0</div>
+                                        <div class="stat-label">Participantes</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="stat-card">
+                                        <div class="stat-value" id="previewDays">0</div>
+                                        <div class="stat-label">Dias</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="participantsList" class="mb-3"></div>
+
+                            <div class="row g-3 align-items-end">
+                                <div class="col-md-6">
+                                    <label class="form-label">Seu nome no chat</label>
+                                    <input type="text" id="myNameInput" class="form-control" value="Renato" placeholder="Seu nome no chat">
+                                </div>
+                                <div class="col-md-6">
+                                    <button class="btn btn-whatsapp w-100" onclick="confirmImport()">
+                                        <i class="bi bi-check-circle me-2"></i> Importar Mensagens
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

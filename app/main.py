@@ -3991,14 +3991,29 @@ async def get_contact(contact_id: int):
 
     contact = row_to_dict(row)
 
-    # Buscar memórias/interações
+    # Buscar memórias/notas
     cursor.execute('''
-        SELECT * FROM contact_memories
+        SELECT *, 'memory' as item_type FROM contact_memories
         WHERE contact_id = %s
         ORDER BY data_ocorrencia DESC
         LIMIT 50
     ''', (contact_id,))
     memories = [row_to_dict(r) for r in cursor.fetchall()]
+
+    # Buscar interações manuais
+    cursor.execute('''
+        SELECT id, tipo, titulo, descricao, data_interacao as data_ocorrencia,
+               tags, sentimento, criado_em, 'interaction' as item_type
+        FROM contact_interactions
+        WHERE contact_id = %s
+        ORDER BY data_interacao DESC
+        LIMIT 50
+    ''', (contact_id,))
+    interactions = [row_to_dict(r) for r in cursor.fetchall()]
+
+    # Merge memories and interactions, sort by date
+    memories = memories + interactions
+    memories.sort(key=lambda x: x.get('data_ocorrencia') or x.get('criado_em') or '', reverse=True)
 
     # Buscar fatos
     cursor.execute('''
@@ -6435,6 +6450,108 @@ async def get_import_status(request: Request):
 
     service = get_whatsapp_import_service()
     return service.get_import_status()
+
+
+# ============== WhatsApp Batch Import ==============
+
+from services.whatsapp_batch_import import get_batch_importer
+
+@app.post("/api/whatsapp/batch-import")
+async def batch_import_whatsapp(request: Request, files: List[UploadFile] = File(...)):
+    """
+    Importa múltiplos arquivos .txt do WhatsApp em lote.
+    Detecta contatos automaticamente e importa para o Inbox.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    importer = get_batch_importer()
+    file_data = []
+
+    for file in files:
+        try:
+            content = await file.read()
+            content_str = content.decode('utf-8', errors='ignore')
+            file_data.append((file.filename, content_str, None))
+        except Exception as e:
+            file_data.append((file.filename, "", None))
+
+    result = importer.process_batch(file_data)
+    return result
+
+
+@app.post("/api/whatsapp/batch-import/preview")
+async def batch_import_preview(request: Request, files: List[UploadFile] = File(...)):
+    """
+    Analisa arquivos e retorna preview antes de importar.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    importer = get_batch_importer()
+    previews = []
+
+    for file in files:
+        try:
+            content = await file.read()
+            content_str = content.decode('utf-8', errors='ignore')
+            parsed = importer.parse_file_content(content_str)
+
+            # Tentar encontrar contato
+            contact = None
+            contact_name = parsed.get('contact_name')
+            if contact_name:
+                phone = importer.extract_phone(contact_name)
+                contact = importer.find_contact(contact_name, phone)
+
+            previews.append({
+                'filename': file.filename,
+                'messages_count': parsed['total_messages'],
+                'participants': parsed['participants'],
+                'contact_name': contact_name,
+                'contact_found': contact is not None,
+                'contact': contact,
+                'date_range': {
+                    'start': parsed['date_range']['start'].isoformat() if parsed['date_range']['start'] else None,
+                    'end': parsed['date_range']['end'].isoformat() if parsed['date_range']['end'] else None
+                }
+            })
+        except Exception as e:
+            previews.append({
+                'filename': file.filename,
+                'error': str(e)
+            })
+
+    return {'files': previews}
+
+
+@app.post("/api/whatsapp/batch-import/confirm")
+async def batch_import_confirm(request: Request):
+    """
+    Confirma importação com mapeamento de contatos.
+
+    Body:
+    {
+        "files": [
+            {"filename": "chat.txt", "content": "...", "contact_id": 123},
+            ...
+        ]
+    }
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = await request.json()
+    files = data.get('files', [])
+
+    importer = get_batch_importer()
+    file_data = [(f['filename'], f['content'], f.get('contact_id')) for f in files]
+
+    result = importer.process_batch(file_data)
+    return result
 
 
 @app.get("/api/whatsapp/messages/{contact_id}")

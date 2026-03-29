@@ -530,6 +530,7 @@
         .timeline-dot.whatsapp { border-color: #25D366; color: #25D366; }
         .timeline-dot.note { border-color: var(--warning); color: var(--warning); }
         .timeline-dot.call { border-color: var(--primary); color: var(--primary); }
+        .timeline-dot.interaction { border-color: #8b5cf6; color: #8b5cf6; background: rgba(139, 92, 246, 0.1); }
 
         .timeline-content {
             background: var(--gray-100);
@@ -1565,11 +1566,18 @@
                 'email': 'bi-envelope',
                 'whatsapp': 'bi-whatsapp',
                 'call': 'bi-telephone',
-                'note': 'bi-sticky'
+                'note': 'bi-sticky',
+                'Telefonema': 'bi-telephone',
+                'Reuniao': 'bi-camera-video',
+                'Email': 'bi-envelope',
+                'LinkedIn': 'bi-linkedin',
+                'Evento': 'bi-calendar-event',
+                'Nota': 'bi-sticky'
             };
 
             const icon = typeIcons[memory.tipo] || 'bi-circle';
-            const dotClass = memory.tipo || '';
+            const dotClass = memory.item_type === 'interaction' ? 'interaction' : (memory.tipo || '');
+            const content = memory.resumo || memory.descricao || '';
 
             return `
                 <div class="timeline-item">
@@ -1581,7 +1589,7 @@
                             <span class="timeline-title">${memory.titulo || memory.tipo}</span>
                             <span class="timeline-date">${formatDateTime(memory.data_ocorrencia)}</span>
                         </div>
-                        <div class="timeline-text">${memory.resumo || ''}</div>
+                        <div class="timeline-text">${content}</div>
                         ${memory.fatos_importantes && memory.fatos_importantes.length > 0 ? `
                             <div class="timeline-meta">
                                 <span><i class="bi bi-lightbulb"></i> ${memory.fatos_importantes.length} fatos extraidos</span>
