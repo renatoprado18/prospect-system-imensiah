@@ -119,24 +119,30 @@ class EvolutionAPIClient:
     # ==================== CONNECTION ====================
 
     async def get_qr_code(self, instance_name: str = None) -> Dict:
-        """Obtém QR Code para conexão"""
+        """
+        Obtém QR Code para conexão.
+
+        Resposta da Evolution API:
+        {
+            "pairingCode": "WZYEH1YY",
+            "code": "2@y8eK+bjtEjUWy9/...",
+            "base64": "data:image/png;base64,iVBORw0KGgo...",
+            "count": 1
+        }
+        """
         name = instance_name or self.instance_name
         result = await self._request("GET", f"/instance/connect/{name}")
 
         if "error" in result:
             return result
 
-        # Evolution API retorna QR em diferentes formatos
-        if "qrcode" in result:
-            return {
-                "qr_base64": result.get("qrcode", {}).get("base64"),
-                "qr_code": result.get("qrcode", {}).get("code"),
-                "pairingCode": result.get("qrcode", {}).get("pairingCode")
-            }
-        elif "base64" in result:
-            return {"qr_base64": result["base64"]}
-
-        return result
+        # Formato padrão v2: base64 direto no root
+        return {
+            "qr_base64": result.get("base64"),
+            "qr_code": result.get("code"),
+            "pairingCode": result.get("pairingCode"),
+            "count": result.get("count", 0)
+        }
 
     async def check_connection(self, instance_name: str = None) -> Dict:
         """Verifica se está conectado"""
@@ -302,7 +308,17 @@ class EvolutionAPIClient:
         events: List[str] = None,
         instance_name: str = None
     ) -> Dict:
-        """Configura webhook para receber eventos"""
+        """
+        Configura webhook para receber eventos.
+
+        Eventos disponíveis:
+        - MESSAGES_UPSERT: Nova mensagem recebida
+        - MESSAGES_UPDATE: Mensagem atualizada (lida, etc)
+        - SEND_MESSAGE: Confirmação de envio
+        - CONNECTION_UPDATE: Status da conexão mudou
+        - QRCODE_UPDATED: Novo QR code gerado
+        - CONTACTS_UPSERT: Contato adicionado/atualizado
+        """
         name = instance_name or self.instance_name
 
         default_events = [
@@ -314,10 +330,11 @@ class EvolutionAPIClient:
         ]
 
         return await self._request("POST", f"/webhook/set/{name}", {
-            "enabled": True,
             "url": webhook_url,
+            "events": events or default_events,
+            "enabled": True,
             "webhookByEvents": True,
-            "events": events or default_events
+            "webhookBase64": False
         })
 
     async def get_webhook(self, instance_name: str = None) -> Dict:
