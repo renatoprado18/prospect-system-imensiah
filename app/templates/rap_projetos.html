@@ -2,97 +2,393 @@
 
 {% block title %}Projetos - INTEL{% endblock %}
 
-{% block content %}
-<div class="content-header">
-    <div>
-        <h1><i class="bi bi-kanban me-2"></i>Projetos</h1>
-        <p class="text-muted mb-0">Gerencie seus projetos pessoais e profissionais</p>
-    </div>
-    <div class="d-flex gap-2">
-        <div class="btn-group" role="group">
-            <button type="button" class="btn btn-outline-secondary active" onclick="setView('grid')" id="btnGrid">
-                <i class="bi bi-grid-3x3-gap"></i>
-            </button>
-            <button type="button" class="btn btn-outline-secondary" onclick="setView('list')" id="btnList">
-                <i class="bi bi-list"></i>
-            </button>
-        </div>
-        <button class="btn btn-primary" onclick="openNewProjectModal()">
-            <i class="bi bi-plus-lg me-1"></i> Novo Projeto
+{% block page_title %}Projetos{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Header stats - compacto */
+    .stats-bar {
+        display: flex;
+        gap: 1.5rem;
+        padding: 0.75rem 1rem;
+        background: var(--card-bg);
+        border-radius: 12px;
+        margin-bottom: 1.5rem;
+        box-shadow: var(--shadow-sm);
+    }
+    .stats-bar .stat {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .stats-bar .stat-value {
+        font-size: 1.25rem;
+        font-weight: 700;
+    }
+    .stats-bar .stat-label {
+        font-size: 0.8rem;
+        color: var(--gray-500);
+    }
+    .stats-bar .stat.active .stat-value { color: var(--primary); }
+    .stats-bar .stat.done .stat-value { color: var(--success); }
+    .stats-bar .stat.pending .stat-value { color: var(--warning); }
+    .stats-bar .stat.upcoming .stat-value { color: #8b5cf6; }
+
+    /* Filters - mais compactos */
+    .filters-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        align-items: center;
+    }
+    .filter-group {
+        display: flex;
+        gap: 0.25rem;
+    }
+    .filter-btn {
+        padding: 0.4rem 0.75rem;
+        border: 1px solid var(--gray-200);
+        background: white;
+        border-radius: 8px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: all 0.15s;
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+    }
+    .filter-btn:hover {
+        background: var(--gray-50);
+    }
+    .filter-btn.active {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+    }
+    .filter-btn.type-negocio.active { background: #2563eb; border-color: #2563eb; }
+    .filter-btn.type-pessoal.active { background: #16a34a; border-color: #16a34a; }
+    .filter-btn.type-patrimonio.active { background: #d97706; border-color: #d97706; }
+    .filter-btn.type-conselho.active { background: #9333ea; border-color: #9333ea; }
+
+    /* Projects Grid */
+    .projects-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+        gap: 1rem;
+    }
+
+    /* Project Card - novo design */
+    .project-card {
+        background: var(--card-bg);
+        border-radius: 12px;
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+        transition: all 0.2s;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+    }
+    .project-card:hover {
+        box-shadow: var(--shadow-md);
+        transform: translateY(-2px);
+    }
+
+    .project-header {
+        padding: 1rem 1.25rem;
+        border-left: 4px solid var(--primary);
+    }
+    .project-header.type-negocio { border-color: #2563eb; }
+    .project-header.type-pessoal { border-color: #16a34a; }
+    .project-header.type-patrimonio { border-color: #d97706; }
+    .project-header.type-conselho { border-color: #9333ea; }
+
+    .project-name {
+        font-size: 1.05rem;
+        font-weight: 600;
+        margin: 0 0 0.5rem 0;
+        line-height: 1.3;
+        color: var(--gray-800);
+    }
+    .project-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+    }
+    .project-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 6px;
+        font-size: 0.7rem;
+        font-weight: 500;
+    }
+    .badge-type {
+        background: var(--gray-100);
+        color: var(--gray-600);
+    }
+    .badge-type.negocio { background: #dbeafe; color: #1e40af; }
+    .badge-type.pessoal { background: #dcfce7; color: #166534; }
+    .badge-type.patrimonio { background: #fef3c7; color: #92400e; }
+    .badge-type.conselho { background: #f3e8ff; color: #7c3aed; }
+
+    .badge-status {
+        background: #dcfce7;
+        color: #166534;
+    }
+    .badge-status.pausado {
+        background: #fef3c7;
+        color: #92400e;
+    }
+    .badge-status.concluido {
+        background: var(--gray-100);
+        color: var(--gray-600);
+    }
+
+    .project-body {
+        padding: 0 1.25rem 1rem;
+        flex: 1;
+    }
+    .project-description {
+        font-size: 0.85rem;
+        color: var(--gray-500);
+        line-height: 1.5;
+        margin-bottom: 0.75rem;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    /* Actionable Info */
+    .project-actions-info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    .action-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+        padding: 0.4rem 0.6rem;
+        background: var(--gray-50);
+        border-radius: 6px;
+    }
+    .action-item i {
+        font-size: 0.9rem;
+    }
+    .action-item.warning {
+        background: #fef3c7;
+        color: #92400e;
+    }
+    .action-item.info {
+        background: #dbeafe;
+        color: #1e40af;
+    }
+    .action-item.success {
+        background: #dcfce7;
+        color: #166534;
+    }
+    .action-item.danger {
+        background: #fee2e2;
+        color: #dc2626;
+    }
+
+    .project-footer {
+        padding: 0.75rem 1.25rem;
+        background: var(--gray-50);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-top: 1px solid var(--gray-100);
+    }
+    .project-stats {
+        display: flex;
+        gap: 1rem;
+    }
+    .project-stat {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.8rem;
+        color: var(--gray-500);
+    }
+    .project-stat i {
+        font-size: 0.9rem;
+    }
+    .project-stat.has-items {
+        color: var(--gray-700);
+        font-weight: 500;
+    }
+
+    .project-members {
+        display: flex;
+    }
+    .member-avatar {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: var(--gray-200);
+        border: 2px solid white;
+        margin-left: -8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.65rem;
+        font-weight: 600;
+        color: var(--gray-600);
+        overflow: hidden;
+    }
+    .member-avatar:first-child {
+        margin-left: 0;
+    }
+    .member-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    /* List View */
+    .projects-list {
+        background: var(--card-bg);
+        border-radius: 12px;
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+    }
+    .list-item {
+        display: grid;
+        grid-template-columns: 1fr auto auto auto;
+        gap: 1rem;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid var(--gray-100);
+        align-items: center;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+    .list-item:last-child {
+        border-bottom: none;
+    }
+    .list-item:hover {
+        background: var(--gray-50);
+    }
+    .list-item-main {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    .list-type-indicator {
+        width: 4px;
+        height: 36px;
+        border-radius: 2px;
+        flex-shrink: 0;
+    }
+    .list-type-indicator.negocio { background: #2563eb; }
+    .list-type-indicator.pessoal { background: #16a34a; }
+    .list-type-indicator.patrimonio { background: #d97706; }
+    .list-type-indicator.conselho { background: #9333ea; }
+
+    .list-info h4 {
+        margin: 0 0 0.25rem;
+        font-size: 0.95rem;
+        font-weight: 600;
+    }
+    .list-info .subtitle {
+        font-size: 0.8rem;
+        color: var(--gray-500);
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+        background: var(--card-bg);
+        border-radius: 12px;
+    }
+    .empty-state i {
+        font-size: 3rem;
+        color: var(--gray-300);
+    }
+    .empty-state h4 {
+        margin: 1rem 0 0.5rem;
+        color: var(--gray-700);
+    }
+    .empty-state p {
+        color: var(--gray-500);
+    }
+</style>
+{% endblock %}
+
+{% block header_actions %}
+<div class="d-flex gap-2">
+    <div class="btn-group" role="group">
+        <button type="button" class="btn btn-outline-secondary btn-sm active" onclick="setView('grid')" id="btnGrid">
+            <i class="bi bi-grid-3x3-gap"></i>
         </button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setView('list')" id="btnList">
+            <i class="bi bi-list"></i>
+        </button>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="openNewProjectModal()">
+        <i class="bi bi-plus-lg me-1"></i> Novo Projeto
+    </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<p style="color: var(--gray-500); margin-bottom: 1rem;">Gerencie seus projetos pessoais e profissionais</p>
+
+<!-- Stats Bar - Compacto -->
+<div class="stats-bar">
+    <div class="stat active">
+        <span class="stat-value" id="statAtivos">-</span>
+        <span class="stat-label">Ativos</span>
+    </div>
+    <div class="stat done">
+        <span class="stat-value" id="statConcluidos">-</span>
+        <span class="stat-label">Concluidos</span>
+    </div>
+    <div class="stat pending">
+        <span class="stat-value" id="statTarefas">-</span>
+        <span class="stat-label">Com Tarefas</span>
+    </div>
+    <div class="stat upcoming">
+        <span class="stat-value" id="statMarcos">-</span>
+        <span class="stat-label">Marcos Proximos</span>
     </div>
 </div>
 
 <!-- Filters -->
-<div class="card mb-4">
-    <div class="card-body py-2">
-        <div class="d-flex flex-wrap gap-2 align-items-center">
-            <span class="text-muted small">Filtros:</span>
-            <div class="btn-group btn-group-sm" role="group">
-                <button type="button" class="btn btn-outline-secondary active" onclick="filterByStatus(null)">Todos</button>
-                <button type="button" class="btn btn-outline-success" onclick="filterByStatus('ativo')">Ativos</button>
-                <button type="button" class="btn btn-outline-warning" onclick="filterByStatus('pausado')">Pausados</button>
-                <button type="button" class="btn btn-outline-secondary" onclick="filterByStatus('concluido')">Concluidos</button>
-            </div>
-            <div class="vr mx-2"></div>
-            <div class="btn-group btn-group-sm" role="group">
-                <button type="button" class="btn btn-outline-secondary active" onclick="filterByType(null)">Todos</button>
-                <button type="button" class="btn btn-outline-primary" onclick="filterByType('negocio')">
-                    <i class="bi bi-briefcase me-1"></i>Negocio
-                </button>
-                <button type="button" class="btn btn-outline-success" onclick="filterByType('pessoal')">
-                    <i class="bi bi-house-heart me-1"></i>Pessoal
-                </button>
-                <button type="button" class="btn btn-outline-warning" onclick="filterByType('patrimonio')">
-                    <i class="bi bi-building me-1"></i>Patrimonio
-                </button>
-                <button type="button" class="btn btn-outline-info" onclick="filterByType('conselho')">
-                    <i class="bi bi-people me-1"></i>Conselho
-                </button>
-            </div>
-        </div>
+<div class="filters-bar">
+    <div class="filter-group">
+        <button class="filter-btn active" onclick="filterByStatus(null, this)">Todos</button>
+        <button class="filter-btn" onclick="filterByStatus('ativo', this)">Ativos</button>
+        <button class="filter-btn" onclick="filterByStatus('pausado', this)">Pausados</button>
+        <button class="filter-btn" onclick="filterByStatus('concluido', this)">Concluidos</button>
+    </div>
+    <span style="color: var(--gray-300);">|</span>
+    <div class="filter-group">
+        <button class="filter-btn active" onclick="filterByType(null, this)">Todos</button>
+        <button class="filter-btn type-negocio" onclick="filterByType('negocio', this)">
+            <i class="bi bi-briefcase"></i> Negocio
+        </button>
+        <button class="filter-btn type-pessoal" onclick="filterByType('pessoal', this)">
+            <i class="bi bi-house-heart"></i> Pessoal
+        </button>
+        <button class="filter-btn type-patrimonio" onclick="filterByType('patrimonio', this)">
+            <i class="bi bi-building"></i> Patrimonio
+        </button>
+        <button class="filter-btn type-conselho" onclick="filterByType('conselho', this)">
+            <i class="bi bi-people"></i> Conselho
+        </button>
     </div>
 </div>
 
-<!-- Stats Cards -->
-<div class="row g-3 mb-4" id="statsCards">
-    <div class="col-md-3">
-        <div class="card h-100">
-            <div class="card-body text-center">
-                <div class="display-4 text-primary" id="statAtivos">-</div>
-                <div class="text-muted">Projetos Ativos</div>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card h-100">
-            <div class="card-body text-center">
-                <div class="display-4 text-success" id="statConcluidos">-</div>
-                <div class="text-muted">Concluidos</div>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card h-100">
-            <div class="card-body text-center">
-                <div class="display-4 text-warning" id="statTarefas">-</div>
-                <div class="text-muted">Com Tarefas Pendentes</div>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card h-100">
-            <div class="card-body text-center">
-                <div class="display-4 text-info" id="statMarcos">-</div>
-                <div class="text-muted">Marcos Proximos</div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Projects Grid -->
-<div class="row g-3" id="projectsGrid">
-    <div class="col-12 text-center py-5">
+<!-- Projects Container -->
+<div id="projectsContainer">
+    <div class="text-center py-5">
         <div class="spinner-border text-primary" role="status"></div>
         <p class="mt-2 text-muted">Carregando projetos...</p>
     </div>
@@ -101,14 +397,12 @@
 <!-- New Project Modal -->
 <div class="modal fade" id="newProjectModal" tabindex="-1">
     <div class="modal-dialog modal-lg">
-        <div class="modal-content" style="border-radius: 16px; border: none;">
-            <div class="modal-header" style="border-bottom: 1px solid var(--gray-200); padding: 20px 24px; background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; border-radius: 16px 16px 0 0;">
-                <h5 class="modal-title" style="font-weight: 600;">
-                    <i class="bi bi-folder-plus me-2"></i>Novo Projeto
-                </h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-folder-plus me-2"></i>Novo Projeto</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body" style="padding: 24px;">
+            <div class="modal-body">
                 <div class="row g-3">
                     <div class="col-md-8">
                         <label class="form-label fw-semibold">Nome do Projeto *</label>
@@ -157,7 +451,7 @@
                     </div>
                 </div>
             </div>
-            <div class="modal-footer" style="border-top: 1px solid var(--gray-200); padding: 16px 24px;">
+            <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
                 <button type="button" class="btn btn-primary" onclick="saveNewProject()">
                     <i class="bi bi-check-lg me-1"></i> Criar Projeto
@@ -166,105 +460,9 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
-<style>
-    .project-card {
-        border-radius: 16px;
-        border: none;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        transition: all 0.2s;
-        height: 100%;
-    }
-
-    .project-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
-    }
-
-    .project-card .card-header {
-        border-radius: 16px 16px 0 0;
-        border: none;
-        padding: 16px;
-    }
-
-    .project-type-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 4px 10px;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        font-weight: 500;
-    }
-
-    .project-status-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 4px 10px;
-        border-radius: 20px;
-        font-size: 0.7rem;
-        font-weight: 500;
-    }
-
-    .project-stats {
-        display: flex;
-        gap: 16px;
-        padding: 12px 16px;
-        background: var(--gray-100);
-        border-radius: 0 0 16px 16px;
-    }
-
-    .project-stat {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 0.85rem;
-        color: var(--gray-600);
-    }
-
-    .project-members {
-        display: flex;
-        margin-top: 12px;
-    }
-
-    .project-member-avatar {
-        width: 28px;
-        height: 28px;
-        border-radius: 50%;
-        background: var(--gray-300);
-        border: 2px solid white;
-        margin-left: -8px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.7rem;
-        font-weight: 600;
-        color: var(--gray-600);
-    }
-
-    .project-member-avatar:first-child {
-        margin-left: 0;
-    }
-
-    .project-member-avatar img {
-        width: 100%;
-        height: 100%;
-        border-radius: 50%;
-        object-fit: cover;
-    }
-
-    .empty-state {
-        text-align: center;
-        padding: 60px 20px;
-    }
-
-    .empty-state i {
-        font-size: 4rem;
-        color: var(--gray-300);
-    }
-</style>
-
+{% block extra_js %}
 <script>
     let projects = [];
     let currentView = 'grid';
@@ -280,7 +478,6 @@
         try {
             const response = await fetch('/api/projects/stats');
             const stats = await response.json();
-
             document.getElementById('statAtivos').textContent = stats.total_ativos || 0;
             document.getElementById('statConcluidos').textContent = stats.total_concluidos || 0;
             document.getElementById('statTarefas').textContent = stats.com_tarefas_pendentes || 0;
@@ -299,90 +496,183 @@
             const response = await fetch(url);
             const data = await response.json();
             projects = data.projects || [];
-
             renderProjects();
         } catch (error) {
             console.error('Error loading projects:', error);
-            document.getElementById('projectsGrid').innerHTML = `
-                <div class="col-12">
-                    <div class="alert alert-danger">Erro ao carregar projetos</div>
-                </div>
+            document.getElementById('projectsContainer').innerHTML = `
+                <div class="alert alert-danger">Erro ao carregar projetos</div>
             `;
         }
     }
 
     function renderProjects() {
-        const container = document.getElementById('projectsGrid');
+        const container = document.getElementById('projectsContainer');
 
         if (projects.length === 0) {
             container.innerHTML = `
-                <div class="col-12">
-                    <div class="empty-state">
-                        <i class="bi bi-folder2-open"></i>
-                        <h4 class="mt-3">Nenhum projeto encontrado</h4>
-                        <p class="text-muted">Crie seu primeiro projeto clicando no botao acima</p>
-                    </div>
+                <div class="empty-state">
+                    <i class="bi bi-folder2-open"></i>
+                    <h4>Nenhum projeto encontrado</h4>
+                    <p>Crie seu primeiro projeto clicando no botao acima</p>
                 </div>
             `;
             return;
         }
 
         if (currentView === 'grid') {
-            container.innerHTML = projects.map(p => renderProjectCard(p)).join('');
+            container.innerHTML = `<div class="projects-grid">${projects.map(p => renderProjectCard(p)).join('')}</div>`;
         } else {
-            container.innerHTML = `<div class="col-12">${renderProjectList()}</div>`;
+            container.innerHTML = renderProjectList();
         }
     }
 
-    function renderProjectCard(project) {
-        const typeInfo = project.tipo_info || {};
-        const statusInfo = project.status_info || {};
+    function getTypeIcon(tipo) {
+        const icons = {
+            'negocio': 'briefcase',
+            'pessoal': 'house-heart',
+            'patrimonio': 'building',
+            'conselho': 'people'
+        };
+        return icons[tipo] || 'folder';
+    }
 
-        const membersHtml = (project.membros || []).slice(0, 4).map(m => {
+    function getTypeLabel(tipo) {
+        const labels = {
+            'negocio': 'Negocio',
+            'pessoal': 'Pessoal',
+            'patrimonio': 'Patrimonio',
+            'conselho': 'Conselho'
+        };
+        return labels[tipo] || tipo;
+    }
+
+    function getStatusLabel(status) {
+        const labels = {
+            'ativo': 'Ativo',
+            'pausado': 'Pausado',
+            'concluido': 'Concluido'
+        };
+        return labels[status] || status;
+    }
+
+    function getActionableInfo(project) {
+        const actions = [];
+
+        // Proximo marco
+        if (project.proximo_marco) {
+            const daysUntil = project.proximo_marco.dias_ate;
+            let cls = 'info';
+            let icon = 'bi-flag';
+            if (daysUntil <= 3) cls = 'danger';
+            else if (daysUntil <= 7) cls = 'warning';
+
+            actions.push({
+                icon: icon,
+                text: `Marco: ${project.proximo_marco.titulo} (${daysUntil === 0 ? 'Hoje' : daysUntil + 'd'})`,
+                cls: cls
+            });
+        }
+
+        // Data previsao
+        if (project.data_previsao && !project.proximo_marco) {
+            const prevDate = new Date(project.data_previsao);
+            const hoje = new Date();
+            const diff = Math.ceil((prevDate - hoje) / (1000 * 60 * 60 * 24));
+
+            if (diff <= 30 && diff >= 0) {
+                actions.push({
+                    icon: 'bi-calendar-check',
+                    text: `Previsao: ${formatDate(project.data_previsao)}`,
+                    cls: diff <= 7 ? 'warning' : 'info'
+                });
+            }
+        }
+
+        // Tarefas pendentes
+        if (project.tasks_pendentes > 0) {
+            actions.push({
+                icon: 'bi-check2-square',
+                text: `${project.tasks_pendentes} tarefa${project.tasks_pendentes > 1 ? 's' : ''} pendente${project.tasks_pendentes > 1 ? 's' : ''}`,
+                cls: 'warning'
+            });
+        }
+
+        // Proxima tarefa
+        if (project.proxima_tarefa) {
+            actions.push({
+                icon: 'bi-arrow-right-circle',
+                text: project.proxima_tarefa.titulo,
+                cls: 'success'
+            });
+        }
+
+        return actions.slice(0, 2); // Max 2 actions
+    }
+
+    function renderProjectCard(project) {
+        const tipo = project.tipo || 'negocio';
+        const status = project.status || 'ativo';
+        const actions = getActionableInfo(project);
+
+        // Members
+        const membersHtml = (project.membros || []).slice(0, 3).map(m => {
             if (m.foto_url) {
-                return `<div class="project-member-avatar"><img src="${m.foto_url}" alt="${m.nome}"></div>`;
+                return `<div class="member-avatar"><img src="${m.foto_url}" alt="${m.nome}"></div>`;
             }
             const initials = m.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
-            return `<div class="project-member-avatar">${initials}</div>`;
+            return `<div class="member-avatar">${initials}</div>`;
         }).join('');
-
-        const extraMembers = (project.total_membros || 0) - 4;
+        const extraMembers = (project.total_membros || 0) - 3;
 
         return `
-            <div class="col-md-6 col-lg-4">
-                <div class="card project-card" onclick="openProject(${project.id})" style="cursor: pointer;">
-                    <div class="card-header" style="background: ${project.cor || typeInfo.color || '#6366f1'}15;">
-                        <div class="d-flex justify-content-between align-items-start mb-2">
-                            <span class="project-type-badge" style="background: ${typeInfo.color || '#6366f1'}20; color: ${typeInfo.color || '#6366f1'};">
-                                <i class="bi bi-${typeInfo.icon || 'folder'}"></i>
-                                ${typeInfo.label || project.tipo}
-                            </span>
-                            <span class="project-status-badge" style="background: ${statusInfo.color || '#6b7280'}20; color: ${statusInfo.color || '#6b7280'};">
-                                ${statusInfo.label || project.status}
-                            </span>
+            <div class="project-card" onclick="openProject(${project.id})">
+                <div class="project-header type-${tipo}">
+                    <h3 class="project-name">${project.nome}</h3>
+                    <div class="project-meta">
+                        <span class="project-badge badge-type ${tipo}">
+                            <i class="bi bi-${getTypeIcon(tipo)}"></i>
+                            ${getTypeLabel(tipo)}
+                        </span>
+                        <span class="project-badge badge-status ${status}">
+                            ${getStatusLabel(status)}
+                        </span>
+                        ${project.empresa_relacionada ? `<span style="font-size: 0.75rem; color: var(--gray-500);">${project.empresa_relacionada}</span>` : ''}
+                    </div>
+                </div>
+                <div class="project-body">
+                    ${project.descricao ? `<p class="project-description">${project.descricao}</p>` : ''}
+                    ${actions.length > 0 ? `
+                        <div class="project-actions-info">
+                            ${actions.map(a => `
+                                <div class="action-item ${a.cls}">
+                                    <i class="bi ${a.icon}"></i>
+                                    <span>${a.text}</span>
+                                </div>
+                            `).join('')}
                         </div>
-                        <h5 class="mb-1" style="font-weight: 600;">${project.nome}</h5>
-                        ${project.empresa_relacionada ? `<small class="text-muted">${project.empresa_relacionada}</small>` : ''}
-                    </div>
-                    <div class="card-body">
-                        ${project.descricao ? `<p class="text-muted small mb-3">${project.descricao.substring(0, 100)}${project.descricao.length > 100 ? '...' : ''}</p>` : ''}
-                        ${membersHtml ? `
-                            <div class="project-members">
-                                ${membersHtml}
-                                ${extraMembers > 0 ? `<div class="project-member-avatar" style="background: var(--gray-200);">+${extraMembers}</div>` : ''}
-                            </div>
-                        ` : ''}
-                    </div>
+                    ` : ''}
+                </div>
+                <div class="project-footer">
                     <div class="project-stats">
-                        <div class="project-stat">
+                        <div class="project-stat ${project.tasks_pendentes > 0 ? 'has-items' : ''}">
                             <i class="bi bi-check2-square"></i>
-                            ${project.tasks_pendentes || 0} tarefas
+                            ${project.tasks_pendentes || 0}
+                        </div>
+                        <div class="project-stat ${project.marcos_pendentes > 0 ? 'has-items' : ''}">
+                            <i class="bi bi-flag"></i>
+                            ${project.marcos_pendentes || 0}
                         </div>
                         <div class="project-stat">
-                            <i class="bi bi-flag"></i>
-                            ${project.marcos_pendentes || 0} marcos
+                            <i class="bi bi-envelope"></i>
+                            ${project.total_mensagens || 0}
                         </div>
                     </div>
+                    ${membersHtml ? `
+                        <div class="project-members">
+                            ${membersHtml}
+                            ${extraMembers > 0 ? `<div class="member-avatar">+${extraMembers}</div>` : ''}
+                        </div>
+                    ` : ''}
                 </div>
             </div>
         `;
@@ -390,44 +680,45 @@
 
     function renderProjectList() {
         return `
-            <div class="card">
-                <div class="table-responsive">
-                    <table class="table table-hover mb-0">
-                        <thead>
-                            <tr>
-                                <th>Projeto</th>
-                                <th>Tipo</th>
-                                <th>Status</th>
-                                <th>Tarefas</th>
-                                <th>Membros</th>
-                                <th>Atualizado</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${projects.map(p => `
-                                <tr onclick="openProject(${p.id})" style="cursor: pointer;">
-                                    <td>
-                                        <strong>${p.nome}</strong>
-                                        ${p.empresa_relacionada ? `<br><small class="text-muted">${p.empresa_relacionada}</small>` : ''}
-                                    </td>
-                                    <td>
-                                        <span class="badge" style="background: ${p.tipo_info?.color || '#6366f1'}20; color: ${p.tipo_info?.color || '#6366f1'};">
-                                            ${p.tipo_info?.label || p.tipo}
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <span class="badge" style="background: ${p.status_info?.color || '#6b7280'}20; color: ${p.status_info?.color || '#6b7280'};">
-                                            ${p.status_info?.label || p.status}
-                                        </span>
-                                    </td>
-                                    <td>${p.tasks_pendentes || 0}</td>
-                                    <td>${p.total_membros || 0}</td>
-                                    <td><small class="text-muted">${formatDate(p.atualizado_em)}</small></td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
+            <div class="projects-list">
+                ${projects.map(p => {
+                    const tipo = p.tipo || 'negocio';
+                    const status = p.status || 'ativo';
+                    return `
+                        <div class="list-item" onclick="openProject(${p.id})">
+                            <div class="list-item-main">
+                                <div class="list-type-indicator ${tipo}"></div>
+                                <div class="list-info">
+                                    <h4>${p.nome}</h4>
+                                    <div class="subtitle">
+                                        ${p.empresa_relacionada || getTypeLabel(tipo)}
+                                        ${p.data_previsao ? ` • Previsao: ${formatDate(p.data_previsao)}` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <span class="project-badge badge-type ${tipo}">
+                                    <i class="bi bi-${getTypeIcon(tipo)}"></i>
+                                    ${getTypeLabel(tipo)}
+                                </span>
+                                <span class="project-badge badge-status ${status}">
+                                    ${getStatusLabel(status)}
+                                </span>
+                            </div>
+                            <div class="project-stats">
+                                <div class="project-stat ${p.tasks_pendentes > 0 ? 'has-items' : ''}">
+                                    <i class="bi bi-check2-square"></i> ${p.tasks_pendentes || 0}
+                                </div>
+                                <div class="project-stat ${p.marcos_pendentes > 0 ? 'has-items' : ''}">
+                                    <i class="bi bi-flag"></i> ${p.marcos_pendentes || 0}
+                                </div>
+                            </div>
+                            <div style="font-size: 0.8rem; color: var(--gray-500);">
+                                ${formatDate(p.atualizado_em)}
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
             </div>
         `;
     }
@@ -439,28 +730,23 @@
         renderProjects();
     }
 
-    function filterByStatus(status) {
+    function filterByStatus(status, btn) {
         filterStatus = status;
         loadProjects();
-        // Update button states
-        document.querySelectorAll('[onclick^="filterByStatus"]').forEach(btn => {
-            btn.classList.remove('active');
-        });
-        event.target.classList.add('active');
+        // Update buttons
+        btn.closest('.filter-group').querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
     }
 
-    function filterByType(type) {
+    function filterByType(type, btn) {
         filterType = type;
         loadProjects();
-        // Update button states
-        document.querySelectorAll('[onclick^="filterByType"]').forEach(btn => {
-            btn.classList.remove('active');
-        });
-        event.target.classList.add('active');
+        // Update buttons
+        btn.closest('.filter-group').querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
     }
 
     function openNewProjectModal() {
-        // Reset form
         document.getElementById('projectNome').value = '';
         document.getElementById('projectTipo').value = 'negocio';
         document.getElementById('projectDescricao').value = '';
@@ -502,7 +788,6 @@
             const result = await response.json();
             if (result.project) {
                 bootstrap.Modal.getInstance(document.getElementById('newProjectModal')).hide();
-                // Open the new project
                 openProject(result.project.id);
             } else {
                 alert('Erro ao criar projeto: ' + (result.detail || 'Erro desconhecido'));
@@ -520,7 +805,7 @@
     function formatDate(dateStr) {
         if (!dateStr) return '-';
         const date = new Date(dateStr);
-        return date.toLocaleDateString('pt-BR');
+        return date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
     }
 </script>
 {% endblock %}
