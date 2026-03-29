@@ -1260,145 +1260,149 @@
 
                 <!-- Tab: Resumo -->
                 <div class="tab-content active" id="tab-resumo">
+                    <!-- Main 3-column grid -->
                     <div class="row g-3">
-                        <div class="col-md-8">
-                            <!-- Contact Details -->
-                            <div class="card mb-3">
-                                <div class="card-header">
-                                    <h2 class="card-title"><i class="bi bi-person-lines-fill"></i> Informacoes</h2>
+                        <!-- Column 1: Fatos -->
+                        <div class="col-md-4">
+                            <div class="card h-100">
+                                <div class="card-header d-flex justify-content-between align-items-center py-2">
+                                    <h2 class="card-title mb-0" style="font-size: 0.95rem;">
+                                        <i class="bi bi-lightbulb text-warning"></i> Fatos
+                                    </h2>
+                                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="extractFacts()" title="Extrair fatos com IA">
+                                        <i class="bi bi-magic"></i>
+                                    </button>
                                 </div>
-                                <div class="card-body">
-                                    <div class="row g-3">
-                                        ${emails.length > 0 ? `
-                                            <div class="col-md-6">
-                                                <label class="text-muted small">Emails</label>
-                                                ${emails.map(e => `<div><a href="mailto:${e.email}">${e.email}</a> <small class="text-muted">(${e.type || 'Email'})</small></div>`).join('')}
-                                            </div>
-                                        ` : ''}
-                                        ${telefones.length > 0 ? `
-                                            <div class="col-md-6">
-                                                <label class="text-muted small">Telefones</label>
-                                                ${telefones.map(t => `<div><a href="tel:${t.number}">${t.number}</a> ${t.whatsapp ? '<i class="bi bi-whatsapp text-success"></i>' : ''}</div>`).join('')}
-                                            </div>
-                                        ` : ''}
-                                        ${contact.linkedin ? `
-                                            <div class="col-12">
-                                                <label class="text-muted small">LinkedIn</label>
-                                                <div><a href="${contact.linkedin}" target="_blank">${contact.linkedin}</a></div>
-                                            </div>
-                                        ` : ''}
-                                        ${categorias.length > 0 ? `
-                                            <div class="col-12">
-                                                <label class="text-muted small">Categorias</label>
-                                                <div>${categorias.map(c => `<span class="badge bg-secondary me-1">${c}</span>`).join('')}</div>
-                                            </div>
-                                        ` : ''}
-                                    </div>
+                                <div class="card-body py-2" style="max-height: 350px; overflow-y: auto;">
+                                    ${facts && facts.length > 0 ? `
+                                        <ul class="list-unstyled mb-0" style="font-size: 0.85rem;">
+                                            ${facts.map(f => `
+                                                <li class="mb-2 pb-2 border-bottom d-flex">
+                                                    <i class="bi bi-dot text-primary flex-shrink-0"></i>
+                                                    <span>${f.fato || f.content || (typeof f === 'string' ? f : 'Fato')}</span>
+                                                </li>
+                                            `).join('')}
+                                        </ul>
+                                    ` : `
+                                        <div class="text-center text-muted py-3">
+                                            <i class="bi bi-lightbulb-off" style="font-size: 1.5rem;"></i>
+                                            <p class="mb-0 mt-2 small">Nenhum fato</p>
+                                            <button class="btn btn-sm btn-outline-primary mt-2" onclick="extractFacts()">
+                                                <i class="bi bi-magic me-1"></i>Extrair com IA
+                                            </button>
+                                        </div>
+                                    `}
                                 </div>
                             </div>
+                        </div>
 
-                            <!-- Quick AI Summary -->
-                            ${contact.resumo_ai ? `
-                                <div class="card">
-                                    <div class="card-header">
-                                        <h2 class="card-title"><i class="bi bi-robot"></i> Resumo IA</h2>
-                                    </div>
-                                    <div class="card-body">
-                                        <p style="font-size: 0.9rem; line-height: 1.6; white-space: pre-line; margin: 0;">${contact.resumo_ai}</p>
-                                    </div>
+                        <!-- Column 2: Projetos -->
+                        <div class="col-md-4">
+                            <div class="card h-100" id="projectsCard">
+                                <div class="card-header d-flex justify-content-between align-items-center py-2">
+                                    <h2 class="card-title mb-0" style="font-size: 0.95rem;">
+                                        <i class="bi bi-folder2 text-primary"></i> Projetos
+                                    </h2>
+                                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="openAddToProjectModal()" title="Adicionar a projeto">
+                                        <i class="bi bi-plus-lg"></i>
+                                    </button>
                                 </div>
-                            ` : ''}
-
-                            <!-- Current Briefing (loaded dynamically) -->
-                            <div class="card mt-3" id="current-briefing-card" style="display: none;">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <h2 class="card-title mb-0"><i class="bi bi-file-text"></i> Briefing Atual</h2>
-                                    <small class="text-muted" id="briefing-date"></small>
-                                </div>
-                                <div class="card-body">
-                                    <div id="briefing-content"></div>
-                                    <div id="briefing-opportunities" class="mt-3" style="display: none;">
-                                        <h6 class="text-primary"><i class="bi bi-lightbulb"></i> Oportunidades</h6>
-                                        <ul class="mb-0" id="briefing-opportunities-list"></ul>
-                                    </div>
-                                    <div id="briefing-talking-points" class="mt-3" style="display: none;">
-                                        <h6 class="text-success"><i class="bi bi-chat-dots"></i> Sugestoes de Pauta</h6>
-                                        <ul class="mb-0" id="briefing-talking-points-list"></ul>
-                                    </div>
-                                    <div class="mt-3 d-flex gap-2">
-                                        <button class="btn btn-sm btn-outline-primary" onclick="useBriefingForWhatsApp()">
-                                            <i class="bi bi-whatsapp"></i> WhatsApp
-                                        </button>
-                                        <button class="btn btn-sm btn-outline-secondary" onclick="useBriefingForEmail()">
-                                            <i class="bi bi-envelope"></i> Email
-                                        </button>
-                                        <button class="btn btn-sm btn-outline-info" onclick="generateBriefing()">
-                                            <i class="bi bi-arrow-clockwise"></i> Atualizar
-                                        </button>
+                                <div class="card-body py-2" id="projectsContainer" style="max-height: 350px; overflow-y: auto;">
+                                    <div class="text-center text-muted py-3">
+                                        <div class="spinner-border spinner-border-sm" role="status"></div>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
+                        <!-- Column 3: Tarefas -->
                         <div class="col-md-4">
-                            <!-- Facts -->
-                            <div class="card mb-3">
-                                <div class="card-header">
-                                    <h2 class="card-title"><i class="bi bi-lightbulb"></i> Fatos</h2>
-                                </div>
-                                <div class="card-body">
-                                    ${facts && facts.length > 0 ? `
-                                        <ul class="list-unstyled mb-0" style="font-size: 0.9rem;">
-                                            ${facts.slice(0, 5).map(f => `<li class="mb-2"><i class="bi bi-dot"></i> ${f.fato || f.content || (typeof f === 'string' ? f : 'Fato sem descricao')}</li>`).join('')}
-                                        </ul>
-                                    ` : `
-                                        <div class="text-center text-muted py-2">
-                                            <i class="bi bi-lightbulb" style="font-size: 1.5rem;"></i>
-                                            <p class="mb-0 mt-2 small">Nenhum fato registrado</p>
-                                        </div>
-                                    `}
-                                </div>
-                            </div>
-
-                            <!-- Recent Activity -->
-                            <div class="card">
-                                <div class="card-header">
-                                    <h2 class="card-title"><i class="bi bi-activity"></i> Atividade</h2>
-                                </div>
-                                <div class="card-body">
-                                    ${memories.length > 0 ? `
-                                        <ul class="list-unstyled mb-0" style="font-size: 0.85rem;">
-                                            ${memories.slice(0, 3).map(m => `
-                                                <li class="mb-2 pb-2 border-bottom">
-                                                    <div class="fw-medium">${m.type || 'Interacao'}</div>
-                                                    <small class="text-muted">${formatDateTime(m.created_at)}</small>
-                                                </li>
-                                            `).join('')}
-                                        </ul>
-                                        <a href="#" onclick="switchTab('timeline'); return false;" class="small">Ver timeline completa →</a>
-                                    ` : `
-                                        <div class="text-center text-muted py-2">
-                                            <p class="mb-0 small">Nenhuma atividade</p>
-                                        </div>
-                                    `}
-                                </div>
-                            </div>
-
-                            <!-- Projects -->
-                            <div class="card mt-3" id="projectsCard">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <h2 class="card-title mb-0"><i class="bi bi-folder2"></i> Projetos</h2>
-                                    <button class="btn btn-sm btn-outline-primary" onclick="openAddToProjectModal()">
-                                        <i class="bi bi-plus"></i>
+                            <div class="card h-100" id="tasksCard">
+                                <div class="card-header d-flex justify-content-between align-items-center py-2">
+                                    <h2 class="card-title mb-0" style="font-size: 0.95rem;">
+                                        <i class="bi bi-check2-square text-success"></i> Tarefas
+                                    </h2>
+                                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="quickCreateTask()" title="Criar tarefa">
+                                        <i class="bi bi-plus-lg"></i>
                                     </button>
                                 </div>
-                                <div class="card-body" id="projectsContainer">
-                                    <div class="text-center text-muted py-2">
+                                <div class="card-body py-2" id="tasksContainer" style="max-height: 350px; overflow-y: auto;">
+                                    <div class="text-center text-muted py-3">
                                         <div class="spinner-border spinner-border-sm" role="status"></div>
-                                        <p class="mb-0 small mt-2">Carregando...</p>
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- AI Summary (if available) -->
+                    ${contact.resumo_ai ? `
+                        <div class="card mt-3">
+                            <div class="card-header py-2">
+                                <h2 class="card-title mb-0" style="font-size: 0.95rem;">
+                                    <i class="bi bi-robot text-info"></i> Resumo IA
+                                </h2>
+                            </div>
+                            <div class="card-body py-2">
+                                <p style="font-size: 0.85rem; line-height: 1.5; white-space: pre-line; margin: 0;">${contact.resumo_ai}</p>
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <!-- Current Briefing (loaded dynamically) -->
+                    <div class="card mt-3" id="current-briefing-card" style="display: none;">
+                        <div class="card-header d-flex justify-content-between align-items-center py-2">
+                            <h2 class="card-title mb-0" style="font-size: 0.95rem;">
+                                <i class="bi bi-file-text text-purple"></i> Briefing Atual
+                            </h2>
+                            <small class="text-muted" id="briefing-date"></small>
+                        </div>
+                        <div class="card-body py-2">
+                            <div id="briefing-content" style="font-size: 0.85rem;"></div>
+                            <div id="briefing-opportunities" class="mt-2" style="display: none;">
+                                <h6 class="text-primary small mb-1"><i class="bi bi-lightbulb"></i> Oportunidades</h6>
+                                <ul class="mb-0 small" id="briefing-opportunities-list"></ul>
+                            </div>
+                            <div id="briefing-talking-points" class="mt-2" style="display: none;">
+                                <h6 class="text-success small mb-1"><i class="bi bi-chat-dots"></i> Sugestoes</h6>
+                                <ul class="mb-0 small" id="briefing-talking-points-list"></ul>
+                            </div>
+                            <div class="mt-2 d-flex gap-2">
+                                <button class="btn btn-sm btn-outline-success" onclick="useBriefingForWhatsApp()">
+                                    <i class="bi bi-whatsapp"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="useBriefingForEmail()">
+                                    <i class="bi bi-envelope"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-info" onclick="generateBriefing()">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Recent Activity (compact) -->
+                    <div class="card mt-3">
+                        <div class="card-header d-flex justify-content-between align-items-center py-2">
+                            <h2 class="card-title mb-0" style="font-size: 0.95rem;">
+                                <i class="bi bi-activity text-secondary"></i> Atividade Recente
+                            </h2>
+                            <a href="#" onclick="switchTab('timeline'); return false;" class="small text-decoration-none">
+                                Ver tudo <i class="bi bi-arrow-right"></i>
+                            </a>
+                        </div>
+                        <div class="card-body py-2">
+                            ${memories.length > 0 ? `
+                                <div class="d-flex flex-wrap gap-2">
+                                    ${memories.slice(0, 5).map(m => `
+                                        <span class="badge bg-light text-dark border" style="font-size: 0.75rem;">
+                                            ${m.type || 'Interacao'} - ${formatDate(m.created_at)}
+                                        </span>
+                                    `).join('')}
+                                </div>
+                            ` : `
+                                <p class="text-muted small mb-0">Nenhuma atividade registrada</p>
+                            `}
                         </div>
                     </div>
                 </div>
@@ -3014,9 +3018,105 @@
             }
         }
 
-        // Load projects when page loads
+        // ============ TASKS FUNCTIONS ============
+
+        async function loadContactTasks() {
+            const container = document.getElementById('tasksContainer');
+            if (!container) return;
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/tasks`);
+                if (!response.ok) throw new Error('API error');
+
+                const data = await response.json();
+                const tasks = data.tasks || [];
+                renderTasks(tasks);
+            } catch (error) {
+                console.error('Error loading tasks:', error);
+                container.innerHTML = `
+                    <div class="text-center text-muted py-2">
+                        <p class="mb-0 small">Erro ao carregar</p>
+                    </div>
+                `;
+            }
+        }
+
+        function renderTasks(tasks) {
+            const container = document.getElementById('tasksContainer');
+            if (!container) return;
+
+            if (tasks.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center text-muted py-3">
+                        <i class="bi bi-check2-all" style="font-size: 1.5rem;"></i>
+                        <p class="mb-2 small mt-2">Nenhuma tarefa</p>
+                        <button class="btn btn-sm btn-outline-success" onclick="quickCreateTask()">
+                            <i class="bi bi-plus me-1"></i>Nova Tarefa
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            const pending = tasks.filter(t => t.status === 'pending');
+            const completed = tasks.filter(t => t.status === 'completed').slice(0, 3);
+
+            container.innerHTML = `
+                <ul class="list-unstyled mb-0" style="font-size: 0.85rem;">
+                    ${pending.map(t => `
+                        <li class="d-flex align-items-start py-2 border-bottom">
+                            <input type="checkbox" class="form-check-input me-2 mt-1"
+                                   onchange="toggleContactTask(${t.id}, this.checked)"
+                                   style="cursor: pointer;">
+                            <div class="flex-grow-1">
+                                <div class="fw-medium">${t.titulo}</div>
+                                ${t.data_vencimento ? `
+                                    <small class="text-${new Date(t.data_vencimento) < new Date() ? 'danger' : 'muted'}">
+                                        <i class="bi bi-calendar"></i> ${formatDate(t.data_vencimento)}
+                                    </small>
+                                ` : ''}
+                                ${t.project_nome ? `
+                                    <small class="text-primary ms-2">
+                                        <i class="bi bi-folder"></i> ${t.project_nome}
+                                    </small>
+                                ` : ''}
+                            </div>
+                        </li>
+                    `).join('')}
+                    ${completed.length > 0 ? `
+                        <li class="pt-2">
+                            <small class="text-muted">Concluidas</small>
+                        </li>
+                        ${completed.map(t => `
+                            <li class="d-flex align-items-center py-1 text-muted">
+                                <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                <span class="text-decoration-line-through small">${t.titulo}</span>
+                            </li>
+                        `).join('')}
+                    ` : ''}
+                </ul>
+            `;
+        }
+
+        async function toggleContactTask(taskId, completed) {
+            try {
+                await fetch(`/api/projects/tasks/${taskId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: completed ? 'completed' : 'pending' })
+                });
+                loadContactTasks();
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+
+        // Load projects and tasks when page loads
         document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(loadContactProjects, 500); // Load after contact data
+            setTimeout(() => {
+                loadContactProjects();
+                loadContactTasks();
+            }, 500);
         });
     </script>
 </body>

@@ -9653,6 +9653,23 @@ async def api_contact_projects(contact_id: int):
         return {"projects": projects}
 
 
+@app.get("/api/contacts/{contact_id}/tasks")
+async def api_contact_tasks(contact_id: int):
+    """Retorna tarefas vinculadas ao contato."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT t.*, p.nome as project_nome
+            FROM tasks t
+            LEFT JOIN projects p ON p.id = t.project_id
+            WHERE t.contact_id = %s
+            ORDER BY t.status = 'pending' DESC, t.prioridade ASC, t.data_vencimento ASC NULLS LAST
+            LIMIT 20
+        """, (contact_id,))
+        tasks = [dict(row) for row in cursor.fetchall()]
+        return {"tasks": tasks}
+
+
 @app.get("/api/projects/available")
 async def api_available_projects():
     """Retorna lista de projetos ativos para selecao."""
