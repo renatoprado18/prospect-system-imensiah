@@ -613,8 +613,9 @@
 
             document.getElementById('searchResults').innerHTML = (results.contacts || results || []).map(c => {
                 const initials = c.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+                const escapedNome = c.nome.replace(/'/g, "\\'").replace(/"/g, "&quot;");
                 return `
-                    <div class="search-result-item" onclick="selectContact(${c.id}, '${c.nome}')">
+                    <div class="search-result-item" onclick="selectContact(${c.id}, '${escapedNome}')">
                         <div class="member-avatar" style="width: 36px; height: 36px;">
                             ${c.foto_url ? `<img src="${c.foto_url}">` : initials}
                         </div>

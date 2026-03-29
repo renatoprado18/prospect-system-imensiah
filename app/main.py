@@ -9606,6 +9606,38 @@ async def api_remove_project_member(project_id: int, contact_id: int):
     raise HTTPException(status_code=404, detail="Membro nao encontrado")
 
 
+@app.get("/api/contacts/{contact_id}/projects")
+async def api_contact_projects(contact_id: int):
+    """Retorna projetos que o contato participa."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT p.id, p.nome, p.tipo, p.status, p.descricao, pm.papel,
+                   (SELECT COUNT(*) FROM project_members WHERE project_id = p.id) as total_membros,
+                   (SELECT COUNT(*) FROM tasks WHERE project_id = p.id AND status = 'pending') as tasks_pendentes
+            FROM projects p
+            JOIN project_members pm ON pm.project_id = p.id
+            WHERE pm.contact_id = %s
+            ORDER BY p.status = 'ativo' DESC, p.nome
+        """, (contact_id,))
+        projects = [dict(row) for row in cursor.fetchall()]
+        return {"projects": projects}
+
+
+@app.get("/api/projects/available")
+async def api_available_projects():
+    """Retorna lista de projetos ativos para selecao."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, tipo, status
+            FROM projects
+            WHERE status = 'ativo'
+            ORDER BY nome
+        """)
+        return {"projects": [dict(row) for row in cursor.fetchall()]}
+
+
 # ============== PROJECT MILESTONES ==============
 
 @app.post("/api/projects/{project_id}/milestones")
