@@ -542,13 +542,16 @@
             if (filterType) url += `tipo=${filterType}&`;
 
             const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
             const data = await response.json();
             projects = data.projects || [];
             renderProjects();
         } catch (error) {
             console.error('Error loading projects:', error);
             document.getElementById('projectsContainer').innerHTML = `
-                <div class="alert alert-danger">Erro ao carregar projetos</div>
+                <div class="alert alert-danger">Erro ao carregar projetos: ${error.message}</div>
             `;
         }
     }
