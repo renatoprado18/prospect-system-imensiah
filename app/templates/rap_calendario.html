@@ -86,11 +86,12 @@
     /* Grid do calendario */
     .calendar-grid {
         display: grid;
-        grid-template-columns: repeat(7, 1fr);
+        grid-template-columns: repeat(7, minmax(0, 1fr));
         gap: 1px;
         background: var(--gray-200);
         border-radius: 12px;
         overflow: hidden;
+        width: 100%;
     }
 
     .calendar-day-header {
@@ -109,6 +110,9 @@
         padding: 8px;
         cursor: pointer;
         transition: all 0.2s;
+        /* Forcar celula a respeitar o grid */
+        min-width: 0;
+        overflow: hidden;
     }
 
     .calendar-day:hover {
@@ -146,6 +150,8 @@
         display: flex;
         flex-direction: column;
         gap: 2px;
+        min-width: 0;
+        overflow: hidden;
     }
 
     .day-event {
@@ -156,6 +162,8 @@
         overflow: hidden;
         text-overflow: ellipsis;
         cursor: pointer;
+        max-width: 100%;
+        display: block;
     }
 
     .day-event.meeting {

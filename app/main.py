@@ -9539,6 +9539,12 @@ async def api_active_projects(limit: int = 5):
     }
 
 
+@app.get("/api/projects/active-summary")
+async def api_active_projects_summary(limit: int = 5):
+    """Retorna array de projetos ativos para widget do dashboard."""
+    return get_active_projects_summary(limit=limit)
+
+
 @app.get("/api/projects/{project_id}")
 async def api_get_project(project_id: int):
     """Retorna projeto com todos os detalhes."""
