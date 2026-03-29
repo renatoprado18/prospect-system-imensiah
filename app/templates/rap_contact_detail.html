@@ -2288,9 +2288,10 @@
 
                 const result = await response.json();
                 if (result.draft) {
-                    // Copy to clipboard
-                    await navigator.clipboard.writeText(result.draft);
-                    showNotification('Mensagem copiada! Abrindo WhatsApp...', 'success');
+                    const message = result.draft;
+
+                    // Also copy to clipboard as backup
+                    await navigator.clipboard.writeText(message);
 
                     // Get phone from API response or from contact data
                     let phone = result.contact_info?.phone;
@@ -2306,9 +2307,12 @@
                         if (cleanPhone.length <= 11) {
                             cleanPhone = '55' + cleanPhone;
                         }
-                        window.open(`https://wa.me/${cleanPhone}`, '_blank');
+                        // Open WhatsApp with pre-filled message
+                        const encodedMessage = encodeURIComponent(message);
+                        window.open(`https://wa.me/${cleanPhone}?text=${encodedMessage}`, '_blank');
+                        showNotification('WhatsApp aberto com mensagem!', 'success');
                     } else {
-                        showNotification('Telefone nao encontrado', 'warning');
+                        showNotification('Telefone nao encontrado. Mensagem copiada para clipboard.', 'warning');
                     }
                 } else {
                     showNotification('Erro: ' + (result.detail || 'Falha ao gerar mensagem'), 'error');
