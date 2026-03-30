@@ -3563,33 +3563,59 @@
                 return;
             }
 
-            container.innerHTML = `
-                <div class="messages-list" style="font-size: 0.85rem;">
+            // Bubble styles
+            const styles = `
+                <style>
+                    .msg-row { display: flex; margin-bottom: 8px; }
+                    .msg-row.outgoing { justify-content: flex-end; }
+                    .msg-bubble {
+                        max-width: 85%;
+                        padding: 8px 12px;
+                        border-radius: 12px;
+                        font-size: 0.8rem;
+                        line-height: 1.4;
+                        position: relative;
+                    }
+                    .msg-bubble.incoming {
+                        background: #f8f9fa;
+                        border: 1px solid #e9ecef;
+                        border-bottom-left-radius: 4px;
+                    }
+                    .msg-bubble.outgoing {
+                        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+                        color: white;
+                        border-bottom-right-radius: 4px;
+                    }
+                    .msg-bubble .msg-time {
+                        font-size: 0.6rem;
+                        opacity: 0.7;
+                        margin-top: 4px;
+                    }
+                    .msg-bubble.outgoing .msg-time { text-align: right; }
+                    .msg-channel {
+                        position: absolute;
+                        top: -8px;
+                        font-size: 0.65rem;
+                    }
+                    .msg-bubble.incoming .msg-channel { left: 8px; }
+                    .msg-bubble.outgoing .msg-channel { right: 8px; }
+                </style>
+            `;
+
+            container.innerHTML = styles + `
+                <div class="messages-list">
                     ${messages.map(m => {
                         const isWhatsApp = m.canal === 'whatsapp';
-                        const isIncoming = m.direcao === 'incoming';
-                        const channelIcon = isWhatsApp ? 'bi-whatsapp' : 'bi-envelope';
-                        const channelColor = isWhatsApp ? 'text-success' : 'text-primary';
-                        const preview = (m.conteudo || '').substring(0, 80) + ((m.conteudo || '').length > 80 ? '...' : '');
-
-                        // Visual differentiation for direction
-                        const directionIcon = isIncoming ? 'bi-arrow-down-left' : 'bi-arrow-up-right';
-                        const directionColor = isIncoming ? 'text-info' : 'text-warning';
-                        const bgClass = isIncoming ? 'bg-light' : '';
-                        const directionLabel = isIncoming ? 'Deles' : 'Você';
+                        const isOutgoing = m.direcao === 'outgoing';
+                        const channelIcon = isWhatsApp ? 'bi-whatsapp text-success' : 'bi-envelope text-primary';
+                        const preview = (m.conteudo || '').substring(0, 100) + ((m.conteudo || '').length > 100 ? '...' : '');
 
                         return `
-                            <div class="d-flex align-items-start py-2 border-bottom ${bgClass}" style="border-radius: 4px; margin-bottom: 2px;">
-                                <div class="me-2 mt-1 d-flex flex-column align-items-center" style="width: 24px;">
-                                    <i class="bi ${channelIcon} ${channelColor}" style="font-size: 0.9rem;"></i>
-                                    <i class="bi ${directionIcon} ${directionColor}" style="font-size: 0.65rem;"></i>
-                                </div>
-                                <div class="flex-grow-1 min-width-0">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <span class="badge ${isIncoming ? 'bg-info' : 'bg-warning'} bg-opacity-25 ${isIncoming ? 'text-info' : 'text-warning'}" style="font-size: 0.65rem;">${directionLabel}</span>
-                                        <small class="text-muted">${formatDateTime(m.enviado_em || m.created_at)}</small>
-                                    </div>
-                                    <p class="mb-0 text-muted small text-truncate">${preview}</p>
+                            <div class="msg-row ${isOutgoing ? 'outgoing' : ''}">
+                                <div class="msg-bubble ${isOutgoing ? 'outgoing' : 'incoming'}">
+                                    <span class="msg-channel"><i class="bi ${channelIcon}"></i></span>
+                                    <div>${preview}</div>
+                                    <div class="msg-time">${formatDateTime(m.enviado_em || m.created_at)}</div>
                                 </div>
                             </div>
                         `;
