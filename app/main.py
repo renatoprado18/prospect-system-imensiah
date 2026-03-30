@@ -623,17 +623,10 @@ async def rap_settings(request: Request):
     })
 
 
-@app.get("/rap/whatsapp", response_class=HTMLResponse)
+@app.get("/rap/whatsapp")
 async def rap_whatsapp(request: Request):
-    """RAP WhatsApp Integration Page"""
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
-
-    return templates.TemplateResponse("rap_whatsapp.html", {
-        "request": request,
-        "user": user
-    })
+    """RAP WhatsApp - Redireciona para Configuracoes"""
+    return RedirectResponse(url="/configuracoes", status_code=302)
 
 
 @app.get("/api/user/{email}")

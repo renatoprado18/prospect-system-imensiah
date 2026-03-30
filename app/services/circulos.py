@@ -1,15 +1,27 @@
 """
 Servico de Circulos - Classificacao e Health Score
 
-Sistema de classificacao de contatos em 5 niveis de proximidade:
-- Circulo 1: Intimo (familia, amigos proximos)
-- Circulo 2: Proximo (parceiros, mentores, conselheiros)
-- Circulo 3: Ativo (networking ativo, clientes-chave)
-- Circulo 4: Conhecido (contatos ocasionais)
-- Circulo 5: Arquivo (demais contatos)
+Sistema DUAL de classificacao de contatos:
+
+PESSOAL (baseado em proximidade real, nao grau de parentesco):
+- Circulo 1: Nucleo (convivio diario/semanal) - filhos, pais, namorada, ex-esposa
+- Circulo 2: Proximo (convivio frequente) - irmaos, avos, amigos intimos
+- Circulo 3: Relacionamento proximo - amigos, alguns primos, padrinhos
+- Circulo 4: Ocasional - primos distantes, conhecidos
+- Circulo 5: Distante/Arquivo
+
+PROFISSIONAL (baseado em impacto no negocio):
+- Circulo 1: Core business - clientes atuais, socios, parceiros ativos, fornecedores criticos
+- Circulo 2: Influencia estrategica - conselheiros, mentores, investidores
+- Circulo 3: Networking ativo - prospects, fornecedores, ex-clientes ativos
+- Circulo 4: Ocasional - contatos de eventos, ex-clientes
+- Circulo 5: Arquivo profissional
+
+Contatos MISTOS participam de ambos os circulos.
+Health Score usa a MENOR frequencia (mais urgente).
 
 Autor: INTEL
-Data: 2026-03-25
+Data: 2026-03-25 (Atualizado: 2026-03-29)
 """
 
 from datetime import datetime, timedelta
@@ -20,60 +32,142 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Configuracao padrao dos circulos
-CIRCULO_CONFIG = {
+# ============== CONFIGURACAO CIRCULOS PESSOAIS ==============
+CIRCULO_PESSOAL_CONFIG = {
     1: {
-        "nome": "Intimo",
-        "descricao": "Familia e amigos proximos",
+        "nome": "Nucleo",
+        "descricao": "Convivio diario/semanal",
         "frequencia_dias": 7,
         "cor": "#FF6B6B",
-        "icone": "heart"
+        "icone": "heart-fill"
     },
     2: {
         "nome": "Proximo",
-        "descricao": "Parceiros e mentores",
+        "descricao": "Convivio frequente",
         "frequencia_dias": 14,
-        "cor": "#4ECDC4",
-        "icone": "star"
+        "cor": "#F87171",
+        "icone": "heart"
     },
     3: {
-        "nome": "Ativo",
-        "descricao": "Networking ativo",
+        "nome": "Relacionamento",
+        "descricao": "Relacionamento proximo",
         "frequencia_dias": 30,
-        "cor": "#45B7D1",
-        "icone": "briefcase"
+        "cor": "#FB923C",
+        "icone": "people"
     },
     4: {
-        "nome": "Conhecido",
-        "descricao": "Contatos ocasionais",
+        "nome": "Ocasional",
+        "descricao": "Relacionamento ocasional",
         "frequencia_dias": 90,
-        "cor": "#96CEB4",
-        "icone": "users"
+        "cor": "#FBBF24",
+        "icone": "person"
     },
     5: {
-        "nome": "Arquivo",
-        "descricao": "Demais contatos",
-        "frequencia_dias": 365,
-        "cor": "#DDA0DD",
+        "nome": "Distante",
+        "descricao": "Distante/Arquivo",
+        "frequencia_dias": 180,
+        "cor": "#A3A3A3",
         "icone": "archive"
     },
 }
 
-# Tags que fazem override direto para circulo especifico
-TAG_OVERRIDES = {
+# ============== CONFIGURACAO CIRCULOS PROFISSIONAIS ==============
+CIRCULO_PROFISSIONAL_CONFIG = {
+    1: {
+        "nome": "Core",
+        "descricao": "Revenue/Operacao critica",
+        "frequencia_dias": 14,
+        "cor": "#6366F1",
+        "icone": "briefcase-fill"
+    },
+    2: {
+        "nome": "Estrategico",
+        "descricao": "Influencia estrategica",
+        "frequencia_dias": 21,
+        "cor": "#8B5CF6",
+        "icone": "star-fill"
+    },
+    3: {
+        "nome": "Networking",
+        "descricao": "Networking ativo",
+        "frequencia_dias": 45,
+        "cor": "#0EA5E9",
+        "icone": "diagram-3"
+    },
+    4: {
+        "nome": "Ocasional",
+        "descricao": "Relacionamento ocasional",
+        "frequencia_dias": 90,
+        "cor": "#14B8A6",
+        "icone": "person-badge"
+    },
+    5: {
+        "nome": "Arquivo",
+        "descricao": "Arquivo profissional",
+        "frequencia_dias": 365,
+        "cor": "#A3A3A3",
+        "icone": "archive"
+    },
+}
+
+# Manter config antiga para compatibilidade (usa menor frequencia)
+CIRCULO_CONFIG = CIRCULO_PESSOAL_CONFIG
+
+# ============== TAGS PESSOAIS (Override para circulo especifico) ==============
+TAG_PESSOAL_OVERRIDES = {
     1: [
-        "familia", "family", "esposa", "wife", "marido", "husband",
-        "filho", "filha", "son", "daughter", "pai", "mae", "father", "mother",
-        "irmao", "irma", "brother", "sister", "avo", "grandparent",
-        "primo", "prima", "cousin", "tio", "tia", "uncle", "aunt",
-        "sogro", "sogra", "cunhado", "cunhada"
+        "filho", "filha", "pai", "mae", "namorada", "namorado",
+        "esposa", "esposo", "marido", "wife", "husband",
+        "ex-esposa", "ex-marido"  # co-parenting
     ],
     2: [
-        "conselho", "board", "advisor", "conselheiro", "mentor",
-        "socio", "partner", "co-founder", "cofundador",
-        "investidor", "investor", "angel"
+        "irmao", "irma", "avo", "neto", "neta",
+        "amigo-intimo", "melhor-amigo"
+    ],
+    3: [
+        "tio", "tia", "primo", "prima", "sobrinho", "sobrinha",
+        "sogro", "sogra", "cunhado", "cunhada", "padrinho", "madrinha",
+        "amigo", "amigo-proximo"
+    ],
+    4: [
+        "conhecido", "vizinho"
     ],
 }
+
+# ============== TAGS PROFISSIONAIS (Override para circulo especifico) ==============
+TAG_PROFISSIONAL_OVERRIDES = {
+    1: [
+        "cliente", "cliente-ativo", "socio", "partner",
+        "parceiro-ativo", "fornecedor-critico", "co-founder"
+    ],
+    2: [
+        "conselheiro", "conselho", "mentor", "advisor",
+        "investidor", "investor", "angel", "board"
+    ],
+    3: [
+        "prospect", "fornecedor", "ex-cliente-ativo",
+        "parceiro", "networking"
+    ],
+    4: [
+        "ex-cliente", "contato-evento", "lead"
+    ],
+}
+
+# Tags que identificam contexto (pessoal vs profissional)
+TAGS_PESSOAIS = [
+    "familia", "family", "filho", "filha", "pai", "mae", "irmao", "irma",
+    "avo", "primo", "tio", "sogro", "cunhado", "amigo", "friend",
+    "namorada", "namorado", "esposa", "esposo", "marido", "wife"
+]
+
+TAGS_PROFISSIONAIS = [
+    "cliente", "client", "socio", "partner", "fornecedor", "supplier",
+    "conselheiro", "advisor", "mentor", "investidor", "investor",
+    "prospect", "lead", "networking", "profissional", "business"
+]
+
+# Tags antigas para compatibilidade
+TAG_OVERRIDES = TAG_PESSOAL_OVERRIDES
 
 # Tags que dao bonus (nao override)
 BONUS_TAGS = {

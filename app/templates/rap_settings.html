@@ -186,6 +186,59 @@
         .settings-section { margin-bottom: 32px; }
         .section-title { font-size: 1.1rem; font-weight: 600; color: var(--dark); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
 
+        /* WhatsApp Section */
+        .whatsapp-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+        .whatsapp-status.connected { background: rgba(37, 211, 102, 0.15); color: #128C7E; }
+        .whatsapp-status.disconnected { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
+        .whatsapp-status.connecting { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
+        .whatsapp-status .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+        .whatsapp-status.connected .dot { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+        .whatsapp-card {
+            background: linear-gradient(135deg, #25D366 0%, #128C7E 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .whatsapp-card .info-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: rgba(255,255,255,0.15);
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-top: 16px;
+        }
+        .qr-container {
+            text-align: center;
+            padding: 24px;
+            background: var(--gray-100);
+            border-radius: 12px;
+        }
+        .qr-container img { border-radius: 8px; }
+
+        .import-area {
+            border: 2px dashed var(--gray-300);
+            border-radius: 12px;
+            padding: 32px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .import-area:hover {
+            border-color: #25D366;
+            background: rgba(37, 211, 102, 0.05);
+        }
+
         @media (max-width: 768px) {
             .sidebar { display: none; }
             .main-content { margin-left: 0; padding: 16px; }
@@ -449,6 +502,129 @@
                                 <div style="font-size: 2rem; font-weight: 700; color: var(--secondary);" id="statWithPhoto">-</div>
                                 <div style="color: var(--gray-500); font-size: 0.9rem;">Com Foto</div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- WhatsApp Section -->
+        <div class="settings-section">
+            <h2 class="section-title">
+                <i class="bi bi-whatsapp" style="color: #25D366;"></i>
+                WhatsApp
+            </h2>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">Conexao via Evolution API</h3>
+                    <div id="waStatusBadge">
+                        <span class="whatsapp-status connecting">
+                            <span class="dot"></span>
+                            Verificando...
+                        </span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <!-- Connected State -->
+                    <div id="waConnected" style="display: none;">
+                        <div class="whatsapp-card">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <div>
+                                    <h5 class="mb-1"><i class="bi bi-check-circle me-2"></i>Conectado</h5>
+                                    <small style="opacity: 0.9;">Mensagens sendo recebidas automaticamente</small>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-sm btn-outline-light" id="waWebhookBtn" onclick="setupWaWebhook()">
+                                        <i class="bi bi-gear me-1"></i>Webhook
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-light" onclick="disconnectWa()">
+                                        <i class="bi bi-x-circle me-1"></i>Desconectar
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="info-row">
+                                <i class="bi bi-phone" style="font-size: 1.3rem;"></i>
+                                <div class="flex-grow-1">
+                                    <small style="opacity: 0.8;">Numero conectado</small>
+                                    <div class="fw-medium" id="waNumber">+55 11 98415-3337</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="waWebhookStatus" class="mt-3" style="display: none;">
+                            <div class="alert alert-info mb-0 py-2">
+                                <i class="bi bi-info-circle me-1"></i>
+                                <span id="waWebhookText"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Disconnected State - QR Code -->
+                    <div id="waDisconnected" style="display: none;">
+                        <div class="qr-container">
+                            <img id="waQrImage" src="" alt="QR Code" width="220" style="display: none;" />
+                            <div id="waQrLoading">
+                                <div class="spinner-border text-secondary mb-3"></div>
+                                <p class="text-muted">Gerando QR Code...</p>
+                            </div>
+                            <div class="mt-3">
+                                <p class="text-muted mb-2"><strong>Para conectar:</strong></p>
+                                <ol class="text-start text-muted small" style="max-width: 280px; margin: 0 auto;">
+                                    <li>Abra o WhatsApp no celular</li>
+                                    <li>Toque em <strong>Aparelhos Conectados</strong></li>
+                                    <li>Toque em <strong>Conectar Aparelho</strong></li>
+                                    <li>Aponte a camera para o QR Code</li>
+                                </ol>
+                            </div>
+                            <button class="btn btn-outline-secondary btn-sm mt-3" onclick="refreshWaQR()">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Atualizar QR
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Not Configured State -->
+                    <div id="waNotConfigured" style="display: none;">
+                        <div class="alert alert-warning mb-0">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            <strong>Evolution API nao configurada.</strong><br>
+                            <small>Configure as variaveis EVOLUTION_API_URL e EVOLUTION_API_KEY no Vercel.</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Import History Card -->
+            <div class="card" id="waImportCard" style="display: none;">
+                <div class="card-header">
+                    <h3 class="card-title"><i class="bi bi-file-earmark-text"></i> Importar Historico</h3>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-3">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Importe conversas exportadas do WhatsApp (arquivos .txt)
+                    </p>
+                    <div class="import-area" id="waImportArea">
+                        <i class="bi bi-cloud-upload" style="font-size: 2.5rem; color: #25D366;"></i>
+                        <p class="mt-2 mb-1"><strong>Arraste arquivos .txt aqui</strong></p>
+                        <small class="text-muted">Ou clique para selecionar</small>
+                        <input type="file" id="waFileInput" accept=".txt" multiple style="display: none;">
+                    </div>
+                    <div id="waImportPreview" style="display: none;" class="mt-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span><strong id="waFileCount">0</strong> arquivos</span>
+                            <span class="text-muted" id="waMsgCount">0 mensagens</span>
+                        </div>
+                        <div id="waFilesList" style="max-height: 200px; overflow-y: auto;"></div>
+                        <div class="d-flex gap-2 mt-3">
+                            <button class="btn btn-outline-secondary" onclick="clearWaImport()">Limpar</button>
+                            <button class="btn btn-success flex-grow-1" onclick="confirmWaImport()" id="waImportBtn">
+                                <i class="bi bi-check-circle me-1"></i>Importar
+                            </button>
+                        </div>
+                    </div>
+                    <div id="waImportResult" style="display: none;" class="mt-3">
+                        <div class="alert alert-success mb-0">
+                            <i class="bi bi-check-circle me-2"></i><span id="waImportResultText"></span>
                         </div>
                     </div>
                 </div>
@@ -747,6 +923,301 @@
                 minute: '2-digit'
             });
         }
+
+        // ============== WhatsApp Functions ==============
+        let waContactsList = [];
+        let waBatchFiles = [];
+
+        async function checkWaStatus() {
+            try {
+                const response = await fetch('/api/evolution/status', { credentials: 'include' });
+                const data = await response.json();
+
+                const statusBadge = document.getElementById('waStatusBadge');
+                const connected = document.getElementById('waConnected');
+                const disconnected = document.getElementById('waDisconnected');
+                const notConfigured = document.getElementById('waNotConfigured');
+                const importCard = document.getElementById('waImportCard');
+
+                if (!data.configured) {
+                    statusBadge.innerHTML = '<span class="whatsapp-status disconnected"><span class="dot"></span>Nao Configurado</span>';
+                    connected.style.display = 'none';
+                    disconnected.style.display = 'none';
+                    notConfigured.style.display = 'block';
+                    importCard.style.display = 'none';
+                    return;
+                }
+
+                notConfigured.style.display = 'none';
+
+                if (data.connected) {
+                    statusBadge.innerHTML = '<span class="whatsapp-status connected"><span class="dot"></span>Conectado</span>';
+                    connected.style.display = 'block';
+                    disconnected.style.display = 'none';
+                    importCard.style.display = 'block';
+                    checkWaWebhook();
+                    loadWaContacts();
+                } else {
+                    statusBadge.innerHTML = '<span class="whatsapp-status disconnected"><span class="dot"></span>Desconectado</span>';
+                    connected.style.display = 'none';
+                    disconnected.style.display = 'block';
+                    importCard.style.display = 'block';
+                    refreshWaQR();
+                    loadWaContacts();
+                }
+            } catch (error) {
+                console.error('Error checking WA status:', error);
+                document.getElementById('waStatusBadge').innerHTML = '<span class="whatsapp-status disconnected"><span class="dot"></span>Erro</span>';
+            }
+        }
+
+        async function checkWaWebhook() {
+            try {
+                const response = await fetch('/api/evolution/webhook', { credentials: 'include' });
+                const data = await response.json();
+
+                const webhookStatus = document.getElementById('waWebhookStatus');
+                const webhookText = document.getElementById('waWebhookText');
+                const webhookBtn = document.getElementById('waWebhookBtn');
+
+                if (data.configured && data.is_correct) {
+                    webhookStatus.style.display = 'block';
+                    webhookText.innerHTML = '<i class="bi bi-check-circle text-success me-1"></i>Webhook ativo - mensagens salvas automaticamente no Inbox';
+                    webhookBtn.innerHTML = '<i class="bi bi-check me-1"></i>OK';
+                    webhookBtn.classList.add('btn-success');
+                    webhookBtn.classList.remove('btn-outline-light');
+                } else {
+                    webhookStatus.style.display = 'block';
+                    webhookText.innerHTML = '<i class="bi bi-exclamation-circle text-warning me-1"></i>Clique em Webhook para ativar recebimento automatico';
+                }
+            } catch (error) {
+                console.error('Error checking webhook:', error);
+            }
+        }
+
+        async function setupWaWebhook() {
+            const btn = document.getElementById('waWebhookBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+            try {
+                const response = await fetch('/api/evolution/setup-webhook', { method: 'POST', credentials: 'include' });
+                const data = await response.json();
+
+                if (data.result && !data.result.error) {
+                    showAlert('success', 'Webhook configurado! Mensagens serao recebidas automaticamente.');
+                    checkWaWebhook();
+                } else {
+                    showAlert('danger', 'Erro ao configurar webhook: ' + (data.result?.error || 'desconhecido'));
+                }
+            } catch (error) {
+                showAlert('danger', 'Erro ao configurar webhook');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-gear me-1"></i>Webhook';
+            }
+        }
+
+        async function refreshWaQR() {
+            const qrImage = document.getElementById('waQrImage');
+            const qrLoading = document.getElementById('waQrLoading');
+
+            qrImage.style.display = 'none';
+            qrLoading.style.display = 'block';
+
+            try {
+                const response = await fetch('/api/evolution/qrcode', { credentials: 'include' });
+                const data = await response.json();
+
+                if (data.qr_base64) {
+                    qrImage.src = data.qr_base64;
+                    qrImage.style.display = 'block';
+                    qrLoading.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error getting QR:', error);
+                qrLoading.innerHTML = '<p class="text-danger">Erro ao gerar QR Code</p>';
+            }
+        }
+
+        async function disconnectWa() {
+            if (!confirm('Deseja desconectar o WhatsApp?')) return;
+
+            try {
+                await fetch('/api/evolution/disconnect', { method: 'POST', credentials: 'include' });
+                showAlert('success', 'WhatsApp desconectado');
+                setTimeout(checkWaStatus, 2000);
+            } catch (error) {
+                showAlert('danger', 'Erro ao desconectar');
+            }
+        }
+
+        async function loadWaContacts() {
+            try {
+                const response = await fetch('/api/contacts?limit=500');
+                const data = await response.json();
+                waContactsList = data.contacts || [];
+            } catch (error) {
+                console.error('Error loading contacts:', error);
+            }
+        }
+
+        // Import file handling
+        function setupWaImport() {
+            const importArea = document.getElementById('waImportArea');
+            const fileInput = document.getElementById('waFileInput');
+
+            if (!importArea || !fileInput) return;
+
+            importArea.addEventListener('click', () => fileInput.click());
+            importArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                importArea.style.borderColor = '#25D366';
+                importArea.style.background = 'rgba(37, 211, 102, 0.05)';
+            });
+            importArea.addEventListener('dragleave', () => {
+                importArea.style.borderColor = '';
+                importArea.style.background = '';
+            });
+            importArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                importArea.style.borderColor = '';
+                importArea.style.background = '';
+                if (e.dataTransfer.files.length) processWaFiles(e.dataTransfer.files);
+            });
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length) processWaFiles(e.target.files);
+            });
+        }
+
+        async function processWaFiles(files) {
+            const txtFiles = Array.from(files).filter(f => f.name.endsWith('.txt'));
+            if (txtFiles.length === 0) {
+                showAlert('warning', 'Selecione arquivos .txt');
+                return;
+            }
+
+            const formData = new FormData();
+            txtFiles.forEach(f => formData.append('files', f));
+
+            try {
+                const response = await fetch('/api/whatsapp/batch-import/preview', {
+                    method: 'POST',
+                    body: formData,
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+                waBatchFiles = data.files || [];
+
+                for (let i = 0; i < txtFiles.length; i++) {
+                    const content = await txtFiles[i].text();
+                    if (waBatchFiles[i]) waBatchFiles[i].content = content;
+                }
+
+                renderWaImportPreview();
+            } catch (e) {
+                showAlert('danger', 'Erro ao processar arquivos');
+            }
+        }
+
+        function renderWaImportPreview() {
+            document.getElementById('waImportPreview').style.display = 'block';
+            document.getElementById('waFileCount').textContent = waBatchFiles.length;
+
+            const totalMsgs = waBatchFiles.reduce((sum, f) => sum + (f.messages_count || 0), 0);
+            document.getElementById('waMsgCount').textContent = `${totalMsgs.toLocaleString()} mensagens`;
+
+            const list = document.getElementById('waFilesList');
+            list.innerHTML = waBatchFiles.map((file, idx) => {
+                const hasContact = file.contact_found;
+                const contactName = file.contact ? file.contact.nome : file.contact_name || 'Desconhecido';
+
+                return `
+                <div class="d-flex align-items-center gap-2 p-2 border rounded mb-2">
+                    <span class="badge ${hasContact ? 'bg-success' : 'bg-warning'}">
+                        <i class="bi ${hasContact ? 'bi-check' : 'bi-question'}"></i>
+                    </span>
+                    <div class="flex-grow-1 text-truncate small">${file.filename}</div>
+                    <div style="min-width: 150px;">
+                        ${hasContact
+                            ? `<span class="text-success small">${contactName}</span>`
+                            : `<select class="form-select form-select-sm" onchange="setWaContact(${idx}, this.value)">
+                                    <option value="">Selecionar...</option>
+                                    ${waContactsList.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}
+                               </select>`
+                        }
+                    </div>
+                </div>
+                `;
+            }).join('');
+        }
+
+        function setWaContact(idx, contactId) {
+            if (waBatchFiles[idx] && contactId) {
+                waBatchFiles[idx].contact_id = parseInt(contactId);
+                waBatchFiles[idx].contact_found = true;
+                const contact = waContactsList.find(c => c.id == contactId);
+                if (contact) waBatchFiles[idx].contact = contact;
+            }
+        }
+
+        function clearWaImport() {
+            waBatchFiles = [];
+            document.getElementById('waImportPreview').style.display = 'none';
+            document.getElementById('waImportResult').style.display = 'none';
+            document.getElementById('waFileInput').value = '';
+        }
+
+        async function confirmWaImport() {
+            const filesToImport = waBatchFiles.filter(f => f.contact_found || f.contact_id);
+            if (filesToImport.length === 0) {
+                showAlert('warning', 'Selecione contatos para os arquivos');
+                return;
+            }
+
+            const btn = document.getElementById('waImportBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importando...';
+
+            try {
+                const response = await fetch('/api/whatsapp/batch-import/confirm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        files: filesToImport.map(f => ({
+                            filename: f.filename,
+                            content: f.content,
+                            contact_id: f.contact?.id || f.contact_id
+                        }))
+                    }),
+                    credentials: 'include'
+                });
+
+                const result = await response.json();
+
+                document.getElementById('waImportPreview').style.display = 'none';
+                document.getElementById('waImportResult').style.display = 'block';
+                document.getElementById('waImportResultText').innerHTML = `
+                    <strong>${result.successful}</strong> arquivos importados,
+                    <strong>${result.total_messages_imported?.toLocaleString() || 0}</strong> mensagens adicionadas
+                `;
+
+                showAlert('success', `Importado: ${result.total_messages_imported} mensagens`);
+            } catch (e) {
+                showAlert('danger', 'Erro ao importar');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Importar';
+            }
+        }
+
+        // Initialize WhatsApp on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            checkWaStatus();
+            setupWaImport();
+            setInterval(checkWaStatus, 30000);
+        });
     </script>
 </body>
 </html>

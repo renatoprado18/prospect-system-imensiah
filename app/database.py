@@ -289,6 +289,17 @@ def init_db():
             ADD COLUMN IF NOT EXISTS health_score INTEGER DEFAULT 50
         ''')
 
+        # Sistema dual de circulos (Pessoal + Profissional)
+        cursor.execute('''
+            ALTER TABLE contacts
+            ADD COLUMN IF NOT EXISTS circulo_pessoal INTEGER,
+            ADD COLUMN IF NOT EXISTS circulo_profissional INTEGER,
+            ADD COLUMN IF NOT EXISTS circulo_pessoal_manual BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS circulo_profissional_manual BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS health_pessoal INTEGER,
+            ADD COLUMN IF NOT EXISTS health_profissional INTEGER
+        ''')
+
         # Adicionar colunas de Enriquecimento Avancado
         cursor.execute('''
             ALTER TABLE contacts
