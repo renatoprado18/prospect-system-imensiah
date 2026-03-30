@@ -493,6 +493,12 @@ async def process_incoming_message(data: Dict) -> Dict:
     if not content:
         return {"processed": False, "reason": "empty_content"}
 
+    # Verificar se e uma resposta do Renato a uma proposta de acao
+    # fromMe = True significa que a mensagem foi enviada do celular conectado (Renato)
+    if from_me and is_proposal_response(content):
+        asyncio.create_task(process_renato_reply(content, phone))
+        return {"processed": True, "reason": "proposal_response", "content": content}
+
     # Buscar contato pelo telefone
     with get_db() as conn:
         cursor = conn.cursor()
@@ -596,9 +602,11 @@ async def analyze_message_in_background(message_id: int, contact_id: int, conten
     try:
         from services.realtime_analyzer import get_realtime_analyzer
         from services.action_proposals import get_action_proposals
+        from services.whatsapp_notifications import get_whatsapp_notifications
 
         analyzer = get_realtime_analyzer()
         proposals_service = get_action_proposals()
+        notifications = get_whatsapp_notifications()
 
         # Analisar mensagem
         analysis = await analyzer.analyze_message(
@@ -618,6 +626,13 @@ async def analyze_message_in_background(message_id: int, contact_id: int, conten
             if created:
                 logger.info(f"Created {len(created)} action proposals for message {message_id}")
 
+                # Enviar notificacao WhatsApp para Renato
+                for proposal in created:
+                    try:
+                        await notifications.send_proposal_notification(proposal)
+                    except Exception as e:
+                        logger.error(f"Error sending notification for proposal {proposal['id']}: {e}")
+
     except Exception as e:
         logger.error(f"Error analyzing message {message_id}: {e}")
 
@@ -627,3 +642,57 @@ async def process_sent_message(data: Dict) -> Dict:
     # Por enquanto, apenas log
     logger.info(f"Message sent: {data.get('key', {}).get('id')}")
     return {"processed": True, "event": "send.message"}
+
+
+def is_proposal_response(content: str) -> bool:
+    """
+    Verifica se o conteudo parece ser uma resposta a uma proposta de acao.
+
+    Respostas validas:
+    - Numeros: 1, 2, 3, 4
+    - Emojis numericos: 1️⃣, 2️⃣, 3️⃣, 4️⃣
+    - Referencias: #123
+    - Comandos: pendentes, ignorar, lista
+    """
+    text = content.strip().lower()
+
+    # Respostas numericas simples
+    if text in ['1', '2', '3', '4']:
+        return True
+
+    # Emojis numericos
+    if text in ['1️⃣', '2️⃣', '3️⃣', '4️⃣']:
+        return True
+
+    # Referencia a proposta (#123)
+    if text.startswith('#') and any(c.isdigit() for c in text):
+        return True
+
+    # Comandos especiais
+    if text in ['pendentes', 'pending', 'lista', 'list', 'ignorar', 'ignore', 'skip', 'pular']:
+        return True
+
+    # Ref: #123 no texto
+    if 'ref:' in text and '#' in text:
+        return True
+
+    return False
+
+
+async def process_renato_reply(content: str, phone: str):
+    """
+    Processa resposta do Renato a uma notificacao de proposta.
+    """
+    try:
+        from services.whatsapp_notifications import get_whatsapp_notifications
+
+        notifications = get_whatsapp_notifications()
+        result = await notifications.process_reply(content, phone)
+
+        if result:
+            logger.info(f"Processed Renato reply: {content} -> {result}")
+        else:
+            logger.debug(f"Reply not processed: {content}")
+
+    except Exception as e:
+        logger.error(f"Error processing Renato reply: {e}")
