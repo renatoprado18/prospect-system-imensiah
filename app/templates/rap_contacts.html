@@ -887,13 +887,14 @@
             try {
                 let url = `/api/contacts?limit=${perPage}&offset=${(currentPage - 1) * perPage}`;
 
-                // Build search query with letter prefix if needed
-                let searchQuery = currentSearch;
+                // Add letter filter if selected
                 if (currentLetter) {
-                    searchQuery = currentLetter + (currentSearch ? '%' + currentSearch : '');
+                    url += `&letter=${currentLetter}`;
                 }
-                if (searchQuery) {
-                    url += `&search=${encodeURIComponent(searchQuery)}`;
+
+                // Add search query if present
+                if (currentSearch) {
+                    url += `&search=${encodeURIComponent(currentSearch)}`;
                 }
 
                 if (currentFilter !== 'all') {

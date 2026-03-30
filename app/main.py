@@ -3350,6 +3350,7 @@ class ContactsImportData(BaseModel):
 async def list_contacts(
     search: Optional[str] = None,
     q: Optional[str] = None,  # Alias for search
+    letter: Optional[str] = None,  # Filter by first letter of name
     contexto: Optional[str] = None,
     limit: int = Query(50, le=500),
     offset: int = 0
@@ -3363,6 +3364,11 @@ async def list_contacts(
 
     query = "SELECT * FROM contacts WHERE 1=1"
     params = []
+
+    # Filter by first letter of name
+    if letter and len(letter) == 1:
+        query += " AND UPPER(LEFT(nome, 1)) = %s"
+        params.append(letter.upper())
 
     if search_term_raw:
         # Search in name, company, cargo, and phone numbers
@@ -3383,6 +3389,9 @@ async def list_contacts(
     # Count total
     count_query = "SELECT COUNT(*) as count FROM contacts WHERE 1=1"
     count_params = []
+    if letter and len(letter) == 1:
+        count_query += " AND UPPER(LEFT(nome, 1)) = %s"
+        count_params.append(letter.upper())
     if search_term_raw:
         count_query += " AND (nome ILIKE %s OR empresa ILIKE %s OR cargo ILIKE %s OR telefones::text ILIKE %s)"
         count_params.extend([f"%{search_term_raw}%", f"%{search_term_raw}%", f"%{search_term_raw}%", f"%{search_term_raw}%"])
