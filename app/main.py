@@ -542,92 +542,57 @@ async def intel_settings(request: Request):
     })
 
 
-# ============== RAP Pages (retrocompatibilidade) ==============
-
-@app.get("/rap", response_class=HTMLResponse)
-async def rap_dashboard(request: Request):
-    """RAP Dashboard - Assistente Pessoal (retrocompatibilidade)"""
+@app.get("/projetos", response_class=HTMLResponse)
+async def projetos_page(request: Request):
+    """Pagina de projetos"""
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_projetos.html", {"request": request})
 
-    return templates.TemplateResponse("rap_dashboard.html", {
-        "request": request,
-        "user": user
-    })
 
-@app.get("/rap/contacts", response_class=HTMLResponse)
-async def rap_contacts(request: Request):
-    """RAP Contacts List"""
+@app.get("/projetos/{project_id}", response_class=HTMLResponse)
+async def projeto_detail_page(request: Request, project_id: int):
+    """Pagina de detalhe do projeto"""
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-
-    return templates.TemplateResponse("rap_contacts.html", {
+    return templates.TemplateResponse("rap_projeto_detail.html", {
         "request": request,
-        "user": user
-    })
-
-@app.get("/rap/contacts/cleanup", response_class=HTMLResponse)
-async def rap_contacts_cleanup(request: Request):
-    """Page for reviewing and cleaning up contacts"""
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
-
-    return templates.TemplateResponse("rap_contacts_cleanup.html", {
-        "request": request,
-        "user": user
+        "project_id": project_id
     })
 
 
-@app.get("/rap/contacts/linkedin", response_class=HTMLResponse)
-async def rap_contacts_linkedin(request: Request):
-    """Page for importing LinkedIn connections"""
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
+# ============== RAP Redirects (retrocompatibilidade) ==============
+# Todas as rotas /rap/* redirecionam para rotas na raiz
 
-    return templates.TemplateResponse("rap_linkedin_import.html", {
-        "request": request,
-        "user": user
-    })
+@app.get("/rap")
+async def rap_redirect():
+    return RedirectResponse(url="/", status_code=301)
 
+@app.get("/rap/contacts")
+async def rap_contacts_redirect():
+    return RedirectResponse(url="/contatos", status_code=301)
 
-# NOTE: This parameterized route MUST come AFTER specific routes like /cleanup, /linkedin
-@app.get("/rap/contacts/{contact_id}", response_class=HTMLResponse)
-async def rap_contact_detail(request: Request, contact_id: int):
-    """RAP Contact Detail Page"""
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
+@app.get("/rap/contacts/cleanup")
+async def rap_contacts_cleanup_redirect():
+    return RedirectResponse(url="/contatos/limpeza", status_code=301)
 
-    return templates.TemplateResponse("rap_contact_detail.html", {
-        "request": request,
-        "user": user,
-        "contact_id": contact_id
-    })
+@app.get("/rap/contacts/linkedin")
+async def rap_contacts_linkedin_redirect():
+    return RedirectResponse(url="/contatos/linkedin", status_code=301)
 
-@app.get("/rap/settings", response_class=HTMLResponse)
-async def rap_settings(request: Request):
-    """RAP Settings Page - Google Accounts Management"""
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse(url="/login", status_code=302)
+@app.get("/rap/contacts/{contact_id}")
+async def rap_contact_detail_redirect(contact_id: int):
+    return RedirectResponse(url=f"/contatos/{contact_id}", status_code=301)
 
-    if user.get("role") != "admin":
-        return RedirectResponse(url="/rap", status_code=302)
-
-    return templates.TemplateResponse("rap_settings.html", {
-        "request": request,
-        "user": user
-    })
-
+@app.get("/rap/settings")
+async def rap_settings_redirect():
+    return RedirectResponse(url="/configuracoes", status_code=301)
 
 @app.get("/rap/whatsapp")
-async def rap_whatsapp(request: Request):
-    """RAP WhatsApp - Redireciona para Configuracoes"""
-    return RedirectResponse(url="/configuracoes", status_code=302)
+async def rap_whatsapp_redirect():
+    return RedirectResponse(url="/configuracoes", status_code=301)
 
 
 @app.get("/api/user/{email}")
@@ -5923,10 +5888,9 @@ async def recalculate_contact_circulo(contact_id: int, force: bool = False):
 
 # ============== CIRCULOS PAGE ROUTE ==============
 
-@app.get("/rap/circulos", response_class=HTMLResponse)
-async def rap_circulos_page(request: Request):
-    """Pagina de dashboard dos Circulos"""
-    return templates.TemplateResponse("rap_circulos.html", {"request": request})
+@app.get("/rap/circulos")
+async def rap_circulos_redirect():
+    return RedirectResponse(url="/circulos", status_code=301)
 
 
 # ============== BRIEFINGS ENDPOINTS ==============
@@ -6003,10 +5967,9 @@ async def add_feedback_to_briefing(briefing_id: int, data: dict):
 
 # ============== BRIEFINGS PAGE ROUTE ==============
 
-@app.get("/rap/briefings", response_class=HTMLResponse)
-async def rap_briefings_page(request: Request):
-    """Pagina de briefings"""
-    return templates.TemplateResponse("rap_briefings.html", {"request": request})
+@app.get("/rap/briefings")
+async def rap_briefings_redirect():
+    return RedirectResponse(url="/briefings", status_code=301)
 
 
 # ============== DUPLICADOS ENDPOINTS ==============
@@ -10314,19 +10277,14 @@ async def api_delete_project_task(task_id: int):
 
 # ============== PROJECTS PAGE ==============
 
-@app.get("/rap/projetos", response_class=HTMLResponse)
-async def rap_projetos_page(request: Request):
-    """Pagina de projetos."""
-    return templates.TemplateResponse("rap_projetos.html", {"request": request})
+@app.get("/rap/projetos")
+async def rap_projetos_redirect():
+    return RedirectResponse(url="/projetos", status_code=301)
 
 
-@app.get("/rap/projetos/{project_id}", response_class=HTMLResponse)
-async def rap_projeto_detail_page(request: Request, project_id: int):
-    """Pagina de detalhe do projeto."""
-    return templates.TemplateResponse("rap_projeto_detail.html", {
-        "request": request,
-        "project_id": project_id
-    })
+@app.get("/rap/projetos/{project_id}")
+async def rap_projeto_detail_redirect(project_id: int):
+    return RedirectResponse(url=f"/projetos/{project_id}", status_code=301)
 
 
 # Vercel handler
