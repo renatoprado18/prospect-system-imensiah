@@ -1150,25 +1150,109 @@
             list.innerHTML = waBatchFiles.map((file, idx) => {
                 const hasContact = file.contact_found;
                 const contactName = file.contact ? file.contact.nome : file.contact_name || 'Desconhecido';
+                const participants = file.participants || [];
+                const searchInfo = file.search_attempts?.join(', ') || '';
 
-                return `
-                <div class="d-flex align-items-center gap-2 p-2 border rounded mb-2">
-                    <span class="badge ${hasContact ? 'bg-success' : 'bg-warning'}">
-                        <i class="bi ${hasContact ? 'bi-check' : 'bi-question'}"></i>
-                    </span>
-                    <div class="flex-grow-1 text-truncate small">${file.filename}</div>
-                    <div style="min-width: 150px;">
-                        ${hasContact
-                            ? `<span class="text-success small">${contactName}</span>`
-                            : `<select class="form-select form-select-sm" onchange="setWaContact(${idx}, this.value)">
-                                    <option value="">Selecionar...</option>
-                                    ${waContactsList.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}
-                               </select>`
-                        }
+                if (hasContact) {
+                    return `
+                    <div class="p-2 border rounded mb-2" style="background: rgba(25, 135, 84, 0.05);">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge bg-success"><i class="bi bi-check"></i></span>
+                            <div class="flex-grow-1">
+                                <div class="small fw-medium text-truncate">${file.filename}</div>
+                                <div class="text-muted" style="font-size: 0.7rem;">${file.messages_count} msgs</div>
+                            </div>
+                            <div class="text-success small fw-medium">${contactName}</div>
+                        </div>
                     </div>
-                </div>
-                `;
+                    `;
+                } else {
+                    return `
+                    <div class="p-2 border rounded mb-2 border-warning" style="background: rgba(255, 193, 7, 0.05);">
+                        <div class="d-flex align-items-center gap-2 mb-2">
+                            <span class="badge bg-warning text-dark"><i class="bi bi-question"></i></span>
+                            <div class="flex-grow-1">
+                                <div class="small fw-medium text-truncate">${file.filename}</div>
+                                <div class="text-muted" style="font-size: 0.7rem;">
+                                    ${file.messages_count} msgs
+                                    ${participants.length > 0 ? `| Participantes: ${participants.slice(0, 2).join(', ')}` : ''}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="position-relative">
+                            <input type="text"
+                                   class="form-control form-control-sm"
+                                   placeholder="Buscar contato..."
+                                   id="waContactSearch_${idx}"
+                                   oninput="searchWaContact(${idx}, this.value)"
+                                   onfocus="showWaContactDropdown(${idx})"
+                                   autocomplete="off">
+                            <div id="waContactDropdown_${idx}"
+                                 class="position-absolute w-100 bg-white border rounded shadow-sm mt-1"
+                                 style="max-height: 150px; overflow-y: auto; z-index: 100; display: none;">
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }
             }).join('');
+
+            // Close dropdowns when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('[id^="waContactSearch_"]') && !e.target.closest('[id^="waContactDropdown_"]')) {
+                    document.querySelectorAll('[id^="waContactDropdown_"]').forEach(d => d.style.display = 'none');
+                }
+            });
+        }
+
+        function searchWaContact(idx, query) {
+            const dropdown = document.getElementById(`waContactDropdown_${idx}`);
+            if (!query || query.length < 2) {
+                dropdown.innerHTML = waContactsList.slice(0, 10).map(c =>
+                    `<div class="p-2 small hover-bg" style="cursor: pointer;" onclick="selectWaContact(${idx}, ${c.id}, '${c.nome.replace(/'/g, "\\'")}')">
+                        ${c.nome}
+                    </div>`
+                ).join('');
+                dropdown.style.display = 'block';
+                return;
+            }
+
+            const lowerQuery = query.toLowerCase();
+            const filtered = waContactsList.filter(c =>
+                c.nome.toLowerCase().includes(lowerQuery)
+            ).slice(0, 10);
+
+            if (filtered.length === 0) {
+                dropdown.innerHTML = '<div class="p-2 small text-muted">Nenhum contato encontrado</div>';
+            } else {
+                dropdown.innerHTML = filtered.map(c =>
+                    `<div class="p-2 small" style="cursor: pointer;" onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background=''" onclick="selectWaContact(${idx}, ${c.id}, '${c.nome.replace(/'/g, "\\'")}')">
+                        ${highlightMatch(c.nome, query)}
+                    </div>`
+                ).join('');
+            }
+            dropdown.style.display = 'block';
+        }
+
+        function showWaContactDropdown(idx) {
+            const input = document.getElementById(`waContactSearch_${idx}`);
+            searchWaContact(idx, input.value);
+        }
+
+        function highlightMatch(text, query) {
+            if (!query) return text;
+            const regex = new RegExp(`(${query})`, 'gi');
+            return text.replace(regex, '<strong>$1</strong>');
+        }
+
+        function selectWaContact(idx, contactId, contactName) {
+            if (waBatchFiles[idx]) {
+                waBatchFiles[idx].contact_id = contactId;
+                waBatchFiles[idx].contact_found = true;
+                waBatchFiles[idx].contact = { id: contactId, nome: contactName };
+            }
+            document.getElementById(`waContactDropdown_${idx}`).style.display = 'none';
+            renderWaImportPreview();
         }
 
         function setWaContact(idx, contactId) {

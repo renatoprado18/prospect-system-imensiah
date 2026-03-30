@@ -176,35 +176,88 @@ class WhatsAppBatchImporter:
             }
         }
 
+    def normalize_phone(self, phone: str) -> str:
+        """Normaliza telefone removendo caracteres e padronizando."""
+        if not phone:
+            return ""
+        # Remove tudo exceto dígitos
+        digits = re.sub(r'\D', '', phone)
+        # Remove código do país se presente (55 para Brasil)
+        if len(digits) > 11 and digits.startswith('55'):
+            digits = digits[2:]
+        # Remove nono dígito se presente (para comparação)
+        if len(digits) == 11 and digits[2] == '9':
+            digits_without_9 = digits[:2] + digits[3:]
+        else:
+            digits_without_9 = digits
+        return digits
+
     def find_contact(self, name: str, phone: Optional[str] = None) -> Optional[Dict]:
-        """Busca contato por nome ou telefone."""
+        """Busca contato por nome ou telefone com múltiplas estratégias."""
         with get_db() as conn:
             cursor = conn.cursor()
 
-            # Tentar por telefone primeiro
-            if phone and len(phone) >= 8:
-                cursor.execute("""
-                    SELECT id, nome, telefones, foto_url
-                    FROM contacts
-                    WHERE telefones IS NOT NULL
-                      AND telefones::text LIKE %s
-                """, (f'%{phone[-8:]}%',))
-                result = cursor.fetchone()
-                if result:
-                    return dict(result)
+            # 1. Tentar por telefone (múltiplas variações)
+            if phone:
+                phone_digits = self.normalize_phone(phone)
 
-            # Tentar por nome exato
+                # Tentar diferentes partes do telefone
+                phone_variants = []
+                if len(phone_digits) >= 8:
+                    phone_variants.append(phone_digits[-8:])  # Últimos 8 dígitos
+                if len(phone_digits) >= 9:
+                    phone_variants.append(phone_digits[-9:])  # Últimos 9 dígitos
+                if len(phone_digits) >= 10:
+                    phone_variants.append(phone_digits[-10:])  # Últimos 10 dígitos
+                if len(phone_digits) >= 11:
+                    phone_variants.append(phone_digits[-11:])  # Todos os dígitos
+
+                for variant in phone_variants:
+                    cursor.execute("""
+                        SELECT id, nome, telefones, foto_url
+                        FROM contacts
+                        WHERE telefones IS NOT NULL
+                          AND telefones::text LIKE %s
+                        LIMIT 1
+                    """, (f'%{variant}%',))
+                    result = cursor.fetchone()
+                    if result:
+                        logger.info(f"Contato encontrado por telefone: {result['nome']}")
+                        return dict(result)
+
+            if not name:
+                return None
+
+            # 2. Tentar por nome exato
             cursor.execute("""
                 SELECT id, nome, telefones, foto_url
                 FROM contacts
-                WHERE LOWER(nome) = LOWER(%s)
+                WHERE LOWER(TRIM(nome)) = LOWER(TRIM(%s))
                 LIMIT 1
             """, (name,))
             result = cursor.fetchone()
             if result:
+                logger.info(f"Contato encontrado por nome exato: {result['nome']}")
                 return dict(result)
 
-            # Tentar por nome parcial
+            # 3. Tentar pelo primeiro nome
+            first_name = name.split()[0] if name else ""
+            if first_name and len(first_name) >= 3:
+                cursor.execute("""
+                    SELECT id, nome, telefones, foto_url
+                    FROM contacts
+                    WHERE LOWER(nome) LIKE LOWER(%s)
+                    ORDER BY
+                        CASE WHEN LOWER(nome) LIKE LOWER(%s) THEN 0 ELSE 1 END,
+                        LENGTH(nome) ASC
+                    LIMIT 1
+                """, (f'{first_name}%', f'{first_name} %'))
+                result = cursor.fetchone()
+                if result:
+                    logger.info(f"Contato encontrado por primeiro nome: {result['nome']}")
+                    return dict(result)
+
+            # 4. Tentar nome parcial (contém)
             cursor.execute("""
                 SELECT id, nome, telefones, foto_url
                 FROM contacts
@@ -214,9 +267,47 @@ class WhatsAppBatchImporter:
             """, (f'%{name}%',))
             result = cursor.fetchone()
             if result:
+                logger.info(f"Contato encontrado por nome parcial: {result['nome']}")
                 return dict(result)
 
+            # 5. Tentar apelido/nickname
+            cursor.execute("""
+                SELECT id, nome, telefones, foto_url
+                FROM contacts
+                WHERE apelido IS NOT NULL
+                  AND LOWER(apelido) LIKE LOWER(%s)
+                LIMIT 1
+            """, (f'%{name}%',))
+            result = cursor.fetchone()
+            if result:
+                logger.info(f"Contato encontrado por apelido: {result['nome']}")
+                return dict(result)
+
+            # 6. Busca por palavras individuais do nome (para nomes compostos)
+            name_parts = [p for p in name.split() if len(p) >= 3]
+            for part in name_parts:
+                cursor.execute("""
+                    SELECT id, nome, telefones, foto_url
+                    FROM contacts
+                    WHERE LOWER(nome) LIKE LOWER(%s)
+                    ORDER BY LENGTH(nome) ASC
+                    LIMIT 1
+                """, (f'%{part}%',))
+                result = cursor.fetchone()
+                if result:
+                    logger.info(f"Contato encontrado por parte do nome '{part}': {result['nome']}")
+                    return dict(result)
+
             return None
+
+    def find_contact_for_participants(self, participants: List[str]) -> Optional[Dict]:
+        """Tenta encontrar contato testando todos os participantes."""
+        for participant in participants:
+            phone = self.extract_phone(participant)
+            contact = self.find_contact(participant, phone)
+            if contact:
+                return contact
+        return None
 
     def get_or_create_conversation(self, contact_id: int, cursor) -> int:
         """Obtém ou cria conversa WhatsApp para um contato."""
@@ -366,12 +457,25 @@ class WhatsAppBatchImporter:
                     if row:
                         contact = dict(row)
             else:
-                # Tentar encontrar automaticamente
+                # Tentar encontrar automaticamente - múltiplas estratégias
                 contact_name = parsed['contact_name']
+
+                # 1. Tentar pelo contato principal
                 if contact_name:
-                    # Extrair telefone do nome se possível
                     phone = self.extract_phone(contact_name)
                     contact = self.find_contact(contact_name, phone)
+
+                # 2. Se não encontrou, tentar por todos os participantes
+                if not contact and parsed.get('participants'):
+                    contact = self.find_contact_for_participants(parsed['participants'])
+
+                # 3. Tentar extrair telefone de qualquer mensagem incoming
+                if not contact:
+                    for msg in parsed.get('messages', [])[:20]:  # Checar primeiras 20 mensagens
+                        if msg.get('direction') == 'incoming' and msg.get('phone'):
+                            contact = self.find_contact(msg.get('sender', ''), msg['phone'])
+                            if contact:
+                                break
 
             if not contact:
                 result['errors'].append(f'Contato não encontrado: {parsed.get("contact_name", "desconhecido")}')
