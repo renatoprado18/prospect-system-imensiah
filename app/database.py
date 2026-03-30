@@ -552,6 +552,7 @@ def init_db():
                 source_id INTEGER,
                 contact_id INTEGER REFERENCES contacts(id),
                 prospect_id INTEGER REFERENCES prospects(id),
+                project_id INTEGER REFERENCES projects(id),
                 data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 data_vencimento TIMESTAMP,
                 data_conclusao TIMESTAMP,
@@ -562,9 +563,28 @@ def init_db():
                 recorrente BOOLEAN DEFAULT FALSE,
                 recurrence_rule TEXT,
                 tags JSONB DEFAULT '[]',
-                contexto TEXT DEFAULT 'professional'
+                contexto TEXT DEFAULT 'professional',
+                google_task_id TEXT,
+                google_tasklist_id TEXT DEFAULT '@default',
+                last_synced_at TIMESTAMP,
+                sync_status TEXT DEFAULT 'local_only',
+                etag TEXT
             )
         ''')
+
+        # Add Google sync columns if they don't exist (migration)
+        for col, col_def in [
+            ('google_task_id', 'TEXT'),
+            ('google_tasklist_id', "TEXT DEFAULT '@default'"),
+            ('last_synced_at', 'TIMESTAMP'),
+            ('sync_status', "TEXT DEFAULT 'local_only'"),
+            ('etag', 'TEXT'),
+            ('project_id', 'INTEGER REFERENCES projects(id)')
+        ]:
+            try:
+                cursor.execute(f'ALTER TABLE tasks ADD COLUMN IF NOT EXISTS {col} {col_def}')
+            except:
+                pass
 
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_tasks_status

@@ -4024,7 +4024,8 @@ async def linkedin_bookmarklet_receive_get(data: str):
             }}
             window.close();
         }}
-        setTimeout(closeAll, 3000);
+        // Auto-close desativado para debug
+        // setTimeout(closeAll, 3000);
         </script>
         </body></html>
         """)
