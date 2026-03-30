@@ -364,6 +364,186 @@ Responda em JSON:
             logger.error(f"Error in get_task_context: {e}")
             return {"error": str(e)}
 
+    async def suggest_followup(self, task_id: int) -> Dict:
+        """
+        Sugere follow-up ao completar uma tarefa.
+        Analisa contexto e sugere prazo apropriado.
+        """
+        try:
+            # Buscar tarefa e contexto
+            task = self.get_task_with_project(task_id)
+            if not task:
+                return {"needs_followup": False}
+
+            contact = None
+            try:
+                contact = self.find_contact_from_task(task)
+            except:
+                pass
+
+            # Buscar últimas mensagens para contexto
+            messages = []
+            if contact:
+                try:
+                    messages = self.get_whatsapp_messages(contact['id'], limit=5)
+                except:
+                    pass
+
+            # Buscar projeto
+            project = {}
+            if task.get('project_id'):
+                try:
+                    project = self.get_project_context(task['project_id'])
+                except:
+                    pass
+
+            # Determinar se precisa follow-up e prazo
+            # Regras simples primeiro, depois IA
+            titulo = task.get('titulo', '').lower()
+
+            # Detectar tipo de tarefa
+            is_communication = any(word in titulo for word in [
+                'mensagem', 'email', 'ligar', 'contatar', 'whatsapp',
+                'enviar', 'responder', 'falar com'
+            ])
+
+            is_proposal = any(word in titulo for word in [
+                'proposta', 'orçamento', 'cotação', 'pitch', 'apresentação'
+            ])
+
+            is_meeting = any(word in titulo for word in [
+                'reunião', 'meeting', 'call', 'ligação', 'agendar'
+            ])
+
+            # Sugerir prazo baseado no tipo
+            if not is_communication and not is_proposal and not is_meeting:
+                return {"needs_followup": False}
+
+            # Prazo sugerido
+            if is_proposal:
+                days = 5
+                reason = "Proposta enviada - aguardar retorno"
+            elif is_meeting:
+                days = 1
+                reason = "Confirmar agenda ou preparar próximos passos"
+            else:
+                days = 3
+                reason = "Verificar se houve resposta"
+
+            # Gerar título do follow-up
+            contact_name = contact.get('nome', '') if contact else ''
+            if contact_name:
+                followup_title = f"Follow-up com {contact_name}"
+            else:
+                # Extrair nome do título original
+                followup_title = f"Follow-up: {task.get('titulo', 'Tarefa')}"
+
+            # Se tiver API key, usar IA para refinar
+            if self.claude_api_key and contact:
+                try:
+                    suggestion = await self._ai_suggest_followup(
+                        task, contact, messages, project
+                    )
+                    if suggestion and not suggestion.get('error'):
+                        return suggestion
+                except Exception as e:
+                    logger.error(f"AI followup error: {e}")
+
+            return {
+                "needs_followup": True,
+                "followup_title": followup_title,
+                "suggested_days": days,
+                "reason": reason,
+                "contact_id": contact.get('id') if contact else None,
+                "contact_name": contact_name,
+                "project_id": task.get('project_id')
+            }
+
+        except Exception as e:
+            logger.error(f"Error suggesting followup: {e}")
+            return {"needs_followup": False, "error": str(e)}
+
+    async def _ai_suggest_followup(
+        self,
+        task: Dict,
+        contact: Dict,
+        messages: List[Dict],
+        project: Dict
+    ) -> Dict:
+        """Usa IA para sugerir follow-up mais preciso."""
+
+        context_parts = [
+            f"Tarefa completada: {task.get('titulo', '')}",
+            f"Contato: {contact.get('nome', '')} - {contact.get('empresa', '')}",
+        ]
+
+        if project:
+            context_parts.append(f"Projeto: {project.get('nome', '')} ({project.get('tipo', '')})")
+
+        if messages:
+            context_parts.append("Últimas mensagens:")
+            for msg in messages[-3:]:
+                dir_label = "Enviado" if msg.get('direcao') == 'outgoing' else "Recebido"
+                context_parts.append(f"- {dir_label}: {msg.get('conteudo', '')[:100]}")
+
+        prompt = f"""Analise esta tarefa que foi completada e sugira um follow-up apropriado.
+
+{chr(10).join(context_parts)}
+
+Responda em JSON:
+{{
+    "needs_followup": true/false,
+    "followup_title": "título sugerido para o follow-up",
+    "suggested_days": número de dias (1-14),
+    "reason": "breve explicação do porquê este prazo"
+}}
+
+Se a tarefa não precisar de follow-up (ex: tarefa interna, sem necessidade de resposta), retorne needs_followup: false."""
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": self.claude_api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json"
+                    },
+                    json={
+                        "model": "claude-sonnet-4-20250514",
+                        "max_tokens": 256,
+                        "messages": [{"role": "user", "content": prompt}]
+                    }
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    content = result.get("content", [{}])[0].get("text", "{}")
+
+                    import json
+                    try:
+                        json_match = content
+                        if "```json" in content:
+                            json_match = content.split("```json")[1].split("```")[0]
+                        elif "```" in content:
+                            json_match = content.split("```")[1].split("```")[0]
+
+                        suggestion = json.loads(json_match.strip())
+
+                        # Adicionar dados do contato e projeto
+                        if suggestion.get("needs_followup"):
+                            suggestion["contact_id"] = contact.get('id')
+                            suggestion["contact_name"] = contact.get('nome', '')
+                            suggestion["project_id"] = task.get('project_id')
+
+                        return suggestion
+                    except:
+                        pass
+        except Exception as e:
+            logger.error(f"AI followup API error: {e}")
+
+        return None
+
 
 # Singleton
 _task_context_service = None

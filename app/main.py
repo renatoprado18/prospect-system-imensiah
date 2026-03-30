@@ -8279,8 +8279,66 @@ async def test_proposal_notification(request: Request, contact_name: str = "Pedr
     return {
         "success": sent,
         "proposal_id": proposal['id'],
-        "message": "Notificacao enviada! Responda no WhatsApp com 1, 2, 3 ou 4" if sent else "Falha ao enviar notificacao"
+        "message": "Notificacao enviada! Clique nos links para executar" if sent else "Falha ao enviar notificacao"
     }
+
+
+@app.get("/api/action-proposals/{proposal_id}/quick-action")
+async def quick_action_proposal(proposal_id: int, option: str):
+    """
+    Endpoint para executar acao rapidamente via link (sem auth).
+    Usado pelos links enviados via WhatsApp.
+    """
+    from services.action_proposals import get_action_proposals
+    from services.action_executor import get_action_executor
+    from services.whatsapp_notifications import get_whatsapp_notifications
+
+    proposals_service = get_action_proposals()
+    executor = get_action_executor()
+    notifications = get_whatsapp_notifications()
+
+    # Buscar proposta
+    proposal = proposals_service.get_proposal(proposal_id)
+    if not proposal:
+        return HTMLResponse(content="""
+            <html><body style="font-family: sans-serif; padding: 20px; text-align: center;">
+                <h2>❌ Proposta não encontrada</h2>
+                <p>Esta proposta pode ter sido removida ou expirada.</p>
+            </body></html>
+        """, status_code=404)
+
+    if proposal['status'] != 'pending':
+        return HTMLResponse(content=f"""
+            <html><body style="font-family: sans-serif; padding: 20px; text-align: center;">
+                <h2>ℹ️ Proposta já processada</h2>
+                <p>Status atual: {proposal['status']}</p>
+            </body></html>
+        """)
+
+    # Executar acao
+    result = await executor.execute(proposal_id, option_id=option)
+
+    if result.get('success'):
+        # Enviar confirmacao via WhatsApp
+        try:
+            await notifications._send_reply(f"✅ {result.get('message', 'Ação executada!')}")
+        except:
+            pass
+
+        return HTMLResponse(content=f"""
+            <html><body style="font-family: sans-serif; padding: 20px; text-align: center;">
+                <h2>✅ Ação executada!</h2>
+                <p>{result.get('message', 'Sucesso')}</p>
+                <p style="color: #666; margin-top: 20px;">Você pode fechar esta janela.</p>
+            </body></html>
+        """)
+    else:
+        return HTMLResponse(content=f"""
+            <html><body style="font-family: sans-serif; padding: 20px; text-align: center;">
+                <h2>❌ Erro</h2>
+                <p>{result.get('message', 'Falha ao executar ação')}</p>
+            </body></html>
+        """, status_code=400)
 
 
 @app.get("/api/action-proposals/{proposal_id}")

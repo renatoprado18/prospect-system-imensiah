@@ -102,16 +102,22 @@ class WhatsAppNotificationService:
             content = f"📌 *{proposal.get('title', 'Acao sugerida')}*\n"
             content += f"_{proposal.get('description', '')[:200]}_\n\n"
 
-        # Opcoes
+        # Opcoes com links clicaveis
         options = proposal.get('options', [])
-        if options:
-            content += "*Responda com o numero:*\n"
+        proposal_id = proposal.get('id')
+        base_url = "https://intel.almeida-prado.com/api/action-proposals"
+
+        if options and proposal_id:
+            content += "*Clique para executar:*\n"
             for i, opt in enumerate(options[:4], 1):
                 emoji = self._get_option_emoji(opt.get('id', ''))
-                content += f"{i}️⃣ {emoji} {opt.get('label', f'Opcao {i}')}\n"
+                opt_id = opt.get('id', f'option_{i}')
+                # Link direto para executar a acao
+                link = f"{base_url}/{proposal_id}/quick-action?option={opt_id}"
+                content += f"{emoji} {opt.get('label', f'Opcao {i}')}\n{link}\n\n"
 
-        # Footer com ID para referencia
-        content += f"\n_Ref: #{proposal['id']}_"
+        # Footer
+        content += f"_Ref: #{proposal_id}_"
 
         return header + content
 
