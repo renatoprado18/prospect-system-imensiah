@@ -149,7 +149,73 @@
     </div>
 </div>
 
+<!-- Task Context Modal -->
+<div class="modal fade" id="taskContextModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content" style="border-radius: 16px; border: none;">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-lightbulb me-2"></i>Contexto da Tarefa</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="taskContextBody">
+                <div class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2 text-muted">Analisando contexto...</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+                <button type="button" class="btn btn-success" id="btnCopyMessage" style="display: none">
+                    <i class="bi bi-clipboard me-1"></i>Copiar Mensagem
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
+    .task-context-section {
+        background: var(--gray-50);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+    .task-context-section h6 {
+        color: var(--gray-600);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 12px;
+    }
+    .message-bubble {
+        background: white;
+        border-radius: 12px;
+        padding: 10px 14px;
+        margin-bottom: 8px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .message-bubble.outgoing {
+        background: #dcf8c6;
+        margin-left: 40px;
+    }
+    .message-bubble.incoming {
+        background: white;
+        margin-right: 40px;
+    }
+    .suggestion-card {
+        background: linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%);
+        border: 1px solid #e0e7ff;
+        border-radius: 12px;
+        padding: 16px;
+    }
+    .suggested-message {
+        background: white;
+        border-radius: 8px;
+        padding: 12px;
+        border: 1px solid #e5e7eb;
+        font-family: inherit;
+        white-space: pre-wrap;
+    }
     .project-header {
         background: white;
         border-radius: 16px;
@@ -560,11 +626,15 @@
         }
 
         return tasks.map(t => `
-            <div class="d-flex align-items-center gap-2 py-2 border-bottom">
+            <div class="d-flex align-items-center gap-2 py-2 border-bottom task-row" data-task-id="${t.id}">
                 <input type="checkbox" class="form-check-input" ${t.status === 'completed' ? 'checked' : ''}
                     onchange="toggleTask(${t.id}, this.checked)">
-                <span class="${t.status === 'completed' ? 'text-decoration-line-through text-muted' : ''}">${t.titulo}</span>
-                ${t.contact_nome ? `<small class="text-muted ms-auto">${t.contact_nome}</small>` : ''}
+                <span class="flex-grow-1 ${t.status === 'completed' ? 'text-decoration-line-through text-muted' : ''}"
+                    style="cursor: pointer" onclick="showTaskContext(${t.id})">${t.titulo}</span>
+                ${t.contact_nome ? `<small class="text-muted">${t.contact_nome}</small>` : ''}
+                <button class="btn btn-sm btn-outline-primary" onclick="showTaskContext(${t.id})" title="Ver contexto e sugestao">
+                    <i class="bi bi-lightbulb"></i>
+                </button>
             </div>
         `).join('');
     }
@@ -819,6 +889,158 @@
             console.error('Error:', error);
             alert('Erro ao criar tarefa');
         }
+    }
+
+    let currentTaskContext = null;
+
+    async function showTaskContext(taskId) {
+        // Show modal with loading
+        const modal = new bootstrap.Modal(document.getElementById('taskContextModal'));
+        const body = document.getElementById('taskContextBody');
+        const btnCopy = document.getElementById('btnCopyMessage');
+
+        body.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-primary" role="status"></div>
+                <p class="mt-2 text-muted">Analisando contexto e gerando sugestao...</p>
+            </div>
+        `;
+        btnCopy.style.display = 'none';
+        modal.show();
+
+        try {
+            const response = await fetch(`/api/tasks/${taskId}/context`);
+            if (!response.ok) throw new Error('Erro ao buscar contexto');
+
+            currentTaskContext = await response.json();
+            renderTaskContext(currentTaskContext);
+
+        } catch (error) {
+            console.error('Error:', error);
+            body.innerHTML = `
+                <div class="text-center py-4 text-danger">
+                    <i class="bi bi-exclamation-circle" style="font-size: 2rem;"></i>
+                    <p class="mt-2">Erro ao carregar contexto</p>
+                </div>
+            `;
+        }
+    }
+
+    function renderTaskContext(ctx) {
+        const body = document.getElementById('taskContextBody');
+        const btnCopy = document.getElementById('btnCopyMessage');
+        const task = ctx.task || {};
+        const contact = ctx.contact;
+        const messages = ctx.messages || [];
+        const suggestion = ctx.suggestion || {};
+
+        let html = '';
+
+        // Task info
+        html += `
+            <div class="task-context-section">
+                <h6><i class="bi bi-check2-square me-1"></i>Tarefa</h6>
+                <div class="fw-semibold">${task.titulo || 'Sem titulo'}</div>
+                ${task.descricao ? `<p class="text-muted mb-0 mt-1">${task.descricao}</p>` : ''}
+            </div>
+        `;
+
+        // Contact info
+        if (contact) {
+            html += `
+                <div class="task-context-section">
+                    <h6><i class="bi bi-person me-1"></i>Contato Identificado</h6>
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="member-avatar" style="width: 48px; height: 48px; min-width: 48px;">
+                            ${contact.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                        </div>
+                        <div>
+                            <div class="fw-semibold">${contact.nome}</div>
+                            ${contact.empresa ? `<div class="text-muted small">${contact.cargo ? contact.cargo + ' - ' : ''}${contact.empresa}</div>` : ''}
+                            ${contact.telefone ? `<div class="text-muted small"><i class="bi bi-whatsapp me-1"></i>${contact.telefone}</div>` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Messages
+        if (messages.length > 0) {
+            html += `
+                <div class="task-context-section">
+                    <h6><i class="bi bi-chat-dots me-1"></i>Ultimas Mensagens WhatsApp</h6>
+                    <div style="max-height: 200px; overflow-y: auto;">
+            `;
+            messages.slice(-8).forEach(msg => {
+                const isOutgoing = msg.direcao === 'outgoing';
+                const date = msg.enviado_em ? new Date(msg.enviado_em).toLocaleDateString('pt-BR', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'}) : '';
+                html += `
+                    <div class="message-bubble ${isOutgoing ? 'outgoing' : 'incoming'}">
+                        <div class="small text-muted mb-1">${isOutgoing ? 'Voce' : (contact?.nome || 'Contato')} - ${date}</div>
+                        <div>${msg.conteudo || ''}</div>
+                    </div>
+                `;
+            });
+            html += '</div></div>';
+        }
+
+        // AI Suggestion
+        if (suggestion && !suggestion.error) {
+            html += `
+                <div class="suggestion-card">
+                    <h6 class="mb-3"><i class="bi bi-lightbulb text-warning me-1"></i>Sugestao da INTEL</h6>
+
+                    ${suggestion.resumo_situacao ? `
+                        <div class="mb-3">
+                            <div class="small text-muted text-uppercase mb-1">Resumo da Situacao</div>
+                            <div>${suggestion.resumo_situacao}</div>
+                        </div>
+                    ` : ''}
+
+                    ${suggestion.ultima_interacao ? `
+                        <div class="mb-3">
+                            <div class="small text-muted text-uppercase mb-1">Ultima Interacao</div>
+                            <div>${suggestion.ultima_interacao}</div>
+                        </div>
+                    ` : ''}
+
+                    ${suggestion.sugestao_acao ? `
+                        <div class="mb-3">
+                            <div class="small text-muted text-uppercase mb-1">Acao Sugerida</div>
+                            <div class="fw-semibold text-primary">${suggestion.sugestao_acao}</div>
+                        </div>
+                    ` : ''}
+
+                    ${suggestion.mensagem_sugerida ? `
+                        <div class="mb-3">
+                            <div class="small text-muted text-uppercase mb-1">Mensagem Sugerida</div>
+                            <div class="suggested-message" id="suggestedMessage">${suggestion.mensagem_sugerida}</div>
+                        </div>
+                    ` : ''}
+
+                    ${suggestion.timing ? `
+                        <div class="mb-0">
+                            <div class="small text-muted text-uppercase mb-1">Timing</div>
+                            <div>${suggestion.timing}</div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+
+            // Show copy button if there's a suggested message
+            if (suggestion.mensagem_sugerida) {
+                btnCopy.style.display = 'inline-flex';
+                btnCopy.onclick = () => {
+                    navigator.clipboard.writeText(suggestion.mensagem_sugerida);
+                    btnCopy.innerHTML = '<i class="bi bi-check me-1"></i>Copiado!';
+                    setTimeout(() => {
+                        btnCopy.innerHTML = '<i class="bi bi-clipboard me-1"></i>Copiar Mensagem';
+                    }, 2000);
+                };
+            }
+        }
+
+        body.innerHTML = html;
     }
 
     function searchTaskResponsavel(query) {

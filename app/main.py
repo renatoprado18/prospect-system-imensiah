@@ -7613,6 +7613,33 @@ async def delete_task_endpoint(request: Request, task_id: int):
     return result
 
 
+@app.get("/api/tasks/{task_id}/context")
+async def get_task_context(request: Request, task_id: int):
+    """
+    Busca contexto completo de uma tarefa.
+
+    Retorna:
+    - Tarefa com dados do projeto
+    - Contato relacionado (identificado pelo titulo ou contact_id)
+    - Mensagens WhatsApp recentes com o contato
+    - Emails recentes com o contato
+    - Contexto do projeto (participantes, outras tarefas)
+    - Sugestao de acao gerada por IA
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.task_context import get_task_context_service
+    context_service = get_task_context_service()
+    result = await context_service.get_task_context(task_id)
+
+    if "error" in result and result["error"] == "Tarefa nao encontrada":
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    return result
+
+
 @app.post("/api/tasks/sync")
 async def sync_tasks(request: Request):
     """
