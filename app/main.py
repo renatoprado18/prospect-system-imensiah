@@ -3837,10 +3837,13 @@ async def linkedin_bookmarklet_receive_get(data: str):
         </div></body></html>
         """)
 
+    # Log para debug
+    data_length = len(data) if data else 0
+
     try:
         parsed_data = json.loads(data)
     except Exception as e:
-        return error_page("Dados invalidos", str(e))
+        return error_page(f"Dados invalidos (len={data_length})", f"{str(e)}\n\nData preview: {data[:500] if data else 'None'}...")
 
     linkedin_url = parsed_data.get("linkedin_url", "").strip()
     if not linkedin_url:
@@ -3977,14 +3980,18 @@ async def linkedin_bookmarklet_receive_get(data: str):
 
         # Dados extraidos para mostrar no popup
         extracted_info = []
-        if parsed_data.get("headline"): extracted_info.append(f"📝 {parsed_data.get('headline')[:60]}...")
+        if parsed_data.get("headline"): extracted_info.append(f"📝 {parsed_data.get('headline')[:60]}")
         if parsed_data.get("location"): extracted_info.append(f"📍 {parsed_data.get('location')}")
         if parsed_data.get("company"): extracted_info.append(f"🏢 {parsed_data.get('company')}")
         if parsed_data.get("title"): extracted_info.append(f"💼 {parsed_data.get('title')}")
         if parsed_data.get("connections"): extracted_info.append(f"🔗 {parsed_data.get('connections')} conexões")
-        if parsed_data.get("profile_picture"): extracted_info.append("📷 Foto capturada")
+        photo_url = parsed_data.get("profile_picture", "")
+        if photo_url: extracted_info.append(f"📷 Foto ({len(photo_url)} chars)")
 
         extracted_html = "<br>".join(extracted_info) if extracted_info else "<span style='color:#f59e0b;'>⚠️ Nenhum dado extra extraído</span>"
+        # Debug: mostrar chaves recebidas
+        keys_received = ", ".join(parsed_data.keys())
+        extracted_html += f"<br><small style='color:#999;'>Keys: {keys_received}</small>"
 
         # Foto para mostrar no popup
         photo_html = ""
@@ -7899,6 +7906,169 @@ async def mark_inbox_conversation_read(
     service = get_inbox_service()
     service.mark_as_read(conversation_id)
     return {"success": True}
+
+
+# =============================================================================
+# ACTION PROPOSALS ENDPOINTS (INTEL Proativo)
+# =============================================================================
+
+@app.get("/api/action-proposals")
+async def get_action_proposals_list(
+    request: Request,
+    limit: int = 20,
+    include_resolved: bool = False
+):
+    """Lista propostas de acao pendentes"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.action_proposals import get_action_proposals
+    service = get_action_proposals()
+
+    if include_resolved:
+        # Para admin/debug, incluir todas
+        with get_pg_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT ap.*, c.nome as contact_name, c.foto_url as contact_foto
+                FROM action_proposals ap
+                LEFT JOIN contacts c ON c.id = ap.contact_id
+                ORDER BY ap.criado_em DESC
+                LIMIT %s
+            """, (limit,))
+            proposals = []
+            for row in cursor.fetchall():
+                proposal = dict(row)
+                for key in ['criado_em', 'expires_at', 'responded_at', 'executed_at']:
+                    if proposal.get(key) and hasattr(proposal[key], 'isoformat'):
+                        proposal[key] = proposal[key].isoformat()
+                proposals.append(proposal)
+            return {"proposals": proposals}
+    else:
+        proposals = service.get_pending_proposals(limit)
+        return {"proposals": proposals}
+
+
+@app.get("/api/action-proposals/count")
+async def get_action_proposals_count(request: Request):
+    """Retorna contagem de propostas pendentes por urgencia"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.action_proposals import get_action_proposals
+    service = get_action_proposals()
+    return service.get_pending_count()
+
+
+@app.get("/api/action-proposals/stats")
+async def get_action_proposals_stats(request: Request, days: int = 30):
+    """Estatisticas de propostas"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.action_proposals import get_action_proposals
+    service = get_action_proposals()
+    return service.get_stats(days)
+
+
+@app.get("/api/action-proposals/{proposal_id}")
+async def get_action_proposal(request: Request, proposal_id: int):
+    """Detalhes de uma proposta"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.action_proposals import get_action_proposals
+    service = get_action_proposals()
+
+    proposal = service.get_proposal(proposal_id)
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposta nao encontrada")
+
+    return proposal
+
+
+class ExecuteProposalRequest(BaseModel):
+    option_id: Optional[str] = None
+    custom_params: Optional[Dict] = None
+
+
+@app.post("/api/action-proposals/{proposal_id}/execute")
+async def execute_action_proposal(
+    request: Request,
+    proposal_id: int,
+    body: ExecuteProposalRequest
+):
+    """Executa acao de uma proposta"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.action_executor import get_action_executor
+    executor = get_action_executor()
+
+    result = await executor.execute(
+        proposal_id,
+        option_id=body.option_id,
+        custom_params=body.custom_params
+    )
+
+    return result
+
+
+@app.post("/api/action-proposals/{proposal_id}/dismiss")
+async def dismiss_action_proposal(request: Request, proposal_id: int):
+    """Ignora uma proposta"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.action_proposals import get_action_proposals
+    service = get_action_proposals()
+
+    result = service.dismiss_proposal(proposal_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Proposta nao encontrada ou ja processada")
+
+    return {"success": True, "proposal": result}
+
+
+@app.post("/api/action-proposals/{proposal_id}/reject")
+async def reject_action_proposal(
+    request: Request,
+    proposal_id: int,
+    reason: Optional[str] = None
+):
+    """Rejeita uma proposta"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.action_proposals import get_action_proposals
+    service = get_action_proposals()
+
+    result = service.reject_proposal(proposal_id, reason)
+    if not result:
+        raise HTTPException(status_code=404, detail="Proposta nao encontrada ou ja processada")
+
+    return {"success": True, "proposal": result}
+
+
+@app.post("/api/action-proposals/expire-old")
+async def expire_old_proposals(request: Request):
+    """Marca propostas expiradas (pode ser chamado por cron)"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.action_proposals import get_action_proposals
+    service = get_action_proposals()
+
+    count = service.expire_old_proposals()
+    return {"expired": count}
 
 
 # =============================================================================

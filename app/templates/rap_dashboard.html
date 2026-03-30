@@ -694,6 +694,129 @@
             }
         }
 
+        /* Action Proposals Widget - INTEL Proativo */
+        .action-proposals-widget {
+            background: white;
+            border-radius: 12px;
+            padding: 14px 18px;
+            margin-bottom: 16px;
+            border-left: 4px solid var(--warning);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .action-proposals-widget.has-urgent {
+            border-left-color: var(--danger);
+            animation: pulse-border 2s infinite;
+        }
+
+        @keyframes pulse-border {
+            0%, 100% { box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+            50% { box-shadow: 0 2px 16px rgba(239, 68, 68, 0.2); }
+        }
+
+        .proposals-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .proposals-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            color: var(--dark);
+        }
+
+        .proposals-title i {
+            color: var(--warning);
+            font-size: 1.1rem;
+        }
+
+        .proposals-count {
+            font-size: 0.7rem;
+            padding: 2px 8px;
+        }
+
+        .proposals-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .proposal-card {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px;
+            background: var(--gray-100);
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .proposal-card:hover {
+            background: var(--gray-200);
+        }
+
+        .proposal-card.urgent {
+            background: linear-gradient(135deg, #fef2f2 0%, #fff7ed 100%);
+            border: 1px solid #fecaca;
+        }
+
+        .proposal-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: var(--warning);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+
+        .proposal-card.urgent .proposal-icon {
+            background: var(--danger);
+        }
+
+        .proposal-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .proposal-content h6 {
+            margin: 0 0 4px 0;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--dark);
+        }
+
+        .proposal-content p {
+            margin: 0 0 8px 0;
+            font-size: 0.75rem;
+            color: var(--gray-500);
+            line-height: 1.4;
+        }
+
+        .proposal-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .proposal-actions button {
+            font-size: 0.7rem;
+            padding: 4px 10px;
+        }
+
+        .proposal-time {
+            font-size: 0.65rem;
+            color: var(--gray-400);
+            white-space: nowrap;
+        }
+
         /* Quem Contatar Hoje - Compact */
         .contact-today-card {
             border: 2px solid var(--primary);
@@ -1443,6 +1566,23 @@
             </div>
         </div>
 
+        <!-- Action Proposals Widget (INTEL Proativo) -->
+        <div class="action-proposals-widget" id="actionProposalsWidget" style="display: none;">
+            <div class="proposals-header">
+                <div class="proposals-title">
+                    <i class="bi bi-lightning-charge-fill"></i>
+                    <span>Acoes Sugeridas</span>
+                    <span class="proposals-count badge bg-danger" id="proposalsCount">0</span>
+                </div>
+                <button class="btn btn-sm btn-link" onclick="refreshProposals()">
+                    <i class="bi bi-arrow-clockwise"></i>
+                </button>
+            </div>
+            <div class="proposals-list" id="proposalsList">
+                <!-- Preenchido via JS -->
+            </div>
+        </div>
+
         <!-- Stats - Compact clickable cards -->
         <div class="stats-grid">
             <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/contatos'">
@@ -1659,6 +1799,9 @@
 
                 // Briefings pendentes - buscar da API especifica
                 loadBriefingsPendentes();
+
+                // Action proposals (INTEL Proativo)
+                loadActionProposals();
 
             } catch (error) {
                 console.error('Error loading dashboard:', error);
@@ -2086,6 +2229,158 @@
             }
         }
 
+        // Load action proposals (INTEL Proativo)
+        async function loadActionProposals() {
+            try {
+                const response = await fetch('/api/action-proposals?limit=5');
+                if (!response.ok) return;
+
+                const data = await response.json();
+                const proposals = data.proposals || [];
+
+                const widget = document.getElementById('actionProposalsWidget');
+                const listEl = document.getElementById('proposalsList');
+                const countEl = document.getElementById('proposalsCount');
+
+                if (proposals.length === 0) {
+                    widget.style.display = 'none';
+                    return;
+                }
+
+                // Show widget
+                widget.style.display = 'block';
+                countEl.textContent = proposals.length;
+
+                // Check for urgent
+                const hasUrgent = proposals.some(p => p.urgency === 'high');
+                widget.classList.toggle('has-urgent', hasUrgent);
+
+                // Render proposals
+                listEl.innerHTML = proposals.map(p => renderProposalCard(p)).join('');
+
+            } catch (error) {
+                console.log('Action proposals API not available:', error);
+            }
+        }
+
+        function renderProposalCard(proposal) {
+            const isUrgent = proposal.urgency === 'high';
+            const icon = getProposalIcon(proposal.action_type);
+            const timeAgo = formatTimeAgo(proposal.criado_em);
+
+            // Render options as buttons
+            const options = proposal.options || [];
+            const optionsHtml = options.slice(0, 3).map(opt => {
+                const btnClass = opt.action === 'dismiss' ? 'btn-link text-muted' :
+                                 opt.id.includes('reschedule') || opt.id.includes('respond') ? 'btn-primary' :
+                                 opt.action === 'cancel' ? 'btn-outline-danger' : 'btn-outline-secondary';
+                return `<button class="btn btn-sm ${btnClass}" onclick="executeProposal(${proposal.id}, '${opt.id}')">${opt.label}</button>`;
+            }).join('');
+
+            return `
+                <div class="proposal-card ${isUrgent ? 'urgent' : ''}">
+                    <div class="proposal-icon">
+                        <i class="bi ${icon}"></i>
+                    </div>
+                    <div class="proposal-content">
+                        <h6>${proposal.title}</h6>
+                        <p>${proposal.description || ''}</p>
+                        <div class="proposal-actions">
+                            ${optionsHtml}
+                        </div>
+                    </div>
+                    <div class="proposal-time">${timeAgo}</div>
+                </div>
+            `;
+        }
+
+        function getProposalIcon(actionType) {
+            const icons = {
+                'reschedule_event': 'bi-calendar-event',
+                'cancel_event': 'bi-calendar-x',
+                'confirm_event': 'bi-calendar-check',
+                'urgent_alert': 'bi-exclamation-triangle-fill',
+                'pending_response': 'bi-chat-dots',
+                'financial_alert': 'bi-currency-dollar'
+            };
+            return icons[actionType] || 'bi-lightning';
+        }
+
+        function formatTimeAgo(dateStr) {
+            if (!dateStr) return '';
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+
+            if (diffMins < 1) return 'agora';
+            if (diffMins < 60) return `ha ${diffMins} min`;
+            const diffHours = Math.floor(diffMins / 60);
+            if (diffHours < 24) return `ha ${diffHours}h`;
+            const diffDays = Math.floor(diffHours / 24);
+            return `ha ${diffDays}d`;
+        }
+
+        async function executeProposal(proposalId, optionId) {
+            try {
+                const response = await fetch(`/api/action-proposals/${proposalId}/execute`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({option_id: optionId})
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Show success feedback
+                    showToast(result.message || 'Acao executada!', 'success');
+
+                    // Reload proposals
+                    loadActionProposals();
+
+                    // If action opens a conversation, redirect
+                    if (result.result?.action === 'open_conversation' && result.result?.contact_id) {
+                        window.location.href = `/contacts/${result.result.contact_id}`;
+                    }
+                } else {
+                    showToast(result.message || 'Erro ao executar acao', 'error');
+                }
+            } catch (error) {
+                console.error('Error executing proposal:', error);
+                showToast('Erro ao executar acao', 'error');
+            }
+        }
+
+        async function dismissProposal(proposalId) {
+            try {
+                await fetch(`/api/action-proposals/${proposalId}/dismiss`, {method: 'POST'});
+                loadActionProposals();
+            } catch (error) {
+                console.error('Error dismissing proposal:', error);
+            }
+        }
+
+        function refreshProposals() {
+            loadActionProposals();
+        }
+
+        function showToast(message, type = 'info') {
+            // Simple toast notification
+            const toast = document.createElement('div');
+            toast.className = `toast-notification ${type}`;
+            toast.innerHTML = `<i class="bi ${type === 'success' ? 'bi-check-circle' : 'bi-exclamation-circle'}"></i> ${message}`;
+            toast.style.cssText = `
+                position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+                background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#6366f1'};
+                color: white; padding: 12px 20px; border-radius: 8px;
+                display: flex; align-items: center; gap: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                animation: slideIn 0.3s ease;
+            `;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
         // Init - SINGLE API call for all dashboard data
         async function initDashboard() {
             try {
@@ -2098,6 +2393,9 @@
                 document.getElementById('statAtencao').textContent = data.stats?.precisam_atencao || 0;
                 // Briefings pendentes - buscar da API especifica
                 loadBriefingsPendentes();
+
+                // Action proposals (INTEL Proativo)
+                loadActionProposals();
 
                 // Circulos Distribution
                 if (data.circulos_resumo) {

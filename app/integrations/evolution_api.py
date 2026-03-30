@@ -447,9 +447,9 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
 
 
 async def process_incoming_message(data: Dict) -> Dict:
-    """Processa mensagem recebida"""
+    """Processa mensagem recebida e analisa com IA"""
     from database import get_db
-    from services.inbox import serialize_datetime
+    import asyncio
 
     message = data.get("message", {})
     key = data.get("key", {})
@@ -577,12 +577,49 @@ async def process_incoming_message(data: Dict) -> Dict:
 
         conn.commit()
 
+    # Analisar mensagem com IA em background (apenas mensagens recebidas)
+    if direction == "incoming" and content:
+        asyncio.create_task(
+            analyze_message_in_background(new_msg_id, contact_id, content)
+        )
+
     return {
         "processed": True,
         "message_id": new_msg_id,
         "contact_id": contact_id,
         "direction": direction
     }
+
+
+async def analyze_message_in_background(message_id: int, contact_id: int, content: str):
+    """Analisa mensagem em background e cria propostas de acao se necessario"""
+    try:
+        from services.realtime_analyzer import get_realtime_analyzer
+        from services.action_proposals import get_action_proposals
+
+        analyzer = get_realtime_analyzer()
+        proposals_service = get_action_proposals()
+
+        # Analisar mensagem
+        analysis = await analyzer.analyze_message(
+            message_text=content,
+            contact_id=contact_id,
+            message_direction="incoming",
+            message_id=message_id
+        )
+
+        # Criar propostas se necessario
+        if analysis.get('requires_action') and analysis.get('suggested_actions'):
+            created = proposals_service.create_from_analysis(
+                message_id=message_id,
+                contact_id=contact_id,
+                analysis=analysis
+            )
+            if created:
+                logger.info(f"Created {len(created)} action proposals for message {message_id}")
+
+    except Exception as e:
+        logger.error(f"Error analyzing message {message_id}: {e}")
 
 
 async def process_sent_message(data: Dict) -> Dict:
