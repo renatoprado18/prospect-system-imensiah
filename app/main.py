@@ -3807,6 +3807,18 @@ async def import_linkedin_csv(request: Request):
 
 # ============== LINKEDIN ENRICHMENT ENDPOINTS ==============
 
+# CORS headers for bookmarklet
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+}
+
+@app.options("/api/linkedin/bookmarklet")
+async def linkedin_bookmarklet_preflight():
+    """Handle CORS preflight for bookmarklet"""
+    return JSONResponse(content={}, headers=CORS_HEADERS)
+
 @app.post("/api/linkedin/bookmarklet")
 async def linkedin_bookmarklet_receive(request: Request):
     """
@@ -3816,11 +3828,19 @@ async def linkedin_bookmarklet_receive(request: Request):
     try:
         data = await request.json()
     except:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+        return JSONResponse(
+            content={"success": False, "error": "Invalid JSON"},
+            status_code=400,
+            headers=CORS_HEADERS
+        )
 
     linkedin_url = data.get("linkedin_url", "").strip()
     if not linkedin_url:
-        raise HTTPException(status_code=400, detail="linkedin_url is required")
+        return JSONResponse(
+            content={"success": False, "error": "linkedin_url is required"},
+            status_code=400,
+            headers=CORS_HEADERS
+        )
 
     # Normalizar URL
     linkedin_url_normalized = linkedin_url.lower()
@@ -3848,12 +3868,15 @@ async def linkedin_bookmarklet_receive(request: Request):
 
     if not contact:
         conn.close()
-        return {
-            "success": False,
-            "error": "contact_not_found",
-            "message": f"Nenhum contato encontrado com LinkedIn: {linkedin_url}",
-            "linkedin_url": linkedin_url
-        }
+        return JSONResponse(
+            content={
+                "success": False,
+                "error": "contact_not_found",
+                "message": f"Nenhum contato encontrado com LinkedIn: {linkedin_url}",
+                "linkedin_url": linkedin_url
+            },
+            headers=CORS_HEADERS
+        )
 
     contact = dict(contact)
     contact_id = contact["id"]
@@ -3943,13 +3966,16 @@ async def linkedin_bookmarklet_receive(request: Request):
     conn.commit()
     conn.close()
 
-    return {
-        "success": True,
-        "contact_id": contact_id,
-        "nome": contact["nome"],
-        "job_change": job_change,
-        "message": f"Dados atualizados para {contact['nome']}" + (" - MUDANCA DE EMPREGO DETECTADA!" if job_change else "")
-    }
+    return JSONResponse(
+        content={
+            "success": True,
+            "contact_id": contact_id,
+            "nome": contact["nome"],
+            "job_change": job_change,
+            "message": f"Dados atualizados para {contact['nome']}" + (" - MUDANCA DE EMPREGO DETECTADA!" if job_change else "")
+        },
+        headers=CORS_HEADERS
+    )
 
 
 @app.get("/api/linkedin/stats")
