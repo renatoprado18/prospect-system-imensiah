@@ -724,32 +724,43 @@
     }
 
     async function searchContacts(query) {
+        const resultsDiv = document.getElementById('searchResults');
+
         if (query.length < 2) {
-            document.getElementById('searchResults').innerHTML = '';
+            resultsDiv.innerHTML = '<p class="text-muted small p-2">Digite pelo menos 2 caracteres...</p>';
             return;
         }
+
+        resultsDiv.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm"></div> Buscando...</div>';
 
         try {
             const response = await fetch(`/api/contacts/search?q=${encodeURIComponent(query)}&limit=10`);
             const results = await response.json();
+            const contacts = results.contacts || results || [];
 
-            document.getElementById('searchResults').innerHTML = (results.contacts || results || []).map(c => {
+            if (contacts.length === 0) {
+                resultsDiv.innerHTML = '<p class="text-muted small p-3">Nenhum contato encontrado para "' + query + '"</p>';
+                return;
+            }
+
+            resultsDiv.innerHTML = contacts.map(c => {
                 const initials = c.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
                 const escapedNome = c.nome.replace(/'/g, "\\'").replace(/"/g, "&quot;");
                 return `
-                    <div class="search-result-item" onclick="selectContact(${c.id}, '${escapedNome}')">
-                        <div class="member-avatar" style="width: 36px; height: 36px; min-width: 36px;" data-initials="${initials}">
-                            ${c.foto_url ? `<img src="${c.foto_url}" onerror="this.style.display='none'; this.parentElement.textContent=this.parentElement.dataset.initials;">` : initials}
+                    <div class="search-result-item" onclick="selectContact(${c.id}, '${escapedNome}')" style="cursor: pointer; padding: 10px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px;">
+                        <div class="member-avatar" style="width: 36px; height: 36px; min-width: 36px; border-radius: 50%; background: #4f46e5; color: white; display: flex; align-items: center; justify-content: center; font-size: 14px;" data-initials="${initials}">
+                            ${c.foto_url ? `<img src="${c.foto_url}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;" onerror="this.style.display='none'; this.parentElement.textContent=this.parentElement.dataset.initials;">` : initials}
                         </div>
                         <div>
                             <div class="fw-semibold">${c.nome}</div>
-                            <small class="text-muted">${c.empresa || ''} ${c.cargo || ''}</small>
+                            <small class="text-muted">${c.empresa || ''} ${c.cargo ? '- ' + c.cargo : ''}</small>
                         </div>
                     </div>
                 `;
-            }).join('') || '<p class="text-muted small p-3">Nenhum contato encontrado</p>';
+            }).join('');
         } catch (error) {
-            console.error('Error:', error);
+            console.error('Error searching contacts:', error);
+            resultsDiv.innerHTML = '<p class="text-danger small p-3">Erro ao buscar contatos</p>';
         }
     }
 
