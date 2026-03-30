@@ -540,7 +540,7 @@ class WhatsAppBatchImporter:
             'alternatives': []
         }
 
-    def get_or_create_conversation(self, contact_id: int, cursor) -> int:
+    def get_or_create_conversation(self, contact_id: int, cursor, contact_name: str = None) -> int:
         """Obtém ou cria conversa WhatsApp para um contato."""
         # Verificar se já existe
         cursor.execute("""
@@ -552,12 +552,13 @@ class WhatsAppBatchImporter:
         if result:
             return result['id']
 
-        # Criar nova conversa
+        # Criar nova conversa com assunto
+        assunto = f"WhatsApp com {contact_name}" if contact_name else "Conversa WhatsApp"
         cursor.execute("""
-            INSERT INTO conversations (contact_id, canal, status, criado_em, atualizado_em)
-            VALUES (%s, 'whatsapp', 'open', NOW(), NOW())
+            INSERT INTO conversations (contact_id, canal, assunto, status, criado_em, atualizado_em)
+            VALUES (%s, 'whatsapp', %s, 'open', NOW(), NOW())
             RETURNING id
-        """, (contact_id,))
+        """, (contact_id, assunto))
         return cursor.fetchone()['id']
 
     def import_messages_to_inbox(
@@ -719,7 +720,7 @@ class WhatsAppBatchImporter:
             # Criar/obter conversa
             with get_db() as conn:
                 cursor = conn.cursor()
-                conversation_id = self.get_or_create_conversation(contact['id'], cursor)
+                conversation_id = self.get_or_create_conversation(contact['id'], cursor, contact['nome'])
                 conn.commit()
 
             # Importar mensagens
