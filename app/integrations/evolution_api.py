@@ -329,13 +329,30 @@ class EvolutionAPIClient:
             "QRCODE_UPDATED"
         ]
 
-        return await self._request("POST", f"/webhook/set/{name}", {
-            "url": webhook_url,
-            "events": events or default_events,
-            "enabled": True,
-            "webhookByEvents": True,
-            "webhookBase64": False
-        })
+        # Try Evolution API v2 format with "webhook" wrapper
+        payload = {
+            "webhook": {
+                "url": webhook_url,
+                "events": events or default_events,
+                "enabled": True,
+                "webhookByEvents": True,
+                "webhookBase64": False
+            }
+        }
+
+        result = await self._request("POST", f"/webhook/set/{name}", payload)
+
+        # If that fails, try without wrapper (v1 format)
+        if result.get("error") and "webhook" in str(result.get("error", "")):
+            result = await self._request("POST", f"/webhook/set/{name}", {
+                "url": webhook_url,
+                "events": events or default_events,
+                "enabled": True,
+                "webhookByEvents": True,
+                "webhookBase64": False
+            })
+
+        return result
 
     async def get_webhook(self, instance_name: str = None) -> Dict:
         """Obtém configuração do webhook"""
