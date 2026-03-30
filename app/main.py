@@ -8299,12 +8299,9 @@ async def expire_old_proposals(request: Request):
 
 
 @app.post("/api/action-proposals/test-notification")
+@app.get("/api/action-proposals/test-notification")
 async def test_proposal_notification(request: Request, contact_name: str = "Pedro Salles"):
-    """Endpoint de teste - cria proposta fake e envia notificacao WhatsApp"""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Nao autenticado")
-
+    """Endpoint de teste - cria proposta fake e envia notificacao WhatsApp (sem auth)"""
     from services.action_proposals import get_action_proposals
     from services.whatsapp_notifications import get_whatsapp_notifications
 
