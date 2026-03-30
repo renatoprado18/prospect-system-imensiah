@@ -328,6 +328,20 @@ class WhatsAppBatchImporter:
                 return contact
         return None
 
+    def clean_name(self, name: str) -> str:
+        """Remove caracteres especiais e normaliza o nome para busca."""
+        if not name:
+            return ""
+        # Remove caracteres invisíveis e normaliza espaços
+        import unicodedata
+        # Normaliza Unicode (remove acentos compostos, etc)
+        normalized = unicodedata.normalize('NFKC', name)
+        # Remove caracteres de controle e espaços extras
+        cleaned = ' '.join(normalized.split())
+        # Remove caracteres especiais mantendo letras, números e espaços
+        cleaned = re.sub(r'[^\w\s]', '', cleaned, flags=re.UNICODE)
+        return cleaned.strip()
+
     def auto_detect_contact(self, parsed: Dict) -> Dict:
         """
         Detecta automaticamente o contato a partir do conteúdo do chat.
@@ -345,19 +359,23 @@ class WhatsAppBatchImporter:
         match_reason = ''
         alternatives = []
 
-        contact_name = parsed.get('contact_name')
+        contact_name = parsed.get('contact_name', '').strip()
         contact_phone = parsed.get('contact_phone')
         all_phones = parsed.get('all_phones', [])
         participants_data = parsed.get('participants_data', {})
 
+        # Limpar nome para busca
+        clean_contact_name = self.clean_name(contact_name)
+
+        logger.info(f"Auto-detect: Buscando contato - nome original: '{contact_name}', limpo: '{clean_contact_name}', phones: {all_phones}")
+
         with get_db() as conn:
             cursor = conn.cursor()
 
-            # 1. ALTA CONFIANÇA: Match por telefone exato
+            # 1. ALTA CONFIANÇA: Match por telefone
             for phone in all_phones:
                 if phone and len(phone) >= 10:
                     phone_normalized = self.normalize_phone(phone)
-                    # Buscar por múltiplas variações do telefone
                     for variant in [phone_normalized[-11:], phone_normalized[-10:], phone_normalized[-9:], phone_normalized[-8:]]:
                         if len(variant) >= 8:
                             cursor.execute("""
@@ -370,8 +388,8 @@ class WhatsAppBatchImporter:
                             if result:
                                 contact = dict(result)
                                 confidence = 'high'
-                                match_reason = f'Telefone {phone} encontrado no cadastro'
-                                logger.info(f"Auto-detect: HIGH confidence match by phone {phone} -> {contact['nome']}")
+                                match_reason = f'Telefone {phone} encontrado'
+                                logger.info(f"Auto-detect: HIGH by phone {phone} -> {contact['nome']}")
                                 return {
                                     'contact': contact,
                                     'confidence': confidence,
@@ -379,20 +397,42 @@ class WhatsAppBatchImporter:
                                     'alternatives': []
                                 }
 
-            # 2. MÉDIA CONFIANÇA: Match por nome exato
-            if contact_name:
+            # 2. ALTA CONFIANÇA: Match por nome exato (usando ILIKE para ser mais tolerante)
+            if clean_contact_name:
+                # Tentar nome exato primeiro
                 cursor.execute("""
                     SELECT id, nome, telefones, foto_url
                     FROM contacts
-                    WHERE LOWER(TRIM(nome)) = LOWER(TRIM(%s))
+                    WHERE TRIM(nome) ILIKE %s
+                    LIMIT 1
+                """, (clean_contact_name,))
+                result = cursor.fetchone()
+                if result:
+                    contact = dict(result)
+                    confidence = 'high'
+                    match_reason = f'Nome exato encontrado'
+                    logger.info(f"Auto-detect: HIGH by exact name '{clean_contact_name}' -> {contact['nome']}")
+                    return {
+                        'contact': contact,
+                        'confidence': confidence,
+                        'match_reason': match_reason,
+                        'alternatives': []
+                    }
+
+            # 2b. Tentar com nome original (pode ter caracteres especiais que casam)
+            if contact_name and contact_name != clean_contact_name:
+                cursor.execute("""
+                    SELECT id, nome, telefones, foto_url
+                    FROM contacts
+                    WHERE TRIM(nome) ILIKE %s
                     LIMIT 1
                 """, (contact_name,))
                 result = cursor.fetchone()
                 if result:
                     contact = dict(result)
                     confidence = 'high'
-                    match_reason = f'Nome "{contact_name}" encontrado exatamente'
-                    logger.info(f"Auto-detect: HIGH confidence match by exact name -> {contact['nome']}")
+                    match_reason = f'Nome exato encontrado'
+                    logger.info(f"Auto-detect: HIGH by original name '{contact_name}' -> {contact['nome']}")
                     return {
                         'contact': contact,
                         'confidence': confidence,
