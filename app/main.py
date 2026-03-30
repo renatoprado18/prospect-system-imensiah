@@ -5296,47 +5296,27 @@ async def cron_sync_calendar(request: Request):
 @app.get("/api/cron/sync-tasks")
 async def cron_sync_tasks(request: Request):
     """
-    Cron: Sincroniza tarefas do Google Tasks.
+    Cron: Sincronizacao bidirecional de tarefas com Google Tasks.
     Schedule: 0 7,13,19 * * * (7h, 13h, 19h)
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
 
-    from integrations.google_tasks import get_tasks_integration
-    from integrations.gmail import GmailIntegration
-
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
-        account = cursor.fetchone()
-
-    if not account:
-        return {"job": "sync-tasks", "status": "skipped", "reason": "No Google account connected"}
+    from services.tasks_sync import get_tasks_sync_service
 
     try:
-        gmail = GmailIntegration()
-        tokens = await gmail.refresh_access_token(account["refresh_token"])
+        tasks_service = get_tasks_sync_service()
+        result = await tasks_service.full_sync()
 
-        if "error" in tokens:
-            return {"job": "sync-tasks", "status": "error", "error": "Token refresh failed"}
-
-        access_token = tokens.get("access_token")
-        tasks_api = get_tasks_integration()
-
-        # Fetch all task lists and tasks
-        task_lists = await tasks_api.list_task_lists(access_token)
-        total_tasks = 0
-
-        for tl in task_lists:
-            tasks = await tasks_api.list_tasks(access_token, tl["id"])
-            total_tasks += len(tasks)
+        if "error" in result:
+            return {"job": "sync-tasks", "status": "error", "error": result["error"]}
 
         return {
             "job": "sync-tasks",
             "timestamp": datetime.now().isoformat(),
             "status": "success",
-            "task_lists": len(task_lists),
-            "total_tasks": total_tasks
+            "push": result.get("push", {}),
+            "pull": result.get("pull", {})
         }
 
     except Exception as e:
@@ -7278,140 +7258,228 @@ async def calendar_today(request: Request, debug: bool = False):
 # NOTE: /api/calendar/events endpoint is defined later in the file (CalendarEventsService)
 # It returns events from local DB with contact_name field
 
-# ============== Google Tasks Endpoints ==============
+# ============== Google Tasks Endpoints (Bidirectional Sync) ==============
 
 from integrations.google_tasks import get_tasks_integration
+from services.tasks_sync import get_tasks_sync_service
 
 
 @app.get("/api/tasks")
 async def list_tasks(
     request: Request,
     show_completed: bool = False,
-    limit: int = 20,
-    status: str = None  # 'pending', 'completed', or None for all
+    limit: int = 50,
+    status: str = None,  # 'pending', 'completed', or None for all
+    contact_id: int = None,
+    project_id: int = None,
+    source: str = "local"  # 'local', 'google', or 'both'
 ):
     """
-    Lista tarefas do Google Tasks.
+    Lista tarefas. Suporta fonte local, Google Tasks, ou ambas.
 
     Params:
         show_completed: Include completed tasks
         limit: Max number of tasks to return
         status: Filter by status ('pending' or 'completed')
+        contact_id: Filter by contact
+        project_id: Filter by project
+        source: 'local' (DB), 'google' (API), or 'both'
     """
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
-        account = cursor.fetchone()
+    tasks_service = get_tasks_sync_service()
 
-    if not account:
-        return {"tasks": [], "error": "Nenhuma conta Google conectada"}
+    # Local tasks from database
+    local_tasks = []
+    if source in ["local", "both"]:
+        local_status = None
+        if status == "pending":
+            local_status = "pending"
+        elif status == "completed" or show_completed:
+            local_status = "completed" if status == "completed" else None
 
-    from integrations.gmail import GmailIntegration
-    gmail = GmailIntegration()
-    tokens = await gmail.refresh_access_token(account["refresh_token"])
-
-    if "error" in tokens:
-        return {"tasks": [], "error": "Token invalido"}
-
-    access_token = tokens.get("access_token")
-    tasks_api = get_tasks_integration()
-
-    # If status=pending, don't show completed
-    include_completed = show_completed or (status == "completed")
-
-    # Fetch from all task lists
-    all_tasks = []
-    task_lists = await tasks_api.list_task_lists(access_token)
-
-    if not task_lists:
-        task_lists = [{"id": "@default", "title": "Minhas tarefas"}]
-
-    for tl in task_lists:
-        tasks = await tasks_api.list_tasks(
-            access_token,
-            tasklist_id=tl.get("id", "@default"),
-            show_completed=include_completed
+        local_tasks = tasks_service.get_tasks(
+            status=local_status,
+            contact_id=contact_id,
+            project_id=project_id,
+            limit=limit
         )
-        for task in tasks:
-            task["tasklist_title"] = tl.get("title", "Tarefas")
-            # Normalize field names for frontend compatibility
-            task["due_date"] = task.get("due")
-            task["description"] = task.get("notes")
-            all_tasks.append(task)
 
-    # Filter by status if specified
+        # Filter out completed if not requested
+        if not show_completed and status != "completed":
+            local_tasks = [t for t in local_tasks if t.get("status") != "completed"]
+
+        # Normalize for frontend
+        for task in local_tasks:
+            task["due_date"] = task.get("data_vencimento")
+            task["description"] = task.get("descricao")
+            task["title"] = task.get("titulo")
+            task["source"] = "local"
+
+        if source == "local":
+            return {"tasks": local_tasks[:limit]}
+
+    # Google Tasks from API
+    google_tasks = []
+    if source in ["google", "both"]:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+            account = cursor.fetchone()
+
+        if account:
+            from integrations.gmail import GmailIntegration
+            gmail = GmailIntegration()
+            tokens = await gmail.refresh_access_token(account["refresh_token"])
+
+            if "error" not in tokens:
+                access_token = tokens.get("access_token")
+                tasks_api = get_tasks_integration()
+
+                include_completed = show_completed or (status == "completed")
+                task_lists = await tasks_api.list_task_lists(access_token)
+
+                if not task_lists:
+                    task_lists = [{"id": "@default", "title": "Minhas tarefas"}]
+
+                for tl in task_lists:
+                    tasks = await tasks_api.list_tasks(
+                        access_token,
+                        tasklist_id=tl.get("id", "@default"),
+                        show_completed=include_completed
+                    )
+                    for task in tasks:
+                        task["tasklist_title"] = tl.get("title", "Tarefas")
+                        task["due_date"] = task.get("due")
+                        task["description"] = task.get("notes")
+                        task["source"] = "google"
+                        google_tasks.append(task)
+
+        if source == "google":
+            # Filter by status
+            if status == "pending":
+                google_tasks = [t for t in google_tasks if t.get("status") != "completed"]
+            elif status == "completed":
+                google_tasks = [t for t in google_tasks if t.get("status") == "completed"]
+
+            return {"tasks": google_tasks[:limit]}
+
+    # Merge local and Google tasks (deduplicate by google_task_id)
+    all_tasks = local_tasks.copy()
+    local_google_ids = {t.get("google_task_id") for t in local_tasks if t.get("google_task_id")}
+
+    for gtask in google_tasks:
+        if gtask.get("id") not in local_google_ids:
+            all_tasks.append(gtask)
+
+    # Filter by status
     if status == "pending":
         all_tasks = [t for t in all_tasks if t.get("status") != "completed"]
     elif status == "completed":
         all_tasks = [t for t in all_tasks if t.get("status") == "completed"]
 
-    # Sort by due date (tasks without due date at the end)
+    # Sort by due date
     def sort_key(task):
-        due = task.get("due_date") or task.get("due")
+        due = task.get("due_date") or task.get("due") or task.get("data_vencimento")
         if due:
-            return (0, due)
+            return (0, str(due))
         return (1, "9999-12-31")
 
     all_tasks.sort(key=sort_key)
 
-    # Apply limit
-    all_tasks = all_tasks[:limit]
-
-    return {"tasks": all_tasks}
+    return {"tasks": all_tasks[:limit]}
 
 
 @app.post("/api/tasks")
 async def create_task(request: Request):
     """
-    Cria nova tarefa no Google Tasks.
+    Cria nova tarefa localmente e sincroniza com Google Tasks.
     """
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
     data = await request.json()
-    title = data.get("title")
-    notes = data.get("notes")
-    due = data.get("due")
+    title = data.get("title") or data.get("titulo")
+    notes = data.get("notes") or data.get("descricao")
+    due = data.get("due") or data.get("data_vencimento")
+    contact_id = data.get("contact_id")
+    project_id = data.get("project_id")
+    prioridade = data.get("prioridade", 5)
+    sync_to_google = data.get("sync_to_google", True)
 
     if not title:
         raise HTTPException(status_code=400, detail="Titulo obrigatorio")
 
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
-        account = cursor.fetchone()
+    due_datetime = None
+    if due:
+        try:
+            if isinstance(due, str):
+                due_datetime = datetime.fromisoformat(due.replace("Z", "+00:00"))
+            else:
+                due_datetime = due
+        except:
+            pass
 
-    if not account:
-        raise HTTPException(status_code=400, detail="Nenhuma conta Google conectada")
+    tasks_service = get_tasks_sync_service()
+    result = await tasks_service.create_task(
+        titulo=title,
+        descricao=notes,
+        data_vencimento=due_datetime,
+        prioridade=prioridade,
+        contact_id=contact_id,
+        project_id=project_id,
+        sync_to_google=sync_to_google
+    )
 
-    from integrations.gmail import GmailIntegration
-    gmail = GmailIntegration()
-    tokens = await gmail.refresh_access_token(account["refresh_token"])
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
 
-    if "error" in tokens:
-        raise HTTPException(status_code=401, detail="Token invalido")
+    return result
 
-    access_token = tokens.get("access_token")
-    tasks_api = get_tasks_integration()
+
+@app.put("/api/tasks/{task_id}")
+async def update_task_endpoint(request: Request, task_id: int):
+    """
+    Atualiza tarefa e sincroniza com Google Tasks.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = await request.json()
+    title = data.get("title") or data.get("titulo")
+    notes = data.get("notes") or data.get("descricao")
+    due = data.get("due") or data.get("data_vencimento")
+    status = data.get("status")
+    prioridade = data.get("prioridade")
+    sync_to_google = data.get("sync_to_google", True)
 
     due_datetime = None
     if due:
         try:
-            due_datetime = datetime.fromisoformat(due.replace("Z", "+00:00"))
+            if isinstance(due, str):
+                due_datetime = datetime.fromisoformat(due.replace("Z", "+00:00"))
+            else:
+                due_datetime = due
         except:
             pass
 
-    result = await tasks_api.create_task(
-        access_token=access_token,
-        title=title,
-        notes=notes,
-        due=due_datetime
+    tasks_service = get_tasks_sync_service()
+    result = await tasks_service.update_task(
+        task_id=task_id,
+        titulo=title,
+        descricao=notes,
+        data_vencimento=due_datetime,
+        status=status,
+        prioridade=prioridade,
+        sync_to_google=sync_to_google
     )
+
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
 
     return result
 
@@ -7420,6 +7488,82 @@ async def create_task(request: Request):
 async def complete_task(request: Request, task_id: str):
     """
     Marca tarefa como concluida.
+    Suporta tanto ID local (int) quanto Google Task ID (string).
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    tasks_service = get_tasks_sync_service()
+
+    # Check if it's a local ID (numeric) or Google ID (string)
+    try:
+        local_id = int(task_id)
+        result = await tasks_service.complete_task(local_id)
+    except ValueError:
+        # It's a Google Task ID - complete directly via API
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+            account = cursor.fetchone()
+
+        if not account:
+            raise HTTPException(status_code=400, detail="Nenhuma conta Google conectada")
+
+        from integrations.gmail import GmailIntegration
+        gmail = GmailIntegration()
+        tokens = await gmail.refresh_access_token(account["refresh_token"])
+
+        if "error" in tokens:
+            raise HTTPException(status_code=401, detail="Token invalido")
+
+        tasks_api = get_tasks_integration()
+        result = await tasks_api.complete_task(tokens["access_token"], task_id)
+
+    return result
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task_endpoint(request: Request, task_id: int):
+    """
+    Deleta tarefa localmente e do Google Tasks.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    tasks_service = get_tasks_sync_service()
+    result = await tasks_service.delete_task(task_id)
+
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    return result
+
+
+@app.post("/api/tasks/sync")
+async def sync_tasks(request: Request):
+    """
+    Sincronizacao bidirecional de tasks com Google Tasks.
+    Push local -> Google, Pull Google -> Local.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    tasks_service = get_tasks_sync_service()
+    result = await tasks_service.full_sync()
+
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return result
+
+
+@app.get("/api/tasks/sync/status")
+async def get_tasks_sync_status(request: Request):
+    """
+    Retorna status do sync de tasks.
     """
     user = get_current_user(request)
     if not user:
@@ -7427,24 +7571,37 @@ async def complete_task(request: Request, task_id: str):
 
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
-        account = cursor.fetchone()
 
-    if not account:
-        raise HTTPException(status_code=400, detail="Nenhuma conta Google conectada")
+        # Count by sync status
+        cursor.execute("""
+            SELECT sync_status, COUNT(*) as count
+            FROM tasks
+            GROUP BY sync_status
+        """)
+        by_status = {row["sync_status"]: row["count"] for row in cursor.fetchall()}
 
-    from integrations.gmail import GmailIntegration
-    gmail = GmailIntegration()
-    tokens = await gmail.refresh_access_token(account["refresh_token"])
+        # Count by origin
+        cursor.execute("""
+            SELECT origem, COUNT(*) as count
+            FROM tasks
+            GROUP BY origem
+        """)
+        by_origin = {row["origem"] or "unknown": row["count"] for row in cursor.fetchall()}
 
-    if "error" in tokens:
-        raise HTTPException(status_code=401, detail="Token invalido")
+        # Last sync
+        cursor.execute("""
+            SELECT MAX(last_synced_at) as last_sync
+            FROM tasks
+            WHERE last_synced_at IS NOT NULL
+        """)
+        last_sync = cursor.fetchone()
 
-    access_token = tokens.get("access_token")
-    tasks_api = get_tasks_integration()
-    result = await tasks_api.complete_task(access_token, task_id)
-
-    return result
+    return {
+        "by_sync_status": by_status,
+        "by_origin": by_origin,
+        "last_sync": last_sync["last_sync"] if last_sync else None,
+        "total_local": sum(by_status.values()) if by_status else 0
+    }
 
 
 # ============== ANALYTICS API ==============
