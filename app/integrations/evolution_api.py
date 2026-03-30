@@ -638,9 +638,32 @@ async def analyze_message_in_background(message_id: int, contact_id: int, conten
 
 
 async def process_sent_message(data: Dict) -> Dict:
-    """Processa confirmação de mensagem enviada"""
-    # Por enquanto, apenas log
-    logger.info(f"Message sent: {data.get('key', {}).get('id')}")
+    """Processa confirmação de mensagem enviada - tambem verifica respostas a propostas"""
+    import asyncio
+
+    key = data.get("key", {})
+    message = data.get("message", {})
+
+    message_id = key.get("id")
+    remote_jid = key.get("remoteJid", "")
+    from_me = key.get("fromMe", False)
+
+    logger.info(f"Message sent: {message_id}, fromMe: {from_me}, to: {remote_jid}")
+
+    # Extrair conteudo
+    content = ""
+    if "conversation" in message:
+        content = message["conversation"]
+    elif "extendedTextMessage" in message:
+        content = message["extendedTextMessage"].get("text", "")
+
+    # Verificar se e resposta a proposta (mensagem enviada por Renato)
+    if from_me and content and is_proposal_response(content):
+        phone = remote_jid.replace("@s.whatsapp.net", "")
+        logger.info(f"Detected proposal response in send.message: {content}")
+        asyncio.create_task(process_renato_reply(content, phone))
+        return {"processed": True, "reason": "proposal_response", "content": content}
+
     return {"processed": True, "event": "send.message"}
 
 

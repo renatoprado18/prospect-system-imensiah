@@ -142,23 +142,19 @@ class WhatsAppNotificationService:
             """, (proposal_id,))
             conn.commit()
 
-    async def process_reply(self, message_text: str, from_phone: str) -> Optional[Dict]:
+    async def process_reply(self, message_text: str, from_phone: str = None) -> Optional[Dict]:
         """
         Processa resposta do Renato a uma notificacao.
+        Nota: A verificacao de que e do Renato ja foi feita no webhook (fromMe=True)
 
         Args:
             message_text: Texto da mensagem de resposta
-            from_phone: Telefone de quem enviou
+            from_phone: Telefone (opcional, para logging)
 
         Returns:
             Resultado da execucao ou None se nao for resposta a proposal
         """
-        # Verificar se e do Renato
-        phone_clean = ''.join(filter(str.isdigit, from_phone))
-        renato_clean = ''.join(filter(str.isdigit, self.renato_phone))
-
-        if not phone_clean.endswith(renato_clean[-8:]):
-            return None
+        logger.info(f"Processing reply: '{message_text}' from {from_phone}")
 
         text = message_text.strip().lower()
 
