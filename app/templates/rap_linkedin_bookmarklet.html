@@ -412,19 +412,36 @@ for(var i=0;i<spans.length;i++){
 var connMatch=document.body.innerText.match(/(\\d+)\\+?\\s*(connections|conexoes)/i);
 if(connMatch)d.connections=parseInt(connMatch[1]);
 
-/* Foto - buscar todas as imagens, pegar a maior que parece foto de perfil */
-var imgs=document.querySelectorAll('img');
-var bestPhoto=null;var bestSize=0;
-for(var i=0;i<imgs.length;i++){
-  var img=imgs[i];
-  if(!img.src)continue;
-  if(img.src.includes('ghost')||img.src.includes('static.licdn.com/aero'))continue;
-  if(img.src.includes('media.licdn.com')&&(img.src.includes('profile')||img.width>=100)){
-    var size=img.width*img.height;
-    if(size>bestSize){bestSize=size;bestPhoto=img;}
+/* Foto - buscar foto de PERFIL (circular), NAO background */
+var profilePhoto=null;
+/* Primeiro: tentar seletores especificos de foto de perfil */
+var photoSelectors=[
+  'button.pv-top-card-profile-picture__image-wrapper img',
+  'img.pv-top-card-profile-picture__image',
+  '.pv-top-card-profile-picture__container img',
+  '.pv-top-card__photo-wrapper img',
+  'img[class*="profile-picture"]'
+];
+for(var ps=0;ps<photoSelectors.length&&!profilePhoto;ps++){
+  profilePhoto=document.querySelector(photoSelectors[ps]);
+}
+/* Fallback: buscar imagem quadrada/circular (ratio proximo de 1) de tamanho medio */
+if(!profilePhoto){
+  var imgs=document.querySelectorAll('img');
+  for(var i=0;i<imgs.length;i++){
+    var img=imgs[i];
+    if(!img.src||!img.src.includes('media.licdn.com'))continue;
+    if(img.src.includes('ghost')||img.src.includes('aero'))continue;
+    /* Ignorar backgrounds (muito largos) */
+    if(img.width>400||img.height<80)continue;
+    /* Preferir imagens aproximadamente quadradas (foto de perfil) */
+    var ratio=img.width/img.height;
+    if(ratio>0.8&&ratio<1.2&&img.width>=100&&img.width<=250){
+      profilePhoto=img;break;
+    }
   }
 }
-if(bestPhoto)d.profile_picture=bestPhoto.src;
+if(profilePhoto&&profilePhoto.src&&!profilePhoto.src.includes('ghost'))d.profile_picture=profilePhoto.src;
 
 /* Experiencia atual - da headline ou secao experience */
 if(d.headline){
