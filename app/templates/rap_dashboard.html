@@ -1327,6 +1327,13 @@
             from { opacity: 0; transform: translateY(-20px); }
             to { opacity: 1; transform: translateY(0); }
         }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .spin {
+            animation: spin 1s linear infinite;
+        }
         .suggestion-modal-header {
             padding: 20px 24px;
             border-bottom: 1px solid var(--gray-200);
@@ -1976,6 +1983,39 @@
                 loadTasks(); // Reload
             } catch (error) {
                 console.error('Error toggling task:', error);
+            }
+        }
+
+        async function syncTasks() {
+            const icon = document.getElementById('syncTasksIcon');
+            const container = document.getElementById('tasksList');
+
+            // Animate icon
+            icon.classList.add('spin');
+
+            try {
+                const response = await fetch('/api/tasks/sync', { method: 'POST' });
+                const result = await response.json();
+
+                if (result.error) {
+                    console.error('Sync error:', result.error);
+                    alert('Erro ao sincronizar: ' + result.error);
+                } else {
+                    console.log('Sync result:', result);
+                    // Show success notification
+                    const pushed = result.push?.pushed || 0;
+                    const pulled = (result.pull?.created || 0) + (result.pull?.updated || 0);
+                    if (pushed > 0 || pulled > 0) {
+                        alert(`Sincronizado! Enviadas: ${pushed}, Recebidas: ${pulled}`);
+                    }
+                    // Reload tasks
+                    loadTasks();
+                }
+            } catch (error) {
+                console.error('Error syncing tasks:', error);
+                alert('Erro ao sincronizar tarefas');
+            } finally {
+                icon.classList.remove('spin');
             }
         }
 
