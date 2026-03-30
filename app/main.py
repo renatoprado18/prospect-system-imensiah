@@ -4037,22 +4037,21 @@ async def linkedin_bookmarklet_receive_get(data: str):
             {extracted_html}
         </div>
         {job_change_html}
-        <button onclick="goToQueue()" style="margin-top:16px;padding:12px 40px;background:#22c55e;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Próximo</button>
-        <p style="margin-top:8px;font-size:11px;color:#666;">Indo para fila em <span id="countdown">2</span>s...</p>
+        <button onclick="fechar()" style="margin-top:16px;padding:12px 40px;background:#22c55e;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
+        <p style="margin-top:8px;font-size:11px;color:#666;">Fechando em <span id="countdown">2</span>s...</p>
         </div>
         <script>
-        // Notifica outras abas para atualizar
+        // Notifica a aba do bookmarklet para atualizar
         try {{
             const bc = new BroadcastChannel('intel-linkedin');
             bc.postMessage({{type: 'enriched', contactId: {contact_id}, name: '{contact["nome"]}'}});
         }} catch(e) {{}}
 
-        function goToQueue() {{
-            // Abre a fila de trabalho (substitui esta janela)
-            window.location.replace('https://intel.almeida-prado.com/linkedin/bookmarklet');
+        function fechar() {{
+            window.close();
         }}
 
-        // Countdown e auto-redirect
+        // Auto-close em 2 segundos
         var count = 2;
         var timer = setInterval(function() {{
             count--;
@@ -4060,7 +4059,7 @@ async def linkedin_bookmarklet_receive_get(data: str):
             if (el) el.textContent = count;
             if (count <= 0) {{
                 clearInterval(timer);
-                goToQueue();
+                fechar();
             }}
         }}, 1000);
         </script>
