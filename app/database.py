@@ -86,6 +86,21 @@ def get_db():
     """
     return DBConnection()
 
+
+# Legacy compatibility - some modules import these directly
+def get_connection():
+    """Legacy: Get a raw database connection. Caller must close it."""
+    return _create_connection()
+
+
+def return_connection(conn):
+    """Legacy: Close a connection (no pooling, just closes)"""
+    if conn:
+        try:
+            conn.close()
+        except:
+            pass
+
 def init_db():
     """Initialize PostgreSQL database tables"""
     with get_db() as conn:
