@@ -389,51 +389,47 @@ var m=title.match(/^(.+?)\\s*[-|–]/);
 if(m)d.full_name=m[1].trim();
 if(!d.full_name){var h1=document.querySelector('h1');if(h1)d.full_name=h1.textContent.trim();}
 
-/* Headline - texto abaixo do nome */
-var mainSection=document.querySelector('main')||document.body;
-var textEls=mainSection.querySelectorAll('div,span');
-for(var i=0;i<textEls.length;i++){
-  var el=textEls[i];
-  var txt=el.textContent.trim();
-  var cls=el.className||'';
-  /* Headline tipicamente contem "at" ou "|" ou eh o cargo */
-  if(cls.includes('text-body-medium')&&txt.length>5&&txt.length<200&&!txt.includes('LinkedIn')){
-    d.headline=txt;break;
-  }
-}
-/* Fallback: buscar texto que parece headline (contem "at" ou "|") */
+/* Headline - pegar diretamente do DOM */
+var hlEl=document.querySelector('.text-body-medium.break-words');
+if(hlEl)d.headline=hlEl.innerText.trim();
 if(!d.headline){
-  var bodyText=mainSection.innerText;
-  var lines=bodyText.split('\\n');
-  for(var i=0;i<Math.min(lines.length,20);i++){
-    var line=lines[i].trim();
-    if(line.length>10&&line.length<150&&(line.includes(' at ')||line.includes(' na ')||line.includes(' | '))){
-      d.headline=line;break;
+  /* Fallback: segundo elemento apos h1 */
+  var h1=document.querySelector('h1');
+  if(h1&&h1.parentElement){
+    var siblings=h1.parentElement.querySelectorAll('div');
+    for(var si=0;si<siblings.length;si++){
+      var stxt=siblings[si].innerText.trim();
+      if(stxt.length>10&&stxt.length<200&&stxt!==d.full_name){
+        d.headline=stxt;break;
+      }
     }
   }
 }
 
-/* Location - buscar texto com cidade/pais */
-var locMatch=mainSection.innerText.match(/(São Paulo|Rio de Janeiro|Brasília|Brasil|Brazil|Portugal|United States|USA|London|New York)[^\\n]{0,30}/i);
-if(locMatch){
-  /* Pegar a linha completa */
-  var locLine=mainSection.innerText.substring(Math.max(0,locMatch.index-30),locMatch.index+50);
-  var locParts=locLine.split('\\n');
-  for(var lp=0;lp<locParts.length;lp++){
-    if(locParts[lp].includes(locMatch[1])){
-      d.location=locParts[lp].trim().substring(0,60);break;
+/* Location - pegar span com localizacao */
+var locEl=document.querySelector('.text-body-small.inline.t-black--light.break-words');
+if(locEl)d.location=locEl.innerText.trim();
+if(!d.location){
+  /* Fallback: buscar span que parece localizacao */
+  var spans=document.querySelectorAll('span.text-body-small');
+  for(var sp=0;sp<spans.length;sp++){
+    var stxt=spans[sp].innerText.trim();
+    if(stxt.length>5&&stxt.length<80&&(stxt.includes(',')||stxt.includes('Brasil')||stxt.includes('Brazil'))){
+      d.location=stxt;break;
     }
   }
 }
 
-/* Conexoes - buscar numero seguido de conexoes/connections */
-var connMatch=mainSection.innerText.match(/(\\d+)\\+?\\s*(connections|conexoes|conexões)/i);
-if(connMatch)d.connections=parseInt(connMatch[1]);
-/* Fallback: "Mais de X conexoes" */
+/* Conexoes */
+var pageText=document.body.innerText;
+var connMatch=pageText.match(/(\\d[\\d.,]+)\\+?\\s*(connections|conexões|conexoes)/i);
+if(connMatch)d.connections=parseInt(connMatch[1].replace(/[.,]/g,''));
 if(!d.connections){
-  var maisMatch=mainSection.innerText.match(/mais de (\\d+)/i);
+  var maisMatch=pageText.match(/mais de (\\d+)/i);
   if(maisMatch)d.connections=parseInt(maisMatch[1]);
 }
+/* Debug: salvar snippet do texto para diagnostico */
+d._debug_text=pageText.substring(0,500);
 
 /* Foto - buscar foto de PERFIL (circular), NAO background */
 var profilePhoto=null;

@@ -4014,8 +4014,12 @@ async def linkedin_bookmarklet_receive_get(data: str):
 
         extracted_html = "<br>".join(extracted_info) if extracted_info else "<span style='color:#f59e0b;'>⚠️ Nenhum dado extra extraído</span>"
         # Debug: mostrar chaves recebidas
-        keys_received = ", ".join(parsed_data.keys())
+        keys_received = ", ".join([k for k in parsed_data.keys() if not k.startswith('_')])
         extracted_html += f"<br><small style='color:#999;'>Keys: {keys_received}</small>"
+        # Debug: mostrar texto capturado
+        debug_text = parsed_data.get("_debug_text", "")[:200]
+        if debug_text:
+            extracted_html += f"<br><details><summary style='color:#999;font-size:11px;cursor:pointer;'>Debug text</summary><pre style='font-size:10px;max-height:100px;overflow:auto;text-align:left;'>{debug_text}...</pre></details>"
 
         # Foto para mostrar no popup
         photo_html = ""
