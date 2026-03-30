@@ -28,7 +28,7 @@
                     <p>Arraste o botao abaixo para sua barra de favoritos:</p>
 
                     <div class="text-center my-4">
-                        <a href="javascript:(function(){const INTEL_URL='https://intel.almeida-prado.com';function extractData(){const d={linkedin_url:window.location.href};try{const h=document.querySelector('h1');if(h)d.full_name=h.textContent.trim();const hl=document.querySelector('.text-body-medium');if(hl)d.headline=hl.textContent.trim();const loc=document.querySelector('.text-body-small.inline.t-black--light.break-words');if(loc)d.location=loc.textContent.trim();const about=document.querySelector('#about~div .inline-show-more-text');if(about)d.about=about.textContent.trim();const exp=document.querySelector('#experience');if(exp){const items=exp.parentElement.querySelectorAll('li.artdeco-list__item');d.experience=[];items.forEach((item,i)=>{if(i>=5)return;const title=item.querySelector('.t-bold span');const company=item.querySelector('.t-normal span');const dates=item.querySelector('.t-black--light span');d.experience.push({title:title?.textContent?.trim(),company:company?.textContent?.trim(),dates:dates?.textContent?.trim()})});}const photo=document.querySelector('img.pv-top-card-profile-picture__image');if(photo)d.profile_picture=photo.src;const conn=document.querySelector('a[href*=connections] span');if(conn){const m=conn.textContent.match(/([\\d,]+)/);if(m)d.connections=parseInt(m[1].replace(',',''));}if(d.experience&&d.experience[0]){d.company=d.experience[0].company;d.title=d.experience[0].title;}}catch(e){console.error('Extract error:',e);}return d;}const data=extractData();if(!data.full_name){alert('Nao foi possivel extrair dados. Verifique se voce esta em um perfil LinkedIn.');return;}const overlay=document.createElement('div');overlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:999999;display:flex;align-items:center;justify-content:center;';overlay.innerHTML='<div style=\"background:white;padding:30px;border-radius:12px;text-align:center;max-width:400px;\"><div style=\"font-size:24px;margin-bottom:10px;\">Enviando dados...</div><div style=\"color:#666;\">'+data.full_name+'</div></div>';document.body.appendChild(overlay);fetch(INTEL_URL+'/api/linkedin/bookmarklet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()).then(res=>{overlay.innerHTML='<div style=\"background:white;padding:30px;border-radius:12px;text-align:center;max-width:400px;\">'+(res.success?'<div style=\"font-size:48px;color:#22c55e;\">&#10004;</div><div style=\"font-size:20px;margin:10px 0;\">'+res.nome+'</div><div style=\"color:#666;\">Dados atualizados!'+(res.job_change?'<br><strong style=\"color:#f59e0b;\">Mudanca de emprego detectada!</strong>':'')+'</div>':'<div style=\"font-size:48px;color:#ef4444;\">&#10060;</div><div style=\"font-size:20px;margin:10px 0;\">Erro</div><div style=\"color:#666;\">'+(res.message||'Contato nao encontrado')+'</div>')+'<button onclick=\"this.parentElement.parentElement.remove()\" style=\"margin-top:20px;padding:10px 30px;background:#3b82f6;color:white;border:none;border-radius:6px;cursor:pointer;\">OK</button></div>';}).catch(e=>{overlay.innerHTML='<div style=\"background:white;padding:30px;border-radius:12px;text-align:center;\"><div style=\"font-size:48px;color:#ef4444;\">&#10060;</div><div>Erro de conexao</div><button onclick=\"this.parentElement.parentElement.remove()\" style=\"margin-top:20px;padding:10px 30px;background:#3b82f6;color:white;border:none;border-radius:6px;cursor:pointer;\">OK</button></div>';});})();"
+                        <a href="#" id="bookmarkletLink"
                            class="btn btn-lg btn-primary px-5 py-3"
                            style="font-size: 1.2rem; cursor: grab;"
                            onclick="alert('Arraste este botao para sua barra de favoritos!'); return false;"
@@ -40,6 +40,16 @@
                     <div class="alert alert-info">
                         <i class="bi bi-info-circle me-2"></i>
                         <strong>Dica:</strong> Se a barra de favoritos nao estiver visivel, pressione <kbd>Ctrl+Shift+B</kbd> (Windows) ou <kbd>Cmd+Shift+B</kbd> (Mac).
+                    </div>
+
+                    <div class="mt-3 p-3 bg-light rounded">
+                        <p class="mb-2"><strong>Alternativa:</strong> Copie o codigo abaixo e crie um favorito manualmente:</p>
+                        <div class="input-group">
+                            <input type="text" class="form-control form-control-sm" id="bookmarkletCode" readonly>
+                            <button class="btn btn-outline-secondary btn-sm" onclick="copyBookmarkletCode()">
+                                <i class="bi bi-clipboard"></i> Copiar
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -368,7 +378,61 @@ async function loadJobChanges() {
     }
 }
 
+// Bookmarklet code
+const BOOKMARKLET_CODE = `javascript:(function(){
+var INTEL_URL='https://intel.almeida-prado.com';
+var d={linkedin_url:location.href};
+try{
+var h=document.querySelector('h1');
+if(h)d.full_name=h.textContent.trim();
+var hl=document.querySelector('.text-body-medium');
+if(hl)d.headline=hl.textContent.trim();
+var loc=document.querySelector('.text-body-small.inline.t-black--light.break-words');
+if(loc)d.location=loc.textContent.trim();
+var about=document.querySelector('#about~div .inline-show-more-text');
+if(about)d.about=about.textContent.trim();
+var exp=document.querySelector('#experience');
+if(exp){
+var items=exp.parentElement.querySelectorAll('li.artdeco-list__item');
+d.experience=[];
+items.forEach(function(item,i){
+if(i>=5)return;
+var title=item.querySelector('.t-bold span');
+var company=item.querySelector('.t-normal span');
+d.experience.push({title:title?title.textContent.trim():'',company:company?company.textContent.trim():''});
+});
+}
+var photo=document.querySelector('img.pv-top-card-profile-picture__image');
+if(photo)d.profile_picture=photo.src;
+if(d.experience&&d.experience[0]){d.company=d.experience[0].company;d.title=d.experience[0].title;}
+}catch(e){console.error(e);}
+if(!d.full_name){alert('Abra um perfil LinkedIn primeiro');return;}
+var ov=document.createElement('div');
+ov.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:999999;display:flex;align-items:center;justify-content:center';
+ov.innerHTML='<div style="background:white;padding:40px;border-radius:16px;text-align:center"><div style="font-size:20px">Enviando...</div><div style="color:#666;margin-top:8px">'+d.full_name+'</div></div>';
+document.body.appendChild(ov);
+fetch(INTEL_URL+'/api/linkedin/bookmarklet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
+.then(function(r){return r.json()})
+.then(function(res){
+ov.innerHTML='<div style="background:white;padding:40px;border-radius:16px;text-align:center;max-width:400px">'+(res.success?'<div style="font-size:64px">✅</div><div style="font-size:24px;margin:16px 0">'+res.nome+'</div><div style="color:#666">Dados salvos!'+(res.job_change?'<br><b style="color:#f59e0b">Mudou de emprego!</b>':'')+'</div>':'<div style="font-size:64px">❌</div><div style="font-size:20px;margin:16px 0">Erro</div><div style="color:#666">'+(res.message||'Contato nao encontrado')+'</div>')+'<button onclick="this.parentElement.parentElement.remove()" style="margin-top:24px;padding:12px 40px;background:#3b82f6;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px">OK</button></div>';
+})
+.catch(function(){
+ov.innerHTML='<div style="background:white;padding:40px;border-radius:16px;text-align:center"><div style="font-size:64px">❌</div><div style="margin:16px 0">Erro de conexao</div><button onclick="this.parentElement.parentElement.remove()" style="margin-top:24px;padding:12px 40px;background:#3b82f6;color:white;border:none;border-radius:8px;cursor:pointer">OK</button></div>';
+});
+})();`.replace(/\n/g, '');
+
+function copyBookmarkletCode() {
+    const input = document.getElementById('bookmarkletCode');
+    input.select();
+    document.execCommand('copy');
+    alert('Codigo copiado! Crie um novo favorito e cole no campo URL.');
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+    // Set bookmarklet href
+    document.getElementById('bookmarkletLink').href = BOOKMARKLET_CODE;
+    document.getElementById('bookmarkletCode').value = BOOKMARKLET_CODE;
+
     loadStats();
     loadPendingContacts();
     loadJobChanges();
