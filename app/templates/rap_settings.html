@@ -1141,61 +1141,95 @@
 
         function renderWaImportPreview() {
             document.getElementById('waImportPreview').style.display = 'block';
-            document.getElementById('waFileCount').textContent = waBatchFiles.length;
 
+            const autoFiles = waBatchFiles.filter(f => f.auto_import && f.contact);
+            const reviewFiles = waBatchFiles.filter(f => f.needs_review || !f.contact);
+
+            document.getElementById('waFileCount').textContent = waBatchFiles.length;
             const totalMsgs = waBatchFiles.reduce((sum, f) => sum + (f.messages_count || 0), 0);
             document.getElementById('waMsgCount').textContent = `${totalMsgs.toLocaleString()} mensagens`;
 
             const list = document.getElementById('waFilesList');
-            list.innerHTML = waBatchFiles.map((file, idx) => {
-                const hasContact = file.contact_found;
-                const contactName = file.contact ? file.contact.nome : file.contact_name || 'Desconhecido';
-                const participants = file.participants || [];
-                const searchInfo = file.search_attempts?.join(', ') || '';
+            let html = '';
 
-                if (hasContact) {
+            // Arquivos detectados automaticamente (prontos para importar)
+            if (autoFiles.length > 0) {
+                html += `<div class="mb-2 small text-success fw-medium"><i class="bi bi-check-circle me-1"></i>${autoFiles.length} arquivo(s) detectado(s) automaticamente</div>`;
+                html += autoFiles.map((file, idx) => {
+                    const realIdx = waBatchFiles.indexOf(file);
+                    const confidence = file.confidence === 'high' ? 'Alta' : 'Media';
+                    const confidenceColor = file.confidence === 'high' ? 'success' : 'info';
                     return `
-                    <div class="p-2 border rounded mb-2" style="background: rgba(25, 135, 84, 0.05);">
+                    <div class="p-2 border rounded mb-2 border-${confidenceColor}" style="background: rgba(25, 135, 84, 0.03);">
                         <div class="d-flex align-items-center gap-2">
-                            <span class="badge bg-success"><i class="bi bi-check"></i></span>
+                            <span class="badge bg-${confidenceColor}"><i class="bi bi-check"></i></span>
                             <div class="flex-grow-1">
                                 <div class="small fw-medium text-truncate">${file.filename}</div>
-                                <div class="text-muted" style="font-size: 0.7rem;">${file.messages_count} msgs</div>
+                                <div class="text-muted" style="font-size: 0.65rem;">
+                                    ${file.messages_count} msgs | ${file.match_reason}
+                                </div>
                             </div>
-                            <div class="text-success small fw-medium">${contactName}</div>
+                            <div class="text-end">
+                                <div class="text-${confidenceColor} small fw-medium">${file.contact.nome}</div>
+                                <span class="badge bg-light text-muted" style="font-size: 0.6rem;">Conf. ${confidence}</span>
+                            </div>
                         </div>
                     </div>
                     `;
-                } else {
+                }).join('');
+            }
+
+            // Arquivos que precisam de revisão
+            if (reviewFiles.length > 0) {
+                html += `<div class="mb-2 mt-3 small text-warning fw-medium"><i class="bi bi-exclamation-triangle me-1"></i>${reviewFiles.length} arquivo(s) precisa(m) de revisao</div>`;
+                html += reviewFiles.map((file, idx) => {
+                    const realIdx = waBatchFiles.indexOf(file);
+                    const chatName = file.contact_name || 'Desconhecido';
+                    const phones = file.all_phones?.slice(0, 2).join(', ') || '';
+
+                    // Se tem alternativas, mostrar
+                    let alternativesHtml = '';
+                    if (file.alternatives && file.alternatives.length > 0) {
+                        alternativesHtml = `
+                        <div class="mt-1 small text-muted">
+                            Sugestoes: ${file.alternatives.map(a =>
+                                `<a href="#" onclick="selectWaContact(${realIdx}, ${a.id}, '${a.nome.replace(/'/g, "\\'")}'); return false;" class="text-primary">${a.nome}</a>`
+                            ).join(', ')}
+                        </div>`;
+                    }
+
                     return `
-                    <div class="p-2 border rounded mb-2 border-warning" style="background: rgba(255, 193, 7, 0.05);">
+                    <div class="p-2 border rounded mb-2 border-warning" style="background: rgba(255, 193, 7, 0.03);">
                         <div class="d-flex align-items-center gap-2 mb-2">
                             <span class="badge bg-warning text-dark"><i class="bi bi-question"></i></span>
                             <div class="flex-grow-1">
-                                <div class="small fw-medium text-truncate">${file.filename}</div>
-                                <div class="text-muted" style="font-size: 0.7rem;">
-                                    ${file.messages_count} msgs
-                                    ${participants.length > 0 ? `| Participantes: ${participants.slice(0, 2).join(', ')}` : ''}
+                                <div class="small fw-medium">${file.filename}</div>
+                                <div class="text-muted" style="font-size: 0.65rem;">
+                                    ${file.messages_count} msgs | Chat: "${chatName}" ${phones ? `| Tel: ${phones}` : ''}
                                 </div>
+                                ${file.match_reason ? `<div class="text-danger" style="font-size: 0.65rem;">${file.match_reason}</div>` : ''}
+                                ${alternativesHtml}
                             </div>
                         </div>
                         <div class="position-relative">
                             <input type="text"
                                    class="form-control form-control-sm"
-                                   placeholder="Buscar contato..."
-                                   id="waContactSearch_${idx}"
-                                   oninput="searchWaContact(${idx}, this.value)"
-                                   onfocus="showWaContactDropdown(${idx})"
+                                   placeholder="Buscar contato por nome..."
+                                   id="waContactSearch_${realIdx}"
+                                   oninput="searchWaContact(${realIdx}, this.value)"
+                                   onfocus="showWaContactDropdown(${realIdx})"
                                    autocomplete="off">
-                            <div id="waContactDropdown_${idx}"
+                            <div id="waContactDropdown_${realIdx}"
                                  class="position-absolute w-100 bg-white border rounded shadow-sm mt-1"
                                  style="max-height: 150px; overflow-y: auto; z-index: 100; display: none;">
                             </div>
                         </div>
                     </div>
                     `;
-                }
-            }).join('');
+                }).join('');
+            }
+
+            list.innerHTML = html;
 
             // Close dropdowns when clicking outside
             document.addEventListener('click', (e) => {
@@ -1272,10 +1306,21 @@
         }
 
         async function confirmWaImport() {
-            const filesToImport = waBatchFiles.filter(f => f.contact_found || f.contact_id);
+            // Arquivos prontos: auto-detectados OU manualmente selecionados
+            const filesToImport = waBatchFiles.filter(f =>
+                (f.auto_import && f.contact) || f.contact_id || (f.contact_found && f.contact)
+            );
+
             if (filesToImport.length === 0) {
-                showAlert('warning', 'Selecione contatos para os arquivos');
+                showAlert('warning', 'Nenhum arquivo pronto para importar. Selecione contatos para os arquivos pendentes.');
                 return;
+            }
+
+            const pendingFiles = waBatchFiles.filter(f => f.needs_review && !f.contact_id && !f.contact);
+            if (pendingFiles.length > 0) {
+                if (!confirm(`${pendingFiles.length} arquivo(s) serao ignorados pois nao tem contato definido. Continuar?`)) {
+                    return;
+                }
             }
 
             const btn = document.getElementById('waImportBtn');

@@ -6304,8 +6304,8 @@ async def batch_import_whatsapp(request: Request, files: List[UploadFile] = File
 @app.post("/api/whatsapp/batch-import/preview")
 async def batch_import_preview(request: Request, files: List[UploadFile] = File(...)):
     """
-    Analisa arquivos e retorna preview antes de importar.
-    Usa múltiplas estratégias para detectar contato automaticamente.
+    Analisa arquivos e detecta contatos automaticamente a partir do conteúdo.
+    Retorna nível de confiança para cada arquivo.
     """
     user = get_current_user(request)
     if not user:
@@ -6320,43 +6320,25 @@ async def batch_import_preview(request: Request, files: List[UploadFile] = File(
             content_str = content.decode('utf-8', errors='ignore')
             parsed = importer.parse_file_content(content_str)
 
-            contact = None
-            contact_name = parsed.get('contact_name')
-            search_attempts = []
-
-            # 1. Tentar pelo contato principal (nome e telefone)
-            if contact_name:
-                phone = importer.extract_phone(contact_name)
-                contact = importer.find_contact(contact_name, phone)
-                if not contact:
-                    search_attempts.append(f"Nome principal: {contact_name}")
-
-            # 2. Se não encontrou, tentar por todos os participantes
-            if not contact and parsed.get('participants'):
-                contact = importer.find_contact_for_participants(parsed['participants'])
-                if not contact:
-                    search_attempts.append(f"Participantes: {', '.join(parsed['participants'][:3])}")
-
-            # 3. Tentar extrair telefone de mensagens incoming
-            if not contact:
-                phones_found = set()
-                for msg in parsed.get('messages', [])[:30]:
-                    if msg.get('direction') == 'incoming' and msg.get('phone'):
-                        phones_found.add(msg['phone'])
-                        contact = importer.find_contact(msg.get('sender', ''), msg['phone'])
-                        if contact:
-                            break
-                if not contact and phones_found:
-                    search_attempts.append(f"Telefones: {', '.join(list(phones_found)[:3])}")
+            # Auto-detectar contato a partir do conteúdo do chat
+            detection = importer.auto_detect_contact(parsed)
 
             previews.append({
                 'filename': file.filename,
                 'messages_count': parsed['total_messages'],
                 'participants': parsed['participants'],
-                'contact_name': contact_name,
-                'contact_found': contact is not None,
-                'contact': contact,
-                'search_attempts': search_attempts if not contact else [],
+                'contact_name': parsed.get('contact_name'),
+                'contact_phone': parsed.get('contact_phone'),
+                'all_phones': parsed.get('all_phones', []),
+                # Resultado da detecção automática
+                'contact': detection['contact'],
+                'contact_found': detection['contact'] is not None,
+                'confidence': detection['confidence'],
+                'match_reason': detection['match_reason'],
+                'alternatives': detection['alternatives'],
+                # Para importação automática
+                'auto_import': detection['confidence'] in ['high', 'medium'],
+                'needs_review': detection['confidence'] in ['low', 'none'],
                 'date_range': {
                     'start': parsed['date_range']['start'].isoformat() if parsed['date_range']['start'] else None,
                     'end': parsed['date_range']['end'].isoformat() if parsed['date_range']['end'] else None
@@ -6365,7 +6347,8 @@ async def batch_import_preview(request: Request, files: List[UploadFile] = File(
         except Exception as e:
             previews.append({
                 'filename': file.filename,
-                'error': str(e)
+                'error': str(e),
+                'needs_review': True
             })
 
     return {'files': previews}

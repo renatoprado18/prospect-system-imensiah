@@ -105,11 +105,11 @@ class WhatsAppBatchImporter:
         Parseia conteúdo de arquivo .txt exportado do WhatsApp.
 
         Returns:
-            Dict com messages, participants, date_range, etc.
+            Dict com messages, participants, date_range, phones, etc.
         """
         lines = content.split('\n')
         messages = []
-        participants = set()
+        participants = {}  # {sender: {'count': N, 'phones': set()}}
         current_message = None
 
         for line in lines:
@@ -148,8 +148,13 @@ class WhatsAppBatchImporter:
                         'is_media': self.is_media_message(msg_content)
                     }
 
+                    # Track participants (não sou eu)
                     if not is_outgoing:
-                        participants.add(sender)
+                        if sender not in participants:
+                            participants[sender] = {'count': 0, 'phones': set()}
+                        participants[sender]['count'] += 1
+                        if phone:
+                            participants[sender]['phones'].add(phone)
 
                     matched = True
                     break
@@ -162,13 +167,27 @@ class WhatsAppBatchImporter:
 
         # Determinar o contato principal (quem mais aparece que não sou eu)
         contact_name = None
+        contact_phone = None
+        all_phones = set()
+
         if participants:
-            contact_name = max(participants, key=lambda p: sum(1 for m in messages if m['sender'] == p))
+            # Ordenar por quantidade de mensagens
+            sorted_participants = sorted(participants.items(), key=lambda x: x[1]['count'], reverse=True)
+            contact_name = sorted_participants[0][0]
+            if sorted_participants[0][1]['phones']:
+                contact_phone = list(sorted_participants[0][1]['phones'])[0]
+
+            # Coletar todos os telefones encontrados
+            for p_data in participants.values():
+                all_phones.update(p_data['phones'])
 
         return {
             'messages': messages,
-            'participants': list(participants),
+            'participants': list(participants.keys()),
+            'participants_data': {k: {'count': v['count'], 'phones': list(v['phones'])} for k, v in participants.items()},
             'contact_name': contact_name,
+            'contact_phone': contact_phone,
+            'all_phones': list(all_phones),
             'total_messages': len(messages),
             'date_range': {
                 'start': messages[0]['timestamp'] if messages else None,
@@ -308,6 +327,162 @@ class WhatsAppBatchImporter:
             if contact:
                 return contact
         return None
+
+    def auto_detect_contact(self, parsed: Dict) -> Dict:
+        """
+        Detecta automaticamente o contato a partir do conteúdo do chat.
+
+        Returns:
+            {
+                'contact': Dict ou None,
+                'confidence': 'high' | 'medium' | 'low' | 'none',
+                'match_reason': str,
+                'alternatives': List[Dict]  # Outros possíveis matches
+            }
+        """
+        contact = None
+        confidence = 'none'
+        match_reason = ''
+        alternatives = []
+
+        contact_name = parsed.get('contact_name')
+        contact_phone = parsed.get('contact_phone')
+        all_phones = parsed.get('all_phones', [])
+        participants_data = parsed.get('participants_data', {})
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # 1. ALTA CONFIANÇA: Match por telefone exato
+            for phone in all_phones:
+                if phone and len(phone) >= 10:
+                    phone_normalized = self.normalize_phone(phone)
+                    # Buscar por múltiplas variações do telefone
+                    for variant in [phone_normalized[-11:], phone_normalized[-10:], phone_normalized[-9:], phone_normalized[-8:]]:
+                        if len(variant) >= 8:
+                            cursor.execute("""
+                                SELECT id, nome, telefones, foto_url
+                                FROM contacts
+                                WHERE telefones::text LIKE %s
+                                LIMIT 1
+                            """, (f'%{variant}%',))
+                            result = cursor.fetchone()
+                            if result:
+                                contact = dict(result)
+                                confidence = 'high'
+                                match_reason = f'Telefone {phone} encontrado no cadastro'
+                                logger.info(f"Auto-detect: HIGH confidence match by phone {phone} -> {contact['nome']}")
+                                return {
+                                    'contact': contact,
+                                    'confidence': confidence,
+                                    'match_reason': match_reason,
+                                    'alternatives': []
+                                }
+
+            # 2. MÉDIA CONFIANÇA: Match por nome exato
+            if contact_name:
+                cursor.execute("""
+                    SELECT id, nome, telefones, foto_url
+                    FROM contacts
+                    WHERE LOWER(TRIM(nome)) = LOWER(TRIM(%s))
+                    LIMIT 1
+                """, (contact_name,))
+                result = cursor.fetchone()
+                if result:
+                    contact = dict(result)
+                    confidence = 'high'
+                    match_reason = f'Nome "{contact_name}" encontrado exatamente'
+                    logger.info(f"Auto-detect: HIGH confidence match by exact name -> {contact['nome']}")
+                    return {
+                        'contact': contact,
+                        'confidence': confidence,
+                        'match_reason': match_reason,
+                        'alternatives': []
+                    }
+
+            # 3. MÉDIA CONFIANÇA: Match por primeiro nome + sobrenome similar
+            if contact_name and ' ' in contact_name:
+                parts = contact_name.split()
+                first_name = parts[0]
+                last_name = parts[-1] if len(parts) > 1 else ''
+
+                if len(first_name) >= 3:
+                    cursor.execute("""
+                        SELECT id, nome, telefones, foto_url
+                        FROM contacts
+                        WHERE LOWER(nome) LIKE LOWER(%s)
+                          AND (LOWER(nome) LIKE LOWER(%s) OR %s = '')
+                        ORDER BY LENGTH(nome) ASC
+                        LIMIT 5
+                    """, (f'{first_name}%', f'%{last_name}%', last_name))
+                    results = cursor.fetchall()
+                    if results:
+                        contact = dict(results[0])
+                        confidence = 'medium' if len(results) == 1 else 'low'
+                        match_reason = f'Nome similar a "{contact_name}"'
+                        alternatives = [dict(r) for r in results[1:4]]
+                        logger.info(f"Auto-detect: {confidence.upper()} confidence match by similar name -> {contact['nome']}")
+                        return {
+                            'contact': contact,
+                            'confidence': confidence,
+                            'match_reason': match_reason,
+                            'alternatives': alternatives
+                        }
+
+            # 4. BAIXA CONFIANÇA: Match por primeiro nome apenas
+            if contact_name:
+                first_name = contact_name.split()[0] if contact_name else ''
+                if len(first_name) >= 3:
+                    cursor.execute("""
+                        SELECT id, nome, telefones, foto_url
+                        FROM contacts
+                        WHERE LOWER(nome) LIKE LOWER(%s)
+                        ORDER BY LENGTH(nome) ASC
+                        LIMIT 5
+                    """, (f'{first_name}%',))
+                    results = cursor.fetchall()
+                    if results:
+                        # Se só tem um resultado, confiança média
+                        if len(results) == 1:
+                            contact = dict(results[0])
+                            confidence = 'medium'
+                            match_reason = f'Único contato com nome "{first_name}"'
+                        else:
+                            contact = dict(results[0])
+                            confidence = 'low'
+                            match_reason = f'Múltiplos contatos com nome "{first_name}"'
+                            alternatives = [dict(r) for r in results[1:4]]
+
+                        logger.info(f"Auto-detect: {confidence.upper()} confidence match by first name -> {contact['nome']}")
+                        return {
+                            'contact': contact,
+                            'confidence': confidence,
+                            'match_reason': match_reason,
+                            'alternatives': alternatives
+                        }
+
+            # 5. Tentar outros participantes
+            for participant in list(participants_data.keys())[1:]:  # Skip main, já tentamos
+                phones = participants_data[participant].get('phones', [])
+                for phone in phones:
+                    result = self.find_contact(participant, phone)
+                    if result:
+                        contact = result
+                        confidence = 'medium'
+                        match_reason = f'Outro participante "{participant}" encontrado'
+                        return {
+                            'contact': contact,
+                            'confidence': confidence,
+                            'match_reason': match_reason,
+                            'alternatives': []
+                        }
+
+        return {
+            'contact': None,
+            'confidence': 'none',
+            'match_reason': f'Nenhum contato encontrado para "{contact_name or "desconhecido"}"',
+            'alternatives': []
+        }
 
     def get_or_create_conversation(self, contact_id: int, cursor) -> int:
         """Obtém ou cria conversa WhatsApp para um contato."""
