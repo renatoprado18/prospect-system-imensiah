@@ -340,7 +340,29 @@ class EvolutionAPIClient:
     async def get_webhook(self, instance_name: str = None) -> Dict:
         """Obtém configuração do webhook"""
         name = instance_name or self.instance_name
-        return await self._request("GET", f"/webhook/find/{name}")
+
+        # Try different endpoint formats (varies by Evolution API version)
+        endpoints = [
+            f"/webhook/find/{name}",
+            f"/webhook/{name}",
+            f"/instance/fetchInstances"  # Fallback to get instance info
+        ]
+
+        for endpoint in endpoints:
+            try:
+                result = await self._request("GET", endpoint)
+                if result and "error" not in result:
+                    # For fetchInstances, extract webhook from instance data
+                    if "fetchInstances" in endpoint and isinstance(result, list):
+                        for inst in result:
+                            if inst.get("instanceName") == name:
+                                return inst.get("webhook", {})
+                    return result
+            except Exception as e:
+                logger.debug(f"Webhook endpoint {endpoint} failed: {e}")
+                continue
+
+        return {"error": "Could not fetch webhook configuration"}
 
 
 # Singleton

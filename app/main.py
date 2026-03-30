@@ -6658,10 +6658,14 @@ async def evolution_get_webhook(request: Request):
     client = get_evolution_client()
 
     if not client.is_configured:
-        return {"configured": False}
+        return {"configured": False, "error": "Evolution API não configurada"}
 
-    result = await client.get_webhook()
-    logger.info(f"Webhook check result: {result}")
+    try:
+        result = await client.get_webhook()
+        logger.info(f"Webhook check result: {result}")
+    except Exception as e:
+        logger.error(f"Error getting webhook: {e}")
+        return {"configured": False, "error": str(e)}
 
     # Expected URL
     base_url = os.getenv("BASE_URL", "https://intel.almeida-prado.com")
@@ -6674,6 +6678,14 @@ async def evolution_get_webhook(request: Request):
 
     # Try different possible paths in response
     if isinstance(result, dict):
+        # Check for error
+        if "error" in result:
+            return {
+                "configured": False,
+                "error": result.get("error"),
+                "expected_url": expected_url
+            }
+
         # Direct url field
         current_url = result.get("url")
         enabled = result.get("enabled", False)
@@ -6682,9 +6694,10 @@ async def evolution_get_webhook(request: Request):
         # Nested webhook object
         if not current_url and "webhook" in result:
             webhook = result.get("webhook", {})
-            current_url = webhook.get("url")
-            enabled = webhook.get("enabled", False)
-            events = webhook.get("events", [])
+            if isinstance(webhook, dict):
+                current_url = webhook.get("url")
+                enabled = webhook.get("enabled", False)
+                events = webhook.get("events", [])
 
         # Array response (some Evolution API versions)
         if not current_url and isinstance(result.get("data"), list) and len(result.get("data", [])) > 0:
