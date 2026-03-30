@@ -1374,6 +1374,71 @@
                         </div>
                     ` : ''}
 
+                    <!-- LinkedIn Profile Section -->
+                    ${contact.linkedin ? `
+                        <div class="card mt-3" id="linkedinProfileCard">
+                            <div class="card-header d-flex justify-content-between align-items-center py-2">
+                                <h2 class="card-title mb-0" style="font-size: 0.95rem;">
+                                    <i class="bi bi-linkedin text-primary"></i> LinkedIn
+                                    ${contact.linkedin_job_changed_at ? '<span class="badge bg-warning text-dark ms-2"><i class="bi bi-arrow-repeat"></i> Mudou de emprego!</span>' : ''}
+                                </h2>
+                                <div>
+                                    <a href="${contact.linkedin}" target="_blank" class="btn btn-sm btn-link p-0 me-2" title="Abrir LinkedIn">
+                                        <i class="bi bi-box-arrow-up-right"></i>
+                                    </a>
+                                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="enrichLinkedIn()" title="Atualizar dados">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="card-body py-2" id="linkedinProfileContent">
+                                ${contact.linkedin_headline ? `
+                                    <div class="mb-2">
+                                        <strong style="font-size: 0.9rem;">${contact.linkedin_headline}</strong>
+                                    </div>
+                                ` : ''}
+                                ${contact.linkedin_location ? `
+                                    <div class="text-muted small mb-2">
+                                        <i class="bi bi-geo-alt me-1"></i>${contact.linkedin_location}
+                                    </div>
+                                ` : ''}
+                                ${contact.linkedin_about ? `
+                                    <div class="mb-2" style="font-size: 0.85rem;">
+                                        <p class="mb-0" style="white-space: pre-line;">${contact.linkedin_about.substring(0, 300)}${contact.linkedin_about.length > 300 ? '...' : ''}</p>
+                                    </div>
+                                ` : ''}
+                                ${contact.linkedin_experience && contact.linkedin_experience.length > 0 ? `
+                                    <div class="mt-2">
+                                        <h6 class="small text-muted mb-1"><i class="bi bi-briefcase me-1"></i>Experiencia</h6>
+                                        <ul class="list-unstyled mb-0" style="font-size: 0.85rem;">
+                                            ${renderLinkedInExperience(contact.linkedin_experience)}
+                                        </ul>
+                                    </div>
+                                ` : ''}
+                                ${contact.linkedin_skills && contact.linkedin_skills.length > 0 ? `
+                                    <div class="mt-2">
+                                        <h6 class="small text-muted mb-1"><i class="bi bi-star me-1"></i>Skills</h6>
+                                        <div>
+                                            ${renderLinkedInSkills(contact.linkedin_skills)}
+                                        </div>
+                                    </div>
+                                ` : ''}
+                                ${contact.linkedin_enriched_at ? `
+                                    <div class="text-muted small mt-2 pt-2 border-top">
+                                        <i class="bi bi-clock me-1"></i>Atualizado em ${formatDate(contact.linkedin_enriched_at)}
+                                    </div>
+                                ` : `
+                                    <div class="text-center py-3">
+                                        <p class="text-muted small mb-2">Dados do LinkedIn nao carregados</p>
+                                        <button class="btn btn-sm btn-outline-primary" onclick="enrichLinkedIn()">
+                                            <i class="bi bi-download me-1"></i>Carregar Dados
+                                        </button>
+                                    </div>
+                                `}
+                            </div>
+                        </div>
+                    ` : ''}
+
                     <!-- Current Briefing (loaded dynamically) -->
                     <div class="card mt-3" id="current-briefing-card" style="display: none;">
                         <div class="card-header d-flex justify-content-between align-items-center py-2">
@@ -1813,6 +1878,81 @@
                 hour: '2-digit',
                 minute: '2-digit'
             });
+        }
+
+        // LinkedIn helper functions
+        function renderLinkedInExperience(experience) {
+            if (!experience) return '';
+            let exp = experience;
+            if (typeof exp === 'string') {
+                try { exp = JSON.parse(exp.replace(/'/g, '"')); } catch { return ''; }
+            }
+            if (!Array.isArray(exp)) return '';
+
+            return exp.slice(0, 3).map(e => `
+                <li class="mb-1">
+                    <strong>${e.title || 'Cargo'}</strong>
+                    ${e.company ? `<br><span class="text-muted">${e.company}</span>` : ''}
+                    ${e.start_date ? `<br><small class="text-muted">${e.start_date}${e.end_date ? ' - ' + e.end_date : ' - Atual'}</small>` : ''}
+                </li>
+            `).join('');
+        }
+
+        function renderLinkedInSkills(skills) {
+            if (!skills) return '';
+            let sk = skills;
+            if (typeof sk === 'string') {
+                try { sk = JSON.parse(sk.replace(/'/g, '"')); } catch { return ''; }
+            }
+            if (!Array.isArray(sk)) return '';
+
+            return sk.slice(0, 8).map(s =>
+                `<span class="badge bg-light text-dark me-1 mb-1" style="font-size: 0.75rem;">${s}</span>`
+            ).join('');
+        }
+
+        async function enrichLinkedIn() {
+            const btn = event.target.closest('button');
+            const originalContent = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/linkedin/enrich`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    if (response.status === 503) {
+                        alert('API do LinkedIn nao configurada. Configure RAPIDAPI_KEY nas variaveis de ambiente.');
+                    } else {
+                        alert('Erro: ' + (data.error || data.detail || 'Erro desconhecido'));
+                    }
+                    return;
+                }
+
+                if (data.success) {
+                    // Show success message
+                    let msg = 'LinkedIn atualizado com sucesso!';
+                    if (data.job_change) {
+                        msg += `\n\n🔔 Mudanca detectada!\nAntes: ${data.job_change.old_title} @ ${data.job_change.old_company}\nAgora: ${data.job_change.new_title} @ ${data.job_change.new_company}`;
+                    }
+                    alert(msg);
+
+                    // Reload contact data
+                    await loadContact();
+                } else {
+                    alert('Erro: ' + (data.error || 'Falha no enriquecimento'));
+                }
+            } catch (error) {
+                console.error('LinkedIn enrich error:', error);
+                alert('Erro ao enriquecer: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalContent;
+            }
         }
 
         function renderInsights(insights) {

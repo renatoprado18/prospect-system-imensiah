@@ -1031,6 +1031,53 @@ def init_db():
             ON tasks(project_id)
         ''')
 
+        # ============== LINKEDIN ENRICHMENT Tables ==============
+
+        # Expand contacts table with more LinkedIn fields
+        cursor.execute('''
+            ALTER TABLE contacts
+            ADD COLUMN IF NOT EXISTS linkedin_location TEXT,
+            ADD COLUMN IF NOT EXISTS linkedin_about TEXT,
+            ADD COLUMN IF NOT EXISTS linkedin_experience JSONB DEFAULT '[]',
+            ADD COLUMN IF NOT EXISTS linkedin_education JSONB DEFAULT '[]',
+            ADD COLUMN IF NOT EXISTS linkedin_skills JSONB DEFAULT '[]',
+            ADD COLUMN IF NOT EXISTS linkedin_connections INTEGER,
+            ADD COLUMN IF NOT EXISTS linkedin_open_to_work BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS linkedin_last_activity TEXT,
+            ADD COLUMN IF NOT EXISTS linkedin_enriched_at TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS linkedin_previous_company TEXT,
+            ADD COLUMN IF NOT EXISTS linkedin_previous_title TEXT,
+            ADD COLUMN IF NOT EXISTS linkedin_job_changed_at TIMESTAMP
+        ''')
+
+        # LinkedIn enrichment history - tracks changes over time
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS linkedin_enrichment_history (
+                id SERIAL PRIMARY KEY,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                empresa_anterior TEXT,
+                cargo_anterior TEXT,
+                empresa_nova TEXT,
+                cargo_nova TEXT,
+                headline_anterior TEXT,
+                headline_nova TEXT,
+                tipo_mudanca TEXT,
+                detectado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                notificado BOOLEAN DEFAULT FALSE,
+                dados_completos JSONB DEFAULT '{}'
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_linkedin_history_contact
+            ON linkedin_enrichment_history(contact_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_linkedin_history_tipo
+            ON linkedin_enrichment_history(tipo_mudanca)
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True

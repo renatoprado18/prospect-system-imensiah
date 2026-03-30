@@ -58,7 +58,18 @@ class WhatsAppBatchImporter:
         Args:
             my_names: Lista de nomes que identificam o usuário (para determinar direção)
         """
-        self.my_names = my_names or ['Renato', 'Renato de Faria', 'Renato Almeida Prado']
+        # Nomes padrão incluem variações comuns em exports WhatsApp
+        default_names = [
+            'Renato', 'Renato de Faria', 'Renato Almeida Prado',
+            'Renato de Faria e Almeida Prado', 'Renato Prado',
+            # Exports em português usam "Você"
+            'Você', 'Voce',
+            # Exports em inglês usam "You"
+            'You',
+            # Número de telefone pode aparecer como sender
+            '+5511984153337', '5511984153337', '11984153337',
+        ]
+        self.my_names = my_names or default_names
 
     def parse_datetime(self, date_str: str, time_str: str) -> Optional[datetime]:
         """Parse date/time strings para datetime."""

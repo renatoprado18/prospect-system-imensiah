@@ -94,6 +94,7 @@ from services.briefing_context import (
     sugerir_assuntos_retomar,
     detectar_promessas_pendentes
 )
+from services.linkedin_enrichment import get_linkedin_enrichment_service
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
@@ -3790,6 +3791,93 @@ async def import_linkedin_csv(request: Request):
     conn.close()
 
     return results
+
+
+# ============== LINKEDIN ENRICHMENT ENDPOINTS ==============
+
+@app.get("/api/linkedin/stats")
+async def linkedin_enrichment_stats():
+    """Estatisticas de enriquecimento LinkedIn"""
+    service = get_linkedin_enrichment_service()
+    stats = service.get_enrichment_stats()
+    stats["api_configured"] = service.is_configured()
+    return stats
+
+
+@app.get("/api/linkedin/pending")
+async def linkedin_pending_enrichments(limit: int = 100):
+    """Lista contatos pendentes de enriquecimento"""
+    service = get_linkedin_enrichment_service()
+    pending = service.get_pending_enrichments(limit)
+    return {"pending": pending, "total": len(pending)}
+
+
+@app.get("/api/linkedin/job-changes")
+async def linkedin_job_changes(days: int = 30, notified: bool = None):
+    """Lista mudancas de emprego detectadas"""
+    service = get_linkedin_enrichment_service()
+    changes = service.get_job_changes(days, notified)
+    return {"job_changes": changes, "total": len(changes)}
+
+
+@app.post("/api/contacts/{contact_id}/linkedin/enrich")
+async def enrich_contact_linkedin(contact_id: int, force: bool = False):
+    """Enriquece um contato com dados do LinkedIn"""
+    service = get_linkedin_enrichment_service()
+
+    if not service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="LinkedIn API not configured. Set RAPIDAPI_KEY environment variable."
+        )
+
+    result = await service.enrich_contact(contact_id, force=force)
+
+    if "error" in result and result.get("code") == "NOT_FOUND":
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    return result
+
+
+@app.post("/api/linkedin/enrich/batch")
+async def enrich_linkedin_batch(
+    limit: int = 50,
+    circulo_max: int = 3,
+    force: bool = False,
+    background_tasks: BackgroundTasks = None
+):
+    """
+    Enriquece multiplos contatos em batch.
+
+    Args:
+        limit: Numero maximo de contatos (default 50)
+        circulo_max: Processar contatos ate este circulo (default 3)
+        force: Re-enriquecer mesmo os ja processados
+    """
+    service = get_linkedin_enrichment_service()
+
+    if not service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="LinkedIn API not configured. Set RAPIDAPI_KEY environment variable."
+        )
+
+    # Para batches grandes, processar em background
+    if limit > 10:
+        async def run_batch():
+            return await service.enrich_batch(limit=limit, circulo_max=circulo_max, force=force)
+
+        if background_tasks:
+            background_tasks.add_task(run_batch)
+            return {
+                "status": "started",
+                "message": f"Batch enrichment started for up to {limit} contacts",
+                "circulo_max": circulo_max
+            }
+
+    # Para batches pequenos, processar sincrono
+    result = await service.enrich_batch(limit=limit, circulo_max=circulo_max, force=force)
+    return result
 
 
 # NOTE: This parameterized route MUST come AFTER the specific routes above
