@@ -3934,13 +3934,14 @@ async def linkedin_bookmarklet_receive_get(data: str):
             ))
 
         # Atualizar contato
+        experience_json = json.dumps(parsed_data.get("experience", []))
         cursor.execute("""
             UPDATE contacts
             SET empresa = COALESCE(NULLIF(%s, ''), empresa),
                 cargo = COALESCE(NULLIF(%s, ''), cargo),
                 linkedin_headline = COALESCE(NULLIF(%s, ''), linkedin_headline),
                 linkedin_location = COALESCE(NULLIF(%s, ''), linkedin_location),
-                linkedin_experience = COALESCE(NULLIF(%s, '[]'), linkedin_experience),
+                linkedin_experience = CASE WHEN %s != '[]' THEN %s::jsonb ELSE linkedin_experience END,
                 linkedin_connections = COALESCE(%s, linkedin_connections),
                 linkedin_enriched_at = CURRENT_TIMESTAMP,
                 linkedin_previous_company = %s,
@@ -3956,7 +3957,8 @@ async def linkedin_bookmarklet_receive_get(data: str):
             parsed_data.get("title"),
             parsed_data.get("headline"),
             parsed_data.get("location"),
-            json.dumps(parsed_data.get("experience", [])),
+            experience_json,
+            experience_json,
             parsed_data.get("connections"),
             old_company if job_change else None,
             old_title if job_change else None,
