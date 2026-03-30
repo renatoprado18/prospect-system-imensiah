@@ -4099,6 +4099,8 @@ async def linkedin_bookmarklet_receive(request: Request):
         ))
 
     # Atualizar contato com dados do bookmarklet
+    exp_json = json.dumps(data.get("experience", []))
+    edu_json = json.dumps(data.get("education", []))
     cursor.execute("""
         UPDATE contacts
         SET empresa = COALESCE(NULLIF(%s, ''), empresa),
@@ -4106,8 +4108,8 @@ async def linkedin_bookmarklet_receive(request: Request):
             linkedin_headline = COALESCE(NULLIF(%s, ''), linkedin_headline),
             linkedin_location = COALESCE(NULLIF(%s, ''), linkedin_location),
             linkedin_about = COALESCE(NULLIF(%s, ''), linkedin_about),
-            linkedin_experience = COALESCE(NULLIF(%s, '[]'), linkedin_experience),
-            linkedin_education = COALESCE(NULLIF(%s, '[]'), linkedin_education),
+            linkedin_experience = CASE WHEN %s != '[]' THEN %s::jsonb ELSE linkedin_experience END,
+            linkedin_education = CASE WHEN %s != '[]' THEN %s::jsonb ELSE linkedin_education END,
             linkedin_connections = COALESCE(%s, linkedin_connections),
             linkedin_enriched_at = CURRENT_TIMESTAMP,
             linkedin_previous_company = %s,
@@ -4124,8 +4126,8 @@ async def linkedin_bookmarklet_receive(request: Request):
         data.get("headline"),
         data.get("location"),
         data.get("about"),
-        json.dumps(data.get("experience", [])),
-        json.dumps(data.get("education", [])),
+        exp_json, exp_json,
+        edu_json, edu_json,
         data.get("connections"),
         old_company if job_change else None,
         old_title if job_change else None,
