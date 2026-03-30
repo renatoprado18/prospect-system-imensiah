@@ -21,9 +21,11 @@
             <div class="modal-body">
                 <div class="mb-3">
                     <label class="form-label">Buscar Contato</label>
-                    <input type="text" class="form-control" id="searchContact" placeholder="Digite o nome..." oninput="searchContacts(this.value)">
+                    <input type="text" class="form-control" id="searchContact" placeholder="Digite o nome..."
+                        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                        oninput="searchContacts(this.value)">
                 </div>
-                <div id="searchResults" style="max-height: 300px; overflow-y: auto;"></div>
+                <div id="searchResults" style="max-height: 300px; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; display: none;"></div>
                 <div class="mb-3 mt-3">
                     <label class="form-label">Papel no Projeto</label>
                     <input type="text" class="form-control" id="memberPapel" placeholder="Ex: Responsavel, Consultor, Participante">
@@ -727,16 +729,20 @@
         const resultsDiv = document.getElementById('searchResults');
 
         if (query.length < 2) {
-            resultsDiv.innerHTML = '<p class="text-muted small p-2">Digite pelo menos 2 caracteres...</p>';
+            resultsDiv.style.display = 'none';
+            resultsDiv.innerHTML = '';
             return;
         }
 
+        resultsDiv.style.display = 'block';
         resultsDiv.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm"></div> Buscando...</div>';
 
         try {
             const response = await fetch(`/api/contacts/search?q=${encodeURIComponent(query)}&limit=10`);
             const results = await response.json();
             const contacts = results.contacts || results || [];
+
+            console.log('Search results:', contacts);
 
             if (contacts.length === 0) {
                 resultsDiv.innerHTML = '<p class="text-muted small p-3">Nenhum contato encontrado para "' + query + '"</p>';
