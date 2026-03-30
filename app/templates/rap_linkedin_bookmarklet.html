@@ -380,26 +380,32 @@ async function loadJobChanges() {
 
 // Bookmarklet code - Updated selectors for LinkedIn 2024/2025
 const BOOKMARKLET_CODE = `javascript:(function(){
+if(!location.href.includes('linkedin.com/in/')){alert('Abra um perfil LinkedIn primeiro (URL deve conter linkedin.com/in/)');return;}
 var INTEL_URL='https://intel.almeida-prado.com';
 var d={linkedin_url:location.href};
+function extract(){
 try{
-var h=document.querySelector('h1.text-heading-xlarge')||document.querySelector('h1.inline.t-24')||document.querySelector('h1');
-if(h)d.full_name=h.textContent.trim();
-var hl=document.querySelector('.text-body-medium.break-words')||document.querySelector('div.text-body-medium');
+var h1s=document.querySelectorAll('h1');
+for(var i=0;i<h1s.length;i++){var t=h1s[i].textContent.trim();if(t&&t.length>2&&t.length<100&&!t.includes('LinkedIn')){d.full_name=t;break;}}
+if(!d.full_name){var title=document.title;var m=title.match(/^([^|\\-–]+)/);if(m)d.full_name=m[1].trim();}
+var hl=document.querySelector('.text-body-medium.break-words')||document.querySelector('div.text-body-medium')||document.querySelector('.pv-text-details__left-panel .text-body-medium');
 if(hl)d.headline=hl.textContent.trim();
-var loc=document.querySelector('.text-body-small.inline.t-black--light.break-words')||document.querySelector('span.text-body-small[class*="break-words"]');
+var loc=document.querySelector('.text-body-small.inline.t-black--light.break-words')||document.querySelector('span.text-body-small[class*="break-words"]')||document.querySelector('.pv-text-details__left-panel .text-body-small');
 if(loc)d.location=loc.textContent.trim();
 var aboutSection=document.getElementById('about');
-if(aboutSection){var aboutDiv=aboutSection.closest('section');if(aboutDiv){var aboutText=aboutDiv.querySelector('.inline-show-more-text')||aboutDiv.querySelector('span[class*="visually-hidden"]~span');if(aboutText)d.about=aboutText.textContent.trim();}}
+if(aboutSection){var aboutDiv=aboutSection.closest('section');if(aboutDiv){var aboutText=aboutDiv.querySelector('.inline-show-more-text')||aboutDiv.querySelector('span[aria-hidden="true"]');if(aboutText)d.about=aboutText.textContent.trim();}}
 var expSection=document.getElementById('experience');
-if(expSection){var expContainer=expSection.closest('section');if(expContainer){var items=expContainer.querySelectorAll('li.artdeco-list__item');d.experience=[];items.forEach(function(item,i){if(i>=5)return;var titleEl=item.querySelector('div.display-flex.align-items-center.mr1 span[aria-hidden="true"]')||item.querySelector('.t-bold span');var companyEl=item.querySelector('span.t-14.t-normal span[aria-hidden="true"]')||item.querySelector('.t-normal span');d.experience.push({title:titleEl?titleEl.textContent.trim():'',company:companyEl?companyEl.textContent.trim():''});});}}
-var photo=document.querySelector('img.pv-top-card-profile-picture__image--show')||document.querySelector('img.pv-top-card-profile-picture__image')||document.querySelector('button[class*="profile-photo"] img');
-if(photo)d.profile_picture=photo.src;
-var connEl=document.querySelector('a[href*="connections"] span')||document.querySelector('span.t-bold:not(.text-heading-xlarge)');
-if(connEl){var m=connEl.textContent.match(/([0-9,.]+)/);if(m)d.connections=parseInt(m[1].replace(/[,.]/g,''));}
+if(expSection){var expContainer=expSection.closest('section');if(expContainer){var items=expContainer.querySelectorAll('li.artdeco-list__item');d.experience=[];items.forEach(function(item,i){if(i>=5)return;var spans=item.querySelectorAll('span[aria-hidden="true"]');var title=spans[0]?spans[0].textContent.trim():'';var company=spans[1]?spans[1].textContent.trim():'';if(title||company)d.experience.push({title:title,company:company});});}}
+var photo=document.querySelector('img.pv-top-card-profile-picture__image--show')||document.querySelector('img.pv-top-card-profile-picture__image')||document.querySelector('.pv-top-card-profile-picture img')||document.querySelector('img[class*="profile-picture"]');
+if(photo&&photo.src&&!photo.src.includes('ghost'))d.profile_picture=photo.src;
+var connText=document.body.innerText;var connMatch=connText.match(/(\d+)\+?\s*(connections|conexoes)/i);
+if(connMatch)d.connections=parseInt(connMatch[1]);
 if(d.experience&&d.experience[0]){d.company=d.experience[0].company;d.title=d.experience[0].title;}
-}catch(e){console.error('INTEL extract error:',e);}
-if(!d.full_name){alert('Erro: Nome nao encontrado. URL: '+location.href);return;}
+}catch(e){console.error('INTEL error:',e);}
+if(!d.full_name){alert('Nome nao encontrado. Tente rolar a pagina e clique novamente.');return false;}
+return true;
+}
+if(!extract()){return;}
 var ov=document.createElement('div');
 ov.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:999999;display:flex;align-items:center;justify-content:center';
 ov.innerHTML='<div style="background:white;padding:40px;border-radius:16px;text-align:center"><div style="font-size:20px">Enviando...</div><div style="color:#666;margin-top:8px">'+d.full_name+'</div></div>';
