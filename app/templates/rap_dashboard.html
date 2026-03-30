@@ -1639,7 +1639,12 @@
                 <div class="card">
                     <div class="card-header">
                         <h2 class="card-title"><i class="bi bi-check2-square me-2"></i>Tarefas</h2>
-                        <a href="/tarefas" class="btn btn-sm btn-outline-secondary">Ver todas</a>
+                        <div class="d-flex gap-2">
+                            <button onclick="syncTasks()" class="btn btn-sm btn-outline-primary" title="Sincronizar com Google Tasks">
+                                <i class="bi bi-arrow-repeat" id="syncTasksIcon"></i>
+                            </button>
+                            <a href="/tarefas" class="btn btn-sm btn-outline-secondary">Ver todas</a>
+                        </div>
                     </div>
                     <div class="card-body" id="tasksList">
                         <div class="loading">

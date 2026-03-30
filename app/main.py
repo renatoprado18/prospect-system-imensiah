@@ -7512,6 +7512,39 @@ async def update_task_endpoint(request: Request, task_id: int):
     return result
 
 
+@app.patch("/api/tasks/{task_id}")
+async def patch_task_endpoint(request: Request, task_id: int):
+    """
+    Atualiza parcialmente tarefa (PATCH para compatibilidade com frontend).
+    Redireciona para o endpoint PUT.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = await request.json()
+
+    # Mapear 'completed' para 'status' se presente
+    if "completed" in data:
+        data["status"] = "completed" if data["completed"] else "pending"
+
+    # Usar o serviço de tasks
+    tasks_service = get_tasks_sync_service()
+    result = await tasks_service.update_task(
+        task_id=task_id,
+        titulo=data.get("title") or data.get("titulo"),
+        descricao=data.get("notes") or data.get("descricao"),
+        status=data.get("status"),
+        prioridade=data.get("prioridade"),
+        sync_to_google=data.get("sync_to_google", True)
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    return result
+
+
 @app.put("/api/tasks/{task_id}/complete")
 async def complete_task(request: Request, task_id: str):
     """
