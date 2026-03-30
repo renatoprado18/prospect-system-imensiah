@@ -23,11 +23,28 @@
 
     console.log('INTEL: Nome encontrado:', d.full_name);
 
-    // Headline - buscar div logo após o nome
+    // Headline - múltiplas estratégias
     var headlineEl = document.querySelector('[class*="text-body-medium"][class*="break-words"]');
+    if (!headlineEl) headlineEl = document.querySelector('.text-body-medium');
     if (!headlineEl) headlineEl = document.querySelector('[data-generated-suggestion-target]');
+    // Tentar pegar o elemento após o h1
+    if (!headlineEl && nameEl) {
+        var parent = nameEl.closest('section') || nameEl.parentElement.parentElement;
+        if (parent) {
+            var divs = parent.querySelectorAll('div');
+            for (var i = 0; i < divs.length; i++) {
+                var txt = divs[i].innerText.trim();
+                if (txt.length > 15 && txt.length < 250 && txt !== d.full_name) {
+                    if (!/^(Conectar|Mensagem|Enviar|1º|2º|3º)/i.test(txt)) {
+                        headlineEl = divs[i];
+                        break;
+                    }
+                }
+            }
+        }
+    }
     if (headlineEl) {
-        d.headline = headlineEl.innerText.trim();
+        d.headline = headlineEl.innerText.trim().split('\n')[0];
     }
 
     // Se não encontrou, tentar pelo texto da página
@@ -50,10 +67,16 @@
 
     console.log('INTEL: Headline:', d.headline);
 
-    // Location
+    // Location - múltiplas estratégias
     var locEl = document.querySelector('[class*="text-body-small"][class*="t-black--light"]');
+    if (!locEl) locEl = document.querySelector('.text-body-small.inline');
+    if (!locEl) locEl = document.querySelector('span.text-body-small');
     if (locEl) {
-        d.location = locEl.innerText.trim();
+        var locText = locEl.innerText.trim();
+        // Filtrar se for o texto de conexões
+        if (!locText.includes('conexões') && !locText.includes('connections') && locText.length < 100) {
+            d.location = locText;
+        }
     }
 
     // Fallback location - buscar padrão de cidade
