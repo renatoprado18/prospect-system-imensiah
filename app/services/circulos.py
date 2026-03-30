@@ -766,7 +766,7 @@ def recalcular_circulo_contato(contact_id: int, force: bool = False) -> Dict:
 
 def recalcular_todos_circulos(force: bool = False, limit: int = None) -> Dict:
     """
-    Recalcula circulos de todos os contatos.
+    Recalcula circulos DUAIS (pessoal + profissional) de todos os contatos.
 
     Args:
         force: Se True, recalcula mesmo os manuais
@@ -782,11 +782,15 @@ def recalcular_todos_circulos(force: bool = False, limit: int = None) -> Dict:
         query = """
             SELECT id, nome, tags, total_interacoes, ultimo_contato,
                    aniversario, linkedin, empresa, cargo, foto_url, contexto, score,
-                   circulo, circulo_manual, frequencia_ideal_dias, health_score
+                   circulo, circulo_manual, frequencia_ideal_dias, health_score,
+                   circulo_pessoal, circulo_profissional,
+                   circulo_pessoal_manual, circulo_profissional_manual,
+                   health_pessoal, health_profissional
             FROM contacts
         """
         if not force:
-            query += " WHERE circulo_manual IS NOT TRUE OR circulo_manual IS NULL"
+            # Nao processar se AMBOS sao manuais
+            query += " WHERE NOT (circulo_pessoal_manual IS TRUE AND circulo_profissional_manual IS TRUE)"
 
         if limit:
             query += f" LIMIT {int(limit)}"
@@ -798,41 +802,71 @@ def recalcular_todos_circulos(force: bool = False, limit: int = None) -> Dict:
             "total": len(contacts),
             "atualizados": 0,
             "ignorados_manual": 0,
-            "por_circulo": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0},
+            "por_circulo_pessoal": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, None: 0},
+            "por_circulo_profissional": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, None: 0},
             "mudancas": []
         }
 
         for row in contacts:
             contact = dict(row)
-            circulo_anterior = contact.get("circulo") or 5
+            pessoal_anterior = contact.get("circulo_pessoal")
+            profissional_anterior = contact.get("circulo_profissional")
 
-            # Calcular novo circulo e health
-            circulo, score, reasons = calcular_score_circulo(contact)
-            health = calcular_health_score(contact, circulo)
+            # Detectar contextos do contato
+            contextos = detectar_contextos(contact)
+
+            # Calcular circulo pessoal (se nao for manual ou force=True)
+            circulo_pessoal = pessoal_anterior
+            health_pessoal = contact.get("health_pessoal")
+            reasons_pessoal = []
+            if force or not contact.get("circulo_pessoal_manual"):
+                circulo_pessoal, _, reasons_pessoal = calcular_circulo_pessoal(contact, contextos)
+                health_pessoal = calcular_health_dual(contact, circulo_pessoal, "pessoal")
+
+            # Calcular circulo profissional (se nao for manual ou force=True)
+            circulo_profissional = profissional_anterior
+            health_profissional = contact.get("health_profissional")
+            reasons_profissional = []
+            if force or not contact.get("circulo_profissional_manual"):
+                circulo_profissional, _, reasons_profissional = calcular_circulo_profissional(contact, contextos)
+                health_profissional = calcular_health_dual(contact, circulo_profissional, "profissional")
+
+            # Calcular health principal (o menor = mais urgente)
+            healths = [h for h in [health_pessoal, health_profissional] if h is not None]
+            health_principal = min(healths) if healths else 100
+
+            # Circulo principal (o mais importante = menor numero)
+            circulos = [c for c in [circulo_pessoal, circulo_profissional] if c is not None]
+            circulo_principal = min(circulos) if circulos else 5
 
             # Atualizar no banco
             cursor.execute("""
                 UPDATE contacts
-                SET circulo = %s,
+                SET circulo_pessoal = %s,
+                    circulo_profissional = %s,
+                    health_pessoal = %s,
+                    health_profissional = %s,
+                    circulo = %s,
                     health_score = %s,
                     ultimo_calculo_circulo = CURRENT_TIMESTAMP
                 WHERE id = %s
-            """, (circulo, health, contact["id"]))
+            """, (circulo_pessoal, circulo_profissional, health_pessoal, health_profissional,
+                  circulo_principal, health_principal, contact["id"]))
 
             stats["atualizados"] += 1
-            stats["por_circulo"][circulo] += 1
+            stats["por_circulo_pessoal"][circulo_pessoal] += 1
+            stats["por_circulo_profissional"][circulo_profissional] += 1
 
-            # Registrar mudanca se circulo mudou
-            if circulo != circulo_anterior:
+            # Registrar mudanca se algum circulo mudou
+            if circulo_pessoal != pessoal_anterior or circulo_profissional != profissional_anterior:
                 stats["mudancas"].append({
                     "contact_id": contact["id"],
                     "nome": contact["nome"],
-                    "de": circulo_anterior,
-                    "para": circulo,
-                    "reasons": reasons[:2]  # Limita para nao poluir
+                    "pessoal": {"de": pessoal_anterior, "para": circulo_pessoal},
+                    "profissional": {"de": profissional_anterior, "para": circulo_profissional}
                 })
 
-        logger.info(f"Recalculo de circulos: {stats['atualizados']} atualizados, {len(stats['mudancas'])} mudancas")
+        logger.info(f"Recalculo dual: {stats['atualizados']} atualizados, {len(stats['mudancas'])} mudancas")
 
         return stats
 
