@@ -677,8 +677,11 @@
                 <span class="flex-grow-1 ${t.status === 'completed' ? 'text-decoration-line-through text-muted' : ''}"
                     style="cursor: pointer" onclick="showTaskContext(${t.id})">${t.titulo}</span>
                 ${t.contact_nome ? `<small class="text-muted">${t.contact_nome}</small>` : ''}
-                <button class="btn btn-sm btn-outline-primary" onclick="showTaskContext(${t.id})" title="Ver contexto e sugestao">
+                <button class="btn btn-sm btn-outline-primary" onclick="showTaskContext(${t.id})" title="Ver contexto">
                     <i class="bi bi-lightbulb"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})" title="Excluir tarefa">
+                    <i class="bi bi-trash"></i>
                 </button>
             </div>
         `).join('');
@@ -1252,6 +1255,26 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: 'completed' })
         });
+    }
+
+    async function deleteTask(taskId) {
+        if (!confirm('Tem certeza que deseja excluir esta tarefa?')) return;
+
+        try {
+            const response = await fetch(`/api/tasks/${taskId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                loadProject(); // Recarregar projeto
+            } else {
+                const err = await response.json();
+                alert(err.detail || 'Erro ao excluir tarefa');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Erro ao excluir tarefa');
+        }
     }
 
     async function createFollowup() {
