@@ -3936,6 +3936,20 @@ async def linkedin_bookmarklet_receive_get(data: str):
                 job_change["type"], json.dumps(parsed_data)
             ))
 
+        # Validar foto com IA (se houver)
+        photo_url = parsed_data.get("profile_picture")
+        photo_validation = None
+        photo_valid = False
+
+        if photo_url:
+            try:
+                from services.photo_validation import validate_profile_photo
+                photo_validation = await validate_profile_photo(photo_url)
+                photo_valid = photo_validation.get("valid", False)
+            except Exception as e:
+                photo_validation = {"error": str(e)}
+                photo_valid = True  # Se falhar validação, aceita a foto
+
         # Atualizar contato
         experience_json = json.dumps(parsed_data.get("experience", []))
         cursor.execute("""
@@ -3966,7 +3980,7 @@ async def linkedin_bookmarklet_receive_get(data: str):
             old_company if job_change else None,
             old_title if job_change else None,
             datetime.now() if job_change else None,
-            parsed_data.get("profile_picture"),
+            photo_url if photo_valid else None,  # Só salva foto se válida
             contact_id
         ))
 
@@ -3985,8 +3999,18 @@ async def linkedin_bookmarklet_receive_get(data: str):
         if parsed_data.get("company"): extracted_info.append(f"🏢 {parsed_data.get('company')}")
         if parsed_data.get("title"): extracted_info.append(f"💼 {parsed_data.get('title')}")
         if parsed_data.get("connections"): extracted_info.append(f"🔗 {parsed_data.get('connections')} conexões")
-        photo_url = parsed_data.get("profile_picture", "")
-        if photo_url: extracted_info.append(f"📷 Foto ({len(photo_url)} chars)")
+        # Resultado da validação de foto
+        if photo_url:
+            if photo_validation:
+                if photo_valid:
+                    desc = photo_validation.get("description", "")[:50]
+                    extracted_info.append(f"📷 Foto ✅ {desc}")
+                else:
+                    num_people = photo_validation.get("num_people", "?")
+                    desc = photo_validation.get("description", "")[:40]
+                    extracted_info.append(f"📷 Foto ❌ Rejeitada ({num_people} pessoas: {desc})")
+            else:
+                extracted_info.append(f"📷 Foto capturada")
 
         extracted_html = "<br>".join(extracted_info) if extracted_info else "<span style='color:#f59e0b;'>⚠️ Nenhum dado extra extraído</span>"
         # Debug: mostrar chaves recebidas
