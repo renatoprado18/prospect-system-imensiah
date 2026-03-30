@@ -3975,14 +3975,26 @@ async def linkedin_bookmarklet_receive_get(data: str):
         if job_change:
             job_change_html = '<div style="background:#fef3c7;padding:12px;border-radius:8px;margin-top:16px;"><b>🔔 Mudança detectada!</b></div>'
 
+        # Dados extraidos para mostrar no popup
+        extracted_info = []
+        if parsed_data.get("headline"): extracted_info.append(f"📝 {parsed_data.get('headline')[:50]}")
+        if parsed_data.get("location"): extracted_info.append(f"📍 {parsed_data.get('location')}")
+        if parsed_data.get("company"): extracted_info.append(f"🏢 {parsed_data.get('company')}")
+        if parsed_data.get("title"): extracted_info.append(f"💼 {parsed_data.get('title')}")
+        if parsed_data.get("connections"): extracted_info.append(f"🔗 {parsed_data.get('connections')} conexões")
+
+        extracted_html = "<br>".join(extracted_info) if extracted_info else "<span style='color:#f59e0b;'>⚠️ Nenhum dado extra extraído</span>"
+
         return HTMLResponse(content=f"""
         <html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#dcfce7;">
-        <div style="text-align:center;padding:40px;background:white;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:400px;">
+        <div style="text-align:center;padding:40px;background:white;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:450px;">
         <div style="font-size:64px;">✅</div>
         <h2 style="margin:16px 0;">{contact['nome']}</h2>
-        <p style="color:#666;">Dados atualizados com sucesso!</p>
+        <div style="text-align:left;background:#f0fdf4;padding:12px;border-radius:8px;font-size:13px;margin:12px 0;">
+            {extracted_html}
+        </div>
         {job_change_html}
-        <button onclick="closeAll()" style="margin-top:20px;padding:12px 40px;background:#22c55e;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
+        <button onclick="closeAll()" style="margin-top:16px;padding:12px 40px;background:#22c55e;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
         </div>
         <script>
         // Notifica outras abas para atualizar
@@ -3992,15 +4004,12 @@ async def linkedin_bookmarklet_receive_get(data: str):
         }} catch(e) {{}}
 
         function closeAll() {{
-            // Tenta fechar a aba do LinkedIn (opener)
             if (window.opener && !window.opener.closed) {{
                 try {{ window.opener.close(); }} catch(e) {{}}
             }}
-            // Fecha este popup
             window.close();
         }}
-        // Auto-fecha apos 2 segundos
-        setTimeout(closeAll, 2000);
+        setTimeout(closeAll, 3000);
         </script>
         </body></html>
         """)
