@@ -63,13 +63,14 @@ class WhatsAppBatchImporter:
     def parse_datetime(self, date_str: str, time_str: str) -> Optional[datetime]:
         """Parse date/time strings para datetime."""
         formats = [
-            ('%d/%m/%Y', '%H:%M:%S'),
-            ('%d/%m/%Y', '%H:%M'),
-            ('%d/%m/%y', '%H:%M'),
-            ('%m/%d/%Y', '%H:%M:%S'),
+            ('%d/%m/%y', '%H:%M:%S'),  # DD/MM/YY com segundos (iOS 2 dígitos)
+            ('%d/%m/%Y', '%H:%M:%S'),  # DD/MM/YYYY com segundos
+            ('%d/%m/%Y', '%H:%M'),     # DD/MM/YYYY sem segundos
+            ('%d/%m/%y', '%H:%M'),     # DD/MM/YY sem segundos
+            ('%m/%d/%Y', '%H:%M:%S'),  # MM/DD/YYYY (US format)
             ('%m/%d/%Y', '%H:%M'),
+            ('%m/%d/%y', '%H:%M:%S'),  # MM/DD/YY (US format com segundos)
             ('%m/%d/%y', '%H:%M'),
-            ('%d/%m/%Y', '%H:%M:%S'),
         ]
         for date_fmt, time_fmt in formats:
             try:
