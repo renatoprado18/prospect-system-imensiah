@@ -7330,21 +7330,24 @@ async def list_tasks(
     # Local tasks from database
     local_tasks = []
     if source in ["local", "both"]:
+        # Get all tasks first, then filter
+        # This handles NULL status and other edge cases
         local_status = None
-        if status == "pending":
-            local_status = "pending"
-        elif status == "completed" or show_completed:
-            local_status = "completed" if status == "completed" else None
+        if status == "completed":
+            local_status = "completed"
 
         local_tasks = tasks_service.get_tasks(
             status=local_status,
             contact_id=contact_id,
             project_id=project_id,
-            limit=limit
+            limit=limit * 2  # Get more to account for filtering
         )
 
-        # Filter out completed if not requested
-        if not show_completed and status != "completed":
+        # Filter based on requested status
+        if status == "pending":
+            # Show non-completed tasks (pending, NULL, or any other status)
+            local_tasks = [t for t in local_tasks if t.get("status") != "completed"]
+        elif not show_completed and status != "completed":
             local_tasks = [t for t in local_tasks if t.get("status") != "completed"]
 
         # Normalize for frontend
