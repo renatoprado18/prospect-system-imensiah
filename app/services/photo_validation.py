@@ -124,11 +124,13 @@ Be strict: a good profile photo should show ONE person with a clearly visible fa
                 except:
                     ai_analysis = {}
 
-                is_valid = (
-                    ai_analysis.get("is_single_person", False) and
-                    ai_analysis.get("face_visible", False) and
-                    ai_analysis.get("recommendation") != "reject"
-                )
+                # Ser menos restritivo - só rejeitar se claramente tem múltiplas pessoas
+                num_people = ai_analysis.get("num_people", 1)
+                recommendation = ai_analysis.get("recommendation", "use")
+                face_visible = ai_analysis.get("face_visible", True)
+
+                # Aceitar se: tem face visível E (recomendação não é reject OU tem 1-2 pessoas)
+                is_valid = face_visible and (recommendation != "reject" or num_people <= 2)
 
                 return {
                     "valid": is_valid,
