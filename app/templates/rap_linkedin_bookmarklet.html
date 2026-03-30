@@ -392,8 +392,12 @@ var loc=document.querySelector('.text-body-small.inline.t-black--light.break-wor
 if(loc)d.location=loc.textContent.trim();
 var expSection=document.getElementById('experience');
 if(expSection){var sec=expSection.closest('section');if(sec){var items=sec.querySelectorAll('li.artdeco-list__item');d.experience=[];for(var j=0;j<Math.min(items.length,3);j++){var spans=items[j].querySelectorAll('span[aria-hidden="true"]');if(spans[0])d.experience.push({title:spans[0].textContent.trim(),company:spans[1]?spans[1].textContent.trim():''});}}}
-var photo=document.querySelector('img.pv-top-card-profile-picture__image--show')||document.querySelector('img.pv-top-card-profile-picture__image')||document.querySelector('.pv-top-card-profile-picture img')||document.querySelector('img[class*="pv-top-card"][class*="photo"]')||document.querySelector('.pv-top-card--photo img')||document.querySelector('button[aria-label*="photo"] img')||document.querySelector('img[alt*="profile photo"]');
-if(photo&&photo.src&&!photo.src.includes('ghost-person'))d.profile_picture=photo.src;
+var photo=null;
+var photoSelectors=['img.pv-top-card-profile-picture__image--show','img.pv-top-card-profile-picture__image','.pv-top-card-profile-picture__image-wrapper img','img.presence-entity__image','img.EntityPhoto-circle-9','img[class*="profile-picture"]','img[data-delayed-url]','.pv-top-card__photo img','button.pv-top-card-profile-picture__image-wrapper img'];
+for(var ps=0;ps<photoSelectors.length&&!photo;ps++){photo=document.querySelector(photoSelectors[ps]);}
+if(!photo){var allImgs=document.querySelectorAll('img');for(var im=0;im<allImgs.length;im++){var img=allImgs[im];if(img.src&&img.src.includes('profile-displayphoto')&&img.width>50){photo=img;break;}}}
+if(!photo){var btn=document.querySelector('button[aria-label*="foto"],button[aria-label*="photo"]');if(btn){photo=btn.querySelector('img');}}
+if(photo&&photo.src&&!photo.src.includes('ghost-person')&&!photo.src.includes('static.licdn.com/aero'))d.profile_picture=photo.src;
 var connMatch=document.body.innerText.match(/(\\d+)\\+?\\s*(connections|conexoes)/i);
 if(connMatch)d.connections=parseInt(connMatch[1]);
 if(d.experience&&d.experience[0]){d.company=d.experience[0].company;d.title=d.experience[0].title;}
