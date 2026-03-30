@@ -5,180 +5,323 @@
 {% block extra_css %}
 <style>
     /* Conversation List */
+    .conversation-list {
+        max-height: calc(100vh - 220px);
+        overflow-y: auto;
+    }
     .conversation-item {
-        padding: 12px 16px;
-        border-bottom: 1px solid var(--gray-200);
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--gray-100);
         cursor: pointer;
         transition: all 0.15s;
     }
     .conversation-item:hover {
-        background: var(--gray-100);
+        background: var(--gray-50);
     }
     .conversation-item.active {
-        background: var(--primary);
+        background: linear-gradient(135deg, var(--primary), #818cf8);
         color: white;
+        border-radius: 8px;
+        margin: 4px 8px;
+        border-bottom: none;
     }
-    .conversation-item.active .text-muted,
-    .conversation-item.active .badge {
-        color: rgba(255,255,255,0.8) !important;
+    .conversation-item.active .conv-meta,
+    .conversation-item.active .conv-preview,
+    .conversation-item.active .channel-icon {
+        color: rgba(255,255,255,0.75) !important;
     }
-    .conversation-item.active .badge.bg-success {
-        background: rgba(255,255,255,0.2) !important;
-    }
-    .conversation-item.active .badge.bg-info {
-        background: rgba(255,255,255,0.2) !important;
-    }
+
+    /* Avatar */
     .conv-avatar {
-        width: 40px;
-        height: 40px;
+        width: 42px;
+        height: 42px;
         border-radius: 50%;
+        flex-shrink: 0;
         display: flex;
         align-items: center;
         justify-content: center;
         font-weight: 600;
         font-size: 14px;
-        flex-shrink: 0;
+        overflow: hidden;
+    }
+    .conv-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    .conv-avatar-initials {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+    }
+
+    /* Contact info */
+    .conv-info {
+        flex: 1;
+        min-width: 0;
+        margin-left: 10px;
+    }
+    .conv-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2px;
     }
     .conv-name {
         font-weight: 500;
-        font-size: 0.9rem;
+        font-size: 0.875rem;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 180px;
+        max-width: 160px;
+    }
+    .conv-meta {
+        font-size: 0.7rem;
+        color: var(--gray-400);
+        white-space: nowrap;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    .conv-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
     }
     .conv-preview {
-        font-size: 0.8rem;
+        font-size: 0.75rem;
         color: var(--gray-500);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 180px;
+        max-width: 140px;
     }
-    .conv-meta {
+    .channel-icon {
         font-size: 0.75rem;
         color: var(--gray-400);
-        white-space: nowrap;
     }
-    .channel-badge {
-        font-size: 0.65rem;
-        padding: 2px 6px;
-        border-radius: 4px;
-    }
+    .channel-icon.whatsapp { color: #25d366; }
+    .channel-icon.email { color: #ea4335; }
 
-    /* Filter buttons */
-    .filter-btn {
-        font-size: 0.75rem;
+    /* Filter pills */
+    .filter-pills {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--gray-100);
+    }
+    .filter-pill {
+        font-size: 0.7rem;
         padding: 4px 10px;
-        border-radius: 20px;
-        border: 1px solid var(--gray-300);
+        border-radius: 12px;
+        border: 1px solid var(--gray-200);
         background: white;
         color: var(--gray-600);
+        cursor: pointer;
+        transition: all 0.15s;
     }
-    .filter-btn:hover {
-        background: var(--gray-100);
-        border-color: var(--gray-400);
+    .filter-pill:hover {
+        background: var(--gray-50);
+        border-color: var(--gray-300);
     }
-    .filter-btn.active {
+    .filter-pill.active {
         background: var(--primary);
         border-color: var(--primary);
         color: white;
     }
 
-    /* Messages area */
-    .message-bubble {
-        max-width: 75%;
-        padding: 10px 14px;
-        border-radius: 16px;
+    /* Messages Panel */
+    .messages-panel {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 180px);
+    }
+    .messages-header {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--gray-100);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .messages-header .conv-avatar {
+        width: 38px;
+        height: 38px;
+    }
+    .messages-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+        background: var(--gray-50);
+    }
+
+    /* Message bubbles */
+    .message-row {
+        display: flex;
         margin-bottom: 8px;
     }
+    .message-row.outgoing {
+        justify-content: flex-end;
+    }
+    .message-bubble {
+        max-width: 70%;
+        padding: 10px 14px;
+        border-radius: 16px;
+        font-size: 0.875rem;
+        line-height: 1.4;
+    }
     .message-bubble.incoming {
-        background: var(--gray-100);
+        background: white;
+        border: 1px solid var(--gray-200);
         border-bottom-left-radius: 4px;
     }
     .message-bubble.outgoing {
         background: var(--primary);
         color: white;
         border-bottom-right-radius: 4px;
-        margin-left: auto;
     }
     .message-time {
-        font-size: 0.7rem;
-        opacity: 0.7;
+        font-size: 0.65rem;
+        opacity: 0.6;
         margin-top: 4px;
+        text-align: right;
+    }
+
+    /* Reply box */
+    .reply-box {
+        padding: 12px 16px;
+        border-top: 1px solid var(--gray-100);
+        background: white;
+    }
+    .reply-input {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+    }
+    .reply-input textarea {
+        flex: 1;
+        border: 1px solid var(--gray-200);
+        border-radius: 20px;
+        padding: 10px 16px;
+        resize: none;
+        font-size: 0.875rem;
+        max-height: 100px;
+    }
+    .reply-input textarea:focus {
+        outline: none;
+        border-color: var(--primary);
+    }
+    .reply-btn {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: var(--primary);
+        color: white;
+        border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .reply-btn:hover {
+        background: #4f46e5;
+        transform: scale(1.05);
     }
 
     /* Empty state */
-    .empty-messages {
+    .empty-state {
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        height: 300px;
+        height: 100%;
         color: var(--gray-400);
+        padding: 40px;
+        text-align: center;
+    }
+    .empty-state i {
+        font-size: 3rem;
+        margin-bottom: 16px;
+        opacity: 0.5;
     }
 
-    /* Message Suggestion Sidebar */
-    .suggestion-sidebar {
-        background: white;
-        border-radius: 16px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    /* AI Suggestions */
+    .suggestions-panel {
+        height: calc(100vh - 180px);
+        display: flex;
+        flex-direction: column;
     }
-    .suggestion-sidebar .card-header {
-        background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(14, 165, 233, 0.05));
-        border-bottom: 1px solid var(--gray-200);
+    .suggestions-header {
         padding: 12px 16px;
+        border-bottom: 1px solid var(--gray-100);
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.03), rgba(14, 165, 233, 0.03));
     }
-    .suggested-message {
+    .suggestions-body {
+        flex: 1;
+        overflow-y: auto;
         padding: 12px;
-        background: var(--gray-100);
+    }
+    .suggestion-card {
+        padding: 12px;
+        background: var(--gray-50);
         border-radius: 10px;
         margin-bottom: 10px;
         cursor: pointer;
         transition: all 0.2s;
         border: 2px solid transparent;
-        font-size: 0.85rem;
+        font-size: 0.8rem;
     }
-    .suggested-message:hover {
+    .suggestion-card:hover {
         background: white;
+        border-color: var(--gray-200);
+    }
+    .suggestion-card.selected {
+        background: rgba(99, 102, 241, 0.05);
         border-color: var(--primary);
     }
-    .suggested-message.selected {
-        background: rgba(99, 102, 241, 0.1);
-        border-color: var(--primary);
-    }
-    .suggested-message-text {
+    .suggestion-text {
         color: var(--dark);
-        line-height: 1.4;
-        white-space: pre-wrap;
+        line-height: 1.5;
+        margin-bottom: 8px;
     }
-    .suggested-message-meta {
+    .suggestion-meta {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-top: 8px;
-        font-size: 0.7rem;
+        font-size: 0.65rem;
         color: var(--gray-500);
     }
-    .tone-badge {
-        padding: 2px 6px;
-        border-radius: 8px;
-        font-size: 0.65rem;
+    .tone-tag {
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.6rem;
         font-weight: 500;
     }
-    .tone-badge.formal { background: rgba(99, 102, 241, 0.1); color: var(--primary); }
-    .tone-badge.casual { background: rgba(16, 185, 129, 0.1); color: var(--success); }
-    .tone-badge.friendly { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
+    .tone-tag.formal { background: rgba(99, 102, 241, 0.1); color: var(--primary); }
+    .tone-tag.casual { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+    .tone-tag.friendly { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
 
-    .use-suggestion-btn {
-        margin-top: 12px;
-        width: 100%;
-        font-size: 0.85rem;
+    .suggestions-actions {
+        padding: 12px;
+        border-top: 1px solid var(--gray-100);
     }
-    .regenerate-btn {
-        margin-top: 6px;
-        width: 100%;
-        font-size: 0.8rem;
+    .suggestions-actions .btn {
+        font-size: 0.75rem;
+        padding: 8px 12px;
+    }
+
+    /* Unread badge */
+    .unread-badge {
+        background: var(--primary);
+        color: white;
+        font-size: 0.65rem;
+        padding: 2px 6px;
+        border-radius: 10px;
+        margin-left: 6px;
     }
 </style>
 {% endblock %}
@@ -186,78 +329,85 @@
 {% block content %}
 <div class="row g-3">
     <!-- Lista de Conversas -->
-    <div class="col-lg-4 col-md-5">
-        <div class="card">
-            <div class="card-header py-2">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h6 class="mb-0">Conversas</h6>
-                    <span class="badge bg-primary" id="unread-badge">0</span>
-                </div>
-                <!-- Filtros -->
-                <div class="d-flex gap-1 flex-wrap">
-                    <button type="button" class="filter-btn active" data-filter="all">Todos</button>
-                    <button type="button" class="filter-btn" data-filter="unread">Pendentes</button>
-                    <button type="button" class="filter-btn" data-filter="email">Email</button>
-                    <button type="button" class="filter-btn" data-filter="whatsapp">WhatsApp</button>
+    <div class="col-lg-3 col-md-4">
+        <div class="card h-100">
+            <div class="card-header py-2 px-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="fw-medium" style="font-size: 0.9rem;">Conversas</span>
+                    <span class="unread-badge" id="unread-badge">0</span>
                 </div>
             </div>
-            <div class="card-body p-0">
-                <div id="conversation-list" style="max-height: 72vh; overflow-y: auto;">
-                    <div class="text-center py-4 text-muted">
-                        <div class="spinner-border spinner-border-sm"></div>
-                    </div>
+            <div class="filter-pills">
+                <button class="filter-pill active" data-filter="all">Todos</button>
+                <button class="filter-pill" data-filter="unread">Pendentes</button>
+                <button class="filter-pill" data-filter="whatsapp"><i class="bi bi-whatsapp"></i></button>
+                <button class="filter-pill" data-filter="email"><i class="bi bi-envelope"></i></button>
+            </div>
+            <div class="conversation-list" id="conversation-list">
+                <div class="text-center py-4 text-muted">
+                    <div class="spinner-border spinner-border-sm"></div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Detalhe da Conversa -->
-    <div class="col-lg-5 col-md-7">
-        <div class="card" id="conversation-detail">
-            <div class="card-header py-2" id="detail-header" style="display: none;">
-                <div class="d-flex justify-content-between align-items-center">
-                    <div class="d-flex align-items-center gap-2">
-                        <div class="conv-avatar" id="contact-avatar" style="background: var(--primary); color: white;">?</div>
-                        <div>
-                            <div class="fw-medium" id="contact-name">-</div>
-                            <small class="text-muted" id="contact-channel">-</small>
+    <!-- Painel de Mensagens -->
+    <div class="col-lg-6 col-md-8">
+        <div class="card h-100">
+            <div class="messages-panel">
+                <div class="messages-header" id="detail-header" style="display: none;">
+                    <div class="d-flex align-items-center">
+                        <div class="conv-avatar" id="contact-avatar"></div>
+                        <div class="ms-2">
+                            <div class="fw-medium" style="font-size: 0.9rem;" id="contact-name">-</div>
+                            <small class="text-muted" style="font-size: 0.7rem;" id="contact-channel">-</small>
                         </div>
                     </div>
-                    <a href="#" id="contact-link" class="btn btn-sm btn-outline-secondary">
-                        <i class="bi bi-person me-1"></i>Perfil
+                    <a href="#" id="contact-link" class="btn btn-sm btn-light" style="font-size: 0.75rem;">
+                        <i class="bi bi-person me-1"></i>Ver Perfil
                     </a>
                 </div>
-            </div>
-            <div class="card-body" id="messages-container" style="height: 55vh; overflow-y: auto;">
-                <div class="empty-messages">
-                    <i class="bi bi-chat-dots" style="font-size: 3rem;"></i>
-                    <p class="mt-3 mb-0">Selecione uma conversa</p>
+                <div class="messages-body" id="messages-container">
+                    <div class="empty-state">
+                        <i class="bi bi-chat-text"></i>
+                        <p class="mb-1">Selecione uma conversa</p>
+                        <small class="text-muted">Escolha uma conversa na lista ao lado</small>
+                    </div>
                 </div>
-            </div>
-            <!-- Reply Box -->
-            <div class="card-footer py-2" id="reply-box" style="display: none;">
-                <div class="d-flex gap-2">
-                    <textarea class="form-control form-control-sm" id="replyText" rows="2" placeholder="Digite sua mensagem..."></textarea>
-                    <button class="btn btn-primary" onclick="sendReply()">
-                        <i class="bi bi-send"></i>
-                    </button>
+                <div class="reply-box" id="reply-box" style="display: none;">
+                    <div class="reply-input">
+                        <textarea id="replyText" rows="1" placeholder="Digite sua mensagem..."></textarea>
+                        <button class="reply-btn" onclick="sendReply()">
+                            <i class="bi bi-send-fill"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- AI Message Suggestions Sidebar -->
+    <!-- Sugestoes IA -->
     <div class="col-lg-3 d-none d-lg-block">
-        <div class="card suggestion-sidebar">
-            <div class="card-header">
-                <h6 class="mb-0" style="color: var(--primary);">
-                    <i class="bi bi-robot me-1"></i>Sugestoes IA
-                </h6>
-            </div>
-            <div class="card-body p-2" id="messageSuggestions">
-                <div class="text-center text-muted py-3">
-                    <i class="bi bi-chat-square-text" style="font-size: 1.5rem;"></i>
-                    <p class="mt-2 mb-0 small">Selecione uma conversa</p>
+        <div class="card h-100">
+            <div class="suggestions-panel">
+                <div class="suggestions-header">
+                    <span class="fw-medium" style="font-size: 0.85rem; color: var(--primary);">
+                        <i class="bi bi-stars me-1"></i>Sugestoes IA
+                    </span>
+                </div>
+                <div class="suggestions-body" id="messageSuggestions">
+                    <div class="empty-state" style="height: auto; padding: 40px 20px;">
+                        <i class="bi bi-lightbulb" style="font-size: 2rem;"></i>
+                        <p class="mb-0 small">Selecione uma conversa para ver sugestoes</p>
+                    </div>
+                </div>
+                <div class="suggestions-actions" id="suggestionActions" style="display: none;">
+                    <button class="btn btn-primary w-100 mb-2" onclick="useSuggestion()" id="useSuggestionBtn" disabled>
+                        <i class="bi bi-check2 me-1"></i>Usar Sugestao
+                    </button>
+                    <button class="btn btn-outline-secondary w-100" onclick="loadMessageSuggestions()">
+                        <i class="bi bi-arrow-repeat me-1"></i>Gerar Novas
+                    </button>
                 </div>
             </div>
         </div>
@@ -272,52 +422,66 @@ let currentConversationId = null;
 let currentContactId = null;
 let selectedSuggestion = null;
 
+const avatarColors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6'];
+
+function getAvatarColor(name) {
+    const index = name ? name.charCodeAt(0) % avatarColors.length : 0;
+    return avatarColors[index];
+}
+
+function getInitials(name) {
+    if (!name) return '?';
+    return name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+}
+
+function renderAvatar(fotoUrl, name, size = 42) {
+    if (fotoUrl) {
+        return `<img src="${fotoUrl}" alt="${name || ''}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;">`;
+    }
+    const color = getAvatarColor(name);
+    const initials = getInitials(name);
+    return `<div class="conv-avatar-initials" style="width:${size}px;height:${size}px;background:${color};border-radius:50%;">${initials}</div>`;
+}
+
 async function loadConversations(filter = 'all') {
     currentFilter = filter;
     const list = document.getElementById('conversation-list');
-    list.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div></div>';
+    list.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-muted"></div></div>';
 
     try {
         const response = await fetch(`/api/inbox/conversations?filter_type=${filter}&limit=50`, {
             credentials: 'include'
         });
 
-        if (!response.ok) {
-            console.error('Inbox API error:', response.status, response.statusText);
-            const errorText = await response.text();
-            console.error('Error details:', errorText);
-            throw new Error(`API error: ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`API error: ${response.status}`);
 
         const data = await response.json();
 
         if (!data.conversations || data.conversations.length === 0) {
-            list.innerHTML = '<div class="text-center py-4 text-muted">Nenhuma conversa</div>';
+            list.innerHTML = '<div class="empty-state" style="height:200px;"><i class="bi bi-inbox"></i><p class="small">Nenhuma conversa</p></div>';
             return;
         }
 
         list.innerHTML = data.conversations.map(conv => {
             const name = conv.contact_name || 'Desconhecido';
-            const initials = name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
-            const avatarColors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
-            const colorIndex = name.charCodeAt(0) % avatarColors.length;
-            const bgColor = avatarColors[colorIndex];
+            const channelIcon = conv.channel === 'whatsapp'
+                ? '<i class="bi bi-whatsapp channel-icon whatsapp"></i>'
+                : '<i class="bi bi-envelope channel-icon email"></i>';
 
             return `
             <div class="conversation-item" onclick="loadMessages(${conv.id}, ${conv.contact_id || 'null'})" data-id="${conv.id}">
-                <div class="d-flex align-items-center gap-2">
-                    ${conv.foto_url
-                        ? `<img src="${conv.foto_url}" class="conv-avatar" style="object-fit: cover;">`
-                        : `<div class="conv-avatar" style="background: ${bgColor}; color: white;">${initials}</div>`
-                    }
-                    <div class="flex-grow-1 min-width-0">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span class="conv-name">${name}</span>
-                            <span class="conv-meta">${formatDate(conv.last_message_at)}</span>
+                <div class="d-flex align-items-center">
+                    <div class="conv-avatar">${renderAvatar(conv.foto_url, name)}</div>
+                    <div class="conv-info">
+                        <div class="conv-header">
+                            <span class="conv-name">${escapeHtml(name)}</span>
+                            <span class="conv-meta">
+                                ${channelIcon}
+                                ${formatDate(conv.last_message_at)}
+                            </span>
                         </div>
-                        <div class="d-flex justify-content-between align-items-center">
-                            <span class="conv-preview">${conv.subject || ''}</span>
-                            <span class="badge channel-badge ${conv.channel === 'email' ? 'bg-info' : 'bg-success'}">${conv.channel}</span>
+                        <div class="conv-footer">
+                            <span class="conv-preview">${escapeHtml(conv.subject || '')}</span>
                         </div>
                     </div>
                 </div>
@@ -326,7 +490,8 @@ async function loadConversations(filter = 'all') {
         }).join('');
 
     } catch (error) {
-        list.innerHTML = '<div class="text-center py-4 text-danger">Erro ao carregar</div>';
+        console.error('Error:', error);
+        list.innerHTML = '<div class="empty-state" style="height:200px;"><i class="bi bi-exclamation-circle text-danger"></i><p class="small text-danger">Erro ao carregar</p></div>';
     }
 }
 
@@ -335,8 +500,8 @@ async function loadMessages(conversationId, contactId) {
     currentContactId = contactId;
 
     // Update active state
-    document.querySelectorAll('#conversation-list .conversation-item').forEach(el => el.classList.remove('active'));
-    document.querySelector(`#conversation-list .conversation-item[data-id="${conversationId}"]`)?.classList.add('active');
+    document.querySelectorAll('.conversation-item').forEach(el => el.classList.remove('active'));
+    document.querySelector(`.conversation-item[data-id="${conversationId}"]`)?.classList.add('active');
 
     const container = document.getElementById('messages-container');
     container.innerHTML = '<div class="d-flex align-items-center justify-content-center h-100"><div class="spinner-border text-primary"></div></div>';
@@ -352,38 +517,32 @@ async function loadMessages(conversationId, contactId) {
 
         currentContactId = conversation.contact_id || contactId;
         const name = conversation.contact_name || 'Desconhecido';
-        const initials = name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
-        const avatarColors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
-        const colorIndex = name.charCodeAt(0) % avatarColors.length;
 
-        document.getElementById('detail-header').style.display = 'block';
+        // Update header
+        document.getElementById('detail-header').style.display = 'flex';
         document.getElementById('reply-box').style.display = 'block';
         document.getElementById('contact-name').textContent = name;
-        document.getElementById('contact-channel').textContent = `Via ${conversation.channel}`;
+        document.getElementById('contact-channel').innerHTML = `
+            ${conversation.channel === 'whatsapp' ? '<i class="bi bi-whatsapp me-1" style="color:#25d366;"></i>' : '<i class="bi bi-envelope me-1" style="color:#ea4335;"></i>'}
+            Via ${conversation.channel}
+        `;
         document.getElementById('contact-link').href = `/contatos/${currentContactId}`;
+        document.getElementById('contact-avatar').innerHTML = renderAvatar(conversation.foto_url, name, 38);
 
-        // Update avatar
-        const avatarEl = document.getElementById('contact-avatar');
-        if (conversation.foto_url) {
-            avatarEl.innerHTML = `<img src="${conversation.foto_url}" class="conv-avatar" style="object-fit: cover; width: 100%; height: 100%;">`;
-        } else {
-            avatarEl.style.background = avatarColors[colorIndex];
-            avatarEl.textContent = initials;
-        }
-
+        // Render messages
         if (!messagesData.messages || messagesData.messages.length === 0) {
             container.innerHTML = `
-                <div class="empty-messages">
-                    <i class="bi bi-chat-square-text" style="font-size: 2.5rem;"></i>
-                    <p class="mt-3 mb-1">Sem historico de mensagens</p>
-                    <small class="text-muted">As mensagens deste contato ainda nao foram importadas</small>
+                <div class="empty-state">
+                    <i class="bi bi-chat-square-text"></i>
+                    <p class="mb-1">Sem historico</p>
+                    <small class="text-muted">Nenhuma mensagem encontrada</small>
                 </div>
             `;
         } else {
             container.innerHTML = messagesData.messages.reverse().map(msg => {
                 const isOutgoing = msg.direction === 'outgoing' || msg.direction === 'outbound';
                 return `
-                <div class="d-flex ${isOutgoing ? 'justify-content-end' : ''}">
+                <div class="message-row ${isOutgoing ? 'outgoing' : ''}">
                     <div class="message-bubble ${isOutgoing ? 'outgoing' : 'incoming'}">
                         <div style="white-space: pre-wrap;">${escapeHtml(msg.content || '')}</div>
                         <div class="message-time">${formatDateTime(msg.sent_at)}</div>
@@ -395,103 +554,73 @@ async function loadMessages(conversationId, contactId) {
             container.scrollTop = container.scrollHeight;
         }
 
+        // Mark as read
         await fetch(`/api/inbox/conversations/${conversationId}/read`, { method: 'POST', credentials: 'include' });
         loadUnreadCount();
-
-        // Auto-load message suggestions
         loadMessageSuggestions();
 
     } catch (error) {
-        console.error('Error loading messages:', error);
-        container.innerHTML = '<div class="empty-messages text-danger"><i class="bi bi-exclamation-circle"></i><p class="mt-2">Erro ao carregar mensagens</p></div>';
+        console.error('Error:', error);
+        container.innerHTML = '<div class="empty-state"><i class="bi bi-exclamation-circle text-danger"></i><p class="text-danger">Erro ao carregar</p></div>';
     }
 }
 
 async function loadMessageSuggestions() {
     const container = document.getElementById('messageSuggestions');
+    const actions = document.getElementById('suggestionActions');
+
     if (!currentContactId) {
-        container.innerHTML = '<div class="text-center text-muted py-4"><p class="small">Selecione uma conversa</p></div>';
+        actions.style.display = 'none';
+        container.innerHTML = '<div class="empty-state" style="height:auto;padding:40px 20px;"><i class="bi bi-lightbulb" style="font-size:2rem;"></i><p class="mb-0 small">Selecione uma conversa</p></div>';
         return;
     }
 
-    container.innerHTML = `
-        <div class="text-center py-4">
-            <div class="spinner-border spinner-border-sm text-primary"></div>
-            <p class="mt-2 mb-0 small text-muted">Gerando sugestoes...</p>
-        </div>
-    `;
+    container.innerHTML = '<div class="text-center py-4"><div class="spinner-border spinner-border-sm text-primary"></div><p class="mt-2 mb-0 small text-muted">Gerando...</p></div>';
 
     try {
         const response = await fetch(`/api/ai/message-suggest/${currentContactId}`);
         if (!response.ok) throw new Error('API not available');
 
         const data = await response.json();
-        const suggestions = data.suggestions || [];
-
-        if (suggestions.length === 0) {
-            container.innerHTML = `
-                <div class="text-center text-muted py-4">
-                    <i class="bi bi-chat-square-text" style="font-size: 1.5rem;"></i>
-                    <p class="mt-2 mb-0 small">Nenhuma sugestao disponivel</p>
-                </div>
-            `;
-            return;
-        }
-
-        renderSuggestions(suggestions);
-
+        renderSuggestions(data.suggestions || []);
     } catch (error) {
-        // Fallback with mock suggestions
-        const mockSuggestions = [
-            {
-                text: "Ola! Como voce esta? Gostaria de agendar uma conversa para atualizarmos sobre o projeto.",
-                tone: "formal",
-                context: "Follow-up profissional"
-            },
-            {
-                text: "Oi! Tudo bem? Estava lembrando de voce e queria saber como andam as coisas.",
-                tone: "casual",
-                context: "Mensagem amigavel"
-            },
-            {
-                text: "Bom dia! Vi que faz um tempo que nao conversamos. Podemos marcar um cafe esta semana?",
-                tone: "friendly",
-                context: "Reconexao"
-            }
-        ];
-        renderSuggestions(mockSuggestions);
+        // Fallback suggestions
+        renderSuggestions([
+            { text: "Ola! Como voce esta? Gostaria de agendar uma conversa para atualizarmos.", tone: "formal", context: "Follow-up" },
+            { text: "Oi! Tudo bem? Estava lembrando de voce e queria saber como andam as coisas.", tone: "casual", context: "Casual" },
+            { text: "Bom dia! Vi que faz tempo que nao conversamos. Podemos marcar um cafe?", tone: "friendly", context: "Reconexao" }
+        ]);
     }
 }
 
 function renderSuggestions(suggestions) {
     const container = document.getElementById('messageSuggestions');
+    const actions = document.getElementById('suggestionActions');
     selectedSuggestion = null;
 
-    let html = suggestions.map((s, idx) => `
-        <div class="suggested-message" onclick="selectSuggestion(${idx}, this)" data-index="${idx}">
-            <div class="suggested-message-text">${escapeHtml(s.text)}</div>
-            <div class="suggested-message-meta">
-                <span class="tone-badge ${s.tone || 'formal'}">${s.tone || 'formal'}</span>
+    if (!suggestions || suggestions.length === 0) {
+        actions.style.display = 'none';
+        container.innerHTML = '<div class="empty-state" style="height:auto;padding:40px 20px;"><i class="bi bi-emoji-frown"></i><p class="mb-0 small">Sem sugestoes disponiveis</p></div>';
+        return;
+    }
+
+    actions.style.display = 'block';
+    container.innerHTML = suggestions.map((s, idx) => `
+        <div class="suggestion-card" onclick="selectSuggestion(${idx}, this)" data-index="${idx}">
+            <div class="suggestion-text">${escapeHtml(s.text)}</div>
+            <div class="suggestion-meta">
+                <span class="tone-tag ${s.tone || 'formal'}">${s.tone || 'formal'}</span>
                 <span>${s.context || ''}</span>
             </div>
         </div>
     `).join('');
 
-    html += `
-        <button class="btn btn-primary use-suggestion-btn" onclick="useSuggestion()" id="useSuggestionBtn" disabled>
-            <i class="bi bi-check me-1"></i>Usar Sugestao
-        </button>
-        <button class="btn btn-outline-secondary regenerate-btn" onclick="loadMessageSuggestions()">
-            <i class="bi bi-arrow-repeat me-1"></i>Gerar Novas
-        </button>
-    `;
-
-    container.innerHTML = html;
     window.currentSuggestions = suggestions;
+    document.getElementById('useSuggestionBtn').disabled = true;
 }
 
 function selectSuggestion(index, element) {
-    document.querySelectorAll('.suggested-message').forEach(el => el.classList.remove('selected'));
+    document.querySelectorAll('.suggestion-card').forEach(el => el.classList.remove('selected'));
     element.classList.add('selected');
     selectedSuggestion = window.currentSuggestions[index];
     document.getElementById('useSuggestionBtn').disabled = false;
@@ -526,7 +655,9 @@ async function loadUnreadCount() {
     try {
         const response = await fetch('/api/inbox/unread', { credentials: 'include' });
         const data = await response.json();
-        document.getElementById('unread-badge').textContent = data.unread || 0;
+        const badge = document.getElementById('unread-badge');
+        badge.textContent = data.unread || 0;
+        badge.style.display = data.unread > 0 ? 'inline' : 'none';
     } catch (error) {}
 }
 
@@ -548,14 +679,16 @@ function formatDateTime(dateStr) {
 }
 
 function escapeHtml(text) {
+    if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
 
-document.querySelectorAll('[data-filter]').forEach(btn => {
+// Filter buttons
+document.querySelectorAll('.filter-pill').forEach(btn => {
     btn.addEventListener('click', function() {
-        document.querySelectorAll('[data-filter]').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
         this.classList.add('active');
         loadConversations(this.dataset.filter);
     });
@@ -569,6 +702,13 @@ document.getElementById('replyText')?.addEventListener('keydown', function(e) {
     }
 });
 
+// Auto-resize textarea
+document.getElementById('replyText')?.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+});
+
+// Init
 loadConversations();
 loadUnreadCount();
 </script>
