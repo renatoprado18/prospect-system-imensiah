@@ -1236,9 +1236,8 @@
                             ${primaryPhone ? `<span class="profile-meta-item"><i class="bi bi-telephone"></i> ${primaryPhone}</span>` : ''}
                         </div>
                         <div class="profile-badges">
-                            <span class="profile-badge circulo">Circulo ${contact.circulo || 3}</span>
+                            ${renderCirculosBadges(contact)}
                             ${renderHealthBadge(contact.health_score)}
-                            <span class="profile-badge context">${contextLabel}</span>
                             ${contact.linkedin ? '<span class="profile-badge" style="background: #0077b5; color: white;"><i class="bi bi-linkedin"></i></span>' : ''}
                         </div>
                     </div>
@@ -1559,6 +1558,53 @@
             if (tabName === 'reunioes') {
                 loadContactMeetings();
             }
+        }
+
+        function renderCirculosBadges(contact) {
+            const pessoalConfig = {
+                1: { nome: 'Nucleo', cor: '#FF6B6B', icone: 'heart-fill' },
+                2: { nome: 'Proximo', cor: '#F87171', icone: 'heart' },
+                3: { nome: 'Relacionamento', cor: '#FB923C', icone: 'people' },
+                4: { nome: 'Ocasional', cor: '#FBBF24', icone: 'person' },
+                5: { nome: 'Distante', cor: '#A3A3A3', icone: 'archive' }
+            };
+
+            const profConfig = {
+                1: { nome: 'Core', cor: '#6366F1', icone: 'briefcase-fill' },
+                2: { nome: 'Estrategico', cor: '#8B5CF6', icone: 'star-fill' },
+                3: { nome: 'Networking', cor: '#0EA5E9', icone: 'diagram-3' },
+                4: { nome: 'Ocasional', cor: '#14B8A6', icone: 'person-badge' },
+                5: { nome: 'Arquivo', cor: '#A3A3A3', icone: 'archive' }
+            };
+
+            let badges = '';
+
+            // Badge Pessoal
+            if (contact.circulo_pessoal) {
+                const cp = pessoalConfig[contact.circulo_pessoal] || pessoalConfig[5];
+                badges += `
+                    <span class="profile-badge" style="background: ${cp.cor}22; color: ${cp.cor}; border: 1px solid ${cp.cor}44;" title="Circulo Pessoal ${contact.circulo_pessoal}: ${cp.nome}">
+                        <i class="bi bi-${cp.icone}"></i> P${contact.circulo_pessoal}
+                    </span>
+                `;
+            }
+
+            // Badge Profissional
+            if (contact.circulo_profissional) {
+                const cr = profConfig[contact.circulo_profissional] || profConfig[5];
+                badges += `
+                    <span class="profile-badge" style="background: ${cr.cor}22; color: ${cr.cor}; border: 1px solid ${cr.cor}44;" title="Circulo Profissional ${contact.circulo_profissional}: ${cr.nome}">
+                        <i class="bi bi-${cr.icone}"></i> R${contact.circulo_profissional}
+                    </span>
+                `;
+            }
+
+            // Fallback para circulo antigo se nao tiver os novos
+            if (!contact.circulo_pessoal && !contact.circulo_profissional) {
+                badges = `<span class="profile-badge circulo">Circulo ${contact.circulo || 5}</span>`;
+            }
+
+            return badges;
         }
 
         function renderHealthBadge(healthScore) {

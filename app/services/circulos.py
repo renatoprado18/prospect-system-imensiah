@@ -407,6 +407,292 @@ def calcular_health_score(contact: Dict, circulo: int = None) -> int:
     return health
 
 
+# ============== FUNCOES PARA SISTEMA DUAL ==============
+
+def detectar_contextos(contact: Dict) -> Dict[str, bool]:
+    """
+    Detecta se o contato pertence ao contexto pessoal, profissional ou ambos.
+
+    Returns:
+        Dict com 'pessoal' e 'profissional' como booleans
+    """
+    tags = parse_tags(contact.get("tags"))
+    contexto_str = (contact.get("contexto") or "").lower()
+
+    # Detectar por tags
+    tem_tag_pessoal = any(tag in TAGS_PESSOAIS for tag in tags)
+    tem_tag_profissional = any(tag in TAGS_PROFISSIONAIS for tag in tags)
+
+    # Detectar por campo contexto
+    is_personal = "personal" in contexto_str or "pessoal" in contexto_str
+    is_professional = "professional" in contexto_str or "profissional" in contexto_str
+
+    return {
+        "pessoal": tem_tag_pessoal or is_personal,
+        "profissional": tem_tag_profissional or is_professional or contact.get("empresa")
+    }
+
+
+def calcular_circulo_pessoal(contact: Dict) -> Tuple[Optional[int], List[str]]:
+    """
+    Calcula o circulo pessoal de um contato.
+
+    Returns:
+        Tuple[circulo ou None, lista de razoes]
+    """
+    tags = parse_tags(contact.get("tags"))
+    reasons = []
+
+    # Check tag overrides primeiro
+    for circulo, override_tags in TAG_PESSOAL_OVERRIDES.items():
+        matched = get_matching_tags(tags, override_tags)
+        if matched:
+            reasons.append(f"Tag pessoal: {', '.join(matched)}")
+            return circulo, reasons
+
+    # Se nao tem tag pessoal especifica, calcular por score
+    contextos = detectar_contextos(contact)
+    if not contextos["pessoal"]:
+        return None, ["Sem contexto pessoal identificado"]
+
+    # Score baseado em interacoes e recencia
+    score = 0
+    total_interacoes = contact.get("total_interacoes") or 0
+    dias_sem_contato = calcular_dias_sem_contato(contact.get("ultimo_contato"))
+
+    if total_interacoes >= 30:
+        score += 30
+    elif total_interacoes >= 10:
+        score += 20
+    elif total_interacoes >= 5:
+        score += 10
+
+    if dias_sem_contato is not None:
+        if dias_sem_contato <= 7:
+            score += 30
+        elif dias_sem_contato <= 30:
+            score += 20
+        elif dias_sem_contato <= 90:
+            score += 10
+
+    # Mapear para circulo
+    if score >= 50:
+        return 2, [f"Score pessoal: {score}"]
+    elif score >= 30:
+        return 3, [f"Score pessoal: {score}"]
+    elif score >= 15:
+        return 4, [f"Score pessoal: {score}"]
+    else:
+        return 5, [f"Score pessoal: {score}"]
+
+
+def calcular_circulo_profissional(contact: Dict) -> Tuple[Optional[int], List[str]]:
+    """
+    Calcula o circulo profissional de um contato.
+
+    Returns:
+        Tuple[circulo ou None, lista de razoes]
+    """
+    tags = parse_tags(contact.get("tags"))
+    reasons = []
+
+    # Check tag overrides primeiro
+    for circulo, override_tags in TAG_PROFISSIONAL_OVERRIDES.items():
+        matched = get_matching_tags(tags, override_tags)
+        if matched:
+            reasons.append(f"Tag profissional: {', '.join(matched)}")
+            return circulo, reasons
+
+    # Se nao tem tag profissional especifica, calcular por score
+    contextos = detectar_contextos(contact)
+    if not contextos["profissional"]:
+        return None, ["Sem contexto profissional identificado"]
+
+    # Score baseado em interacoes, recencia e dados profissionais
+    score = 0
+    total_interacoes = contact.get("total_interacoes") or 0
+    dias_sem_contato = calcular_dias_sem_contato(contact.get("ultimo_contato"))
+
+    if total_interacoes >= 30:
+        score += 25
+    elif total_interacoes >= 10:
+        score += 15
+    elif total_interacoes >= 5:
+        score += 8
+
+    if dias_sem_contato is not None:
+        if dias_sem_contato <= 14:
+            score += 25
+        elif dias_sem_contato <= 45:
+            score += 15
+        elif dias_sem_contato <= 90:
+            score += 8
+
+    # Bonus por dados profissionais
+    if contact.get("linkedin"):
+        score += 10
+    if contact.get("empresa"):
+        score += 5
+    if contact.get("cargo"):
+        score += 5
+
+    # Mapear para circulo
+    if score >= 50:
+        return 2, [f"Score profissional: {score}"]
+    elif score >= 30:
+        return 3, [f"Score profissional: {score}"]
+    elif score >= 15:
+        return 4, [f"Score profissional: {score}"]
+    else:
+        return 5, [f"Score profissional: {score}"]
+
+
+def calcular_health_dual(contact: Dict) -> Dict:
+    """
+    Calcula health para ambos os contextos e retorna o efetivo (menor frequencia).
+
+    Returns:
+        Dict com health_pessoal, health_profissional, health_efetivo, frequencia_efetiva
+    """
+    circulo_pessoal = contact.get("circulo_pessoal")
+    circulo_profissional = contact.get("circulo_profissional")
+    dias_sem_contato = calcular_dias_sem_contato(contact.get("ultimo_contato"))
+
+    result = {
+        "health_pessoal": None,
+        "health_profissional": None,
+        "health_efetivo": 20,  # default se nao tem contato
+        "frequencia_efetiva": 365
+    }
+
+    if dias_sem_contato is None:
+        return result
+
+    # Calcular health pessoal
+    if circulo_pessoal:
+        freq_pessoal = CIRCULO_PESSOAL_CONFIG.get(circulo_pessoal, {}).get("frequencia_dias", 180)
+        if dias_sem_contato <= freq_pessoal:
+            result["health_pessoal"] = 100
+        else:
+            excesso = dias_sem_contato - freq_pessoal
+            result["health_pessoal"] = max(0, 100 - int(excesso / freq_pessoal * 100))
+
+    # Calcular health profissional
+    if circulo_profissional:
+        freq_prof = CIRCULO_PROFISSIONAL_CONFIG.get(circulo_profissional, {}).get("frequencia_dias", 365)
+        if dias_sem_contato <= freq_prof:
+            result["health_profissional"] = 100
+        else:
+            excesso = dias_sem_contato - freq_prof
+            result["health_profissional"] = max(0, 100 - int(excesso / freq_prof * 100))
+
+    # Health efetivo = menor dos dois (mais urgente)
+    healths = [h for h in [result["health_pessoal"], result["health_profissional"]] if h is not None]
+    if healths:
+        result["health_efetivo"] = min(healths)
+
+        # Frequencia efetiva = menor frequencia
+        freqs = []
+        if circulo_pessoal:
+            freqs.append(CIRCULO_PESSOAL_CONFIG.get(circulo_pessoal, {}).get("frequencia_dias", 180))
+        if circulo_profissional:
+            freqs.append(CIRCULO_PROFISSIONAL_CONFIG.get(circulo_profissional, {}).get("frequencia_dias", 365))
+        if freqs:
+            result["frequencia_efetiva"] = min(freqs)
+
+    return result
+
+
+def recalcular_circulos_dual(contact_id: int, force: bool = False) -> Dict:
+    """
+    Recalcula ambos os circulos (pessoal e profissional) de um contato.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, nome, tags, total_interacoes, ultimo_contato,
+                   aniversario, linkedin, empresa, cargo, foto_url, contexto, score,
+                   circulo_pessoal, circulo_profissional,
+                   circulo_pessoal_manual, circulo_profissional_manual,
+                   health_pessoal, health_profissional, health_score
+            FROM contacts
+            WHERE id = %s
+        """, (contact_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            return {"error": "Contato nao encontrado", "contact_id": contact_id}
+
+        contact = dict(row)
+
+        # Calcular circulos
+        circulo_pessoal, razoes_pessoal = calcular_circulo_pessoal(contact)
+        circulo_prof, razoes_prof = calcular_circulo_profissional(contact)
+
+        # Respeitar manual se nao force
+        if contact.get("circulo_pessoal_manual") and not force:
+            circulo_pessoal = contact.get("circulo_pessoal")
+        if contact.get("circulo_profissional_manual") and not force:
+            circulo_prof = contact.get("circulo_profissional")
+
+        # Atualizar contact dict para calculo de health
+        contact["circulo_pessoal"] = circulo_pessoal
+        contact["circulo_profissional"] = circulo_prof
+
+        # Calcular health
+        health_result = calcular_health_dual(contact)
+
+        # Circulo efetivo (para compatibilidade) = menor dos dois ou o que existir
+        circulo_efetivo = 5
+        if circulo_pessoal and circulo_prof:
+            # Usar o que tem menor frequencia
+            freq_p = CIRCULO_PESSOAL_CONFIG.get(circulo_pessoal, {}).get("frequencia_dias", 999)
+            freq_r = CIRCULO_PROFISSIONAL_CONFIG.get(circulo_prof, {}).get("frequencia_dias", 999)
+            circulo_efetivo = circulo_pessoal if freq_p <= freq_r else circulo_prof
+        elif circulo_pessoal:
+            circulo_efetivo = circulo_pessoal
+        elif circulo_prof:
+            circulo_efetivo = circulo_prof
+
+        # Atualizar no banco
+        cursor.execute("""
+            UPDATE contacts
+            SET circulo_pessoal = %s,
+                circulo_profissional = %s,
+                health_pessoal = %s,
+                health_profissional = %s,
+                circulo = %s,
+                health_score = %s,
+                ultimo_calculo_circulo = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (
+            circulo_pessoal,
+            circulo_prof,
+            health_result["health_pessoal"],
+            health_result["health_profissional"],
+            circulo_efetivo,
+            health_result["health_efetivo"],
+            contact_id
+        ))
+
+        conn.commit()
+
+        return {
+            "contact_id": contact_id,
+            "nome": contact.get("nome"),
+            "circulo_pessoal": circulo_pessoal,
+            "circulo_profissional": circulo_prof,
+            "circulo_efetivo": circulo_efetivo,
+            "health_pessoal": health_result["health_pessoal"],
+            "health_profissional": health_result["health_profissional"],
+            "health_efetivo": health_result["health_efetivo"],
+            "frequencia_efetiva": health_result["frequencia_efetiva"],
+            "razoes_pessoal": razoes_pessoal,
+            "razoes_profissional": razoes_prof
+        }
+
+
 def recalcular_circulo_contato(contact_id: int, force: bool = False) -> Dict:
     """
     Recalcula o circulo de um contato especifico.
