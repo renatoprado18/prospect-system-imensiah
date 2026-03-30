@@ -455,6 +455,18 @@ async def intel_contatos_linkedin(request: Request):
     })
 
 
+@app.get("/linkedin/bookmarklet", response_class=HTMLResponse)
+async def intel_linkedin_bookmarklet(request: Request):
+    """INTEL - LinkedIn Bookmarklet"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_linkedin_bookmarklet.html", {
+        "request": request,
+        "user": user
+    })
+
+
 @app.get("/duplicados", response_class=HTMLResponse)
 async def intel_duplicados(request: Request):
     """INTEL - Pagina de duplicados"""
@@ -3794,6 +3806,151 @@ async def import_linkedin_csv(request: Request):
 
 
 # ============== LINKEDIN ENRICHMENT ENDPOINTS ==============
+
+@app.post("/api/linkedin/bookmarklet")
+async def linkedin_bookmarklet_receive(request: Request):
+    """
+    Recebe dados do LinkedIn extraidos pelo bookmarklet.
+    Encontra o contato pela URL do LinkedIn e atualiza os dados.
+    """
+    try:
+        data = await request.json()
+    except:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    linkedin_url = data.get("linkedin_url", "").strip()
+    if not linkedin_url:
+        raise HTTPException(status_code=400, detail="linkedin_url is required")
+
+    # Normalizar URL
+    linkedin_url_normalized = linkedin_url.lower()
+    if "/in/" in linkedin_url_normalized:
+        # Extrair username
+        import re
+        match = re.search(r'linkedin\.com/in/([^/?\s]+)', linkedin_url_normalized)
+        if match:
+            username = match.group(1)
+            linkedin_url_normalized = f"https://www.linkedin.com/in/{username}"
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Buscar contato pela URL do LinkedIn (busca flexivel)
+    cursor.execute("""
+        SELECT id, nome, empresa, cargo, linkedin_headline
+        FROM contacts
+        WHERE LOWER(linkedin) LIKE %s
+           OR LOWER(linkedin) LIKE %s
+        LIMIT 1
+    """, (f"%{username}%", f"%{linkedin_url_normalized}%"))
+
+    contact = cursor.fetchone()
+
+    if not contact:
+        conn.close()
+        return {
+            "success": False,
+            "error": "contact_not_found",
+            "message": f"Nenhum contato encontrado com LinkedIn: {linkedin_url}",
+            "linkedin_url": linkedin_url
+        }
+
+    contact = dict(contact)
+    contact_id = contact["id"]
+
+    # Detectar mudanca de emprego
+    job_change = None
+    old_company = contact.get("empresa")
+    old_title = contact.get("cargo")
+    new_company = data.get("company")
+    new_title = data.get("title")
+
+    def normalize(s):
+        return (s or "").lower().strip()
+
+    if normalize(old_company) and normalize(new_company) and normalize(old_company) != normalize(new_company):
+        job_change = {
+            "type": "job_change",
+            "old_company": old_company,
+            "new_company": new_company,
+            "old_title": old_title,
+            "new_title": new_title
+        }
+    elif normalize(old_title) and normalize(new_title) and normalize(old_title) != normalize(new_title):
+        job_change = {
+            "type": "promotion",
+            "old_company": old_company,
+            "new_company": new_company,
+            "old_title": old_title,
+            "new_title": new_title
+        }
+
+    # Registrar mudanca no historico se detectada
+    if job_change:
+        cursor.execute("""
+            INSERT INTO linkedin_enrichment_history
+            (contact_id, empresa_anterior, cargo_anterior, empresa_nova, cargo_nova,
+             headline_anterior, headline_nova, tipo_mudanca, dados_completos)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            contact_id,
+            old_company,
+            old_title,
+            new_company,
+            new_title,
+            contact.get("linkedin_headline"),
+            data.get("headline"),
+            job_change["type"],
+            json.dumps(data)
+        ))
+
+    # Atualizar contato com dados do bookmarklet
+    cursor.execute("""
+        UPDATE contacts
+        SET empresa = COALESCE(NULLIF(%s, ''), empresa),
+            cargo = COALESCE(NULLIF(%s, ''), cargo),
+            linkedin_headline = COALESCE(NULLIF(%s, ''), linkedin_headline),
+            linkedin_location = COALESCE(NULLIF(%s, ''), linkedin_location),
+            linkedin_about = COALESCE(NULLIF(%s, ''), linkedin_about),
+            linkedin_experience = COALESCE(NULLIF(%s, '[]'), linkedin_experience),
+            linkedin_education = COALESCE(NULLIF(%s, '[]'), linkedin_education),
+            linkedin_connections = COALESCE(%s, linkedin_connections),
+            linkedin_enriched_at = CURRENT_TIMESTAMP,
+            linkedin_previous_company = %s,
+            linkedin_previous_title = %s,
+            linkedin_job_changed_at = %s,
+            foto_url = COALESCE(NULLIF(%s, ''), foto_url),
+            enriquecimento_status = 'bookmarklet',
+            ultimo_enriquecimento = CURRENT_TIMESTAMP,
+            atualizado_em = CURRENT_TIMESTAMP
+        WHERE id = %s
+    """, (
+        data.get("company"),
+        data.get("title"),
+        data.get("headline"),
+        data.get("location"),
+        data.get("about"),
+        json.dumps(data.get("experience", [])),
+        json.dumps(data.get("education", [])),
+        data.get("connections"),
+        old_company if job_change else None,
+        old_title if job_change else None,
+        datetime.now() if job_change else None,
+        data.get("profile_picture"),
+        contact_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "success": True,
+        "contact_id": contact_id,
+        "nome": contact["nome"],
+        "job_change": job_change,
+        "message": f"Dados atualizados para {contact['nome']}" + (" - MUDANCA DE EMPREGO DETECTADA!" if job_change else "")
+    }
+
 
 @app.get("/api/linkedin/stats")
 async def linkedin_enrichment_stats():

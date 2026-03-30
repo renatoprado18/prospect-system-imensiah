@@ -1,0 +1,205 @@
+{% extends "rap_base.html" %}
+
+{% block title %}LinkedIn Bookmarklet - INTEL{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-8">
+            <!-- Header -->
+            <div class="d-flex align-items-center mb-4">
+                <a href="/contatos/linkedin" class="btn btn-outline-secondary me-3">
+                    <i class="bi bi-arrow-left"></i>
+                </a>
+                <div>
+                    <h1 class="mb-0" style="font-size: 1.75rem; font-weight: 700;">
+                        <i class="bi bi-bookmark-star text-primary me-2"></i>LinkedIn Bookmarklet
+                    </h1>
+                    <p class="text-muted mb-0">Extraia dados do LinkedIn com um clique</p>
+                </div>
+            </div>
+
+            <!-- Bookmarklet Card -->
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-1-circle me-2"></i>Instalar o Bookmarklet</h5>
+                </div>
+                <div class="card-body">
+                    <p>Arraste o botao abaixo para sua barra de favoritos:</p>
+
+                    <div class="text-center my-4">
+                        <a href="javascript:(function(){const INTEL_URL='https://intel.almeida-prado.com';function extractData(){const d={linkedin_url:window.location.href};try{const h=document.querySelector('h1');if(h)d.full_name=h.textContent.trim();const hl=document.querySelector('.text-body-medium');if(hl)d.headline=hl.textContent.trim();const loc=document.querySelector('.text-body-small.inline.t-black--light.break-words');if(loc)d.location=loc.textContent.trim();const about=document.querySelector('#about~div .inline-show-more-text');if(about)d.about=about.textContent.trim();const exp=document.querySelector('#experience');if(exp){const items=exp.parentElement.querySelectorAll('li.artdeco-list__item');d.experience=[];items.forEach((item,i)=>{if(i>=5)return;const title=item.querySelector('.t-bold span');const company=item.querySelector('.t-normal span');const dates=item.querySelector('.t-black--light span');d.experience.push({title:title?.textContent?.trim(),company:company?.textContent?.trim(),dates:dates?.textContent?.trim()})});}const photo=document.querySelector('img.pv-top-card-profile-picture__image');if(photo)d.profile_picture=photo.src;const conn=document.querySelector('a[href*=connections] span');if(conn){const m=conn.textContent.match(/([\\d,]+)/);if(m)d.connections=parseInt(m[1].replace(',',''));}if(d.experience&&d.experience[0]){d.company=d.experience[0].company;d.title=d.experience[0].title;}}catch(e){console.error('Extract error:',e);}return d;}const data=extractData();if(!data.full_name){alert('Nao foi possivel extrair dados. Verifique se voce esta em um perfil LinkedIn.');return;}const overlay=document.createElement('div');overlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:999999;display:flex;align-items:center;justify-content:center;';overlay.innerHTML='<div style=\"background:white;padding:30px;border-radius:12px;text-align:center;max-width:400px;\"><div style=\"font-size:24px;margin-bottom:10px;\">Enviando dados...</div><div style=\"color:#666;\">'+data.full_name+'</div></div>';document.body.appendChild(overlay);fetch(INTEL_URL+'/api/linkedin/bookmarklet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(r=>r.json()).then(res=>{overlay.innerHTML='<div style=\"background:white;padding:30px;border-radius:12px;text-align:center;max-width:400px;\">'+(res.success?'<div style=\"font-size:48px;color:#22c55e;\">&#10004;</div><div style=\"font-size:20px;margin:10px 0;\">'+res.nome+'</div><div style=\"color:#666;\">Dados atualizados!'+(res.job_change?'<br><strong style=\"color:#f59e0b;\">Mudanca de emprego detectada!</strong>':'')+'</div>':'<div style=\"font-size:48px;color:#ef4444;\">&#10060;</div><div style=\"font-size:20px;margin:10px 0;\">Erro</div><div style=\"color:#666;\">'+(res.message||'Contato nao encontrado')+'</div>')+'<button onclick=\"this.parentElement.parentElement.remove()\" style=\"margin-top:20px;padding:10px 30px;background:#3b82f6;color:white;border:none;border-radius:6px;cursor:pointer;\">OK</button></div>';}).catch(e=>{overlay.innerHTML='<div style=\"background:white;padding:30px;border-radius:12px;text-align:center;\"><div style=\"font-size:48px;color:#ef4444;\">&#10060;</div><div>Erro de conexao</div><button onclick=\"this.parentElement.parentElement.remove()\" style=\"margin-top:20px;padding:10px 30px;background:#3b82f6;color:white;border:none;border-radius:6px;cursor:pointer;\">OK</button></div>';});})();"
+                           class="btn btn-lg btn-primary px-5 py-3"
+                           style="font-size: 1.2rem; cursor: grab;"
+                           onclick="alert('Arraste este botao para sua barra de favoritos!'); return false;"
+                           draggable="true">
+                            <i class="bi bi-linkedin me-2"></i>INTEL LinkedIn
+                        </a>
+                    </div>
+
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>Dica:</strong> Se a barra de favoritos nao estiver visivel, pressione <kbd>Ctrl+Shift+B</kbd> (Windows) ou <kbd>Cmd+Shift+B</kbd> (Mac).
+                    </div>
+                </div>
+            </div>
+
+            <!-- Instructions Card -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-2-circle me-2"></i>Como Usar</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row g-4">
+                        <div class="col-md-4 text-center">
+                            <div class="rounded-circle bg-light d-inline-flex align-items-center justify-content-center mb-3" style="width: 80px; height: 80px;">
+                                <i class="bi bi-linkedin text-primary" style="font-size: 2rem;"></i>
+                            </div>
+                            <h6>1. Abra um Perfil</h6>
+                            <p class="text-muted small">Navegue ate o perfil LinkedIn de um contato</p>
+                        </div>
+                        <div class="col-md-4 text-center">
+                            <div class="rounded-circle bg-light d-inline-flex align-items-center justify-content-center mb-3" style="width: 80px; height: 80px;">
+                                <i class="bi bi-bookmark-star text-primary" style="font-size: 2rem;"></i>
+                            </div>
+                            <h6>2. Clique no Bookmarklet</h6>
+                            <p class="text-muted small">Clique em "INTEL LinkedIn" na barra de favoritos</p>
+                        </div>
+                        <div class="col-md-4 text-center">
+                            <div class="rounded-circle bg-light d-inline-flex align-items-center justify-content-center mb-3" style="width: 80px; height: 80px;">
+                                <i class="bi bi-check-circle text-success" style="font-size: 2rem;"></i>
+                            </div>
+                            <h6>3. Pronto!</h6>
+                            <p class="text-muted small">Os dados sao enviados automaticamente para o INTEL</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- What's Extracted Card -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-database me-2"></i>Dados Extraidos</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <ul class="list-unstyled">
+                                <li class="mb-2"><i class="bi bi-check text-success me-2"></i>Nome completo</li>
+                                <li class="mb-2"><i class="bi bi-check text-success me-2"></i>Headline (titulo)</li>
+                                <li class="mb-2"><i class="bi bi-check text-success me-2"></i>Empresa atual</li>
+                                <li class="mb-2"><i class="bi bi-check text-success me-2"></i>Cargo atual</li>
+                                <li class="mb-2"><i class="bi bi-check text-success me-2"></i>Localizacao</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <ul class="list-unstyled">
+                                <li class="mb-2"><i class="bi bi-check text-success me-2"></i>Sobre (resumo)</li>
+                                <li class="mb-2"><i class="bi bi-check text-success me-2"></i>Experiencias anteriores</li>
+                                <li class="mb-2"><i class="bi bi-check text-success me-2"></i>Foto do perfil</li>
+                                <li class="mb-2"><i class="bi bi-check text-success me-2"></i>Numero de conexoes</li>
+                                <li class="mb-2"><i class="bi bi-star text-warning me-2"></i>Detecta mudanca de emprego!</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stats Card -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-bar-chart me-2"></i>Estatisticas de Enriquecimento</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center" id="statsContainer">
+                        <div class="col-md-3">
+                            <div class="display-6 text-primary" id="statTotal">-</div>
+                            <div class="text-muted">Com LinkedIn</div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="display-6 text-success" id="statEnriched">-</div>
+                            <div class="text-muted">Enriquecidos</div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="display-6 text-warning" id="statPending">-</div>
+                            <div class="text-muted">Pendentes</div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="display-6 text-info" id="statChanges">-</div>
+                            <div class="text-muted">Mudancas (30d)</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Job Changes -->
+            <div class="card mt-4" id="jobChangesCard" style="display: none;">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-arrow-repeat text-warning me-2"></i>Mudancas de Emprego Recentes</h5>
+                </div>
+                <div class="card-body">
+                    <div id="jobChangesList"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function loadStats() {
+    try {
+        const response = await fetch('/api/linkedin/stats');
+        const stats = await response.json();
+
+        document.getElementById('statTotal').textContent = stats.total_with_linkedin.toLocaleString();
+        document.getElementById('statEnriched').textContent = stats.enriched.toLocaleString();
+        document.getElementById('statPending').textContent = stats.pending.toLocaleString();
+        document.getElementById('statChanges').textContent = stats.job_changes_30d.toLocaleString();
+    } catch (error) {
+        console.error('Error loading stats:', error);
+    }
+}
+
+async function loadJobChanges() {
+    try {
+        const response = await fetch('/api/linkedin/job-changes?days=30');
+        const data = await response.json();
+
+        if (data.job_changes && data.job_changes.length > 0) {
+            document.getElementById('jobChangesCard').style.display = 'block';
+
+            const html = data.job_changes.map(change => `
+                <div class="d-flex align-items-center justify-content-between py-2 border-bottom">
+                    <div class="d-flex align-items-center">
+                        <img src="${change.foto_url || '/static/default-avatar.png'}"
+                             class="rounded-circle me-3"
+                             style="width: 48px; height: 48px; object-fit: cover;"
+                             onerror="this.src='/static/default-avatar.png'">
+                        <div>
+                            <strong>${change.nome}</strong>
+                            <div class="small text-muted">
+                                ${change.cargo_anterior || '?'} @ ${change.empresa_anterior || '?'}
+                                <i class="bi bi-arrow-right mx-1"></i>
+                                <span class="text-success">${change.cargo_nova || '?'} @ ${change.empresa_nova || '?'}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <a href="/contatos/${change.contact_id}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-eye"></i>
+                    </a>
+                </div>
+            `).join('');
+
+            document.getElementById('jobChangesList').innerHTML = html;
+        }
+    } catch (error) {
+        console.error('Error loading job changes:', error);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadStats();
+    loadJobChanges();
+});
+</script>
+{% endblock %}
