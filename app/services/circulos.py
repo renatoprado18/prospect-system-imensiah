@@ -812,28 +812,25 @@ def recalcular_todos_circulos(force: bool = False, limit: int = None) -> Dict:
             pessoal_anterior = contact.get("circulo_pessoal")
             profissional_anterior = contact.get("circulo_profissional")
 
-            # Detectar contextos do contato
-            contextos = detectar_contextos(contact)
-
             # Calcular circulo pessoal (se nao for manual ou force=True)
             circulo_pessoal = pessoal_anterior
-            health_pessoal = contact.get("health_pessoal")
-            reasons_pessoal = []
             if force or not contact.get("circulo_pessoal_manual"):
-                circulo_pessoal, _, reasons_pessoal = calcular_circulo_pessoal(contact, contextos)
-                health_pessoal = calcular_health_dual(contact, circulo_pessoal, "pessoal")
+                circulo_pessoal, _ = calcular_circulo_pessoal(contact)
 
             # Calcular circulo profissional (se nao for manual ou force=True)
             circulo_profissional = profissional_anterior
-            health_profissional = contact.get("health_profissional")
-            reasons_profissional = []
             if force or not contact.get("circulo_profissional_manual"):
-                circulo_profissional, _, reasons_profissional = calcular_circulo_profissional(contact, contextos)
-                health_profissional = calcular_health_dual(contact, circulo_profissional, "profissional")
+                circulo_profissional, _ = calcular_circulo_profissional(contact)
 
-            # Calcular health principal (o menor = mais urgente)
-            healths = [h for h in [health_pessoal, health_profissional] if h is not None]
-            health_principal = min(healths) if healths else 100
+            # Atualizar contact dict com os novos circulos para calcular health
+            contact["circulo_pessoal"] = circulo_pessoal
+            contact["circulo_profissional"] = circulo_profissional
+
+            # Calcular health dual (retorna dict com health_pessoal, health_profissional, etc)
+            health_result = calcular_health_dual(contact)
+            health_pessoal = health_result.get("health_pessoal")
+            health_profissional = health_result.get("health_profissional")
+            health_efetivo = health_result.get("health_efetivo", 100)
 
             # Circulo principal (o mais importante = menor numero)
             circulos = [c for c in [circulo_pessoal, circulo_profissional] if c is not None]
@@ -851,7 +848,7 @@ def recalcular_todos_circulos(force: bool = False, limit: int = None) -> Dict:
                     ultimo_calculo_circulo = CURRENT_TIMESTAMP
                 WHERE id = %s
             """, (circulo_pessoal, circulo_profissional, health_pessoal, health_profissional,
-                  circulo_principal, health_principal, contact["id"]))
+                  circulo_principal, health_efetivo, contact["id"]))
 
             stats["atualizados"] += 1
             stats["por_circulo_pessoal"][circulo_pessoal] += 1
