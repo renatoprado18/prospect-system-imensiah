@@ -84,15 +84,17 @@ class TaskContextService:
                     break
 
             if potential_name:
-                # Buscar contato por nome similar
+                # Buscar contato por nome similar (usando ILIKE para compatibilidade)
+                # Primeiro tenta match exato, depois parcial
                 cursor.execute("""
-                    SELECT id, nome, email, telefone, empresa, cargo, circulo,
-                           similarity(nome, %s) as sim
+                    SELECT id, nome, email, telefone, empresa, cargo, circulo
                     FROM contacts
-                    WHERE nome ILIKE %s OR similarity(nome, %s) > 0.3
-                    ORDER BY similarity(nome, %s) DESC
+                    WHERE nome ILIKE %s
+                    ORDER BY
+                        CASE WHEN nome ILIKE %s THEN 0 ELSE 1 END,
+                        LENGTH(nome)
                     LIMIT 1
-                """, (potential_name, f'%{potential_name}%', potential_name, potential_name))
+                """, (f'%{potential_name}%', potential_name))
                 row = cursor.fetchone()
                 if row:
                     return dict(row)
@@ -305,39 +307,62 @@ Responda em JSON:
         Busca contexto completo de uma tarefa.
         Retorna: tarefa, contato, mensagens, emails, projeto, sugestao IA.
         """
-        # Buscar tarefa
-        task = self.get_task_with_project(task_id)
-        if not task:
-            return {"error": "Tarefa nao encontrada"}
+        try:
+            # Buscar tarefa
+            task = self.get_task_with_project(task_id)
+            if not task:
+                return {"error": "Tarefa nao encontrada"}
 
-        # Encontrar contato
-        contact = self.find_contact_from_task(task)
+            # Encontrar contato
+            contact = None
+            try:
+                contact = self.find_contact_from_task(task)
+            except Exception as e:
+                logger.error(f"Error finding contact: {e}")
 
-        # Buscar mensagens e emails
-        messages = []
-        emails = []
-        if contact:
-            messages = self.get_whatsapp_messages(contact['id'])
-            emails = self.get_emails(contact['id'])
+            # Buscar mensagens e emails
+            messages = []
+            emails = []
+            if contact:
+                try:
+                    messages = self.get_whatsapp_messages(contact['id'])
+                except Exception as e:
+                    logger.error(f"Error fetching messages: {e}")
+                try:
+                    emails = self.get_emails(contact['id'])
+                except Exception as e:
+                    logger.error(f"Error fetching emails: {e}")
 
-        # Buscar contexto do projeto
-        project = {}
-        if task.get('project_id'):
-            project = self.get_project_context(task['project_id'])
+            # Buscar contexto do projeto
+            project = {}
+            if task.get('project_id'):
+                try:
+                    project = self.get_project_context(task['project_id'])
+                except Exception as e:
+                    logger.error(f"Error fetching project context: {e}")
 
-        # Gerar sugestao com IA
-        suggestion = await self.generate_action_suggestion(
-            task, contact, messages, emails, project
-        )
+            # Gerar sugestao com IA
+            suggestion = {}
+            try:
+                suggestion = await self.generate_action_suggestion(
+                    task, contact, messages, emails, project
+                )
+            except Exception as e:
+                logger.error(f"Error generating suggestion: {e}")
+                suggestion = {"error": str(e)}
 
-        return {
-            "task": task,
-            "contact": contact,
-            "messages": messages,
-            "emails": emails,
-            "project": project,
-            "suggestion": suggestion
-        }
+            return {
+                "task": task,
+                "contact": contact,
+                "messages": messages,
+                "emails": emails,
+                "project": project,
+                "suggestion": suggestion
+            }
+
+        except Exception as e:
+            logger.error(f"Error in get_task_context: {e}")
+            return {"error": str(e)}
 
 
 # Singleton
