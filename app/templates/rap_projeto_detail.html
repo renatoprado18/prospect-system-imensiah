@@ -173,7 +173,52 @@
     </div>
 </div>
 
+<!-- Follow-up Modal -->
+<div class="modal fade" id="followupModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content" style="border-radius: 16px; border: none;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border-radius: 16px 16px 0 0;">
+                <h5 class="modal-title"><i class="bi bi-check-circle me-2"></i>Tarefa Concluída!</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="followupBody">
+                <div class="text-center py-3">
+                    <div class="spinner-border spinner-border-sm text-primary"></div>
+                    <span class="ms-2">Analisando...</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" onclick="confirmNoFollowup()">
+                    Não precisa
+                </button>
+                <button type="button" class="btn btn-primary" id="btnCreateFollowup" onclick="createFollowup()">
+                    <i class="bi bi-plus-circle me-1"></i>Criar Follow-up
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <style>
+    .followup-option {
+        padding: 12px 16px;
+        border: 2px solid var(--gray-200);
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+        margin-bottom: 8px;
+    }
+    .followup-option:hover {
+        border-color: var(--primary);
+        background: var(--gray-50);
+    }
+    .followup-option.selected {
+        border-color: var(--primary);
+        background: rgba(79, 70, 229, 0.1);
+    }
+    .followup-option input[type="radio"] {
+        margin-right: 10px;
+    }
     .task-context-section {
         background: var(--gray-50);
         border-radius: 12px;
@@ -1084,15 +1129,172 @@
         document.getElementById('taskResponsavelResults').innerHTML = '';
     }
 
+    let pendingFollowup = null;
+
     async function toggleTask(taskId, completed) {
+        if (completed) {
+            // Ao completar, mostrar modal de follow-up
+            showFollowupModal(taskId);
+        } else {
+            // Ao desmarcar, apenas atualizar
+            try {
+                await fetch(`/api/tasks/${taskId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'pending' })
+                });
+                loadProject();
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+    }
+
+    async function showFollowupModal(taskId) {
+        const modal = new bootstrap.Modal(document.getElementById('followupModal'));
+        const body = document.getElementById('followupBody');
+
+        body.innerHTML = `
+            <div class="text-center py-3">
+                <div class="spinner-border spinner-border-sm text-primary"></div>
+                <span class="ms-2">Analisando contexto...</span>
+            </div>
+        `;
+        modal.show();
+
         try {
-            await fetch(`/api/tasks/${taskId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: completed ? 'completed' : 'pending' })
-            });
+            const response = await fetch(`/api/tasks/${taskId}/suggest-followup`);
+            const suggestion = await response.json();
+
+            pendingFollowup = {
+                taskId: taskId,
+                ...suggestion
+            };
+
+            if (suggestion.needs_followup) {
+                body.innerHTML = `
+                    <div class="mb-3">
+                        <p class="text-muted mb-2">${suggestion.reason || 'Sugerimos criar um follow-up para esta tarefa.'}</p>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Título do Follow-up</label>
+                        <input type="text" class="form-control" id="followupTitle"
+                            value="${suggestion.followup_title || 'Follow-up'}">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Prazo</label>
+                        <div class="followup-option ${suggestion.suggested_days === 1 ? 'selected' : ''}"
+                            onclick="selectFollowupDays(1, this)">
+                            <input type="radio" name="followupDays" value="1" ${suggestion.suggested_days === 1 ? 'checked' : ''}>
+                            <span>Amanhã</span>
+                        </div>
+                        <div class="followup-option ${suggestion.suggested_days === 3 ? 'selected' : ''}"
+                            onclick="selectFollowupDays(3, this)">
+                            <input type="radio" name="followupDays" value="3" ${suggestion.suggested_days === 3 ? 'checked' : ''}>
+                            <span>Em 3 dias</span>
+                            ${suggestion.suggested_days === 3 ? '<span class="badge bg-primary ms-2">Recomendado</span>' : ''}
+                        </div>
+                        <div class="followup-option ${suggestion.suggested_days === 5 ? 'selected' : ''}"
+                            onclick="selectFollowupDays(5, this)">
+                            <input type="radio" name="followupDays" value="5" ${suggestion.suggested_days === 5 ? 'checked' : ''}>
+                            <span>Em 5 dias</span>
+                            ${suggestion.suggested_days === 5 ? '<span class="badge bg-primary ms-2">Recomendado</span>' : ''}
+                        </div>
+                        <div class="followup-option ${suggestion.suggested_days === 7 ? 'selected' : ''}"
+                            onclick="selectFollowupDays(7, this)">
+                            <input type="radio" name="followupDays" value="7" ${suggestion.suggested_days === 7 ? 'checked' : ''}>
+                            <span>Em 1 semana</span>
+                        </div>
+                    </div>
+                `;
+            } else {
+                // Não precisa de follow-up, apenas completar
+                body.innerHTML = `
+                    <div class="text-center py-3">
+                        <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                        <p class="mt-2 mb-0">Tarefa concluída com sucesso!</p>
+                    </div>
+                `;
+                document.getElementById('btnCreateFollowup').style.display = 'none';
+
+                // Completar a tarefa
+                await completeTaskOnly(taskId);
+
+                setTimeout(() => {
+                    bootstrap.Modal.getInstance(document.getElementById('followupModal')).hide();
+                    loadProject();
+                }, 1500);
+            }
+
         } catch (error) {
             console.error('Error:', error);
+            body.innerHTML = `
+                <div class="text-center py-3 text-danger">
+                    <i class="bi bi-exclamation-circle" style="font-size: 2rem;"></i>
+                    <p class="mt-2">Erro ao analisar tarefa</p>
+                </div>
+            `;
+        }
+    }
+
+    function selectFollowupDays(days, element) {
+        document.querySelectorAll('.followup-option').forEach(el => el.classList.remove('selected'));
+        element.classList.add('selected');
+        element.querySelector('input[type="radio"]').checked = true;
+        pendingFollowup.selectedDays = days;
+    }
+
+    async function completeTaskOnly(taskId) {
+        await fetch(`/api/tasks/${taskId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'completed' })
+        });
+    }
+
+    async function createFollowup() {
+        if (!pendingFollowup) return;
+
+        const title = document.getElementById('followupTitle')?.value || pendingFollowup.followup_title;
+        const selectedRadio = document.querySelector('input[name="followupDays"]:checked');
+        const days = selectedRadio ? parseInt(selectedRadio.value) : (pendingFollowup.suggested_days || 3);
+
+        try {
+            const response = await fetch(`/api/tasks/${pendingFollowup.taskId}/complete-with-followup`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    create_followup: true,
+                    followup_title: title,
+                    followup_days: days,
+                    contact_id: pendingFollowup.contact_id,
+                    project_id: pendingFollowup.project_id || projectId
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.completed) {
+                bootstrap.Modal.getInstance(document.getElementById('followupModal')).hide();
+                loadProject();
+
+                // Mostrar notificação de sucesso
+                if (result.followup_created) {
+                    alert(`Follow-up criado para ${days} dia(s)!`);
+                }
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Erro ao criar follow-up');
+        }
+    }
+
+    async function confirmNoFollowup() {
+        if (pendingFollowup) {
+            await completeTaskOnly(pendingFollowup.taskId);
+            loadProject();
         }
     }
 

@@ -7640,6 +7640,79 @@ async def get_task_context(request: Request, task_id: int):
     return result
 
 
+@app.get("/api/tasks/{task_id}/suggest-followup")
+async def suggest_task_followup(request: Request, task_id: int):
+    """
+    Sugere follow-up ao completar uma tarefa.
+    Analisa contexto e retorna sugestão de prazo.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.task_context import get_task_context_service
+    context_service = get_task_context_service()
+    result = await context_service.suggest_followup(task_id)
+
+    return result
+
+
+@app.post("/api/tasks/{task_id}/complete-with-followup")
+async def complete_task_with_followup(request: Request, task_id: int):
+    """
+    Completa tarefa e opcionalmente cria follow-up.
+
+    Body:
+    {
+        "create_followup": true/false,
+        "followup_title": "título do follow-up",
+        "followup_days": 3,
+        "contact_id": 123 (opcional),
+        "project_id": 456 (opcional)
+    }
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = await request.json()
+
+    # 1. Completar tarefa original
+    tasks_service = get_tasks_sync_service()
+    result = await tasks_service.complete_task(task_id)
+
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    # 2. Criar follow-up se solicitado
+    followup_task = None
+    if data.get("create_followup"):
+        from datetime import timedelta
+
+        followup_days = data.get("followup_days", 3)
+        due_date = datetime.now() + timedelta(days=followup_days)
+
+        followup_result = await tasks_service.create_task(
+            titulo=data.get("followup_title", "Follow-up"),
+            descricao=f"Follow-up da tarefa #{task_id}",
+            data_vencimento=due_date,
+            prioridade=5,
+            contact_id=data.get("contact_id"),
+            project_id=data.get("project_id"),
+            sync_to_google=True
+        )
+
+        if "error" not in followup_result:
+            followup_task = followup_result
+
+    return {
+        "completed": True,
+        "task_id": task_id,
+        "followup_created": followup_task is not None,
+        "followup_task": followup_task
+    }
+
+
 @app.post("/api/tasks/sync")
 async def sync_tasks(request: Request):
     """
