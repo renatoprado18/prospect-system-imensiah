@@ -8201,6 +8201,58 @@ async def get_action_proposals_stats(request: Request, days: int = 30):
     return service.get_stats(days)
 
 
+@app.post("/api/action-proposals/test-notification")
+@app.get("/api/action-proposals/test-notification")
+async def test_proposal_notification(request: Request, contact_name: str = "Pedro Salles"):
+    """Endpoint de teste - cria proposta fake e envia notificacao WhatsApp (sem auth)"""
+    from services.action_proposals import get_action_proposals
+    from services.whatsapp_notifications import get_whatsapp_notifications
+
+    proposals_service = get_action_proposals()
+    notifications = get_whatsapp_notifications()
+
+    # Criar proposta de teste
+    test_proposal = {
+        'action_type': 'reschedule_event',
+        'contact_id': None,
+        'message_id': None,
+        'title': f'Remarcar reuniao com {contact_name}',
+        'description': f'{contact_name} pediu para remarcar a reuniao de hoje.',
+        'trigger_text': 'Oi Renato, consegue remarcar nossa reuniao de hoje? Surgiu um imprevisto aqui.',
+        'ai_reasoning': 'Mensagem indica pedido de remarcacao',
+        'confidence': 0.95,
+        'urgency': 'high',
+        'action_params': {
+            'event_id': None,
+            'original_date': '2024-03-30T15:00:00'
+        },
+        'options': [
+            {'id': 'reschedule_tomorrow', 'label': 'Remarcar amanha mesmo horario', 'action': 'reschedule'},
+            {'id': 'reschedule_next_week', 'label': 'Remarcar proxima semana', 'action': 'reschedule'},
+            {'id': 'cancel', 'label': 'Cancelar reuniao', 'action': 'cancel'},
+            {'id': 'ignore', 'label': 'Ignorar', 'action': 'dismiss'}
+        ]
+    }
+
+    # Salvar proposta
+    proposal = proposals_service.create_proposal(test_proposal)
+
+    if not proposal:
+        return {"success": False, "error": "Falha ao criar proposta"}
+
+    # Adicionar contact_name para a notificacao
+    proposal['contact_name'] = contact_name
+
+    # Enviar notificacao
+    sent = await notifications.send_proposal_notification(proposal)
+
+    return {
+        "success": sent,
+        "proposal_id": proposal['id'],
+        "message": "Notificacao enviada! Responda no WhatsApp com 1, 2, 3 ou 4" if sent else "Falha ao enviar notificacao"
+    }
+
+
 @app.get("/api/action-proposals/{proposal_id}")
 async def get_action_proposal(request: Request, proposal_id: int):
     """Detalhes de uma proposta"""
@@ -8296,58 +8348,6 @@ async def expire_old_proposals(request: Request):
 
     count = service.expire_old_proposals()
     return {"expired": count}
-
-
-@app.post("/api/action-proposals/test-notification")
-@app.get("/api/action-proposals/test-notification")
-async def test_proposal_notification(request: Request, contact_name: str = "Pedro Salles"):
-    """Endpoint de teste - cria proposta fake e envia notificacao WhatsApp (sem auth)"""
-    from services.action_proposals import get_action_proposals
-    from services.whatsapp_notifications import get_whatsapp_notifications
-
-    proposals_service = get_action_proposals()
-    notifications = get_whatsapp_notifications()
-
-    # Criar proposta de teste
-    test_proposal = {
-        'action_type': 'reschedule_event',
-        'contact_id': None,
-        'message_id': None,
-        'title': f'Remarcar reuniao com {contact_name}',
-        'description': f'{contact_name} pediu para remarcar a reuniao de hoje.',
-        'trigger_text': 'Oi Renato, consegue remarcar nossa reuniao de hoje? Surgiu um imprevisto aqui.',
-        'ai_reasoning': 'Mensagem indica pedido de remarcacao',
-        'confidence': 0.95,
-        'urgency': 'high',
-        'action_params': {
-            'event_id': None,
-            'original_date': '2024-03-30T15:00:00'
-        },
-        'options': [
-            {'id': 'reschedule_tomorrow', 'label': 'Remarcar amanha mesmo horario', 'action': 'reschedule'},
-            {'id': 'reschedule_next_week', 'label': 'Remarcar proxima semana', 'action': 'reschedule'},
-            {'id': 'cancel', 'label': 'Cancelar reuniao', 'action': 'cancel'},
-            {'id': 'ignore', 'label': 'Ignorar', 'action': 'dismiss'}
-        ]
-    }
-
-    # Salvar proposta
-    proposal = proposals_service.create_proposal(test_proposal)
-
-    if not proposal:
-        return {"success": False, "error": "Falha ao criar proposta"}
-
-    # Adicionar contact_name para a notificacao
-    proposal['contact_name'] = contact_name
-
-    # Enviar notificacao
-    sent = await notifications.send_proposal_notification(proposal)
-
-    return {
-        "success": sent,
-        "proposal_id": proposal['id'],
-        "message": "Notificacao enviada! Responda no WhatsApp com 1, 2, 3 ou 4" if sent else "Falha ao enviar notificacao"
-    }
 
 
 # =============================================================================
