@@ -378,46 +378,29 @@ async function loadJobChanges() {
     }
 }
 
-// Bookmarklet code - Updated selectors for LinkedIn 2024/2025
+// Bookmarklet code - Uses popup window to bypass LinkedIn CSP
 const BOOKMARKLET_CODE = `javascript:(function(){
-if(!location.href.includes('linkedin.com/in/')){alert('Abra um perfil LinkedIn primeiro (URL deve conter linkedin.com/in/)');return;}
-var INTEL_URL='https://intel.almeida-prado.com';
+if(!location.href.includes('linkedin.com/in/')){alert('Abra um perfil LinkedIn primeiro');return;}
 var d={linkedin_url:location.href};
-function extract(){
 try{
 var h1s=document.querySelectorAll('h1');
 for(var i=0;i<h1s.length;i++){var t=h1s[i].textContent.trim();if(t&&t.length>2&&t.length<100&&!t.includes('LinkedIn')){d.full_name=t;break;}}
 if(!d.full_name){var title=document.title;var m=title.match(/^([^|\\-–]+)/);if(m)d.full_name=m[1].trim();}
-var hl=document.querySelector('.text-body-medium.break-words')||document.querySelector('div.text-body-medium')||document.querySelector('.pv-text-details__left-panel .text-body-medium');
+var hl=document.querySelector('.text-body-medium.break-words')||document.querySelector('div.text-body-medium');
 if(hl)d.headline=hl.textContent.trim();
-var loc=document.querySelector('.text-body-small.inline.t-black--light.break-words')||document.querySelector('span.text-body-small[class*="break-words"]')||document.querySelector('.pv-text-details__left-panel .text-body-small');
+var loc=document.querySelector('.text-body-small.inline.t-black--light.break-words')||document.querySelector('span.text-body-small');
 if(loc)d.location=loc.textContent.trim();
-var aboutSection=document.getElementById('about');
-if(aboutSection){var aboutDiv=aboutSection.closest('section');if(aboutDiv){var aboutText=aboutDiv.querySelector('.inline-show-more-text')||aboutDiv.querySelector('span[aria-hidden="true"]');if(aboutText)d.about=aboutText.textContent.trim();}}
 var expSection=document.getElementById('experience');
-if(expSection){var expContainer=expSection.closest('section');if(expContainer){var items=expContainer.querySelectorAll('li.artdeco-list__item');d.experience=[];items.forEach(function(item,i){if(i>=5)return;var spans=item.querySelectorAll('span[aria-hidden="true"]');var title=spans[0]?spans[0].textContent.trim():'';var company=spans[1]?spans[1].textContent.trim():'';if(title||company)d.experience.push({title:title,company:company});});}}
-var photo=document.querySelector('img.pv-top-card-profile-picture__image--show')||document.querySelector('img.pv-top-card-profile-picture__image')||document.querySelector('.pv-top-card-profile-picture img')||document.querySelector('img[class*="profile-picture"]');
-if(photo&&photo.src&&!photo.src.includes('ghost'))d.profile_picture=photo.src;
-var connText=document.body.innerText;var connMatch=connText.match(/(\d+)\+?\s*(connections|conexoes)/i);
+if(expSection){var items=expSection.closest('section').querySelectorAll('li.artdeco-list__item');d.experience=[];for(var j=0;j<Math.min(items.length,3);j++){var spans=items[j].querySelectorAll('span[aria-hidden="true"]');if(spans[0])d.experience.push({title:spans[0].textContent.trim(),company:spans[1]?spans[1].textContent.trim():''});}}
+var photo=document.querySelector('img.pv-top-card-profile-picture__image--show')||document.querySelector('img.pv-top-card-profile-picture__image');
+if(photo&&photo.src)d.profile_picture=photo.src;
+var connMatch=document.body.innerText.match(/(\\d+)\\+?\\s*(connections|conexoes)/i);
 if(connMatch)d.connections=parseInt(connMatch[1]);
 if(d.experience&&d.experience[0]){d.company=d.experience[0].company;d.title=d.experience[0].title;}
-}catch(e){console.error('INTEL error:',e);}
-if(!d.full_name){alert('Nome nao encontrado. Tente rolar a pagina e clique novamente.');return false;}
-return true;
-}
-if(!extract()){return;}
-var ov=document.createElement('div');
-ov.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:999999;display:flex;align-items:center;justify-content:center';
-ov.innerHTML='<div style="background:white;padding:40px;border-radius:16px;text-align:center"><div style="font-size:20px">Enviando...</div><div style="color:#666;margin-top:8px">'+d.full_name+'</div></div>';
-document.body.appendChild(ov);
-fetch(INTEL_URL+'/api/linkedin/bookmarklet',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
-.then(function(r){return r.json()})
-.then(function(res){
-ov.innerHTML='<div style="background:white;padding:40px;border-radius:16px;text-align:center;max-width:400px">'+(res.success?'<div style="font-size:64px">✅</div><div style="font-size:24px;margin:16px 0">'+res.nome+'</div><div style="color:#666">Dados salvos!'+(res.job_change?'<br><b style="color:#f59e0b">Mudou de emprego!</b>':'')+'</div>':'<div style="font-size:64px">❌</div><div style="font-size:20px;margin:16px 0">Erro</div><div style="color:#666">'+(res.message||'Contato nao encontrado')+'</div>')+'<button onclick="this.parentElement.parentElement.remove()" style="margin-top:24px;padding:12px 40px;background:#3b82f6;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px">OK</button></div>';
-})
-.catch(function(e){
-ov.innerHTML='<div style="background:white;padding:40px;border-radius:16px;text-align:center"><div style="font-size:64px">❌</div><div style="margin:16px 0">Erro de conexao</div><div style="font-size:12px;color:#999">'+e+'</div><button onclick="this.parentElement.parentElement.remove()" style="margin-top:24px;padding:12px 40px;background:#3b82f6;color:white;border:none;border-radius:8px;cursor:pointer">OK</button></div>';
-});
+}catch(e){}
+if(!d.full_name){alert('Nome nao encontrado');return;}
+var url='https://intel.almeida-prado.com/api/linkedin/bookmarklet-receive?data='+encodeURIComponent(JSON.stringify(d));
+window.open(url,'_blank','width=500,height=400');
 })();`.replace(/\n/g, '');
 
 function copyBookmarkletCode() {
