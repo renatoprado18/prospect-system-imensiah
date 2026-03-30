@@ -6661,12 +6661,38 @@ async def evolution_get_webhook(request: Request):
         return {"configured": False}
 
     result = await client.get_webhook()
+    logger.info(f"Webhook check result: {result}")
 
     # Expected URL
     base_url = os.getenv("BASE_URL", "https://intel.almeida-prado.com")
     expected_url = f"{base_url}/api/webhooks/whatsapp"
 
-    current_url = result.get("url") or result.get("webhook", {}).get("url")
+    # Handle multiple possible response formats from Evolution API
+    current_url = None
+    enabled = False
+    events = []
+
+    # Try different possible paths in response
+    if isinstance(result, dict):
+        # Direct url field
+        current_url = result.get("url")
+        enabled = result.get("enabled", False)
+        events = result.get("events", [])
+
+        # Nested webhook object
+        if not current_url and "webhook" in result:
+            webhook = result.get("webhook", {})
+            current_url = webhook.get("url")
+            enabled = webhook.get("enabled", False)
+            events = webhook.get("events", [])
+
+        # Array response (some Evolution API versions)
+        if not current_url and isinstance(result.get("data"), list) and len(result.get("data", [])) > 0:
+            first = result["data"][0]
+            current_url = first.get("url")
+            enabled = first.get("enabled", False)
+            events = first.get("events", [])
+
     is_correct = current_url == expected_url if current_url else False
 
     return {
@@ -6674,8 +6700,9 @@ async def evolution_get_webhook(request: Request):
         "url": current_url,
         "expected_url": expected_url,
         "is_correct": is_correct,
-        "enabled": result.get("enabled") or result.get("webhook", {}).get("enabled", False),
-        "events": result.get("events") or result.get("webhook", {}).get("events", [])
+        "enabled": enabled,
+        "events": events,
+        "raw": result  # Include raw response for debugging
     }
 
 
