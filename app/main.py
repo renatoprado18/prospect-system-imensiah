@@ -35,6 +35,7 @@ from integrations.whatsapp import (
 from integrations.gmail import GmailIntegration, parse_gmail_date
 from services.circulos import (
     recalcular_circulo_contato,
+    recalcular_circulos_dual,
     recalcular_todos_circulos,
     get_dashboard_circulos,
     get_contatos_precisando_atencao,
@@ -5915,8 +5916,8 @@ async def recalculate_circulos(force: bool = False, limit: int = None):
 
 @app.post("/api/contacts/{contact_id}/circulo/recalculate")
 async def recalculate_contact_circulo(contact_id: int, force: bool = False):
-    """Recalcula circulo de um contato especifico"""
-    result = recalcular_circulo_contato(contact_id, force=force)
+    """Recalcula circulos (pessoal e profissional) de um contato"""
+    result = recalcular_circulos_dual(contact_id, force=force)
     return result
 
 
@@ -7440,9 +7441,9 @@ async def create_contact_interaction(contact_id: int, interaction: InteractionCr
 
         conn.commit()
 
-    # Recalculate health score after interaction
-    health_result = recalcular_circulo_contato(contact_id)
-    new_health = health_result.get('health_score', 0)
+    # Recalculate health score after interaction (dual circles)
+    health_result = recalcular_circulos_dual(contact_id)
+    new_health = health_result.get('health_efetivo', 0)
 
     return {
         "status": "success",
