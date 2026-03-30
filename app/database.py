@@ -1078,6 +1078,64 @@ def init_db():
             ON linkedin_enrichment_history(tipo_mudanca)
         ''')
 
+        # =========================================================================
+        # ACTION PROPOSALS - Sistema de Propostas de Ação do INTEL Proativo
+        # =========================================================================
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS action_proposals (
+                id SERIAL PRIMARY KEY,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+
+                -- Tipo e detalhes da ação proposta
+                action_type TEXT NOT NULL,
+                action_params JSONB DEFAULT '{}',
+
+                -- Contexto e razão
+                trigger_text TEXT,
+                ai_reasoning TEXT,
+                confidence FLOAT DEFAULT 0.5,
+                urgency TEXT DEFAULT 'medium',
+
+                -- Status: pending, accepted, rejected, executed, expired
+                status TEXT DEFAULT 'pending',
+
+                -- UI display
+                title TEXT NOT NULL,
+                description TEXT,
+                options JSONB DEFAULT '[]',
+
+                -- Timestamps
+                expires_at TIMESTAMP,
+                responded_at TIMESTAMP,
+                executed_at TIMESTAMP,
+                execution_result JSONB,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_action_proposals_status
+            ON action_proposals(status)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_action_proposals_contact
+            ON action_proposals(contact_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_action_proposals_pending
+            ON action_proposals(status, criado_em DESC) WHERE status = 'pending'
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_action_proposals_urgency
+            ON action_proposals(urgency, criado_em DESC) WHERE status = 'pending'
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True

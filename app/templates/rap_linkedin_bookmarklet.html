@@ -383,28 +383,72 @@ const BOOKMARKLET_CODE = `javascript:(function(){
 if(!location.href.includes('linkedin.com/in/')){alert('Abra um perfil LinkedIn primeiro');return;}
 var d={linkedin_url:location.href};
 try{
-var h1s=document.querySelectorAll('h1');
-for(var i=0;i<h1s.length;i++){var t=h1s[i].textContent.trim();if(t&&t.length>2&&t.length<100&&!t.includes('LinkedIn')){d.full_name=t;break;}}
-if(!d.full_name){var title=document.title;var m=title.match(/^([^|\\-–]+)/);if(m)d.full_name=m[1].trim();}
-var hl=document.querySelector('.text-body-medium.break-words')||document.querySelector('div.text-body-medium')||document.querySelector('[data-generated-suggestion-target]');
-if(hl)d.headline=hl.textContent.trim();
-var loc=document.querySelector('.text-body-small.inline.t-black--light.break-words')||document.querySelector('span.text-body-small.inline')||document.querySelector('.pv-text-details__left-panel .text-body-small');
-if(loc)d.location=loc.textContent.trim();
-var expSection=document.getElementById('experience');
-if(expSection){var sec=expSection.closest('section');if(sec){var items=sec.querySelectorAll('li.artdeco-list__item');d.experience=[];for(var j=0;j<Math.min(items.length,3);j++){var spans=items[j].querySelectorAll('span[aria-hidden="true"]');if(spans[0])d.experience.push({title:spans[0].textContent.trim(),company:spans[1]?spans[1].textContent.trim():''});}}}
-var photo=null;
-var photoSelectors=['img.pv-top-card-profile-picture__image--show','img.pv-top-card-profile-picture__image','.pv-top-card-profile-picture__image-wrapper img','img.presence-entity__image','img.EntityPhoto-circle-9','img[class*="profile-picture"]','img[data-delayed-url]','.pv-top-card__photo img','button.pv-top-card-profile-picture__image-wrapper img'];
-for(var ps=0;ps<photoSelectors.length&&!photo;ps++){photo=document.querySelector(photoSelectors[ps]);}
-if(!photo){var allImgs=document.querySelectorAll('img');for(var im=0;im<allImgs.length;im++){var img=allImgs[im];if(img.src&&img.src.includes('profile-displayphoto')&&img.width>50){photo=img;break;}}}
-if(!photo){var btn=document.querySelector('button[aria-label*="foto"],button[aria-label*="photo"]');if(btn){photo=btn.querySelector('img');}}
-if(photo&&photo.src&&!photo.src.includes('ghost-person')&&!photo.src.includes('static.licdn.com/aero'))d.profile_picture=photo.src;
+/* Nome - do titulo da pagina */
+var title=document.title;
+var m=title.match(/^(.+?)\\s*[-|–]/);
+if(m)d.full_name=m[1].trim();
+if(!d.full_name){var h1=document.querySelector('h1');if(h1)d.full_name=h1.textContent.trim();}
+
+/* Headline - primeiro div com classe text-body-medium */
+var allDivs=document.querySelectorAll('div');
+for(var i=0;i<allDivs.length;i++){
+  var div=allDivs[i];
+  if(div.className&&div.className.includes('text-body-medium')&&div.textContent.trim().length>10&&div.textContent.trim().length<200){
+    d.headline=div.textContent.trim();break;
+  }
+}
+
+/* Location - span com text-body-small que contem cidade/pais */
+var spans=document.querySelectorAll('span');
+for(var i=0;i<spans.length;i++){
+  var sp=spans[i];
+  var txt=sp.textContent.trim();
+  if(sp.className&&sp.className.includes('text-body-small')&&(txt.includes('Brasil')||txt.includes('Brazil')||txt.includes(', ')&&txt.length<60)){
+    d.location=txt;break;
+  }
+}
+
+/* Conexoes */
 var connMatch=document.body.innerText.match(/(\\d+)\\+?\\s*(connections|conexoes)/i);
 if(connMatch)d.connections=parseInt(connMatch[1]);
-if(d.experience&&d.experience[0]){d.company=d.experience[0].company;d.title=d.experience[0].title;}
+
+/* Foto - buscar todas as imagens, pegar a maior que parece foto de perfil */
+var imgs=document.querySelectorAll('img');
+var bestPhoto=null;var bestSize=0;
+for(var i=0;i<imgs.length;i++){
+  var img=imgs[i];
+  if(!img.src)continue;
+  if(img.src.includes('ghost')||img.src.includes('static.licdn.com/aero'))continue;
+  if(img.src.includes('media.licdn.com')&&(img.src.includes('profile')||img.width>=100)){
+    var size=img.width*img.height;
+    if(size>bestSize){bestSize=size;bestPhoto=img;}
+  }
+}
+if(bestPhoto)d.profile_picture=bestPhoto.src;
+
+/* Experiencia atual - da headline ou secao experience */
+if(d.headline){
+  var parts=d.headline.split(/[|@]/);
+  if(parts.length>=1)d.title=parts[0].trim();
+}
+var expSection=document.getElementById('experience');
+if(expSection){
+  var sec=expSection.closest('section');
+  if(sec){
+    var firstExp=sec.querySelector('li');
+    if(firstExp){
+      var expSpans=firstExp.querySelectorAll('span[aria-hidden="true"]');
+      if(expSpans.length>=2){
+        d.title=expSpans[0].textContent.trim();
+        d.company=expSpans[1].textContent.trim();
+      }
+    }
+  }
+}
 }catch(e){console.error('INTEL:',e);}
 if(!d.full_name){alert('Nome nao encontrado');return;}
 var url='https://intel.almeida-prado.com/api/linkedin/bookmarklet-receive?data='+encodeURIComponent(JSON.stringify(d));
-window.open(url,'_blank','width=500,height=450');
+window.open(url,'_blank','width=500,height=500');
 })();`.replace(/\n/g, '');
 
 function copyBookmarkletCode() {
