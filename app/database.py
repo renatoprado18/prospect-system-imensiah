@@ -62,6 +62,65 @@ def get_db():
     finally:
         return_connection(conn)
 
+
+class DBConnectionWrapper:
+    """Wrapper that allows get_db() to work both as context manager and direct connection."""
+    def __init__(self, pool):
+        self._pool = pool
+        self._conn = None
+
+    def _get_conn(self):
+        if self._conn is None:
+            self._conn = self._pool.getconn()
+        return self._conn
+
+    def cursor(self):
+        return self._get_conn().cursor()
+
+    def commit(self):
+        if self._conn:
+            self._conn.commit()
+
+    def rollback(self):
+        if self._conn:
+            self._conn.rollback()
+
+    def close(self):
+        if self._conn:
+            try:
+                self._pool.putconn(self._conn)
+            except:
+                pass
+            self._conn = None
+
+    def __enter__(self):
+        return self._get_conn()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type:
+            self.rollback()
+        else:
+            self.commit()
+        self.close()
+        return False
+
+
+def get_db_compat():
+    """Get database connection that works both with 'with' and without."""
+    return DBConnectionWrapper(get_pool())
+
+
+# Override get_db to use the compat wrapper for backwards compatibility
+# This allows both:
+#   conn = get_db()  (old style, needs .close())
+#   with get_db() as conn:  (context manager style)
+_original_get_db = get_db
+
+
+def get_db():
+    """Get database connection - works both with 'with' statement and direct assignment."""
+    return DBConnectionWrapper(get_pool())
+
 def init_db():
     """Initialize PostgreSQL database tables"""
     with get_db() as conn:
