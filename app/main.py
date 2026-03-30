@@ -3982,8 +3982,21 @@ async def linkedin_bookmarklet_receive_get(data: str):
         <h2 style="margin:16px 0;">{contact['nome']}</h2>
         <p style="color:#666;">Dados atualizados com sucesso!</p>
         {job_change_html}
-        <button onclick="window.close()" style="margin-top:20px;padding:12px 40px;background:#22c55e;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
-        </div></body></html>
+        <button onclick="closeAll()" style="margin-top:20px;padding:12px 40px;background:#22c55e;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
+        </div>
+        <script>
+        function closeAll() {{
+            // Tenta fechar a aba do LinkedIn (opener)
+            if (window.opener && !window.opener.closed) {{
+                try {{ window.opener.close(); }} catch(e) {{}}
+            }}
+            // Fecha este popup
+            window.close();
+        }}
+        // Auto-fecha apos 3 segundos
+        setTimeout(closeAll, 3000);
+        </script>
+        </body></html>
         """)
 
     except Exception as e:
