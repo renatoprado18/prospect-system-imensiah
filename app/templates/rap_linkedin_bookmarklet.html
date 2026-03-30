@@ -386,21 +386,21 @@ try{
 var h1s=document.querySelectorAll('h1');
 for(var i=0;i<h1s.length;i++){var t=h1s[i].textContent.trim();if(t&&t.length>2&&t.length<100&&!t.includes('LinkedIn')){d.full_name=t;break;}}
 if(!d.full_name){var title=document.title;var m=title.match(/^([^|\\-–]+)/);if(m)d.full_name=m[1].trim();}
-var hl=document.querySelector('.text-body-medium.break-words')||document.querySelector('div.text-body-medium');
+var hl=document.querySelector('.text-body-medium.break-words')||document.querySelector('div.text-body-medium')||document.querySelector('[data-generated-suggestion-target]');
 if(hl)d.headline=hl.textContent.trim();
-var loc=document.querySelector('.text-body-small.inline.t-black--light.break-words')||document.querySelector('span.text-body-small');
+var loc=document.querySelector('.text-body-small.inline.t-black--light.break-words')||document.querySelector('span.text-body-small.inline')||document.querySelector('.pv-text-details__left-panel .text-body-small');
 if(loc)d.location=loc.textContent.trim();
 var expSection=document.getElementById('experience');
-if(expSection){var items=expSection.closest('section').querySelectorAll('li.artdeco-list__item');d.experience=[];for(var j=0;j<Math.min(items.length,3);j++){var spans=items[j].querySelectorAll('span[aria-hidden="true"]');if(spans[0])d.experience.push({title:spans[0].textContent.trim(),company:spans[1]?spans[1].textContent.trim():''});}}
-var photo=document.querySelector('img.pv-top-card-profile-picture__image--show')||document.querySelector('img.pv-top-card-profile-picture__image');
-if(photo&&photo.src)d.profile_picture=photo.src;
+if(expSection){var sec=expSection.closest('section');if(sec){var items=sec.querySelectorAll('li.artdeco-list__item');d.experience=[];for(var j=0;j<Math.min(items.length,3);j++){var spans=items[j].querySelectorAll('span[aria-hidden="true"]');if(spans[0])d.experience.push({title:spans[0].textContent.trim(),company:spans[1]?spans[1].textContent.trim():''});}}}
+var photo=document.querySelector('img.pv-top-card-profile-picture__image--show')||document.querySelector('img.pv-top-card-profile-picture__image')||document.querySelector('.pv-top-card-profile-picture img')||document.querySelector('img[class*="pv-top-card"][class*="photo"]')||document.querySelector('.pv-top-card--photo img')||document.querySelector('button[aria-label*="photo"] img')||document.querySelector('img[alt*="profile photo"]');
+if(photo&&photo.src&&!photo.src.includes('ghost-person'))d.profile_picture=photo.src;
 var connMatch=document.body.innerText.match(/(\\d+)\\+?\\s*(connections|conexoes)/i);
 if(connMatch)d.connections=parseInt(connMatch[1]);
 if(d.experience&&d.experience[0]){d.company=d.experience[0].company;d.title=d.experience[0].title;}
-}catch(e){}
+}catch(e){console.error('INTEL:',e);}
 if(!d.full_name){alert('Nome nao encontrado');return;}
 var url='https://intel.almeida-prado.com/api/linkedin/bookmarklet-receive?data='+encodeURIComponent(JSON.stringify(d));
-window.open(url,'_blank','width=500,height=400');
+window.open(url,'_blank','width=500,height=450');
 })();`.replace(/\n/g, '');
 
 function copyBookmarkletCode() {

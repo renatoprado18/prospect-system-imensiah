@@ -3977,19 +3977,27 @@ async def linkedin_bookmarklet_receive_get(data: str):
 
         # Dados extraidos para mostrar no popup
         extracted_info = []
-        if parsed_data.get("headline"): extracted_info.append(f"📝 {parsed_data.get('headline')[:50]}")
+        if parsed_data.get("headline"): extracted_info.append(f"📝 {parsed_data.get('headline')[:60]}...")
         if parsed_data.get("location"): extracted_info.append(f"📍 {parsed_data.get('location')}")
         if parsed_data.get("company"): extracted_info.append(f"🏢 {parsed_data.get('company')}")
         if parsed_data.get("title"): extracted_info.append(f"💼 {parsed_data.get('title')}")
         if parsed_data.get("connections"): extracted_info.append(f"🔗 {parsed_data.get('connections')} conexões")
+        if parsed_data.get("profile_picture"): extracted_info.append("📷 Foto capturada")
 
         extracted_html = "<br>".join(extracted_info) if extracted_info else "<span style='color:#f59e0b;'>⚠️ Nenhum dado extra extraído</span>"
+
+        # Foto para mostrar no popup
+        photo_html = ""
+        if parsed_data.get("profile_picture"):
+            photo_html = f'<img src="{parsed_data.get("profile_picture")}" style="width:80px;height:80px;border-radius:50%;object-fit:cover;margin-bottom:8px;">'
+        else:
+            photo_html = '<div style="font-size:64px;">✅</div>'
 
         return HTMLResponse(content=f"""
         <html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#dcfce7;">
         <div style="text-align:center;padding:40px;background:white;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:450px;">
-        <div style="font-size:64px;">✅</div>
-        <h2 style="margin:16px 0;">{contact['nome']}</h2>
+        {photo_html}
+        <h2 style="margin:8px 0 16px 0;">{contact['nome']}</h2>
         <div style="text-align:left;background:#f0fdf4;padding:12px;border-radius:8px;font-size:13px;margin:12px 0;">
             {extracted_html}
         </div>
