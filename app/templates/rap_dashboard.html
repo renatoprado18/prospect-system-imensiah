@@ -1431,29 +1431,37 @@
             </div>
         </div>
 
-        <!-- Stats - All clickable -->
+        <!-- Stats - Compact clickable cards -->
         <div class="stats-grid">
             <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/contatos'">
                 <div class="stat-icon contacts"><i class="bi bi-people"></i></div>
-                <div class="stat-value" id="statContacts">-</div>
-                <div class="stat-label">Contatos</div>
+                <div class="stat-content">
+                    <div class="stat-value" id="statContacts">-</div>
+                    <div class="stat-label">Contatos</div>
+                </div>
             </div>
             <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/circulos'">
                 <div class="stat-icon" style="background: rgba(255, 107, 107, 0.1); color: #FF6B6B;"><i class="bi bi-bullseye"></i></div>
-                <div id="circulosBadges" style="display: flex; gap: 6px; flex-wrap: wrap;">
-                    <span style="font-size: 0.8rem; color: var(--gray-400);">Carregando...</span>
+                <div class="stat-content">
+                    <div id="circulosBadges" style="display: flex; gap: 4px; flex-wrap: wrap;">
+                        <span style="font-size: 0.7rem; color: var(--gray-400);">...</span>
+                    </div>
+                    <div class="stat-label">Circulos</div>
                 </div>
-                <div class="stat-label">Circulos</div>
             </div>
             <div class="stat-card" style="cursor: pointer; border-left: 3px solid var(--warning);" onclick="window.location.href='/contatos?filter=needs_attention'">
                 <div class="stat-icon" style="background: rgba(245, 158, 11, 0.1); color: var(--warning);"><i class="bi bi-exclamation-triangle"></i></div>
-                <div class="stat-value" id="statAtencao">-</div>
-                <div class="stat-label">Precisam Atencao</div>
+                <div class="stat-content">
+                    <div class="stat-value" id="statAtencao">-</div>
+                    <div class="stat-label">Precisam Atencao</div>
+                </div>
             </div>
             <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/briefings'">
                 <div class="stat-icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;"><i class="bi bi-file-text"></i></div>
-                <div class="stat-value" id="statBriefings">-</div>
-                <div class="stat-label">Briefings Pendentes</div>
+                <div class="stat-content">
+                    <div class="stat-value" id="statBriefings">-</div>
+                    <div class="stat-label">Briefings Pendentes</div>
+                </div>
             </div>
         </div>
 
@@ -1526,7 +1534,7 @@
                 <div class="card mb-4">
                     <div class="card-header" style="padding: 12px 16px;">
                         <h2 class="card-title"><i class="bi bi-folder me-2" style="color: #6366f1;"></i>Projetos Ativos</h2>
-                        <a href="/projetos" class="btn btn-sm btn-outline-primary">Ver Todos</a>
+                        <a href="/rap/projetos" class="btn btn-sm btn-outline-primary">Ver Todos</a>
                     </div>
                     <div class="card-body" id="projectsWidget" style="padding: 0;">
                         <div class="text-center py-3">
@@ -1536,31 +1544,6 @@
                     </div>
                 </div>
 
-                <!-- 4. Acoes Rapidas -->
-                <div class="card">
-                    <div class="card-header" style="padding: 12px 16px;">
-                        <h2 class="card-title"><i class="bi bi-lightning me-2"></i>Acoes Rapidas</h2>
-                    </div>
-                    <div class="card-body" style="padding: 14px 16px;">
-                        <div class="d-grid gap-2">
-                            <a href="/contatos" class="btn btn-sm btn-outline-primary text-start">
-                                <i class="bi bi-people me-2"></i>Ver Contatos
-                            </a>
-                            <a href="/projetos" class="btn btn-sm btn-outline-indigo text-start">
-                                <i class="bi bi-folder me-2"></i>Projetos
-                            </a>
-                            <a href="/calendario" class="btn btn-sm btn-outline-success text-start">
-                                <i class="bi bi-calendar-event me-2"></i>Calendario
-                            </a>
-                            <a href="/inbox" class="btn btn-sm btn-outline-secondary text-start">
-                                <i class="bi bi-inbox me-2"></i>Inbox
-                            </a>
-                            <a href="/analytics" class="btn btn-sm btn-outline-info text-start">
-                                <i class="bi bi-graph-up me-2"></i>Analytics
-                            </a>
-                        </div>
-                    </div>
-                </div>
 
             </div>
         </div>
@@ -1615,7 +1598,7 @@
                     let html = '';
                     for (let i = 1; i <= 5; i++) {
                         const circulo = data.circulos_resumo[i] || {total: 0};
-                        html += `<span style="background: ${colors[i]}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 600;">C${i}: ${circulo.total}</span>`;
+                        html += `<span style="background: ${colors[i]}; color: white; padding: 1px 5px; border-radius: 8px; font-size: 0.65rem; font-weight: 600;">C${i}: ${circulo.total}</span>`;
                     }
                     circulosContainer.innerHTML = html;
 
