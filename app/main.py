@@ -4037,8 +4037,8 @@ async def linkedin_bookmarklet_receive_get(data: str):
             {extracted_html}
         </div>
         {job_change_html}
-        <button onclick="goToQueue()" style="margin-top:16px;padding:12px 40px;background:#22c55e;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
-        <p style="margin-top:8px;font-size:11px;color:#666;">Fechando em <span id="countdown">3</span>s...</p>
+        <button onclick="goToQueue()" style="margin-top:16px;padding:12px 40px;background:#22c55e;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Próximo</button>
+        <p style="margin-top:8px;font-size:11px;color:#666;">Indo para fila em <span id="countdown">2</span>s...</p>
         </div>
         <script>
         // Notifica outras abas para atualizar
@@ -4048,21 +4048,18 @@ async def linkedin_bookmarklet_receive_get(data: str):
         }} catch(e) {{}}
 
         function goToQueue() {{
-            // Fecha a aba do LinkedIn se foi aberta por script
-            if (window.opener && !window.opener.closed) {{
-                try {{ window.opener.close(); }} catch(e) {{}}
-            }}
-            // Redireciona para a fila de trabalho
-            window.location.href = '/contatos/linkedin/bookmarklet';
+            // Abre a fila de trabalho (substitui esta janela)
+            window.location.replace('https://intel.almeida-prado.com/linkedin/bookmarklet');
         }}
 
         // Countdown e auto-redirect
-        var count = 3;
-        var countdown = setInterval(function() {{
+        var count = 2;
+        var timer = setInterval(function() {{
             count--;
-            document.getElementById('countdown').textContent = count;
+            var el = document.getElementById('countdown');
+            if (el) el.textContent = count;
             if (count <= 0) {{
-                clearInterval(countdown);
+                clearInterval(timer);
                 goToQueue();
             }}
         }}, 1000);
