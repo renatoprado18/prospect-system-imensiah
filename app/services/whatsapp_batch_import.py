@@ -18,12 +18,16 @@ class WhatsAppBatchImporter:
 
     # Regex patterns para diferentes formatos de export
     PATTERNS = [
-        # iOS: [DD/MM/YYYY, HH:MM:SS] Nome: Mensagem
+        # iOS: [DD/MM/YY, HH:MM:SS] Nome: Mensagem (ano com 2 dígitos)
+        re.compile(r'^\[(\d{2}/\d{2}/\d{2}), (\d{2}:\d{2}:\d{2})\] ([^:]+): (.+)$'),
+        # iOS: [DD/MM/YYYY, HH:MM:SS] Nome: Mensagem (ano com 4 dígitos)
         re.compile(r'^\[(\d{2}/\d{2}/\d{4}), (\d{2}:\d{2}:\d{2})\] ([^:]+): (.+)$'),
         # Android: DD/MM/YYYY HH:MM - Nome: Mensagem
         re.compile(r'^(\d{2}/\d{2}/\d{4}) (\d{2}:\d{2}) - ([^:]+): (.+)$'),
         # Android alt: DD/MM/YY, HH:MM - Nome: Mensagem
         re.compile(r'^(\d{2}/\d{2}/\d{2}), (\d{2}:\d{2}) - ([^:]+): (.+)$'),
+        # Android: DD/MM/YY HH:MM - Nome: Mensagem (sem vírgula)
+        re.compile(r'^(\d{2}/\d{2}/\d{2}) (\d{2}:\d{2}) - ([^:]+): (.+)$'),
         # Outro formato: D/M/YY HH:MM - Nome: Mensagem
         re.compile(r'^(\d{1,2}/\d{1,2}/\d{2,4}),? (\d{1,2}:\d{2}(?::\d{2})?)(?:\s?[AP]M)? [-–] ([^:]+): (.+)$'),
     ]
