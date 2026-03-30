@@ -11,16 +11,25 @@ from datetime import datetime
 from database import get_db
 
 
-def serialize_datetime(obj):
-    """Converte datetime para string ISO para serialização JSON"""
+def serialize_value(obj):
+    """Converte qualquer valor para formato JSON serializável"""
+    if obj is None:
+        return None
     if isinstance(obj, datetime):
         return obj.isoformat()
-    return obj
+    if isinstance(obj, dict):
+        return {k: serialize_value(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [serialize_value(item) for item in obj]
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    # Fallback para outros tipos
+    return str(obj)
 
 
 def serialize_row(row: Dict) -> Dict:
     """Serializa uma row do banco para garantir compatibilidade JSON"""
-    return {k: serialize_datetime(v) for k, v in row.items()}
+    return {k: serialize_value(v) for k, v in row.items()}
 
 
 class InboxService:

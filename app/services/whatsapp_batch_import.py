@@ -4,6 +4,7 @@ Importa múltiplos arquivos .txt do WhatsApp de uma vez.
 Usa as tabelas conversations + messages para integrar com o Inbox.
 """
 import re
+import json
 import logging
 from datetime import datetime
 from typing import List, Dict, Optional, Any, Tuple
@@ -288,7 +289,7 @@ class WhatsAppBatchImporter:
                         direction,
                         content,
                         timestamp,
-                        {'imported': True, 'is_media': msg.get('is_media', False)}
+                        json.dumps({'imported': True, 'is_media': msg.get('is_media', False)})
                     ))
 
                     stats['imported'] += 1

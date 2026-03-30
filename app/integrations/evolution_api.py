@@ -6,6 +6,7 @@ Docs: https://doc.evolution-api.com/v2/en
 GitHub: https://github.com/EvolutionAPI/evolution-api
 """
 import os
+import json
 import httpx
 import logging
 from typing import Optional, Dict, List, Any
@@ -551,7 +552,7 @@ async def process_incoming_message(data: Dict) -> Dict:
             direction,
             content,
             timestamp,
-            {"phone": phone, "type": message_type, "from_webhook": True}
+            json.dumps({"phone": phone, "type": message_type, "from_webhook": True})
         ))
 
         new_msg_id = cursor.fetchone()["id"]
