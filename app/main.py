@@ -3825,19 +3825,22 @@ async def linkedin_bookmarklet_receive_get(data: str):
     Recebe dados do LinkedIn via GET (para bypass de CSP).
     Retorna uma pagina HTML com o resultado.
     """
-    try:
-        import json as json_module
-        parsed_data = json_module.loads(data)
-    except:
-        return HTMLResponse(content="""
+    def error_page(msg, details=""):
+        return HTMLResponse(content=f"""
         <html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#fee2e2;">
-        <div style="text-align:center;padding:40px;background:white;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.1);">
+        <div style="text-align:center;padding:40px;background:white;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:500px;">
         <div style="font-size:64px;">❌</div>
         <h2>Erro</h2>
-        <p>Dados invalidos</p>
+        <p>{msg}</p>
+        <pre style="text-align:left;background:#f5f5f5;padding:10px;border-radius:4px;font-size:11px;overflow:auto;max-height:200px;">{details}</pre>
         <button onclick="window.close()" style="margin-top:20px;padding:12px 40px;background:#3b82f6;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
         </div></body></html>
         """)
+
+    try:
+        parsed_data = json.loads(data)
+    except Exception as e:
+        return error_page("Dados invalidos", str(e))
 
     linkedin_url = parsed_data.get("linkedin_url", "").strip()
     if not linkedin_url:
@@ -3871,114 +3874,119 @@ async def linkedin_bookmarklet_receive_get(data: str):
         </div></body></html>
         """)
 
-    conn = get_db()
-    cursor = conn.cursor()
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
 
-    # Buscar contato pela URL do LinkedIn
-    cursor.execute("""
-        SELECT id, nome, empresa, cargo, linkedin_headline
-        FROM contacts
-        WHERE LOWER(linkedin) LIKE %s
-        LIMIT 1
-    """, (f"%{username}%",))
+        # Buscar contato pela URL do LinkedIn
+        cursor.execute("""
+            SELECT id, nome, empresa, cargo, linkedin_headline
+            FROM contacts
+            WHERE LOWER(linkedin) LIKE %s
+            LIMIT 1
+        """, (f"%{username}%",))
 
-    contact = cursor.fetchone()
+        contact = cursor.fetchone()
 
-    if not contact:
+        if not contact:
+            conn.close()
+            full_name = parsed_data.get("full_name", "Desconhecido")
+            return HTMLResponse(content=f"""
+            <html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#fef3c7;">
+            <div style="text-align:center;padding:40px;background:white;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:400px;">
+            <div style="font-size:64px;">⚠️</div>
+            <h2>{full_name}</h2>
+            <p style="color:#666;">Este contato nao esta cadastrado no INTEL.</p>
+            <p style="font-size:12px;color:#999;margin-top:16px;">{username}</p>
+            <button onclick="window.close()" style="margin-top:20px;padding:12px 40px;background:#3b82f6;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
+            </div></body></html>
+            """)
+
+        contact = dict(contact)
+        contact_id = contact["id"]
+
+        # Detectar mudanca de emprego
+        job_change = None
+        old_company = contact.get("empresa")
+        old_title = contact.get("cargo")
+        new_company = parsed_data.get("company")
+        new_title = parsed_data.get("title")
+
+        def normalize(s):
+            return (s or "").lower().strip()
+
+        if normalize(old_company) and normalize(new_company) and normalize(old_company) != normalize(new_company):
+            job_change = {"type": "job_change", "old_company": old_company, "new_company": new_company}
+        elif normalize(old_title) and normalize(new_title) and normalize(old_title) != normalize(new_title):
+            job_change = {"type": "promotion", "old_title": old_title, "new_title": new_title}
+
+        # Registrar mudanca no historico
+        if job_change:
+            cursor.execute("""
+                INSERT INTO linkedin_enrichment_history
+                (contact_id, empresa_anterior, cargo_anterior, empresa_nova, cargo_nova,
+                 headline_anterior, headline_nova, tipo_mudanca, dados_completos)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                contact_id, old_company, old_title, new_company, new_title,
+                contact.get("linkedin_headline"), parsed_data.get("headline"),
+                job_change["type"], json.dumps(parsed_data)
+            ))
+
+        # Atualizar contato
+        cursor.execute("""
+            UPDATE contacts
+            SET empresa = COALESCE(NULLIF(%s, ''), empresa),
+                cargo = COALESCE(NULLIF(%s, ''), cargo),
+                linkedin_headline = COALESCE(NULLIF(%s, ''), linkedin_headline),
+                linkedin_location = COALESCE(NULLIF(%s, ''), linkedin_location),
+                linkedin_experience = COALESCE(NULLIF(%s, '[]'), linkedin_experience),
+                linkedin_connections = COALESCE(%s, linkedin_connections),
+                linkedin_enriched_at = CURRENT_TIMESTAMP,
+                linkedin_previous_company = %s,
+                linkedin_previous_title = %s,
+                linkedin_job_changed_at = %s,
+                foto_url = COALESCE(NULLIF(%s, ''), foto_url),
+                enriquecimento_status = 'bookmarklet',
+                ultimo_enriquecimento = CURRENT_TIMESTAMP,
+                atualizado_em = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (
+            parsed_data.get("company"),
+            parsed_data.get("title"),
+            parsed_data.get("headline"),
+            parsed_data.get("location"),
+            json.dumps(parsed_data.get("experience", [])),
+            parsed_data.get("connections"),
+            old_company if job_change else None,
+            old_title if job_change else None,
+            datetime.now() if job_change else None,
+            parsed_data.get("profile_picture"),
+            contact_id
+        ))
+
+        conn.commit()
         conn.close()
-        full_name = parsed_data.get("full_name", "Desconhecido")
+
+        # Retornar pagina de sucesso
+        job_change_html = ""
+        if job_change:
+            job_change_html = '<div style="background:#fef3c7;padding:12px;border-radius:8px;margin-top:16px;"><b>🔔 Mudança detectada!</b></div>'
+
         return HTMLResponse(content=f"""
-        <html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#fef3c7;">
+        <html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#dcfce7;">
         <div style="text-align:center;padding:40px;background:white;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:400px;">
-        <div style="font-size:64px;">⚠️</div>
-        <h2>{full_name}</h2>
-        <p style="color:#666;">Este contato nao esta cadastrado no INTEL.</p>
-        <p style="font-size:12px;color:#999;margin-top:16px;">{username}</p>
-        <button onclick="window.close()" style="margin-top:20px;padding:12px 40px;background:#3b82f6;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
+        <div style="font-size:64px;">✅</div>
+        <h2 style="margin:16px 0;">{contact['nome']}</h2>
+        <p style="color:#666;">Dados atualizados com sucesso!</p>
+        {job_change_html}
+        <button onclick="window.close()" style="margin-top:20px;padding:12px 40px;background:#22c55e;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
         </div></body></html>
         """)
 
-    contact = dict(contact)
-    contact_id = contact["id"]
-
-    # Detectar mudanca de emprego
-    job_change = None
-    old_company = contact.get("empresa")
-    old_title = contact.get("cargo")
-    new_company = parsed_data.get("company")
-    new_title = parsed_data.get("title")
-
-    def normalize(s):
-        return (s or "").lower().strip()
-
-    if normalize(old_company) and normalize(new_company) and normalize(old_company) != normalize(new_company):
-        job_change = {"type": "job_change", "old_company": old_company, "new_company": new_company}
-    elif normalize(old_title) and normalize(new_title) and normalize(old_title) != normalize(new_title):
-        job_change = {"type": "promotion", "old_title": old_title, "new_title": new_title}
-
-    # Registrar mudanca no historico
-    if job_change:
-        cursor.execute("""
-            INSERT INTO linkedin_enrichment_history
-            (contact_id, empresa_anterior, cargo_anterior, empresa_nova, cargo_nova,
-             headline_anterior, headline_nova, tipo_mudanca, dados_completos)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            contact_id, old_company, old_title, new_company, new_title,
-            contact.get("linkedin_headline"), parsed_data.get("headline"),
-            job_change["type"], json.dumps(parsed_data)
-        ))
-
-    # Atualizar contato
-    cursor.execute("""
-        UPDATE contacts
-        SET empresa = COALESCE(NULLIF(%s, ''), empresa),
-            cargo = COALESCE(NULLIF(%s, ''), cargo),
-            linkedin_headline = COALESCE(NULLIF(%s, ''), linkedin_headline),
-            linkedin_location = COALESCE(NULLIF(%s, ''), linkedin_location),
-            linkedin_experience = COALESCE(NULLIF(%s, '[]'), linkedin_experience),
-            linkedin_connections = COALESCE(%s, linkedin_connections),
-            linkedin_enriched_at = CURRENT_TIMESTAMP,
-            linkedin_previous_company = %s,
-            linkedin_previous_title = %s,
-            linkedin_job_changed_at = %s,
-            foto_url = COALESCE(NULLIF(%s, ''), foto_url),
-            enriquecimento_status = 'bookmarklet',
-            ultimo_enriquecimento = CURRENT_TIMESTAMP,
-            atualizado_em = CURRENT_TIMESTAMP
-        WHERE id = %s
-    """, (
-        parsed_data.get("company"),
-        parsed_data.get("title"),
-        parsed_data.get("headline"),
-        parsed_data.get("location"),
-        json.dumps(parsed_data.get("experience", [])),
-        parsed_data.get("connections"),
-        old_company if job_change else None,
-        old_title if job_change else None,
-        datetime.now() if job_change else None,
-        parsed_data.get("profile_picture"),
-        contact_id
-    ))
-
-    conn.commit()
-    conn.close()
-
-    # Retornar pagina de sucesso
-    job_change_html = ""
-    if job_change:
-        job_change_html = '<div style="background:#fef3c7;padding:12px;border-radius:8px;margin-top:16px;"><b>🔔 Mudança detectada!</b></div>'
-
-    return HTMLResponse(content=f"""
-    <html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#dcfce7;">
-    <div style="text-align:center;padding:40px;background:white;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:400px;">
-    <div style="font-size:64px;">✅</div>
-    <h2 style="margin:16px 0;">{contact['nome']}</h2>
-    <p style="color:#666;">Dados atualizados com sucesso!</p>
-    {job_change_html}
-    <button onclick="window.close()" style="margin-top:20px;padding:12px 40px;background:#22c55e;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
-    </div></body></html>
-    """)
+    except Exception as e:
+        import traceback
+        return error_page("Erro no servidor", traceback.format_exc())
 
 @app.post("/api/linkedin/bookmarklet")
 async def linkedin_bookmarklet_receive(request: Request):
