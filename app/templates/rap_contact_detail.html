@@ -1542,6 +1542,14 @@
                     </div>
                 </div>
             `;
+
+            // Load data for the 3-column grid immediately after rendering
+            Promise.all([
+                loadContactProjects().catch(e => console.log('Projects error:', e)),
+                loadContactTasks().catch(e => console.log('Tasks error:', e)),
+                loadContactFacts().catch(e => console.log('Facts error:', e)),
+                loadContactMessages().catch(e => console.log('Messages error:', e))
+            ]);
         }
 
         // Tab switching function
@@ -3441,18 +3449,7 @@
             `;
         }
 
-        // Load projects, tasks, facts, and messages when page loads (in parallel)
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(() => {
-                // Load all in parallel for faster page load
-                Promise.all([
-                    loadContactProjects().catch(e => console.log('Projects error:', e)),
-                    loadContactTasks().catch(e => console.log('Tasks error:', e)),
-                    loadContactFacts().catch(e => console.log('Facts error:', e)),
-                    loadContactMessages().catch(e => console.log('Messages error:', e))
-                ]);
-            }, 300);
-        });
+        // Note: Projects, tasks, facts, and messages are loaded in renderContact() after DOM is ready
     </script>
 </body>
 </html>
