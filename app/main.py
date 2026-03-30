@@ -3985,6 +3985,12 @@ async def linkedin_bookmarklet_receive_get(data: str):
         <button onclick="closeAll()" style="margin-top:20px;padding:12px 40px;background:#22c55e;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Fechar</button>
         </div>
         <script>
+        // Notifica outras abas para atualizar
+        try {{
+            const bc = new BroadcastChannel('intel-linkedin');
+            bc.postMessage({{type: 'enriched', contactId: {contact_id}, name: '{contact["nome"]}'}});
+        }} catch(e) {{}}
+
         function closeAll() {{
             // Tenta fechar a aba do LinkedIn (opener)
             if (window.opener && !window.opener.closed) {{
@@ -3993,8 +3999,8 @@ async def linkedin_bookmarklet_receive_get(data: str):
             // Fecha este popup
             window.close();
         }}
-        // Auto-fecha apos 3 segundos
-        setTimeout(closeAll, 3000);
+        // Auto-fecha apos 2 segundos
+        setTimeout(closeAll, 2000);
         </script>
         </body></html>
         """)

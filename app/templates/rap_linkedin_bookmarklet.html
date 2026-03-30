@@ -418,6 +418,22 @@ document.addEventListener('DOMContentLoaded', function() {
     loadStats();
     loadPendingContacts();
     loadJobChanges();
+
+    // Escuta notificacoes de outras abas (popup de sucesso)
+    try {
+        const bc = new BroadcastChannel('intel-linkedin');
+        bc.onmessage = function(event) {
+            if (event.data.type === 'enriched') {
+                console.log('Contato enriquecido:', event.data.name);
+                // Atualiza a lista e estatisticas
+                loadStats();
+                loadPendingContacts();
+                loadJobChanges();
+                // Mostra notificacao
+                showToast && showToast(`${event.data.name} atualizado!`);
+            }
+        };
+    } catch(e) { console.log('BroadcastChannel not supported'); }
 });
 </script>
 {% endblock %}
