@@ -1,20 +1,15 @@
 """
 PostgreSQL Database Module for Vercel Postgres
-Com connection pooling para melhor performance
+Simplified: direct connections without pooling for serverless reliability
 """
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from psycopg2 import pool
 from contextlib import contextmanager
-import threading
 
 # Vercel Postgres connection string
 DATABASE_URL = os.getenv("POSTGRES_URL", os.getenv("DATABASE_URL", ""))
 
-# Connection pool (singleton)
-_connection_pool = None
-_pool_lock = threading.Lock()
 
 def _get_conn_string():
     """Get formatted connection string"""
@@ -23,55 +18,24 @@ def _get_conn_string():
     # Vercel uses postgres:// but psycopg2 needs postgresql://
     return DATABASE_URL.replace("postgres://", "postgresql://")
 
-def get_pool():
-    """Get or create connection pool (thread-safe singleton)"""
-    global _connection_pool
-    if _connection_pool is None:
-        with _pool_lock:
-            if _connection_pool is None:
-                conn_string = _get_conn_string()
-                _connection_pool = pool.ThreadedConnectionPool(
-                    minconn=2,
-                    maxconn=10,
-                    dsn=conn_string,
-                    cursor_factory=RealDictCursor
-                )
-    return _connection_pool
 
-def get_connection():
-    """Get a PostgreSQL connection from pool"""
-    return get_pool().getconn()
-
-def return_connection(conn):
-    """Return connection to pool"""
-    try:
-        get_pool().putconn(conn)
-    except:
-        pass
-
-@contextmanager
-def get_db():
-    """Context manager for database connections with pooling"""
-    conn = get_connection()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        return_connection(conn)
+def _create_connection():
+    """Create a new database connection"""
+    return psycopg2.connect(_get_conn_string(), cursor_factory=RealDictCursor)
 
 
-class DBConnectionWrapper:
-    """Wrapper that allows get_db() to work both as context manager and direct connection."""
-    def __init__(self, pool):
-        self._pool = pool
+class DBConnection:
+    """
+    Database connection wrapper that works both:
+    - As context manager: with get_db() as conn:
+    - As direct connection: conn = get_db(); ... ; conn.close()
+    """
+    def __init__(self):
         self._conn = None
 
     def _get_conn(self):
         if self._conn is None:
-            self._conn = self._pool.getconn()
+            self._conn = _create_connection()
         return self._conn
 
     def cursor(self):
@@ -88,7 +52,7 @@ class DBConnectionWrapper:
     def close(self):
         if self._conn:
             try:
-                self._pool.putconn(self._conn)
+                self._conn.close()
             except:
                 pass
             self._conn = None
@@ -105,21 +69,22 @@ class DBConnectionWrapper:
         return False
 
 
-def get_db_compat():
-    """Get database connection that works both with 'with' and without."""
-    return DBConnectionWrapper(get_pool())
-
-
-# Override get_db to use the compat wrapper for backwards compatibility
-# This allows both:
-#   conn = get_db()  (old style, needs .close())
-#   with get_db() as conn:  (context manager style)
-_original_get_db = get_db
-
-
 def get_db():
-    """Get database connection - works both with 'with' statement and direct assignment."""
-    return DBConnectionWrapper(get_pool())
+    """
+    Get database connection - works both ways:
+
+    # Pattern 1: Context manager (recommended)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        ...
+
+    # Pattern 2: Direct (legacy)
+    conn = get_db()
+    cursor = conn.cursor()
+    ...
+    conn.close()
+    """
+    return DBConnection()
 
 def init_db():
     """Initialize PostgreSQL database tables"""
