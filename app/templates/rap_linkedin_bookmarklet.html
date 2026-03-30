@@ -132,6 +132,56 @@
                 </div>
             </div>
 
+            <!-- Work Queue - Pending Contacts -->
+            <div class="card mt-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-list-check text-primary me-2"></i>Fila de Trabalho</h5>
+                    <div>
+                        <select id="circuloFilter" class="form-select form-select-sm d-inline-block" style="width: auto;" onchange="loadPendingContacts()">
+                            <option value="1">Circulo 1 (Nucleo)</option>
+                            <option value="2">Circulo 2 (Proximo)</option>
+                            <option value="3" selected>Circulos 1-3</option>
+                            <option value="5">Todos</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0" id="pendingTable">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 50px;"></th>
+                                    <th>Nome</th>
+                                    <th>Empresa</th>
+                                    <th>Cargo</th>
+                                    <th>Circulo</th>
+                                    <th style="width: 120px;">Acao</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pendingList">
+                                <tr>
+                                    <td colspan="6" class="text-center py-4">
+                                        <div class="spinner-border spinner-border-sm text-primary"></div>
+                                        <span class="ms-2">Carregando...</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card-footer d-flex justify-content-between align-items-center">
+                    <span class="text-muted" id="pendingCount">-</span>
+                    <div>
+                        <button class="btn btn-sm btn-outline-secondary me-2" onclick="loadPendingContacts()" title="Atualizar">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                        <button class="btn btn-sm btn-primary" onclick="openNextLinkedIn()" id="btnOpenNext">
+                            <i class="bi bi-box-arrow-up-right me-1"></i>Abrir Proximo
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Recent Job Changes -->
             <div class="card mt-4" id="jobChangesCard" style="display: none;">
                 <div class="card-header">
@@ -146,6 +196,9 @@
 </div>
 
 <script>
+let pendingContacts = [];
+let currentIndex = 0;
+
 async function loadStats() {
     try {
         const response = await fetch('/api/linkedin/stats');
@@ -158,6 +211,124 @@ async function loadStats() {
     } catch (error) {
         console.error('Error loading stats:', error);
     }
+}
+
+async function loadPendingContacts() {
+    const filter = document.getElementById('circuloFilter').value;
+    const tbody = document.getElementById('pendingList');
+
+    tbody.innerHTML = `
+        <tr>
+            <td colspan="6" class="text-center py-4">
+                <div class="spinner-border spinner-border-sm text-primary"></div>
+                <span class="ms-2">Carregando...</span>
+            </td>
+        </tr>
+    `;
+
+    try {
+        const response = await fetch(`/api/linkedin/pending?limit=100`);
+        const data = await response.json();
+
+        // Filter by circulo
+        let contacts = data.pending || [];
+        if (filter !== '5') {
+            const maxCirculo = parseInt(filter);
+            contacts = contacts.filter(c => c.circulo && c.circulo <= maxCirculo);
+        }
+
+        pendingContacts = contacts;
+        currentIndex = 0;
+
+        document.getElementById('pendingCount').textContent = `${contacts.length} contatos pendentes`;
+
+        if (contacts.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="text-center py-4 text-muted">
+                        <i class="bi bi-check-circle text-success" style="font-size: 2rem;"></i>
+                        <p class="mb-0 mt-2">Nenhum contato pendente neste filtro!</p>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = contacts.slice(0, 20).map((c, idx) => `
+            <tr data-index="${idx}" class="${idx === 0 ? 'table-primary' : ''}">
+                <td>
+                    <span class="badge ${c.circulo === 1 ? 'bg-danger' : c.circulo === 2 ? 'bg-warning' : 'bg-secondary'}">
+                        ${c.circulo || '-'}
+                    </span>
+                </td>
+                <td>
+                    <a href="/contatos/${c.id}" target="_blank" class="text-decoration-none">
+                        <strong>${c.nome}</strong>
+                    </a>
+                </td>
+                <td class="text-muted">${c.empresa || '-'}</td>
+                <td class="text-muted">${c.cargo || '-'}</td>
+                <td>
+                    <small class="text-muted">
+                        ${c.ultimo_contato ? new Date(c.ultimo_contato).toLocaleDateString('pt-BR') : 'Nunca'}
+                    </small>
+                </td>
+                <td>
+                    <a href="${c.linkedin}" target="_blank" class="btn btn-sm btn-primary"
+                       onclick="markAsOpened(${idx})" title="Abrir LinkedIn">
+                        <i class="bi bi-linkedin"></i> Abrir
+                    </a>
+                </td>
+            </tr>
+        `).join('');
+
+        // Show remaining count if more than 20
+        if (contacts.length > 20) {
+            tbody.innerHTML += `
+                <tr>
+                    <td colspan="6" class="text-center text-muted py-2">
+                        ... e mais ${contacts.length - 20} contatos
+                    </td>
+                </tr>
+            `;
+        }
+
+    } catch (error) {
+        console.error('Error loading pending:', error);
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" class="text-center py-4 text-danger">
+                    Erro ao carregar contatos
+                </td>
+            </tr>
+        `;
+    }
+}
+
+function markAsOpened(index) {
+    // Highlight the row that was opened
+    document.querySelectorAll('#pendingList tr').forEach(tr => tr.classList.remove('table-primary'));
+    const row = document.querySelector(`#pendingList tr[data-index="${index}"]`);
+    if (row) {
+        row.classList.add('table-success');
+    }
+    currentIndex = index + 1;
+}
+
+function openNextLinkedIn() {
+    if (pendingContacts.length === 0) {
+        alert('Nenhum contato na fila. Carregue a lista primeiro.');
+        return;
+    }
+
+    if (currentIndex >= pendingContacts.length) {
+        alert('Voce ja abriu todos os contatos da lista!');
+        return;
+    }
+
+    const contact = pendingContacts[currentIndex];
+    window.open(contact.linkedin, '_blank');
+    markAsOpened(currentIndex);
 }
 
 async function loadJobChanges() {
@@ -199,6 +370,7 @@ async function loadJobChanges() {
 
 document.addEventListener('DOMContentLoaded', function() {
     loadStats();
+    loadPendingContacts();
     loadJobChanges();
 });
 </script>
