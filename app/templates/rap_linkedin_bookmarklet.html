@@ -378,8 +378,8 @@ async function loadJobChanges() {
     }
 }
 
-// Bookmarklet code - Carrega script externo (fácil de atualizar!)
-const BOOKMARKLET_CODE = `javascript:(function(){var s=document.createElement('script');s.src='https://intel.almeida-prado.com/static/linkedin-extract.js?v='+Date.now();document.body.appendChild(s);})();`;
+// Bookmarklet code - Tudo inline para evitar bloqueio CSP
+const BOOKMARKLET_CODE = `javascript:(function(){if(!location.href.includes('linkedin.com/in/')){alert('Abra um perfil LinkedIn');return;}var d={linkedin_url:location.href};var t=document.title.match(/^(.+?)\\s*[-–|]/);if(t)d.full_name=t[1].trim();var m=document.querySelector('main');if(m){var tx=m.innerText;var ls=tx.split('\\n').map(function(x){return x.trim()}).filter(function(x){return x.length>0});for(var i=0;i<ls.length&&i<20;i++){var l=ls[i];if(!d.full_name&&l.length>3&&l.length<50&&!/[0-9]/.test(l)&&!l.includes('·')){d.full_name=l;continue}if(d.full_name&&!d.headline&&l.length>20&&l.length<300&&l!==d.full_name){d.headline=l;continue}if(d.headline&&!d.location&&(l.includes('Brasil')||l.includes('Brazil')||l.includes(', SP')||l.includes(', RJ'))&&l.length<100){d.location=l.split('·')[0].trim();break}}}var cm=tx.match(/(\\d[\\d.,]*)\\+?\\s*(conexões|connections)/i);if(cm)d.connections=parseInt(cm[1].replace(/[.,]/g,''));var im=document.querySelectorAll('img[src*="media.licdn.com"]');for(var j=0;j<im.length;j++){var img=im[j];if(img.src.includes('ghost'))continue;if(img.width>=80&&img.width<=300&&Math.abs(img.width-img.height)<50){d.profile_picture=img.src;break}}if(!d.full_name){alert('Nome não encontrado');return}var u='https://intel.almeida-prado.com/api/linkedin/bookmarklet-receive?data='+encodeURIComponent(JSON.stringify(d));window.open(u,'_blank','width=500,height=500')})();`;
 
 function copyBookmarkletCode() {
     const input = document.getElementById('bookmarkletCode');
