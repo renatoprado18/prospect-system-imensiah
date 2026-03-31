@@ -6,10 +6,11 @@
 
 ## Status Atual
 
-**Ultima atualizacao**: 2026-03-25 (noite)
+**Ultima atualizacao**: 2026-03-31 (3FLOW)
 **Instancias ativas**: 3
 **Dominio**: `intel.almeida-prado.com` (ATIVO)
 **Modo**: AUTONOMO - instancias trabalham em fila de tarefas
+**Deploy**: AUTOMATICO via Vercel (push to main)
 
 ## Estrutura de Instancias
 
@@ -387,6 +388,39 @@ interacoes registradas. Apos sync Gmail/WhatsApp, distribuicao se ajustara.
 - Integracao com Circulos (health score, frequencia)
 - Contexto inclui: fatos, memorias, mensagens, tasks
 
+## Sessao 2026-03-31 (3FLOW)
+
+### Trabalho Realizado
+| Feature | Status | Detalhes |
+|---------|--------|----------|
+| Fix busca participantes (422) | CONCLUIDO | Reordenei rotas FastAPI - especificas antes de parametrizadas |
+| Modal Add Participante UX | CONCLUIDO | Dropdown interno, selecao visual, botao Adicionar |
+| Auto-add owner em projetos | CONCLUIDO | Renato adicionado como Responsavel automaticamente |
+| Participantes clicaveis | CONCLUIDO | Nome/avatar linkam para pagina do contato |
+| Retry logic API Claude | CONCLUIDO | Exponential backoff para erros 529/429 |
+| Documentacao ARCHITECTURE.md | CONCLUIDO | Deploy automatico, gotchas tecnicos |
+
+### Gotchas Importantes (TODAS INSTANCIAS DEVEM SABER)
+
+1. **FastAPI Route Ordering**: Rotas especificas (`/api/contacts/suggestions`) DEVEM vir ANTES de parametrizadas (`/api/contacts/{contact_id}`). Erro 422 se invertido.
+
+2. **Deploy**: AUTOMATICO via Vercel ao fazer `git push origin main`. Nao precisa acao manual.
+
+3. **PostgreSQL Vercel**: Funcao `similarity()` NAO disponivel (requer pg_trgm). Usar `ILIKE` para buscas.
+
+4. **Google OAuth Scopes**: Para Tasks sync, usar `tasks` (nao `tasks.readonly`). Usuario precisa reconectar apos mudanca.
+
+5. **Claude API 529**: Erro de overload. Implementar retry com backoff exponencial.
+
+### Arquivos Modificados Hoje
+- `app/main.py` - Reordenacao de rotas contacts
+- `app/services/projects.py` - Auto-add owner
+- `app/services/project_enrichment.py` - Retry logic
+- `app/templates/rap_projeto_detail.html` - UX melhorias
+- `docs/ARCHITECTURE.md` - Documentacao tecnica
+
+---
+
 ## Proximos Passos Globais
 
 1. [x] Definir nova estrutura de instancias (ARCH/INTEL/FLOW)
@@ -402,8 +436,10 @@ interacoes registradas. Apos sync Gmail/WhatsApp, distribuicao se ajustara.
 11. [x] Deploy em producao
 12. [x] **INTEL: Criar API Dashboard unificado**
 13. [x] **FLOW: Migrar UI para intel.almeida-prado.com**
-14. [ ] Configurar dominio intel.almeida-prado.com no Vercel
+14. [x] Configurar dominio intel.almeida-prado.com no Vercel
 15. [x] Recalcular circulos de todos os contatos
 16. [x] Aplicar tags automaticas em lote
 17. [x] Verificar duplicados
 18. [ ] Importar interacoes Gmail/WhatsApp para melhorar distribuicao
+19. [ ] **Enriquecimento de Projetos com IA** (plano em `~/.claude/plans/`)
+20. [ ] Sync bidirectional Google Tasks
