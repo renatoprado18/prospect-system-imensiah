@@ -35,78 +35,98 @@ logger = logging.getLogger(__name__)
 # ============== CONFIGURACAO CIRCULOS PESSOAIS ==============
 CIRCULO_PESSOAL_CONFIG = {
     1: {
+        "badge": "P1",
         "nome": "Nucleo",
-        "descricao": "Convivio diario/semanal",
+        "descricao": "Familia proxima, parceiros",
         "frequencia_dias": 7,
         "cor": "#FF6B6B",
-        "icone": "heart-fill"
+        "icone": "heart-fill",
+        "peso": 100
     },
     2: {
+        "badge": "P2",
         "nome": "Proximo",
-        "descricao": "Convivio frequente",
+        "descricao": "Familia, amigos intimos",
         "frequencia_dias": 14,
         "cor": "#F87171",
-        "icone": "heart"
+        "icone": "heart",
+        "peso": 80
     },
     3: {
+        "badge": "P3",
         "nome": "Relacionamento",
-        "descricao": "Relacionamento proximo",
+        "descricao": "Amigos, parentes",
         "frequencia_dias": 30,
         "cor": "#FB923C",
-        "icone": "people"
+        "icone": "people",
+        "peso": 60
     },
     4: {
+        "badge": "P4",
         "nome": "Ocasional",
-        "descricao": "Relacionamento ocasional",
+        "descricao": "Conhecidos",
         "frequencia_dias": 90,
         "cor": "#FBBF24",
-        "icone": "person"
+        "icone": "person",
+        "peso": 40
     },
     5: {
+        "badge": "P5",
         "nome": "Distante",
-        "descricao": "Distante/Arquivo",
+        "descricao": "Arquivo pessoal",
         "frequencia_dias": 180,
         "cor": "#A3A3A3",
-        "icone": "archive"
+        "icone": "archive",
+        "peso": 20
     },
 }
 
 # ============== CONFIGURACAO CIRCULOS PROFISSIONAIS ==============
 CIRCULO_PROFISSIONAL_CONFIG = {
     1: {
+        "badge": "R1",
         "nome": "Core",
-        "descricao": "Revenue/Operacao critica",
+        "descricao": "Clientes, socios, parceiros",
         "frequencia_dias": 14,
         "cor": "#6366F1",
-        "icone": "briefcase-fill"
+        "icone": "briefcase-fill",
+        "peso": 100
     },
     2: {
+        "badge": "R2",
         "nome": "Estrategico",
-        "descricao": "Influencia estrategica",
+        "descricao": "Conselheiros, mentores",
         "frequencia_dias": 21,
         "cor": "#8B5CF6",
-        "icone": "star-fill"
+        "icone": "star-fill",
+        "peso": 80
     },
     3: {
+        "badge": "R3",
         "nome": "Networking",
-        "descricao": "Networking ativo",
+        "descricao": "Prospects, fornecedores",
         "frequencia_dias": 45,
         "cor": "#0EA5E9",
-        "icone": "diagram-3"
+        "icone": "diagram-3",
+        "peso": 60
     },
     4: {
+        "badge": "R4",
         "nome": "Ocasional",
-        "descricao": "Relacionamento ocasional",
+        "descricao": "Contatos eventuais",
         "frequencia_dias": 90,
         "cor": "#14B8A6",
-        "icone": "person-badge"
+        "icone": "person-badge",
+        "peso": 40
     },
     5: {
+        "badge": "R5",
         "nome": "Arquivo",
         "descricao": "Arquivo profissional",
         "frequencia_dias": 365,
         "cor": "#A3A3A3",
-        "icone": "archive"
+        "icone": "archive",
+        "peso": 20
     },
 }
 
@@ -870,155 +890,189 @@ def recalcular_todos_circulos(force: bool = False, limit: int = None) -> Dict:
 
 def get_contatos_precisando_atencao(limit: int = 10) -> List[Dict]:
     """
-    Retorna contatos precisando atencao com scoring por prioridade.
+    Retorna contatos precisando atencao (versao legacy, usa a nova funcao).
+    """
+    resultado = get_prioridades_por_contexto(limit_per_context=limit)
+    # Combina pessoal e profissional, ordena por score
+    todos = resultado.get("pessoal", []) + resultado.get("profissional", [])
+    todos.sort(key=lambda x: x.get("priority_score", 0), reverse=True)
+    return todos[:limit]
 
-    Algoritmo de scoring:
-    priority_score = (peso_circulo × fator_health × fator_dias) + bonus
 
-    Pesos por circulo:
-    - C1 (Nucleo): 100
-    - C2 (Proximo): 80
-    - C3 (Ativo): 60
-    - C4 (Ocasional): 40
+def get_prioridades_por_contexto(limit_per_context: int = 15) -> Dict[str, List[Dict]]:
+    """
+    Retorna contatos ordenados por prioridade, separados por contexto.
 
-    Multiplicadores:
-    - Health < 25%: ate 2.5x
-    - Dias sem contato acima do limite: ate 2x
+    Novo algoritmo baseado em CONTEXTO (nao apenas tempo):
+    priority_score = peso_circulo × (1 + soma_fatores)
 
-    Bonus:
-    - Aniversario em 7 dias: +50
-    - Health critico (<20%): +30
-    - Muito tempo sem contato: +20
+    Fatores de prioridade:
+    - Aniversario hoje: +100
+    - Tarefa pendente: +80
+    - Projeto/deal ativo: +60
+    - Mensagem nao respondida: +50
+    - Reuniao esta semana: +40
+    - Tempo sem contato (fallback): +20
 
     Categorias visuais:
-    - urgent: C1/C2 com health critico ou muito tempo sem contato
-    - important: C1/C2/C3 precisando atencao moderada
-    - attention: Outros em risco
-
-    Args:
-        limit: Numero maximo de contatos a retornar
+    - urgent: Aniversario hoje OU tarefa vencida OU C1/C2 com pendencia
+    - important: Tarefa pendente OU projeto ativo OU C1-C3 com pendencia
+    - attention: Tempo sem contato acima do baseline
 
     Returns:
-        Lista de contatos precisando atencao com priority_score e category
+        Dict com 'pessoal' e 'profissional', cada um com lista de contatos
     """
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Buscar contatos com health < 70 ou aniversario proximo (circulos 1-4)
+        hoje = datetime.now().date()
+
+        # === BUSCAR TAREFAS PENDENTES POR CONTATO ===
         cursor.execute("""
-            SELECT id, nome, empresa, cargo, foto_url,
-                   circulo, health_score, ultimo_contato,
-                   frequencia_ideal_dias, emails, telefones, aniversario
-            FROM contacts
-            WHERE COALESCE(circulo, 5) <= 4
-              AND (
-                  COALESCE(health_score, 50) < 70
-                  OR (
-                      aniversario IS NOT NULL
-                      AND (
-                          (EXTRACT(MONTH FROM aniversario) = EXTRACT(MONTH FROM CURRENT_DATE)
-                           AND EXTRACT(DAY FROM aniversario) >= EXTRACT(DAY FROM CURRENT_DATE)
-                           AND EXTRACT(DAY FROM aniversario) <= EXTRACT(DAY FROM CURRENT_DATE) + 7)
-                          OR
-                          (EXTRACT(MONTH FROM aniversario) = EXTRACT(MONTH FROM CURRENT_DATE + INTERVAL '7 days')
-                           AND EXTRACT(DAY FROM aniversario) <= EXTRACT(DAY FROM CURRENT_DATE + INTERVAL '7 days'))
-                      )
-                  )
+            SELECT contact_id, COUNT(*) as count,
+                   MIN(data_vencimento) as proxima_vencimento
+            FROM tasks
+            WHERE status = 'pending' AND contact_id IS NOT NULL
+            GROUP BY contact_id
+        """)
+        tarefas_por_contato = {row["contact_id"]: {
+            "count": row["count"],
+            "vencida": row["proxima_vencimento"] and row["proxima_vencimento"].date() < hoje if row["proxima_vencimento"] else False,
+            "proxima": row["proxima_vencimento"]
+        } for row in cursor.fetchall()}
+
+        # === BUSCAR PROJETOS ATIVOS POR CONTATO ===
+        cursor.execute("""
+            SELECT contact_id, COUNT(*) as count
+            FROM projects
+            WHERE status = 'active' AND contact_id IS NOT NULL
+            GROUP BY contact_id
+        """)
+        projetos_por_contato = {row["contact_id"]: row["count"] for row in cursor.fetchall()}
+
+        # === BUSCAR MENSAGENS NAO RESPONDIDAS (ultimos 7 dias) ===
+        cursor.execute("""
+            SELECT DISTINCT c.contact_id
+            FROM conversations c
+            JOIN messages m ON m.conversation_id = c.id
+            WHERE m.direcao = 'incoming'
+              AND m.enviado_em > NOW() - INTERVAL '7 days'
+              AND NOT EXISTS (
+                  SELECT 1 FROM messages m2
+                  WHERE m2.conversation_id = c.id
+                    AND m2.direcao = 'outgoing'
+                    AND m2.enviado_em > m.enviado_em
               )
-            ORDER BY circulo ASC, health_score ASC
-            LIMIT 100
+        """)
+        mensagens_pendentes = {row["contact_id"] for row in cursor.fetchall()}
+
+        # === BUSCAR TODOS OS CONTATOS COM CIRCULO ===
+        cursor.execute("""
+            SELECT id, nome, empresa, cargo, foto_url, contexto,
+                   circulo, circulo_pessoal, circulo_profissional,
+                   health_score, ultimo_contato, aniversario,
+                   frequencia_ideal_dias
+            FROM contacts
+            WHERE circulo IS NOT NULL
+              AND COALESCE(circulo, 5) <= 4
+            ORDER BY circulo ASC
         """)
 
-        # Pesos por circulo
-        CIRCULO_WEIGHTS = {1: 100, 2: 80, 3: 60, 4: 40, 5: 20}
-
-        results = []
-        hoje = datetime.now().date()
+        pessoal = []
+        profissional = []
 
         for row in cursor.fetchall():
             contact = dict(row)
-            circulo = contact.get("circulo") or 5
-            health = contact.get("health_score") or 50
+            contact_id = contact["id"]
+            contexto = contact.get("contexto") or "professional"
 
-            # Calcular dias sem contato
-            dias_sem_contato = calcular_dias_sem_contato(contact.get("ultimo_contato"))
-            contact["dias_sem_contato"] = dias_sem_contato
-
-            # Config do circulo
-            circulo_cfg = CIRCULO_CONFIG.get(circulo, CIRCULO_CONFIG[5])
-            contact["circulo_config"] = circulo_cfg
-            frequencia_ideal = contact.get("frequencia_ideal_dias") or circulo_cfg.get("frequencia_dias", 30)
-
-            # === CALCULAR PRIORITY SCORE ===
-            peso_base = CIRCULO_WEIGHTS.get(circulo, 20)
-
-            # Fator health (quanto menor, mais urgente)
-            if health < 25:
-                fator_health = 2.5
-            elif health < 40:
-                fator_health = 2.0
-            elif health < 50:
-                fator_health = 1.5
-            elif health < 70:
-                fator_health = 1.2
+            # Determinar circulo e config baseado no contexto
+            if contexto == "personal":
+                circulo = contact.get("circulo_pessoal") or contact.get("circulo") or 5
+                circulo_cfg = CIRCULO_PESSOAL_CONFIG.get(circulo, CIRCULO_PESSOAL_CONFIG[5])
             else:
-                fator_health = 1.0
+                circulo = contact.get("circulo_profissional") or contact.get("circulo") or 5
+                circulo_cfg = CIRCULO_PROFISSIONAL_CONFIG.get(circulo, CIRCULO_PROFISSIONAL_CONFIG[5])
 
-            # Fator dias (quanto mais atrasado, mais urgente)
-            fator_dias = 1.0
-            if dias_sem_contato and frequencia_ideal:
-                excesso = dias_sem_contato - frequencia_ideal
-                if excesso > frequencia_ideal:  # 2x o limite
-                    fator_dias = 2.0
-                elif excesso > frequencia_ideal * 0.5:  # 1.5x o limite
-                    fator_dias = 1.5
-                elif excesso > 0:
-                    fator_dias = 1.2
+            peso_base = circulo_cfg.get("peso", 50)
+            badge = circulo_cfg.get("badge", f"C{circulo}")
+            contact["badge"] = badge
+            contact["circulo_config"] = circulo_cfg
 
-            # Score base
-            priority_score = peso_base * fator_health * fator_dias
+            # === CALCULAR FATORES ===
+            fatores = []
+            priority_score = peso_base
 
-            # === BONUS ===
-            # Aniversario em 7 dias
+            # 1. Aniversario hoje (+100)
             aniversario = contact.get("aniversario")
-            dias_ate_aniversario = None
+            aniversario_hoje = False
             if aniversario:
                 try:
-                    aniv_este_ano = aniversario.replace(year=hoje.year)
-                    if aniv_este_ano < hoje:
-                        aniv_este_ano = aniversario.replace(year=hoje.year + 1)
-                    dias_ate_aniversario = (aniv_este_ano - hoje).days
-                    if 0 <= dias_ate_aniversario <= 7:
-                        priority_score += 50
-                        contact["aniversario_proximo"] = True
-                        contact["dias_ate_aniversario"] = dias_ate_aniversario
+                    if aniversario.month == hoje.month and aniversario.day == hoje.day:
+                        priority_score += 100
+                        fatores.append({"tipo": "birthday", "label": "Aniversario!"})
+                        aniversario_hoje = True
                 except (ValueError, AttributeError):
                     pass
 
-            # Health critico
-            if health < 20:
-                priority_score += 30
+            # 2. Tarefa pendente (+80, +100 se vencida)
+            tarefa_info = tarefas_por_contato.get(contact_id)
+            if tarefa_info:
+                if tarefa_info["vencida"]:
+                    priority_score += 100
+                    fatores.append({"tipo": "task", "label": "Tarefa vencida"})
+                else:
+                    priority_score += 80
+                    fatores.append({"tipo": "task", "label": f"{tarefa_info['count']} tarefa(s)"})
 
-            # Muito tempo sem contato (2x o limite)
-            if dias_sem_contato and frequencia_ideal and dias_sem_contato > frequencia_ideal * 2:
+            # 3. Projeto ativo (+60)
+            projeto_count = projetos_por_contato.get(contact_id, 0)
+            if projeto_count > 0:
+                priority_score += 60
+                fatores.append({"tipo": "project", "label": "Projeto ativo"})
+
+            # 4. Mensagem nao respondida (+50)
+            if contact_id in mensagens_pendentes:
+                priority_score += 50
+                fatores.append({"tipo": "message", "label": "Responder msg"})
+
+            # 5. Tempo sem contato (fallback, +20)
+            dias_sem_contato = calcular_dias_sem_contato(contact.get("ultimo_contato"))
+            contact["dias_sem_contato"] = dias_sem_contato
+            frequencia_ideal = contact.get("frequencia_ideal_dias") or circulo_cfg.get("frequencia_dias", 30)
+
+            if dias_sem_contato and dias_sem_contato > frequencia_ideal:
                 priority_score += 20
+                if not fatores:  # Só mostra se não tem outro fator
+                    fatores.append({"tipo": "time", "label": f"{dias_sem_contato}d sem contato"})
 
             contact["priority_score"] = round(priority_score, 1)
+            contact["fatores"] = fatores
 
             # === CATEGORIA VISUAL ===
-            if circulo <= 2 and (health < 25 or (dias_sem_contato and frequencia_ideal and dias_sem_contato > frequencia_ideal * 2)):
-                contact["category"] = "urgent"  # 🔴 URGENTE
-            elif circulo <= 3 and health < 50:
-                contact["category"] = "important"  # 🟠 Importante
+            if aniversario_hoje or (tarefa_info and tarefa_info["vencida"]) or (circulo <= 2 and fatores):
+                contact["category"] = "urgent"
+            elif fatores and circulo <= 3:
+                contact["category"] = "important"
+            elif fatores:
+                contact["category"] = "attention"
             else:
-                contact["category"] = "attention"  # 🟡 Atenção
+                continue  # Sem fatores = nao precisa atencao
 
-            results.append(contact)
+            # Separar por contexto
+            if contexto == "personal":
+                pessoal.append(contact)
+            else:
+                profissional.append(contact)
 
-        # Ordenar por priority_score (maior primeiro)
-        results.sort(key=lambda x: x.get("priority_score", 0), reverse=True)
+        # Ordenar por priority_score
+        pessoal.sort(key=lambda x: x.get("priority_score", 0), reverse=True)
+        profissional.sort(key=lambda x: x.get("priority_score", 0), reverse=True)
 
-        return results[:limit]
+        return {
+            "pessoal": pessoal[:limit_per_context],
+            "profissional": profissional[:limit_per_context]
+        }
 
 
 def get_aniversarios_proximos(dias: int = 30) -> List[Dict]:
@@ -1081,98 +1135,102 @@ def get_dashboard_circulos(contexto: str = None) -> Dict:
     """
     Retorna dados consolidados para o dashboard de circulos.
 
-    Args:
-        contexto: Filtro de contexto ('professional', 'personal', ou None para todos)
+    Novo formato com dados separados para Pessoal e Profissional.
 
     Returns:
-        Dict com estatisticas e dados do dashboard
+        Dict com estatisticas para ambos os contextos
     """
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Build context filter
-        context_filter = ""
-        context_params = []
-        if contexto == "professional":
-            context_filter = "WHERE COALESCE(contexto, 'professional') != 'personal'"
-        elif contexto == "personal":
-            context_filter = "WHERE contexto = 'personal'"
-
-        # Contagem e health medio por circulo (com filtro de contexto)
-        cursor.execute(f"""
+        # === STATS PESSOAL ===
+        cursor.execute("""
             SELECT
-                COALESCE(circulo, 5) as circulo,
+                COALESCE(circulo_pessoal, circulo, 5) as circulo,
                 COUNT(*) as total,
                 AVG(COALESCE(health_score, 50)) as health_medio
             FROM contacts
-            {context_filter}
-            GROUP BY COALESCE(circulo, 5)
+            WHERE contexto = 'personal'
+            GROUP BY COALESCE(circulo_pessoal, circulo, 5)
             ORDER BY circulo
         """)
 
-        por_circulo = {}
-        total_geral = 0
+        pessoal_por_circulo = {}
+        pessoal_total = 0
         for row in cursor.fetchall():
             c = row["circulo"]
-            por_circulo[c] = {
+            cfg = CIRCULO_PESSOAL_CONFIG.get(c, CIRCULO_PESSOAL_CONFIG[5])
+            pessoal_por_circulo[c] = {
                 "total": row["total"],
                 "health_medio": round(row["health_medio"] or 50, 1),
-                "config": CIRCULO_CONFIG.get(c, CIRCULO_CONFIG[5])
+                "config": cfg
             }
-            total_geral += row["total"]
+            pessoal_total += row["total"]
 
-        # Preencher circulos vazios
+        # Preencher circulos vazios pessoal
         for c in range(1, 6):
-            if c not in por_circulo:
-                por_circulo[c] = {
+            if c not in pessoal_por_circulo:
+                pessoal_por_circulo[c] = {
                     "total": 0,
                     "health_medio": 0,
-                    "config": CIRCULO_CONFIG[c]
+                    "config": CIRCULO_PESSOAL_CONFIG[c]
                 }
 
-        # Contagem por contexto (personal/professional)
+        # === STATS PROFISSIONAL ===
         cursor.execute("""
             SELECT
-                COALESCE(contexto, 'professional') as contexto,
-                COUNT(*) as total
+                COALESCE(circulo_profissional, circulo, 5) as circulo,
+                COUNT(*) as total,
+                AVG(COALESCE(health_score, 50)) as health_medio
             FROM contacts
-            GROUP BY COALESCE(contexto, 'professional')
+            WHERE COALESCE(contexto, 'professional') != 'personal'
+            GROUP BY COALESCE(circulo_profissional, circulo, 5)
+            ORDER BY circulo
         """)
-        by_context = {"personal": 0, "professional": 0}
+
+        profissional_por_circulo = {}
+        profissional_total = 0
         for row in cursor.fetchall():
-            ctx = row["contexto"]
-            if ctx in ("personal", "pessoal"):
-                by_context["personal"] = row["total"]
-            else:
-                by_context["professional"] += row["total"]
+            c = row["circulo"]
+            cfg = CIRCULO_PROFISSIONAL_CONFIG.get(c, CIRCULO_PROFISSIONAL_CONFIG[5])
+            profissional_por_circulo[c] = {
+                "total": row["total"],
+                "health_medio": round(row["health_medio"] or 50, 1),
+                "config": cfg
+            }
+            profissional_total += row["total"]
 
-        # Contatos em risco (health < 30% em circulos 1-4)
-        cursor.execute("""
-            SELECT COUNT(*) as count
-            FROM contacts
-            WHERE COALESCE(health_score, 50) < 30
-              AND COALESCE(circulo, 5) <= 4
-        """)
-        em_risco = cursor.fetchone()["count"]
+        # Preencher circulos vazios profissional
+        for c in range(1, 6):
+            if c not in profissional_por_circulo:
+                profissional_por_circulo[c] = {
+                    "total": 0,
+                    "health_medio": 0,
+                    "config": CIRCULO_PROFISSIONAL_CONFIG[c]
+                }
 
-        # Contatos sem circulo definido
-        cursor.execute("""
-            SELECT COUNT(*) as count
-            FROM contacts
-            WHERE circulo IS NULL
-        """)
-        sem_circulo = cursor.fetchone()["count"]
+        # === PRIORIDADES POR CONTEXTO ===
+        prioridades = get_prioridades_por_contexto(limit_per_context=15)
 
         return {
-            "por_circulo": por_circulo,
-            "config": CIRCULO_CONFIG,
-            "total": total_geral,
-            "total_contatos": total_geral,
-            "by_context": by_context,
-            "em_risco": em_risco,
-            "sem_circulo": sem_circulo,
-            "precisam_atencao": get_contatos_precisando_atencao(10),
-            "aniversarios": get_aniversarios_proximos(14)
+            "pessoal": {
+                "total": pessoal_total,
+                "por_circulo": pessoal_por_circulo,
+                "config": CIRCULO_PESSOAL_CONFIG,
+                "prioridades": prioridades.get("pessoal", [])
+            },
+            "profissional": {
+                "total": profissional_total,
+                "por_circulo": profissional_por_circulo,
+                "config": CIRCULO_PROFISSIONAL_CONFIG,
+                "prioridades": prioridades.get("profissional", [])
+            },
+            # Legacy fields for compatibility
+            "total": pessoal_total + profissional_total,
+            "by_context": {
+                "personal": pessoal_total,
+                "professional": profissional_total
+            }
         }
 
 
