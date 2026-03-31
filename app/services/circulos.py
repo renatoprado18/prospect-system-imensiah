@@ -928,54 +928,65 @@ def get_prioridades_por_contexto(limit_per_context: int = 15) -> Dict[str, List[
         hoje = datetime.now().date()
 
         # === BUSCAR TAREFAS PENDENTES POR CONTATO ===
-        cursor.execute("""
-            SELECT contact_id, COUNT(*) as count,
-                   MIN(data_vencimento) as proxima_vencimento
-            FROM tasks
-            WHERE status = 'pending' AND contact_id IS NOT NULL
-            GROUP BY contact_id
-        """)
         tarefas_por_contato = {}
-        for row in cursor.fetchall():
-            prox = row["proxima_vencimento"]
-            # Handle both date and datetime types
-            vencida = False
-            if prox:
-                try:
-                    prox_date = prox.date() if hasattr(prox, 'date') else prox
-                    vencida = prox_date < hoje
-                except (AttributeError, TypeError):
-                    pass
-            tarefas_por_contato[row["contact_id"]] = {
-                "count": row["count"],
-                "vencida": vencida,
-                "proxima": prox
-            }
+        try:
+            cursor.execute("""
+                SELECT contact_id, COUNT(*) as count,
+                       MIN(data_vencimento) as proxima_vencimento
+                FROM tasks
+                WHERE status = 'pending' AND contact_id IS NOT NULL
+                GROUP BY contact_id
+            """)
+            for row in cursor.fetchall():
+                prox = row["proxima_vencimento"]
+                # Handle both date and datetime types
+                vencida = False
+                if prox:
+                    try:
+                        prox_date = prox.date() if hasattr(prox, 'date') else prox
+                        vencida = prox_date < hoje
+                    except (AttributeError, TypeError):
+                        pass
+                tarefas_por_contato[row["contact_id"]] = {
+                    "count": row["count"],
+                    "vencida": vencida,
+                    "proxima": prox
+                }
+        except Exception as e:
+            logger.warning(f"Error fetching tasks: {e}")
 
         # === BUSCAR PROJETOS ATIVOS POR CONTATO ===
-        cursor.execute("""
-            SELECT contact_id, COUNT(*) as count
-            FROM projects
-            WHERE status = 'active' AND contact_id IS NOT NULL
-            GROUP BY contact_id
-        """)
-        projetos_por_contato = {row["contact_id"]: row["count"] for row in cursor.fetchall()}
+        projetos_por_contato = {}
+        try:
+            cursor.execute("""
+                SELECT contact_id, COUNT(*) as count
+                FROM projects
+                WHERE status = 'active' AND contact_id IS NOT NULL
+                GROUP BY contact_id
+            """)
+            projetos_por_contato = {row["contact_id"]: row["count"] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.warning(f"Error fetching projects: {e}")
 
         # === BUSCAR MENSAGENS NAO RESPONDIDAS (ultimos 7 dias) ===
-        cursor.execute("""
-            SELECT DISTINCT c.contact_id
-            FROM conversations c
-            JOIN messages m ON m.conversation_id = c.id
-            WHERE m.direcao = 'incoming'
-              AND m.enviado_em > NOW() - INTERVAL '7 days'
-              AND NOT EXISTS (
-                  SELECT 1 FROM messages m2
-                  WHERE m2.conversation_id = c.id
-                    AND m2.direcao = 'outgoing'
-                    AND m2.enviado_em > m.enviado_em
-              )
-        """)
-        mensagens_pendentes = {row["contact_id"] for row in cursor.fetchall()}
+        mensagens_pendentes = set()
+        try:
+            cursor.execute("""
+                SELECT DISTINCT c.contact_id
+                FROM conversations c
+                JOIN messages m ON m.conversation_id = c.id
+                WHERE m.direcao = 'incoming'
+                  AND m.enviado_em > NOW() - INTERVAL '7 days'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM messages m2
+                      WHERE m2.conversation_id = c.id
+                        AND m2.direcao = 'outgoing'
+                        AND m2.enviado_em > m.enviado_em
+                  )
+            """)
+            mensagens_pendentes = {row["contact_id"] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.warning(f"Error fetching messages: {e}")
 
         # === BUSCAR TODOS OS CONTATOS COM CIRCULO ===
         cursor.execute("""

@@ -60,58 +60,61 @@
         font-weight: 500;
     }
 
-    /* Circle Cards Grid */
-    .circles-row {
+    /* Circle Cards - Vertical Stack */
+    .circles-column {
         display: flex;
+        flex-direction: column;
         gap: 0.5rem;
-        padding: 1rem;
-        overflow-x: auto;
+        padding: 0.75rem;
+        border-bottom: 1px solid var(--gray-100);
     }
     .circle-card {
-        flex: 1;
-        min-width: 80px;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
         background: white;
-        border-radius: 12px;
-        padding: 0.75rem;
+        border-radius: 10px;
+        padding: 0.5rem 0.75rem;
         border: 2px solid var(--gray-100);
         cursor: pointer;
         transition: all 0.2s;
-        text-align: center;
     }
     .circle-card:hover {
         border-color: var(--gray-300);
-        transform: translateY(-2px);
+        background: var(--gray-50);
     }
     .circle-card.active {
         border-color: var(--circle-color);
-        background: linear-gradient(to bottom, color-mix(in srgb, var(--circle-color) 8%, white), white);
+        background: linear-gradient(to right, color-mix(in srgb, var(--circle-color) 8%, white), white);
     }
-    .circle-card .number {
-        font-size: 1.5rem;
-        font-weight: 700;
-        line-height: 1;
-        color: var(--gray-800);
-    }
-    .circle-card.active .number { color: var(--circle-color); }
     .circle-card .badge-label {
-        font-size: 0.7rem;
-        font-weight: 600;
-        color: var(--gray-500);
-        margin-top: 0.25rem;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: white;
+        background: var(--circle-color, var(--gray-400));
+        padding: 2px 8px;
+        border-radius: 6px;
+        min-width: 32px;
+        text-align: center;
     }
     .circle-card .name {
-        font-size: 0.75rem;
-        color: var(--gray-600);
-        margin-top: 0.125rem;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: var(--gray-700);
+        flex: 1;
     }
+    .circle-card .number {
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--gray-800);
+        min-width: 30px;
+        text-align: right;
+    }
+    .circle-card.active .number { color: var(--circle-color); }
     .circle-card .health-dot {
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        margin: 0.5rem auto 0;
     }
     .health-dot.high { background: #22c55e; }
     .health-dot.medium { background: #eab308; }
@@ -306,7 +309,7 @@
             <div class="context-title">Pessoal</div>
             <div class="context-count" id="countPessoal">-</div>
         </div>
-        <div class="circles-row" id="circlesPessoal">
+        <div class="circles-column" id="circlesPessoal">
             <!-- Populated by JS -->
         </div>
         <div class="priority-header">
@@ -326,7 +329,7 @@
             <div class="context-title">Profissional</div>
             <div class="context-count" id="countProfissional">-</div>
         </div>
-        <div class="circles-row" id="circlesProfissional">
+        <div class="circles-column" id="circlesProfissional">
             <!-- Populated by JS -->
         </div>
         <div class="priority-header">
@@ -384,9 +387,9 @@ function renderCircleCards(contexto, porCirculo, config) {
         container.innerHTML += `
             <div class="circle-card circle-${i} ${isActive ? 'active' : ''}"
                  onclick="selectCircle('${contexto}', ${i})">
-                <div class="number">${formatNumber(stats.total)}</div>
                 <div class="badge-label">${cfg.badge || 'C' + i}</div>
                 <div class="name">${cfg.nome || ''}</div>
+                <div class="number">${formatNumber(stats.total)}</div>
                 <div class="health-dot ${healthClass}" title="Health: ${Math.round(stats.health_medio)}%"></div>
             </div>
         `;
