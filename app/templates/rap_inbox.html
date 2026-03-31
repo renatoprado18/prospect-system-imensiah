@@ -640,18 +640,36 @@ async function sendReply() {
     const text = document.getElementById('replyText').value.trim();
     if (!text || !currentConversationId) return;
 
+    const btn = document.querySelector('.reply-btn');
+    const originalContent = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    btn.disabled = true;
+
     try {
-        await fetch(`/api/inbox/conversations/${currentConversationId}/reply`, {
+        const response = await fetch(`/api/inbox/conversations/${currentConversationId}/reply`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content: text }),
             credentials: 'include'
         });
 
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `Erro HTTP ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log('Reply sent:', result);
+
         document.getElementById('replyText').value = '';
         loadMessages(currentConversationId, currentContactId);
+        loadConversations(); // Atualizar lista
     } catch (error) {
-        alert('Erro ao enviar mensagem');
+        console.error('Error sending reply:', error);
+        alert('Erro ao enviar: ' + error.message);
+    } finally {
+        btn.innerHTML = originalContent;
+        btn.disabled = false;
     }
 }
 
