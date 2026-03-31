@@ -1190,76 +1190,95 @@ def get_dashboard_circulos(contexto: str = None) -> Dict:
     Returns:
         Dict com estatisticas para ambos os contextos
     """
-    with get_db() as conn:
-        cursor = conn.cursor()
+    # Default response structure
+    default_response = {
+        "pessoal": {
+            "total": 0,
+            "por_circulo": {c: {"total": 0, "health_medio": 0, "config": CIRCULO_PESSOAL_CONFIG[c]} for c in range(1, 6)},
+            "config": CIRCULO_PESSOAL_CONFIG,
+            "prioridades": []
+        },
+        "profissional": {
+            "total": 0,
+            "por_circulo": {c: {"total": 0, "health_medio": 0, "config": CIRCULO_PROFISSIONAL_CONFIG[c]} for c in range(1, 6)},
+            "config": CIRCULO_PROFISSIONAL_CONFIG,
+            "prioridades": []
+        },
+        "total": 0,
+        "by_context": {"personal": 0, "professional": 0}
+    }
 
-        # === STATS PESSOAL ===
-        cursor.execute("""
-            SELECT
-                COALESCE(circulo_pessoal, circulo, 5) as circulo,
-                COUNT(*) as total,
-                AVG(COALESCE(health_score, 50)) as health_medio
-            FROM contacts
-            WHERE contexto = 'personal'
-            GROUP BY COALESCE(circulo_pessoal, circulo, 5)
-            ORDER BY circulo
-        """)
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
 
-        pessoal_por_circulo = {}
-        pessoal_total = 0
-        for row in cursor.fetchall():
-            c = row["circulo"]
-            cfg = CIRCULO_PESSOAL_CONFIG.get(c, CIRCULO_PESSOAL_CONFIG[5])
-            pessoal_por_circulo[c] = {
-                "total": row["total"],
-                "health_medio": round(row["health_medio"] or 50, 1),
-                "config": cfg
-            }
-            pessoal_total += row["total"]
+            # === STATS PESSOAL ===
+            cursor.execute("""
+                SELECT
+                    COALESCE(circulo_pessoal, circulo, 5) as circulo,
+                    COUNT(*) as total,
+                    AVG(COALESCE(health_score, 50)) as health_medio
+                FROM contacts
+                WHERE contexto = 'personal'
+                GROUP BY COALESCE(circulo_pessoal, circulo, 5)
+                ORDER BY circulo
+            """)
 
-        # Preencher circulos vazios pessoal
-        for c in range(1, 6):
-            if c not in pessoal_por_circulo:
+            pessoal_por_circulo = {}
+            pessoal_total = 0
+            for row in cursor.fetchall():
+                c = row["circulo"]
+                cfg = CIRCULO_PESSOAL_CONFIG.get(c, CIRCULO_PESSOAL_CONFIG[5])
                 pessoal_por_circulo[c] = {
-                    "total": 0,
-                    "health_medio": 0,
-                    "config": CIRCULO_PESSOAL_CONFIG[c]
+                    "total": row["total"],
+                    "health_medio": round(row["health_medio"] or 50, 1),
+                    "config": cfg
                 }
+                pessoal_total += row["total"]
 
-        # === STATS PROFISSIONAL ===
-        cursor.execute("""
-            SELECT
-                COALESCE(circulo_profissional, circulo, 5) as circulo,
-                COUNT(*) as total,
-                AVG(COALESCE(health_score, 50)) as health_medio
-            FROM contacts
-            WHERE COALESCE(contexto, 'professional') != 'personal'
-            GROUP BY COALESCE(circulo_profissional, circulo, 5)
-            ORDER BY circulo
-        """)
+            # Preencher circulos vazios pessoal
+            for c in range(1, 6):
+                if c not in pessoal_por_circulo:
+                    pessoal_por_circulo[c] = {
+                        "total": 0,
+                        "health_medio": 0,
+                        "config": CIRCULO_PESSOAL_CONFIG[c]
+                    }
 
-        profissional_por_circulo = {}
-        profissional_total = 0
-        for row in cursor.fetchall():
-            c = row["circulo"]
-            cfg = CIRCULO_PROFISSIONAL_CONFIG.get(c, CIRCULO_PROFISSIONAL_CONFIG[5])
-            profissional_por_circulo[c] = {
-                "total": row["total"],
-                "health_medio": round(row["health_medio"] or 50, 1),
-                "config": cfg
-            }
-            profissional_total += row["total"]
+            # === STATS PROFISSIONAL ===
+            cursor.execute("""
+                SELECT
+                    COALESCE(circulo_profissional, circulo, 5) as circulo,
+                    COUNT(*) as total,
+                    AVG(COALESCE(health_score, 50)) as health_medio
+                FROM contacts
+                WHERE COALESCE(contexto, 'professional') != 'personal'
+                GROUP BY COALESCE(circulo_profissional, circulo, 5)
+                ORDER BY circulo
+            """)
 
-        # Preencher circulos vazios profissional
-        for c in range(1, 6):
-            if c not in profissional_por_circulo:
+            profissional_por_circulo = {}
+            profissional_total = 0
+            for row in cursor.fetchall():
+                c = row["circulo"]
+                cfg = CIRCULO_PROFISSIONAL_CONFIG.get(c, CIRCULO_PROFISSIONAL_CONFIG[5])
                 profissional_por_circulo[c] = {
-                    "total": 0,
-                    "health_medio": 0,
-                    "config": CIRCULO_PROFISSIONAL_CONFIG[c]
+                    "total": row["total"],
+                    "health_medio": round(row["health_medio"] or 50, 1),
+                    "config": cfg
                 }
+                profissional_total += row["total"]
 
-        # === PRIORIDADES POR CONTEXTO ===
+            # Preencher circulos vazios profissional
+            for c in range(1, 6):
+                if c not in profissional_por_circulo:
+                    profissional_por_circulo[c] = {
+                        "total": 0,
+                        "health_medio": 0,
+                        "config": CIRCULO_PROFISSIONAL_CONFIG[c]
+                    }
+
+        # === PRIORIDADES POR CONTEXTO === (outside db connection)
         prioridades = get_prioridades_por_contexto(limit_per_context=15)
 
         return {
@@ -1282,6 +1301,10 @@ def get_dashboard_circulos(contexto: str = None) -> Dict:
                 "professional": profissional_total
             }
         }
+
+    except Exception as e:
+        logger.error(f"Error in get_dashboard_circulos: {e}")
+        return default_response
 
 
 def definir_circulo_manual(
