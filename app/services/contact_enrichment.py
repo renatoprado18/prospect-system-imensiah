@@ -786,21 +786,36 @@ async def search_company_info(
     page_title = ""
     page_description = ""
 
-    # Validar URL
+    # Validar URL - deve ter TLD válido (pelo menos 2 caracteres)
     import re as url_re
-    if not url_re.match(r'^https?://[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+', url_to_fetch):
-        return {"status": "error", "error": f"Invalid URL format: {url_to_fetch}"}
+    if not url_re.match(r'^https?://[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,}', url_to_fetch):
+        return {"status": "error", "error": f"URL inválida: {url_to_fetch} (verifique se está completa)"}
 
     try:
-        # Usar limits para evitar resource busy em serverless
-        limits = httpx.Limits(max_keepalive_connections=1, max_connections=1)
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, limits=limits) as client:
-            response = await client.get(
-                url_to_fetch,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-                }
-            )
+        # Retry logic para ambientes serverless
+        import asyncio
+        response = None
+        last_error = None
+
+        for attempt in range(3):
+            try:
+                limits = httpx.Limits(max_keepalive_connections=1, max_connections=1)
+                async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, limits=limits) as client:
+                    response = await client.get(
+                        url_to_fetch,
+                        headers={
+                            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                        }
+                    )
+                    break  # Success, exit retry loop
+            except Exception as retry_error:
+                last_error = retry_error
+                if attempt < 2:
+                    await asyncio.sleep(0.5)  # Wait before retry
+                continue
+
+        if response is None:
+            raise last_error or Exception("Failed after retries")
 
             if response.status_code == 200:
                 html = response.text

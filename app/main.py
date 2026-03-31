@@ -4316,6 +4316,76 @@ async def enrich_linkedin_batch(
     return result
 
 
+# Contact search routes - MUST come before /api/contacts/{contact_id}
+@app.get("/api/contacts/search")
+async def search_contacts_api(
+    request: Request,
+    q: str = None,
+    circulo: int = None,
+    tags: str = None,
+    health_min: int = None,
+    health_max: int = None,
+    has_email: bool = None,
+    has_whatsapp: bool = None,
+    empresa: str = None,
+    contexto: str = None,
+    ordem: str = "nome",
+    limit: int = 50,
+    offset: int = 0
+):
+    """Busca avancada de contatos com multiplos filtros"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    try:
+        service = get_search_service()
+
+        # Parse tags from comma-separated string
+        tags_list = [t.strip() for t in tags.split(",")] if tags else None
+
+        return service.search_contacts(
+            query=q,
+            circulo=circulo,
+            tags=tags_list,
+            health_min=health_min,
+            health_max=health_max,
+            has_email=has_email,
+            has_whatsapp=has_whatsapp,
+            empresa=empresa,
+            contexto=contexto,
+            ordem=ordem,
+            limit=limit,
+            offset=offset
+        )
+    except Exception as e:
+        logger.error(f"Error in contact search: {e}")
+        return {"contacts": [], "total": 0, "error": str(e)}
+
+
+@app.get("/api/contacts/suggestions")
+async def get_contact_suggestions(
+    request: Request,
+    q: str = "",
+    limit: int = 10
+):
+    """Sugestoes de autocomplete para busca"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    if not q or len(q) < 2:
+        return {"suggestions": []}
+
+    try:
+        service = get_search_service()
+        results = service.get_search_suggestions(q, limit)
+        return {"suggestions": results}
+    except Exception as e:
+        logger.error(f"Error in contact suggestions: {e}")
+        return {"suggestions": [], "error": str(e)}
+
+
 # NOTE: This parameterized route MUST come AFTER the specific routes above
 @app.get("/api/contacts/{contact_id}")
 async def get_contact(contact_id: int):
