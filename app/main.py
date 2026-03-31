@@ -7820,13 +7820,24 @@ async def test_list_tasks():
     """
     with get_db() as conn:
         cursor = conn.cursor()
+
+        # Primeiro, contar total
+        cursor.execute("SELECT COUNT(*) as total FROM tasks")
+        total = cursor.fetchone()['total']
+
+        # Contar por status
+        cursor.execute("SELECT status, COUNT(*) as count FROM tasks GROUP BY status")
+        by_status = {row['status']: row['count'] for row in cursor.fetchall()}
+
+        # Buscar todas as tarefas
         cursor.execute("""
             SELECT id, titulo, status, origem, google_task_id, data_vencimento,
                    sync_status, last_synced_at
             FROM tasks
-            WHERE status = 'pending'
-            ORDER BY data_vencimento ASC NULLS LAST
-            LIMIT 25
+            ORDER BY
+                CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+                data_vencimento ASC NULLS LAST
+            LIMIT 30
         """)
         tasks = [dict(row) for row in cursor.fetchall()]
 
@@ -7837,7 +7848,7 @@ async def test_list_tasks():
             if t.get('last_synced_at'):
                 t['last_synced_at'] = t['last_synced_at'].isoformat() if hasattr(t['last_synced_at'], 'isoformat') else str(t['last_synced_at'])
 
-    return {"count": len(tasks), "tasks": tasks}
+    return {"total": total, "by_status": by_status, "count": len(tasks), "tasks": tasks}
 
 
 @app.get("/api/tasks/sync/status")
