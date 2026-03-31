@@ -5294,27 +5294,21 @@ async def cron_daily_sync(request: Request):
     except Exception as e:
         results["steps"]["sync_calendar"] = {"status": "error", "error": str(e)}
 
-    # 4. Sync Tasks
+    # 4. Sync Tasks (bidirecional completo)
     try:
-        from integrations.google_tasks import get_tasks_integration
-        from integrations.gmail import GmailIntegration
+        from services.tasks_sync import get_tasks_sync_service
+        tasks_service = get_tasks_sync_service()
+        sync_result = await tasks_service.full_sync()
 
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
-            account = cursor.fetchone()
-
-        if account:
-            gmail = GmailIntegration()
-            tokens = await gmail.refresh_access_token(account["refresh_token"])
-            if "access_token" in tokens:
-                tasks_api = get_tasks_integration()
-                task_lists = await tasks_api.list_task_lists(tokens["access_token"])
-                results["steps"]["sync_tasks"] = {"status": "success", "task_lists": len(task_lists)}
-            else:
-                results["steps"]["sync_tasks"] = {"status": "skipped", "reason": "token_error"}
+        if "error" in sync_result:
+            results["steps"]["sync_tasks"] = {"status": "error", "error": sync_result["error"]}
         else:
-            results["steps"]["sync_tasks"] = {"status": "skipped", "reason": "no_account"}
+            results["steps"]["sync_tasks"] = {
+                "status": "success",
+                "pushed": sync_result.get("push", {}).get("pushed", 0),
+                "pulled_created": sync_result.get("pull", {}).get("created", 0),
+                "pulled_updated": sync_result.get("pull", {}).get("updated", 0)
+            }
     except Exception as e:
         results["steps"]["sync_tasks"] = {"status": "error", "error": str(e)}
 
@@ -7801,6 +7795,21 @@ async def sync_tasks(request: Request):
         raise HTTPException(status_code=500, detail=result["error"])
 
     return result
+
+
+@app.get("/api/tasks/sync/test")
+async def test_tasks_sync():
+    """
+    Endpoint para testar sync de tasks (sem autenticacao).
+    Executa sync bidirecional completo.
+    """
+    tasks_service = get_tasks_sync_service()
+    result = await tasks_service.full_sync()
+
+    return {
+        "status": "error" if "error" in result else "success",
+        "result": result
+    }
 
 
 @app.get("/api/tasks/sync/status")
