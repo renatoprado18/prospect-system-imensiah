@@ -6207,9 +6207,13 @@ async def get_dashboard_unified(request: Request):
 # Implementado por: FLOW (2026-03-25)
 
 @app.get("/api/circulos")
-async def get_circulos():
-    """Retorna configuracao e estatisticas dos circulos"""
-    return get_dashboard_circulos()
+async def get_circulos(contexto: str = None):
+    """Retorna configuracao e estatisticas dos circulos.
+
+    Args:
+        contexto: Filtro de contexto ('professional', 'personal', ou None para todos)
+    """
+    return get_dashboard_circulos(contexto=contexto)
 
 
 @app.get("/api/circulos/{circulo}/contacts")

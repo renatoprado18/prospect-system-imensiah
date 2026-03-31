@@ -393,6 +393,16 @@
         margin-bottom: 0.5rem;
         display: block;
     }
+
+    /* Urgent pulse animation */
+    @keyframes urgentPulse {
+        0%, 100% { background: white; }
+        50% { background: #fef2f2; }
+    }
+    .sidebar-item.urgent-pulse {
+        animation: urgentPulse 2s ease-in-out infinite;
+        border-left: 3px solid #dc2626;
+    }
 </style>
 {% endblock %}
 
@@ -520,33 +530,45 @@ const LIMIT = 25;
 let circuloData = {};
 let circuloConfig = {};
 
-const circleNames = {
-    1: { nome: 'Nucleo', desc: 'Contato semanal' },
-    2: { nome: 'Proximo', desc: 'Contato quinzenal' },
-    3: { nome: 'Relacionamento', desc: 'Contato mensal' },
-    4: { nome: 'Ocasional', desc: 'Contato trimestral' },
-    5: { nome: 'Distante', desc: 'Contato semestral' }
+// Default names (will be overridden by API config)
+const defaultCircleNames = {
+    1: { nome: 'Nucleo', descricao: 'Contato semanal', frequencia_dias: 7 },
+    2: { nome: 'Proximo', descricao: 'Contato quinzenal', frequencia_dias: 14 },
+    3: { nome: 'Relacionamento', descricao: 'Contato mensal', frequencia_dias: 30 },
+    4: { nome: 'Ocasional', descricao: 'Contato trimestral', frequencia_dias: 90 },
+    5: { nome: 'Distante', descricao: 'Contato anual', frequencia_dias: 365 }
 };
 
-async function loadDashboard() {
+async function loadDashboard(reloadCircleData = true) {
     try {
-        const response = await fetch('/api/circulos');
+        // Build API URL with context filter for circle data
+        let apiUrl = '/api/circulos';
+        if (currentContext !== 'all') {
+            apiUrl += `?contexto=${currentContext}`;
+        }
+
+        const response = await fetch(apiUrl);
         const data = await response.json();
 
         circuloData = data.por_circulo || {};
         circuloConfig = data.config || {};
 
-        // Update context counts
-        updateContextCounts(data);
+        // Update context counts (always show total counts, not filtered)
+        if (reloadCircleData) {
+            // Load unfiltered counts for context switcher
+            const allDataResponse = await fetch('/api/circulos');
+            const allData = await allDataResponse.json();
+            updateContextCounts(allData);
 
-        // Render circles
+            // Render sidebars with all data (not filtered)
+            renderPrecisamAtencao(allData.precisam_atencao);
+            renderAniversarios(allData.aniversarios);
+        }
+
+        // Render circles with filtered data
         renderCircleCards();
 
-        // Render sidebars
-        renderPrecisamAtencao(data.precisam_atencao);
-        renderAniversarios(data.aniversarios);
-
-        // Update quick stats
+        // Update quick stats with filtered data
         updateQuickStats(data);
 
         // Load contacts
@@ -589,15 +611,26 @@ function renderCircleCards() {
 
     for (let i = 1; i <= 5; i++) {
         const stats = circuloData[i] || { total: 0, health_medio: 50 };
-        const cfg = circuloConfig[i] || circleNames[i];
+        const cfg = circuloConfig[i] || defaultCircleNames[i];
         const isActive = currentCirculo === i;
         const healthClass = getHealthClass(stats.health_medio);
+
+        // Format frequency description
+        const freq = cfg.frequencia_dias || defaultCircleNames[i].frequencia_dias;
+        let freqDesc = cfg.descricao || '';
+        if (!freqDesc && freq) {
+            if (freq <= 7) freqDesc = 'Contato semanal';
+            else if (freq <= 14) freqDesc = 'Contato quinzenal';
+            else if (freq <= 30) freqDesc = 'Contato mensal';
+            else if (freq <= 90) freqDesc = 'Contato trimestral';
+            else freqDesc = 'Contato anual';
+        }
 
         container.innerHTML += `
             <div class="circle-card circle-${i} ${isActive ? 'active' : ''}" onclick="selectCirculo(${i})">
                 <div class="circle-number">${formatNumber(stats.total)}</div>
-                <div class="circle-name">${cfg.nome}</div>
-                <div class="circle-desc">${cfg.desc || circleNames[i].desc}</div>
+                <div class="circle-name">${cfg.nome || defaultCircleNames[i].nome}</div>
+                <div class="circle-desc">${freqDesc}</div>
                 <div class="circle-health">
                     <span class="health-indicator ${healthClass}"></span>
                     <span class="health-label">Health: ${Math.round(stats.health_medio)}%</span>
@@ -615,16 +648,31 @@ function renderPrecisamAtencao(contacts) {
         return;
     }
 
-    container.innerHTML = contacts.slice(0, 6).map(c => `
-        <a href="/contatos/${c.id}" class="sidebar-item">
-            <div class="sidebar-avatar warning">${c.nome.charAt(0)}</div>
-            <div class="sidebar-info">
-                <div class="sidebar-name">${c.nome}</div>
-                <div class="sidebar-meta">C${c.circulo} · ${c.health_score}%</div>
-            </div>
-            <span class="sidebar-badge urgent">${formatDaysAgo(c.ultimo_contato)}</span>
-        </a>
-    `).join('');
+    // Category styles
+    const categoryStyles = {
+        urgent: { avatar: 'background: #fee2e2; color: #dc2626;', badge: 'color: #dc2626; font-weight: 600;', icon: '🔴' },
+        important: { avatar: 'background: #ffedd5; color: #ea580c;', badge: 'color: #ea580c;', icon: '🟠' },
+        attention: { avatar: 'background: #fef3c7; color: #d97706;', badge: 'color: #d97706;', icon: '🟡' }
+    };
+
+    container.innerHTML = contacts.slice(0, 8).map(c => {
+        const cat = categoryStyles[c.category] || categoryStyles.attention;
+        const hasBirthday = c.aniversario_proximo ? ' 🎂' : '';
+        const daysText = c.aniversario_proximo && c.dias_ate_aniversario <= 7
+            ? (c.dias_ate_aniversario === 0 ? 'Aniv hoje!' : `Aniv ${c.dias_ate_aniversario}d`)
+            : formatDaysAgo(c.ultimo_contato);
+
+        return `
+            <a href="/contatos/${c.id}" class="sidebar-item ${c.category === 'urgent' ? 'urgent-pulse' : ''}">
+                <div class="sidebar-avatar" style="${cat.avatar}">${c.nome.charAt(0)}${hasBirthday}</div>
+                <div class="sidebar-info">
+                    <div class="sidebar-name">${c.nome}</div>
+                    <div class="sidebar-meta">C${c.circulo} · ${c.health_score}%</div>
+                </div>
+                <span class="sidebar-badge" style="${cat.badge}">${daysText}</span>
+            </a>
+        `;
+    }).join('');
 }
 
 function renderAniversarios(aniversarios) {
@@ -657,9 +705,8 @@ function switchContext(context) {
         btn.classList.toggle('active', btn.dataset.context === context);
     });
 
-    // Update circle cards to show filtered data
-    renderCircleCards();
-    loadContacts();
+    // Reload circle stats with context filter (don't reload sidebars)
+    loadDashboard(false);
 }
 
 function selectCirculo(circulo) {
@@ -690,7 +737,7 @@ async function loadContacts() {
         const data = await response.json();
 
         const contacts = data.contacts || data;
-        const cfg = circuloConfig[currentCirculo] || circleNames[currentCirculo] || {};
+        const cfg = circuloConfig[currentCirculo] || defaultCircleNames[currentCirculo] || {};
 
         let title = '<i class="bi bi-people me-2"></i>';
         if (currentCirculo) {

@@ -870,40 +870,155 @@ def recalcular_todos_circulos(force: bool = False, limit: int = None) -> Dict:
 
 def get_contatos_precisando_atencao(limit: int = 10) -> List[Dict]:
     """
-    Retorna contatos com health_score baixo, priorizando circulos mais proximos.
+    Retorna contatos precisando atencao com scoring por prioridade.
+
+    Algoritmo de scoring:
+    priority_score = (peso_circulo × fator_health × fator_dias) + bonus
+
+    Pesos por circulo:
+    - C1 (Nucleo): 100
+    - C2 (Proximo): 80
+    - C3 (Ativo): 60
+    - C4 (Ocasional): 40
+
+    Multiplicadores:
+    - Health < 25%: ate 2.5x
+    - Dias sem contato acima do limite: ate 2x
+
+    Bonus:
+    - Aniversario em 7 dias: +50
+    - Health critico (<20%): +30
+    - Muito tempo sem contato: +20
+
+    Categorias visuais:
+    - urgent: C1/C2 com health critico ou muito tempo sem contato
+    - important: C1/C2/C3 precisando atencao moderada
+    - attention: Outros em risco
 
     Args:
         limit: Numero maximo de contatos a retornar
 
     Returns:
-        Lista de contatos precisando atencao
+        Lista de contatos precisando atencao com priority_score e category
     """
     with get_db() as conn:
         cursor = conn.cursor()
 
+        # Buscar contatos com health < 70 ou aniversario proximo (circulos 1-4)
         cursor.execute("""
             SELECT id, nome, empresa, cargo, foto_url,
                    circulo, health_score, ultimo_contato,
-                   frequencia_ideal_dias, emails, telefones
+                   frequencia_ideal_dias, emails, telefones, aniversario
             FROM contacts
             WHERE COALESCE(circulo, 5) <= 4
-              AND COALESCE(health_score, 50) < 50
-            ORDER BY
-                COALESCE(circulo, 5) ASC,
-                COALESCE(health_score, 50) ASC
-            LIMIT %s
-        """, (limit,))
+              AND (
+                  COALESCE(health_score, 50) < 70
+                  OR (
+                      aniversario IS NOT NULL
+                      AND (
+                          (EXTRACT(MONTH FROM aniversario) = EXTRACT(MONTH FROM CURRENT_DATE)
+                           AND EXTRACT(DAY FROM aniversario) >= EXTRACT(DAY FROM CURRENT_DATE)
+                           AND EXTRACT(DAY FROM aniversario) <= EXTRACT(DAY FROM CURRENT_DATE) + 7)
+                          OR
+                          (EXTRACT(MONTH FROM aniversario) = EXTRACT(MONTH FROM CURRENT_DATE + INTERVAL '7 days')
+                           AND EXTRACT(DAY FROM aniversario) <= EXTRACT(DAY FROM CURRENT_DATE + INTERVAL '7 days'))
+                      )
+                  )
+              )
+            ORDER BY circulo ASC, health_score ASC
+            LIMIT 100
+        """)
+
+        # Pesos por circulo
+        CIRCULO_WEIGHTS = {1: 100, 2: 80, 3: 60, 4: 40, 5: 20}
 
         results = []
+        hoje = datetime.now().date()
+
         for row in cursor.fetchall():
             contact = dict(row)
-            # Calcular dias sem contato para exibicao
-            contact["dias_sem_contato"] = calcular_dias_sem_contato(contact.get("ultimo_contato"))
+            circulo = contact.get("circulo") or 5
+            health = contact.get("health_score") or 50
+
+            # Calcular dias sem contato
+            dias_sem_contato = calcular_dias_sem_contato(contact.get("ultimo_contato"))
+            contact["dias_sem_contato"] = dias_sem_contato
+
             # Config do circulo
-            contact["circulo_config"] = CIRCULO_CONFIG.get(contact.get("circulo") or 5)
+            circulo_cfg = CIRCULO_CONFIG.get(circulo, CIRCULO_CONFIG[5])
+            contact["circulo_config"] = circulo_cfg
+            frequencia_ideal = contact.get("frequencia_ideal_dias") or circulo_cfg.get("frequencia_dias", 30)
+
+            # === CALCULAR PRIORITY SCORE ===
+            peso_base = CIRCULO_WEIGHTS.get(circulo, 20)
+
+            # Fator health (quanto menor, mais urgente)
+            if health < 25:
+                fator_health = 2.5
+            elif health < 40:
+                fator_health = 2.0
+            elif health < 50:
+                fator_health = 1.5
+            elif health < 70:
+                fator_health = 1.2
+            else:
+                fator_health = 1.0
+
+            # Fator dias (quanto mais atrasado, mais urgente)
+            fator_dias = 1.0
+            if dias_sem_contato and frequencia_ideal:
+                excesso = dias_sem_contato - frequencia_ideal
+                if excesso > frequencia_ideal:  # 2x o limite
+                    fator_dias = 2.0
+                elif excesso > frequencia_ideal * 0.5:  # 1.5x o limite
+                    fator_dias = 1.5
+                elif excesso > 0:
+                    fator_dias = 1.2
+
+            # Score base
+            priority_score = peso_base * fator_health * fator_dias
+
+            # === BONUS ===
+            # Aniversario em 7 dias
+            aniversario = contact.get("aniversario")
+            dias_ate_aniversario = None
+            if aniversario:
+                try:
+                    aniv_este_ano = aniversario.replace(year=hoje.year)
+                    if aniv_este_ano < hoje:
+                        aniv_este_ano = aniversario.replace(year=hoje.year + 1)
+                    dias_ate_aniversario = (aniv_este_ano - hoje).days
+                    if 0 <= dias_ate_aniversario <= 7:
+                        priority_score += 50
+                        contact["aniversario_proximo"] = True
+                        contact["dias_ate_aniversario"] = dias_ate_aniversario
+                except (ValueError, AttributeError):
+                    pass
+
+            # Health critico
+            if health < 20:
+                priority_score += 30
+
+            # Muito tempo sem contato (2x o limite)
+            if dias_sem_contato and frequencia_ideal and dias_sem_contato > frequencia_ideal * 2:
+                priority_score += 20
+
+            contact["priority_score"] = round(priority_score, 1)
+
+            # === CATEGORIA VISUAL ===
+            if circulo <= 2 and (health < 25 or (dias_sem_contato and frequencia_ideal and dias_sem_contato > frequencia_ideal * 2)):
+                contact["category"] = "urgent"  # 🔴 URGENTE
+            elif circulo <= 3 and health < 50:
+                contact["category"] = "important"  # 🟠 Importante
+            else:
+                contact["category"] = "attention"  # 🟡 Atenção
+
             results.append(contact)
 
-        return results
+        # Ordenar por priority_score (maior primeiro)
+        results.sort(key=lambda x: x.get("priority_score", 0), reverse=True)
+
+        return results[:limit]
 
 
 def get_aniversarios_proximos(dias: int = 30) -> List[Dict]:
@@ -962,9 +1077,12 @@ def get_aniversarios_proximos(dias: int = 30) -> List[Dict]:
         return results[:20]  # Limita a 20
 
 
-def get_dashboard_circulos() -> Dict:
+def get_dashboard_circulos(contexto: str = None) -> Dict:
     """
     Retorna dados consolidados para o dashboard de circulos.
+
+    Args:
+        contexto: Filtro de contexto ('professional', 'personal', ou None para todos)
 
     Returns:
         Dict com estatisticas e dados do dashboard
@@ -972,13 +1090,22 @@ def get_dashboard_circulos() -> Dict:
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Contagem e health medio por circulo
-        cursor.execute("""
+        # Build context filter
+        context_filter = ""
+        context_params = []
+        if contexto == "professional":
+            context_filter = "WHERE COALESCE(contexto, 'professional') != 'personal'"
+        elif contexto == "personal":
+            context_filter = "WHERE contexto = 'personal'"
+
+        # Contagem e health medio por circulo (com filtro de contexto)
+        cursor.execute(f"""
             SELECT
                 COALESCE(circulo, 5) as circulo,
                 COUNT(*) as total,
                 AVG(COALESCE(health_score, 50)) as health_medio
             FROM contacts
+            {context_filter}
             GROUP BY COALESCE(circulo, 5)
             ORDER BY circulo
         """)
@@ -1003,6 +1130,22 @@ def get_dashboard_circulos() -> Dict:
                     "config": CIRCULO_CONFIG[c]
                 }
 
+        # Contagem por contexto (personal/professional)
+        cursor.execute("""
+            SELECT
+                COALESCE(contexto, 'professional') as contexto,
+                COUNT(*) as total
+            FROM contacts
+            GROUP BY COALESCE(contexto, 'professional')
+        """)
+        by_context = {"personal": 0, "professional": 0}
+        for row in cursor.fetchall():
+            ctx = row["contexto"]
+            if ctx in ("personal", "pessoal"):
+                by_context["personal"] = row["total"]
+            else:
+                by_context["professional"] += row["total"]
+
         # Contatos em risco (health < 30% em circulos 1-4)
         cursor.execute("""
             SELECT COUNT(*) as count
@@ -1023,10 +1166,12 @@ def get_dashboard_circulos() -> Dict:
         return {
             "por_circulo": por_circulo,
             "config": CIRCULO_CONFIG,
+            "total": total_geral,
             "total_contatos": total_geral,
+            "by_context": by_context,
             "em_risco": em_risco,
             "sem_circulo": sem_circulo,
-            "precisam_atencao": get_contatos_precisando_atencao(5),
+            "precisam_atencao": get_contatos_precisando_atencao(10),
             "aniversarios": get_aniversarios_proximos(14)
         }
 
