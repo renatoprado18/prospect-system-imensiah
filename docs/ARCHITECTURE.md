@@ -147,10 +147,36 @@ Prospect -> scoring.py -> Fatores (cargo, setor, dados) -> Tier A/B/C/D/E
 
 ## Deploy
 
-- **Plataforma**: Vercel
+- **Plataforma**: Vercel (Serverless)
 - **Regiao**: GRU1 (Brasil)
-- **Dominio**: prospects.almeida-prado.com
+- **Dominio**: intel.almeida-prado.com
+- **Deploy**: AUTOMATICO via GitHub push (nao precisa acao manual)
 - **Cron**: Sync contatos 9h diario
+
+### Fluxo de Deploy
+```
+git push origin main -> GitHub -> Vercel detecta push -> Build automatico -> Deploy em ~2min
+```
+
+## Gotchas e Conhecimento Importante
+
+### FastAPI Route Ordering
+- Rotas especificas DEVEM vir ANTES de rotas parametrizadas
+- Ex: `/api/contacts/suggestions` ANTES de `/api/contacts/{contact_id}`
+- Caso contrario: erro 422 (FastAPI tenta validar "suggestions" como int)
+
+### Google OAuth Scopes
+- Para sync de Tasks (leitura+escrita): usar `https://www.googleapis.com/auth/tasks`
+- NAO usar `tasks.readonly` se precisar criar/atualizar tasks
+- Usuario precisa reconectar conta Google apos mudanca de scope
+
+### PostgreSQL
+- Funcao `similarity()` requer extensao `pg_trgm` (nao disponivel no Vercel Postgres)
+- Usar `ILIKE` para buscas fuzzy simples
+
+### Desenvolvimento Local
+- Servidor local: `uvicorn app.main:app --reload` (porta 8000)
+- Hot reload automatico com WatchFiles
 
 ## Variaveis de Ambiente
 
