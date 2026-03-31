@@ -23,6 +23,9 @@ from typing import Optional, Dict, List, Any
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 async def get_contact_context(contact_id: int, db_connection) -> Dict[str, Any]:
     """
@@ -269,7 +272,10 @@ Responda APENAS com JSON valido:
 
     # Call Claude API
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        logger.info(f"Enriching contact {contact_id} with model {CLAUDE_MODEL}")
+        logger.info(f"Prompt length: {len(prompt)} chars")
+
+        async with httpx.AsyncClient(timeout=90.0) as client:
             response = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -286,10 +292,14 @@ Responda APENAS com JSON valido:
                 }
             )
 
+            logger.info(f"API response status: {response.status_code}")
+
             if response.status_code != 200:
+                error_text = response.text[:500]
+                logger.error(f"API error: {response.status_code} - {error_text}")
                 return {
                     "status": "error",
-                    "error": f"API error: {response.status_code} - {response.text}"
+                    "error": f"API error: {response.status_code} - {error_text}"
                 }
 
             result = response.json()
