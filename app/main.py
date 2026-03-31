@@ -8361,6 +8361,105 @@ async def mark_inbox_conversation_read(
     return {"success": True}
 
 
+@app.post("/api/inbox/conversations/{conversation_id}/reply")
+async def send_inbox_reply(
+    request: Request,
+    conversation_id: int
+):
+    """Envia resposta em uma conversa (WhatsApp ou Email)"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = await request.json()
+    content = data.get("content", "").strip()
+
+    if not content:
+        raise HTTPException(status_code=400, detail="Conteudo da mensagem e obrigatorio")
+
+    service = get_inbox_service()
+
+    # Get conversation details
+    conversation = service.get_conversation_by_id(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversa nao encontrada")
+
+    contact_id = conversation.get("contact_id")
+    channel = conversation.get("channel")
+
+    # Get contact info for phone/email
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, telefones, emails
+            FROM contacts
+            WHERE id = %s
+        """, (contact_id,))
+        contact = cursor.fetchone()
+
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+    contact = dict(contact)
+    sent_result = None
+
+    # Send via appropriate channel
+    if channel == "whatsapp":
+        # Get phone number
+        phones = contact.get("telefones", [])
+        if not phones:
+            raise HTTPException(status_code=400, detail="Contato nao tem telefone cadastrado")
+
+        phone = phones[0].get("numero") if isinstance(phones[0], dict) else phones[0]
+
+        # Send via WhatsApp
+        try:
+            sent_result = await whatsapp.send_text(phone, content)
+            if "error" in sent_result:
+                raise HTTPException(status_code=500, detail=f"Erro ao enviar WhatsApp: {sent_result['error']}")
+        except Exception as e:
+            logger.error(f"Error sending WhatsApp: {e}")
+            raise HTTPException(status_code=500, detail=f"Erro ao enviar mensagem: {str(e)}")
+
+    elif channel == "email":
+        # TODO: Implement email sending via Gmail API
+        raise HTTPException(status_code=501, detail="Envio de email ainda nao implementado")
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Canal desconhecido: {channel}")
+
+    # Save message to database
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Insert outgoing message
+        cursor.execute("""
+            INSERT INTO messages (conversation_id, contact_id, direcao, conteudo, enviado_em)
+            VALUES (%s, %s, 'outgoing', %s, NOW())
+            RETURNING id
+        """, (conversation_id, contact_id, content))
+        message_id = cursor.fetchone()["id"]
+
+        # Update conversation
+        cursor.execute("""
+            UPDATE conversations
+            SET ultimo_mensagem = NOW(),
+                total_mensagens = total_mensagens + 1,
+                requer_resposta = FALSE,
+                atualizado_em = NOW()
+            WHERE id = %s
+        """, (conversation_id,))
+
+        conn.commit()
+
+    return {
+        "success": True,
+        "message_id": message_id,
+        "channel": channel,
+        "sent_result": sent_result
+    }
+
+
 # =============================================================================
 # ACTION PROPOSALS ENDPOINTS (INTEL Proativo)
 # =============================================================================
