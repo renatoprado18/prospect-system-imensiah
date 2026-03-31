@@ -300,9 +300,9 @@
 {% endblock %}
 
 {% block content %}
-<div class="split-container">
+<div class="split-container" style="display: flex !important; flex-direction: row !important; gap: 1rem;">
     <!-- PESSOAL -->
-    <div class="context-section personal">
+    <div class="context-section personal" style="flex: 1; min-width: 0;">
         <div class="context-header personal">
             <div class="context-icon personal"><i class="bi bi-heart-fill"></i></div>
             <div class="context-title">Pessoal</div>
@@ -320,7 +320,7 @@
     </div>
 
     <!-- PROFISSIONAL -->
-    <div class="context-section professional">
+    <div class="context-section professional" style="flex: 1; min-width: 0;">
         <div class="context-header professional">
             <div class="context-icon professional"><i class="bi bi-briefcase-fill"></i></div>
             <div class="context-title">Profissional</div>
@@ -436,23 +436,42 @@ async function filterByCircle(ctx, n) {
     const el = document.getElementById(`list${cap(ctx)}`);
     el.innerHTML = '<div class="empty-state"><div class="spinner-border spinner-border-sm"></div></div>';
 
-    let url = `/api/contacts?contexto=${ctx}&limit=20&sort_by=priority`;
-    if (n) url += `&circulo=${n}`;
+    // If no circle selected, reload prioridades from data
+    if (!n) {
+        const d = ctx === 'pessoal' ? data.pessoal : data.profissional;
+        renderList(ctx, d.prioridades);
+        return;
+    }
 
+    // Use the specific circle endpoint
     try {
-        const res = await fetch(url);
+        const res = await fetch(`/api/circulos/${n}/contacts?sort_by=health&limit=20`);
         const r = await res.json();
-        const contacts = r.contacts || r;
+        const contacts = r.contacts || [];
         const cfg = ctx === 'pessoal' ? data.pessoal.config : data.profissional.config;
-        contacts.forEach(c => {
-            const cn = c.circulo_pessoal || c.circulo_profissional || c.circulo || 5;
+
+        // Filter by context
+        const ctxField = ctx === 'pessoal' ? 'personal' : 'professional';
+        const filtered = contacts.filter(c => {
+            const cCtx = c.contexto || 'professional';
+            return cCtx.includes(ctxField) || (ctx === 'profissional' && !cCtx.includes('personal'));
+        });
+
+        filtered.forEach(c => {
+            const cn = ctx === 'pessoal' ? (c.circulo_pessoal || c.circulo || 5) : (c.circulo_profissional || c.circulo || 5);
             c.badge = cfg[cn]?.badge || `C${cn}`;
             c.fatores = c.fatores || [];
-            c.category = c.category || 'attention';
+            c.category = c.category || (c.health_score < 40 ? 'attention' : 'normal');
         });
-        renderList(ctx, contacts);
+
+        if (filtered.length === 0) {
+            el.innerHTML = '<div class="empty-state">Nenhum contato neste círculo</div>';
+        } else {
+            renderList(ctx, filtered);
+        }
     } catch (e) {
-        el.innerHTML = '<div class="empty-state text-danger">Erro</div>';
+        console.error('Filter error:', e);
+        el.innerHTML = '<div class="empty-state text-danger">Erro ao filtrar</div>';
     }
 }
 
