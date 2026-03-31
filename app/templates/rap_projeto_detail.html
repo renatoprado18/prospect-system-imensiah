@@ -738,11 +738,19 @@
         resultsDiv.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm"></div> Buscando...</div>';
 
         try {
-            const response = await fetch(`/api/contacts/search?q=${encodeURIComponent(query)}&limit=10`);
-            const results = await response.json();
-            const contacts = results.contacts || results || [];
+            const response = await fetch(`/api/contacts/suggestions?q=${encodeURIComponent(query)}&limit=10`);
 
-            console.log('Search results:', contacts);
+            if (!response.ok) {
+                console.error('Search API error:', response.status);
+                resultsDiv.innerHTML = '<p class="text-danger small p-3">Erro na busca (API ' + response.status + ')</p>';
+                return;
+            }
+
+            const results = await response.json();
+            console.log('API response:', results);
+
+            const contacts = results.suggestions || [];
+            console.log('Contacts:', contacts);
 
             if (contacts.length === 0) {
                 resultsDiv.innerHTML = '<p class="text-muted small p-3">Nenhum contato encontrado para "' + query + '"</p>';
