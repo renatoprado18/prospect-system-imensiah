@@ -8642,6 +8642,37 @@ async def get_contact_suggestions(
         return {"suggestions": [], "error": str(e)}
 
 
+@app.get("/api/contacts/quick-search")
+async def quick_search_contacts(request: Request):
+    """Busca simples de contatos - endpoint alternativo"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    # Pegar query da URL manualmente
+    query = request.query_params.get("q", "")
+    limit = int(request.query_params.get("limit", "10"))
+
+    if not query or len(query) < 2:
+        return {"contacts": []}
+
+    try:
+        with get_pg_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, nome, empresa, cargo, foto_url
+                FROM contacts
+                WHERE nome ILIKE %s
+                ORDER BY nome
+                LIMIT %s
+            """, (f"%{query}%", limit))
+            contacts = [dict(row) for row in cursor.fetchall()]
+        return {"contacts": contacts}
+    except Exception as e:
+        logger.error(f"Error in quick search: {e}")
+        return {"contacts": [], "error": str(e)}
+
+
 @app.get("/api/contacts/by-company/{empresa}")
 async def get_contacts_by_company(
     request: Request,

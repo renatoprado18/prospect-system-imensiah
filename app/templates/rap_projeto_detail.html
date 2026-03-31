@@ -738,7 +738,7 @@
         resultsDiv.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm"></div> Buscando...</div>';
 
         try {
-            const response = await fetch(`/api/contacts/suggestions?q=${encodeURIComponent(query)}&limit=10`);
+            const response = await fetch(`/api/contacts/quick-search?q=${encodeURIComponent(query)}&limit=10`);
 
             if (!response.ok) {
                 console.error('Search API error:', response.status);
