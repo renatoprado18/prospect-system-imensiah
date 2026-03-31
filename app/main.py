@@ -7812,6 +7812,34 @@ async def test_tasks_sync():
     }
 
 
+@app.get("/api/tasks/test-list")
+async def test_list_tasks():
+    """
+    Endpoint para testar listagem de tasks (sem auth).
+    Mostra as tarefas do banco de dados.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, titulo, status, origem, google_task_id, data_vencimento,
+                   sync_status, last_synced_at
+            FROM tasks
+            WHERE status = 'pending'
+            ORDER BY data_vencimento ASC NULLS LAST
+            LIMIT 25
+        """)
+        tasks = [dict(row) for row in cursor.fetchall()]
+
+        # Format dates for JSON
+        for t in tasks:
+            if t.get('data_vencimento'):
+                t['data_vencimento'] = t['data_vencimento'].isoformat() if hasattr(t['data_vencimento'], 'isoformat') else str(t['data_vencimento'])
+            if t.get('last_synced_at'):
+                t['last_synced_at'] = t['last_synced_at'].isoformat() if hasattr(t['last_synced_at'], 'isoformat') else str(t['last_synced_at'])
+
+    return {"count": len(tasks), "tasks": tasks}
+
+
 @app.get("/api/tasks/sync/status")
 async def get_tasks_sync_status(request: Request):
     """
