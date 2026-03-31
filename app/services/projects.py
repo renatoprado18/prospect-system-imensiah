@@ -28,6 +28,39 @@ PROJECT_STATUS = {
     'cancelado': {'label': 'Cancelado', 'color': '#ef4444'},
 }
 
+# Owner config - automatically added as participant to all projects
+OWNER_EMAIL = "renato@almeida-prado.com"
+OWNER_NAME_PATTERNS = ["Renato de Faria e Almeida Prado", "Renato Almeida Prado", "Renato de Faria", "Renato Prado"]
+
+
+def get_owner_contact_id() -> Optional[int]:
+    """Find the owner's contact ID by email or name patterns."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Try by email first
+        cursor.execute("""
+            SELECT id FROM contacts
+            WHERE emails::text ILIKE %s
+            LIMIT 1
+        """, (f'%{OWNER_EMAIL}%',))
+        row = cursor.fetchone()
+        if row:
+            return row['id']
+
+        # Try by name patterns
+        for name in OWNER_NAME_PATTERNS:
+            cursor.execute("""
+                SELECT id FROM contacts
+                WHERE nome ILIKE %s
+                LIMIT 1
+            """, (f'%{name}%',))
+            row = cursor.fetchone()
+            if row:
+                return row['id']
+
+        return None
+
 
 def list_projects(
     tipo: str = None,
@@ -167,6 +200,11 @@ def create_project(data: Dict) -> Dict:
 
         project = dict(cursor.fetchone())
         conn.commit()
+
+        # Always add owner as participant (Renato)
+        owner_id = get_owner_contact_id()
+        if owner_id:
+            add_project_member(project['id'], owner_id, "Responsavel")
 
         # Add initial members if provided
         if data.get('membros'):
