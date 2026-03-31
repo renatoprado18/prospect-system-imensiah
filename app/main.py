@@ -10473,6 +10473,7 @@ async def briefing_create_task(request: Request, data: BriefingTaskCreate):
     """
     Cria tarefa rapida a partir do briefing.
     Auto-gera titulo baseado no tipo de acao e dados do contato.
+    Salva localmente E sincroniza com Google Tasks imediatamente.
     """
     user = get_current_user(request)
     if not user:
@@ -10507,25 +10508,6 @@ async def briefing_create_task(request: Request, data: BriefingTaskCreate):
         cargo_info = f" ({contact['cargo']})" if contact.get('cargo') else ""
         notes = f"Contato: {contact['nome']}{cargo_info}{empresa_info}\nCriado via Briefing RAP"
 
-    # Get Google account for Tasks API
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
-        account = cursor.fetchone()
-
-    if not account:
-        raise HTTPException(status_code=400, detail="Nenhuma conta Google conectada")
-
-    from integrations.gmail import GmailIntegration
-    gmail = GmailIntegration()
-    tokens = await gmail.refresh_access_token(account["refresh_token"])
-
-    if "error" in tokens:
-        raise HTTPException(status_code=401, detail="Token invalido")
-
-    access_token = tokens.get("access_token")
-    tasks_api = get_tasks_integration()
-
     # Parse due date
     due_datetime = None
     if data.due_date:
@@ -10534,11 +10516,14 @@ async def briefing_create_task(request: Request, data: BriefingTaskCreate):
         except:
             pass
 
-    result = await tasks_api.create_task(
-        access_token=access_token,
-        title=title,
-        notes=notes,
-        due=due_datetime
+    # Use sync service to create locally AND push to Google
+    tasks_service = get_tasks_sync_service()
+    result = await tasks_service.create_task(
+        titulo=title,
+        descricao=notes,
+        data_vencimento=due_datetime,
+        contact_id=data.contact_id,
+        sync_to_google=True
     )
 
     if "error" in result:
@@ -10546,9 +10531,10 @@ async def briefing_create_task(request: Request, data: BriefingTaskCreate):
 
     return {
         "status": "success",
-        "task": result,
+        "task_id": result.get("id"),
         "contact_name": contact['nome'],
-        "action_type": data.action_type
+        "action_type": data.action_type,
+        "synced_to_google": True
     }
 
 
@@ -11226,7 +11212,7 @@ async def api_project_timeline(project_id: int, limit: int = 50):
 async def api_add_project_task(project_id: int, request: Request):
     """
     Cria tarefa vinculada ao projeto.
-    Salva no banco local com project_id.
+    Salva no banco local com project_id E sincroniza com Google Tasks.
     """
     data = await request.json()
     titulo = data.get('titulo')
@@ -11236,81 +11222,90 @@ async def api_add_project_task(project_id: int, request: Request):
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Verify project exists
-        cursor.execute("SELECT id FROM projects WHERE id = %s", (project_id,))
-        if not cursor.fetchone():
+        # Verify project exists and get project name for context
+        cursor.execute("SELECT id, nome FROM projects WHERE id = %s", (project_id,))
+        project = cursor.fetchone()
+        if not project:
             raise HTTPException(status_code=404, detail="Projeto nao encontrado")
 
-        # Create task
-        cursor.execute("""
-            INSERT INTO tasks (
-                titulo, descricao, project_id, contact_id,
-                data_vencimento, prioridade, status, origem
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING *
-        """, (
-            titulo,
-            data.get('descricao'),
-            project_id,
-            data.get('contact_id'),
-            data.get('data_vencimento'),
-            data.get('prioridade', 5),
-            'pending',
-            'projeto'
-        ))
+    # Parse due date
+    due_datetime = None
+    if data.get('data_vencimento'):
+        try:
+            due_datetime = datetime.fromisoformat(str(data['data_vencimento']).replace("Z", "+00:00"))
+        except:
+            pass
 
-        task = dict(cursor.fetchone())
-        conn.commit()
+    # Add project context to description
+    descricao = data.get('descricao') or ''
+    if project['nome']:
+        descricao = f"[Projeto: {project['nome']}]\n{descricao}".strip()
 
-        return {"status": "success", "task": task}
+    # Use sync service to create locally AND push to Google
+    tasks_service = get_tasks_sync_service()
+    result = await tasks_service.create_task(
+        titulo=titulo,
+        descricao=descricao,
+        data_vencimento=due_datetime,
+        prioridade=data.get('prioridade', 5),
+        contact_id=data.get('contact_id'),
+        project_id=project_id,
+        sync_to_google=True
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=f"Erro ao criar tarefa: {result['error']}")
+
+    # Get the created task for response
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM tasks WHERE id = %s", (result.get('id'),))
+        task = dict(cursor.fetchone()) if cursor.fetchone() else result
+
+    return {"status": "success", "task": task, "synced_to_google": True}
 
 
 @app.put("/api/projects/tasks/{task_id}")
 async def api_update_project_task(task_id: int, request: Request):
-    """Atualiza tarefa do projeto."""
+    """Atualiza tarefa do projeto e sincroniza com Google Tasks."""
     data = await request.json()
 
-    with get_db() as conn:
-        cursor = conn.cursor()
+    # Parse due date if present
+    due_datetime = None
+    if data.get('data_vencimento'):
+        try:
+            due_datetime = datetime.fromisoformat(str(data['data_vencimento']).replace("Z", "+00:00"))
+        except:
+            due_datetime = data.get('data_vencimento')
 
-        # Build update dynamically
-        allowed = ['titulo', 'descricao', 'status', 'prioridade', 'data_vencimento', 'contact_id']
-        updates = []
-        values = []
+    # Use sync service to update locally AND push to Google
+    tasks_service = get_tasks_sync_service()
+    result = await tasks_service.update_task(
+        task_id=task_id,
+        titulo=data.get('titulo'),
+        descricao=data.get('descricao'),
+        status=data.get('status'),
+        prioridade=data.get('prioridade'),
+        data_vencimento=due_datetime,
+        sync_to_google=True
+    )
 
-        for field in allowed:
-            if field in data:
-                updates.append(f"{field} = %s")
-                values.append(data[field])
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
 
-        if not updates:
-            raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
-
-        values.append(task_id)
-        cursor.execute(f"""
-            UPDATE tasks SET {', '.join(updates)}
-            WHERE id = %s
-            RETURNING *
-        """, values)
-
-        task = cursor.fetchone()
-        if not task:
-            raise HTTPException(status_code=404, detail="Tarefa nao encontrada")
-
-        conn.commit()
-        return {"status": "success", "task": dict(task)}
+    return {"status": "success", "task": result.get("task", {}), "synced_to_google": True}
 
 
 @app.delete("/api/projects/tasks/{task_id}")
 async def api_delete_project_task(task_id: int):
-    """Deleta tarefa do projeto."""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM tasks WHERE id = %s RETURNING id", (task_id,))
-        if not cursor.fetchone():
-            raise HTTPException(status_code=404, detail="Tarefa nao encontrada")
-        conn.commit()
-        return {"status": "success"}
+    """Deleta tarefa do projeto e do Google Tasks."""
+    tasks_service = get_tasks_sync_service()
+    result = await tasks_service.delete_task(task_id, delete_from_google=True)
+
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+
+    return {"status": "success", "deleted_from_google": True}
 
 
 # ============== PROJECTS PAGE ==============
