@@ -522,6 +522,29 @@
             margin: 0;
         }
 
+        /* Toast Notification */
+        .toast-notification {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--dark);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            z-index: 9999;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .toast-notification.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .toast-notification.success { background: var(--success); }
+        .toast-notification.error { background: var(--danger); }
+
         /* Loading */
         .loading {
             display: flex;
@@ -2062,15 +2085,120 @@
 
         async function toggleTask(taskId, completed) {
             try {
+                // Mark task as completed/pending
                 await fetch(`/api/tasks/${taskId}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ completed, status: completed ? 'completed' : 'pending' })
                 });
+
+                // If completing, check for follow-up suggestion
+                if (completed) {
+                    await checkFollowUpSuggestion(taskId);
+                }
+
                 loadTasks(); // Reload
             } catch (error) {
                 console.error('Error toggling task:', error);
             }
+        }
+
+        async function checkFollowUpSuggestion(taskId) {
+            try {
+                const response = await fetch(`/api/tasks/${taskId}/suggest-followup`);
+                const suggestion = await response.json();
+
+                if (suggestion.needs_followup) {
+                    showFollowUpModal(taskId, suggestion);
+                }
+            } catch (error) {
+                console.error('Error checking follow-up:', error);
+            }
+        }
+
+        function showFollowUpModal(taskId, suggestion) {
+            const content = document.getElementById('taskDetailContent');
+            const dueDate = new Date();
+            dueDate.setDate(dueDate.getDate() + (suggestion.suggested_days || 3));
+            const dueDateStr = dueDate.toISOString().split('T')[0];
+
+            content.innerHTML = `
+                <div class="followup-suggestion">
+                    <div class="alert alert-info mb-3">
+                        <i class="bi bi-lightbulb me-2"></i>
+                        <strong>Sugestão de Follow-up</strong>
+                    </div>
+                    <p class="text-muted">${suggestion.reason || 'Esta tarefa pode precisar de acompanhamento.'}</p>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Título do Follow-up</label>
+                        <input type="text" class="form-control" id="followupTitle"
+                               value="${suggestion.followup_title || 'Follow-up'}" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Data de Vencimento</label>
+                        <input type="date" class="form-control" id="followupDate" value="${dueDateStr}" />
+                    </div>
+
+                    ${suggestion.contact_name ? `<p class="small text-muted"><i class="bi bi-person me-1"></i>Contato: ${suggestion.contact_name}</p>` : ''}
+
+                    <div class="d-flex gap-2 justify-content-end mt-4">
+                        <button class="btn btn-outline-secondary" onclick="closeTaskModal()">
+                            Ignorar
+                        </button>
+                        <button class="btn btn-primary" onclick="createFollowUp(${taskId}, ${suggestion.contact_id || 'null'}, ${suggestion.project_id || 'null'})">
+                            <i class="bi bi-plus-circle me-1"></i>Criar Follow-up
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('taskDetailModal').classList.add('show');
+            document.getElementById('modalBackdrop').classList.add('show');
+        }
+
+        async function createFollowUp(originalTaskId, contactId, projectId) {
+            const title = document.getElementById('followupTitle').value;
+            const dueDate = document.getElementById('followupDate').value;
+
+            try {
+                const response = await fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title: title,
+                        due_date: dueDate,
+                        contact_id: contactId,
+                        project_id: projectId,
+                        notes: `Follow-up da tarefa #${originalTaskId}`
+                    })
+                });
+
+                if (response.ok) {
+                    closeTaskModal();
+                    loadTasks();
+                    // Show success toast
+                    showToast('Follow-up criado com sucesso!', 'success');
+                } else {
+                    showToast('Erro ao criar follow-up', 'error');
+                }
+            } catch (error) {
+                console.error('Error creating follow-up:', error);
+                showToast('Erro ao criar follow-up', 'error');
+            }
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            toast.className = `toast-notification ${type}`;
+            toast.innerHTML = `<i class="bi bi-${type === 'success' ? 'check-circle' : 'exclamation-circle'} me-2"></i>${message}`;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.classList.add('show'), 10);
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
         }
 
         async function syncTasks() {

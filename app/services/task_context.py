@@ -403,24 +403,34 @@ Responda em JSON:
 
             # Detectar tipo de tarefa
             is_communication = any(word in titulo for word in [
-                'mensagem', 'email', 'ligar', 'contatar', 'whatsapp',
-                'enviar', 'responder', 'falar com'
+                'mensagem', 'email', 'ligar', 'contatar', 'whatsapp', 'wa ',
+                'enviar', 'responder', 'falar com', 'cobran', 'cobrança',
+                'follow-up', 'followup', 'fup', 'retorno', 'lembrar'
             ])
 
             is_proposal = any(word in titulo for word in [
-                'proposta', 'orçamento', 'cotação', 'pitch', 'apresentação'
+                'proposta', 'orçamento', 'cotação', 'pitch', 'apresentação',
+                'enviar doc', 'contrato', 'acordo'
             ])
 
             is_meeting = any(word in titulo for word in [
-                'reunião', 'meeting', 'call', 'ligação', 'agendar'
+                'reunião', 'meeting', 'call', 'ligação', 'agendar', 'marcar'
+            ])
+
+            is_financial = any(word in titulo for word in [
+                'pagamento', 'pagar', 'receber', 'cobrar', 'cobrança',
+                'boleto', 'fatura', 'honorário', 'r$', 'valor'
             ])
 
             # Sugerir prazo baseado no tipo
-            if not is_communication and not is_proposal and not is_meeting:
+            if not is_communication and not is_proposal and not is_meeting and not is_financial:
                 return {"needs_followup": False}
 
             # Prazo sugerido
-            if is_proposal:
+            if is_financial:
+                days = 7
+                reason = "Verificar se pagamento foi efetuado"
+            elif is_proposal:
                 days = 5
                 reason = "Proposta enviada - aguardar retorno"
             elif is_meeting:
