@@ -8406,19 +8406,38 @@ async def send_inbox_reply(
     # Send via appropriate channel
     if channel == "whatsapp":
         # Get phone number
-        phones = contact.get("telefones", [])
+        phones = contact.get("telefones") or []
+        logger.info(f"Contact phones: {phones}")
+
         if not phones:
             raise HTTPException(status_code=400, detail="Contato nao tem telefone cadastrado")
 
-        phone = phones[0].get("numero") if isinstance(phones[0], dict) else phones[0]
+        # Extract phone number - handle different formats
+        phone = None
+        if isinstance(phones, list) and len(phones) > 0:
+            first_phone = phones[0]
+            if isinstance(first_phone, dict):
+                phone = first_phone.get("numero") or first_phone.get("phone") or first_phone.get("number")
+            else:
+                phone = str(first_phone)
+        elif isinstance(phones, str):
+            phone = phones
+
+        if not phone:
+            raise HTTPException(status_code=400, detail=f"Formato de telefone invalido: {phones}")
+
+        logger.info(f"Sending WhatsApp to {phone}: {content[:50]}...")
 
         # Send via WhatsApp
         try:
             sent_result = await whatsapp.send_text(phone, content)
-            if "error" in sent_result:
+            logger.info(f"WhatsApp send result: {sent_result}")
+            if sent_result and "error" in sent_result:
                 raise HTTPException(status_code=500, detail=f"Erro ao enviar WhatsApp: {sent_result['error']}")
+        except HTTPException:
+            raise
         except Exception as e:
-            logger.error(f"Error sending WhatsApp: {e}")
+            logger.error(f"Error sending WhatsApp: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Erro ao enviar mensagem: {str(e)}")
 
     elif channel == "email":
