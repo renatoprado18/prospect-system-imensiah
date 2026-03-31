@@ -922,6 +922,15 @@ def get_prioridades_por_contexto(limit_per_context: int = 15) -> Dict[str, List[
     Returns:
         Dict com 'pessoal' e 'profissional', cada um com lista de contatos
     """
+    try:
+        return _get_prioridades_por_contexto_impl(limit_per_context)
+    except Exception as e:
+        logger.error(f"Error in get_prioridades_por_contexto: {e}")
+        return {"pessoal": [], "profissional": []}
+
+
+def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str, List[Dict]]:
+    """Implementation of get_prioridades_por_contexto."""
     with get_db() as conn:
         cursor = conn.cursor()
 
