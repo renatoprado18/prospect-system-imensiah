@@ -1389,7 +1389,8 @@ def get_contatos_por_circulo(
     circulo: int,
     sort_by: str = "health",
     limit: int = 50,
-    offset: int = 0
+    offset: int = 0,
+    contexto: str = None
 ) -> Dict:
     """
     Lista contatos de um circulo especifico com paginacao.
@@ -1399,6 +1400,7 @@ def get_contatos_por_circulo(
         sort_by: Campo para ordenacao (health, nome, ultimo_contato)
         limit: Limite de resultados
         offset: Offset para paginacao
+        contexto: 'pessoal' ou 'profissional' (usa circulo_pessoal/circulo_profissional)
 
     Returns:
         Dict com contatos e metadados
@@ -1411,16 +1413,32 @@ def get_contatos_por_circulo(
     }
     order_by = sort_options.get(sort_by, sort_options["health"])
 
+    # Determine which circle field and context filter to use
+    if contexto == "pessoal":
+        circulo_field = "COALESCE(circulo_pessoal, circulo, 5)"
+        context_filter = "AND contexto = 'personal'"
+        config = CIRCULO_PESSOAL_CONFIG.get(circulo, CIRCULO_PESSOAL_CONFIG[5])
+    elif contexto == "profissional":
+        circulo_field = "COALESCE(circulo_profissional, circulo, 5)"
+        context_filter = "AND COALESCE(contexto, 'professional') != 'personal'"
+        config = CIRCULO_PROFISSIONAL_CONFIG.get(circulo, CIRCULO_PROFISSIONAL_CONFIG[5])
+    else:
+        # Legacy: use general circulo field
+        circulo_field = "COALESCE(circulo, 5)"
+        context_filter = ""
+        config = CIRCULO_CONFIG.get(circulo, CIRCULO_CONFIG[5])
+
     with get_db() as conn:
         cursor = conn.cursor()
 
         # Buscar contatos
         cursor.execute(f"""
             SELECT id, nome, empresa, cargo, foto_url, emails, telefones,
-                   circulo, health_score, ultimo_contato, total_interacoes,
-                   frequencia_ideal_dias, circulo_manual, tags
+                   circulo, circulo_pessoal, circulo_profissional, contexto,
+                   health_score, ultimo_contato, total_interacoes,
+                   frequencia_ideal_dias, circulo_manual, tags, aniversario
             FROM contacts
-            WHERE COALESCE(circulo, 5) = %s
+            WHERE {circulo_field} = %s {context_filter}
             ORDER BY {order_by}
             LIMIT %s OFFSET %s
         """, (circulo, limit, offset))
@@ -1429,19 +1447,25 @@ def get_contatos_por_circulo(
         for row in cursor.fetchall():
             contact = dict(row)
             contact["dias_sem_contato"] = calcular_dias_sem_contato(contact.get("ultimo_contato"))
+            # Add badge based on context
+            if contexto == "pessoal":
+                contact["badge"] = CIRCULO_PESSOAL_CONFIG.get(circulo, {}).get("badge", f"P{circulo}")
+            elif contexto == "profissional":
+                contact["badge"] = CIRCULO_PROFISSIONAL_CONFIG.get(circulo, {}).get("badge", f"R{circulo}")
             contacts.append(contact)
 
         # Total count
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT COUNT(*) as count
             FROM contacts
-            WHERE COALESCE(circulo, 5) = %s
+            WHERE {circulo_field} = %s {context_filter}
         """, (circulo,))
         total = cursor.fetchone()["count"]
 
         return {
             "circulo": circulo,
-            "config": CIRCULO_CONFIG.get(circulo, CIRCULO_CONFIG[5]),
+            "contexto": contexto,
+            "config": config,
             "total": total,
             "limit": limit,
             "offset": offset,

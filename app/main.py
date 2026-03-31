@@ -6221,16 +6221,18 @@ async def get_contacts_by_circulo(
     circulo: int,
     sort_by: str = "health",
     limit: int = 50,
-    offset: int = 0
+    offset: int = 0,
+    contexto: str = None
 ):
     """Lista contatos de um circulo especifico"""
     if circulo < 1 or circulo > 5:
         raise HTTPException(status_code=400, detail="Circulo deve ser entre 1 e 5")
 
-    result = get_contatos_por_circulo(circulo, sort_by=sort_by, limit=limit, offset=offset)
+    result = get_contatos_por_circulo(circulo, sort_by=sort_by, limit=limit, offset=offset, contexto=contexto)
     return {
         "circulo": circulo,
-        "config": CIRCULO_CONFIG.get(circulo),
+        "contexto": contexto,
+        "config": result.get("config", CIRCULO_CONFIG.get(circulo)),
         "total": result.get("total", 0),
         "contacts": result.get("contacts", [])
     }

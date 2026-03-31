@@ -443,31 +443,22 @@ async function filterByCircle(ctx, n) {
         return;
     }
 
-    // Use the specific circle endpoint
+    // Use the specific circle endpoint with contexto parameter
     try {
-        const res = await fetch(`/api/circulos/${n}/contacts?sort_by=health&limit=20`);
+        const res = await fetch(`/api/circulos/${n}/contacts?sort_by=health&limit=30&contexto=${ctx}`);
         const r = await res.json();
         const contacts = r.contacts || [];
         const cfg = ctx === 'pessoal' ? data.pessoal.config : data.profissional.config;
 
-        // Filter by context
-        const ctxField = ctx === 'pessoal' ? 'personal' : 'professional';
-        const filtered = contacts.filter(c => {
-            const cCtx = c.contexto || 'professional';
-            return cCtx.includes(ctxField) || (ctx === 'profissional' && !cCtx.includes('personal'));
-        });
-
-        filtered.forEach(c => {
-            const cn = ctx === 'pessoal' ? (c.circulo_pessoal || c.circulo || 5) : (c.circulo_profissional || c.circulo || 5);
-            c.badge = cfg[cn]?.badge || `C${cn}`;
+        contacts.forEach(c => {
             c.fatores = c.fatores || [];
             c.category = c.category || (c.health_score < 40 ? 'attention' : 'normal');
         });
 
-        if (filtered.length === 0) {
+        if (contacts.length === 0) {
             el.innerHTML = '<div class="empty-state">Nenhum contato neste círculo</div>';
         } else {
-            renderList(ctx, filtered);
+            renderList(ctx, contacts);
         }
     } catch (e) {
         console.error('Filter error:', e);
