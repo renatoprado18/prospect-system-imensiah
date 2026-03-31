@@ -31,10 +31,10 @@
         color: rgba(255,255,255,0.75) !important;
     }
 
-    /* Avatar */
+    /* Avatar - compacto */
     .conv-avatar {
-        width: 42px;
-        height: 42px;
+        width: 28px;
+        height: 28px;
         border-radius: 50%;
         flex-shrink: 0;
         display: flex;
@@ -56,6 +56,8 @@
         align-items: center;
         justify-content: center;
         color: white;
+        font-size: 0.65rem;
+        font-weight: 600;
     }
 
     /* Contact info */
@@ -148,8 +150,8 @@
         align-items: center;
     }
     .messages-header .conv-avatar {
-        width: 38px;
-        height: 38px;
+        width: 32px;
+        height: 32px;
     }
     .messages-body {
         flex: 1;
@@ -336,6 +338,12 @@
                     <span class="fw-medium" style="font-size: 0.9rem;">Conversas</span>
                     <span class="unread-badge" id="unread-badge">0</span>
                 </div>
+            </div>
+            <!-- Busca de conversa -->
+            <div class="px-2 py-2" style="border-bottom: 1px solid var(--gray-100);">
+                <input type="text" id="searchConversation" class="form-control form-control-sm"
+                    placeholder="Filtrar conversas..." style="font-size: 0.8rem;"
+                    oninput="filterConversations(this.value)">
             </div>
             <div class="filter-pills">
                 <button class="filter-pill active" data-filter="all">Todos</button>
@@ -728,6 +736,37 @@ document.getElementById('replyText')?.addEventListener('keydown', function(e) {
 document.getElementById('replyText')?.addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+});
+
+// Filter conversations by name
+function filterConversations(query) {
+    const items = document.querySelectorAll('.conversation-item');
+    const q = query.toLowerCase().trim();
+
+    items.forEach(item => {
+        const name = item.querySelector('.conv-name')?.textContent?.toLowerCase() || '';
+        item.style.display = name.includes(q) ? '' : 'none';
+    });
+}
+
+// Auto-refresh every 30 seconds
+let refreshInterval = setInterval(() => {
+    loadConversations(currentFilter);
+    loadUnreadCount();
+}, 30000);
+
+// Pause refresh when window not visible
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        clearInterval(refreshInterval);
+    } else {
+        loadConversations(currentFilter);
+        loadUnreadCount();
+        refreshInterval = setInterval(() => {
+            loadConversations(currentFilter);
+            loadUnreadCount();
+        }, 30000);
+    }
 });
 
 // Init
