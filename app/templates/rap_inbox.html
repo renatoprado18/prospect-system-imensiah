@@ -359,7 +359,10 @@
                     <div class="d-flex align-items-center">
                         <div class="conv-avatar" id="contact-avatar"></div>
                         <div class="ms-2">
-                            <div class="fw-medium" style="font-size: 0.9rem;" id="contact-name">-</div>
+                            <a href="#" id="contact-name-link" class="text-decoration-none text-dark d-flex align-items-center" style="font-size: 0.9rem;">
+                                <span class="fw-medium" id="contact-name">-</span>
+                                <i class="bi bi-box-arrow-up-right ms-2" style="font-size: 0.65rem; opacity: 0.4;"></i>
+                            </a>
                             <small class="text-muted" style="font-size: 0.7rem;" id="contact-channel">-</small>
                         </div>
                     </div>
@@ -527,6 +530,7 @@ async function loadMessages(conversationId, contactId) {
             Via ${conversation.channel}
         `;
         document.getElementById('contact-link').href = `/contatos/${currentContactId}`;
+        document.getElementById('contact-name-link').href = `/contatos/${currentContactId}`;
         document.getElementById('contact-avatar').innerHTML = renderAvatar(conversation.foto_url, name, 38);
 
         // Render messages

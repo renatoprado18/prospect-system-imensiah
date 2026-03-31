@@ -935,11 +935,22 @@ def get_prioridades_por_contexto(limit_per_context: int = 15) -> Dict[str, List[
             WHERE status = 'pending' AND contact_id IS NOT NULL
             GROUP BY contact_id
         """)
-        tarefas_por_contato = {row["contact_id"]: {
-            "count": row["count"],
-            "vencida": row["proxima_vencimento"] and row["proxima_vencimento"].date() < hoje if row["proxima_vencimento"] else False,
-            "proxima": row["proxima_vencimento"]
-        } for row in cursor.fetchall()}
+        tarefas_por_contato = {}
+        for row in cursor.fetchall():
+            prox = row["proxima_vencimento"]
+            # Handle both date and datetime types
+            vencida = False
+            if prox:
+                try:
+                    prox_date = prox.date() if hasattr(prox, 'date') else prox
+                    vencida = prox_date < hoje
+                except (AttributeError, TypeError):
+                    pass
+            tarefas_por_contato[row["contact_id"]] = {
+                "count": row["count"],
+                "vencida": vencida,
+                "proxima": prox
+            }
 
         # === BUSCAR PROJETOS ATIVOS POR CONTATO ===
         cursor.execute("""

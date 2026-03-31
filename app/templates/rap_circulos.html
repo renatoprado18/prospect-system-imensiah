@@ -4,13 +4,14 @@
 
 {% block extra_css %}
 <style>
-    /* Split Layout */
+    /* Split Layout - Side by Side */
     .split-container {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 1.5rem;
+        gap: 1rem;
+        min-height: calc(100vh - 200px);
     }
-    @media (max-width: 1200px) {
+    @media (max-width: 900px) {
         .split-container { grid-template-columns: 1fr; }
     }
 
