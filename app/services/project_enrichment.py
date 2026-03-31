@@ -26,6 +26,53 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 
+async def call_claude_api(prompt: str, max_tokens: int = 500, retries: int = 2) -> Dict[str, Any]:
+    """
+    Helper to call Claude API with retry logic.
+    """
+    import asyncio
+
+    for attempt in range(retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                response = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json"
+                    },
+                    json={
+                        "model": CLAUDE_MODEL,
+                        "max_tokens": max_tokens,
+                        "messages": [{"role": "user", "content": prompt}]
+                    }
+                )
+
+                if response.status_code == 200:
+                    return {"success": True, "data": response.json()}
+                elif response.status_code == 529:
+                    # Server overloaded - retry after delay
+                    if attempt < retries:
+                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        continue
+                    return {"success": False, "error": "API sobrecarregada. Tente novamente em alguns segundos.", "code": 529}
+                elif response.status_code == 429:
+                    return {"success": False, "error": "Limite de requisições excedido. Aguarde um momento.", "code": 429}
+                else:
+                    return {"success": False, "error": f"Erro na API: {response.status_code}", "code": response.status_code}
+
+        except httpx.TimeoutException:
+            if attempt < retries:
+                await asyncio.sleep(1)
+                continue
+            return {"success": False, "error": "Timeout na chamada da API. Tente novamente.", "code": 408}
+        except Exception as e:
+            return {"success": False, "error": str(e), "code": 500}
+
+    return {"success": False, "error": "Falha após múltiplas tentativas", "code": 503}
+
+
 async def extract_entities_with_ai(descricao: str) -> Dict[str, Any]:
     """
     Use Claude to extract entities from the project description.
@@ -60,42 +107,31 @@ Regras para tipo_inferido:
 - "conselho": participação em conselhos, governança corporativa
 """
 
+    default_response = {"pessoas": [], "empresas": [], "temas": [], "tipo_inferido": "pessoal", "urgencia": "media"}
+
+    result = await call_claude_api(prompt, max_tokens=500)
+
+    if not result.get("success"):
+        print(f"Error extracting entities: {result.get('error')}")
+        return default_response
+
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                },
-                json={
-                    "model": CLAUDE_MODEL,
-                    "max_tokens": 500,
-                    "messages": [{"role": "user", "content": prompt}]
-                }
-            )
+        content = result["data"].get("content", [{}])[0].get("text", "")
 
-            if response.status_code != 200:
-                return {"pessoas": [], "empresas": [], "temas": [], "tipo_inferido": "pessoal", "urgencia": "media"}
+        # Clean up JSON
+        content = content.strip()
+        if content.startswith("```json"):
+            content = content[7:]
+        if content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
 
-            result = response.json()
-            content = result.get("content", [{}])[0].get("text", "")
-
-            # Clean up JSON
-            content = content.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-
-            return json.loads(content.strip())
+        return json.loads(content.strip())
 
     except Exception as e:
-        print(f"Error extracting entities: {e}")
-        return {"pessoas": [], "empresas": [], "temas": [], "tipo_inferido": "pessoal", "urgencia": "media"}
+        print(f"Error parsing entities: {e}")
+        return default_response
 
 
 def search_related_contacts(pessoas: List[str]) -> List[Dict]:
@@ -318,13 +354,7 @@ async def search_company_web_info(empresas: List[str]) -> Dict[str, Any]:
     web_info = {}
 
     for empresa in empresas[:2]:  # Limit to 2 companies
-        try:
-            # Try to find company website
-            search_url = f"https://www.google.com/search?q={empresa}+site+oficial"
-
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                # Search for company info using Claude's knowledge
-                prompt = f"""O que você sabe sobre a empresa "{empresa}"?
+        prompt = f"""O que você sabe sobre a empresa "{empresa}"?
 
 Forneça informações concisas sobre:
 1. O que a empresa faz
@@ -334,28 +364,13 @@ Forneça informações concisas sobre:
 
 Responda em 2-3 parágrafos, de forma objetiva."""
 
-                response = await client.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": ANTHROPIC_API_KEY,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json"
-                    },
-                    json={
-                        "model": CLAUDE_MODEL,
-                        "max_tokens": 500,
-                        "messages": [{"role": "user", "content": prompt}]
-                    }
-                )
+        result = await call_claude_api(prompt, max_tokens=500, retries=1)
 
-                if response.status_code == 200:
-                    result = response.json()
-                    content = result.get("content", [{}])[0].get("text", "")
-                    web_info[empresa] = content
-
-        except Exception as e:
-            print(f"Error searching web for {empresa}: {e}")
-            continue
+        if result.get("success"):
+            content = result["data"].get("content", [{}])[0].get("text", "")
+            web_info[empresa] = content
+        else:
+            print(f"Error searching web for {empresa}: {result.get('error')}")
 
     return web_info
 
@@ -466,53 +481,40 @@ IMPORTANTE:
 - Use as informações encontradas para personalizar as sugestões
 """
 
+    # Call API with retries for this important step
+    result = await call_claude_api(prompt, max_tokens=2000, retries=2)
+
+    if not result.get("success"):
+        return {
+            "status": "error",
+            "error": result.get("error", "Erro desconhecido na API")
+        }
+
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                },
-                json={
-                    "model": CLAUDE_MODEL,
-                    "max_tokens": 2000,
-                    "messages": [{"role": "user", "content": prompt}]
-                }
-            )
+        content = result["data"].get("content", [{}])[0].get("text", "")
 
-            if response.status_code != 200:
-                return {
-                    "status": "error",
-                    "error": f"API error: {response.status_code}"
-                }
+        # Clean up JSON
+        content = content.strip()
+        if content.startswith("```json"):
+            content = content[7:]
+        if content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
 
-            result = response.json()
-            content = result.get("content", [{}])[0].get("text", "")
-
-            # Clean up JSON
-            content = content.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-
-            suggestions = json.loads(content.strip())
-            suggestions["status"] = "success"
-            return suggestions
+        suggestions = json.loads(content.strip())
+        suggestions["status"] = "success"
+        return suggestions
 
     except json.JSONDecodeError as e:
         return {
             "status": "error",
-            "error": f"Failed to parse AI response: {str(e)}"
+            "error": f"Falha ao processar resposta da IA: {str(e)}"
         }
     except Exception as e:
         return {
             "status": "error",
-            "error": f"API call failed: {str(e)}"
+            "error": f"Erro inesperado: {str(e)}"
         }
 
 
