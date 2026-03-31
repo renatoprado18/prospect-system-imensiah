@@ -954,19 +954,37 @@ def get_prioridades_por_contexto(limit_per_context: int = 15) -> Dict[str, List[
                 }
         except Exception as e:
             logger.warning(f"Error fetching tasks: {e}")
+            conn.rollback()
 
         # === BUSCAR PROJETOS ATIVOS POR CONTATO ===
         projetos_por_contato = {}
         try:
+            # projects uses owner_contact_id, and project_members links contacts
             cursor.execute("""
-                SELECT contact_id, COUNT(*) as count
+                SELECT owner_contact_id as contact_id, COUNT(*) as count
                 FROM projects
-                WHERE status = 'active' AND contact_id IS NOT NULL
-                GROUP BY contact_id
+                WHERE status = 'active' AND owner_contact_id IS NOT NULL
+                GROUP BY owner_contact_id
             """)
             projetos_por_contato = {row["contact_id"]: row["count"] for row in cursor.fetchall()}
+
+            # Also check project_members for linked contacts
+            cursor.execute("""
+                SELECT pm.contact_id, COUNT(DISTINCT pm.project_id) as count
+                FROM project_members pm
+                JOIN projects p ON p.id = pm.project_id
+                WHERE p.status = 'active' AND pm.contact_id IS NOT NULL
+                GROUP BY pm.contact_id
+            """)
+            for row in cursor.fetchall():
+                cid = row["contact_id"]
+                if cid in projetos_por_contato:
+                    projetos_por_contato[cid] += row["count"]
+                else:
+                    projetos_por_contato[cid] = row["count"]
         except Exception as e:
             logger.warning(f"Error fetching projects: {e}")
+            conn.rollback()
 
         # === BUSCAR MENSAGENS NAO RESPONDIDAS (ultimos 7 dias) ===
         mensagens_pendentes = set()
@@ -987,6 +1005,7 @@ def get_prioridades_por_contexto(limit_per_context: int = 15) -> Dict[str, List[
             mensagens_pendentes = {row["contact_id"] for row in cursor.fetchall()}
         except Exception as e:
             logger.warning(f"Error fetching messages: {e}")
+            conn.rollback()
 
         # === BUSCAR TODOS OS CONTATOS COM CIRCULO ===
         cursor.execute("""
