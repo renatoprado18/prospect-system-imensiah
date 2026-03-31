@@ -1071,14 +1071,21 @@
         .task-item {
             display: flex;
             align-items: flex-start;
-            gap: 12px;
-            padding: 12px 0;
+            gap: 8px;
+            padding: 8px 0;
             border-bottom: 1px solid var(--gray-100);
+            cursor: pointer;
+            transition: background 0.15s;
+            margin: 0 -12px;
+            padding-left: 12px;
+            padding-right: 12px;
         }
+        .task-item:hover { background: var(--gray-50); }
         .task-item:last-child { border-bottom: none; }
         .task-checkbox {
-            width: 20px;
-            height: 20px;
+            width: 16px;
+            height: 16px;
+            min-width: 16px;
             border-radius: 6px;
             border: 2px solid var(--gray-300);
             cursor: pointer;
@@ -1095,16 +1102,25 @@
             border-color: var(--success);
             color: white;
         }
-        .task-content { flex: 1; }
+        .task-content { flex: 1; min-width: 0; }
         .task-title {
             font-weight: 500;
+            font-size: 0.85rem;
             color: var(--dark);
-            margin-bottom: 4px;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         .task-item.completed .task-title {
             text-decoration: line-through;
             color: var(--gray-400);
         }
+        .task-meta {
+            font-size: 0.7rem;
+            color: var(--gray-500);
+        }
+        .task-meta i { font-size: 0.65rem; }
         .task-meta {
             font-size: 0.8rem;
             color: var(--gray-500);
@@ -1342,6 +1358,30 @@
             gap: 12px;
         }
         .suggestion-modal-body { padding: 24px; }
+
+        /* Task Detail Styles */
+        .task-detail-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+        .task-detail-header h5 { margin: 0; font-size: 1.1rem; }
+        .task-detail-meta {
+            font-size: 0.9rem;
+            color: var(--gray-600);
+        }
+        .task-detail-meta > div {
+            padding: 6px 0;
+            border-bottom: 1px solid var(--gray-100);
+        }
+        .task-detail-meta > div:last-child { border-bottom: none; }
+        .task-detail-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
         .suggestion-modal-footer {
             padding: 16px 24px;
             border-top: 1px solid var(--gray-200);
@@ -1926,7 +1966,7 @@
         async function loadTasks() {
             const container = document.getElementById('tasksList');
             try {
-                const response = await fetch('/api/tasks?limit=5&status=pending');
+                const response = await fetch('/api/tasks?limit=10&status=pending');
                 if (!response.ok) throw new Error('API indisponivel');
                 const data = await response.json();
                 const tasks = data.tasks || data || [];
@@ -1942,20 +1982,21 @@
                 }
 
                 let html = '';
-                tasks.slice(0, 5).forEach(task => {
+                tasks.slice(0, 10).forEach(task => {
                     const isCompleted = task.status === 'completed' || task.completed;
-                    const priorityClass = task.priority === 'high' ? 'high' : (task.priority === 'low' ? 'low' : 'medium');
+                    const title = task.titulo || task.title || task.description || 'Tarefa';
+                    const dueDate = task.data_vencimento || task.due_date || task.due;
                     html += `
-                        <div class="task-item ${isCompleted ? 'completed' : ''}" data-task-id="${task.id}">
-                            <div class="task-checkbox ${isCompleted ? 'completed' : ''}" onclick="toggleTask(${task.id}, ${!isCompleted})">
+                        <div class="task-item ${isCompleted ? 'completed' : ''}" data-task-id="${task.id}" onclick="showTaskDetail(${task.id})">
+                            <div class="task-checkbox ${isCompleted ? 'completed' : ''}" onclick="event.stopPropagation(); toggleTask(${task.id}, ${!isCompleted})">
                                 ${isCompleted ? '<i class="bi bi-check"></i>' : ''}
                             </div>
                             <div class="task-content">
-                                <div class="task-title">${task.title || task.description || 'Tarefa'}</div>
+                                <div class="task-title" title="${title}">${title}</div>
                                 <div class="task-meta">
-                                    ${task.priority ? `<span class="task-priority ${priorityClass}">${task.priority}</span>` : ''}
-                                    ${task.due_date ? `<span><i class="bi bi-clock"></i> ${formatDate(task.due_date)}</span>` : ''}
-                                    ${task.contact_name ? `<span><i class="bi bi-person"></i> ${task.contact_name}</span>` : ''}
+                                    ${dueDate ? `<i class="bi bi-clock me-1"></i>${formatDate(dueDate)}` : ''}
+                                    ${task.contact_name ? ` · <i class="bi bi-person"></i> ${task.contact_name}` : ''}
+                                    ${task.project_name ? ` · <i class="bi bi-folder"></i> ${task.project_name}` : ''}
                                 </div>
                             </div>
                         </div>
@@ -1971,6 +2012,52 @@
                     </div>
                 `;
             }
+        }
+
+        async function showTaskDetail(taskId) {
+            try {
+                const response = await fetch(`/api/tasks/${taskId}/context`);
+                const data = await response.json();
+                const task = data.task || data;
+
+                const title = task.titulo || task.title || 'Tarefa';
+                const desc = task.descricao || task.notes || '';
+                const dueDate = task.data_vencimento || task.due_date;
+                const status = task.status || 'pending';
+                const contactName = data.contact?.nome || task.contact_name || '';
+                const projectName = data.project?.nome || task.project_name || '';
+
+                let detailHtml = `
+                    <div class="task-detail-header">
+                        <h5>${title}</h5>
+                        <span class="badge ${status === 'completed' ? 'bg-success' : 'bg-warning'}">${status === 'completed' ? 'Concluída' : 'Pendente'}</span>
+                    </div>
+                    ${desc ? `<p class="text-muted mb-3">${desc}</p>` : ''}
+                    <div class="task-detail-meta">
+                        ${dueDate ? `<div><i class="bi bi-calendar me-2"></i><strong>Vencimento:</strong> ${new Date(dueDate).toLocaleDateString('pt-BR')}</div>` : ''}
+                        ${contactName ? `<div><i class="bi bi-person me-2"></i><strong>Contato:</strong> ${contactName}</div>` : ''}
+                        ${projectName ? `<div><i class="bi bi-folder me-2"></i><strong>Projeto:</strong> ${projectName}</div>` : ''}
+                    </div>
+                    <div class="task-detail-actions mt-3">
+                        ${status !== 'completed' ? `<button class="btn btn-success btn-sm" onclick="toggleTask(${taskId}, true); closeTaskModal();">
+                            <i class="bi bi-check me-1"></i>Concluir
+                        </button>` : ''}
+                        <button class="btn btn-outline-secondary btn-sm" onclick="closeTaskModal()">Fechar</button>
+                    </div>
+                `;
+
+                // Show in modal
+                document.getElementById('taskDetailContent').innerHTML = detailHtml;
+                document.getElementById('taskDetailModal').classList.add('show');
+                document.getElementById('modalBackdrop').classList.add('show');
+            } catch (error) {
+                console.error('Error loading task detail:', error);
+            }
+        }
+
+        function closeTaskModal() {
+            document.getElementById('taskDetailModal').classList.remove('show');
+            document.getElementById('modalBackdrop').classList.remove('show');
         }
 
         async function toggleTask(taskId, completed) {
@@ -3184,8 +3271,33 @@
         }, 300);
     </script>
 
+    <!-- Modal Backdrop (shared) -->
+    <div class="modal-backdrop" id="modalBackdrop" onclick="closeAllModals()"></div>
+
+    <!-- Task Detail Modal -->
+    <div class="suggestion-modal" id="taskDetailModal">
+        <div class="suggestion-modal-content">
+            <div class="suggestion-modal-header">
+                <div class="suggestion-icon" style="width: 48px; height: 48px; background: var(--primary); color: white;">
+                    <i class="bi bi-check2-square"></i>
+                </div>
+                <div>
+                    <h4 class="mb-1">Detalhes da Tarefa</h4>
+                    <span class="text-muted">Google Tasks sincronizado</span>
+                </div>
+                <button class="btn btn-link ms-auto" onclick="closeTaskModal()">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="suggestion-modal-body" id="taskDetailContent">
+                <div class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Suggestion Detail Modal -->
-    <div class="modal-backdrop" id="modalBackdrop" onclick="closeSuggestionModal()"></div>
     <div class="suggestion-modal" id="suggestionModal">
         <div class="suggestion-modal-content">
             <div class="suggestion-modal-header">
@@ -3209,5 +3321,13 @@
             </div>
         </div>
     </div>
+
+    <script>
+        function closeAllModals() {
+            document.getElementById('modalBackdrop').classList.remove('show');
+            document.getElementById('taskDetailModal').classList.remove('show');
+            document.getElementById('suggestionModal').classList.remove('show');
+        }
+    </script>
 </body>
 </html>
