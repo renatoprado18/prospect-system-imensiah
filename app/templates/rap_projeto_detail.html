@@ -14,25 +14,59 @@
 <div class="modal fade" id="addMemberModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content" style="border-radius: 16px; border: none;">
-            <div class="modal-header">
+            <div class="modal-header border-0 pb-0">
                 <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>Adicionar Participante</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <div class="mb-3">
-                    <label class="form-label">Buscar Contato</label>
-                    <input type="text" class="form-control" id="searchContact" placeholder="Digite o nome..."
-                        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-                        oninput="searchContacts(this.value)">
+                <!-- Contato Selecionado -->
+                <div id="selectedContactDisplay" style="display: none; background: #f0f9ff; border: 2px solid #3b82f6; border-radius: 12px; padding: 12px; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div id="selectedContactAvatar" style="width: 48px; height: 48px; min-width: 48px; border-radius: 50%; background: #3b82f6; color: white; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600;"></div>
+                        <div style="flex: 1;">
+                            <div id="selectedContactName" style="font-weight: 600; font-size: 16px;"></div>
+                            <div id="selectedContactInfo" style="font-size: 13px; color: #64748b;"></div>
+                        </div>
+                        <button type="button" onclick="clearSelectedContact()" class="btn btn-sm btn-outline-secondary" style="border-radius: 50%; width: 32px; height: 32px; padding: 0;">
+                            <i class="bi bi-x"></i>
+                        </button>
+                    </div>
                 </div>
-                <div id="searchResults" style="max-height: 300px; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; display: none;"></div>
-                <div class="mb-3 mt-3">
-                    <label class="form-label">Papel no Projeto</label>
-                    <input type="text" class="form-control" id="memberPapel" placeholder="Ex: Responsavel, Consultor, Participante">
+
+                <!-- Campo de Busca -->
+                <div id="searchContactSection">
+                    <div class="mb-3 position-relative">
+                        <label class="form-label fw-semibold">Buscar Contato</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-white"><i class="bi bi-search text-muted"></i></span>
+                            <input type="text" class="form-control" id="searchContact" placeholder="Digite o nome do contato..."
+                                autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                                oninput="searchContactsModal(this.value)" style="border-left: none;">
+                        </div>
+                        <!-- Resultados da Busca (dropdown style) -->
+                        <div id="searchResultsModal" style="display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 1000; background: white; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-height: 250px; overflow-y: auto; margin-top: 4px;"></div>
+                    </div>
+                </div>
+
+                <!-- Papel no Projeto -->
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Papel no Projeto</label>
+                    <select class="form-select" id="memberPapel">
+                        <option value="">Selecione...</option>
+                        <option value="Responsavel">Responsavel</option>
+                        <option value="Consultor">Consultor</option>
+                        <option value="Participante">Participante</option>
+                        <option value="Observador">Observador</option>
+                        <option value="Cliente">Cliente</option>
+                        <option value="Fornecedor">Fornecedor</option>
+                    </select>
                 </div>
             </div>
-            <div class="modal-footer">
+            <div class="modal-footer border-0 pt-0">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="btnAddMember" onclick="confirmAddMember()" disabled>
+                    <i class="bi bi-plus-lg me-1"></i>Adicionar
+                </button>
             </div>
         </div>
     </div>
@@ -717,16 +751,22 @@
     }
 
     // Modal functions
+    let selectedMemberData = null;
+
     function openAddMemberModal() {
-        selectedContactId = null;
+        selectedMemberData = null;
         document.getElementById('searchContact').value = '';
         document.getElementById('memberPapel').value = '';
-        document.getElementById('searchResults').innerHTML = '';
+        document.getElementById('searchResultsModal').innerHTML = '';
+        document.getElementById('searchResultsModal').style.display = 'none';
+        document.getElementById('selectedContactDisplay').style.display = 'none';
+        document.getElementById('searchContactSection').style.display = 'block';
+        document.getElementById('btnAddMember').disabled = true;
         new bootstrap.Modal(document.getElementById('addMemberModal')).show();
     }
 
-    async function searchContacts(query) {
-        const resultsDiv = document.getElementById('searchResults');
+    async function searchContactsModal(query) {
+        const resultsDiv = document.getElementById('searchResultsModal');
 
         if (query.length < 2) {
             resultsDiv.style.display = 'none';
@@ -735,65 +775,108 @@
         }
 
         resultsDiv.style.display = 'block';
-        resultsDiv.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm"></div> Buscando...</div>';
+        resultsDiv.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm"></div></div>';
 
         try {
-            const response = await fetch(`/api/contacts/suggestions?q=${encodeURIComponent(query)}&limit=10`);
+            const response = await fetch(`/api/contacts/suggestions?q=${encodeURIComponent(query)}&limit=8`);
 
             if (!response.ok) {
-                console.error('Search API error:', response.status);
-                resultsDiv.innerHTML = '<p class="text-danger small p-3">Erro na busca (API ' + response.status + ')</p>';
+                resultsDiv.innerHTML = '<p class="text-danger small p-3">Erro na busca</p>';
                 return;
             }
 
             const results = await response.json();
-            console.log('API response:', results);
-
             const contacts = results.suggestions || [];
-            console.log('Contacts:', contacts);
 
             if (contacts.length === 0) {
-                resultsDiv.innerHTML = '<p class="text-muted small p-3">Nenhum contato encontrado para "' + query + '"</p>';
+                resultsDiv.innerHTML = '<p class="text-muted small p-3">Nenhum contato encontrado</p>';
                 return;
             }
 
             resultsDiv.innerHTML = contacts.map(c => {
                 const initials = c.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
-                const escapedNome = c.nome.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                const empresa = c.empresa || '';
                 return `
-                    <div class="search-result-item" onclick="selectContact(${c.id}, '${escapedNome}')" style="cursor: pointer; padding: 10px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px;">
-                        <div class="member-avatar" style="width: 36px; height: 36px; min-width: 36px; border-radius: 50%; background: #4f46e5; color: white; display: flex; align-items: center; justify-content: center; font-size: 14px;" data-initials="${initials}">
-                            ${c.foto_url ? `<img src="${c.foto_url}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;" onerror="this.style.display='none'; this.parentElement.textContent=this.parentElement.dataset.initials;">` : initials}
+                    <div class="search-result-item" onclick="selectMemberContact(${c.id}, '${c.nome.replace(/'/g, "\\'")}', '${empresa.replace(/'/g, "\\'")}', '${c.foto_url || ''}')"
+                         style="cursor: pointer; padding: 12px 16px; display: flex; align-items: center; gap: 12px; transition: background 0.15s;"
+                         onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='white'">
+                        <div style="width: 40px; height: 40px; min-width: 40px; border-radius: 50%; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600;">
+                            ${c.foto_url ? `<img src="${c.foto_url}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;" onerror="this.style.display='none'; this.parentElement.innerHTML='${initials}';">` : initials}
                         </div>
-                        <div>
-                            <div class="fw-semibold">${c.nome}</div>
-                            <small class="text-muted">${c.empresa || ''} ${c.cargo ? '- ' + c.cargo : ''}</small>
+                        <div style="flex: 1; min-width: 0;">
+                            <div style="font-weight: 600; color: #1e293b;">${c.nome}</div>
+                            <div style="font-size: 13px; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${empresa}</div>
                         </div>
+                        <i class="bi bi-chevron-right text-muted"></i>
                     </div>
                 `;
             }).join('');
         } catch (error) {
             console.error('Error searching contacts:', error);
-            resultsDiv.innerHTML = '<p class="text-danger small p-3">Erro ao buscar contatos</p>';
+            resultsDiv.innerHTML = '<p class="text-danger small p-3">Erro ao buscar</p>';
         }
     }
 
-    async function selectContact(contactId, nome) {
+    function selectMemberContact(id, nome, empresa, fotoUrl) {
+        selectedMemberData = { id, nome, empresa, fotoUrl };
+
+        // Esconder busca, mostrar selecionado
+        document.getElementById('searchResultsModal').style.display = 'none';
+        document.getElementById('searchContactSection').style.display = 'none';
+        document.getElementById('selectedContactDisplay').style.display = 'block';
+
+        // Preencher dados do selecionado
+        const initials = nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+        const avatarDiv = document.getElementById('selectedContactAvatar');
+        if (fotoUrl) {
+            avatarDiv.innerHTML = `<img src="${fotoUrl}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;" onerror="this.parentElement.innerHTML='${initials}';">`;
+        } else {
+            avatarDiv.innerHTML = initials;
+        }
+        document.getElementById('selectedContactName').textContent = nome;
+        document.getElementById('selectedContactInfo').textContent = empresa || 'Sem empresa';
+
+        // Habilitar botao
+        document.getElementById('btnAddMember').disabled = false;
+    }
+
+    function clearSelectedContact() {
+        selectedMemberData = null;
+        document.getElementById('selectedContactDisplay').style.display = 'none';
+        document.getElementById('searchContactSection').style.display = 'block';
+        document.getElementById('searchContact').value = '';
+        document.getElementById('searchContact').focus();
+        document.getElementById('btnAddMember').disabled = true;
+    }
+
+    async function confirmAddMember() {
+        if (!selectedMemberData) return;
+
         const papel = document.getElementById('memberPapel').value;
+        const btn = document.getElementById('btnAddMember');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Adicionando...';
 
         try {
             const response = await fetch(`/api/projects/${projectId}/members`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contact_id: contactId, papel: papel })
+                body: JSON.stringify({ contact_id: selectedMemberData.id, papel: papel })
             });
 
             if (response.ok) {
                 bootstrap.Modal.getInstance(document.getElementById('addMemberModal')).hide();
                 loadProject();
+            } else {
+                alert('Erro ao adicionar participante');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-plus-lg me-1"></i>Adicionar';
             }
         } catch (error) {
             console.error('Error:', error);
+            alert('Erro ao adicionar participante');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-plus-lg me-1"></i>Adicionar';
         }
     }
 
