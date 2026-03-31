@@ -653,12 +653,12 @@
             const initials = m.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
             return `
                 <div class="member-item">
-                    <div class="member-avatar" data-initials="${initials}">
+                    <a href="/rap/contacts/${m.contact_id}" class="member-avatar" data-initials="${initials}" style="text-decoration: none;">
                         ${m.foto_url ? `<img src="${m.foto_url}" alt="${m.nome}" onerror="this.style.display='none'; this.parentElement.textContent=this.parentElement.dataset.initials;">` : initials}
-                    </div>
+                    </a>
                     <div class="flex-grow-1">
-                        <div class="fw-semibold">${m.nome}</div>
-                        <small class="text-muted">${m.papel || m.cargo || ''}</small>
+                        <a href="/rap/contacts/${m.contact_id}" class="fw-semibold text-dark" style="text-decoration: none;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">${m.nome}</a>
+                        <div><small class="text-muted">${m.papel || m.cargo || ''}</small></div>
                     </div>
                     <button class="btn btn-sm btn-link text-danger" onclick="removeMember(${m.contact_id})" title="Remover">
                         <i class="bi bi-x"></i>
