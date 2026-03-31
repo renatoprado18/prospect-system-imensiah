@@ -8594,31 +8594,35 @@ async def search_contacts_api(
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
-    service = get_search_service()
+    try:
+        service = get_search_service()
 
-    # Parse tags from comma-separated string
-    tags_list = [t.strip() for t in tags.split(",")] if tags else None
+        # Parse tags from comma-separated string
+        tags_list = [t.strip() for t in tags.split(",")] if tags else None
 
-    return service.search_contacts(
-        query=q,
-        circulo=circulo,
-        tags=tags_list,
-        health_min=health_min,
-        health_max=health_max,
-        has_email=has_email,
-        has_whatsapp=has_whatsapp,
-        empresa=empresa,
-        contexto=contexto,
-        ordem=ordem,
-        limit=limit,
-        offset=offset
-    )
+        return service.search_contacts(
+            query=q,
+            circulo=circulo,
+            tags=tags_list,
+            health_min=health_min,
+            health_max=health_max,
+            has_email=has_email,
+            has_whatsapp=has_whatsapp,
+            empresa=empresa,
+            contexto=contexto,
+            ordem=ordem,
+            limit=limit,
+            offset=offset
+        )
+    except Exception as e:
+        logger.error(f"Error in contact search: {e}")
+        return {"contacts": [], "total": 0, "error": str(e)}
 
 
 @app.get("/api/contacts/suggestions")
 async def get_contact_suggestions(
     request: Request,
-    q: str,
+    q: str = "",
     limit: int = 10
 ):
     """Sugestoes de autocomplete para busca"""
@@ -8626,8 +8630,16 @@ async def get_contact_suggestions(
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
-    service = get_search_service()
-    return {"suggestions": service.get_search_suggestions(q, limit)}
+    if not q or len(q) < 2:
+        return {"suggestions": []}
+
+    try:
+        service = get_search_service()
+        results = service.get_search_suggestions(q, limit)
+        return {"suggestions": results}
+    except Exception as e:
+        logger.error(f"Error in contact suggestions: {e}")
+        return {"suggestions": [], "error": str(e)}
 
 
 @app.get("/api/contacts/by-company/{empresa}")
