@@ -786,8 +786,15 @@ async def search_company_info(
     page_title = ""
     page_description = ""
 
+    # Validar URL
+    import re as url_re
+    if not url_re.match(r'^https?://[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+', url_to_fetch):
+        return {"status": "error", "error": f"Invalid URL format: {url_to_fetch}"}
+
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        # Usar limits para evitar resource busy em serverless
+        limits = httpx.Limits(max_keepalive_connections=1, max_connections=1)
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, limits=limits) as client:
             response = await client.get(
                 url_to_fetch,
                 headers={
@@ -831,7 +838,10 @@ async def search_company_info(
                 }
 
     except Exception as e:
-        return {"status": "error", "error": f"Failed to fetch website: {str(e)}"}
+        error_msg = str(e)
+        if "Errno 16" in error_msg or "resource busy" in error_msg.lower():
+            return {"status": "error", "error": "Servidor ocupado. Tente novamente em alguns segundos."}
+        return {"status": "error", "error": f"Failed to fetch website: {error_msg}"}
 
     # Se nao tem conteudo, retornar erro
     if not page_content and not page_title:
