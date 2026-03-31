@@ -984,6 +984,46 @@
             color: #f59e0b;
         }
 
+        .contact-today-badge.urgent {
+            background: rgba(239, 68, 68, 0.2);
+            color: #dc2626;
+            animation: pulse-urgent 2s infinite;
+        }
+
+        .contact-today-badge.important {
+            background: rgba(249, 115, 22, 0.15);
+            color: #ea580c;
+        }
+
+        @keyframes pulse-urgent {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        /* Circulo mini badge */
+        .circulo-mini {
+            display: inline-block;
+            font-size: 0.6rem;
+            font-weight: 700;
+            padding: 1px 4px;
+            border-radius: 4px;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+        .circulo-mini.c1 { background: #ef4444; color: white; }
+        .circulo-mini.c2 { background: #f59e0b; color: white; }
+        .circulo-mini.c3 { background: #3b82f6; color: white; }
+        .circulo-mini.c4 { background: #8b5cf6; color: white; }
+        .circulo-mini.c5 { background: #6b7280; color: white; }
+
+        /* Avatar colors by type */
+        .contact-today-avatar.urgent {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+        }
+        .contact-today-avatar.important {
+            background: linear-gradient(135deg, #f97316, #ea580c);
+        }
+
         .contact-today-empty {
             text-align: center;
             padding: 32px 16px;
@@ -3194,27 +3234,48 @@
                     });
                 }
 
-                // 3. Contatos em risco critico (health < 20)
+                // 3. Contatos priorizados por importância (novo sistema de scoring)
                 const atRiskContacts = atRiskData.contacts || [];
                 atRiskContacts.forEach(c => {
                     if (!priorityContacts.find(p => p.id === c.id)) {
-                        const health = c.health_score || Math.round((1 - (c.risco_churn || 0.5)) * 100);
-                        const isCritical = health < 20;
+                        const health = c.health_score || 50;
+                        const circulo = c.circulo || 5;
+                        const category = c.category || 'attention';
+                        const priorityScore = c.priority_score || 0;
+
+                        // Mapear categoria para tipo visual
+                        let type, priority;
+                        if (category === 'urgent') {
+                            type = 'urgent';
+                            priority = 3;
+                        } else if (category === 'important') {
+                            type = 'important';
+                            priority = 4;
+                        } else {
+                            type = 'attention';
+                            priority = 5;
+                        }
 
                         priorityContacts.push({
                             id: c.id,
                             nome: c.nome,
-                            reason: `Health ${health}% - ${c.motivo_risco || 'precisa atencao'}`,
-                            reasonIcon: 'bi-heart-pulse',
-                            type: isCritical ? 'critical' : 'attention',
-                            priority: isCritical ? 3 : 4,
-                            health: health
+                            circulo: circulo,
+                            reason: c.motivo_risco || 'precisa atenção',
+                            reasonIcon: category === 'urgent' ? 'bi-exclamation-triangle' :
+                                       category === 'important' ? 'bi-star' : 'bi-heart-pulse',
+                            type: type,
+                            priority: priority,
+                            health: health,
+                            priorityScore: priorityScore
                         });
                     }
                 });
 
-                // Ordenar por prioridade
-                priorityContacts.sort((a, b) => a.priority - b.priority);
+                // Ordenar por prioridade (menor = mais importante) e depois por priorityScore
+                priorityContacts.sort((a, b) => {
+                    if (a.priority !== b.priority) return a.priority - b.priority;
+                    return (b.priorityScore || 0) - (a.priorityScore || 0);
+                });
 
                 // Limitar a 6 contatos
                 const displayContacts = priorityContacts.slice(0, 6);
@@ -3233,21 +3294,32 @@
 
                 container.innerHTML = displayContacts.map(c => {
                     const initials = (c.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+                    const circuloBadge = c.circulo ? `<span class="circulo-mini c${c.circulo}">C${c.circulo}</span>` : '';
+
+                    // Labels por tipo
+                    const typeLabel = {
+                        'birthday': 'Aniversário',
+                        'followup': 'Follow-up',
+                        'urgent': 'URGENTE',
+                        'important': 'Importante',
+                        'attention': 'Atenção',
+                        'critical': 'Crítico'
+                    };
 
                     return `
                         <a href="/contatos/${c.id}" class="contact-today-item">
                             <div class="contact-today-avatar ${c.type}">${initials}</div>
                             <div class="contact-today-info">
-                                <div class="contact-today-name">${c.nome}</div>
+                                <div class="contact-today-name">
+                                    ${circuloBadge} ${c.nome}
+                                </div>
                                 <div class="contact-today-reason">
                                     <i class="bi ${c.reasonIcon}"></i>
-                                    ${c.reason}
+                                    ${c.health ? `Health ${c.health}% - ` : ''}${c.reason}
                                 </div>
                             </div>
                             <span class="contact-today-badge ${c.type}">
-                                ${c.type === 'birthday' ? 'Aniversario' :
-                                  c.type === 'followup' ? 'Follow-up' :
-                                  c.type === 'critical' ? 'Critico' : 'Atencao'}
+                                ${typeLabel[c.type] || 'Atenção'}
                             </span>
                         </a>
                     `;

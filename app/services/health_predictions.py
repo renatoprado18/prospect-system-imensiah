@@ -154,74 +154,138 @@ class HealthPredictionsService:
     def get_at_risk_contacts(
         self,
         threshold: int = 40,
-        circulo_max: int = 3,
+        circulo_max: int = 4,
         limit: int = 50
     ) -> List[Dict]:
-        """Retorna contatos em risco de queda de health"""
+        """
+        Retorna contatos priorizados por importância e urgência.
+
+        Sistema de scoring:
+        - Peso do círculo: C1=5x, C2=4x, C3=3x, C4=2x, C5=1x
+        - Urgência de health: quanto menor, mais urgente
+        - Dias sem contato: acima do limite do círculo aumenta urgência
+        - Bônus: aniversário próximo, etc.
+        """
         contacts_at_risk = []
+
+        # Pesos por círculo (importância do relacionamento)
+        CIRCULO_WEIGHT = {1: 100, 2: 80, 3: 60, 4: 40, 5: 20}
+
+        # Limites de dias sem contato por círculo
+        DIAS_LIMITE = {1: 30, 2: 45, 3: 60, 4: 90, 5: 180}
 
         with get_db() as conn:
             cursor = conn.cursor()
 
-            # Contatos importantes com health abaixo do threshold ou sem contato recente
+            # Buscar contatos com dados relevantes incluindo aniversário
             cursor.execute("""
-                SELECT id, nome, empresa, circulo, health_score, ultimo_contato,
-                       EXTRACT(DAY FROM NOW() - ultimo_contato)::int as dias_sem_contato
+                SELECT
+                    id, nome, empresa, cargo, circulo, health_score, ultimo_contato,
+                    COALESCE(EXTRACT(DAY FROM NOW() - ultimo_contato)::int, 999) as dias_sem_contato,
+                    aniversario,
+                    CASE
+                        WHEN aniversario IS NOT NULL THEN
+                            CASE
+                                WHEN TO_CHAR(aniversario, 'MM-DD') >= TO_CHAR(NOW(), 'MM-DD')
+                                THEN TO_DATE(TO_CHAR(NOW(), 'YYYY') || '-' || TO_CHAR(aniversario, 'MM-DD'), 'YYYY-MM-DD') - CURRENT_DATE
+                                ELSE TO_DATE(TO_CHAR(NOW(), 'YYYY')::int + 1 || '-' || TO_CHAR(aniversario, 'MM-DD'), 'YYYY-MM-DD') - CURRENT_DATE
+                            END
+                        ELSE 999
+                    END as dias_ate_aniversario
                 FROM contacts
                 WHERE COALESCE(circulo, 5) <= %s
                 AND (
                     COALESCE(health_score, 50) < %s
-                    OR (circulo = 1 AND ultimo_contato < NOW() - INTERVAL '30 days')
-                    OR (circulo = 2 AND ultimo_contato < NOW() - INTERVAL '45 days')
-                    OR (circulo = 3 AND ultimo_contato < NOW() - INTERVAL '60 days')
+                    OR (circulo = 1 AND (ultimo_contato IS NULL OR ultimo_contato < NOW() - INTERVAL '30 days'))
+                    OR (circulo = 2 AND (ultimo_contato IS NULL OR ultimo_contato < NOW() - INTERVAL '45 days'))
+                    OR (circulo = 3 AND (ultimo_contato IS NULL OR ultimo_contato < NOW() - INTERVAL '60 days'))
+                    OR (circulo = 4 AND (ultimo_contato IS NULL OR ultimo_contato < NOW() - INTERVAL '90 days'))
                 )
-                ORDER BY circulo ASC, health_score ASC NULLS LAST
-                LIMIT %s
-            """, (circulo_max, threshold, limit))
+                LIMIT 200
+            """, (circulo_max, threshold))
 
             for row in cursor.fetchall():
                 contact = dict(row)
 
-                # Calcular nivel de risco
                 health = contact["health_score"] or 50
                 dias = contact["dias_sem_contato"] or 0
                 circulo = contact["circulo"] or 5
+                dias_aniv = contact.get("dias_ate_aniversario") or 999
 
-                risk_score = 0
+                # === NOVO SISTEMA DE SCORING ===
 
-                # Fator health
-                if health < 20:
-                    risk_score += 40
-                elif health < 30:
-                    risk_score += 30
-                elif health < 40:
-                    risk_score += 20
+                # 1. Base: peso do círculo (0-100)
+                base_score = CIRCULO_WEIGHT.get(circulo, 20)
 
-                # Fator tempo sem contato
-                if circulo == 1:
-                    risk_score += min(30, dias // 10 * 5)
-                elif circulo == 2:
-                    risk_score += min(25, dias // 15 * 5)
+                # 2. Fator de urgência de health (multiplicador 1.0 a 2.5)
+                # Health 0 = 2.5x, Health 50 = 1.0x
+                health_factor = 1.0 + (1.5 * (50 - min(health, 50)) / 50)
+
+                # 3. Fator de dias sem contato (multiplicador 1.0 a 2.0)
+                dias_limite = DIAS_LIMITE.get(circulo, 90)
+                if dias > dias_limite:
+                    days_factor = 1.0 + min(1.0, (dias - dias_limite) / dias_limite)
                 else:
-                    risk_score += min(20, dias // 20 * 5)
+                    days_factor = 1.0
 
-                # Fator circulo (mais importante = mais risco)
-                risk_score += (4 - circulo) * 5
+                # 4. Bônus especiais
+                bonus = 0
+                motivos = []
 
-                contact["risk_score"] = min(100, risk_score)
-                contact["risk_level"] = (
-                    "critical" if risk_score >= 70 else
-                    "high" if risk_score >= 50 else
-                    "medium" if risk_score >= 30 else
-                    "low"
-                )
+                # Aniversário em até 7 dias
+                if dias_aniv <= 7:
+                    bonus += 50
+                    motivos.append(f"aniversário em {dias_aniv} dias" if dias_aniv > 0 else "aniversário HOJE!")
+
+                # Health crítico (< 20)
+                if health < 20:
+                    bonus += 30
+                    motivos.append("health crítico")
+                elif health < 30:
+                    motivos.append("health baixo")
+
+                # Muito tempo sem contato
+                if dias > dias_limite * 1.5:
+                    bonus += 20
+                    motivos.append(f"{dias} dias sem contato")
+                elif dias > dias_limite:
+                    motivos.append(f"{dias} dias sem contato")
+
+                # C1/C2 sempre tem motivo especial
+                if circulo <= 2 and not motivos:
+                    motivos.append("relacionamento importante")
+
+                # === SCORE FINAL ===
+                priority_score = (base_score * health_factor * days_factor) + bonus
+
+                # Normalizar para 0-100
+                priority_score = min(100, priority_score / 3)
+
+                # Determinar categoria
+                if circulo <= 2 and (health < 30 or dias > dias_limite * 1.5):
+                    category = "urgent"  # 🔴 URGENTE
+                elif circulo <= 3 and (health < 40 or dias > dias_limite):
+                    category = "important"  # 🟠 IMPORTANTE
+                else:
+                    category = "attention"  # 🟡 ATENÇÃO
+
+                # Motivo principal para exibição
+                if not motivos:
+                    motivos.append("precisa atenção")
+
+                contact["priority_score"] = round(priority_score, 1)
+                contact["risk_score"] = round(priority_score, 1)  # Compatibilidade
+                contact["risk_level"] = category
+                contact["category"] = category
+                contact["motivo_risco"] = motivos[0]
+                contact["motivos"] = motivos
 
                 contacts_at_risk.append(contact)
 
-            # Ordenar por risk_score
-            contacts_at_risk.sort(key=lambda x: x["risk_score"], reverse=True)
+            # Ordenar por priority_score (maior = mais urgente)
+            contacts_at_risk.sort(key=lambda x: x["priority_score"], reverse=True)
 
-        return contacts_at_risk
+        return contacts_at_risk[:limit]
 
     def run_batch_predictions(
         self,
