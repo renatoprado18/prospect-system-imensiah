@@ -95,6 +95,7 @@ from services.briefing_context import (
     detectar_promessas_pendentes
 )
 from services.linkedin_enrichment import get_linkedin_enrichment_service
+from services.search import get_search_service
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
@@ -8640,108 +8641,6 @@ async def generate_insights_batch_endpoint(
 # =============================================================================
 # SEARCH API ENDPOINTS
 # =============================================================================
-
-from services.search import get_search_service
-
-@app.get("/api/contacts/search")
-async def search_contacts_api(
-    request: Request,
-    q: str = None,
-    circulo: int = None,
-    tags: str = None,
-    health_min: int = None,
-    health_max: int = None,
-    has_email: bool = None,
-    has_whatsapp: bool = None,
-    empresa: str = None,
-    contexto: str = None,
-    ordem: str = "nome",
-    limit: int = 50,
-    offset: int = 0
-):
-    """Busca avancada de contatos com multiplos filtros"""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Nao autenticado")
-
-    try:
-        service = get_search_service()
-
-        # Parse tags from comma-separated string
-        tags_list = [t.strip() for t in tags.split(",")] if tags else None
-
-        return service.search_contacts(
-            query=q,
-            circulo=circulo,
-            tags=tags_list,
-            health_min=health_min,
-            health_max=health_max,
-            has_email=has_email,
-            has_whatsapp=has_whatsapp,
-            empresa=empresa,
-            contexto=contexto,
-            ordem=ordem,
-            limit=limit,
-            offset=offset
-        )
-    except Exception as e:
-        logger.error(f"Error in contact search: {e}")
-        return {"contacts": [], "total": 0, "error": str(e)}
-
-
-@app.get("/api/contacts/suggestions")
-async def get_contact_suggestions(
-    request: Request,
-    q: str = "",
-    limit: int = 10
-):
-    """Sugestoes de autocomplete para busca"""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Nao autenticado")
-
-    if not q or len(q) < 2:
-        return {"suggestions": []}
-
-    try:
-        service = get_search_service()
-        results = service.get_search_suggestions(q, limit)
-        return {"suggestions": results}
-    except Exception as e:
-        logger.error(f"Error in contact suggestions: {e}")
-        return {"suggestions": [], "error": str(e)}
-
-
-@app.get("/api/contacts/quick-search")
-async def quick_search_contacts(request: Request):
-    """Busca simples de contatos - endpoint alternativo"""
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Nao autenticado")
-
-    # Pegar query da URL manualmente
-    query = request.query_params.get("q", "")
-    limit = int(request.query_params.get("limit", "10"))
-
-    if not query or len(query) < 2:
-        return {"contacts": []}
-
-    try:
-        with get_pg_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, nome, empresa, cargo, foto_url
-                FROM contacts
-                WHERE nome ILIKE %s
-                ORDER BY nome
-                LIMIT %s
-            """, (f"%{query}%", limit))
-            contacts = [dict(row) for row in cursor.fetchall()]
-        return {"contacts": contacts}
-    except Exception as e:
-        logger.error(f"Error in quick search: {e}")
-        return {"contacts": [], "error": str(e)}
-
 
 @app.get("/api/contacts/by-company/{empresa}")
 async def get_contacts_by_company(
