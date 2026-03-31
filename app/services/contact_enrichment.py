@@ -130,11 +130,18 @@ async def enrich_contact_with_ai(contact_id: int, db_connection) -> Dict[str, An
             "status": "success" | "error"
         }
     """
+    logger.info(f"=== enrich_contact_with_ai called for contact {contact_id} ===")
+
     if not ANTHROPIC_API_KEY:
+        logger.error("ANTHROPIC_API_KEY not configured!")
         return {"status": "error", "error": "ANTHROPIC_API_KEY not configured"}
 
+    logger.info(f"API Key present: {bool(ANTHROPIC_API_KEY)}, length: {len(ANTHROPIC_API_KEY)}")
+
     # Gather context
+    logger.info("Gathering contact context...")
     context = await get_contact_context(contact_id, db_connection)
+    logger.info(f"Context gathered - has error: {'error' in context}")
 
     if "error" in context:
         return {"status": "error", "error": context["error"]}
@@ -272,8 +279,11 @@ Responda APENAS com JSON valido:
 
     # Call Claude API
     try:
-        logger.info(f"Enriching contact {contact_id} with model {CLAUDE_MODEL}")
+        logger.info(f"=== Calling Claude API ===")
+        logger.info(f"Model: {CLAUDE_MODEL}")
         logger.info(f"Prompt length: {len(prompt)} chars")
+        logger.info(f"WhatsApp messages: {len(context['whatsapp_messages'])}")
+        logger.info(f"Email messages: {len(context['email_messages'])}")
 
         async with httpx.AsyncClient(timeout=90.0) as client:
             response = await client.post(
@@ -322,16 +332,31 @@ Responda APENAS com JSON valido:
                 return enrichment
 
             except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error: {str(e)}")
+                logger.error(f"Raw response: {content[:500]}")
                 return {
                     "status": "error",
                     "error": f"Failed to parse AI response: {str(e)}",
                     "raw_response": content[:500]
                 }
 
-    except Exception as e:
+    except httpx.TimeoutException as e:
+        logger.error(f"API timeout: {str(e)}")
         return {
             "status": "error",
-            "error": f"API call failed: {str(e)}"
+            "error": f"API timeout after 90s: {str(e)}"
+        }
+    except httpx.RequestError as e:
+        logger.error(f"HTTP request error: {str(e)}")
+        return {
+            "status": "error",
+            "error": f"HTTP request failed: {str(e)}"
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error: {type(e).__name__}: {str(e)}")
+        return {
+            "status": "error",
+            "error": f"API call failed: {type(e).__name__}: {str(e)}"
         }
 
 
@@ -401,8 +426,11 @@ async def enrich_and_save(contact_id: int, db_connection) -> Dict[str, Any]:
     """
     Full enrichment pipeline: analyze and save results.
     """
+    logger.info(f"=== Starting enrichment pipeline for contact {contact_id} ===")
+
     # Run enrichment
     enrichment = await enrich_contact_with_ai(contact_id, db_connection)
+    logger.info(f"Enrichment result status: {enrichment.get('status')}")
 
     if enrichment.get("status") != "success":
         return enrichment
