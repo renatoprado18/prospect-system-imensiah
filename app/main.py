@@ -5,9 +5,18 @@ API Backend com FastAPI
 Deploy: Vercel (Serverless)
 Domínio: intel.almeida-prado.com
 """
+# Load .env for local development (before any other imports)
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env from project root
+env_path = Path(__file__).resolve().parent.parent / '.env'
+load_dotenv(env_path)
+
 import os
 import json
 import asyncio
+import httpx
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from contextlib import asynccontextmanager
@@ -8490,14 +8499,30 @@ async def send_inbox_reply(
 
         logger.info(f"Sending WhatsApp to {phone}: {content[:50]}...")
 
+        # Check Evolution API configuration
+        if not whatsapp.base_url or not whatsapp.api_key:
+            logger.error("Evolution API not configured - missing EVOLUTION_API_URL or EVOLUTION_API_KEY")
+            raise HTTPException(
+                status_code=503,
+                detail="WhatsApp nao configurado. Verifique EVOLUTION_API_URL e EVOLUTION_API_KEY no ambiente."
+            )
+
         # Send via WhatsApp
         try:
             sent_result = await whatsapp.send_text(phone, content)
             logger.info(f"WhatsApp send result: {sent_result}")
             if sent_result and "error" in sent_result:
-                raise HTTPException(status_code=500, detail=f"Erro ao enviar WhatsApp: {sent_result['error']}")
+                error_msg = sent_result.get('error', 'Erro desconhecido')
+                logger.error(f"WhatsApp API error: {error_msg}")
+                raise HTTPException(status_code=502, detail=f"Erro da API WhatsApp: {error_msg}")
         except HTTPException:
             raise
+        except httpx.TimeoutException:
+            logger.error("WhatsApp API timeout")
+            raise HTTPException(status_code=504, detail="Timeout ao conectar com WhatsApp API")
+        except httpx.ConnectError as e:
+            logger.error(f"WhatsApp API connection error: {e}")
+            raise HTTPException(status_code=503, detail="Nao foi possivel conectar com WhatsApp API")
         except Exception as e:
             logger.error(f"Error sending WhatsApp: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Erro ao enviar mensagem: {str(e)}")
