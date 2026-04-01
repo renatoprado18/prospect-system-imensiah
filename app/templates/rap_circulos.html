@@ -720,31 +720,48 @@ function selectCircle(n) {
 }
 
 async function saveCircleEdit() {
-    if (!editState.id) return;
+    console.log('saveCircleEdit called', editState);
+
+    if (!editState.id) {
+        console.error('No editState.id');
+        return;
+    }
+
+    if (!editState.context || !editState.circulo) {
+        alert('Selecione contexto e círculo');
+        return;
+    }
 
     const btn = document.querySelector('.btn-save');
     btn.disabled = true;
     btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
 
+    const payload = {
+        contexto: editState.context,
+        circulo: editState.circulo
+    };
+    console.log('Sending payload:', payload);
+
     try {
         const res = await fetch(`/api/contatos/${editState.id}/circulo`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contexto: editState.context,
-                circulo: editState.circulo
-            })
+            body: JSON.stringify(payload)
         });
+
+        console.log('Response status:', res.status);
+        const data = await res.json();
+        console.log('Response data:', data);
 
         if (res.ok) {
             closeEditModal();
             loadData(); // Reload all data
         } else {
-            alert('Erro ao salvar');
+            alert('Erro ao salvar: ' + (data.detail || res.status));
         }
     } catch (e) {
-        console.error(e);
-        alert('Erro ao salvar');
+        console.error('Save error:', e);
+        alert('Erro ao salvar: ' + e.message);
     } finally {
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-check me-1"></i>Salvar';
@@ -764,15 +781,12 @@ let draggedData = null;
 
 function setupDragEvents(container) {
     const items = container.querySelectorAll('.contact-item[draggable="true"]');
+    console.log('setupDragEvents: found', items.length, 'items in', container.id);
 
     items.forEach(item => {
-        // Remove existing listeners to avoid duplicates
-        item.removeEventListener('dragstart', handleDragStart);
-        item.removeEventListener('dragend', handleDragEnd);
-
-        // Add listeners
-        item.addEventListener('dragstart', handleDragStart);
-        item.addEventListener('dragend', handleDragEnd);
+        // Add listeners using ondragstart/ondragend directly to avoid issues
+        item.ondragstart = handleDragStart;
+        item.ondragend = handleDragEnd;
     });
 }
 
@@ -838,36 +852,51 @@ function setupDropZones() {
         list.addEventListener('drop', async (e) => {
             e.preventDefault();
             list.classList.remove('drag-over');
+            console.log('Drop event:', { draggedData, target: list.dataset.context });
 
-            if (!draggedData) return;
+            if (!draggedData) {
+                console.error('No draggedData');
+                return;
+            }
 
             const targetContext = list.dataset.context;
 
             // If dropping to same context, do nothing
-            if (targetContext === draggedData.context) return;
+            if (targetContext === draggedData.context) {
+                console.log('Same context, ignoring');
+                return;
+            }
 
             // Show loading state
             const contactName = draggedData.name || 'Contato';
             const targetLabel = targetContext === 'pessoal' ? 'Pessoal' : 'Profissional';
 
+            const payload = {
+                contexto: targetContext,
+                circulo: draggedData.circulo
+            };
+            console.log('Drag drop payload:', payload);
+
             try {
                 const res = await fetch(`/api/contatos/${draggedData.id}/circulo`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contexto: targetContext,
-                        circulo: draggedData.circulo
-                    })
+                    body: JSON.stringify(payload)
                 });
+
+                const data = await res.json();
+                console.log('Drop response:', res.status, data);
 
                 if (res.ok) {
                     console.log(`Moved ${contactName} to ${targetLabel}`);
                     loadData(); // Reload all data
                 } else {
-                    console.error('Error moving contact');
+                    console.error('Error moving contact:', data.detail);
+                    alert('Erro ao mover: ' + (data.detail || res.status));
                 }
             } catch (err) {
                 console.error('Drop error:', err);
+                alert('Erro ao mover: ' + err.message);
             }
         });
     });

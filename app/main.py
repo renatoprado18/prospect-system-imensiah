@@ -6294,8 +6294,8 @@ async def get_contact_circulo(contact_id: int):
 
 
 @app.post("/api/contacts/{contact_id}/circulo")
-async def update_contact_circulo(contact_id: int, data: dict):
-    """Atualiza circulo de um contato manualmente"""
+async def update_contact_circulo_legacy(contact_id: int, data: dict):
+    """Atualiza circulo de um contato manualmente (legacy endpoint)"""
     circulo = data.get("circulo")
     frequencia = data.get("frequencia_ideal_dias")
 
@@ -6329,8 +6329,8 @@ async def recalculate_contact_circulo(contact_id: int, force: bool = False):
 
 
 @app.put("/api/contatos/{contact_id}/circulo")
-async def update_contact_circulo(contact_id: int, data: dict):
-    """Atualiza circulo e/ou contexto de um contato manualmente."""
+async def update_contact_circulo_dual(contact_id: int, data: dict):
+    """Atualiza circulo e/ou contexto de um contato manualmente (dual circles)."""
     from database import get_db
 
     contexto = data.get("contexto")  # 'pessoal' ou 'profissional'
