@@ -281,6 +281,146 @@
         font-size: 0.85rem;
     }
 
+    /* Quick Edit Button - always visible */
+    .contact-item {
+        position: relative;
+    }
+    .contact-item .edit-btn {
+        padding: 4px 8px;
+        font-size: 0.7rem;
+        border: 1px solid var(--gray-300);
+        background: white;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.15s;
+        margin-left: auto;
+        flex-shrink: 0;
+    }
+    .contact-item .edit-btn:hover {
+        background: var(--gray-100);
+        border-color: var(--primary);
+        color: var(--primary);
+    }
+
+    /* Drag and Drop */
+    .contact-item[draggable="true"] {
+        cursor: grab;
+        user-select: none;
+    }
+    .contact-item[draggable="true"]:active { cursor: grabbing; }
+    .contact-item.dragging {
+        opacity: 0.4;
+        background: var(--gray-100);
+    }
+    .priority-list {
+        min-height: 100px;
+        transition: all 0.2s;
+    }
+    .priority-list.drag-over {
+        background: rgba(99, 102, 241, 0.08) !important;
+        outline: 2px dashed var(--primary);
+        outline-offset: -2px;
+    }
+
+    /* Edit Modal */
+    .edit-modal {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+    .edit-modal.active { display: flex; }
+    .edit-modal-content {
+        background: white;
+        border-radius: 16px;
+        padding: 1.5rem;
+        width: 320px;
+        max-width: 90%;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    .edit-modal h5 {
+        margin: 0 0 1rem 0;
+        font-size: 1rem;
+        font-weight: 600;
+    }
+    .edit-modal .form-label {
+        font-size: 0.8rem;
+        font-weight: 500;
+        color: var(--gray-600);
+        margin-bottom: 0.25rem;
+    }
+    .circle-options {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+    .circle-option {
+        padding: 0.5rem 1rem;
+        border: 2px solid var(--gray-200);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 0.8rem;
+        font-weight: 600;
+        transition: all 0.15s;
+    }
+    .circle-option:hover { border-color: var(--gray-400); }
+    .circle-option.selected {
+        border-color: var(--primary);
+        background: rgba(99, 102, 241, 0.1);
+        color: var(--primary);
+    }
+    .context-toggle {
+        display: flex;
+        gap: 0.5rem;
+        margin: 1rem 0;
+    }
+    .context-toggle button {
+        flex: 1;
+        padding: 0.5rem;
+        border: 2px solid var(--gray-200);
+        border-radius: 8px;
+        background: white;
+        cursor: pointer;
+        font-size: 0.85rem;
+        font-weight: 500;
+        transition: all 0.15s;
+    }
+    .context-toggle button.active.personal {
+        border-color: #ec4899;
+        background: #fdf2f8;
+        color: #be185d;
+    }
+    .context-toggle button.active.professional {
+        border-color: #3b82f6;
+        background: #eff6ff;
+        color: #1d4ed8;
+    }
+    .edit-modal-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 1.5rem;
+    }
+    .edit-modal-actions button {
+        flex: 1;
+        padding: 0.5rem;
+        border-radius: 8px;
+        font-weight: 500;
+        cursor: pointer;
+    }
+    .btn-cancel {
+        background: var(--gray-100);
+        border: none;
+        color: var(--gray-600);
+    }
+    .btn-save {
+        background: var(--primary);
+        border: none;
+        color: white;
+    }
+
     /* Mobile */
     @media (max-width: 768px) {
         .split-container {
@@ -313,7 +453,7 @@
             <div class="priority-header">
                 <i class="bi bi-sort-down"></i> Prioridade
             </div>
-            <div class="priority-list" id="listPessoal">
+            <div class="priority-list" id="listPessoal" data-context="pessoal">
                 <div class="empty-state"><div class="spinner-border spinner-border-sm"></div></div>
             </div>
         </div>
@@ -331,9 +471,41 @@
             <div class="priority-header">
                 <i class="bi bi-sort-down"></i> Prioridade
             </div>
-            <div class="priority-list" id="listProfissional">
+            <div class="priority-list" id="listProfissional" data-context="profissional">
                 <div class="empty-state"><div class="spinner-border spinner-border-sm"></div></div>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Circle Modal -->
+<div class="edit-modal" id="editModal">
+    <div class="edit-modal-content">
+        <h5><i class="bi bi-pencil me-2"></i>Editar Círculo</h5>
+        <input type="hidden" id="editContactId">
+
+        <div class="mb-3">
+            <label class="form-label">Contexto</label>
+            <div class="context-toggle">
+                <button type="button" id="ctxPessoal" onclick="setContext('pessoal')">
+                    <i class="bi bi-heart-fill me-1"></i>Pessoal
+                </button>
+                <button type="button" id="ctxProfissional" onclick="setContext('profissional')">
+                    <i class="bi bi-briefcase-fill me-1"></i>Profissional
+                </button>
+            </div>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">Círculo</label>
+            <div class="circle-options" id="circleOptions"></div>
+        </div>
+
+        <div class="edit-modal-actions">
+            <button class="btn-cancel" onclick="closeEditModal()">Cancelar</button>
+            <button class="btn-save" onclick="saveCircleEdit()">
+                <i class="bi bi-check me-1"></i>Salvar
+            </button>
         </div>
     </div>
 </div>
@@ -395,6 +567,7 @@ function renderList(ctx, contacts) {
         const bday = c.fatores?.some(f => f.tipo === 'birthday');
         const f = c.fatores?.[0];
         const days = c.dias_sem_contato === null ? 'Nunca' : c.dias_sem_contato === 0 ? 'Hoje' : c.dias_sem_contato + 'd';
+        const circulo = ctx === 'pessoal' ? (c.circulo_pessoal || c.circulo || 5) : (c.circulo_profissional || c.circulo || 5);
 
         let icon = '';
         if (f) {
@@ -402,14 +575,17 @@ function renderList(ctx, contacts) {
             icon = `<i class="bi ${icons[f.tipo] || 'bi-circle'}"></i>`;
         }
 
+        const safeName = (c.nome || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
         return `
-            <a href="/contatos/${c.id}" class="contact-item">
+            <div class="contact-item" draggable="true" data-id="${c.id}" data-context="${ctx}" data-circulo="${circulo}" data-name="${safeName}"
+                 style="cursor:grab; user-select:none;">
                 <div class="cat-dot ${c.category || 'attention'}"></div>
-                <div class="contact-avatar">
+                <div class="contact-avatar" onclick="event.stopPropagation();window.location='/contatos/${c.id}'" style="cursor:pointer;">
                     ${c.foto_url ? `<img src="${c.foto_url}">` : c.nome?.charAt(0) || '?'}
                     ${bday ? '<span class="bday-icon">🎂</span>' : ''}
                 </div>
-                <div class="contact-info">
+                <div class="contact-info" onclick="event.stopPropagation();window.location='/contatos/${c.id}'" style="cursor:pointer;">
                     <div class="contact-name">
                         <span>${c.nome || 'Sem nome'}</span>
                         <span class="c-badge ${bc}">${c.badge || '?'}</span>
@@ -420,9 +596,17 @@ function renderList(ctx, contacts) {
                     <div class="contact-days ${c.category === 'urgent' ? 'urgent' : ''}">${days}</div>
                     <div class="health-bar"><div class="health-fill ${hc}" style="width:${h}%"></div></div>
                 </div>
-            </a>
+                <button class="edit-btn"
+                        style="padding:4px 10px; font-size:0.75rem; border:1px solid #d1d5db; background:#fff; border-radius:4px; cursor:pointer; margin-left:8px; flex-shrink:0;"
+                        onclick="event.stopPropagation();openEditModal(${c.id},'${safeName}','${ctx}',${circulo})">
+                    ✏️
+                </button>
+            </div>
         `;
     }).join('');
+
+    // Setup drag events for items
+    setupDragEvents(el);
 }
 
 function selectTile(ctx, n) {
@@ -482,6 +666,216 @@ function fmt(n) { return n >= 1000 ? (n/1000).toFixed(1) + 'k' : n; }
 function healthClass(h) { return h >= 70 ? 'high' : h >= 40 ? 'medium' : 'low'; }
 function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
-document.addEventListener('DOMContentLoaded', loadData);
+// =============================================
+// EDIT MODAL
+// =============================================
+let editState = { id: null, context: null, circulo: null };
+
+function openEditModal(contactId, contactName, currentContext, currentCirculo) {
+    editState = { id: contactId, context: currentContext, circulo: currentCirculo };
+
+    document.getElementById('editContactId').value = contactId;
+    document.querySelector('#editModal h5').innerHTML = `<i class="bi bi-pencil me-2"></i>${contactName}`;
+
+    // Set context toggle
+    setContext(currentContext);
+
+    // Show modal
+    document.getElementById('editModal').classList.add('active');
+}
+
+function closeEditModal() {
+    document.getElementById('editModal').classList.remove('active');
+    editState = { id: null, context: null, circulo: null };
+}
+
+function setContext(ctx) {
+    editState.context = ctx;
+
+    // Update toggle buttons
+    const btnP = document.getElementById('ctxPessoal');
+    const btnR = document.getElementById('ctxProfissional');
+    btnP.className = ctx === 'pessoal' ? 'active personal' : '';
+    btnR.className = ctx === 'profissional' ? 'active professional' : '';
+
+    // Render circle options based on context
+    renderCircleOptions(ctx);
+}
+
+function renderCircleOptions(ctx) {
+    const cfg = ctx === 'pessoal' ? data.pessoal.config : data.profissional.config;
+    const el = document.getElementById('circleOptions');
+
+    el.innerHTML = '';
+    for (let i = 1; i <= 5; i++) {
+        const c = cfg[i] || {};
+        const sel = editState.circulo === i ? 'selected' : '';
+        el.innerHTML += `<div class="circle-option ${sel}" onclick="selectCircle(${i})">${c.badge || 'C'+i}</div>`;
+    }
+}
+
+function selectCircle(n) {
+    editState.circulo = n;
+    renderCircleOptions(editState.context);
+}
+
+async function saveCircleEdit() {
+    if (!editState.id) return;
+
+    const btn = document.querySelector('.btn-save');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
+
+    try {
+        const res = await fetch(`/api/contatos/${editState.id}/circulo`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contexto: editState.context,
+                circulo: editState.circulo
+            })
+        });
+
+        if (res.ok) {
+            closeEditModal();
+            loadData(); // Reload all data
+        } else {
+            alert('Erro ao salvar');
+        }
+    } catch (e) {
+        console.error(e);
+        alert('Erro ao salvar');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check me-1"></i>Salvar';
+    }
+}
+
+// Close modal on backdrop click
+document.addEventListener('click', (e) => {
+    if (e.target.id === 'editModal') closeEditModal();
+});
+
+// =============================================
+// DRAG AND DROP
+// =============================================
+let draggedItem = null;
+let draggedData = null;
+
+function setupDragEvents(container) {
+    const items = container.querySelectorAll('.contact-item[draggable="true"]');
+
+    items.forEach(item => {
+        // Remove existing listeners to avoid duplicates
+        item.removeEventListener('dragstart', handleDragStart);
+        item.removeEventListener('dragend', handleDragEnd);
+
+        // Add listeners
+        item.addEventListener('dragstart', handleDragStart);
+        item.addEventListener('dragend', handleDragEnd);
+    });
+}
+
+function handleDragStart(e) {
+    draggedItem = this;
+    draggedData = {
+        id: this.dataset.id,
+        context: this.dataset.context,
+        circulo: parseInt(this.dataset.circulo) || 3,
+        name: this.dataset.name
+    };
+
+    this.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', JSON.stringify(draggedData));
+
+    // Highlight drop zones
+    setTimeout(() => {
+        document.querySelectorAll('.priority-list').forEach(el => {
+            if (el.dataset.context !== draggedData.context) {
+                el.style.outline = '2px dashed #6366f1';
+                el.style.outlineOffset = '-2px';
+            }
+        });
+    }, 0);
+}
+
+function handleDragEnd(e) {
+    this.classList.remove('dragging');
+    draggedItem = null;
+    draggedData = null;
+
+    // Remove all highlights
+    document.querySelectorAll('.priority-list').forEach(el => {
+        el.classList.remove('drag-over');
+        el.style.outline = '';
+        el.style.outlineOffset = '';
+    });
+}
+
+// Setup drop zones (the priority lists)
+function setupDropZones() {
+    const lists = document.querySelectorAll('.priority-list');
+
+    lists.forEach(list => {
+        list.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+
+            // Only highlight if different context
+            if (draggedData && list.dataset.context !== draggedData.context) {
+                list.classList.add('drag-over');
+            }
+        });
+
+        list.addEventListener('dragleave', (e) => {
+            // Only remove if leaving the list entirely
+            if (!list.contains(e.relatedTarget)) {
+                list.classList.remove('drag-over');
+            }
+        });
+
+        list.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            list.classList.remove('drag-over');
+
+            if (!draggedData) return;
+
+            const targetContext = list.dataset.context;
+
+            // If dropping to same context, do nothing
+            if (targetContext === draggedData.context) return;
+
+            // Show loading state
+            const contactName = draggedData.name || 'Contato';
+            const targetLabel = targetContext === 'pessoal' ? 'Pessoal' : 'Profissional';
+
+            try {
+                const res = await fetch(`/api/contatos/${draggedData.id}/circulo`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contexto: targetContext,
+                        circulo: draggedData.circulo
+                    })
+                });
+
+                if (res.ok) {
+                    console.log(`Moved ${contactName} to ${targetLabel}`);
+                    loadData(); // Reload all data
+                } else {
+                    console.error('Error moving contact');
+                }
+            } catch (err) {
+                console.error('Drop error:', err);
+            }
+        });
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadData();
+    setupDropZones();
+});
 </script>
 {% endblock %}

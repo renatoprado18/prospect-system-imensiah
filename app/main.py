@@ -6319,6 +6319,66 @@ async def recalculate_contact_circulo(contact_id: int, force: bool = False):
     return result
 
 
+@app.put("/api/contatos/{contact_id}/circulo")
+async def update_contact_circulo(contact_id: int, data: dict):
+    """Atualiza circulo e/ou contexto de um contato manualmente."""
+    from database import get_db
+
+    contexto = data.get("contexto")  # 'pessoal' ou 'profissional'
+    circulo = data.get("circulo")    # 1-5
+
+    if not contexto or not circulo:
+        raise HTTPException(status_code=400, detail="contexto e circulo são obrigatórios")
+
+    if circulo not in [1, 2, 3, 4, 5]:
+        raise HTTPException(status_code=400, detail="circulo deve ser 1-5")
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Map contexto to database field
+            if contexto == "pessoal":
+                cursor.execute("""
+                    UPDATE contacts
+                    SET circulo_pessoal = %s,
+                        contexto = 'personal',
+                        atualizado_em = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    RETURNING id, nome, circulo_pessoal, circulo_profissional, contexto
+                """, (circulo, contact_id))
+            else:  # profissional
+                cursor.execute("""
+                    UPDATE contacts
+                    SET circulo_profissional = %s,
+                        contexto = COALESCE(contexto, 'professional'),
+                        atualizado_em = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    RETURNING id, nome, circulo_pessoal, circulo_profissional, contexto
+                """, (circulo, contact_id))
+
+            result = cursor.fetchone()
+            conn.commit()
+
+            if not result:
+                raise HTTPException(status_code=404, detail="Contato não encontrado")
+
+            return {
+                "success": True,
+                "contact": {
+                    "id": result["id"],
+                    "nome": result["nome"],
+                    "circulo_pessoal": result["circulo_pessoal"],
+                    "circulo_profissional": result["circulo_profissional"],
+                    "contexto": result["contexto"]
+                }
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============== CIRCULOS PAGE ROUTE ==============
 
 @app.get("/rap/circulos")
