@@ -610,6 +610,7 @@ function renderList(ctx, contacts) {
 }
 
 function selectTile(ctx, n) {
+    console.log('selectTile:', ctx, n);
     selected[ctx] = selected[ctx] === n ? null : n;
     const d = ctx === 'pessoal' ? data.pessoal : data.profissional;
     renderTiles(ctx, d.por_circulo, d.config);
@@ -617,6 +618,7 @@ function selectTile(ctx, n) {
 }
 
 async function filterByCircle(ctx, n) {
+    console.log('filterByCircle:', ctx, n);
     const el = document.getElementById(`list${cap(ctx)}`);
     el.innerHTML = '<div class="empty-state"><div class="spinner-border spinner-border-sm"></div></div>';
 
@@ -628,9 +630,14 @@ async function filterByCircle(ctx, n) {
     }
 
     // Use the specific circle endpoint with contexto parameter
+    const url = `/api/circulos/${n}/contacts?sort_by=health&limit=30&contexto=${ctx}`;
+    console.log('Fetching:', url);
+
     try {
-        const res = await fetch(`/api/circulos/${n}/contacts?sort_by=health&limit=30&contexto=${ctx}`);
+        const res = await fetch(url);
+        console.log('Response status:', res.status);
         const r = await res.json();
+        console.log('Response data:', r);
         const contacts = r.contacts || [];
         const cfg = ctx === 'pessoal' ? data.pessoal.config : data.profissional.config;
 
@@ -639,6 +646,7 @@ async function filterByCircle(ctx, n) {
             c.category = c.category || (c.health_score < 40 ? 'attention' : 'normal');
         });
 
+        console.log('Filtered contacts:', contacts.length);
         if (contacts.length === 0) {
             el.innerHTML = '<div class="empty-state">Nenhum contato neste círculo</div>';
         } else {
@@ -791,15 +799,19 @@ function setupDragEvents(container) {
 }
 
 function handleDragStart(e) {
-    draggedItem = this;
+    const item = e.target.closest('.contact-item');
+    if (!item) return;
+
+    console.log('Drag started:', item.dataset);
+    draggedItem = item;
     draggedData = {
-        id: this.dataset.id,
-        context: this.dataset.context,
-        circulo: parseInt(this.dataset.circulo) || 3,
-        name: this.dataset.name
+        id: item.dataset.id,
+        context: item.dataset.context,
+        circulo: parseInt(item.dataset.circulo) || 3,
+        name: item.dataset.name
     };
 
-    this.classList.add('dragging');
+    item.classList.add('dragging');
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', JSON.stringify(draggedData));
 
@@ -815,7 +827,9 @@ function handleDragStart(e) {
 }
 
 function handleDragEnd(e) {
-    this.classList.remove('dragging');
+    const item = e.target.closest('.contact-item');
+    if (item) item.classList.remove('dragging');
+
     draggedItem = null;
     draggedData = null;
 
