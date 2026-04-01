@@ -579,7 +579,7 @@ function renderList(ctx, contacts) {
 
         return `
             <div class="contact-item" draggable="true" data-id="${c.id}" data-context="${ctx}" data-circulo="${circulo}" data-name="${safeName}"
-                 style="cursor:grab; user-select:none;">
+                 style="cursor:grab; user-select:none;" ondragstart="handleDragStart(event)" ondragend="handleDragEnd(event)">
                 <div class="cat-dot ${c.category || 'attention'}"></div>
                 <div class="contact-avatar" onclick="event.stopPropagation();window.location='/contatos/${c.id}'" style="cursor:pointer;">
                     ${c.foto_url ? `<img src="${c.foto_url}">` : c.nome?.charAt(0) || '?'}
@@ -788,14 +788,9 @@ let draggedItem = null;
 let draggedData = null;
 
 function setupDragEvents(container) {
+    // Events are now attached inline via ondragstart/ondragend attributes
     const items = container.querySelectorAll('.contact-item[draggable="true"]');
-    console.log('setupDragEvents: found', items.length, 'items in', container.id);
-
-    items.forEach(item => {
-        // Add listeners using ondragstart/ondragend directly to avoid issues
-        item.ondragstart = handleDragStart;
-        item.ondragend = handleDragEnd;
-    });
+    console.log('setupDragEvents: found', items.length, 'draggable items in', container.id);
 }
 
 function handleDragStart(e) {
