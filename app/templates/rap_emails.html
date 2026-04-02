@@ -287,6 +287,22 @@
         </button>
     </div>
 
+    <!-- Stats Badges (clickable filters by classification) -->
+    <div class="stats-inline">
+        <span class="stat-badge urgent" onclick="filterByClassification('urgent')" id="stat-urgent">
+            <span class="count">-</span> urgentes
+        </span>
+        <span class="stat-badge important" onclick="filterByClassification('important')" id="stat-important">
+            <span class="count">-</span> importantes
+        </span>
+        <span class="stat-badge followup" onclick="filterByClassification('followup')" id="stat-followup">
+            <span class="count">-</span> follow-up
+        </span>
+        <span class="stat-badge pending" onclick="filterByClassification('')" id="stat-pending">
+            <span class="count">-</span> total pendentes
+        </span>
+    </div>
+
     <!-- Filters & Batch Actions -->
     <div class="filters-row">
         <button class="filter-btn active" data-status="pending">Pendentes</button>
@@ -370,13 +386,27 @@
             const res = await fetch('/api/email-triage/stats');
             const stats = await res.json();
 
-            document.getElementById('stat-urgent').textContent = stats.by_classification?.urgent || 0;
-            document.getElementById('stat-important').textContent = stats.by_classification?.important || 0;
-            document.getElementById('stat-followup').textContent = stats.by_classification?.followup || 0;
-            document.getElementById('stat-pending').textContent = stats.total_pending || 0;
+            document.querySelector('#stat-urgent .count').textContent = stats.by_classification?.urgent || 0;
+            document.querySelector('#stat-important .count').textContent = stats.by_classification?.important || 0;
+            document.querySelector('#stat-followup .count').textContent = stats.by_classification?.followup || 0;
+            document.querySelector('#stat-pending .count').textContent = stats.total_pending || 0;
         } catch (e) {
             console.error('Error loading stats:', e);
         }
+    }
+
+    let currentClassification = '';
+
+    function filterByClassification(classification) {
+        currentClassification = classification;
+
+        // Update badge active states
+        document.querySelectorAll('.stat-badge').forEach(b => b.classList.remove('active'));
+        if (classification) {
+            document.getElementById(`stat-${classification}`).classList.add('active');
+        }
+
+        loadEmails();
     }
 
     async function loadEmails() {
@@ -387,6 +417,7 @@
             let url = `/api/email-triage?limit=50`;
             if (currentStatus) url += `&status=${currentStatus}`;
             if (currentAccount) url += `&account_type=${currentAccount}`;
+            if (currentClassification) url += `&classification=${currentClassification}`;
 
             const res = await fetch(url);
             const data = await res.json();
