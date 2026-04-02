@@ -77,34 +77,70 @@ class GoogleCalendarIntegration:
         self,
         access_token: str,
         query: str,
-        calendar_id: str = "primary",
+        calendar_id: str = None,
         max_results: int = 20
     ) -> Dict[str, Any]:
         """
-        Busca eventos por texto (titulo, descricao, local, participantes).
+        Busca eventos por texto em todos os calendários do usuário.
+        Inclui eventos passados (últimos 3 anos) e futuros.
         """
-        params = {
-            "q": query,
-            "maxResults": max_results,
-            "singleEvents": "true",
-            "orderBy": "startTime"
-        }
+        # Buscar desde 3 anos atrás para incluir eventos passados
+        three_years_ago = (datetime.now() - timedelta(days=3*365)).isoformat() + "Z"
+
+        all_items = []
 
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get(
-                    f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                    params=params,
-                    timeout=30.0
-                )
+                # Se calendar_id específico, buscar só nele
+                if calendar_id:
+                    calendar_ids = [calendar_id]
+                else:
+                    # Listar todos os calendários do usuário
+                    cal_response = await client.get(
+                        f"{self.CALENDAR_API_BASE}/users/me/calendarList",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        timeout=30.0
+                    )
+                    if cal_response.status_code != 200:
+                        return {"error": "Failed to list calendars"}
 
-                if response.status_code == 401:
-                    return {"error": "token_expired"}
-                elif response.status_code != 200:
-                    return {"error": response.text}
+                    calendars = cal_response.json().get("items", [])
+                    # Filtrar apenas calendários próprios (não feriados, etc)
+                    calendar_ids = [
+                        c["id"] for c in calendars
+                        if c.get("accessRole") in ["owner", "writer"]
+                    ]
 
-                return response.json()
+                # Buscar em cada calendário
+                for cal_id in calendar_ids[:5]:  # Limitar a 5 calendários
+                    params = {
+                        "q": query,
+                        "maxResults": max_results,
+                        "singleEvents": "true",
+                        "orderBy": "startTime",
+                        "timeMin": three_years_ago
+                    }
+
+                    response = await client.get(
+                        f"{self.CALENDAR_API_BASE}/calendars/{cal_id}/events",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        params=params,
+                        timeout=30.0
+                    )
+
+                    if response.status_code == 200:
+                        items = response.json().get("items", [])
+                        all_items.extend(items)
+
+                # Remover duplicatas por ID e ordenar por data
+                seen_ids = set()
+                unique_items = []
+                for item in all_items:
+                    if item.get("id") not in seen_ids:
+                        seen_ids.add(item.get("id"))
+                        unique_items.append(item)
+
+                return {"items": unique_items}
 
             except Exception as e:
                 logger.error(f"Erro ao buscar eventos: {e}")
