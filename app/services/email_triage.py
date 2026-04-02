@@ -478,7 +478,7 @@ class EmailTriageService:
 
             # Contar total
             count_query = """
-                SELECT COUNT(*) FROM email_triage et WHERE 1=1
+                SELECT COUNT(*) as total FROM email_triage et WHERE 1=1
             """
             count_params = []
             if status:
@@ -492,7 +492,8 @@ class EmailTriageService:
                 count_params.append(classification)
 
             cursor.execute(count_query, count_params)
-            total = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            total = result['total'] if result else 0
 
             return {
                 "items": items,
@@ -718,8 +719,9 @@ class EmailTriageService:
         with get_db() as conn:
             cursor = conn.cursor()
 
-            cursor.execute("SELECT COUNT(*) FROM email_triage_rules")
-            count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) as total FROM email_triage_rules")
+            result = cursor.fetchone()
+            count = result['total'] if result else 0
 
             if count > 0:
                 return {"message": "Rules already exist", "count": count}
