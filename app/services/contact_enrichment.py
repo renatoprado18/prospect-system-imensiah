@@ -855,40 +855,40 @@ async def search_company_info(
         if response is None:
             raise last_error or Exception("Failed after retries")
 
-            if response.status_code == 200:
-                html = response.text
+        if response.status_code == 200:
+            html = response.text
 
-                # Extrair title
-                import re
-                title_match = re.search(r'<title[^>]*>([^<]+)</title>', html, re.IGNORECASE)
-                if title_match:
-                    page_title = title_match.group(1).strip()
+            # Extrair title
+            import re
+            title_match = re.search(r'<title[^>]*>([^<]+)</title>', html, re.IGNORECASE)
+            if title_match:
+                page_title = title_match.group(1).strip()
 
-                # Extrair meta description
+            # Extrair meta description
+            desc_match = re.search(
+                r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
+                html, re.IGNORECASE
+            )
+            if not desc_match:
                 desc_match = re.search(
-                    r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
+                    r'<meta[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']description["\']',
                     html, re.IGNORECASE
                 )
-                if not desc_match:
-                    desc_match = re.search(
-                        r'<meta[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']description["\']',
-                        html, re.IGNORECASE
-                    )
-                if desc_match:
-                    page_description = desc_match.group(1).strip()
+            if desc_match:
+                page_description = desc_match.group(1).strip()
 
-                # Extrair texto limpo (primeiros 5000 chars)
-                # Remover scripts, styles, etc
-                clean_html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-                clean_html = re.sub(r'<style[^>]*>.*?</style>', '', clean_html, flags=re.DOTALL | re.IGNORECASE)
-                clean_html = re.sub(r'<[^>]+>', ' ', clean_html)
-                clean_html = re.sub(r'\s+', ' ', clean_html)
-                page_content = clean_html[:5000].strip()
-            else:
-                return {
-                    "status": "error",
-                    "error": f"Failed to fetch {url_to_fetch}: HTTP {response.status_code}"
-                }
+            # Extrair texto limpo (primeiros 5000 chars)
+            # Remover scripts, styles, etc
+            clean_html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+            clean_html = re.sub(r'<style[^>]*>.*?</style>', '', clean_html, flags=re.DOTALL | re.IGNORECASE)
+            clean_html = re.sub(r'<[^>]+>', ' ', clean_html)
+            clean_html = re.sub(r'\s+', ' ', clean_html)
+            page_content = clean_html[:5000].strip()
+        else:
+            return {
+                "status": "error",
+                "error": f"Falha ao acessar {url_to_fetch}: HTTP {response.status_code}"
+            }
 
     except Exception as e:
         error_msg = str(e)
@@ -898,7 +898,7 @@ async def search_company_info(
 
     # Se nao tem conteudo, retornar erro
     if not page_content and not page_title:
-        return {"status": "error", "error": "No content found on page"}
+        return {"status": "error", "error": "Nenhum conteudo encontrado na pagina. Verifique se a URL esta correta."}
 
     # Usar AI para extrair informacoes estruturadas
     prompt = f"""Analise o conteudo deste website empresarial e extraia informacoes da empresa.
