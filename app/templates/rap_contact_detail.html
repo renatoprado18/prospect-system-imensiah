@@ -3937,6 +3937,9 @@
 
         // ============ INTEL INSIGHT FUNCTIONS ============
 
+        // Store messages data for insight analysis
+        let intelMessagesData = null;
+
         async function loadIntelInsight() {
             const panel = document.getElementById('intelPanel');
             if (!panel) return;
@@ -3947,18 +3950,28 @@
             if (loadingDiv) loadingDiv.style.display = 'flex';
             if (contentDiv) contentDiv.style.display = 'none';
 
-            // For now, render a placeholder insight based on available data
-            // Later this will call the API endpoint
-            setTimeout(() => {
-                renderPlaceholderInsight();
-            }, 300);
+            // Fetch messages to analyze conversation status
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/messages?limit=10`);
+                if (response.ok) {
+                    const data = await response.json();
+                    intelMessagesData = data.messages || [];
+                }
+            } catch (e) {
+                console.log('Could not fetch messages for insight:', e);
+                intelMessagesData = [];
+            }
+
+            // Render insight with real data
+            renderIntelInsight();
         }
 
-        function renderPlaceholderInsight() {
+        function renderIntelInsight() {
             const panel = document.getElementById('intelPanel');
             if (!panel || !contactData?.contact) return;
 
             const contact = contactData.contact;
+            const messages = intelMessagesData || [];
 
             // Hide loading, show content
             const loadingDiv = document.getElementById('intelLoading');
@@ -3972,71 +3985,108 @@
             let recommendation = '';
             const actions = [];
 
-            // Check last message/interaction
-            const lastInteraction = contact.ultima_interacao || contact.ultima_mensagem;
-            if (lastInteraction) {
-                const lastDate = new Date(lastInteraction);
-                const daysSince = Math.floor((new Date() - lastDate) / (1000 * 60 * 60 * 24));
+            // Analyze messages to determine conversation status
+            if (messages.length > 0) {
+                const lastMsg = messages[0]; // Most recent
+                const lastMsgDate = new Date(lastMsg.enviado_em || lastMsg.created_at);
+                const daysSince = Math.floor((new Date() - lastMsgDate) / (1000 * 60 * 60 * 24));
+                const isIncoming = lastMsg.direcao === 'incoming';
+                const preview = (lastMsg.conteudo || '').substring(0, 50);
 
-                if (daysSince === 0) {
-                    situation = 'Contato ativo hoje';
-                    contextItems.push('Interação recente - aproveite o momento');
-                    actions.push({ id: 'reply', label: 'Responder', icon: 'reply', primary: true });
-                } else if (daysSince <= 7) {
-                    situation = `Contato recente (${daysSince} dia${daysSince > 1 ? 's' : ''})`;
-                    contextItems.push('Relacionamento aquecido');
-                } else if (daysSince <= 30) {
-                    situation = `Último contato há ${daysSince} dias`;
-                    contextItems.push('Considere fazer um follow-up');
-                    actions.push({ id: 'reconnect', label: 'Reconectar', icon: 'arrow-repeat', primary: true });
+                if (isIncoming) {
+                    // Last message was from them - needs reply!
+                    if (daysSince === 0) {
+                        situation = '💬 Mensagem recebida hoje';
+                        contextItems.push(`"${preview}..."`);
+                        recommendation = 'Responda para manter a conversa ativa';
+                        actions.push({ id: 'reply', label: 'Responder', icon: 'reply', primary: true });
+                    } else if (daysSince <= 3) {
+                        situation = `💬 Aguardando resposta há ${daysSince} dia${daysSince > 1 ? 's' : ''}`;
+                        contextItems.push(`Última mensagem dele: "${preview}..."`);
+                        recommendation = 'Não deixe a conversa esfriar - responda!';
+                        actions.push({ id: 'reply', label: 'Responder', icon: 'reply', primary: true });
+                    } else if (daysSince <= 7) {
+                        situation = `⚠️ Mensagem sem resposta há ${daysSince} dias`;
+                        recommendation = 'A conversa pode estar esfriando';
+                        actions.push({ id: 'reply', label: 'Responder Agora', icon: 'reply', primary: true });
+                    } else {
+                        situation = `🔴 Mensagem ignorada há ${daysSince} dias`;
+                        recommendation = 'Retome o contato com uma resposta ou nova mensagem';
+                        actions.push({ id: 'reconnect', label: 'Retomar Contato', icon: 'arrow-repeat', primary: true });
+                    }
                 } else {
-                    situation = `⚠️ Sem contato há ${daysSince} dias`;
-                    contextItems.push('Relacionamento esfriando');
-                    recommendation = 'Faça um check-in para manter o relacionamento ativo';
-                    actions.push({ id: 'reconnect', label: 'Reconectar', icon: 'arrow-repeat', primary: true });
+                    // Last message was from you - waiting for their reply
+                    if (daysSince <= 3) {
+                        situation = '✓ Aguardando resposta';
+                        contextItems.push(`Você enviou mensagem há ${daysSince === 0 ? 'hoje' : daysSince + ' dia' + (daysSince > 1 ? 's' : '')}`);
+                    } else if (daysSince <= 14) {
+                        situation = `Sem resposta há ${daysSince} dias`;
+                        contextItems.push('Considere um follow-up gentil');
+                        actions.push({ id: 'reconnect', label: 'Follow-up', icon: 'arrow-repeat', primary: true });
+                    } else {
+                        situation = `⚠️ Conversa parada há ${daysSince} dias`;
+                        recommendation = 'Faça um novo contato para reativar o relacionamento';
+                        actions.push({ id: 'reconnect', label: 'Reativar', icon: 'arrow-repeat', primary: true });
+                    }
                 }
             } else {
-                situation = 'Novo relacionamento';
-                contextItems.push('Nenhuma interação registrada ainda');
-                recommendation = 'Inicie o relacionamento com uma mensagem ou encontro';
+                // No messages - check for other interactions
+                const lastInteraction = contact.ultima_interacao;
+                if (lastInteraction) {
+                    const lastDate = new Date(lastInteraction);
+                    const daysSince = Math.floor((new Date() - lastDate) / (1000 * 60 * 60 * 24));
+                    situation = `Última interação há ${daysSince} dias`;
+                    if (daysSince > 30) {
+                        recommendation = 'Retome o contato para manter o relacionamento';
+                        actions.push({ id: 'reconnect', label: 'Reconectar', icon: 'arrow-repeat', primary: true });
+                    }
+                } else {
+                    situation = 'Novo relacionamento';
+                    contextItems.push('Nenhuma conversa registrada');
+                    recommendation = 'Inicie o relacionamento com uma mensagem';
+                    actions.push({ id: 'reply', label: 'Iniciar Conversa', icon: 'chat-dots', primary: true });
+                }
             }
 
-            // Check profile completeness
-            const missingFields = [];
-            if (!contact.linkedin) missingFields.push('LinkedIn');
-            const emails = parseJsonField(contact.emails || []);
-            if (emails.length === 0) missingFields.push('Email');
-            if (!contact.empresa) missingFields.push('Empresa');
-            if (!contact.cargo) missingFields.push('Cargo');
+            // Check profile completeness (5 key fields)
+            const profileFields = {
+                'Telefone': parseJsonField(contact.telefones || []).length > 0,
+                'Email': parseJsonField(contact.emails || []).length > 0,
+                'LinkedIn': !!contact.linkedin,
+                'Empresa': !!contact.empresa,
+                'Cargo': !!contact.cargo
+            };
+            const filledCount = Object.values(profileFields).filter(v => v).length;
+            const missingFields = Object.entries(profileFields).filter(([k, v]) => !v).map(([k]) => k);
+            const completeness = Math.round(filledCount / 5 * 100);
 
-            const completeness = Math.round((4 - missingFields.length) / 4 * 100);
-            if (missingFields.length > 0) {
-                contextItems.push(`Perfil ${completeness}% completo (falta: ${missingFields.join(', ')})`);
-                if (missingFields.length >= 2) {
+            if (missingFields.length > 0 && missingFields.length < 5) {
+                contextItems.push(`📋 Perfil ${completeness}% completo`);
+                if (missingFields.length >= 3) {
                     actions.push({ id: 'enrich', label: 'Completar Perfil', icon: 'magic' });
                 }
+            } else if (missingFields.length === 5) {
+                contextItems.push('📋 Perfil incompleto - adicione informações');
+                actions.push({ id: 'enrich', label: 'Completar Perfil', icon: 'magic' });
             }
 
             // Check circles importance
             const isImportant = (contact.circulo_pessoal && contact.circulo_pessoal <= 2) ||
                                (contact.circulo_profissional && contact.circulo_profissional <= 2);
             if (isImportant) {
-                contextItems.push('⭐ Relacionamento de alta prioridade');
+                contextItems.push('⭐ Relacionamento prioritário');
                 if (!recommendation) {
-                    recommendation = 'Mantenha contato regular com esta pessoa importante';
+                    recommendation = 'Mantenha contato regular com esta pessoa';
                 }
-            }
-
-            // Default recommendation if none set
-            if (!recommendation && contextItems.length === 0) {
-                recommendation = 'Perfil bem mantido. Continue cultivando este relacionamento.';
             }
 
             // Default actions
             if (actions.length === 0) {
                 actions.push({ id: 'task', label: 'Criar Tarefa', icon: 'plus-circle', primary: true });
             }
-            actions.push({ id: 'meeting', label: 'Agendar', icon: 'calendar-plus' });
+            if (!actions.find(a => a.id === 'meeting')) {
+                actions.push({ id: 'meeting', label: 'Agendar', icon: 'calendar-plus' });
+            }
 
             // Render situation
             const situationEl = document.getElementById('intelSituation');
