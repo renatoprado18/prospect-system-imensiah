@@ -156,8 +156,8 @@ TAG_PESSOAL_OVERRIDES = {
 
 # ============== TAGS PROFISSIONAIS (Override para circulo especifico) ==============
 # R1 = Core: relacionamento ativo e crítico para MEU negócio
-# R2 = Estratégico: clientes, conselheiros, mentores (importante mas não crítico)
-# R3 = Networking: prospects, fornecedores, parceiros em potencial
+# R2 = Estratégico: clientes ativos, mentores, investidores (geram valor direto)
+# R3 = Networking: conselheiros, prospects, fornecedores, rede profissional
 # R4 = Ocasional: ex-clientes, contatos de eventos, sócios de outras empresas
 TAG_PROFISSIONAL_OVERRIDES = {
     1: [
@@ -166,10 +166,10 @@ TAG_PROFISSIONAL_OVERRIDES = {
     ],
     2: [
         "cliente", "client", "partner",
-        "conselheiro", "conselho", "mentor", "advisor",
-        "investidor", "investor", "angel", "board"
+        "mentor", "investidor", "investor", "angel"
     ],
     3: [
+        "conselheiro", "conselho", "advisor", "board",
         "prospect", "fornecedor", "ex-cliente-ativo",
         "parceiro", "networking"
     ],
@@ -178,6 +178,16 @@ TAG_PROFISSIONAL_OVERRIDES = {
         "socio"
     ],
 }
+
+# Tags que indicam contexto APENAS pessoal (não devem ter circulo profissional)
+TAGS_SOMENTE_PESSOAL = [
+    "filho", "filha", "pai", "mae", "irmao", "irma",
+    "avo", "neto", "neta", "primo", "prima", "tio", "tia",
+    "sobrinho", "sobrinha", "sogro", "sogra", "cunhado", "cunhada",
+    "namorada", "namorado", "esposa", "esposo", "marido", "wife",
+    "ex-esposa", "ex-marido", "padrinho", "madrinha",
+    "familia", "family"
+]
 
 # Tags que identificam contexto (pessoal vs profissional)
 TAGS_PESSOAIS = [
@@ -521,6 +531,11 @@ def calcular_circulo_profissional(contact: Dict) -> Tuple[Optional[int], List[st
     """
     tags = parse_tags(contact.get("tags"))
     reasons = []
+
+    # Se tem tag de familia, NAO deve ter circulo profissional
+    familia_tags = get_matching_tags(tags, TAGS_SOMENTE_PESSOAL)
+    if familia_tags:
+        return None, [f"Contato pessoal/familiar: {', '.join(familia_tags)}"]
 
     # Check tag overrides primeiro
     for circulo, override_tags in TAG_PROFISSIONAL_OVERRIDES.items():
