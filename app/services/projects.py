@@ -127,6 +127,9 @@ def list_projects(
                 if isinstance(data_marco, str):
                     from datetime import datetime
                     data_marco = datetime.strptime(data_marco, '%Y-%m-%d').date()
+                elif hasattr(data_marco, 'date'):
+                    # It's a datetime, convert to date
+                    data_marco = data_marco.date()
                 dias_ate = (data_marco - hoje).days
                 p['proximo_marco'] = {
                     'titulo': marco['titulo'],
@@ -155,6 +158,9 @@ def list_projects(
                     if isinstance(data_tarefa, str):
                         from datetime import datetime
                         data_tarefa = datetime.strptime(data_tarefa, '%Y-%m-%d').date()
+                    elif hasattr(data_tarefa, 'date'):
+                        # It's a datetime, convert to date
+                        data_tarefa = data_tarefa.date()
                     p['proxima_tarefa']['dias_ate'] = (data_tarefa - hoje).days
 
         return projects
