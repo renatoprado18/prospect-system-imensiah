@@ -2407,8 +2407,8 @@
             // Dias sem contato
             if (contact?.ultimo_contato) {
                 const lastContact = new Date(contact.ultimo_contato);
-                const diffDays = Math.floor((new Date() - lastContact) / (1000 * 60 * 60 * 24));
-                if (diffDays === 0) {
+                const diffDays = Math.max(0, Math.floor((new Date() - lastContact) / (1000 * 60 * 60 * 24)));
+                if (diffDays <= 0) {
                     parts.push('Contato hoje');
                 } else if (diffDays === 1) {
                     parts.push('Último contato ontem');
