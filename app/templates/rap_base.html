@@ -664,6 +664,10 @@
                 <span>Inbox</span>
                 <span class="badge" id="inboxBadge" style="display: none;">0</span>
             </a>
+            <a href="/emails" class="nav-item {% if '/emails' in request.path %}active{% endif %}">
+                <i class="bi bi-envelope-exclamation"></i>
+                <span>Triagem Emails</span>
+            </a>
             <a href="/analytics" class="nav-item {% if '/analytics' in request.path %}active{% endif %}">
                 <i class="bi bi-graph-up"></i>
                 <span>Analytics</span>
