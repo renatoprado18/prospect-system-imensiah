@@ -60,7 +60,7 @@ class TaskContextService:
             contact_query = """
                 SELECT id, nome, emails, telefones, empresa, cargo, circulo,
                        circulo_pessoal, circulo_profissional, contexto,
-                       resumo_ia, ultimo_contato, aniversario, linkedin
+                       resumo_ai, ultimo_contato, aniversario, linkedin
                 FROM contacts WHERE id = %s
             """
 
