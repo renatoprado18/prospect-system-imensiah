@@ -6,46 +6,179 @@
 
 {% block extra_css %}
 <style>
-    /* Stats drops - horizontal pills */
-    .stats-drops {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-        margin-bottom: 1.25rem;
+    /* Urgency Sections */
+    .urgency-section {
+        margin-bottom: 1.5rem;
     }
-    .stat-drop {
-        display: inline-flex;
+    .urgency-header {
+        display: flex;
         align-items: center;
-        gap: 0.4rem;
-        padding: 0.4rem 0.75rem;
-        background: white;
-        border: 1px solid var(--gray-200);
-        border-radius: 20px;
+        gap: 0.75rem;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        margin-bottom: 0.5rem;
+        cursor: pointer;
+        user-select: none;
+    }
+    .urgency-header:hover {
+        opacity: 0.9;
+    }
+    .urgency-header .icon {
+        font-size: 1.1rem;
+    }
+    .urgency-header .title {
+        font-weight: 600;
+        font-size: 0.95rem;
+        flex: 1;
+    }
+    .urgency-header .count {
+        font-weight: 700;
+        font-size: 0.9rem;
+        padding: 0.2rem 0.6rem;
+        border-radius: 12px;
+        background: rgba(255,255,255,0.3);
+    }
+    .urgency-header .toggle {
         font-size: 0.8rem;
+        opacity: 0.7;
+    }
+
+    /* Section colors */
+    .urgency-header.atencao {
+        background: linear-gradient(135deg, #dc2626, #ef4444);
+        color: white;
+    }
+    .urgency-header.proximos {
+        background: linear-gradient(135deg, #f59e0b, #fbbf24);
+        color: #78350f;
+    }
+    .urgency-header.em-dia {
+        background: linear-gradient(135deg, #10b981, #34d399);
+        color: white;
+    }
+    .urgency-header.pausados {
+        background: linear-gradient(135deg, #6b7280, #9ca3af);
+        color: white;
+    }
+    .urgency-header.concluidos {
+        background: linear-gradient(135deg, #3b82f6, #60a5fa);
+        color: white;
+    }
+
+    /* Project rows */
+    .project-row {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.75rem 1rem;
+        background: var(--card-bg);
+        border-radius: 8px;
+        margin-bottom: 0.5rem;
         cursor: pointer;
         transition: all 0.15s;
+        border-left: 4px solid var(--gray-200);
     }
-    .stat-drop:hover {
-        border-color: var(--gray-300);
-        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    .project-row:hover {
+        background: var(--gray-50);
+        transform: translateX(4px);
     }
-    .stat-drop .value {
-        font-weight: 700;
+    .project-row.type-negocio { border-left-color: #2563eb; }
+    .project-row.type-pessoal { border-left-color: #16a34a; }
+    .project-row.type-patrimonio { border-left-color: #d97706; }
+    .project-row.type-conselho { border-left-color: #9333ea; }
+
+    .project-row .project-info {
+        flex: 1;
+        min-width: 0;
     }
-    .stat-drop .label {
+    .project-row .project-name {
+        font-weight: 600;
+        font-size: 0.95rem;
+        margin: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .project-row .project-empresa {
+        font-size: 0.8rem;
         color: var(--gray-500);
     }
-    .stat-drop.active .value { color: var(--primary); }
-    .stat-drop.done .value { color: var(--success); }
-    .stat-drop.pending .value { color: var(--warning); }
-    .stat-drop.upcoming .value { color: #8b5cf6; }
 
-    /* Filters - mais compactos */
+    .project-row .project-urgency-info {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+        color: var(--gray-600);
+    }
+    .project-row .urgency-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+    .urgency-badge.danger {
+        background: #fee2e2;
+        color: #dc2626;
+    }
+    .urgency-badge.warning {
+        background: #fef3c7;
+        color: #d97706;
+    }
+    .urgency-badge.info {
+        background: #dbeafe;
+        color: #2563eb;
+    }
+
+    /* Pending tasks inline */
+    .project-row .pending-task {
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.8rem;
+        color: var(--gray-600);
+        background: var(--gray-100);
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        max-width: 300px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .pending-task i {
+        color: var(--gray-400);
+    }
+
+    .project-row .project-stats {
+        display: flex;
+        gap: 0.75rem;
+        font-size: 0.8rem;
+        color: var(--gray-500);
+    }
+    .project-row .project-stats span {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+    }
+
+    /* Collapsible content */
+    .section-content {
+        overflow: hidden;
+        transition: max-height 0.3s ease-out;
+    }
+    .section-content.collapsed {
+        max-height: 0 !important;
+    }
+
+    /* Filters bar compact */
     .filters-bar {
         display: flex;
         flex-wrap: wrap;
         gap: 0.5rem;
-        margin-bottom: 1.5rem;
+        margin-bottom: 1.25rem;
         align-items: center;
     }
     .filter-group {
@@ -53,16 +186,16 @@
         gap: 0.25rem;
     }
     .filter-btn {
-        padding: 0.4rem 0.75rem;
+        padding: 0.35rem 0.65rem;
         border: 1px solid var(--gray-200);
         background: white;
-        border-radius: 8px;
-        font-size: 0.8rem;
+        border-radius: 6px;
+        font-size: 0.75rem;
         cursor: pointer;
         transition: all 0.15s;
         display: flex;
         align-items: center;
-        gap: 0.35rem;
+        gap: 0.3rem;
     }
     .filter-btn:hover {
         background: var(--gray-50);
@@ -77,304 +210,127 @@
     .filter-btn.type-patrimonio.active { background: #d97706; border-color: #d97706; }
     .filter-btn.type-conselho.active { background: #9333ea; border-color: #9333ea; }
 
-    /* Projects Grid */
-    .projects-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    /* Quick summary bar */
+    .quick-summary {
+        display: flex;
+        flex-wrap: wrap;
         gap: 1rem;
-    }
-
-    /* Project Card - novo design */
-    .project-card {
+        margin-bottom: 1.5rem;
+        padding: 1rem;
         background: var(--card-bg);
         border-radius: 12px;
         box-shadow: var(--shadow-sm);
-        overflow: hidden;
-        transition: all 0.2s;
-        cursor: pointer;
-        display: flex;
-        flex-direction: column;
     }
-    .project-card:hover {
-        box-shadow: var(--shadow-md);
-        transform: translateY(-2px);
-    }
-
-    .project-header {
-        padding: 1rem 1.25rem;
-        border-left: 4px solid var(--primary);
-    }
-    .project-header.type-negocio { border-color: #2563eb; }
-    .project-header.type-pessoal { border-color: #16a34a; }
-    .project-header.type-patrimonio { border-color: #d97706; }
-    .project-header.type-conselho { border-color: #9333ea; }
-
-    .project-name {
-        font-size: 1.05rem;
-        font-weight: 600;
-        margin: 0 0 0.5rem 0;
-        line-height: 1.3;
-        color: var(--gray-800);
-    }
-    .project-meta {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-        align-items: center;
-    }
-    .project-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.25rem;
-        padding: 0.2rem 0.5rem;
-        border-radius: 6px;
-        font-size: 0.7rem;
-        font-weight: 500;
-    }
-    .badge-type {
-        background: var(--gray-100);
-        color: var(--gray-600);
-    }
-    .badge-type.negocio { background: #dbeafe; color: #1e40af; }
-    .badge-type.pessoal { background: #dcfce7; color: #166534; }
-    .badge-type.patrimonio { background: #fef3c7; color: #92400e; }
-    .badge-type.conselho { background: #f3e8ff; color: #7c3aed; }
-
-    .badge-status {
-        background: #dcfce7;
-        color: #166534;
-    }
-    .badge-status.pausado {
-        background: #fef3c7;
-        color: #92400e;
-    }
-    .badge-status.concluido {
-        background: var(--gray-100);
-        color: var(--gray-600);
-    }
-
-    .project-body {
-        padding: 0 1.25rem 1rem;
-        flex: 1;
-    }
-    .project-description {
-        font-size: 0.85rem;
-        color: var(--gray-500);
-        line-height: 1.5;
-        margin-bottom: 0.75rem;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-    }
-
-    /* Actionable Info */
-    .project-actions-info {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-    }
-    .action-item {
+    .summary-item {
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        font-size: 0.8rem;
-        padding: 0.4rem 0.6rem;
-        background: var(--gray-50);
-        border-radius: 6px;
     }
-    .action-item i {
-        font-size: 0.9rem;
-    }
-    .action-item.warning {
-        background: #fef3c7;
-        color: #92400e;
-    }
-    .action-item.info {
-        background: #dbeafe;
-        color: #1e40af;
-    }
-    .action-item.success {
-        background: #dcfce7;
-        color: #166534;
-    }
-    .action-item.danger {
-        background: #fee2e2;
-        color: #dc2626;
-    }
-
-    .project-footer {
-        padding: 0.75rem 1.25rem;
-        background: var(--gray-50);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        border-top: 1px solid var(--gray-100);
-    }
-    .project-stats {
-        display: flex;
-        gap: 1rem;
-    }
-    .project-stat {
-        display: flex;
-        align-items: center;
-        gap: 0.35rem;
-        font-size: 0.8rem;
-        color: var(--gray-500);
-    }
-    .project-stat i {
-        font-size: 0.9rem;
-    }
-    .project-stat.has-items {
-        color: var(--gray-700);
-        font-weight: 500;
-    }
-
-    .project-members {
-        display: flex;
-    }
-    .member-avatar {
-        width: 26px;
-        height: 26px;
-        border-radius: 50%;
-        background: var(--gray-200);
-        border: 2px solid white;
-        margin-left: -8px;
+    .summary-item .icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 0.65rem;
-        font-weight: 600;
-        color: var(--gray-600);
-        overflow: hidden;
+        font-size: 1rem;
     }
-    .member-avatar:first-child {
-        margin-left: 0;
+    .summary-item .icon.danger { background: #fee2e2; color: #dc2626; }
+    .summary-item .icon.warning { background: #fef3c7; color: #d97706; }
+    .summary-item .icon.success { background: #dcfce7; color: #16a34a; }
+    .summary-item .icon.info { background: #dbeafe; color: #2563eb; }
+    .summary-item .text {
+        font-size: 0.85rem;
     }
-    .member-avatar img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
+    .summary-item .text .value {
+        font-weight: 700;
+        font-size: 1.1rem;
     }
-
-    /* List View */
-    .projects-list {
-        background: var(--card-bg);
-        border-radius: 12px;
-        box-shadow: var(--shadow-sm);
-        overflow: hidden;
-    }
-    .list-item {
-        display: grid;
-        grid-template-columns: 1fr auto auto auto;
-        gap: 1rem;
-        padding: 1rem 1.25rem;
-        border-bottom: 1px solid var(--gray-100);
-        align-items: center;
-        cursor: pointer;
-        transition: background 0.15s;
-    }
-    .list-item:last-child {
-        border-bottom: none;
-    }
-    .list-item:hover {
-        background: var(--gray-50);
-    }
-    .list-item-main {
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-    }
-    .list-type-indicator {
-        width: 4px;
-        height: 36px;
-        border-radius: 2px;
-        flex-shrink: 0;
-    }
-    .list-type-indicator.negocio { background: #2563eb; }
-    .list-type-indicator.pessoal { background: #16a34a; }
-    .list-type-indicator.patrimonio { background: #d97706; }
-    .list-type-indicator.conselho { background: #9333ea; }
-
-    .list-info h4 {
-        margin: 0 0 0.25rem;
-        font-size: 0.95rem;
-        font-weight: 600;
-    }
-    .list-info .subtitle {
-        font-size: 0.8rem;
+    .summary-item .text .label {
         color: var(--gray-500);
+        font-size: 0.75rem;
     }
 
     /* Empty State */
     .empty-state {
         text-align: center;
-        padding: 4rem 2rem;
+        padding: 3rem 2rem;
         background: var(--card-bg);
         border-radius: 12px;
     }
     .empty-state i {
-        font-size: 3rem;
+        font-size: 2.5rem;
         color: var(--gray-300);
     }
     .empty-state h4 {
-        margin: 1rem 0 0.5rem;
+        margin: 0.75rem 0 0.5rem;
         color: var(--gray-700);
+        font-size: 1rem;
     }
     .empty-state p {
         color: var(--gray-500);
+        font-size: 0.85rem;
     }
+
+    /* Badge type for compact display */
+    .type-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.2rem;
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.7rem;
+        font-weight: 500;
+    }
+    .type-badge.negocio { background: #dbeafe; color: #1e40af; }
+    .type-badge.pessoal { background: #dcfce7; color: #166534; }
+    .type-badge.patrimonio { background: #fef3c7; color: #92400e; }
+    .type-badge.conselho { background: #f3e8ff; color: #7c3aed; }
 </style>
 {% endblock %}
 
 {% block header_actions %}
-<div class="d-flex gap-2">
-    <div class="btn-group" role="group">
-        <button type="button" class="btn btn-outline-secondary btn-sm active" onclick="setView('grid')" id="btnGrid">
-            <i class="bi bi-grid-3x3-gap"></i>
-        </button>
-        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="setView('list')" id="btnList">
-            <i class="bi bi-list"></i>
-        </button>
-    </div>
-    <button class="btn btn-primary btn-sm" onclick="openNewProjectModal()">
-        <i class="bi bi-plus-lg me-1"></i> Novo Projeto
-    </button>
-</div>
+<button class="btn btn-primary btn-sm" onclick="openNewProjectModal()">
+    <i class="bi bi-plus-lg me-1"></i> Novo Projeto
+</button>
 {% endblock %}
 
 {% block content %}
-<p style="color: var(--gray-500); margin-bottom: 1rem;">Gerencie seus projetos pessoais e profissionais</p>
-
-<!-- Stats Drops -->
-<div class="stats-drops">
-    <div class="stat-drop active" onclick="filterByStatus('ativo', document.querySelector('.filter-btn'))">
-        <span class="value" id="statAtivos">-</span>
-        <span class="label">Ativos</span>
+<!-- Quick Summary -->
+<div class="quick-summary" id="quickSummary">
+    <div class="summary-item">
+        <div class="icon danger"><i class="bi bi-exclamation-triangle"></i></div>
+        <div class="text">
+            <div class="value" id="sumAtencao">-</div>
+            <div class="label">Precisam atencao</div>
+        </div>
     </div>
-    <div class="stat-drop done" onclick="filterByStatus('concluido', document.querySelector('.filter-btn'))">
-        <span class="value" id="statConcluidos">-</span>
-        <span class="label">Concluidos</span>
+    <div class="summary-item">
+        <div class="icon warning"><i class="bi bi-clock-history"></i></div>
+        <div class="text">
+            <div class="value" id="sumProximos">-</div>
+            <div class="label">Prox. 7 dias</div>
+        </div>
     </div>
-    <div class="stat-drop pending">
-        <span class="value" id="statTarefas">-</span>
-        <span class="label">Com Tarefas</span>
+    <div class="summary-item">
+        <div class="icon success"><i class="bi bi-check-circle"></i></div>
+        <div class="text">
+            <div class="value" id="sumEmDia">-</div>
+            <div class="label">Em dia</div>
+        </div>
     </div>
-    <div class="stat-drop upcoming">
-        <span class="value" id="statMarcos">-</span>
-        <span class="label">Marcos Prox.</span>
+    <div class="summary-item">
+        <div class="icon info"><i class="bi bi-pause-circle"></i></div>
+        <div class="text">
+            <div class="value" id="sumPausados">-</div>
+            <div class="label">Pausados</div>
+        </div>
     </div>
 </div>
 
 <!-- Filters -->
 <div class="filters-bar">
-    <div class="filter-group">
-        <button class="filter-btn active" onclick="filterByStatus(null, this)">Todos</button>
-        <button class="filter-btn" onclick="filterByStatus('ativo', this)">Ativos</button>
-        <button class="filter-btn" onclick="filterByStatus('pausado', this)">Pausados</button>
-        <button class="filter-btn" onclick="filterByStatus('concluido', this)">Concluidos</button>
-    </div>
-    <span style="color: var(--gray-300);">|</span>
+    <span style="font-size: 0.8rem; color: var(--gray-500);">Filtrar:</span>
     <div class="filter-group">
         <button class="filter-btn active" onclick="filterByType(null, this)">Todos</button>
         <button class="filter-btn type-negocio" onclick="filterByType('negocio', this)">
@@ -513,35 +469,17 @@
 {% block extra_js %}
 <script>
     let projects = [];
-    let currentView = 'grid';
-    let filterStatus = null;
     let filterType = null;
+    let collapsedSections = { 'em-dia': false, 'pausados': true, 'concluidos': true };
 
     document.addEventListener('DOMContentLoaded', () => {
         loadProjects();
-        loadStats();
     });
-
-    async function loadStats() {
-        try {
-            const response = await fetch('/api/projects/stats');
-            const stats = await response.json();
-            document.getElementById('statAtivos').textContent = stats.total_ativos || 0;
-            document.getElementById('statConcluidos').textContent = stats.total_concluidos || 0;
-            document.getElementById('statTarefas').textContent = stats.com_tarefas_pendentes || 0;
-            document.getElementById('statMarcos').textContent = stats.marcos_proximos || 0;
-        } catch (error) {
-            console.error('Error loading stats:', error);
-        }
-    }
 
     async function loadProjects() {
         try {
-            let url = '/api/projects?';
-            if (filterStatus) url += `status=${filterStatus}&`;
-            if (filterType) url += `tipo=${filterType}&`;
-
-            const response = await fetch(url);
+            // Load all active + paused + concluded projects
+            const response = await fetch('/api/projects?include_completed=true');
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
@@ -556,10 +494,115 @@
         }
     }
 
+    function categorizeProject(project) {
+        // Categories: 'atencao', 'proximos', 'em-dia', 'pausados', 'concluidos'
+        const status = project.status || 'ativo';
+
+        if (status === 'concluido') return 'concluidos';
+        if (status === 'pausado') return 'pausados';
+
+        // Check urgency for active projects
+        const hoje = new Date();
+        hoje.setHours(0, 0, 0, 0);
+
+        // Has overdue tasks?
+        if (project.tasks_vencidas > 0) return 'atencao';
+
+        // Has overdue milestones?
+        if (project.proximo_marco) {
+            const diasAte = project.proximo_marco.dias_ate;
+            if (diasAte < 0) return 'atencao';
+            if (diasAte <= 7) return 'proximos';
+        }
+
+        // Has tasks due soon?
+        if (project.proxima_tarefa && project.proxima_tarefa.dias_ate !== undefined) {
+            const diasAteTarefa = project.proxima_tarefa.dias_ate;
+            if (diasAteTarefa < 0) return 'atencao';
+            if (diasAteTarefa <= 7) return 'proximos';
+        }
+
+        // Check project deadline
+        if (project.data_previsao) {
+            const previsao = new Date(project.data_previsao);
+            const diff = Math.ceil((previsao - hoje) / (1000 * 60 * 60 * 24));
+            if (diff < 0) return 'atencao';
+            if (diff <= 7) return 'proximos';
+        }
+
+        return 'em-dia';
+    }
+
+    function getUrgencyInfo(project) {
+        // Return urgency badge info
+        const hoje = new Date();
+        hoje.setHours(0, 0, 0, 0);
+
+        // Overdue tasks
+        if (project.tasks_vencidas > 0) {
+            return {
+                badge: 'danger',
+                icon: 'bi-exclamation-circle',
+                text: `${project.tasks_vencidas} tarefa${project.tasks_vencidas > 1 ? 's' : ''} vencida${project.tasks_vencidas > 1 ? 's' : ''}`
+            };
+        }
+
+        // Overdue milestone
+        if (project.proximo_marco && project.proximo_marco.dias_ate < 0) {
+            return {
+                badge: 'danger',
+                icon: 'bi-flag-fill',
+                text: `Marco atrasado: ${project.proximo_marco.titulo}`
+            };
+        }
+
+        // Upcoming milestone
+        if (project.proximo_marco && project.proximo_marco.dias_ate <= 7) {
+            const dias = project.proximo_marco.dias_ate;
+            return {
+                badge: dias <= 3 ? 'danger' : 'warning',
+                icon: 'bi-flag',
+                text: `Marco em ${dias === 0 ? 'hoje' : dias + 'd'}: ${project.proximo_marco.titulo}`
+            };
+        }
+
+        // Upcoming task
+        if (project.proxima_tarefa) {
+            const dias = project.proxima_tarefa.dias_ate;
+            if (dias !== undefined && dias <= 7) {
+                return {
+                    badge: dias < 0 ? 'danger' : (dias <= 3 ? 'warning' : 'info'),
+                    icon: 'bi-check2-square',
+                    text: dias < 0 ? `Tarefa atrasada` : `Tarefa em ${dias === 0 ? 'hoje' : dias + 'd'}`
+                };
+            }
+        }
+
+        // Project deadline
+        if (project.data_previsao) {
+            const previsao = new Date(project.data_previsao);
+            const diff = Math.ceil((previsao - hoje) / (1000 * 60 * 60 * 24));
+            if (diff <= 7) {
+                return {
+                    badge: diff < 0 ? 'danger' : (diff <= 3 ? 'warning' : 'info'),
+                    icon: 'bi-calendar',
+                    text: diff < 0 ? 'Projeto atrasado' : `Prazo em ${diff === 0 ? 'hoje' : diff + 'd'}`
+                };
+            }
+        }
+
+        return null;
+    }
+
     function renderProjects() {
         const container = document.getElementById('projectsContainer');
 
-        if (projects.length === 0) {
+        // Filter by type if needed
+        let filtered = filterType
+            ? projects.filter(p => p.tipo === filterType)
+            : projects;
+
+        if (filtered.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
                     <i class="bi bi-folder2-open"></i>
@@ -567,14 +610,155 @@
                     <p>Crie seu primeiro projeto clicando no botao acima</p>
                 </div>
             `;
+            updateSummary({ atencao: 0, proximos: 0, 'em-dia': 0, pausados: 0, concluidos: 0 });
             return;
         }
 
-        if (currentView === 'grid') {
-            container.innerHTML = `<div class="projects-grid">${projects.map(p => renderProjectCard(p)).join('')}</div>`;
-        } else {
-            container.innerHTML = renderProjectList();
+        // Categorize projects
+        const categories = {
+            'atencao': [],
+            'proximos': [],
+            'em-dia': [],
+            'pausados': [],
+            'concluidos': []
+        };
+
+        filtered.forEach(p => {
+            const cat = categorizeProject(p);
+            categories[cat].push(p);
+        });
+
+        // Update summary
+        updateSummary({
+            atencao: categories.atencao.length,
+            proximos: categories.proximos.length,
+            'em-dia': categories['em-dia'].length,
+            pausados: categories.pausados.length,
+            concluidos: categories.concluidos.length
+        });
+
+        // Render sections
+        let html = '';
+
+        // Atencao section (always visible if has items)
+        if (categories.atencao.length > 0) {
+            html += renderSection('atencao', 'Precisa de Atencao', categories.atencao, 'bi-exclamation-triangle-fill', false);
         }
+
+        // Proximos 7 dias
+        if (categories.proximos.length > 0) {
+            html += renderSection('proximos', 'Proximos 7 Dias', categories.proximos, 'bi-clock-history', false);
+        }
+
+        // Em dia (collapsible)
+        if (categories['em-dia'].length > 0) {
+            html += renderSection('em-dia', 'Em Dia', categories['em-dia'], 'bi-check-circle', true);
+        }
+
+        // Pausados (collapsible)
+        if (categories.pausados.length > 0) {
+            html += renderSection('pausados', 'Pausados', categories.pausados, 'bi-pause-circle', true);
+        }
+
+        // Concluidos (collapsible)
+        if (categories.concluidos.length > 0) {
+            html += renderSection('concluidos', 'Concluidos', categories.concluidos, 'bi-check-circle-fill', true);
+        }
+
+        container.innerHTML = html;
+    }
+
+    function renderSection(id, title, items, icon, collapsible) {
+        const isCollapsed = collapsible && collapsedSections[id];
+        const contentStyle = isCollapsed ? 'max-height: 0;' : '';
+
+        return `
+            <div class="urgency-section">
+                <div class="urgency-header ${id}" onclick="${collapsible ? `toggleSection('${id}')` : ''}">
+                    <i class="bi ${icon} icon"></i>
+                    <span class="title">${title}</span>
+                    <span class="count">${items.length}</span>
+                    ${collapsible ? `<i class="bi bi-chevron-${isCollapsed ? 'down' : 'up'} toggle"></i>` : ''}
+                </div>
+                <div class="section-content ${isCollapsed ? 'collapsed' : ''}" id="section-${id}" style="${contentStyle}">
+                    ${items.map(p => renderProjectRow(p)).join('')}
+                </div>
+            </div>
+        `;
+    }
+
+    function renderProjectRow(project) {
+        const tipo = project.tipo || 'negocio';
+        const urgency = getUrgencyInfo(project);
+
+        // Pending task text
+        let pendingTaskHtml = '';
+        if (project.proxima_tarefa && project.proxima_tarefa.titulo) {
+            pendingTaskHtml = `
+                <div class="pending-task">
+                    <i class="bi bi-arrow-right"></i>
+                    ${project.proxima_tarefa.titulo}
+                </div>
+            `;
+        }
+
+        // Urgency badge
+        let urgencyHtml = '';
+        if (urgency) {
+            urgencyHtml = `
+                <span class="urgency-badge ${urgency.badge}">
+                    <i class="bi ${urgency.icon}"></i>
+                    ${urgency.text}
+                </span>
+            `;
+        }
+
+        return `
+            <div class="project-row type-${tipo}" onclick="openProject(${project.id})">
+                <div class="project-info">
+                    <h4 class="project-name">${project.nome}</h4>
+                    ${project.empresa_relacionada ? `<span class="project-empresa">${project.empresa_relacionada}</span>` : ''}
+                </div>
+                <div class="project-urgency-info">
+                    ${urgencyHtml}
+                    ${pendingTaskHtml}
+                </div>
+                <div class="project-stats">
+                    <span title="Tarefas pendentes">
+                        <i class="bi bi-check2-square"></i> ${project.tasks_pendentes || 0}
+                    </span>
+                    <span title="Marcos">
+                        <i class="bi bi-flag"></i> ${project.marcos_pendentes || 0}
+                    </span>
+                </div>
+                <span class="type-badge ${tipo}">
+                    <i class="bi bi-${getTypeIcon(tipo)}"></i>
+                </span>
+            </div>
+        `;
+    }
+
+    function toggleSection(id) {
+        collapsedSections[id] = !collapsedSections[id];
+        const section = document.getElementById(`section-${id}`);
+        const header = section.previousElementSibling;
+        const toggleIcon = header.querySelector('.toggle');
+
+        if (collapsedSections[id]) {
+            section.classList.add('collapsed');
+            toggleIcon.classList.replace('bi-chevron-up', 'bi-chevron-down');
+        } else {
+            section.classList.remove('collapsed');
+            section.style.maxHeight = section.scrollHeight + 'px';
+            toggleIcon.classList.replace('bi-chevron-down', 'bi-chevron-up');
+        }
+    }
+
+    function updateSummary(counts) {
+        document.getElementById('sumAtencao').textContent = counts.atencao;
+        document.getElementById('sumProximos').textContent = counts.proximos;
+        document.getElementById('sumEmDia').textContent = counts['em-dia'];
+        document.getElementById('sumPausados').textContent = counts.pausados + counts.concluidos;
     }
 
     function getTypeIcon(tipo) {
@@ -597,201 +781,9 @@
         return labels[tipo] || tipo;
     }
 
-    function getStatusLabel(status) {
-        const labels = {
-            'ativo': 'Ativo',
-            'pausado': 'Pausado',
-            'concluido': 'Concluido'
-        };
-        return labels[status] || status;
-    }
-
-    function getActionableInfo(project) {
-        const actions = [];
-
-        // Proximo marco
-        if (project.proximo_marco) {
-            const daysUntil = project.proximo_marco.dias_ate;
-            let cls = 'info';
-            let icon = 'bi-flag';
-            if (daysUntil <= 3) cls = 'danger';
-            else if (daysUntil <= 7) cls = 'warning';
-
-            actions.push({
-                icon: icon,
-                text: `Marco: ${project.proximo_marco.titulo} (${daysUntil === 0 ? 'Hoje' : daysUntil + 'd'})`,
-                cls: cls
-            });
-        }
-
-        // Data previsao
-        if (project.data_previsao && !project.proximo_marco) {
-            const prevDate = new Date(project.data_previsao);
-            const hoje = new Date();
-            const diff = Math.ceil((prevDate - hoje) / (1000 * 60 * 60 * 24));
-
-            if (diff <= 30 && diff >= 0) {
-                actions.push({
-                    icon: 'bi-calendar-check',
-                    text: `Previsao: ${formatDate(project.data_previsao)}`,
-                    cls: diff <= 7 ? 'warning' : 'info'
-                });
-            }
-        }
-
-        // Tarefas pendentes
-        if (project.tasks_pendentes > 0) {
-            actions.push({
-                icon: 'bi-check2-square',
-                text: `${project.tasks_pendentes} tarefa${project.tasks_pendentes > 1 ? 's' : ''} pendente${project.tasks_pendentes > 1 ? 's' : ''}`,
-                cls: 'warning'
-            });
-        }
-
-        // Proxima tarefa
-        if (project.proxima_tarefa) {
-            actions.push({
-                icon: 'bi-arrow-right-circle',
-                text: project.proxima_tarefa.titulo,
-                cls: 'success'
-            });
-        }
-
-        return actions.slice(0, 2); // Max 2 actions
-    }
-
-    function renderProjectCard(project) {
-        const tipo = project.tipo || 'negocio';
-        const status = project.status || 'ativo';
-        const actions = getActionableInfo(project);
-
-        // Members
-        const membersHtml = (project.membros || []).slice(0, 3).map(m => {
-            if (m.foto_url) {
-                return `<div class="member-avatar"><img src="${m.foto_url}" alt="${m.nome}"></div>`;
-            }
-            const initials = m.nome.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
-            return `<div class="member-avatar">${initials}</div>`;
-        }).join('');
-        const extraMembers = (project.total_membros || 0) - 3;
-
-        return `
-            <div class="project-card" onclick="openProject(${project.id})">
-                <div class="project-header type-${tipo}">
-                    <h3 class="project-name">${project.nome}</h3>
-                    <div class="project-meta">
-                        <span class="project-badge badge-type ${tipo}">
-                            <i class="bi bi-${getTypeIcon(tipo)}"></i>
-                            ${getTypeLabel(tipo)}
-                        </span>
-                        <span class="project-badge badge-status ${status}">
-                            ${getStatusLabel(status)}
-                        </span>
-                        ${project.empresa_relacionada ? `<span style="font-size: 0.75rem; color: var(--gray-500);">${project.empresa_relacionada}</span>` : ''}
-                    </div>
-                </div>
-                <div class="project-body">
-                    ${project.descricao ? `<p class="project-description">${project.descricao}</p>` : ''}
-                    ${actions.length > 0 ? `
-                        <div class="project-actions-info">
-                            ${actions.map(a => `
-                                <div class="action-item ${a.cls}">
-                                    <i class="bi ${a.icon}"></i>
-                                    <span>${a.text}</span>
-                                </div>
-                            `).join('')}
-                        </div>
-                    ` : ''}
-                </div>
-                <div class="project-footer">
-                    <div class="project-stats">
-                        <div class="project-stat ${project.tasks_pendentes > 0 ? 'has-items' : ''}">
-                            <i class="bi bi-check2-square"></i>
-                            ${project.tasks_pendentes || 0}
-                        </div>
-                        <div class="project-stat ${project.marcos_pendentes > 0 ? 'has-items' : ''}">
-                            <i class="bi bi-flag"></i>
-                            ${project.marcos_pendentes || 0}
-                        </div>
-                        <div class="project-stat">
-                            <i class="bi bi-envelope"></i>
-                            ${project.total_mensagens || 0}
-                        </div>
-                    </div>
-                    ${membersHtml ? `
-                        <div class="project-members">
-                            ${membersHtml}
-                            ${extraMembers > 0 ? `<div class="member-avatar">+${extraMembers}</div>` : ''}
-                        </div>
-                    ` : ''}
-                </div>
-            </div>
-        `;
-    }
-
-    function renderProjectList() {
-        return `
-            <div class="projects-list">
-                ${projects.map(p => {
-                    const tipo = p.tipo || 'negocio';
-                    const status = p.status || 'ativo';
-                    return `
-                        <div class="list-item" onclick="openProject(${p.id})">
-                            <div class="list-item-main">
-                                <div class="list-type-indicator ${tipo}"></div>
-                                <div class="list-info">
-                                    <h4>${p.nome}</h4>
-                                    <div class="subtitle">
-                                        ${p.empresa_relacionada || getTypeLabel(tipo)}
-                                        ${p.data_previsao ? ` • Previsao: ${formatDate(p.data_previsao)}` : ''}
-                                    </div>
-                                </div>
-                            </div>
-                            <div style="display: flex; gap: 0.5rem;">
-                                <span class="project-badge badge-type ${tipo}">
-                                    <i class="bi bi-${getTypeIcon(tipo)}"></i>
-                                    ${getTypeLabel(tipo)}
-                                </span>
-                                <span class="project-badge badge-status ${status}">
-                                    ${getStatusLabel(status)}
-                                </span>
-                            </div>
-                            <div class="project-stats">
-                                <div class="project-stat ${p.tasks_pendentes > 0 ? 'has-items' : ''}">
-                                    <i class="bi bi-check2-square"></i> ${p.tasks_pendentes || 0}
-                                </div>
-                                <div class="project-stat ${p.marcos_pendentes > 0 ? 'has-items' : ''}">
-                                    <i class="bi bi-flag"></i> ${p.marcos_pendentes || 0}
-                                </div>
-                            </div>
-                            <div style="font-size: 0.8rem; color: var(--gray-500);">
-                                ${formatDate(p.atualizado_em)}
-                            </div>
-                        </div>
-                    `;
-                }).join('')}
-            </div>
-        `;
-    }
-
-    function setView(view) {
-        currentView = view;
-        document.getElementById('btnGrid').classList.toggle('active', view === 'grid');
-        document.getElementById('btnList').classList.toggle('active', view === 'list');
-        renderProjects();
-    }
-
-    function filterByStatus(status, btn) {
-        filterStatus = status;
-        loadProjects();
-        // Update buttons
-        btn.closest('.filter-group').querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-    }
-
     function filterByType(type, btn) {
         filterType = type;
-        loadProjects();
+        renderProjects();
         // Update buttons
         btn.closest('.filter-group').querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');

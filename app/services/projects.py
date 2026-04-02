@@ -66,9 +66,12 @@ def list_projects(
     tipo: str = None,
     status: str = None,
     limit: int = 50,
-    offset: int = 0
+    offset: int = 0,
+    include_completed: bool = False
 ) -> List[Dict]:
-    """Lista projetos com filtros opcionais."""
+    """Lista projetos com filtros opcionais e dados de urgencia."""
+    from datetime import date
+
     with get_db() as conn:
         cursor = conn.cursor()
 
@@ -76,6 +79,8 @@ def list_projects(
             SELECT p.*,
                    (SELECT COUNT(*) FROM project_members WHERE project_id = p.id) as total_membros,
                    (SELECT COUNT(*) FROM tasks WHERE project_id = p.id AND status = 'pending') as tasks_pendentes,
+                   (SELECT COUNT(*) FROM tasks WHERE project_id = p.id AND status = 'pending'
+                        AND data_vencimento IS NOT NULL AND data_vencimento < CURRENT_DATE) as tasks_vencidas,
                    (SELECT COUNT(*) FROM project_milestones WHERE project_id = p.id AND status = 'pendente') as marcos_pendentes
             FROM projects p
             WHERE 1=1
@@ -89,6 +94,9 @@ def list_projects(
         if status:
             query += " AND p.status = %s"
             params.append(status)
+        elif not include_completed:
+            # By default exclude completed
+            query += " AND p.status != 'concluido'"
 
         query += " ORDER BY p.prioridade ASC, p.criado_em DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
@@ -96,10 +104,58 @@ def list_projects(
         cursor.execute(query, params)
         projects = [dict(row) for row in cursor.fetchall()]
 
-        # Add type info
+        hoje = date.today()
+
+        # Enrich each project with urgency data
         for p in projects:
             p['tipo_info'] = PROJECT_TYPES.get(p['tipo'], PROJECT_TYPES['negocio'])
             p['status_info'] = PROJECT_STATUS.get(p['status'], PROJECT_STATUS['ativo'])
+
+            # Get next milestone
+            cursor.execute("""
+                SELECT titulo, data_prevista
+                FROM project_milestones
+                WHERE project_id = %s AND status = 'pendente'
+                AND data_prevista IS NOT NULL
+                ORDER BY data_prevista ASC
+                LIMIT 1
+            """, (p['id'],))
+            marco = cursor.fetchone()
+            if marco:
+                marco = dict(marco)
+                data_marco = marco['data_prevista']
+                if isinstance(data_marco, str):
+                    from datetime import datetime
+                    data_marco = datetime.strptime(data_marco, '%Y-%m-%d').date()
+                dias_ate = (data_marco - hoje).days
+                p['proximo_marco'] = {
+                    'titulo': marco['titulo'],
+                    'data_prevista': str(marco['data_prevista']),
+                    'dias_ate': dias_ate
+                }
+
+            # Get next task
+            cursor.execute("""
+                SELECT titulo, data_vencimento
+                FROM tasks
+                WHERE project_id = %s AND status = 'pending'
+                ORDER BY
+                    CASE WHEN data_vencimento IS NULL THEN 1 ELSE 0 END,
+                    data_vencimento ASC
+                LIMIT 1
+            """, (p['id'],))
+            tarefa = cursor.fetchone()
+            if tarefa:
+                tarefa = dict(tarefa)
+                p['proxima_tarefa'] = {
+                    'titulo': tarefa['titulo']
+                }
+                if tarefa['data_vencimento']:
+                    data_tarefa = tarefa['data_vencimento']
+                    if isinstance(data_tarefa, str):
+                        from datetime import datetime
+                        data_tarefa = datetime.strptime(data_tarefa, '%Y-%m-%d').date()
+                    p['proxima_tarefa']['dias_ate'] = (data_tarefa - hoje).days
 
         return projects
 
