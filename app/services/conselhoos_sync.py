@@ -277,6 +277,7 @@ class ConselhoOSSyncService:
                 cursor = conn.cursor()
 
                 # Query reuniões for all linked empresas
+                # Cast text array to UUID array for comparison
                 cursor.execute("""
                     SELECT
                         r.id,
@@ -289,7 +290,7 @@ class ConselhoOSSyncService:
                         e.cor_hex
                     FROM reunioes r
                     JOIN empresas e ON e.id = r.empresa_id
-                    WHERE r.empresa_id = ANY(%s)
+                    WHERE r.empresa_id = ANY(%s::uuid[])
                     ORDER BY r.data DESC
                     LIMIT %s
                 """, (empresa_ids, limit))
