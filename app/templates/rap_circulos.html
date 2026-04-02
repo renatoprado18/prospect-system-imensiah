@@ -894,16 +894,19 @@ async function handleTileDrop(e) {
     const tile = e.target.closest('.circle-tile');
     if (!tile || !draggedData) return;
 
+    // Save data locally before async (handleDragEnd will null it)
+    const dropData = { ...draggedData };
+
     tile.classList.remove('drag-over');
     tile.style.transform = '';
 
     const targetContext = tile.dataset.context;
     const targetCirculo = parseInt(tile.dataset.circulo);
 
-    console.log('Tile drop:', { from: draggedData, to: { context: targetContext, circulo: targetCirculo } });
+    console.log('Tile drop:', { from: dropData, to: { context: targetContext, circulo: targetCirculo } });
 
     // Skip if same context AND same circle
-    if (targetContext === draggedData.context && targetCirculo === draggedData.circulo) {
+    if (targetContext === dropData.context && targetCirculo === dropData.circulo) {
         console.log('Same position, ignoring');
         return;
     }
@@ -914,7 +917,7 @@ async function handleTileDrop(e) {
     };
 
     try {
-        const res = await fetch(`/api/contatos/${draggedData.id}/circulo`, {
+        const res = await fetch(`/api/contatos/${dropData.id}/circulo`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -925,7 +928,7 @@ async function handleTileDrop(e) {
 
         if (res.ok) {
             const targetLabel = targetContext === 'pessoal' ? 'Pessoal' : 'Profissional';
-            console.log(`Moved ${draggedData.name} to ${targetLabel} C${targetCirculo}`);
+            console.log(`Moved ${dropData.name} to ${targetLabel} C${targetCirculo}`);
             loadData();
         } else {
             alert('Erro ao mover: ' + (data.detail || res.status));
@@ -968,26 +971,29 @@ function setupDropZones() {
                 return;
             }
 
+            // Save data locally before async (handleDragEnd will null it)
+            const dropData = { ...draggedData };
+
             const targetContext = list.dataset.context;
 
             // If dropping to same context, do nothing
-            if (targetContext === draggedData.context) {
+            if (targetContext === dropData.context) {
                 console.log('Same context, ignoring');
                 return;
             }
 
             // Show loading state
-            const contactName = draggedData.name || 'Contato';
+            const contactName = dropData.name || 'Contato';
             const targetLabel = targetContext === 'pessoal' ? 'Pessoal' : 'Profissional';
 
             const payload = {
                 contexto: targetContext,
-                circulo: draggedData.circulo
+                circulo: dropData.circulo
             };
             console.log('Drag drop payload:', payload);
 
             try {
-                const res = await fetch(`/api/contatos/${draggedData.id}/circulo`, {
+                const res = await fetch(`/api/contatos/${dropData.id}/circulo`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
