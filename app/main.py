@@ -6360,7 +6360,7 @@ async def update_contact_circulo_dual(contact_id: int, data: dict):
                 cursor.execute("""
                     UPDATE contacts
                     SET circulo_profissional = %s,
-                        contexto = COALESCE(contexto, 'professional'),
+                        contexto = 'professional',
                         atualizado_em = CURRENT_TIMESTAMP
                     WHERE id = %s
                     RETURNING id, nome, circulo_pessoal, circulo_profissional, contexto
