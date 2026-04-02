@@ -12383,7 +12383,8 @@ async def api_add_project_task(project_id: int, request: Request):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM tasks WHERE id = %s", (result.get('id'),))
-        task = dict(cursor.fetchone()) if cursor.fetchone() else result
+        row = cursor.fetchone()
+        task = dict(row) if row else result
 
     return {"status": "success", "task": task, "synced_to_google": True}
 
