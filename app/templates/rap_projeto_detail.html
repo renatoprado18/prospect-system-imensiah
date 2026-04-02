@@ -97,7 +97,9 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-primary" onclick="saveMilestone()">Salvar</button>
+                <button type="button" class="btn btn-primary" onclick="saveMilestone()" id="btnSaveMilestone">
+                    <i class="bi bi-check2 me-1"></i>Salvar
+                </button>
             </div>
         </div>
     </div>
@@ -976,8 +978,15 @@
     }
 
     async function saveMilestone() {
+        const btn = document.getElementById('btnSaveMilestone');
+        if (btn.disabled) return; // Prevent double submission
+
         const titulo = document.getElementById('milestoneTitulo').value.trim();
         if (!titulo) return alert('Titulo e obrigatorio');
+
+        // Disable button to prevent double click
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
 
         const editId = document.getElementById('milestoneEditId').value;
         const data = {
@@ -1006,6 +1015,10 @@
             loadProject();
         } catch (error) {
             console.error('Error:', error);
+        } finally {
+            // Re-enable button
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar';
         }
     }
 
@@ -1126,11 +1139,18 @@
     }
 
     async function saveTask() {
+        const btn = document.getElementById('btnSaveTask');
+        if (btn.disabled) return; // Prevent double submission
+
         const titulo = document.getElementById('taskTitulo').value.trim();
         if (!titulo) {
             alert('Titulo e obrigatorio');
             return;
         }
+
+        // Disable button to prevent double click
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
 
         const editId = document.getElementById('taskEditId').value;
         const data = {
@@ -1169,6 +1189,10 @@
         } catch (error) {
             console.error('Error:', error);
             alert('Erro ao salvar tarefa');
+        } finally {
+            // Re-enable button
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar';
         }
     }
 
