@@ -2640,7 +2640,7 @@
 
                     // If action opens a conversation, redirect
                     if (result.result?.action === 'open_conversation' && result.result?.contact_id) {
-                        window.location.href = `/contacts/${result.result.contact_id}`;
+                        window.location.href = `/contatos/${result.result.contact_id}`;
                     }
                 } else {
                     showToast(result.message || 'Erro ao executar acao', 'error');
