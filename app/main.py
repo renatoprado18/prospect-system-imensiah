@@ -8827,6 +8827,9 @@ async def process_emails_for_triage(
     if not user:
         raise HTTPException(status_code=401, detail="Não autenticado")
 
+    # Garantir que as tabelas existem
+    init_db()
+
     from services.email_triage import get_email_triage_service
     service = get_email_triage_service()
 
@@ -8944,10 +8947,13 @@ async def delete_triage_rule(request: Request, rule_id: int):
 
 @app.post("/api/email-triage/rules/init")
 async def init_default_triage_rules(request: Request):
-    """Inicializa regras default"""
+    """Inicializa tabelas e regras default"""
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Não autenticado")
+
+    # Garantir que as tabelas existem
+    init_db()
 
     from services.email_triage import get_email_triage_service
     service = get_email_triage_service()
