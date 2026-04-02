@@ -162,6 +162,22 @@
     .priority-list {
         flex: 1;
         overflow-y: auto;
+        max-height: calc(100vh - 320px);
+        scrollbar-width: thin;
+    }
+    .priority-list::-webkit-scrollbar {
+        width: 6px;
+    }
+    .priority-list::-webkit-scrollbar-track {
+        background: var(--gray-100);
+        border-radius: 3px;
+    }
+    .priority-list::-webkit-scrollbar-thumb {
+        background: var(--gray-300);
+        border-radius: 3px;
+    }
+    .priority-list::-webkit-scrollbar-thumb:hover {
+        background: var(--gray-400);
     }
 
     /* Contact Item */
