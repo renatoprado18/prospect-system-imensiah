@@ -421,6 +421,11 @@
         color: white;
     }
 
+    .milestone-overdue {
+        background: #dc2626;
+        color: white;
+    }
+
     .timeline-item {
         display: flex;
         gap: 12px;
@@ -676,15 +681,42 @@
 
         return milestones.map(m => {
             const isDone = m.status === 'concluido';
+
+            let dateHtml = '';
+            let iconClass = 'milestone-pending';
+            if (m.data_prevista) {
+                const dueDate = new Date(m.data_prevista);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                dueDate.setHours(0, 0, 0, 0);
+                const diffDays = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+
+                let dateClass = 'text-muted';
+                let icon = 'bi-calendar';
+                if (!isDone) {
+                    if (diffDays < 0) {
+                        dateClass = 'text-danger fw-semibold';
+                        icon = 'bi-exclamation-circle-fill';
+                        iconClass = 'milestone-overdue';
+                    } else if (diffDays === 0) {
+                        dateClass = 'text-warning fw-semibold';
+                        icon = 'bi-clock-fill';
+                    } else if (diffDays <= 7) {
+                        dateClass = 'text-warning';
+                    }
+                }
+                dateHtml = `<small class="${dateClass} d-block"><i class="bi ${icon} me-1"></i>${formatDate(m.data_prevista)}</small>`;
+            }
+
             return `
                 <div class="milestone-item">
-                    <div class="milestone-icon ${isDone ? 'milestone-done' : 'milestone-pending'}">
+                    <div class="milestone-icon ${isDone ? 'milestone-done' : iconClass}">
                         <i class="bi bi-${isDone ? 'check' : 'flag'}"></i>
                     </div>
                     <div class="flex-grow-1">
                         <div class="fw-semibold ${isDone ? 'text-decoration-line-through text-muted' : ''}">${m.titulo}</div>
                         ${m.descricao ? `<small class="text-muted">${m.descricao}</small>` : ''}
-                        ${m.data_prevista ? `<small class="text-muted d-block"><i class="bi bi-calendar me-1"></i>${formatDate(m.data_prevista)}</small>` : ''}
+                        ${dateHtml}
                     </div>
                     <div class="dropdown">
                         <button class="btn btn-sm btn-link" data-bs-toggle="dropdown">
@@ -706,21 +738,48 @@
             return '<p class="text-muted small mb-0">Nenhuma tarefa vinculada</p>';
         }
 
-        return tasks.map(t => `
-            <div class="d-flex align-items-center gap-2 py-2 border-bottom task-row" data-task-id="${t.id}">
-                <input type="checkbox" class="form-check-input" ${t.status === 'completed' ? 'checked' : ''}
-                    onchange="toggleTask(${t.id}, this.checked)">
-                <span class="flex-grow-1 ${t.status === 'completed' ? 'text-decoration-line-through text-muted' : ''}"
-                    style="cursor: pointer" onclick="showTaskContext(${t.id})">${t.titulo}</span>
-                ${t.contact_nome ? `<small class="text-muted">${t.contact_nome}</small>` : ''}
-                <button class="btn btn-sm btn-outline-primary" onclick="showTaskContext(${t.id})" title="Ver contexto">
-                    <i class="bi bi-lightbulb"></i>
-                </button>
-                <button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})" title="Excluir tarefa">
-                    <i class="bi bi-trash"></i>
-                </button>
-            </div>
-        `).join('');
+        return tasks.map(t => {
+            let dueDateHtml = '';
+            if (t.data_vencimento) {
+                const dueDate = new Date(t.data_vencimento);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                dueDate.setHours(0, 0, 0, 0);
+                const diffDays = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+
+                let dateClass = 'text-muted';
+                let icon = 'bi-calendar';
+                if (t.status !== 'completed') {
+                    if (diffDays < 0) {
+                        dateClass = 'text-danger fw-semibold';
+                        icon = 'bi-exclamation-circle-fill';
+                    } else if (diffDays === 0) {
+                        dateClass = 'text-warning fw-semibold';
+                        icon = 'bi-clock-fill';
+                    } else if (diffDays <= 3) {
+                        dateClass = 'text-warning';
+                    }
+                }
+                dueDateHtml = `<small class="${dateClass}"><i class="bi ${icon} me-1"></i>${formatDate(t.data_vencimento)}</small>`;
+            }
+
+            return `
+                <div class="d-flex align-items-center gap-2 py-2 border-bottom task-row" data-task-id="${t.id}">
+                    <input type="checkbox" class="form-check-input" ${t.status === 'completed' ? 'checked' : ''}
+                        onchange="toggleTask(${t.id}, this.checked)">
+                    <span class="flex-grow-1 ${t.status === 'completed' ? 'text-decoration-line-through text-muted' : ''}"
+                        style="cursor: pointer" onclick="showTaskContext(${t.id})">${t.titulo}</span>
+                    ${dueDateHtml}
+                    ${t.contact_nome ? `<small class="text-muted">${t.contact_nome}</small>` : ''}
+                    <button class="btn btn-sm btn-outline-primary" onclick="showTaskContext(${t.id})" title="Ver contexto">
+                        <i class="bi bi-lightbulb"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})" title="Excluir tarefa">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            `;
+        }).join('');
     }
 
     function renderTimeline() {
