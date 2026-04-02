@@ -859,18 +859,31 @@ class EmailTriageService:
                         headers = gmail.parse_message_headers(msg_details)
                         body_data = gmail.parse_message_body(msg_details)
 
-                        from_email = gmail.extract_email_address(headers.get("from", ""))
+                        from_header = headers.get("from", "")
+                        from_email = gmail.extract_email_address(from_header)
+                        # Extrair nome do remetente (parte antes do <email>)
+                        from_name = from_header.split('<')[0].strip().strip('"') if '<' in from_header else from_email
                         subject = headers.get("subject", "(Sem assunto)")
                         date_str = headers.get("date", "")
 
-                        # Buscar contato pelo email
+                        # Buscar contato pelo email (formato: [{'email': 'addr@example.com'}])
                         cursor.execute("""
                             SELECT id, nome, circulo, circulo_pessoal, circulo_profissional
                             FROM contacts
                             WHERE emails @> %s::jsonb
                             LIMIT 1
-                        """, (json.dumps([from_email]),))
+                        """, (json.dumps([{'email': from_email}]),))
                         contact = cursor.fetchone()
+
+                        # Se não encontrou, tentar busca mais flexível
+                        if not contact and from_email:
+                            cursor.execute("""
+                                SELECT id, nome, circulo, circulo_pessoal, circulo_profissional
+                                FROM contacts
+                                WHERE emails::text ILIKE %s
+                                LIMIT 1
+                            """, (f'%{from_email}%',))
+                            contact = cursor.fetchone()
 
                         contact_id = contact['id'] if contact else None
 
@@ -910,7 +923,11 @@ class EmailTriageService:
                                 contact_id,
                                 gmail_id,
                                 body_data.get('text', '')[:5000],
-                                json.dumps({"account": account_email, "from": from_email}),
+                                json.dumps({
+                                    "account": account_email,
+                                    "from": from_email,
+                                    "from_name": from_name
+                                }),
                                 sent_at
                             ))
                             message_id = cursor.fetchone()['id']

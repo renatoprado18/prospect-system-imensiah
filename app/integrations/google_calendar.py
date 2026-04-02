@@ -73,6 +73,43 @@ class GoogleCalendarIntegration:
                 logger.error(f"Erro ao listar eventos: {e}")
                 return {"error": str(e)}
 
+    async def search_events(
+        self,
+        access_token: str,
+        query: str,
+        calendar_id: str = "primary",
+        max_results: int = 20
+    ) -> Dict[str, Any]:
+        """
+        Busca eventos por texto (titulo, descricao, local, participantes).
+        """
+        params = {
+            "q": query,
+            "maxResults": max_results,
+            "singleEvents": "true",
+            "orderBy": "startTime"
+        }
+
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(
+                    f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params=params,
+                    timeout=30.0
+                )
+
+                if response.status_code == 401:
+                    return {"error": "token_expired"}
+                elif response.status_code != 200:
+                    return {"error": response.text}
+
+                return response.json()
+
+            except Exception as e:
+                logger.error(f"Erro ao buscar eventos: {e}")
+                return {"error": str(e)}
+
     async def get_today_events(self, access_token: str) -> List[Dict[str, Any]]:
         """Retorna eventos de hoje para o dashboard (timezone America/Sao_Paulo)."""
         from zoneinfo import ZoneInfo

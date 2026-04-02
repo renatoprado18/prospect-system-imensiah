@@ -11181,14 +11181,84 @@ def link_event_to_prospect(request: Request, event_id: int, prospect_id: int):
 
 
 @app.get("/api/contacts/{contact_id}/calendar")
-def get_contact_calendar_events(request: Request, contact_id: int, limit: int = 20):
-    """Lista eventos de um contato"""
+async def get_contact_calendar_events(request: Request, contact_id: int, limit: int = 20):
+    """Lista eventos de um contato - busca no Google Calendar pelo nome"""
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
-    service = get_calendar_events()
-    events = service.get_events_for_contact(contact_id, limit=limit)
+    # Buscar dados do contato
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT nome, empresa FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato não encontrado")
+
+        # Buscar token Google
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
+        return {"events": [], "total": 0, "error": "no_google_account"}
+
+    # Refresh token
+    from integrations.gmail import GmailIntegration
+    gmail = GmailIntegration()
+    tokens = await gmail.refresh_access_token(account["refresh_token"])
+
+    if "error" in tokens:
+        return {"events": [], "total": 0, "error": "token_refresh_failed"}
+
+    access_token = tokens.get("access_token")
+    calendar = get_calendar_integration()
+
+    # Buscar eventos pelo nome do contato
+    contact_name = contact["nome"]
+    # Pegar sobrenome se tiver mais de um nome
+    name_parts = contact_name.split()
+    search_term = name_parts[-1] if len(name_parts) > 1 else contact_name
+
+    result = await calendar.search_events(
+        access_token=access_token,
+        query=search_term,
+        max_results=limit
+    )
+
+    if "error" in result:
+        return {"events": [], "total": 0, "error": result.get("error")}
+
+    # Formatar eventos
+    events = []
+    for item in result.get("items", []):
+        start_info = item.get("start", {})
+        end_info = item.get("end", {})
+
+        is_all_day = "date" in start_info and "dateTime" not in start_info
+
+        if is_all_day:
+            event_start = start_info.get("date") + "T00:00:00"
+            event_end = end_info.get("date") + "T23:59:59"
+        else:
+            event_start = start_info.get("dateTime", "")
+            event_end = end_info.get("dateTime", "")
+
+        events.append({
+            "id": item.get("id"),
+            "summary": item.get("summary", "Sem titulo"),
+            "description": item.get("description"),
+            "location": item.get("location"),
+            "start_datetime": event_start,
+            "end_datetime": event_end,
+            "is_all_day": is_all_day,
+            "status": item.get("status"),
+            "html_link": item.get("htmlLink")
+        })
+
+    # Ordenar por data (mais recentes primeiro para passadas, próximas primeiro para futuras)
+    events.sort(key=lambda x: x.get("start_datetime", ""), reverse=True)
+
     return {"events": events, "total": len(events)}
 
 
