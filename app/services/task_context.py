@@ -330,13 +330,20 @@ class TaskContextService:
         # Mensagens WhatsApp - mais detalhes
         if messages:
             context_parts.append(f"\n=== MENSAGENS WHATSAPP ({len(messages)} msgs) ===")
-            for msg in messages[-15:]:  # Ultimas 15
+            recent_messages = messages[-15:]  # Ultimas 15
+            for i, msg in enumerate(recent_messages):
                 contact_name = contact.get('nome', 'Contato') if contact else 'Contato'
                 direction = "Eu" if msg.get('direcao') == 'outgoing' else contact_name
                 date = msg.get('enviado_em', '')
                 if isinstance(date, datetime):
                     date = date.strftime('%d/%m %H:%M')
-                content = msg.get('conteudo', '')[:300]
+
+                # Mensagens mais recentes (últimas 5): sem truncamento
+                # Mensagens mais antigas: limitar a 200 caracteres
+                content = msg.get('conteudo', '')
+                if i < len(recent_messages) - 5 and len(content) > 200:
+                    content = content[:200] + "..."
+
                 context_parts.append(f"[{date}] {direction}: {content}")
         else:
             context_parts.append("\nSem historico de mensagens WhatsApp")
