@@ -369,6 +369,108 @@ class GmailIntegration:
         # If no angle brackets, assume it's just the email
         return header_value.strip().lower()
 
+    async def list_labels(self, access_token: str) -> List[Dict]:
+        """Lista todas as labels da conta"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+            if response.status_code == 200:
+                return response.json().get("labels", [])
+            return []
+
+    async def get_or_create_label(self, access_token: str, label_name: str) -> Optional[str]:
+        """Retorna ID da label, criando se não existir"""
+        # Listar labels existentes
+        labels = await self.list_labels(access_token)
+        for label in labels:
+            if label.get("name") == label_name:
+                return label.get("id")
+
+        # Criar nova label
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "name": label_name,
+                    "labelListVisibility": "labelShow",
+                    "messageListVisibility": "show"
+                }
+            )
+            if response.status_code == 200:
+                return response.json().get("id")
+            return None
+
+    async def modify_message_labels(
+        self,
+        access_token: str,
+        message_id: str,
+        add_label_ids: List[str] = None,
+        remove_label_ids: List[str] = None
+    ) -> bool:
+        """Adiciona ou remove labels de uma mensagem"""
+        body = {}
+        if add_label_ids:
+            body["addLabelIds"] = add_label_ids
+        if remove_label_ids:
+            body["removeLabelIds"] = remove_label_ids
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}/modify",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json"
+                },
+                json=body
+            )
+            return response.status_code == 200
+
+    async def archive_message(self, access_token: str, message_id: str) -> bool:
+        """Arquiva uma mensagem (remove do INBOX)"""
+        return await self.modify_message_labels(
+            access_token,
+            message_id,
+            remove_label_ids=["INBOX"]
+        )
+
+    async def archive_and_remove_label(
+        self,
+        access_token: str,
+        message_id: str,
+        label_name: str
+    ) -> Dict:
+        """Arquiva mensagem e remove uma label específica"""
+        result = {"archived": False, "label_removed": False}
+
+        # Buscar ID da label
+        labels = await self.list_labels(access_token)
+        label_id = None
+        for label in labels:
+            if label.get("name") == label_name:
+                label_id = label.get("id")
+                break
+
+        # Remover INBOX e a label
+        remove_ids = ["INBOX"]
+        if label_id:
+            remove_ids.append(label_id)
+
+        success = await self.modify_message_labels(
+            access_token,
+            message_id,
+            remove_label_ids=remove_ids
+        )
+
+        result["archived"] = success
+        result["label_removed"] = success and label_id is not None
+        return result
+
 
 # Helper functions for parsing
 def parse_gmail_date(date_str: str) -> Optional[datetime]:
