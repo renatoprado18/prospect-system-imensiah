@@ -904,8 +904,14 @@ async def search_company_info(
 
     # Se tiver nome do contato, tentar buscar pagina de equipe
     team_content = ""
+    contact_found_in_main = False
     if contact_name:
-        team_paths = ['/equipe', '/team', '/sobre', '/about', '/quem-somos', '/about-us', '/nosso-time', '/pessoas', '/people', '/socios', '/partners']
+        # Primeiro verificar se o nome aparece na pagina principal
+        if contact_name.lower() in page_content.lower():
+            contact_found_in_main = True
+
+        # Tentar buscar paginas de equipe
+        team_paths = ['/equipe', '/team', '/sobre', '/about', '/quem-somos', '/about-us', '/nosso-time', '/pessoas', '/people', '/socios', '/partners', '/nossa-equipe', '/colaboradores', '/membros', '/advisors', '/consultores']
         base_url = url_to_fetch.rstrip('/')
 
         for path in team_paths:
@@ -934,8 +940,16 @@ async def search_company_info(
     # Usar AI para extrair informacoes estruturadas
     contact_section = ""
     if contact_name:
+        found_status = ""
+        if team_content:
+            found_status = f"(encontrado na pagina de equipe)"
+        elif contact_found_in_main:
+            found_status = f"(nome encontrado na pagina principal - busque informacoes no conteudo)"
+        else:
+            found_status = f"(nome NAO encontrado no site - busque apenas informacoes da empresa)"
+
         contact_section = f"""
-CONTATO A BUSCAR: {contact_name}
+CONTATO A BUSCAR: {contact_name} {found_status}
 
 Se encontrar informacoes sobre este contato no site, extraia:
 - **cargo_encontrado**: Cargo/titulo do contato
@@ -952,6 +966,15 @@ Se encontrar informacoes sobre este contato no site, extraia:
 CONTEUDO DA PAGINA DE EQUIPE:
 {team_content}
 """
+    elif contact_name and contact_found_in_main:
+        # Se o nome foi encontrado na pagina principal, incluir mais conteudo
+        team_section = f"""
+
+NOTA: O nome "{contact_name}" foi encontrado na pagina principal. Busque cargo, bio, etc. no conteudo acima.
+"""
+
+    # Se nome do contato foi encontrado na pagina principal, usar mais conteudo
+    content_limit = 4000 if (contact_name and contact_found_in_main and not team_content) else 2500
 
     prompt = f"""Analise o conteudo deste website empresarial e extraia informacoes.
 
@@ -960,7 +983,7 @@ Titulo: {page_title}
 Descricao: {page_description}
 {contact_section}
 Conteudo da pagina principal:
-{page_content[:2500]}
+{page_content[:content_limit]}
 {team_section}
 Extraia as seguintes informacoes (se disponiveis):
 

@@ -147,6 +147,114 @@ class WhatsAppSyncService:
             logger.error(f"Erro ao atualizar contato {contact_id}: {e}")
             return False
 
+    def _get_or_create_conversation(self, contact_id: int, phone: str) -> Optional[int]:
+        """
+        Busca ou cria uma conversa WhatsApp para o contato.
+        Retorna o conversation_id.
+        """
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+
+                # Buscar conversa existente
+                cursor.execute("""
+                    SELECT id FROM conversations
+                    WHERE contact_id = %s AND canal = 'whatsapp'
+                    LIMIT 1
+                """, (contact_id,))
+                existing = cursor.fetchone()
+
+                if existing:
+                    return existing["id"]
+
+                # Criar nova conversa
+                cursor.execute("""
+                    INSERT INTO conversations (contact_id, canal, ultimo_mensagem, total_mensagens)
+                    VALUES (%s, 'whatsapp', NOW(), 0)
+                    RETURNING id
+                """, (contact_id,))
+                result = cursor.fetchone()
+                conn.commit()
+
+                logger.info(f"Criada conversa WhatsApp {result['id']} para contato {contact_id}")
+                return result["id"]
+
+        except Exception as e:
+            logger.error(f"Erro ao criar conversa para contato {contact_id}: {e}")
+            return None
+
+    def _save_messages_to_conversation(
+        self,
+        conversation_id: int,
+        contact_id: int,
+        messages: List[Dict]
+    ) -> int:
+        """
+        Salva mensagens na tabela messages.
+        Retorna quantidade de mensagens salvas.
+        """
+        saved = 0
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+
+                for msg in messages:
+                    parsed = self.wa.parse_stored_message(msg)
+                    if not parsed:
+                        continue
+
+                    content = parsed.get("content", "")
+                    if not content or content.strip() == "":
+                        continue
+
+                    direction = parsed.get("direction", "incoming")
+                    timestamp = parsed.get("timestamp")
+                    msg_id = parsed.get("message_id", "")
+
+                    # Verificar se ja existe (por message_id ou conteudo+data)
+                    if msg_id:
+                        cursor.execute("""
+                            SELECT id FROM messages
+                            WHERE conversation_id = %s AND metadata->>'message_id' = %s
+                            LIMIT 1
+                        """, (conversation_id, msg_id))
+                    else:
+                        cursor.execute("""
+                            SELECT id FROM messages
+                            WHERE conversation_id = %s
+                            AND conteudo = %s
+                            AND enviado_em = %s
+                            LIMIT 1
+                        """, (conversation_id, content, timestamp))
+
+                    if cursor.fetchone():
+                        continue  # Ja existe
+
+                    # Inserir mensagem
+                    metadata = json.dumps({"message_id": msg_id, "source": "whatsapp_sync"}) if msg_id else None
+
+                    cursor.execute("""
+                        INSERT INTO messages (conversation_id, contact_id, direcao, conteudo, enviado_em, metadata)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (conversation_id, contact_id, direction, content, timestamp, metadata))
+                    saved += 1
+
+                # Atualizar totais da conversa
+                if saved > 0:
+                    cursor.execute("""
+                        UPDATE conversations
+                        SET total_mensagens = (SELECT COUNT(*) FROM messages WHERE conversation_id = %s),
+                            ultimo_mensagem = (SELECT MAX(enviado_em) FROM messages WHERE conversation_id = %s)
+                        WHERE id = %s
+                    """, (conversation_id, conversation_id, conversation_id))
+
+                conn.commit()
+
+        except Exception as e:
+            logger.error(f"Erro ao salvar mensagens: {e}")
+
+        return saved
+
     async def sync_all_chats(self, include_groups: bool = False) -> Dict[str, Any]:
         """
         Sincroniza todos os chats do WhatsApp com contatos.
@@ -207,8 +315,16 @@ class WhatsAppSyncService:
 
                         if latest_date:
                             self._update_contact_interaction(contact_id, msg_count, latest_date)
-                            self._sync_status["messages_saved"] += msg_count
-                            self._sync_status["linked"] += 1
+
+                        # Criar conversa e salvar mensagens na tabela messages
+                        conversation_id = self._get_or_create_conversation(contact_id, phone)
+                        if conversation_id:
+                            saved = self._save_messages_to_conversation(conversation_id, contact_id, messages)
+                            self._sync_status["messages_saved"] += saved
+                            if saved > 0:
+                                logger.info(f"Salvas {saved} mensagens para contato {contact['nome']} (ID: {contact_id})")
+
+                        self._sync_status["linked"] += 1
 
                     self._sync_status["processed"] += 1
 
@@ -271,34 +387,48 @@ class WhatsAppSyncService:
             timestamp = parsed.get("timestamp", datetime.now())
             self._update_contact_interaction(contact_id, 1, timestamp)
 
-            # Salvar mensagem na tabela (se existir)
+            # Salvar mensagem na tabela messages (via conversation)
             try:
-                with get_db() as conn:
-                    cursor = conn.cursor()
+                conversation_id = self._get_or_create_conversation(contact_id, phone)
+                if conversation_id:
+                    content = parsed.get("content", "")
+                    direction = parsed.get("direction", "incoming")
+                    msg_id = parsed.get("message_id", "")
 
-                    # Verificar se tabela existe
-                    cursor.execute("""
-                        SELECT EXISTS (
-                            SELECT FROM information_schema.tables
-                            WHERE table_name = 'whatsapp_messages'
-                        )
-                    """)
-                    if cursor.fetchone()["exists"]:
-                        cursor.execute("""
-                            INSERT INTO whatsapp_messages
-                            (contact_id, phone, message_id, direction, content, message_type, message_date)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (message_id) DO NOTHING
-                        """, (
-                            contact_id,
-                            phone,
-                            parsed.get("message_id"),
-                            parsed.get("direction"),
-                            parsed.get("content"),
-                            parsed.get("message_type"),
-                            timestamp
-                        ))
-                        conn.commit()
+                    if content and content.strip():
+                        with get_db() as conn:
+                            cursor = conn.cursor()
+
+                            # Verificar duplicata
+                            if msg_id:
+                                cursor.execute("""
+                                    SELECT id FROM messages
+                                    WHERE conversation_id = %s AND metadata->>'message_id' = %s
+                                    LIMIT 1
+                                """, (conversation_id, msg_id))
+                            else:
+                                cursor.execute("""
+                                    SELECT id FROM messages
+                                    WHERE conversation_id = %s AND conteudo = %s AND enviado_em = %s
+                                    LIMIT 1
+                                """, (conversation_id, content, timestamp))
+
+                            if not cursor.fetchone():
+                                metadata = json.dumps({"message_id": msg_id, "source": "webhook"}) if msg_id else None
+                                cursor.execute("""
+                                    INSERT INTO messages (conversation_id, contact_id, direcao, conteudo, enviado_em, metadata)
+                                    VALUES (%s, %s, %s, %s, %s, %s)
+                                """, (conversation_id, contact_id, direction, content, timestamp, metadata))
+
+                                # Atualizar conversa
+                                cursor.execute("""
+                                    UPDATE conversations
+                                    SET total_mensagens = total_mensagens + 1, ultimo_mensagem = %s
+                                    WHERE id = %s
+                                """, (timestamp, conversation_id))
+
+                                conn.commit()
+                                logger.info(f"Mensagem WhatsApp salva para contato {contact_id}")
 
             except Exception as e:
                 logger.warning(f"Erro ao salvar mensagem WhatsApp: {e}")
@@ -315,7 +445,7 @@ class WhatsAppSyncService:
         """
         Sincroniza chat de um numero especifico.
         """
-        result = {"success": False, "messages": 0, "contact_id": None}
+        result = {"success": False, "messages": 0, "saved": 0, "contact_id": None}
 
         try:
             # Buscar contato
@@ -325,6 +455,7 @@ class WhatsAppSyncService:
 
             contact_id = contact["id"]
             result["contact_id"] = contact_id
+            result["contact_name"] = contact.get("nome")
 
             # Buscar mensagens
             messages = await self.wa.get_messages_for_chat(phone, limit=100)
@@ -340,6 +471,13 @@ class WhatsAppSyncService:
 
                 if latest_date:
                     self._update_contact_interaction(contact_id, len(messages), latest_date)
+
+                # Salvar mensagens na tabela messages
+                conversation_id = self._get_or_create_conversation(contact_id, phone)
+                if conversation_id:
+                    saved = self._save_messages_to_conversation(conversation_id, contact_id, messages)
+                    result["saved"] = saved
+                    logger.info(f"Sync single chat: {saved} mensagens salvas para {contact['nome']}")
 
             result["success"] = True
 

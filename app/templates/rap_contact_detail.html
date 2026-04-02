@@ -1879,9 +1879,14 @@
                             <h2 class="card-title mb-0" style="font-size: 0.95rem;">
                                 <i class="bi bi-chat-dots text-info"></i> Mensagens Recentes
                             </h2>
-                            <a href="#" onclick="switchTab('timeline'); return false;" class="small text-decoration-none">
-                                Ver todas <i class="bi bi-arrow-right"></i>
-                            </a>
+                            <div class="d-flex gap-2 align-items-center">
+                                <button class="btn btn-sm btn-outline-success" onclick="syncWhatsApp()" id="btnSyncWhatsApp" title="Sincronizar WhatsApp">
+                                    <i class="bi bi-whatsapp"></i>
+                                </button>
+                                <a href="#" onclick="switchTab('timeline'); return false;" class="small text-decoration-none">
+                                    Ver todas <i class="bi bi-arrow-right"></i>
+                                </a>
+                            </div>
                         </div>
                         <div class="card-body py-2" id="messagesContainer">
                             <div class="text-center text-muted py-2">
@@ -4113,6 +4118,39 @@
         }
 
         // ============ MESSAGES FUNCTIONS ============
+
+        async function syncWhatsApp() {
+            const btn = document.getElementById('btnSyncWhatsApp');
+            if (!btn) return;
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/sync-whatsapp`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    const msg = result.saved > 0
+                        ? `Sincronizado! ${result.saved} mensagens novas`
+                        : 'Sincronizado! Nenhuma mensagem nova';
+                    showToast(msg);
+                    // Recarregar mensagens
+                    loadContactMessages();
+                } else {
+                    showToast(result.error || 'Erro ao sincronizar', 'error');
+                }
+            } catch (error) {
+                console.error('Sync error:', error);
+                showToast('Erro ao sincronizar WhatsApp', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-whatsapp"></i>';
+            }
+        }
 
         async function loadContactMessages() {
             const container = document.getElementById('messagesContainer');

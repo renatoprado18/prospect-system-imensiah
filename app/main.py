@@ -7002,6 +7002,55 @@ async def whatsapp_sync_all_chats(
         return result
 
 
+@app.post("/api/sync/global")
+async def global_sync(request: Request, background: bool = True):
+    """
+    Sincronizacao global manual - WhatsApp + Gmail.
+    Botao de refresh no sidebar.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    import asyncio
+
+    results = {"status": "started", "steps": {}}
+
+    async def do_sync():
+        # WhatsApp sync
+        try:
+            wa_service = get_whatsapp_sync_service()
+            wa_result = await wa_service.sync_all_chats(include_groups=False)
+            results["steps"]["whatsapp"] = {
+                "status": "success",
+                "linked": wa_result.get("linked", 0),
+                "messages": wa_result.get("messages_saved", 0)
+            }
+        except Exception as e:
+            results["steps"]["whatsapp"] = {"status": "error", "error": str(e)}
+
+        # Gmail sync
+        try:
+            from services.gmail_sync import get_gmail_sync_service
+            gmail_service = get_gmail_sync_service()
+            gmail_result = await gmail_service.sync_all_contacts(months_back=1)
+            results["steps"]["gmail"] = {
+                "status": "success",
+                "synced": gmail_result.get("total_synced", 0)
+            }
+        except Exception as e:
+            results["steps"]["gmail"] = {"status": "error", "error": str(e)}
+
+        results["status"] = "completed"
+
+    if background:
+        asyncio.create_task(do_sync())
+        return {"status": "started", "message": "Sincronizacao iniciada em background"}
+    else:
+        await do_sync()
+        return results
+
+
 @app.get("/api/whatsapp/sync-status")
 async def whatsapp_sync_status():
     """
@@ -7022,6 +7071,58 @@ async def whatsapp_sync_single_chat(request: Request, phone: str):
 
     service = get_whatsapp_sync_service()
     result = await service.sync_single_chat(phone)
+    return result
+
+
+@app.post("/api/contacts/{contact_id}/sync-whatsapp")
+async def sync_contact_whatsapp(request: Request, contact_id: int):
+    """
+    Sincroniza mensagens WhatsApp para um contato específico.
+    Busca o telefone do contato e faz sync via Evolution API.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    # Buscar telefone do contato
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT nome, telefones FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato não encontrado")
+
+        telefones = contact["telefones"]
+        if not telefones:
+            return {"success": False, "error": "Contato não tem telefone cadastrado"}
+
+        # Pegar primeiro telefone WhatsApp
+        phone = None
+        for tel in telefones:
+            if isinstance(tel, dict):
+                if tel.get("whatsapp"):
+                    phone = tel.get("number", "") or tel.get("phone", "")
+                    break
+            else:
+                phone = str(tel)
+                break
+
+        if not phone:
+            return {"success": False, "error": "Contato não tem telefone WhatsApp"}
+
+        # Normalizar telefone (remover formatação, adicionar 55 se necessário)
+        import re
+        phone_digits = re.sub(r'\D', '', phone)
+        if len(phone_digits) == 11:  # Ex: 11999232162
+            phone_digits = "55" + phone_digits
+        elif len(phone_digits) == 10:  # Ex: 1199923216
+            phone_digits = "55" + phone_digits
+
+    # Fazer sync
+    service = get_whatsapp_sync_service()
+    result = await service.sync_single_chat(phone_digits)
+    result["contact_name"] = contact["nome"]
     return result
 
 

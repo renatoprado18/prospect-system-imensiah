@@ -51,6 +51,9 @@
         .sidebar-header {
             padding: 24px;
             border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
 
         .sidebar-logo {
@@ -61,6 +64,30 @@
             font-weight: 700;
             text-decoration: none;
             color: white;
+        }
+
+        .btn-global-sync {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-global-sync:hover {
+            background: rgba(255,255,255,0.2);
+            color: white;
+        }
+        .btn-global-sync.syncing {
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            100% { transform: rotate(360deg); }
         }
 
         .sidebar-logo .icon {
@@ -614,6 +641,9 @@
                 <div class="icon"><i class="bi bi-cpu"></i></div>
                 <span>INTEL</span>
             </a>
+            <button class="btn-global-sync" onclick="globalSync()" id="btnGlobalSync" title="Sincronizar tudo (WhatsApp, Gmail, etc)">
+                <i class="bi bi-arrow-repeat"></i>
+            </button>
         </div>
 
         <nav class="sidebar-nav">
@@ -742,6 +772,54 @@
         function toggleMobileSidebar() {
             document.querySelector('.sidebar')?.classList.toggle('show');
             document.querySelector('.sidebar-overlay')?.classList.toggle('show');
+        }
+
+        // Global Sync - refresh all data
+        async function globalSync() {
+            const btn = document.getElementById('btnGlobalSync');
+            if (!btn || btn.classList.contains('syncing')) return;
+
+            btn.classList.add('syncing');
+
+            try {
+                const response = await fetch('/api/sync/global', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ background: true })
+                });
+
+                const result = await response.json();
+
+                // Show toast if available
+                if (typeof showToast === 'function') {
+                    showToast('Sincronizacao iniciada');
+                } else {
+                    // Simple notification
+                    const toast = document.createElement('div');
+                    toast.className = 'position-fixed bottom-0 end-0 p-3';
+                    toast.style.zIndex = '9999';
+                    toast.innerHTML = `
+                        <div class="toast show bg-success text-white">
+                            <div class="toast-body">
+                                <i class="bi bi-check-circle me-2"></i>
+                                Sincronizacao iniciada (WhatsApp + Gmail)
+                            </div>
+                        </div>
+                    `;
+                    document.body.appendChild(toast);
+                    setTimeout(() => toast.remove(), 3000);
+                }
+
+                // Keep spinning for a few seconds to show activity
+                setTimeout(() => {
+                    btn.classList.remove('syncing');
+                }, 3000);
+
+            } catch (error) {
+                console.error('Sync error:', error);
+                btn.classList.remove('syncing');
+                alert('Erro ao iniciar sincronizacao');
+            }
         }
 
         // Global Search
