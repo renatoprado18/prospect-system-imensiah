@@ -58,7 +58,7 @@ class TaskContextService:
 
             # Query completa para buscar contato com resumo IA
             contact_query = """
-                SELECT id, nome, email, telefone, empresa, cargo, circulo,
+                SELECT id, nome, emails, telefones, empresa, cargo, circulo,
                        circulo_pessoal, circulo_profissional, contexto,
                        resumo_ia, ultimo_contato, aniversario, linkedin
                 FROM contacts WHERE id = %s
@@ -95,7 +95,7 @@ class TaskContextService:
             if potential_name and len(potential_name) > 2:
                 # Buscar contato por nome similar
                 cursor.execute("""
-                    SELECT id, nome, email, telefone, empresa, cargo, circulo,
+                    SELECT id, nome, emails, telefones, empresa, cargo, circulo,
                            circulo_pessoal, circulo_profissional, contexto,
                            resumo_ia, ultimo_contato, aniversario, linkedin
                     FROM contacts
@@ -125,7 +125,7 @@ class TaskContextService:
 
                 # Buscar participantes do projeto (tabela project_members)
                 cursor.execute("""
-                    SELECT c.id, c.nome, c.email, c.telefone, c.empresa, c.cargo, c.circulo,
+                    SELECT c.id, c.nome, c.emails, c.telefones, c.empresa, c.cargo, c.circulo,
                            c.circulo_pessoal, c.circulo_profissional, c.contexto,
                            c.resumo_ia, c.ultimo_contato, c.aniversario, c.linkedin,
                            pm.papel
@@ -175,13 +175,21 @@ class TaskContextService:
         with get_db() as conn:
             cursor = conn.cursor()
 
-            # Buscar email do contato
-            cursor.execute("SELECT email FROM contacts WHERE id = %s", (contact_id,))
+            # Buscar email do contato (campo é 'emails' no banco)
+            cursor.execute("SELECT emails FROM contacts WHERE id = %s", (contact_id,))
             contact = cursor.fetchone()
-            if not contact or not contact.get('email'):
+            if not contact or not contact.get('emails'):
                 return []
 
-            email = contact['email']
+            # emails pode ser uma lista ou string
+            email_field = contact['emails']
+            if isinstance(email_field, list):
+                email = email_field[0] if email_field else None
+            else:
+                email = email_field
+
+            if not email:
+                return []
 
             # Buscar emails enviados ou recebidos
             cursor.execute("""
