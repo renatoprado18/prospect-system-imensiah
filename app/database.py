@@ -805,6 +805,97 @@ def init_db():
         ''')
 
         # =========================================================================
+        # EMAIL TRIAGE TABLES
+        # =========================================================================
+
+        # Email Triage - Triagem de emails para atenção
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS email_triage (
+                id SERIAL PRIMARY KEY,
+                message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+                conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+
+                -- Classificação
+                needs_attention BOOLEAN DEFAULT TRUE,
+                priority INTEGER DEFAULT 5,
+                classification TEXT,
+
+                -- Razões da classificação
+                classification_reasons JSONB DEFAULT '[]',
+
+                -- Tags sugeridas pela IA
+                suggested_tags JSONB DEFAULT '[]',
+
+                -- Ações sugeridas
+                suggested_actions JSONB DEFAULT '[]',
+
+                -- Status do workflow
+                status TEXT DEFAULT 'pending',
+                approved_tags JSONB,
+                approved_at TIMESTAMP,
+                dismissed_at TIMESTAMP,
+                actioned_at TIMESTAMP,
+                action_taken TEXT,
+
+                -- Metadados
+                account_type TEXT,
+                ai_confidence FLOAT DEFAULT 0.8,
+                expires_at TIMESTAMP,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_email_triage_status
+            ON email_triage(status)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_email_triage_priority
+            ON email_triage(priority DESC)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_email_triage_contact
+            ON email_triage(contact_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_email_triage_message
+            ON email_triage(message_id)
+        ''')
+
+        # Email Triage Rules - Regras de classificação
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS email_triage_rules (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                descricao TEXT,
+
+                -- Condições
+                conditions JSONB NOT NULL,
+
+                -- Ações automáticas
+                auto_classify TEXT,
+                auto_tags JSONB DEFAULT '[]',
+                auto_priority INTEGER,
+                requires_approval BOOLEAN DEFAULT TRUE,
+
+                -- Status
+                ativo BOOLEAN DEFAULT TRUE,
+                ordem INTEGER DEFAULT 100,
+
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_email_triage_rules_ativo
+            ON email_triage_rules(ativo)
+        ''')
+
+        # =========================================================================
         # CALENDAR EVENTS TABLES
         # =========================================================================
 

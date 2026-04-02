@@ -72,15 +72,16 @@
     </div>
 </div>
 
-<!-- Add Milestone Modal -->
+<!-- Add/Edit Milestone Modal -->
 <div class="modal fade" id="addMilestoneModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content" style="border-radius: 16px; border: none;">
             <div class="modal-header">
-                <h5 class="modal-title"><i class="bi bi-flag me-2"></i>Novo Marco</h5>
+                <h5 class="modal-title" id="milestoneModalTitle"><i class="bi bi-flag me-2"></i>Novo Marco</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
+                <input type="hidden" id="milestoneEditId">
                 <div class="mb-3">
                     <label class="form-label">Titulo *</label>
                     <input type="text" class="form-control" id="milestoneTitulo" placeholder="Ex: Entrega da proposta">
@@ -137,15 +138,16 @@
     </div>
 </div>
 
-<!-- Add Task Modal -->
+<!-- Add/Edit Task Modal -->
 <div class="modal fade" id="addTaskModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content" style="border-radius: 16px; border: none;">
             <div class="modal-header">
-                <h5 class="modal-title"><i class="bi bi-check2-square me-2"></i>Nova Tarefa</h5>
+                <h5 class="modal-title" id="taskModalTitle"><i class="bi bi-check2-square me-2"></i>Nova Tarefa</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
+                <input type="hidden" id="taskEditId">
                 <div class="mb-3">
                     <label class="form-label">Titulo *</label>
                     <input type="text" class="form-control" id="taskTitulo" placeholder="Ex: Enviar proposta">
@@ -177,8 +179,8 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-                <button type="button" class="btn btn-primary" onclick="saveTask()">
-                    <i class="bi bi-check2 me-1"></i>Criar Tarefa
+                <button type="button" class="btn btn-primary" onclick="saveTask()" id="btnSaveTask">
+                    <i class="bi bi-check2 me-1"></i>Salvar
                 </button>
             </div>
         </div>
@@ -723,8 +725,10 @@
                             <i class="bi bi-three-dots"></i>
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end">
-                            ${!isDone ? `<li><a class="dropdown-item" href="#" onclick="completeMilestone(${m.id})">Marcar como concluido</a></li>` : ''}
-                            <li><a class="dropdown-item text-danger" href="#" onclick="deleteMilestone(${m.id})">Excluir</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="editMilestone(${m.id}, '${m.titulo.replace(/'/g, "\\'")}', '${(m.descricao || '').replace(/'/g, "\\'")}', '${m.data_prevista || ''}')"><i class="bi bi-pencil me-2"></i>Editar</a></li>
+                            ${!isDone ? `<li><a class="dropdown-item" href="#" onclick="completeMilestone(${m.id})"><i class="bi bi-check me-2"></i>Marcar como concluido</a></li>` : ''}
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item text-danger" href="#" onclick="deleteMilestone(${m.id})"><i class="bi bi-trash me-2"></i>Excluir</a></li>
                         </ul>
                     </div>
                 </div>
@@ -768,9 +772,12 @@
                     <input type="checkbox" class="form-check-input" ${t.status === 'completed' ? 'checked' : ''}
                         onchange="toggleTask(${t.id}, this.checked)">
                     <span class="flex-grow-1 ${t.status === 'completed' ? 'text-decoration-line-through text-muted' : ''}"
-                        style="cursor: pointer" onclick="showTaskContext(${t.id})">${t.titulo}</span>
+                        style="cursor: pointer" onclick="editTask(${t.id})">${t.titulo}</span>
                     ${dueDateHtml}
                     ${t.contact_nome ? `<small class="text-muted">${t.contact_nome}</small>` : ''}
+                    <button class="btn btn-sm btn-outline-secondary" onclick="editTask(${t.id})" title="Editar tarefa">
+                        <i class="bi bi-pencil"></i>
+                    </button>
                     <button class="btn btn-sm btn-outline-primary" onclick="showTaskContext(${t.id})" title="Ver contexto">
                         <i class="bi bi-lightbulb"></i>
                     </button>
@@ -951,9 +958,20 @@
     }
 
     function openAddMilestoneModal() {
+        document.getElementById('milestoneModalTitle').innerHTML = '<i class="bi bi-flag me-2"></i>Novo Marco';
+        document.getElementById('milestoneEditId').value = '';
         document.getElementById('milestoneTitulo').value = '';
         document.getElementById('milestoneDescricao').value = '';
         document.getElementById('milestoneData').value = '';
+        new bootstrap.Modal(document.getElementById('addMilestoneModal')).show();
+    }
+
+    function editMilestone(id, titulo, descricao, dataPrevista) {
+        document.getElementById('milestoneModalTitle').innerHTML = '<i class="bi bi-pencil me-2"></i>Editar Marco';
+        document.getElementById('milestoneEditId').value = id;
+        document.getElementById('milestoneTitulo').value = titulo;
+        document.getElementById('milestoneDescricao').value = descricao;
+        document.getElementById('milestoneData').value = dataPrevista ? dataPrevista.split('T')[0] : '';
         new bootstrap.Modal(document.getElementById('addMilestoneModal')).show();
     }
 
@@ -961,16 +979,29 @@
         const titulo = document.getElementById('milestoneTitulo').value.trim();
         if (!titulo) return alert('Titulo e obrigatorio');
 
+        const editId = document.getElementById('milestoneEditId').value;
+        const data = {
+            titulo: titulo,
+            descricao: document.getElementById('milestoneDescricao').value,
+            data_prevista: document.getElementById('milestoneData').value || null
+        };
+
         try {
-            await fetch(`/api/projects/${projectId}/milestones`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    titulo: titulo,
-                    descricao: document.getElementById('milestoneDescricao').value,
-                    data_prevista: document.getElementById('milestoneData').value || null
-                })
-            });
+            if (editId) {
+                // Update existing
+                await fetch(`/api/milestones/${editId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            } else {
+                // Create new
+                await fetch(`/api/projects/${projectId}/milestones`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            }
             bootstrap.Modal.getInstance(document.getElementById('addMilestoneModal')).hide();
             loadProject();
         } catch (error) {
@@ -1059,6 +1090,8 @@
 
     function openAddTaskModal() {
         // Clear form
+        document.getElementById('taskModalTitle').innerHTML = '<i class="bi bi-check2-square me-2"></i>Nova Tarefa';
+        document.getElementById('taskEditId').value = '';
         document.getElementById('taskTitulo').value = '';
         document.getElementById('taskDescricao').value = '';
         document.getElementById('taskDataVencimento').value = '';
@@ -1071,6 +1104,27 @@
         new bootstrap.Modal(document.getElementById('addTaskModal')).show();
     }
 
+    function editTask(taskId) {
+        // Find task in project data
+        const task = (project.tarefas || []).find(t => t.id === taskId);
+        if (!task) {
+            alert('Tarefa nao encontrada');
+            return;
+        }
+
+        document.getElementById('taskModalTitle').innerHTML = '<i class="bi bi-pencil me-2"></i>Editar Tarefa';
+        document.getElementById('taskEditId').value = taskId;
+        document.getElementById('taskTitulo').value = task.titulo || '';
+        document.getElementById('taskDescricao').value = task.descricao || '';
+        document.getElementById('taskDataVencimento').value = task.data_vencimento ? task.data_vencimento.split('T')[0] : '';
+        document.getElementById('taskPrioridade').value = task.prioridade || '5';
+        document.getElementById('taskContactId').value = task.contact_id || '';
+        document.getElementById('taskResponsavelSearch').value = task.contact_nome || '';
+        document.getElementById('taskResponsavelResults').innerHTML = '';
+
+        new bootstrap.Modal(document.getElementById('addTaskModal')).show();
+    }
+
     async function saveTask() {
         const titulo = document.getElementById('taskTitulo').value.trim();
         if (!titulo) {
@@ -1078,6 +1132,7 @@
             return;
         }
 
+        const editId = document.getElementById('taskEditId').value;
         const data = {
             titulo: titulo,
             descricao: document.getElementById('taskDescricao').value.trim() || null,
@@ -1087,22 +1142,33 @@
         };
 
         try {
-            const response = await fetch(`/api/projects/${projectId}/tasks`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
+            let response;
+            if (editId) {
+                // Update existing
+                response = await fetch(`/api/tasks/${editId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            } else {
+                // Create new
+                response = await fetch(`/api/projects/${projectId}/tasks`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+            }
 
             if (response.ok) {
                 bootstrap.Modal.getInstance(document.getElementById('addTaskModal')).hide();
-                loadProject(); // Reload project to show new task
+                loadProject(); // Reload project to show changes
             } else {
                 const err = await response.json();
-                alert(err.detail || 'Erro ao criar tarefa');
+                alert(err.detail || 'Erro ao salvar tarefa');
             }
         } catch (error) {
             console.error('Error:', error);
-            alert('Erro ao criar tarefa');
+            alert('Erro ao salvar tarefa');
         }
     }
 

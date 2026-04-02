@@ -8765,6 +8765,197 @@ async def send_inbox_reply(
 
 
 # =============================================================================
+# EMAIL TRIAGE ENDPOINTS
+# =============================================================================
+
+@app.get("/emails", response_class=HTMLResponse)
+async def emails_page(request: Request):
+    """Página de triagem de emails"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_emails.html", {"request": request, "user": user})
+
+
+@app.get("/api/email-triage")
+async def get_email_triage_list(
+    request: Request,
+    status: str = "pending",
+    account_type: str = None,
+    classification: str = None,
+    limit: int = 50,
+    offset: int = 0
+):
+    """Lista emails para triagem"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    from services.email_triage import get_email_triage_service
+    service = get_email_triage_service()
+
+    return service.get_triage_list(
+        status=status,
+        account_type=account_type,
+        classification=classification,
+        limit=limit,
+        offset=offset
+    )
+
+
+@app.get("/api/email-triage/stats")
+async def get_email_triage_stats(request: Request):
+    """Estatísticas da triagem de emails"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    from services.email_triage import get_email_triage_service
+    service = get_email_triage_service()
+
+    return service.get_stats()
+
+
+@app.post("/api/email-triage/process")
+async def process_emails_for_triage(
+    request: Request,
+    account_type: str = None,
+    limit: int = 50
+):
+    """Processa novos emails para triagem"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    from services.email_triage import get_email_triage_service
+    service = get_email_triage_service()
+
+    return service.process_new_emails(account_type=account_type, limit=limit)
+
+
+@app.post("/api/email-triage/approve")
+async def approve_email_triage(request: Request, data: dict):
+    """Aprova emails em lote"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    ids = data.get("ids", [])
+    tags = data.get("tags")
+
+    if not ids:
+        raise HTTPException(status_code=400, detail="IDs são obrigatórios")
+
+    from services.email_triage import get_email_triage_service
+    service = get_email_triage_service()
+
+    return service.approve_batch(ids, tags)
+
+
+@app.post("/api/email-triage/dismiss")
+async def dismiss_email_triage(request: Request, data: dict):
+    """Descarta emails em lote"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    ids = data.get("ids", [])
+    reason = data.get("reason")
+
+    if not ids:
+        raise HTTPException(status_code=400, detail="IDs são obrigatórios")
+
+    from services.email_triage import get_email_triage_service
+    service = get_email_triage_service()
+
+    return service.dismiss_batch(ids, reason)
+
+
+@app.post("/api/email-triage/{triage_id}/action")
+async def mark_email_triage_action(request: Request, triage_id: int, data: dict):
+    """Marca email como tendo ação tomada"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    action = data.get("action")
+    if not action:
+        raise HTTPException(status_code=400, detail="Ação é obrigatória")
+
+    from services.email_triage import get_email_triage_service
+    service = get_email_triage_service()
+
+    return service.mark_actioned(triage_id, action)
+
+
+# === REGRAS DE TRIAGEM ===
+
+@app.get("/api/email-triage/rules")
+async def get_triage_rules(request: Request):
+    """Lista regras de classificação"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    from services.email_triage import get_email_triage_service
+    service = get_email_triage_service()
+
+    return service.get_rules_list()
+
+
+@app.post("/api/email-triage/rules")
+async def create_triage_rule(request: Request, data: dict):
+    """Cria nova regra de classificação"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    from services.email_triage import get_email_triage_service
+    service = get_email_triage_service()
+
+    return service.create_rule(data)
+
+
+@app.put("/api/email-triage/rules/{rule_id}")
+async def update_triage_rule(request: Request, rule_id: int, data: dict):
+    """Atualiza regra de classificação"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    from services.email_triage import get_email_triage_service
+    service = get_email_triage_service()
+
+    return service.update_rule(rule_id, data)
+
+
+@app.delete("/api/email-triage/rules/{rule_id}")
+async def delete_triage_rule(request: Request, rule_id: int):
+    """Deleta regra de classificação"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    from services.email_triage import get_email_triage_service
+    service = get_email_triage_service()
+
+    return service.delete_rule(rule_id)
+
+
+@app.post("/api/email-triage/rules/init")
+async def init_default_triage_rules(request: Request):
+    """Inicializa regras default"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    from services.email_triage import get_email_triage_service
+    service = get_email_triage_service()
+
+    return service.init_default_rules()
+
+
+# =============================================================================
 # ACTION PROPOSALS ENDPOINTS (INTEL Proativo)
 # =============================================================================
 

@@ -1,0 +1,736 @@
+{% extends "rap_base.html" %}
+{% block title %}Triagem de E-mails - INTEL{% endblock %}
+{% block page_title %}Triagem de E-mails{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Stats Cards */
+    .stats-row {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 16px 20px;
+        flex: 1;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .stat-card .stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--gray-800);
+    }
+    .stat-card .stat-label {
+        font-size: 0.8rem;
+        color: var(--gray-500);
+        margin-top: 4px;
+    }
+    .stat-card.urgent { border-left: 4px solid #ef4444; }
+    .stat-card.important { border-left: 4px solid #f59e0b; }
+    .stat-card.followup { border-left: 4px solid #3b82f6; }
+
+    /* Filters */
+    .filters-row {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    .filter-btn {
+        padding: 6px 14px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        border: 1px solid var(--gray-200);
+        background: white;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .filter-btn:hover { background: var(--gray-50); }
+    .filter-btn.active {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+    }
+
+    /* Batch Actions */
+    .batch-actions {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-left: auto;
+    }
+    .batch-actions .btn {
+        padding: 6px 16px;
+        font-size: 0.8rem;
+    }
+    .select-all-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+        color: var(--gray-600);
+    }
+
+    /* Email List */
+    .email-list {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        overflow: hidden;
+    }
+    .email-item {
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--gray-100);
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        transition: background 0.15s;
+    }
+    .email-item:hover {
+        background: var(--gray-50);
+    }
+    .email-item:last-child {
+        border-bottom: none;
+    }
+    .email-item.selected {
+        background: rgba(99, 102, 241, 0.05);
+    }
+
+    /* Email Checkbox */
+    .email-checkbox {
+        margin-top: 4px;
+    }
+    .email-checkbox input {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+    }
+
+    /* Email Content */
+    .email-content {
+        flex: 1;
+        min-width: 0;
+    }
+    .email-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 4px;
+    }
+    .email-sender {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .email-sender-name {
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: var(--gray-800);
+    }
+    .email-circle-badge {
+        font-size: 0.65rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-weight: 600;
+    }
+    .email-circle-badge.c1 { background: #fef2f2; color: #dc2626; }
+    .email-circle-badge.c2 { background: #fef3c7; color: #d97706; }
+    .email-circle-badge.c3 { background: #dbeafe; color: #2563eb; }
+
+    .email-meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.75rem;
+        color: var(--gray-500);
+    }
+    .email-subject {
+        font-size: 0.9rem;
+        color: var(--gray-700);
+        margin-bottom: 8px;
+        line-height: 1.4;
+    }
+
+    /* Classification Badge */
+    .classification-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .classification-badge.urgent {
+        background: #fef2f2;
+        color: #dc2626;
+    }
+    .classification-badge.important {
+        background: #fef3c7;
+        color: #d97706;
+    }
+    .classification-badge.followup {
+        background: #dbeafe;
+        color: #2563eb;
+    }
+    .classification-badge.fyi {
+        background: #f3f4f6;
+        color: #6b7280;
+    }
+
+    /* Tags */
+    .email-tags {
+        display: flex;
+        gap: 6px;
+        margin: 8px 0;
+        flex-wrap: wrap;
+    }
+    .email-tag {
+        padding: 3px 8px;
+        background: var(--gray-100);
+        border-radius: 4px;
+        font-size: 0.7rem;
+        color: var(--gray-600);
+    }
+    .email-tag.highlight {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    /* Reason */
+    .email-reason {
+        font-size: 0.75rem;
+        color: var(--gray-500);
+        margin-bottom: 8px;
+        font-style: italic;
+    }
+
+    /* Actions */
+    .email-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+    }
+    .action-btn {
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        border: 1px solid var(--gray-200);
+        background: white;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        transition: all 0.15s;
+    }
+    .action-btn:hover {
+        background: var(--gray-50);
+        border-color: var(--gray-300);
+    }
+    .action-btn.primary {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+    }
+    .action-btn.primary:hover {
+        background: #4f46e5;
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--gray-500);
+    }
+    .empty-state i {
+        font-size: 3rem;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+
+    /* Loading */
+    .loading {
+        text-align: center;
+        padding: 40px;
+        color: var(--gray-500);
+    }
+    .loading .spinner {
+        animation: spin 1s linear infinite;
+        font-size: 2rem;
+    }
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h4 class="mb-1">Triagem de E-mails</h4>
+            <p class="text-muted mb-0" style="font-size: 0.85rem;">Emails que precisam de sua atenção</p>
+        </div>
+        <button class="btn btn-primary" onclick="processEmails()">
+            <i class="bi bi-arrow-repeat me-1"></i> Processar Novos
+        </button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row">
+        <div class="stat-card urgent">
+            <div class="stat-value" id="stat-urgent">-</div>
+            <div class="stat-label">Urgentes</div>
+        </div>
+        <div class="stat-card important">
+            <div class="stat-value" id="stat-important">-</div>
+            <div class="stat-label">Importantes</div>
+        </div>
+        <div class="stat-card followup">
+            <div class="stat-value" id="stat-followup">-</div>
+            <div class="stat-label">Follow-up</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="stat-pending">-</div>
+            <div class="stat-label">Pendentes</div>
+        </div>
+    </div>
+
+    <!-- Filters & Batch Actions -->
+    <div class="filters-row">
+        <button class="filter-btn active" data-status="pending">Pendentes</button>
+        <button class="filter-btn" data-status="approved">Aprovados</button>
+        <button class="filter-btn" data-status="actioned">Com Ação</button>
+        <button class="filter-btn" data-status="">Todos</button>
+
+        <span style="color: var(--gray-300); margin: 0 8px;">|</span>
+
+        <button class="filter-btn" data-account="">Todas Contas</button>
+        <button class="filter-btn" data-account="professional">Profissional</button>
+        <button class="filter-btn" data-account="personal">Pessoal</button>
+
+        <div class="batch-actions">
+            <label class="select-all-checkbox">
+                <input type="checkbox" id="select-all" onchange="toggleSelectAll()">
+                Selecionar todos
+            </label>
+            <button class="btn btn-success btn-sm" onclick="approveSelected()" id="btn-approve" disabled>
+                <i class="bi bi-check-lg me-1"></i> Aprovar
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="dismissSelected()" id="btn-dismiss" disabled>
+                <i class="bi bi-x-lg me-1"></i> Descartar
+            </button>
+        </div>
+    </div>
+
+    <!-- Email List -->
+    <div class="email-list" id="email-list">
+        <div class="loading">
+            <i class="bi bi-arrow-repeat spinner"></i>
+            <p>Carregando...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Responder -->
+<div class="modal fade" id="replyModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-reply me-2"></i>Responder Email</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Para:</label>
+                    <input type="text" class="form-control" id="reply-to" readonly>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Assunto:</label>
+                    <input type="text" class="form-control" id="reply-subject" readonly>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Mensagem:</label>
+                    <textarea class="form-control" id="reply-body" rows="8" placeholder="Digite sua resposta..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="sendReply()">
+                    <i class="bi bi-send me-1"></i> Enviar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let currentStatus = 'pending';
+    let currentAccount = '';
+    let selectedIds = new Set();
+    let emailData = [];
+
+    // ========== LOAD DATA ==========
+
+    async function loadStats() {
+        try {
+            const res = await fetch('/api/email-triage/stats');
+            const stats = await res.json();
+
+            document.getElementById('stat-urgent').textContent = stats.by_classification?.urgent || 0;
+            document.getElementById('stat-important').textContent = stats.by_classification?.important || 0;
+            document.getElementById('stat-followup').textContent = stats.by_classification?.followup || 0;
+            document.getElementById('stat-pending').textContent = stats.total_pending || 0;
+        } catch (e) {
+            console.error('Error loading stats:', e);
+        }
+    }
+
+    async function loadEmails() {
+        const listEl = document.getElementById('email-list');
+        listEl.innerHTML = '<div class="loading"><i class="bi bi-arrow-repeat spinner"></i><p>Carregando...</p></div>';
+
+        try {
+            let url = `/api/email-triage?limit=50`;
+            if (currentStatus) url += `&status=${currentStatus}`;
+            if (currentAccount) url += `&account_type=${currentAccount}`;
+
+            const res = await fetch(url);
+            const data = await res.json();
+            emailData = data.items || [];
+
+            renderEmails(emailData);
+        } catch (e) {
+            console.error('Error loading emails:', e);
+            listEl.innerHTML = '<div class="empty-state"><i class="bi bi-exclamation-circle"></i><p>Erro ao carregar emails</p></div>';
+        }
+    }
+
+    function renderEmails(emails) {
+        const listEl = document.getElementById('email-list');
+
+        if (!emails || emails.length === 0) {
+            listEl.innerHTML = `
+                <div class="empty-state">
+                    <i class="bi bi-inbox"></i>
+                    <p>Nenhum email para triagem</p>
+                    <button class="btn btn-outline-primary btn-sm mt-2" onclick="processEmails()">
+                        Processar Novos Emails
+                    </button>
+                </div>
+            `;
+            return;
+        }
+
+        listEl.innerHTML = emails.map(email => renderEmailItem(email)).join('');
+        updateBatchButtons();
+    }
+
+    function renderEmailItem(email) {
+        const circle = email.circulo || email.circulo_pessoal || email.circulo_profissional;
+        const circleClass = circle ? `c${circle}` : '';
+        const circleLabel = circle ? `C${circle}` : '';
+
+        const classification = email.classification || 'fyi';
+        const classLabels = {
+            urgent: 'Urgente',
+            important: 'Importante',
+            followup: 'Follow-up',
+            fyi: 'FYI'
+        };
+
+        const tags = email.suggested_tags || [];
+        const reasons = email.classification_reasons || [];
+        const actions = email.suggested_actions || [];
+
+        const isSelected = selectedIds.has(email.id);
+        const isPending = email.status === 'pending';
+
+        // Format time
+        const emailTime = email.enviado_em || email.criado_em;
+        const timeAgo = emailTime ? formatTimeAgo(new Date(emailTime)) : '';
+
+        return `
+            <div class="email-item ${isSelected ? 'selected' : ''}" data-id="${email.id}">
+                <div class="email-checkbox">
+                    ${isPending ? `<input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelect(${email.id})">` : ''}
+                </div>
+                <div class="email-content">
+                    <div class="email-header">
+                        <div class="email-sender">
+                            <span class="classification-badge ${classification}">${classLabels[classification] || classification}</span>
+                            <span class="email-sender-name">${email.contact_nome || 'Desconhecido'}</span>
+                            ${circleLabel ? `<span class="email-circle-badge ${circleClass}">${circleLabel}</span>` : ''}
+                            ${email.empresa ? `<span style="color: var(--gray-500); font-size: 0.8rem;">- ${email.empresa}</span>` : ''}
+                        </div>
+                        <div class="email-meta">
+                            <span>${email.account_type === 'personal' ? 'Pessoal' : 'Prof.'}</span>
+                            <span>${timeAgo}</span>
+                        </div>
+                    </div>
+                    <div class="email-subject">${email.assunto || '(sem assunto)'}</div>
+                    ${tags.length ? `
+                        <div class="email-tags">
+                            ${tags.map(t => `<span class="email-tag ${t.includes('!!') ? 'highlight' : ''}">${t}</span>`).join('')}
+                        </div>
+                    ` : ''}
+                    ${reasons.length ? `
+                        <div class="email-reason">
+                            <i class="bi bi-info-circle me-1"></i>${reasons.join(' | ')}
+                        </div>
+                    ` : ''}
+                    <div class="email-actions">
+                        <button class="action-btn primary" onclick="openReply(${email.id})">
+                            <i class="bi bi-reply"></i> Responder
+                        </button>
+                        <button class="action-btn" onclick="scheduleFromEmail(${email.id})">
+                            <i class="bi bi-calendar"></i> Agendar
+                        </button>
+                        <button class="action-btn" onclick="createTaskFromEmail(${email.id})">
+                            <i class="bi bi-check2-square"></i> Tarefa
+                        </button>
+                        <button class="action-btn" onclick="createProjectFromEmail(${email.id})">
+                            <i class="bi bi-folder"></i> Projeto
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function formatTimeAgo(date) {
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+
+        if (diffMins < 60) return `há ${diffMins}m`;
+        if (diffHours < 24) return `há ${diffHours}h`;
+        if (diffDays < 7) return `há ${diffDays}d`;
+        return date.toLocaleDateString('pt-BR');
+    }
+
+    // ========== FILTERS ==========
+
+    document.querySelectorAll('.filter-btn[data-status]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.filter-btn[data-status]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentStatus = btn.dataset.status;
+            selectedIds.clear();
+            loadEmails();
+        });
+    });
+
+    document.querySelectorAll('.filter-btn[data-account]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.filter-btn[data-account]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentAccount = btn.dataset.account;
+            selectedIds.clear();
+            loadEmails();
+        });
+    });
+
+    // ========== SELECTION ==========
+
+    function toggleSelect(id) {
+        if (selectedIds.has(id)) {
+            selectedIds.delete(id);
+        } else {
+            selectedIds.add(id);
+        }
+        updateBatchButtons();
+        updateItemStyle(id);
+    }
+
+    function toggleSelectAll() {
+        const checkbox = document.getElementById('select-all');
+        const pendingEmails = emailData.filter(e => e.status === 'pending');
+
+        if (checkbox.checked) {
+            pendingEmails.forEach(e => selectedIds.add(e.id));
+        } else {
+            selectedIds.clear();
+        }
+
+        renderEmails(emailData);
+    }
+
+    function updateItemStyle(id) {
+        const item = document.querySelector(`.email-item[data-id="${id}"]`);
+        if (item) {
+            item.classList.toggle('selected', selectedIds.has(id));
+        }
+    }
+
+    function updateBatchButtons() {
+        const hasSelection = selectedIds.size > 0;
+        document.getElementById('btn-approve').disabled = !hasSelection;
+        document.getElementById('btn-dismiss').disabled = !hasSelection;
+    }
+
+    // ========== BATCH ACTIONS ==========
+
+    async function approveSelected() {
+        if (selectedIds.size === 0) return;
+
+        try {
+            const res = await fetch('/api/email-triage/approve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: Array.from(selectedIds) })
+            });
+            const result = await res.json();
+
+            showToast(`${result.approved} emails aprovados`);
+            selectedIds.clear();
+            loadEmails();
+            loadStats();
+        } catch (e) {
+            console.error('Error approving:', e);
+            alert('Erro ao aprovar emails');
+        }
+    }
+
+    async function dismissSelected() {
+        if (selectedIds.size === 0) return;
+
+        if (!confirm(`Descartar ${selectedIds.size} emails?`)) return;
+
+        try {
+            const res = await fetch('/api/email-triage/dismiss', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: Array.from(selectedIds) })
+            });
+            const result = await res.json();
+
+            showToast(`${result.dismissed} emails descartados`);
+            selectedIds.clear();
+            loadEmails();
+            loadStats();
+        } catch (e) {
+            console.error('Error dismissing:', e);
+            alert('Erro ao descartar emails');
+        }
+    }
+
+    // ========== PROCESS ==========
+
+    async function processEmails() {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-arrow-repeat spinner me-1"></i> Processando...';
+
+        try {
+            const res = await fetch('/api/email-triage/process', { method: 'POST' });
+            const result = await res.json();
+
+            showToast(`Processados: ${result.processed} | Urgentes: ${result.urgent} | Importantes: ${result.important}`);
+            loadEmails();
+            loadStats();
+        } catch (e) {
+            console.error('Error processing:', e);
+            alert('Erro ao processar emails');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i> Processar Novos';
+        }
+    }
+
+    // ========== ACTIONS ==========
+
+    let currentTriageId = null;
+
+    function openReply(triageId) {
+        const email = emailData.find(e => e.id === triageId);
+        if (!email) return;
+
+        currentTriageId = triageId;
+        document.getElementById('reply-to').value = email.contact_nome || 'Destinatário';
+        document.getElementById('reply-subject').value = `Re: ${email.assunto || ''}`;
+        document.getElementById('reply-body').value = '';
+
+        new bootstrap.Modal(document.getElementById('replyModal')).show();
+    }
+
+    async function sendReply() {
+        const body = document.getElementById('reply-body').value;
+        if (!body.trim()) {
+            alert('Digite uma mensagem');
+            return;
+        }
+
+        // TODO: Implementar envio real via Gmail API
+        showToast('Funcionalidade em desenvolvimento');
+        bootstrap.Modal.getInstance(document.getElementById('replyModal')).hide();
+
+        // Marcar como ação tomada
+        await markAction(currentTriageId, 'responded');
+    }
+
+    function scheduleFromEmail(triageId) {
+        showToast('Agendar reunião - Em desenvolvimento');
+        markAction(triageId, 'scheduled');
+    }
+
+    function createTaskFromEmail(triageId) {
+        showToast('Criar tarefa - Em desenvolvimento');
+        markAction(triageId, 'task_created');
+    }
+
+    function createProjectFromEmail(triageId) {
+        showToast('Criar projeto - Em desenvolvimento');
+        markAction(triageId, 'project_created');
+    }
+
+    async function markAction(triageId, action) {
+        try {
+            await fetch(`/api/email-triage/${triageId}/action`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action })
+            });
+            loadEmails();
+            loadStats();
+        } catch (e) {
+            console.error('Error marking action:', e);
+        }
+    }
+
+    // ========== TOAST ==========
+
+    function showToast(message) {
+        const toast = document.createElement('div');
+        toast.className = 'position-fixed bottom-0 end-0 p-3';
+        toast.style.zIndex = '1100';
+        toast.innerHTML = `
+            <div class="toast show" role="alert">
+                <div class="toast-body d-flex align-items-center gap-2">
+                    <i class="bi bi-check-circle text-success"></i>
+                    ${message}
+                </div>
+            </div>
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+    }
+
+    // ========== INIT ==========
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadStats();
+        loadEmails();
+    });
+</script>
+{% endblock %}
