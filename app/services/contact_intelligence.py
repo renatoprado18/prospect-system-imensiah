@@ -83,10 +83,10 @@ async def gather_contact_context(contact_id: int, db_connection) -> Dict[str, An
 
     # Get tasks
     cursor.execute("""
-        SELECT titulo, descricao, status, data_vencimento
+        SELECT titulo, descricao, status, data_vencimento, prioridade
         FROM tasks
         WHERE contact_id = %s
-        ORDER BY created_at DESC
+        ORDER BY status = 'pending' DESC, prioridade ASC, data_vencimento ASC NULLS LAST
         LIMIT 10
     """, (contact_id,))
     tasks = [dict(row) for row in cursor.fetchall()]

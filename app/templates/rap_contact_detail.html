@@ -4062,12 +4062,12 @@
             const completeness = Math.round(filledCount / 5 * 100);
 
             if (missingFields.length > 0 && missingFields.length < 5) {
-                contextItems.push(`📋 Perfil ${completeness}% completo`);
-                if (missingFields.length >= 3) {
+                contextItems.push(`📋 Perfil ${completeness}% completo (falta: ${missingFields.join(', ')})`);
+                if (missingFields.length >= 2) {
                     actions.push({ id: 'enrich', label: 'Completar Perfil', icon: 'magic' });
                 }
             } else if (missingFields.length === 5) {
-                contextItems.push('📋 Perfil incompleto - adicione informações');
+                contextItems.push('📋 Perfil incompleto - adicione informações básicas');
                 actions.push({ id: 'enrich', label: 'Completar Perfil', icon: 'magic' });
             }
 
