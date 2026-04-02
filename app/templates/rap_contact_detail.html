@@ -1657,6 +1657,10 @@
                     loadContactMeetings();
                     loadCurrentBriefing();
                     loadIntelInsight();
+
+                    // Initialize Bootstrap tooltips for health badge
+                    const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+                    tooltipTriggerList.forEach(el => new bootstrap.Tooltip(el, { html: true }));
                 }, 100);
             } catch (error) {
                 console.error('Error loading contact:', error);
@@ -1709,15 +1713,15 @@
                     <div class="profile-info-compact">
                         <h1>${contact.nome}</h1>
                         <div class="profile-meta">
-                            ${contact.empresa ? `<span class="profile-meta-item"><i class="bi bi-building"></i> ${contact.empresa}</span>` : ''}
+                            ${contact.empresa ? `<a href="/contatos?empresa=${encodeURIComponent(contact.empresa)}" class="profile-meta-item" style="text-decoration: none; color: inherit;" title="Ver todos de ${contact.empresa}"><i class="bi bi-building"></i> ${contact.empresa}</a>` : ''}
                             ${contact.cargo ? `<span class="profile-meta-item"><i class="bi bi-briefcase"></i> ${contact.cargo}</span>` : ''}
                             ${primaryEmail ? `<span class="profile-meta-item"><i class="bi bi-envelope"></i> ${primaryEmail}</span>` : ''}
                             ${primaryPhone ? `<span class="profile-meta-item"><i class="bi bi-telephone"></i> ${primaryPhone}</span>` : ''}
                         </div>
                         <div class="profile-badges">
                             ${renderCirculosBadges(contact)}
-                            ${renderHealthBadge(contact.health_score)}
-                            ${contact.linkedin ? '<span class="profile-badge" style="background: #0077b5; color: white;"><i class="bi bi-linkedin"></i></span>' : ''}
+                            ${renderHealthBadge(contact)}
+                            ${contact.linkedin ? `<a href="${contact.linkedin}" target="_blank" class="profile-badge" style="background: #0077b5; color: white; text-decoration: none; cursor: pointer;" title="Abrir perfil LinkedIn"><i class="bi bi-linkedin"></i></a>` : ''}
                         </div>
                     </div>
 
@@ -2361,20 +2365,20 @@
             }
         }
 
-        function renderHealthBadge(healthScore) {
-            const health = healthScore || 0;
+        function renderHealthBadge(contact) {
+            const health = contact?.health_score || 0;
             let color, bgColor, icon, label;
 
             if (health >= 80) {
                 color = '#10b981';
                 bgColor = 'rgba(16, 185, 129, 0.15)';
                 icon = 'bi-heart-pulse-fill';
-                label = 'Saudavel';
+                label = 'Saudável';
             } else if (health >= 50) {
                 color = '#f59e0b';
                 bgColor = 'rgba(245, 158, 11, 0.15)';
                 icon = 'bi-heart-pulse';
-                label = 'Atencao';
+                label = 'Atenção';
             } else {
                 color = '#ef4444';
                 bgColor = 'rgba(239, 68, 68, 0.15)';
@@ -2382,11 +2386,55 @@
                 label = 'Risco';
             }
 
+            // Gerar explicação do health score
+            const explanation = generateHealthExplanation(contact, health, label);
+
             return `
-                <span class="profile-badge health-badge" style="background: ${bgColor}; color: ${color}; border: 1px solid ${color}33;" title="Health Score: ${health}%">
+                <span class="profile-badge health-badge"
+                      style="background: ${bgColor}; color: ${color}; border: 1px solid ${color}33; cursor: help;"
+                      title="${explanation}"
+                      data-bs-toggle="tooltip"
+                      data-bs-placement="bottom">
                     <i class="bi ${icon}"></i> ${health}%
                 </span>
             `;
+        }
+
+        function generateHealthExplanation(contact, health, label) {
+            const parts = [];
+            parts.push(`${label} (${health}%)`);
+
+            // Dias sem contato
+            if (contact?.ultimo_contato) {
+                const lastContact = new Date(contact.ultimo_contato);
+                const diffDays = Math.floor((new Date() - lastContact) / (1000 * 60 * 60 * 24));
+                if (diffDays === 0) {
+                    parts.push('Contato hoje');
+                } else if (diffDays === 1) {
+                    parts.push('Último contato ontem');
+                } else {
+                    parts.push(`${diffDays} dias sem contato`);
+                }
+            } else {
+                parts.push('Sem histórico de contato');
+            }
+
+            // Frequência esperada baseada no círculo
+            const circulo = contact?.circulo_profissional || contact?.circulo_pessoal || contact?.circulo || 5;
+            const frequencias = { 1: 14, 2: 21, 3: 30, 4: 60, 5: 90 };
+            const freqEsperada = frequencias[circulo] || 30;
+            parts.push(`Frequência ideal: ${freqEsperada} dias`);
+
+            // Razão do score
+            if (health >= 80) {
+                parts.push('✓ Relacionamento em dia');
+            } else if (health >= 50) {
+                parts.push('⚠ Considere fazer contato');
+            } else {
+                parts.push('⚠ Relacionamento precisa atenção');
+            }
+
+            return parts.join('<br>');
         }
 
         function renderTimelineItem(memory) {
