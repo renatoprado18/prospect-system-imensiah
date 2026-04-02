@@ -3832,7 +3832,7 @@
             if (!container) return;
 
             try {
-                const response = await fetch(`/api/calendar/events?contact_id=${contactId}`);
+                const response = await fetch(`/api/contacts/${contactId}/calendar`);
                 if (!response.ok) throw new Error('API not available');
 
                 const data = await response.json();
