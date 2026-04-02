@@ -4018,7 +4018,8 @@
                     // Last message was from you - waiting for their reply
                     if (daysSince <= 3) {
                         situation = '✓ Aguardando resposta';
-                        contextItems.push(`Você enviou mensagem há ${daysSince === 0 ? 'hoje' : daysSince + ' dia' + (daysSince > 1 ? 's' : '')}`);
+                        const diasTexto = daysSince <= 0 ? 'hoje' : (daysSince === 1 ? 'ontem' : `há ${daysSince} dias`);
+                        contextItems.push(`Você enviou mensagem ${diasTexto}`);
                     } else if (daysSince <= 14) {
                         situation = `Sem resposta há ${daysSince} dias`;
                         contextItems.push('Considere um follow-up gentil');
