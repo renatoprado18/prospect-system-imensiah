@@ -537,17 +537,23 @@ class EmailTriageService:
         with get_db() as conn:
             cursor = conn.cursor()
 
+            # Counts by status (all)
             cursor.execute("""
-                SELECT
-                    status,
-                    classification,
-                    COUNT(*) as count
+                SELECT status, COUNT(*) as count
                 FROM email_triage
-                WHERE criado_em > NOW() - INTERVAL '7 days'
-                GROUP BY status, classification
+                WHERE criado_em > NOW() - INTERVAL '30 days'
+                GROUP BY status
             """)
+            status_rows = cursor.fetchall()
 
-            rows = cursor.fetchall()
+            # Counts by classification (only pending - actionable items)
+            cursor.execute("""
+                SELECT classification, COUNT(*) as count
+                FROM email_triage
+                WHERE status = 'pending'
+                GROUP BY classification
+            """)
+            class_rows = cursor.fetchall()
 
             stats = {
                 "by_status": {},
@@ -557,19 +563,12 @@ class EmailTriageService:
                 "total_actioned": 0
             }
 
-            for row in rows:
-                status = row['status']
-                classification = row['classification']
-                count = row['count']
+            for row in status_rows:
+                stats["by_status"][row['status']] = row['count']
 
-                if status not in stats["by_status"]:
-                    stats["by_status"][status] = 0
-                stats["by_status"][status] += count
-
-                if classification:
-                    if classification not in stats["by_classification"]:
-                        stats["by_classification"][classification] = 0
-                    stats["by_classification"][classification] += count
+            for row in class_rows:
+                if row['classification']:
+                    stats["by_classification"][row['classification']] = row['count']
 
             stats["total_pending"] = stats["by_status"].get("pending", 0)
             stats["total_approved"] = stats["by_status"].get("approved", 0)
