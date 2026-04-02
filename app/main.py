@@ -4764,6 +4764,96 @@ async def update_contact_enrichment_data(contact_id: int, request: Request):
         conn.close()
 
 
+# ============== CONTACT INTELLIGENCE ==============
+
+@app.post("/api/contacts/{contact_id}/intelligence/chat")
+async def contact_intelligence_chat(contact_id: int, request: Request):
+    """
+    Chat with AI about a contact. Ask questions and get intelligent answers.
+
+    Body JSON:
+    {
+        "question": "O que ele faz profissionalmente?"
+    }
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = {}
+    try:
+        data = await request.json()
+    except:
+        raise HTTPException(status_code=400, detail="JSON invalido")
+
+    question = data.get("question", "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Pergunta nao informada")
+
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, nome FROM contacts WHERE id = %s', (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+        from app.services.contact_intelligence import chat_about_contact
+        result = await chat_about_contact(contact_id, question, conn)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/contacts/{contact_id}/intelligence/suggest-response")
+async def contact_suggest_response(contact_id: int, request: Request):
+    """
+    Suggest a response message for the contact.
+
+    Body JSON:
+    {
+        "context_type": "reply" | "reconnect"
+    }
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = {}
+    try:
+        data = await request.json()
+    except:
+        pass
+
+    context_type = data.get("context_type", "reply")
+
+    conn = get_db()
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, nome FROM contacts WHERE id = %s', (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+        from app.services.contact_intelligence import suggest_response
+        result = await suggest_response(contact_id, conn, context_type)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+    finally:
+        conn.close()
+
+
 @app.post("/api/contacts/{contact_id}/enrich-with-context")
 async def enrich_contact_with_context(contact_id: int, request: Request):
     """

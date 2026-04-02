@@ -1578,7 +1578,7 @@
                                 <button class="intel-suggestion" onclick="askIntel('Quando foi nosso último contato?')">
                                     Último contato?
                                 </button>
-                                <button class="intel-suggestion" onclick="askIntel('Escreva uma resposta para ele')">
+                                <button class="intel-suggestion" onclick="suggestIntelResponse()">
                                     Sugerir resposta
                                 </button>
                             </div>
@@ -4164,51 +4164,216 @@
 
         async function sendIntelChat() {
             const input = document.getElementById('intelChatInput');
+            const sendBtn = document.querySelector('.intel-chat-send');
             const question = input?.value?.trim();
 
             if (!question) return;
 
-            // Show loading
-            showNotification('Processando pergunta...', 'info');
-            input.value = '';
+            // Show loading state
+            const originalBtnHtml = sendBtn.innerHTML;
+            sendBtn.innerHTML = '<div class="spinner-border spinner-border-sm" role="status"></div>';
+            sendBtn.disabled = true;
+            input.disabled = true;
 
-            // For now, show a placeholder response
-            // Later this will call the API endpoint
-            setTimeout(() => {
-                const response = generatePlaceholderChatResponse(question);
-                alert(`INTEL: ${response}`);
-            }, 500);
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/intelligence/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success' && result.answer) {
+                    showIntelChatResponse(question, result);
+                } else {
+                    showNotification('Erro: ' + (result.error || 'Falha ao processar'), 'error');
+                }
+            } catch (error) {
+                console.error('Intel chat error:', error);
+                showNotification('Erro ao conectar com a IA', 'error');
+            } finally {
+                sendBtn.innerHTML = originalBtnHtml;
+                sendBtn.disabled = false;
+                input.disabled = false;
+                input.value = '';
+                input.focus();
+            }
         }
 
-        function generatePlaceholderChatResponse(question) {
-            const contact = contactData?.contact;
-            if (!contact) return 'Dados do contato não disponíveis.';
+        function showIntelChatResponse(question, result) {
+            // Create modal to show response
+            const existingModal = document.getElementById('intelResponseModal');
+            if (existingModal) existingModal.remove();
 
-            const q = question.toLowerCase();
+            const confidenceColor = result.confidence === 'high' ? 'success' :
+                                    result.confidence === 'medium' ? 'warning' : 'secondary';
 
-            if (q.includes('faz') || q.includes('trabalha') || q.includes('profissional')) {
-                if (contact.cargo && contact.empresa) {
-                    return `${contact.nome} é ${contact.cargo} na ${contact.empresa}.`;
-                } else if (contact.empresa) {
-                    return `${contact.nome} trabalha na ${contact.empresa}. Cargo não informado.`;
+            const suggestionsHtml = result.suggestions?.length > 0 ?
+                `<div class="mt-3 pt-3 border-top">
+                    <strong><i class="bi bi-lightbulb me-1"></i>Sugestões:</strong>
+                    <ul class="mb-0 mt-2">
+                        ${result.suggestions.map(s => `<li>${s}</li>`).join('')}
+                    </ul>
+                </div>` : '';
+
+            const sourcesHtml = result.sources?.length > 0 ?
+                `<div class="mt-2">
+                    <small class="text-muted">
+                        <i class="bi bi-info-circle me-1"></i>Fontes: ${result.sources.join(', ')}
+                    </small>
+                </div>` : '';
+
+            const modal = document.createElement('div');
+            modal.id = 'intelResponseModal';
+            modal.className = 'modal fade';
+            modal.innerHTML = `
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header" style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); color: white;">
+                            <h5 class="modal-title">
+                                <i class="bi bi-cpu me-2"></i>INTEL Response
+                                <span class="badge bg-${confidenceColor} ms-2" style="font-size: 0.7rem;">
+                                    ${result.confidence || 'medium'} confidence
+                                </span>
+                            </h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3 p-2 rounded" style="background: #f8f9fa;">
+                                <small class="text-muted">Pergunta:</small>
+                                <div class="fw-medium">${question}</div>
+                            </div>
+                            <div style="white-space: pre-line; line-height: 1.7;">
+                                ${result.answer}
+                            </div>
+                            ${sourcesHtml}
+                            ${suggestionsHtml}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                            <button type="button" class="btn btn-primary" onclick="document.getElementById('intelChatInput').focus(); bootstrap.Modal.getInstance(document.getElementById('intelResponseModal')).hide();">
+                                <i class="bi bi-chat-dots me-1"></i>Nova Pergunta
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+            const bsModal = new bootstrap.Modal(modal);
+            bsModal.show();
+
+            // Clean up when modal is closed
+            modal.addEventListener('hidden.bs.modal', () => modal.remove());
+        }
+
+        async function suggestIntelResponse() {
+            showNotification('Gerando sugestão de resposta...', 'info');
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/intelligence/suggest-response`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ context_type: 'reply' })
+                });
+
+                const result = await response.json();
+
+                if (result.status === 'success' && result.suggestion) {
+                    showSuggestedResponse(result);
                 } else {
-                    return 'Informações profissionais não disponíveis. Considere enriquecer o perfil.';
+                    showNotification('Erro: ' + (result.error || 'Falha ao gerar sugestão'), 'error');
                 }
+            } catch (error) {
+                console.error('Suggest response error:', error);
+                showNotification('Erro ao conectar com a IA', 'error');
             }
+        }
 
-            if (q.includes('último') || q.includes('encontr') || q.includes('contato')) {
-                if (contact.ultima_interacao) {
-                    const date = new Date(contact.ultima_interacao);
-                    return `Última interação: ${date.toLocaleDateString('pt-BR')}`;
+        function showSuggestedResponse(result) {
+            const existingModal = document.getElementById('suggestResponseModal');
+            if (existingModal) existingModal.remove();
+
+            const toneLabels = {
+                'professional': 'Profissional',
+                'friendly': 'Amigável',
+                'casual': 'Casual'
+            };
+
+            const modal = document.createElement('div');
+            modal.id = 'suggestResponseModal';
+            modal.className = 'modal fade';
+            modal.innerHTML = `
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white;">
+                            <h5 class="modal-title">
+                                <i class="bi bi-chat-quote me-2"></i>Sugestão de Resposta
+                                <span class="badge bg-light text-dark ms-2" style="font-size: 0.7rem;">
+                                    Tom: ${toneLabels[result.tone] || result.tone}
+                                </span>
+                            </h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="p-3 rounded mb-3" style="background: #f8f9fa; border-left: 4px solid #10b981;">
+                                <div style="white-space: pre-line; font-size: 1rem; line-height: 1.6;">
+                                    ${result.suggestion}
+                                </div>
+                            </div>
+                            ${result.reasoning ? `
+                                <div class="small text-muted">
+                                    <i class="bi bi-info-circle me-1"></i>${result.reasoning}
+                                </div>
+                            ` : ''}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                            <button type="button" class="btn btn-outline-primary" onclick="copySuggestion('${result.suggestion.replace(/'/g, "\\'")}')">
+                                <i class="bi bi-clipboard me-1"></i>Copiar
+                            </button>
+                            <button type="button" class="btn btn-success" onclick="sendSuggestionViaWhatsApp('${result.suggestion.replace(/'/g, "\\'")}')">
+                                <i class="bi bi-whatsapp me-1"></i>Enviar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+            const bsModal = new bootstrap.Modal(modal);
+            bsModal.show();
+
+            modal.addEventListener('hidden.bs.modal', () => modal.remove());
+        }
+
+        function copySuggestion(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showNotification('Texto copiado!', 'success');
+            });
+        }
+
+        function sendSuggestionViaWhatsApp(text) {
+            const telefones = parseJsonField(contactData?.contact?.telefones || []);
+            const phone = telefones.find(t => t.whatsapp)?.number || telefones[0]?.number;
+
+            if (phone) {
+                let cleanPhone = phone.replace(/\D/g, '');
+                if (cleanPhone.length <= 11) {
+                    cleanPhone = '55' + cleanPhone;
                 }
-                return 'Não há registro de interações recentes.';
-            }
+                const encodedMessage = encodeURIComponent(text);
+                window.open(`https://wa.me/${cleanPhone}?text=${encodedMessage}`, '_blank');
 
-            if (q.includes('negócio') || q.includes('projeto')) {
-                return 'Para ver projetos em comum, acesse a aba de Projetos abaixo.';
-            }
+                // Close modal
+                const modal = bootstrap.Modal.getInstance(document.getElementById('suggestResponseModal'));
+                if (modal) modal.hide();
 
-            return 'Para uma análise mais completa, o sistema de chat com IA será implementado em breve. Por enquanto, explore as informações nas abas abaixo.';
+                showNotification('WhatsApp aberto!', 'success');
+            } else {
+                showNotification('Telefone não encontrado', 'error');
+            }
         }
 
         // Note: Projects, tasks, facts, and messages are loaded in renderContact() after DOM is ready
