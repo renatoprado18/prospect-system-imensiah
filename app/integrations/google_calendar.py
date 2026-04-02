@@ -173,6 +173,7 @@ class GoogleCalendarIntegration:
         start_datetime: datetime,
         end_datetime: datetime,
         description: str = None,
+        location: str = None,
         attendees: List[str] = None,
         create_meet: bool = True,
         calendar_id: str = "primary"
@@ -192,6 +193,9 @@ class GoogleCalendarIntegration:
 
         if description:
             event_body["description"] = description
+
+        if location:
+            event_body["location"] = location
 
         if attendees:
             event_body["attendees"] = [{"email": email} for email in attendees]

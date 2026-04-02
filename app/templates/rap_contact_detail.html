@@ -1239,6 +1239,94 @@
         </div>
     </div>
 
+    <!-- Meeting Creation Modal -->
+    <div class="modal fade" id="meetingModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title">
+                        <i class="bi bi-calendar-plus me-2"></i>
+                        Criar Evento
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Titulo do Evento</label>
+                        <input type="text" class="form-control" id="meetingTitle" placeholder="Reuniao com...">
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Data</label>
+                            <input type="date" class="form-control" id="meetingDate">
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label fw-semibold">Hora</label>
+                            <input type="time" class="form-control" id="meetingTime" value="10:00">
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label fw-semibold">Duracao</label>
+                            <select class="form-select" id="meetingDuration">
+                                <option value="30">30 min</option>
+                                <option value="60" selected>1 hora</option>
+                                <option value="90">1h30</option>
+                                <option value="120">2 horas</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">
+                            <i class="bi bi-geo-alt me-1"></i>Local
+                        </label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="meetingLocation" placeholder="Endereco ou link">
+                            <button class="btn btn-outline-secondary" type="button" onclick="searchCompanyAddress()" title="Buscar endereco da empresa">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                        <div id="addressSearchResult" class="form-text text-success" style="display: none;"></div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Descricao</label>
+                        <textarea class="form-control" id="meetingDescription" rows="2" placeholder="Notas sobre a reuniao..."></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="meetingInviteContact">
+                            <label class="form-check-label" for="meetingInviteContact">
+                                Convidar <span id="meetingContactName">contato</span> (<span id="meetingContactEmail">email</span>)
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="meetingCreateMeet">
+                            <label class="form-check-label" for="meetingCreateMeet">
+                                Criar link do Google Meet
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="meetingConfidenceAlert" class="alert alert-info small py-2" style="display: none;">
+                        <i class="bi bi-info-circle me-1"></i>
+                        <span id="meetingConfidenceText"></span>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" onclick="createMeeting()">
+                        <i class="bi bi-calendar-check me-1"></i> Criar no Google Calendar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Enrichment Modal - Enriquecimento com Contexto -->
     <div class="modal fade" id="enrichmentModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
@@ -1943,6 +2031,9 @@
                                 <i class="bi bi-chat-dots text-info"></i> Mensagens Recentes
                             </h2>
                             <div class="d-flex gap-2 align-items-center">
+                                <button class="btn btn-sm btn-outline-primary" onclick="suggestMeeting()" id="btnSuggestMeeting" title="Sugerir evento baseado nas mensagens">
+                                    <i class="bi bi-calendar-plus"></i>
+                                </button>
                                 <button class="btn btn-sm btn-outline-success" onclick="syncWhatsApp()" id="btnSyncWhatsApp" title="Sincronizar WhatsApp">
                                     <i class="bi bi-whatsapp"></i>
                                 </button>
@@ -1954,6 +2045,22 @@
                         <div class="card-body py-2" id="messagesContainer">
                             <div class="text-center text-muted py-2">
                                 <div class="spinner-border spinner-border-sm" role="status"></div>
+                            </div>
+                        </div>
+                        <!-- Meeting Suggestion Banner -->
+                        <div id="meetingSuggestionBanner" class="card-footer bg-light border-top" style="display: none;">
+                            <div class="d-flex align-items-center gap-2">
+                                <i class="bi bi-calendar-event text-primary fs-5"></i>
+                                <div class="flex-grow-1">
+                                    <div class="fw-semibold small" id="suggestionTitle">Reuniao detectada</div>
+                                    <div class="text-muted small" id="suggestionDetails"></div>
+                                </div>
+                                <button class="btn btn-sm btn-primary" onclick="openMeetingModal()">
+                                    <i class="bi bi-plus-circle me-1"></i>Criar Evento
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="dismissMeetingSuggestion()">
+                                    <i class="bi bi-x"></i>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -2444,14 +2551,61 @@
 
         function formatDateTime(dateStr) {
             if (!dateStr) return '-';
-            const date = new Date(dateStr);
+            let date = new Date(dateStr);
+
+            // Se não tem timezone info, assumir UTC e converter para Brasil (UTC-3)
+            if (typeof dateStr === 'string' && !dateStr.includes('Z') && !dateStr.includes('+') && !dateStr.includes('-', 10)) {
+                // Add UTC marker if no timezone specified
+                date = new Date(dateStr + 'Z');
+            }
+
             return date.toLocaleDateString('pt-BR', {
                 day: '2-digit',
                 month: '2-digit',
                 year: 'numeric',
                 hour: '2-digit',
-                minute: '2-digit'
+                minute: '2-digit',
+                timeZone: 'America/Sao_Paulo'
             });
+        }
+
+        function formatMessageTime(dateStr) {
+            if (!dateStr) return '-';
+            let date = new Date(dateStr);
+
+            // Se não tem timezone info, assumir UTC
+            if (typeof dateStr === 'string' && !dateStr.includes('Z') && !dateStr.includes('+') && !dateStr.includes('-', 10)) {
+                date = new Date(dateStr + 'Z');
+            }
+
+            const now = new Date();
+            const today = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+            const msgDate = new Date(date.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+
+            const isToday = today.toDateString() === msgDate.toDateString();
+            const isYesterday = new Date(today - 86400000).toDateString() === msgDate.toDateString();
+
+            if (isToday) {
+                return date.toLocaleTimeString('pt-BR', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZone: 'America/Sao_Paulo'
+                });
+            } else if (isYesterday) {
+                return 'Ontem ' + date.toLocaleTimeString('pt-BR', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZone: 'America/Sao_Paulo'
+                });
+            } else {
+                return date.toLocaleDateString('pt-BR', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    timeZone: 'America/Sao_Paulo'
+                });
+            }
         }
 
         // LinkedIn helper functions
@@ -4215,6 +4369,209 @@
             }
         }
 
+        // ============ MEETING SUGGESTION FUNCTIONS ============
+        let currentMeetingSuggestion = null;
+
+        async function suggestMeeting() {
+            const btn = document.getElementById('btnSuggestMeeting');
+            if (!btn) return;
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/meeting-suggestion?limit=15`);
+                const data = await response.json();
+
+                if (data.detected && data.suggestion) {
+                    currentMeetingSuggestion = data.suggestion;
+                    showMeetingSuggestion(data.suggestion);
+                } else {
+                    showToast('Nenhuma reuniao detectada nas mensagens recentes', 'info');
+                }
+            } catch (error) {
+                console.error('Error getting meeting suggestion:', error);
+                showToast('Erro ao analisar mensagens', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-calendar-plus"></i>';
+            }
+        }
+
+        function showMeetingSuggestion(suggestion) {
+            const banner = document.getElementById('meetingSuggestionBanner');
+            const titleEl = document.getElementById('suggestionTitle');
+            const detailsEl = document.getElementById('suggestionDetails');
+
+            if (!banner || !suggestion.meeting) return;
+
+            const meeting = suggestion.meeting;
+            titleEl.textContent = meeting.title || 'Reuniao detectada';
+
+            let details = [];
+            if (meeting.date) details.push(formatDateBR(meeting.date));
+            if (meeting.time) details.push(meeting.time);
+            if (meeting.location) details.push(meeting.location);
+            if (suggestion.location_final && suggestion.location_final !== meeting.location) {
+                details.push(`(${suggestion.address_info?.source || 'encontrado'})`);
+            }
+
+            detailsEl.textContent = details.join(' • ');
+            banner.style.display = 'block';
+        }
+
+        function dismissMeetingSuggestion() {
+            const banner = document.getElementById('meetingSuggestionBanner');
+            if (banner) banner.style.display = 'none';
+            currentMeetingSuggestion = null;
+        }
+
+        function openMeetingModal() {
+            if (!currentMeetingSuggestion) {
+                showToast('Nenhuma sugestao disponivel', 'error');
+                return;
+            }
+
+            const s = currentMeetingSuggestion;
+            const meeting = s.meeting;
+
+            // Preencher campos do modal
+            document.getElementById('meetingTitle').value = meeting.title || `Reuniao com ${s.contact_name}`;
+            document.getElementById('meetingDate').value = meeting.date || '';
+            document.getElementById('meetingTime').value = meeting.time || '10:00';
+            document.getElementById('meetingDuration').value = meeting.duration_minutes || 60;
+            document.getElementById('meetingLocation').value = s.location_final || meeting.location || '';
+            document.getElementById('meetingDescription').value = meeting.purpose || '';
+
+            // Info do contato
+            document.getElementById('meetingContactName').textContent = s.contact_name || 'contato';
+            document.getElementById('meetingContactEmail').textContent = s.contact_email || 'sem email';
+
+            // Checkbox de convite
+            const inviteCheck = document.getElementById('meetingInviteContact');
+            inviteCheck.checked = !!s.contact_email;
+            inviteCheck.disabled = !s.contact_email;
+
+            // Meet checkbox desabilitado por padrao para reunioes presenciais
+            const meetCheck = document.getElementById('meetingCreateMeet');
+            meetCheck.checked = meeting.location_type === 'virtual';
+
+            // Mostrar confianca
+            const confidenceAlert = document.getElementById('meetingConfidenceAlert');
+            const confidenceText = document.getElementById('meetingConfidenceText');
+            if (meeting.confidence && meeting.confidence !== 'high') {
+                confidenceAlert.style.display = 'block';
+                if (meeting.confidence === 'medium') {
+                    confidenceText.textContent = 'Confianca media - verifique os detalhes antes de criar o evento.';
+                } else {
+                    confidenceText.textContent = 'Confianca baixa - sugestao pode precisar de ajustes.';
+                }
+            } else {
+                confidenceAlert.style.display = 'none';
+            }
+
+            // Abrir modal
+            const modal = new bootstrap.Modal(document.getElementById('meetingModal'));
+            modal.show();
+        }
+
+        async function searchCompanyAddress() {
+            const locationInput = document.getElementById('meetingLocation');
+            const resultDiv = document.getElementById('addressSearchResult');
+
+            if (!contactData?.contact?.empresa) {
+                showToast('Contato nao tem empresa cadastrada', 'info');
+                return;
+            }
+
+            resultDiv.style.display = 'none';
+            resultDiv.textContent = 'Buscando...';
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'form-text text-muted';
+
+            try {
+                const empresa = encodeURIComponent(contactData.contact.empresa);
+                const website = contactData.contact.company_website ? `&website=${encodeURIComponent(contactData.contact.company_website)}` : '';
+                const response = await fetch(`/api/companies/${empresa}/address?contact_id=${contactId}${website}`);
+                const data = await response.json();
+
+                if (data.found && data.address_info) {
+                    locationInput.value = data.address_info.address;
+                    resultDiv.className = 'form-text text-success';
+                    resultDiv.innerHTML = `<i class="bi bi-check-circle me-1"></i>Endereco encontrado via ${data.address_info.source}`;
+                } else {
+                    resultDiv.className = 'form-text text-warning';
+                    resultDiv.innerHTML = `<i class="bi bi-exclamation-circle me-1"></i>Endereco nao encontrado`;
+                }
+            } catch (error) {
+                console.error('Error searching address:', error);
+                resultDiv.className = 'form-text text-danger';
+                resultDiv.textContent = 'Erro ao buscar endereco';
+            }
+        }
+
+        async function createMeeting() {
+            const title = document.getElementById('meetingTitle').value.trim();
+            const date = document.getElementById('meetingDate').value;
+            const time = document.getElementById('meetingTime').value;
+            const duration = document.getElementById('meetingDuration').value;
+            const location = document.getElementById('meetingLocation').value.trim();
+            const description = document.getElementById('meetingDescription').value.trim();
+            const inviteContact = document.getElementById('meetingInviteContact').checked;
+            const createMeet = document.getElementById('meetingCreateMeet').checked;
+
+            if (!title || !date || !time) {
+                showToast('Preencha titulo, data e hora', 'error');
+                return;
+            }
+
+            const attendees = [];
+            if (inviteContact && currentMeetingSuggestion?.contact_email) {
+                attendees.push(currentMeetingSuggestion.contact_email);
+            }
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/create-meeting`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        title,
+                        date,
+                        time,
+                        duration_minutes: parseInt(duration),
+                        location,
+                        description,
+                        attendees,
+                        create_meet: createMeet
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showToast('Evento criado no Google Calendar!');
+                    bootstrap.Modal.getInstance(document.getElementById('meetingModal')).hide();
+                    dismissMeetingSuggestion();
+
+                    // Abrir link do calendario se disponivel
+                    if (result.calendar_link) {
+                        window.open(result.calendar_link, '_blank');
+                    }
+                } else {
+                    showToast(result.detail || 'Erro ao criar evento', 'error');
+                }
+            } catch (error) {
+                console.error('Error creating meeting:', error);
+                showToast('Erro ao criar evento', 'error');
+            }
+        }
+
+        function formatDateBR(dateStr) {
+            if (!dateStr) return '';
+            const [year, month, day] = dateStr.split('-');
+            return `${day}/${month}/${year}`;
+        }
+
         async function loadContactMessages() {
             const container = document.getElementById('messagesContainer');
             if (!container) return;
@@ -4285,9 +4642,12 @@
                 </style>
             `;
 
+            // Reverter ordem para mostrar mais antigas primeiro (cronológico)
+            const sortedMessages = [...messages].reverse();
+
             container.innerHTML = styles + `
                 <div class="messages-list">
-                    ${messages.map(m => {
+                    ${sortedMessages.map(m => {
                         const isWhatsApp = m.canal === 'whatsapp';
                         const isOutgoing = m.direcao === 'outgoing';
                         const channelIcon = isWhatsApp ? 'bi-whatsapp text-success' : 'bi-envelope text-primary';
@@ -4298,7 +4658,7 @@
                                 <div class="msg-bubble ${isOutgoing ? 'outgoing' : 'incoming'}">
                                     <span class="msg-channel"><i class="bi ${channelIcon}"></i></span>
                                     <div>${preview}</div>
-                                    <div class="msg-time">${formatDateTime(m.enviado_em || m.created_at)}</div>
+                                    <div class="msg-time">${formatMessageTime(m.enviado_em || m.created_at)}</div>
                                 </div>
                             </div>
                         `;

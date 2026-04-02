@@ -7126,6 +7126,101 @@ async def sync_contact_whatsapp(request: Request, contact_id: int):
     return result
 
 
+# ============== Meeting Suggestion Endpoints ==============
+
+from services.meeting_suggestion import generate_event_suggestion, find_company_address
+
+
+@app.get("/api/contacts/{contact_id}/meeting-suggestion")
+async def api_meeting_suggestion(request: Request, contact_id: int, limit: int = 10):
+    """
+    Analisa mensagens recentes do contato e sugere criacao de evento.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    suggestion = await generate_event_suggestion(contact_id, limit=limit)
+
+    if not suggestion:
+        return {"detected": False, "message": "Nenhuma reuniao detectada nas mensagens recentes"}
+
+    return {"detected": True, "suggestion": suggestion}
+
+
+@app.post("/api/contacts/{contact_id}/create-meeting")
+async def api_create_meeting_from_suggestion(request: Request, contact_id: int):
+    """
+    Cria evento no Google Calendar a partir de sugestao.
+    Espera JSON com: title, date, time, duration_minutes, location, description, attendees
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = await request.json()
+
+    # Obter token do Gmail (mesmo OAuth)
+    access_token = get_valid_access_token()
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Gmail nao conectado - necessario para criar eventos")
+
+    # Preparar dados do evento
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    sp_tz = ZoneInfo("America/Sao_Paulo")
+
+    date_str = data.get("date")  # YYYY-MM-DD
+    time_str = data.get("time", "10:00")  # HH:MM
+    duration = int(data.get("duration_minutes", 60))
+
+    try:
+        start_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+        start_dt = start_dt.replace(tzinfo=sp_tz)
+        end_dt = start_dt + timedelta(minutes=duration)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Data/hora invalida: {e}")
+
+    # Criar evento
+    event_result = await calendar.create_event(
+        access_token=access_token,
+        summary=data.get("title", "Reuniao"),
+        start_datetime=start_dt,
+        end_datetime=end_dt,
+        description=data.get("description"),
+        location=data.get("location"),
+        attendees=data.get("attendees", []),
+        create_meet=data.get("create_meet", False)
+    )
+
+    if "error" in event_result:
+        raise HTTPException(status_code=500, detail=event_result["error"])
+
+    return {
+        "success": True,
+        "event": event_result,
+        "calendar_link": event_result.get("htmlLink")
+    }
+
+
+@app.get("/api/companies/{company_name}/address")
+async def api_company_address(company_name: str, contact_id: int = None, website: str = None):
+    """
+    Busca endereco de uma empresa.
+    """
+    address_info = await find_company_address(
+        company_name=company_name,
+        contact_id=contact_id,
+        company_website=website
+    )
+
+    if not address_info:
+        return {"found": False}
+
+    return {"found": True, "address_info": address_info}
+
+
 # ============== WhatsApp Import Endpoints ==============
 
 from services.whatsapp_import import get_whatsapp_import_service
