@@ -4412,6 +4412,10 @@ async def get_contact(contact_id: int):
 
     contact = row_to_dict(row)
 
+    # Recalcular health_score em tempo real baseado no ultimo_contato atual
+    circulo = contact.get("circulo_profissional") or contact.get("circulo_pessoal") or contact.get("circulo") or 5
+    contact["health_score"] = calcular_health_score(contact, circulo)
+
     # Buscar memórias/notas
     cursor.execute('''
         SELECT *, 'memory' as item_type FROM contact_memories
@@ -9200,6 +9204,26 @@ async def archive_email_triage(request: Request, triage_id: int):
         import traceback
         print(f"Error archiving email: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Erro ao arquivar: {str(e)}")
+
+
+@app.post("/api/email-triage/sync-labels")
+async def sync_gmail_labels(request: Request, label: str = "!!Renato"):
+    """Importa emails que já têm uma label específica no Gmail"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    try:
+        from services.email_triage import get_email_triage_service
+        service = get_email_triage_service()
+
+        result = await service.sync_labeled_emails(label_name=label)
+        return result
+
+    except Exception as e:
+        import traceback
+        print(f"Error syncing labels: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Erro ao sincronizar: {str(e)}")
 
 
 # === REGRAS DE TRIAGEM ===

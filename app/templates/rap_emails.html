@@ -277,6 +277,9 @@
             <h4 class="mb-1">Triagem de E-mails</h4>
             <p class="text-muted mb-0" style="font-size: 0.85rem;">Emails que precisam de sua atenção</p>
         </div>
+        <button class="btn btn-outline-primary me-2" onclick="syncGmailLabels()" id="btnSyncLabels">
+            <i class="bi bi-cloud-download me-1"></i> Importar do Gmail
+        </button>
         <button class="btn btn-primary" onclick="processEmails()">
             <i class="bi bi-arrow-repeat me-1"></i> Processar Novos
         </button>
@@ -648,6 +651,31 @@
         } finally {
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i> Processar Novos';
+        }
+    }
+
+    async function syncGmailLabels() {
+        const btn = document.getElementById('btnSyncLabels');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i> Importando...';
+
+        try {
+            const res = await fetch('/api/email-triage/sync-labels', { method: 'POST' });
+            const result = await res.json();
+
+            if (res.ok) {
+                showToast(`Importados: ${result.emails_imported} | Já existiam: ${result.emails_skipped}`);
+                loadEmails();
+                loadStats();
+            } else {
+                showToast(result.detail || 'Erro ao importar');
+            }
+        } catch (e) {
+            console.error('Error syncing:', e);
+            showToast('Erro ao importar do Gmail');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-cloud-download me-1"></i> Importar do Gmail';
         }
     }
 

@@ -775,6 +775,191 @@ class EmailTriageService:
             conn.commit()
             return {"created": created}
 
+    async def sync_labeled_emails(self, label_name: str = "!!Renato") -> Dict:
+        """
+        Importa emails que já têm uma label específica no Gmail
+        para a triagem do sistema.
+        """
+        from integrations.gmail import GmailIntegration
+
+        stats = {
+            "accounts_checked": 0,
+            "emails_found": 0,
+            "emails_imported": 0,
+            "emails_skipped": 0,
+            "errors": []
+        }
+
+        gmail = GmailIntegration()
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Buscar todas as contas Google
+            cursor.execute("""
+                SELECT email, access_token, refresh_token, tipo
+                FROM google_accounts
+                WHERE access_token IS NOT NULL
+            """)
+            accounts = cursor.fetchall()
+
+            for account in accounts:
+                stats["accounts_checked"] += 1
+                account_email = account['email']
+                access_token = account['access_token']
+                account_type = account.get('tipo', 'professional')
+
+                try:
+                    # Buscar emails com a label
+                    query = f"label:{label_name}"
+                    result = await gmail.list_messages(access_token, query=query, max_results=100)
+
+                    if "error" in result:
+                        # Tentar refresh token
+                        if result.get("error") == "token_expired":
+                            refresh_result = await gmail.refresh_access_token(account['refresh_token'])
+                            if "access_token" in refresh_result:
+                                access_token = refresh_result["access_token"]
+                                # Atualizar token no banco
+                                cursor.execute("""
+                                    UPDATE google_accounts SET access_token = %s WHERE email = %s
+                                """, (access_token, account_email))
+                                conn.commit()
+                                result = await gmail.list_messages(access_token, query=query, max_results=100)
+                            else:
+                                stats["errors"].append(f"{account_email}: Token refresh failed")
+                                continue
+                        else:
+                            stats["errors"].append(f"{account_email}: {result.get('error')}")
+                            continue
+
+                    messages = result.get("messages", [])
+                    stats["emails_found"] += len(messages)
+
+                    for msg_ref in messages:
+                        gmail_id = msg_ref.get("id")
+
+                        # Verificar se já existe na triagem
+                        cursor.execute("""
+                            SELECT et.id FROM email_triage et
+                            JOIN messages m ON m.id = et.message_id
+                            WHERE m.external_id = %s
+                        """, (gmail_id,))
+                        existing = cursor.fetchone()
+
+                        if existing:
+                            stats["emails_skipped"] += 1
+                            continue
+
+                        # Buscar detalhes do email
+                        msg_details = await gmail.get_message(access_token, gmail_id)
+                        if "error" in msg_details:
+                            continue
+
+                        headers = gmail.parse_message_headers(msg_details)
+                        body_data = gmail.parse_message_body(msg_details)
+
+                        from_email = gmail.extract_email_address(headers.get("from", ""))
+                        subject = headers.get("subject", "(Sem assunto)")
+                        date_str = headers.get("date", "")
+
+                        # Buscar contato pelo email
+                        cursor.execute("""
+                            SELECT id, nome, circulo, circulo_pessoal, circulo_profissional
+                            FROM contacts
+                            WHERE emails @> %s::jsonb
+                            LIMIT 1
+                        """, (json.dumps([from_email]),))
+                        contact = cursor.fetchone()
+
+                        contact_id = contact['id'] if contact else None
+
+                        # Verificar se mensagem já existe
+                        cursor.execute("""
+                            SELECT id, conversation_id FROM messages WHERE external_id = %s
+                        """, (gmail_id,))
+                        existing_msg = cursor.fetchone()
+
+                        if existing_msg:
+                            message_id = existing_msg['id']
+                            conversation_id = existing_msg['conversation_id']
+                        else:
+                            # Criar conversa
+                            cursor.execute("""
+                                INSERT INTO conversations (contact_id, canal, assunto, status)
+                                VALUES (%s, 'email', %s, 'active')
+                                RETURNING id
+                            """, (contact_id, subject))
+                            conversation_id = cursor.fetchone()['id']
+
+                            # Criar mensagem
+                            from email.utils import parsedate_to_datetime
+                            try:
+                                sent_at = parsedate_to_datetime(date_str) if date_str else None
+                            except:
+                                sent_at = None
+
+                            cursor.execute("""
+                                INSERT INTO messages (
+                                    conversation_id, contact_id, external_id, direcao,
+                                    conteudo, metadata, enviado_em
+                                ) VALUES (%s, %s, %s, 'incoming', %s, %s, %s)
+                                RETURNING id
+                            """, (
+                                conversation_id,
+                                contact_id,
+                                gmail_id,
+                                body_data.get('text', '')[:5000],
+                                json.dumps({"account": account_email, "from": from_email}),
+                                sent_at
+                            ))
+                            message_id = cursor.fetchone()['id']
+
+                        # Determinar classificação
+                        classification = "important"
+                        priority = 7
+                        if contact:
+                            circulo = contact.get('circulo')
+                            if circulo == 1:
+                                classification = "urgent"
+                                priority = 10
+                            elif circulo == 2:
+                                classification = "important"
+                                priority = 8
+
+                        # Criar registro de triagem
+                        cursor.execute("""
+                            INSERT INTO email_triage (
+                                message_id, conversation_id, contact_id,
+                                needs_attention, priority, classification,
+                                classification_reasons, suggested_tags,
+                                status, account_type
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT DO NOTHING
+                        """, (
+                            message_id,
+                            conversation_id,
+                            contact_id,
+                            True,
+                            priority,
+                            classification,
+                            json.dumps([f"Importado do Gmail (label {label_name})"]),
+                            json.dumps([label_name]),
+                            'pending',
+                            account_type
+                        ))
+
+                        stats["emails_imported"] += 1
+
+                    conn.commit()
+
+                except Exception as e:
+                    import traceback
+                    stats["errors"].append(f"{account_email}: {str(e)}")
+                    print(f"Error syncing {account_email}: {traceback.format_exc()}")
+
+        return stats
+
 
 # Singleton
 _email_triage_service = None
