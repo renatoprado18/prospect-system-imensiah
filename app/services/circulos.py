@@ -155,13 +155,13 @@ TAG_PESSOAL_OVERRIDES = {
 }
 
 # ============== TAGS PROFISSIONAIS (Override para circulo especifico) ==============
-# R1 = Core: relacionamento ativo e crítico para o negócio
+# R1 = Core: relacionamento ativo e crítico para MEU negócio
 # R2 = Estratégico: clientes, conselheiros, mentores (importante mas não crítico)
 # R3 = Networking: prospects, fornecedores, parceiros em potencial
-# R4 = Ocasional: ex-clientes, contatos de eventos
+# R4 = Ocasional: ex-clientes, contatos de eventos, sócios de outras empresas
 TAG_PROFISSIONAL_OVERRIDES = {
     1: [
-        "cliente-ativo", "socio", "co-founder",
+        "cliente-ativo", "co-founder",
         "parceiro-ativo", "fornecedor-critico"
     ],
     2: [
@@ -174,7 +174,8 @@ TAG_PROFISSIONAL_OVERRIDES = {
         "parceiro", "networking"
     ],
     4: [
-        "ex-cliente", "contato-evento", "lead"
+        "ex-cliente", "contato-evento", "lead",
+        "socio"
     ],
 }
 
