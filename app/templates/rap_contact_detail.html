@@ -119,6 +119,259 @@
         .user-name { font-weight: 500; font-size: 0.9rem; }
         .user-role { font-size: 0.75rem; color: var(--gray-400); }
 
+        /* INTEL Insight Panel */
+        .intel-insight-panel {
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            color: white;
+            position: relative;
+            overflow: hidden;
+        }
+        .intel-insight-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 200px;
+            height: 200px;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.3) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .intel-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .intel-header i {
+            font-size: 1.5rem;
+            color: #a5b4fc;
+        }
+        .intel-header h3 {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #e2e8f0;
+        }
+        .intel-header .refresh-btn {
+            margin-left: auto;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            color: #94a3b8;
+            padding: 6px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .intel-header .refresh-btn:hover {
+            background: rgba(255,255,255,0.2);
+            color: white;
+        }
+        .intel-content {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .intel-situation {
+            font-size: 1rem;
+            font-weight: 500;
+            color: white;
+            margin-bottom: 12px;
+            line-height: 1.5;
+        }
+        .intel-context-list {
+            margin: 0;
+            padding-left: 20px;
+            color: #cbd5e1;
+            font-size: 0.9rem;
+            line-height: 1.8;
+        }
+        .intel-context-list li {
+            margin-bottom: 4px;
+        }
+        .intel-recommendation {
+            display: flex;
+            gap: 10px;
+            background: rgba(99, 102, 241, 0.2);
+            border-left: 3px solid #6366f1;
+            padding: 12px 16px;
+            border-radius: 0 8px 8px 0;
+            margin-top: 12px;
+        }
+        .intel-recommendation i {
+            color: #a5b4fc;
+            font-size: 1.2rem;
+        }
+        .intel-recommendation p {
+            margin: 0;
+            color: #e2e8f0;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        .intel-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .intel-action-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+        .intel-action-btn.primary {
+            background: #6366f1;
+            color: white;
+        }
+        .intel-action-btn.primary:hover {
+            background: #4f46e5;
+        }
+        .intel-action-btn.secondary {
+            background: rgba(255,255,255,0.1);
+            color: #e2e8f0;
+        }
+        .intel-action-btn.secondary:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        /* Chat Input */
+        .intel-chat-section {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+        .intel-chat-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #94a3b8;
+            font-size: 0.85rem;
+            margin-bottom: 10px;
+        }
+        .intel-chat-input-wrapper {
+            display: flex;
+            gap: 10px;
+        }
+        .intel-chat-input {
+            flex: 1;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            padding: 12px 16px;
+            color: white;
+            font-size: 0.9rem;
+        }
+        .intel-chat-input::placeholder {
+            color: #64748b;
+        }
+        .intel-chat-input:focus {
+            outline: none;
+            border-color: #6366f1;
+            background: rgba(255,255,255,0.15);
+        }
+        .intel-chat-send {
+            background: #6366f1;
+            border: none;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .intel-chat-send:hover {
+            background: #4f46e5;
+        }
+        .intel-suggestions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .intel-suggestion {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: #94a3b8;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .intel-suggestion:hover {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border-color: rgba(255,255,255,0.2);
+        }
+
+        /* Loading state */
+        .intel-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            color: #94a3b8;
+        }
+        .intel-loading .spinner-border {
+            width: 24px;
+            height: 24px;
+            margin-right: 12px;
+        }
+
+        /* Insight content */
+        .insight-content .insight-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        .insight-content .insight-list li {
+            padding: 8px 0;
+            color: #e2e8f0;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .insight-content .insight-list li:last-child {
+            border-bottom: none;
+        }
+        .insight-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .insight-actions .action-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+            background: rgba(255,255,255,0.1);
+            color: #e2e8f0;
+        }
+        .insight-actions .action-btn:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        .insight-actions .action-btn.primary {
+            background: #6366f1;
+            color: white;
+        }
+        .insight-actions .action-btn.primary:hover {
+            background: #4f46e5;
+        }
+
         /* Contact Tabs */
         .contact-tabs {
             display: flex;
@@ -1174,10 +1427,11 @@
                 contactData = data;
                 renderContact(data);
 
-                // Load meetings and current briefing after contact is rendered
+                // Load meetings, briefing and INTEL insight after contact is rendered
                 setTimeout(() => {
                     loadContactMeetings();
                     loadCurrentBriefing();
+                    loadIntelInsight();
                 }, 100);
             } catch (error) {
                 console.error('Error loading contact:', error);
@@ -1271,6 +1525,63 @@
                                 <li><a class="dropdown-item" href="#" onclick="generateBriefing()"><i class="bi bi-file-text me-2"></i>Gerar Briefing</a></li>
                                 <li><a class="dropdown-item" href="#" onclick="quickDraftEmail()"><i class="bi bi-envelope-paper me-2"></i>Rascunho Email</a></li>
                             </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- INTEL Insight Panel -->
+                <div class="intel-insight-panel" id="intelPanel">
+                    <div class="intel-loading" id="intelLoading">
+                        <div class="spinner-border spinner-border-sm" role="status"></div>
+                        <span>Analisando contexto...</span>
+                    </div>
+                    <div id="intelContent" style="display: none;">
+                        <div class="intel-header">
+                            <i class="bi bi-cpu"></i>
+                            <h3>INTEL Insight</h3>
+                            <button class="refresh-btn" onclick="loadIntelInsight()" title="Atualizar análise">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </div>
+                        <div class="intel-content">
+                            <div class="intel-situation" id="intelSituation">
+                                <!-- Preenchido via JS -->
+                            </div>
+                            <ul class="intel-context-list" id="intelContextList">
+                                <!-- Preenchido via JS -->
+                            </ul>
+                            <div class="intel-recommendation" id="intelRecommendation">
+                                <i class="bi bi-lightbulb"></i>
+                                <p id="intelRecommendationText"><!-- Preenchido via JS --></p>
+                            </div>
+                        </div>
+                        <div class="intel-actions" id="intelActions">
+                            <!-- Preenchido via JS -->
+                        </div>
+                        <div class="intel-chat-section">
+                            <div class="intel-chat-label">
+                                <i class="bi bi-chat-dots"></i>
+                                <span>Pergunte sobre ${contact.nome.split(' ')[0]}</span>
+                            </div>
+                            <div class="intel-chat-input-wrapper">
+                                <input type="text" class="intel-chat-input" id="intelChatInput"
+                                       placeholder="Ex: O que ele faz profissionalmente?"
+                                       onkeypress="if(event.key==='Enter') sendIntelChat()">
+                                <button class="intel-chat-send" onclick="sendIntelChat()">
+                                    <i class="bi bi-send"></i>
+                                </button>
+                            </div>
+                            <div class="intel-suggestions" id="intelSuggestions">
+                                <button class="intel-suggestion" onclick="askIntel('O que ele faz profissionalmente?')">
+                                    O que ele faz?
+                                </button>
+                                <button class="intel-suggestion" onclick="askIntel('Quando foi nosso último contato?')">
+                                    Último contato?
+                                </button>
+                                <button class="intel-suggestion" onclick="askIntel('Escreva uma resposta para ele')">
+                                    Sugerir resposta
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -3622,6 +3933,231 @@
                     }).join('')}
                 </div>
             `;
+        }
+
+        // ============ INTEL INSIGHT FUNCTIONS ============
+
+        async function loadIntelInsight() {
+            const panel = document.getElementById('intelPanel');
+            if (!panel) return;
+
+            // Show loading, hide content
+            const loadingDiv = document.getElementById('intelLoading');
+            const contentDiv = document.getElementById('intelContent');
+            if (loadingDiv) loadingDiv.style.display = 'flex';
+            if (contentDiv) contentDiv.style.display = 'none';
+
+            // For now, render a placeholder insight based on available data
+            // Later this will call the API endpoint
+            setTimeout(() => {
+                renderPlaceholderInsight();
+            }, 300);
+        }
+
+        function renderPlaceholderInsight() {
+            const panel = document.getElementById('intelPanel');
+            if (!panel || !contactData?.contact) return;
+
+            const contact = contactData.contact;
+
+            // Hide loading, show content
+            const loadingDiv = document.getElementById('intelLoading');
+            const contentDiv = document.getElementById('intelContent');
+            if (loadingDiv) loadingDiv.style.display = 'none';
+            if (contentDiv) contentDiv.style.display = 'block';
+
+            // Build context analysis
+            const contextItems = [];
+            let situation = '';
+            let recommendation = '';
+            const actions = [];
+
+            // Check last message/interaction
+            const lastInteraction = contact.ultima_interacao || contact.ultima_mensagem;
+            if (lastInteraction) {
+                const lastDate = new Date(lastInteraction);
+                const daysSince = Math.floor((new Date() - lastDate) / (1000 * 60 * 60 * 24));
+
+                if (daysSince === 0) {
+                    situation = 'Contato ativo hoje';
+                    contextItems.push('Interação recente - aproveite o momento');
+                    actions.push({ id: 'reply', label: 'Responder', icon: 'reply', primary: true });
+                } else if (daysSince <= 7) {
+                    situation = `Contato recente (${daysSince} dia${daysSince > 1 ? 's' : ''})`;
+                    contextItems.push('Relacionamento aquecido');
+                } else if (daysSince <= 30) {
+                    situation = `Último contato há ${daysSince} dias`;
+                    contextItems.push('Considere fazer um follow-up');
+                    actions.push({ id: 'reconnect', label: 'Reconectar', icon: 'arrow-repeat', primary: true });
+                } else {
+                    situation = `⚠️ Sem contato há ${daysSince} dias`;
+                    contextItems.push('Relacionamento esfriando');
+                    recommendation = 'Faça um check-in para manter o relacionamento ativo';
+                    actions.push({ id: 'reconnect', label: 'Reconectar', icon: 'arrow-repeat', primary: true });
+                }
+            } else {
+                situation = 'Novo relacionamento';
+                contextItems.push('Nenhuma interação registrada ainda');
+                recommendation = 'Inicie o relacionamento com uma mensagem ou encontro';
+            }
+
+            // Check profile completeness
+            const missingFields = [];
+            if (!contact.linkedin) missingFields.push('LinkedIn');
+            const emails = parseJsonField(contact.emails || []);
+            if (emails.length === 0) missingFields.push('Email');
+            if (!contact.empresa) missingFields.push('Empresa');
+            if (!contact.cargo) missingFields.push('Cargo');
+
+            const completeness = Math.round((4 - missingFields.length) / 4 * 100);
+            if (missingFields.length > 0) {
+                contextItems.push(`Perfil ${completeness}% completo (falta: ${missingFields.join(', ')})`);
+                if (missingFields.length >= 2) {
+                    actions.push({ id: 'enrich', label: 'Completar Perfil', icon: 'magic' });
+                }
+            }
+
+            // Check circles importance
+            const isImportant = (contact.circulo_pessoal && contact.circulo_pessoal <= 2) ||
+                               (contact.circulo_profissional && contact.circulo_profissional <= 2);
+            if (isImportant) {
+                contextItems.push('⭐ Relacionamento de alta prioridade');
+                if (!recommendation) {
+                    recommendation = 'Mantenha contato regular com esta pessoa importante';
+                }
+            }
+
+            // Default recommendation if none set
+            if (!recommendation && contextItems.length === 0) {
+                recommendation = 'Perfil bem mantido. Continue cultivando este relacionamento.';
+            }
+
+            // Default actions
+            if (actions.length === 0) {
+                actions.push({ id: 'task', label: 'Criar Tarefa', icon: 'plus-circle', primary: true });
+            }
+            actions.push({ id: 'meeting', label: 'Agendar', icon: 'calendar-plus' });
+
+            // Render situation
+            const situationEl = document.getElementById('intelSituation');
+            if (situationEl) {
+                situationEl.textContent = situation || 'Análise do relacionamento';
+            }
+
+            // Render context list
+            const contextListEl = document.getElementById('intelContextList');
+            if (contextListEl) {
+                if (contextItems.length > 0) {
+                    contextListEl.innerHTML = contextItems.map(item => `<li>${item}</li>`).join('');
+                    contextListEl.style.display = 'block';
+                } else {
+                    contextListEl.style.display = 'none';
+                }
+            }
+
+            // Render recommendation
+            const recEl = document.getElementById('intelRecommendation');
+            const recTextEl = document.getElementById('intelRecommendationText');
+            if (recEl && recTextEl) {
+                if (recommendation) {
+                    recTextEl.textContent = recommendation;
+                    recEl.style.display = 'flex';
+                } else {
+                    recEl.style.display = 'none';
+                }
+            }
+
+            // Render actions
+            const actionsEl = document.getElementById('intelActions');
+            if (actionsEl) {
+                actionsEl.innerHTML = actions.map(a => `
+                    <button class="intel-action-btn ${a.primary ? 'primary' : 'secondary'}" onclick="executeIntelAction('${a.id}')">
+                        <i class="bi bi-${a.icon}"></i> ${a.label}
+                    </button>
+                `).join('');
+            }
+        }
+
+        function executeIntelAction(actionId) {
+            switch (actionId) {
+                case 'reply':
+                    // Open WhatsApp or focus on message input
+                    openWhatsApp();
+                    break;
+                case 'reconnect':
+                    // Generate reconnection message
+                    useBriefingForWhatsApp();
+                    break;
+                case 'enrich':
+                    // Open enrichment modal
+                    enrichContact();
+                    break;
+                case 'task':
+                    quickCreateTask();
+                    break;
+                case 'meeting':
+                    quickScheduleMeeting();
+                    break;
+                default:
+                    console.log('Unknown action:', actionId);
+            }
+        }
+
+        function askIntel(question) {
+            const input = document.getElementById('intelChatInput');
+            if (input) {
+                input.value = question;
+                sendIntelChat();
+            }
+        }
+
+        async function sendIntelChat() {
+            const input = document.getElementById('intelChatInput');
+            const question = input?.value?.trim();
+
+            if (!question) return;
+
+            // Show loading
+            showNotification('Processando pergunta...', 'info');
+            input.value = '';
+
+            // For now, show a placeholder response
+            // Later this will call the API endpoint
+            setTimeout(() => {
+                const response = generatePlaceholderChatResponse(question);
+                alert(`INTEL: ${response}`);
+            }, 500);
+        }
+
+        function generatePlaceholderChatResponse(question) {
+            const contact = contactData?.contact;
+            if (!contact) return 'Dados do contato não disponíveis.';
+
+            const q = question.toLowerCase();
+
+            if (q.includes('faz') || q.includes('trabalha') || q.includes('profissional')) {
+                if (contact.cargo && contact.empresa) {
+                    return `${contact.nome} é ${contact.cargo} na ${contact.empresa}.`;
+                } else if (contact.empresa) {
+                    return `${contact.nome} trabalha na ${contact.empresa}. Cargo não informado.`;
+                } else {
+                    return 'Informações profissionais não disponíveis. Considere enriquecer o perfil.';
+                }
+            }
+
+            if (q.includes('último') || q.includes('encontr') || q.includes('contato')) {
+                if (contact.ultima_interacao) {
+                    const date = new Date(contact.ultima_interacao);
+                    return `Última interação: ${date.toLocaleDateString('pt-BR')}`;
+                }
+                return 'Não há registro de interações recentes.';
+            }
+
+            if (q.includes('negócio') || q.includes('projeto')) {
+                return 'Para ver projetos em comum, acesse a aba de Projetos abaixo.';
+            }
+
+            return 'Para uma análise mais completa, o sistema de chat com IA será implementado em breve. Por enquanto, explore as informações nas abas abaixo.';
         }
 
         // Note: Projects, tasks, facts, and messages are loaded in renderContact() after DOM is ready
