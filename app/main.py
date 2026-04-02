@@ -8827,13 +8827,19 @@ async def process_emails_for_triage(
     if not user:
         raise HTTPException(status_code=401, detail="Não autenticado")
 
-    # Garantir que as tabelas existem
-    init_db()
+    try:
+        # Garantir que as tabelas existem
+        init_db()
 
-    from services.email_triage import get_email_triage_service
-    service = get_email_triage_service()
+        from services.email_triage import get_email_triage_service
+        service = get_email_triage_service()
 
-    return service.process_new_emails(account_type=account_type, limit=limit)
+        return service.process_new_emails(account_type=account_type, limit=limit)
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Error processing emails: {error_detail}")
+        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
 
 
 @app.post("/api/email-triage/approve")
