@@ -182,14 +182,32 @@ class EmailTriageService:
             with get_db() as conn:
                 cursor = conn.cursor()
 
-                # Buscar emails não processados (incoming, últimas 48h)
+                # Diagnóstico: contar emails disponíveis
+                cursor.execute("""
+                    SELECT COUNT(*) as total FROM messages m
+                    LEFT JOIN conversations c ON c.id = m.conversation_id
+                    WHERE m.direcao = 'incoming' AND c.canal = 'email'
+                """)
+                total_emails = cursor.fetchone()['total']
+                stats["total_emails_incoming"] = total_emails
+
+                cursor.execute("""
+                    SELECT COUNT(*) as total FROM messages m
+                    LEFT JOIN conversations c ON c.id = m.conversation_id
+                    WHERE m.direcao = 'incoming' AND c.canal = 'email'
+                    AND m.criado_em > NOW() - INTERVAL '7 days'
+                """)
+                recent_emails = cursor.fetchone()['total']
+                stats["emails_last_7_days"] = recent_emails
+
+                # Buscar emails não processados (incoming, últimos 7 dias)
                 query = """
                     SELECT DISTINCT m.id
                     FROM messages m
                     LEFT JOIN conversations c ON c.id = m.conversation_id
                     WHERE m.direcao = 'incoming'
                     AND c.canal = 'email'
-                    AND m.criado_em > NOW() - INTERVAL '48 hours'
+                    AND m.criado_em > NOW() - INTERVAL '7 days'
                     AND m.id NOT IN (SELECT message_id FROM email_triage WHERE message_id IS NOT NULL)
                 """
                 params = []
@@ -203,6 +221,7 @@ class EmailTriageService:
 
                 cursor.execute(query, params)
                 message_ids = [row['id'] for row in cursor.fetchall()]
+                stats["found_to_process"] = len(message_ids)
 
                 for msg_id in message_ids:
                     try:
