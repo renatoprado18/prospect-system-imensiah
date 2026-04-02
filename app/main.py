@@ -8791,16 +8791,24 @@ async def get_email_triage_list(
     if not user:
         raise HTTPException(status_code=401, detail="Não autenticado")
 
-    from services.email_triage import get_email_triage_service
-    service = get_email_triage_service()
+    try:
+        # Garantir que as tabelas existem
+        init_db()
 
-    return service.get_triage_list(
-        status=status,
-        account_type=account_type,
-        classification=classification,
-        limit=limit,
-        offset=offset
-    )
+        from services.email_triage import get_email_triage_service
+        service = get_email_triage_service()
+
+        return service.get_triage_list(
+            status=status,
+            account_type=account_type,
+            classification=classification,
+            limit=limit,
+            offset=offset
+        )
+    except Exception as e:
+        import traceback
+        print(f"Error listing emails: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
 
 
 @app.get("/api/email-triage/stats")
@@ -8810,10 +8818,18 @@ async def get_email_triage_stats(request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="Não autenticado")
 
-    from services.email_triage import get_email_triage_service
-    service = get_email_triage_service()
+    try:
+        # Garantir que as tabelas existem
+        init_db()
 
-    return service.get_stats()
+        from services.email_triage import get_email_triage_service
+        service = get_email_triage_service()
+
+        return service.get_stats()
+    except Exception as e:
+        import traceback
+        print(f"Error getting stats: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
 
 
 @app.post("/api/email-triage/process")
