@@ -97,7 +97,7 @@ class TaskContextService:
                 cursor.execute("""
                     SELECT id, nome, emails, telefones, empresa, cargo, circulo,
                            circulo_pessoal, circulo_profissional, contexto,
-                           resumo_ia, ultimo_contato, aniversario, linkedin
+                           resumo_ai, ultimo_contato, aniversario, linkedin
                     FROM contacts
                     WHERE nome ILIKE %s
                     ORDER BY
@@ -127,7 +127,7 @@ class TaskContextService:
                 cursor.execute("""
                     SELECT c.id, c.nome, c.emails, c.telefones, c.empresa, c.cargo, c.circulo,
                            c.circulo_pessoal, c.circulo_profissional, c.contexto,
-                           c.resumo_ia, c.ultimo_contato, c.aniversario, c.linkedin,
+                           c.resumo_ai, c.ultimo_contato, c.aniversario, c.linkedin,
                            pm.papel
                     FROM project_members pm
                     JOIN contacts c ON c.id = pm.contact_id
@@ -210,7 +210,7 @@ class TaskContextService:
 
             # Projeto
             cursor.execute("""
-                SELECT id, nome, descricao, tipo, status, valor, empresa_relacionada
+                SELECT id, nome, descricao, tipo, status, valor_estimado, empresa_relacionada
                 FROM projects WHERE id = %s
             """, (project_id,))
             project = cursor.fetchone()
@@ -293,9 +293,9 @@ class TaskContextService:
                     context_parts.append(f"Ultimo contato: {uc.strftime('%d/%m/%Y')} ({dias} dias atras)")
 
             # RESUMO IA - contexto rico sobre o relacionamento
-            if contact.get('resumo_ia'):
+            if contact.get('resumo_ai'):
                 context_parts.append(f"\nRESUMO DO RELACIONAMENTO:")
-                context_parts.append(contact['resumo_ia'][:1000])
+                context_parts.append(contact['resumo_ai'][:1000])
 
             # Papel no projeto (se veio do participante)
             if contact.get('papel'):
