@@ -123,15 +123,15 @@ class TaskContextService:
                     ]:
                         name_candidates.append(word)
 
-                # Buscar participantes do projeto
+                # Buscar participantes do projeto (tabela project_members)
                 cursor.execute("""
                     SELECT c.id, c.nome, c.email, c.telefone, c.empresa, c.cargo, c.circulo,
                            c.circulo_pessoal, c.circulo_profissional, c.contexto,
                            c.resumo_ia, c.ultimo_contato, c.aniversario, c.linkedin,
-                           pp.papel
-                    FROM project_participants pp
-                    JOIN contacts c ON c.id = pp.contact_id
-                    WHERE pp.project_id = %s
+                           pm.papel
+                    FROM project_members pm
+                    JOIN contacts c ON c.id = pm.contact_id
+                    WHERE pm.project_id = %s
                 """, (task['project_id'],))
 
                 participants = [dict(row) for row in cursor.fetchall()]
@@ -212,12 +212,12 @@ class TaskContextService:
 
             project = dict(project)
 
-            # Participantes
+            # Participantes (tabela project_members)
             cursor.execute("""
-                SELECT c.id, c.nome, c.empresa, pp.papel
-                FROM project_participants pp
-                JOIN contacts c ON c.id = pp.contact_id
-                WHERE pp.project_id = %s
+                SELECT c.id, c.nome, c.empresa, pm.papel
+                FROM project_members pm
+                JOIN contacts c ON c.id = pm.contact_id
+                WHERE pm.project_id = %s
             """, (project_id,))
             project['participantes'] = [dict(row) for row in cursor.fetchall()]
 
