@@ -195,19 +195,19 @@ class EmailTriageService:
                     SELECT COUNT(*) as total FROM messages m
                     LEFT JOIN conversations c ON c.id = m.conversation_id
                     WHERE m.direcao = 'incoming' AND c.canal = 'email'
-                    AND m.criado_em > NOW() - INTERVAL '7 days'
+                    AND m.criado_em > NOW() - INTERVAL '30 days'
                 """)
                 recent_emails = cursor.fetchone()['total']
-                stats["emails_last_7_days"] = recent_emails
+                stats["emails_last_30_days"] = recent_emails
 
-                # Buscar emails não processados (incoming, últimos 7 dias)
+                # Buscar emails não processados (incoming, últimos 30 dias)
                 query = """
-                    SELECT DISTINCT m.id
+                    SELECT m.id
                     FROM messages m
                     LEFT JOIN conversations c ON c.id = m.conversation_id
                     WHERE m.direcao = 'incoming'
                     AND c.canal = 'email'
-                    AND m.criado_em > NOW() - INTERVAL '7 days'
+                    AND m.criado_em > NOW() - INTERVAL '30 days'
                     AND m.id NOT IN (SELECT message_id FROM email_triage WHERE message_id IS NOT NULL)
                 """
                 params = []
