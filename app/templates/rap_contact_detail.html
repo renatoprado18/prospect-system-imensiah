@@ -418,34 +418,124 @@
         }
         .meeting-compact .meeting-link:hover { color: var(--primary); }
 
-        /* Messages compact */
-        .msg-compact {
+        /* Messages WhatsApp-style bubbles */
+        .messages-chat {
             display: flex;
-            align-items: flex-start;
-            gap: 6px;
-            padding: 6px 8px;
-            background: var(--gray-50);
-            border-radius: 8px;
-            margin-bottom: 4px;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .msg-bubble-row {
+            display: flex;
+        }
+        .msg-bubble-row.incoming { justify-content: flex-start; }
+        .msg-bubble-row.outgoing { justify-content: flex-end; }
+        .msg-bubble {
+            max-width: 88%;
+            padding: 6px 10px;
+            border-radius: 12px;
+            font-size: 0.78rem;
+            line-height: 1.35;
+        }
+        .msg-bubble.incoming {
+            background: #e5e7eb;
+            color: #1f2937;
+            border-bottom-left-radius: 4px;
+        }
+        .msg-bubble.outgoing {
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .msg-bubble .msg-text {
+            display: block;
+            word-wrap: break-word;
+        }
+        .msg-bubble .msg-footer {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 4px;
+            margin-top: 2px;
+            font-size: 0.6rem;
+        }
+        .msg-bubble.outgoing .msg-footer { color: rgba(255,255,255,0.8); }
+        .msg-bubble.incoming .msg-footer { color: #6b7280; }
+
+        /* Facts compact cards */
+        .fact-card {
+            background: linear-gradient(135deg, #fffbeb, #fef3c7);
+            border-left: 3px solid #f59e0b;
+            padding: 6px 10px;
+            border-radius: 6px;
+            margin-bottom: 5px;
+            font-size: 0.8rem;
+            color: #78350f;
+            position: relative;
+            line-height: 1.4;
+        }
+        .fact-card:hover { background: linear-gradient(135deg, #fef3c7, #fde68a); }
+        .fact-card .fact-actions {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            display: flex;
+            gap: 2px;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+        .fact-card:hover .fact-actions { opacity: 1; }
+        .fact-card .fact-actions button {
+            background: rgba(255,255,255,0.9);
+            border: none;
+            border-radius: 3px;
+            padding: 2px 5px;
+            font-size: 0.65rem;
+            cursor: pointer;
+            color: #92400e;
+        }
+        .fact-card .fact-actions button:hover { background: white; }
+        .fact-card .fact-actions button.delete:hover { color: #dc2626; }
+
+        /* Insights compact */
+        .insights-mini {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
             font-size: 0.8rem;
         }
-        .msg-compact.outgoing {
-            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1));
+        .insight-line {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
         }
-        .msg-compact .msg-text {
-            flex: 1;
-            color: var(--gray-700);
-            line-height: 1.3;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
+        .insight-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.72rem;
+            font-weight: 500;
         }
-        .msg-compact .msg-time {
-            font-size: 0.65rem;
-            color: var(--gray-400);
-            white-space: nowrap;
+        .insight-pill.forte { background: #dcfce7; color: #166534; }
+        .insight-pill.medio { background: #fef3c7; color: #92400e; }
+        .insight-pill.fraco { background: #fee2e2; color: #991b1b; }
+        .insight-pill.positivo { background: #dbeafe; color: #1e40af; }
+        .insight-pill.negativo { background: #fee2e2; color: #991b1b; }
+        .insight-pill.neutro { background: #f3f4f6; color: #4b5563; }
+        .insight-pill.alto { background: #d1fae5; color: #065f46; }
+        .insight-tags-mini {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 3px;
+        }
+        .insight-tag-mini {
+            background: #f1f5f9;
+            color: #475569;
+            padding: 1px 6px;
+            border-radius: 8px;
+            font-size: 0.68rem;
         }
 
         /* ConselhoOS compact items */
@@ -3132,46 +3222,41 @@
         }
 
         function renderInsightsCompact(insights) {
-            if (!insights || Object.keys(insights).length === 0) return '<span class="text-muted" style="font-size: 0.85rem;">Sem insights</span>';
+            if (!insights || Object.keys(insights).length === 0) return '<span class="text-muted" style="font-size: 0.8rem;">Sem insights</span>';
 
-            const strengthColors = {
-                'forte': '#10b981',
-                'medio': '#f59e0b',
-                'fraco': '#ef4444'
-            };
+            let html = '<div class="insights-mini">';
 
-            let html = '<div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.85rem;">';
-
-            // Relationship strength + sentiment in one line
+            // Row 1: Relationship + Sentiment badges
             if (insights.forca_relacionamento || insights.sentimento_geral) {
-                html += '<div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">';
+                html += '<div class="insight-line">';
                 if (insights.forca_relacionamento) {
-                    const color = strengthColors[insights.forca_relacionamento] || '#6b7280';
-                    html += `<span style="display: flex; align-items: center; gap: 4px;">
-                        <span style="width: 8px; height: 8px; border-radius: 50%; background: ${color};"></span>
-                        Rel.: <strong>${insights.forca_relacionamento}</strong>
+                    html += `<span class="insight-pill ${insights.forca_relacionamento}">
+                        <span style="width:6px;height:6px;border-radius:50%;background:currentColor;"></span>
+                        Rel: ${insights.forca_relacionamento}
                     </span>`;
                 }
                 if (insights.sentimento_geral) {
-                    const sentimentIcon = insights.sentimento_geral === 'positivo' ? '😊' :
-                                          insights.sentimento_geral === 'negativo' ? '😟' : '😐';
-                    html += `<span>${sentimentIcon} ${insights.sentimento_geral}</span>`;
+                    const emoji = insights.sentimento_geral === 'positivo' ? '😊' :
+                                  insights.sentimento_geral === 'negativo' ? '😟' : '😐';
+                    html += `<span class="insight-pill ${insights.sentimento_geral}">${emoji} ${insights.sentimento_geral}</span>`;
                 }
                 html += '</div>';
             }
 
-            // Topics as tags
+            // Row 2: Topic tags
             if (insights.topicos_frequentes && insights.topicos_frequentes.length > 0) {
-                html += `<div style="display: flex; flex-wrap: wrap; gap: 4px;">
-                    ${insights.topicos_frequentes.slice(0, 3).map(t => `
-                        <span style="background: #f1f5f9; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem;">${t}</span>
-                    `).join('')}
+                html += `<div class="insight-tags-mini">
+                    ${insights.topicos_frequentes.slice(0, 4).map(t => `<span class="insight-tag-mini">${t}</span>`).join('')}
                 </div>`;
             }
 
-            // Business potential
+            // Row 3: Business potential
             if (insights.potencial_negocio) {
-                html += `<span><i class="bi bi-briefcase me-1"></i>Potencial: <strong>${insights.potencial_negocio}</strong></span>`;
+                html += `<div class="insight-line">
+                    <span class="insight-pill ${insights.potencial_negocio}">
+                        <i class="bi bi-briefcase"></i> Potencial: ${insights.potencial_negocio}
+                    </span>
+                </div>`;
             }
 
             html += '</div>';
@@ -4595,10 +4680,9 @@
 
             if (facts.length === 0) {
                 container.innerHTML = `
-                    <div class="text-center text-muted py-3">
-                        <i class="bi bi-lightbulb-off" style="font-size: 1.5rem;"></i>
-                        <p class="mb-0 mt-2 small">Nenhum fato</p>
-                        <button class="btn btn-sm btn-outline-warning mt-2" onclick="extractFacts()">
+                    <div class="text-center text-muted py-2">
+                        <p class="mb-1 small">Nenhum fato registrado</p>
+                        <button class="btn btn-sm btn-outline-warning" onclick="extractFacts()">
                             <i class="bi bi-magic me-1"></i>Extrair com IA
                         </button>
                     </div>
@@ -4609,28 +4693,19 @@
             // Store facts globally for edit access
             window.contactFacts = facts;
 
-            container.innerHTML = `
-                <ul class="list-unstyled mb-0" style="font-size: 0.85rem;">
-                    ${facts.map((f, idx) => `
-                        <li class="mb-2 pb-2 border-bottom fact-item">
-                            <div class="d-flex align-items-start">
-                                <i class="bi bi-dot text-warning flex-shrink-0 mt-1"></i>
-                                <div class="flex-grow-1">
-                                    <span class="fact-text">${escapeHtml(f.fato || f.content || '')}</span>
-                                </div>
-                                <div class="btn-group btn-group-sm ms-2 flex-shrink-0">
-                                    <button class="btn btn-link btn-sm p-0 text-muted" onclick="editFactByIndex(${idx})" title="Editar">
-                                        <i class="bi bi-pencil"></i>
-                                    </button>
-                                    <button class="btn btn-link btn-sm p-0 text-danger ms-2" onclick="deleteFact(${f.id})" title="Remover">
-                                        <i class="bi bi-trash"></i>
-                                    </button>
-                                </div>
-                            </div>
-                        </li>
-                    `).join('')}
-                </ul>
-            `;
+            container.innerHTML = facts.map((f, idx) => `
+                <div class="fact-card">
+                    <span class="fact-text">${escapeHtml(f.fato || f.content || '')}</span>
+                    <div class="fact-actions">
+                        <button onclick="editFactByIndex(${idx})" title="Editar">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="delete" onclick="deleteFact(${f.id})" title="Remover">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            `).join('');
         }
 
         function escapeHtml(text) {
@@ -5069,24 +5144,30 @@
                     return;
                 }
 
-                // Reverter para ordem cronológica
+                // Reverter para ordem cronológica (mais antigas primeiro)
                 const sortedMessages = [...messages].reverse();
 
-                container.innerHTML = sortedMessages.map(m => {
-                    const isWhatsApp = m.canal === 'whatsapp';
-                    const isOutgoing = m.direcao === 'outgoing';
-                    const channelIcon = isWhatsApp ? 'bi-whatsapp text-success' : 'bi-envelope text-primary';
-                    const preview = (m.conteudo || '').substring(0, 60) + ((m.conteudo || '').length > 60 ? '...' : '');
-                    const bubbleClass = isOutgoing ? 'msg-compact outgoing' : 'msg-compact';
+                container.innerHTML = `<div class="messages-chat">
+                    ${sortedMessages.map(m => {
+                        const isWhatsApp = m.canal === 'whatsapp';
+                        const isOutgoing = m.direcao === 'outgoing';
+                        const direction = isOutgoing ? 'outgoing' : 'incoming';
+                        const preview = (m.conteudo || '').substring(0, 80) + ((m.conteudo || '').length > 80 ? '...' : '');
+                        const channelIcon = isWhatsApp ? '✓✓' : '📧';
 
-                    return `
-                        <div class="${bubbleClass}">
-                            <i class="bi ${channelIcon}" style="font-size: 0.7rem;"></i>
-                            <span class="msg-text">${preview}</span>
-                            <span class="msg-time">${formatMessageTime(m.enviado_em || m.created_at)}</span>
-                        </div>
-                    `;
-                }).join('');
+                        return `
+                            <div class="msg-bubble-row ${direction}">
+                                <div class="msg-bubble ${direction}">
+                                    <span class="msg-text">${preview}</span>
+                                    <div class="msg-footer">
+                                        <span>${formatMessageTime(m.enviado_em || m.created_at)}</span>
+                                        ${isOutgoing ? `<span>${channelIcon}</span>` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>`;
 
             } catch (error) {
                 console.error('Error loading compact messages:', error);
