@@ -86,6 +86,12 @@
         border-color: var(--circle-color);
         background: linear-gradient(to bottom, color-mix(in srgb, var(--circle-color) 10%, white), white);
     }
+    .circle-tile.drag-over {
+        border-color: var(--primary) !important;
+        background: rgba(99, 102, 241, 0.15) !important;
+        transform: scale(1.05);
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    }
     .circle-tile .badge {
         display: inline-block;
         font-size: 0.65rem;
@@ -542,7 +548,12 @@ function renderTiles(ctx, porCirculo, config) {
         const active = selected[ctx] === i;
         const hc = healthClass(s.health_medio);
         el.innerHTML += `
-            <div class="circle-tile tile-${i} ${active ? 'active' : ''}" onclick="selectTile('${ctx}', ${i})">
+            <div class="circle-tile tile-${i} ${active ? 'active' : ''}"
+                 data-context="${ctx}" data-circulo="${i}"
+                 onclick="selectTile('${ctx}', ${i})"
+                 ondragover="handleTileDragOver(event)"
+                 ondragleave="handleTileDragLeave(event)"
+                 ondrop="handleTileDrop(event)">
                 <div class="badge">${c.badge || 'C'+i}</div>
                 <div class="count">${fmt(s.total)}</div>
                 <div class="name">${c.nome || ''}</div>
@@ -810,13 +821,23 @@ function handleDragStart(e) {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', JSON.stringify(draggedData));
 
-    // Highlight drop zones
+    // Highlight drop zones (lists and tiles)
     setTimeout(() => {
+        // Highlight opposite context list
         document.querySelectorAll('.priority-list').forEach(el => {
             if (el.dataset.context !== draggedData.context) {
                 el.style.outline = '2px dashed #6366f1';
                 el.style.outlineOffset = '-2px';
             }
+        });
+
+        // Highlight all circle tiles as potential targets
+        document.querySelectorAll('.circle-tile').forEach(el => {
+            const tileCtx = el.dataset.context;
+            const tileCirc = parseInt(el.dataset.circulo);
+            // Skip current position
+            if (tileCtx === draggedData.context && tileCirc === draggedData.circulo) return;
+            el.style.outline = '2px dashed #6366f1';
         });
     }, 0);
 }
@@ -828,12 +849,91 @@ function handleDragEnd(e) {
     draggedItem = null;
     draggedData = null;
 
-    // Remove all highlights
+    // Remove all highlights from lists
     document.querySelectorAll('.priority-list').forEach(el => {
         el.classList.remove('drag-over');
         el.style.outline = '';
         el.style.outlineOffset = '';
     });
+
+    // Remove all highlights from tiles
+    document.querySelectorAll('.circle-tile').forEach(el => {
+        el.classList.remove('drag-over');
+        el.style.transform = '';
+        el.style.outline = '';
+    });
+}
+
+// =============================================
+// TILE DROP HANDLERS (drop on specific circle)
+// =============================================
+function handleTileDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+
+    const tile = e.target.closest('.circle-tile');
+    if (!tile || !draggedData) return;
+
+    // Highlight tile (allow drop on any tile, including same context)
+    tile.classList.add('drag-over');
+    tile.style.transform = 'scale(1.05)';
+}
+
+function handleTileDragLeave(e) {
+    const tile = e.target.closest('.circle-tile');
+    if (tile) {
+        tile.classList.remove('drag-over');
+        tile.style.transform = '';
+    }
+}
+
+async function handleTileDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const tile = e.target.closest('.circle-tile');
+    if (!tile || !draggedData) return;
+
+    tile.classList.remove('drag-over');
+    tile.style.transform = '';
+
+    const targetContext = tile.dataset.context;
+    const targetCirculo = parseInt(tile.dataset.circulo);
+
+    console.log('Tile drop:', { from: draggedData, to: { context: targetContext, circulo: targetCirculo } });
+
+    // Skip if same context AND same circle
+    if (targetContext === draggedData.context && targetCirculo === draggedData.circulo) {
+        console.log('Same position, ignoring');
+        return;
+    }
+
+    const payload = {
+        contexto: targetContext,
+        circulo: targetCirculo
+    };
+
+    try {
+        const res = await fetch(`/api/contatos/${draggedData.id}/circulo`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        console.log('Tile drop response:', res.status, data);
+
+        if (res.ok) {
+            const targetLabel = targetContext === 'pessoal' ? 'Pessoal' : 'Profissional';
+            console.log(`Moved ${draggedData.name} to ${targetLabel} C${targetCirculo}`);
+            loadData();
+        } else {
+            alert('Erro ao mover: ' + (data.detail || res.status));
+        }
+    } catch (err) {
+        console.error('Tile drop error:', err);
+        alert('Erro ao mover: ' + err.message);
+    }
 }
 
 // Setup drop zones (the priority lists)
