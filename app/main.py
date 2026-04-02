@@ -7161,12 +7161,22 @@ async def api_create_meeting_from_suggestion(request: Request, contact_id: int):
     data = await request.json()
 
     # Obter token do Gmail (mesmo OAuth)
-    access_token = get_valid_access_token()
-    if not access_token:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+
+    if not account:
         raise HTTPException(status_code=401, detail="Gmail nao conectado - necessario para criar eventos")
 
+    # Refresh token
+    tokens = await gmail.refresh_access_token(account["refresh_token"])
+    if "error" in tokens:
+        raise HTTPException(status_code=401, detail=f"Erro ao renovar token: {tokens.get('error')}")
+
+    access_token = tokens.get("access_token")
+
     # Preparar dados do evento
-    from datetime import datetime
     from zoneinfo import ZoneInfo
 
     sp_tz = ZoneInfo("America/Sao_Paulo")
