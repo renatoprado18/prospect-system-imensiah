@@ -663,7 +663,7 @@ async function filterByCircle(ctx, n) {
     }
 
     // Use the specific circle endpoint with contexto parameter
-    const url = `/api/circulos/${n}/contacts?sort_by=health&limit=30&contexto=${ctx}`;
+    const url = `/api/circulos/${n}/contacts?sort_by=health&limit=200&contexto=${ctx}`;
     console.log('Fetching:', url);
 
     try {
