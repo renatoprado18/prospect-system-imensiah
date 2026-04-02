@@ -48,46 +48,56 @@ class TaskContextService:
     def find_contact_from_task(self, task: Dict) -> Optional[Dict]:
         """
         Encontra o contato relacionado a tarefa.
-        Primeiro verifica contact_id, depois busca pelo nome no titulo.
+        Ordem de busca:
+        1. contact_id direto na tarefa
+        2. Nome no titulo da tarefa
+        3. Participantes do projeto (se task pertence a um projeto)
         """
         with get_db() as conn:
             cursor = conn.cursor()
 
-            # Se ja tem contact_id vinculado
+            # Query completa para buscar contato com resumo IA
+            contact_query = """
+                SELECT id, nome, email, telefone, empresa, cargo, circulo,
+                       circulo_pessoal, circulo_profissional, contexto,
+                       resumo_ia, ultimo_contato, aniversario, linkedin
+                FROM contacts WHERE id = %s
+            """
+
+            # 1. Se ja tem contact_id vinculado
             if task.get('linked_contact_id'):
-                cursor.execute("""
-                    SELECT id, nome, email, telefone, empresa, cargo, circulo
-                    FROM contacts WHERE id = %s
-                """, (task['linked_contact_id'],))
+                cursor.execute(contact_query, (task['linked_contact_id'],))
                 row = cursor.fetchone()
                 if row:
                     return dict(row)
 
-            # Buscar pelo nome no titulo da tarefa
+            # 2. Buscar pelo nome no titulo da tarefa
             titulo = task.get('titulo', '')
 
             # Extrair possivel nome do titulo
             # Ex: "Mensagem para Rodrigo Pretola" -> "Rodrigo Pretola"
+            # Ex: "Follow-up: Mensagem para Rodrigo Pretola" -> "Rodrigo Pretola"
             import re
             patterns = [
-                r'para\s+(.+?)(?:\s*$|\s*[-:])',
-                r'com\s+(.+?)(?:\s*$|\s*[-:])',
-                r'de\s+(.+?)(?:\s*$|\s*[-:])',
-                r'(?:ligar|contatar|email|mensagem|whatsapp)\s+(?:para\s+)?(.+?)(?:\s*$|\s*[-:])',
+                r'para\s+([A-Z][a-záéíóúâêîôûãõ]+(?:\s+[A-Z][a-záéíóúâêîôûãõ]+)*)',  # "para Nome Sobrenome"
+                r'com\s+([A-Z][a-záéíóúâêîôûãõ]+(?:\s+[A-Z][a-záéíóúâêîôûãõ]+)*)',  # "com Nome Sobrenome"
+                r'de\s+([A-Z][a-záéíóúâêîôûãõ]+(?:\s+[A-Z][a-záéíóúâêîôûãõ]+)*)',   # "de Nome Sobrenome"
+                r'(?:ligar|contatar|email|mensagem|whatsapp)\s+(?:para\s+)?([A-Z][a-záéíóúâêîôûãõ]+(?:\s+[A-Z][a-záéíóúâêîôûãõ]+)*)',
             ]
 
             potential_name = None
             for pattern in patterns:
-                match = re.search(pattern, titulo, re.IGNORECASE)
+                match = re.search(pattern, titulo)
                 if match:
                     potential_name = match.group(1).strip()
                     break
 
-            if potential_name:
-                # Buscar contato por nome similar (usando ILIKE para compatibilidade)
-                # Primeiro tenta match exato, depois parcial
+            if potential_name and len(potential_name) > 2:
+                # Buscar contato por nome similar
                 cursor.execute("""
-                    SELECT id, nome, email, telefone, empresa, cargo, circulo
+                    SELECT id, nome, email, telefone, empresa, cargo, circulo,
+                           circulo_pessoal, circulo_profissional, contexto,
+                           resumo_ia, ultimo_contato, aniversario, linkedin
                     FROM contacts
                     WHERE nome ILIKE %s
                     ORDER BY
@@ -98,6 +108,45 @@ class TaskContextService:
                 row = cursor.fetchone()
                 if row:
                     return dict(row)
+
+            # 3. Buscar entre participantes do projeto
+            if task.get('project_id'):
+                # Extrair qualquer nome proprio do titulo
+                words = titulo.split()
+                name_candidates = []
+                for i, word in enumerate(words):
+                    # Palavras que começam com maiúscula e não são conectivos
+                    if word and word[0].isupper() and word.lower() not in [
+                        'follow-up:', 'follow-up', 'followup', 'fup', 'mensagem',
+                        'email', 'ligar', 'contatar', 'reuniao', 'meeting', 'call',
+                        'para', 'com', 'de', 'tarefa', 'task', 'enviar', 'responder'
+                    ]:
+                        name_candidates.append(word)
+
+                # Buscar participantes do projeto
+                cursor.execute("""
+                    SELECT c.id, c.nome, c.email, c.telefone, c.empresa, c.cargo, c.circulo,
+                           c.circulo_pessoal, c.circulo_profissional, c.contexto,
+                           c.resumo_ia, c.ultimo_contato, c.aniversario, c.linkedin,
+                           pp.papel
+                    FROM project_participants pp
+                    JOIN contacts c ON c.id = pp.contact_id
+                    WHERE pp.project_id = %s
+                """, (task['project_id'],))
+
+                participants = [dict(row) for row in cursor.fetchall()]
+
+                # Tentar match com nome do titulo
+                for participant in participants:
+                    nome = participant.get('nome', '')
+                    # Verificar se algum candidato de nome está no nome do participante
+                    for candidate in name_candidates:
+                        if candidate.lower() in nome.lower():
+                            return participant
+
+                    # Verificar match direto
+                    if potential_name and potential_name.lower() in nome.lower():
+                        return participant
 
         return None
 
@@ -206,17 +255,52 @@ class TaskContextService:
         if task.get('descricao'):
             context_parts.append(f"Descricao: {task['descricao']}")
 
-        # Contato
+        # Contato - com informações completas
         if contact:
-            context_parts.append(f"\nCONTATO: {contact.get('nome', 'Desconhecido')}")
+            context_parts.append(f"\n=== CONTATO ===")
+            context_parts.append(f"Nome: {contact.get('nome', 'Desconhecido')}")
             if contact.get('empresa'):
                 context_parts.append(f"Empresa: {contact['empresa']}")
             if contact.get('cargo'):
                 context_parts.append(f"Cargo: {contact['cargo']}")
+            if contact.get('email'):
+                context_parts.append(f"Email: {contact['email']}")
+            if contact.get('telefone'):
+                context_parts.append(f"Telefone: {contact['telefone']}")
+
+            # Círculos e contexto
+            circulo_info = []
+            if contact.get('circulo_pessoal'):
+                circulo_info.append(f"Pessoal P{contact['circulo_pessoal']}")
+            if contact.get('circulo_profissional'):
+                circulo_info.append(f"Profissional R{contact['circulo_profissional']}")
+            if circulo_info:
+                context_parts.append(f"Circulos: {', '.join(circulo_info)}")
+
+            # Último contato
+            if contact.get('ultimo_contato'):
+                uc = contact['ultimo_contato']
+                if isinstance(uc, datetime):
+                    dias = (datetime.now() - uc).days
+                    context_parts.append(f"Ultimo contato: {uc.strftime('%d/%m/%Y')} ({dias} dias atras)")
+
+            # RESUMO IA - contexto rico sobre o relacionamento
+            if contact.get('resumo_ia'):
+                context_parts.append(f"\nRESUMO DO RELACIONAMENTO:")
+                context_parts.append(contact['resumo_ia'][:1000])
+
+            # Papel no projeto (se veio do participante)
+            if contact.get('papel'):
+                context_parts.append(f"Papel no projeto: {contact['papel']}")
 
         # Projeto
         if project:
-            context_parts.append(f"\nPROJETO: {project.get('nome', '')}")
+            context_parts.append(f"\n=== PROJETO ===")
+            context_parts.append(f"Nome: {project.get('nome', '')}")
+            if project.get('tipo'):
+                context_parts.append(f"Tipo: {project['tipo']}")
+            if project.get('status'):
+                context_parts.append(f"Status: {project['status']}")
             if project.get('descricao'):
                 context_parts.append(f"Descricao: {project['descricao']}")
             if project.get('participantes'):
@@ -226,40 +310,62 @@ class TaskContextService:
                 ])
                 context_parts.append(f"Participantes: {participants}")
 
-        # Mensagens WhatsApp
+            # Outras tarefas do projeto
+            if project.get('outras_tarefas'):
+                tarefas_status = []
+                for t in project['outras_tarefas'][:5]:
+                    status_icon = "✓" if t.get('status') == 'completed' else "○"
+                    tarefas_status.append(f"{status_icon} {t.get('titulo', '')}")
+                if tarefas_status:
+                    context_parts.append(f"Tarefas do projeto: {'; '.join(tarefas_status)}")
+
+        # Mensagens WhatsApp - mais detalhes
         if messages:
-            context_parts.append("\nULTIMAS MENSAGENS WHATSAPP:")
-            for msg in messages[-10:]:  # Ultimas 10
-                direction = "Voce" if msg.get('direcao') == 'outgoing' else contact.get('nome', 'Contato')
+            context_parts.append(f"\n=== MENSAGENS WHATSAPP ({len(messages)} msgs) ===")
+            for msg in messages[-15:]:  # Ultimas 15
+                contact_name = contact.get('nome', 'Contato') if contact else 'Contato'
+                direction = "Eu" if msg.get('direcao') == 'outgoing' else contact_name
                 date = msg.get('enviado_em', '')
                 if isinstance(date, datetime):
                     date = date.strftime('%d/%m %H:%M')
-                context_parts.append(f"[{date}] {direction}: {msg.get('conteudo', '')[:200]}")
+                content = msg.get('conteudo', '')[:300]
+                context_parts.append(f"[{date}] {direction}: {content}")
+        else:
+            context_parts.append("\nSem historico de mensagens WhatsApp")
 
         # Emails
         if emails:
-            context_parts.append("\nEMAILS RECENTES:")
+            context_parts.append(f"\n=== EMAILS RECENTES ({len(emails)}) ===")
             for email in emails[:5]:
                 direction = "Enviado" if email.get('direction') == 'sent' else "Recebido"
                 context_parts.append(f"- {direction}: {email.get('subject', 'Sem assunto')}")
 
         context = "\n".join(context_parts)
 
-        prompt = f"""Voce e um assistente pessoal de gestao de relacionamentos.
+        prompt = f"""Voce e um assistente executivo de alto nivel, especializado em gestao de relacionamentos estrategicos.
 
-Analise o contexto abaixo e sugira como executar a tarefa.
-
+CONTEXTO COMPLETO:
 {context}
 
-Responda em JSON:
+TAREFA A EXECUTAR: {task.get('titulo', '')}
+
+Analise TODO o contexto acima - historico de conversas, resumo do relacionamento, projeto em andamento, e status atual - e forneca uma sugestao pratica e especifica.
+
+Responda APENAS em JSON valido (sem markdown):
 {{
-  "resumo_situacao": "Breve resumo do contexto e historico com a pessoa",
-  "ultima_interacao": "Quando e sobre o que foi a ultima conversa",
-  "sugestao_acao": "O que fazer agora (ex: enviar WhatsApp, ligar, aguardar)",
-  "mensagem_sugerida": "Se for enviar mensagem, sugira o texto",
-  "timing": "Melhor momento para contato",
-  "observacoes": "Outras observacoes relevantes"
-}}"""
+  "resumo_situacao": "Contexto completo: quem e a pessoa, qual o historico, em que ponto esta o relacionamento/negociacao",
+  "ultima_interacao": "Quando foi, o que foi discutido, se ha pendencias ou expectativas",
+  "sugestao_acao": "Acao especifica e pratica (ex: 'Enviar WhatsApp agradecendo e propondo proximos passos', 'Ligar para alinhar expectativas')",
+  "mensagem_sugerida": "Texto completo da mensagem, personalizado para o contexto e tom da conversa anterior. Se for follow-up, referencie a conversa anterior.",
+  "timing": "Momento ideal considerando o contexto (ex: 'Hoje pela manha - ha 2 dias aguardando resposta')",
+  "observacoes": "Insights estrategicos: riscos, oportunidades, pontos de atencao baseados no historico"
+}}
+
+IMPORTANTE:
+- Use o RESUMO DO RELACIONAMENTO para entender o contexto historico
+- Analise o TOM das mensagens anteriores para manter consistencia
+- Se houver negociacao em andamento, considere a fase atual
+- A mensagem sugerida deve ser natural, no estilo das conversas anteriores"""
 
         try:
             async with httpx.AsyncClient(timeout=30) as client:
