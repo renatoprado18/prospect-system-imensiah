@@ -3339,25 +3339,70 @@
             const container = document.getElementById('conselhoosLinks');
 
             try {
-                const response = await fetch(`/api/contacts/${contactId}/conselhoos`);
-                if (!response.ok) return;
+                // Load empresas and reuniões in parallel
+                const [empresasRes, reunioesRes] = await Promise.all([
+                    fetch(`/api/contacts/${contactId}/conselhoos`),
+                    fetch(`/api/contacts/${contactId}/conselhoos/reunioes?limit=10`)
+                ]);
 
-                const data = await response.json();
-                const empresas = data.empresas || [];
+                const empresasData = empresasRes.ok ? await empresasRes.json() : { empresas: [] };
+                const reunioesData = reunioesRes.ok ? await reunioesRes.json() : { reunioes: [] };
 
-                if (empresas.length > 0) {
+                const empresas = empresasData.empresas || [];
+                const reunioes = reunioesData.reunioes || [];
+
+                if (empresas.length > 0 || reunioes.length > 0) {
                     section.style.display = 'block';
-                    container.innerHTML = empresas.map(e => `
-                        <div class="d-flex justify-content-between align-items-center p-2 rounded mb-2" style="background: rgba(26, 26, 46, 0.05);">
-                            <div>
-                                <strong>${e.conselhoos_empresa_nome}</strong>
-                                <div class="text-muted small">${e.role || 'Stakeholder'}</div>
-                            </div>
-                            <a href="https://conselhoos.vercel.app/empresa/${e.conselhoos_empresa_id}" target="_blank" class="btn btn-sm btn-outline-secondary">
-                                <i class="bi bi-box-arrow-up-right"></i>
-                            </a>
-                        </div>
-                    `).join('');
+
+                    let html = '';
+
+                    // Empresas section
+                    if (empresas.length > 0) {
+                        html += `<div class="mb-3">
+                            <div class="text-muted small mb-2"><i class="bi bi-building me-1"></i> Empresas Vinculadas</div>
+                            ${empresas.map(e => `
+                                <div class="d-flex justify-content-between align-items-center p-2 rounded mb-2" style="background: rgba(26, 26, 46, 0.05);">
+                                    <div>
+                                        <strong>${e.conselhoos_empresa_nome}</strong>
+                                        <div class="text-muted small">${e.role || 'Stakeholder'}</div>
+                                    </div>
+                                    <a href="https://conselho.almeida-prado.com/empresa/${e.conselhoos_empresa_id}" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                        <i class="bi bi-box-arrow-up-right"></i>
+                                    </a>
+                                </div>
+                            `).join('')}
+                        </div>`;
+                    }
+
+                    // Reuniões section
+                    if (reunioes.length > 0) {
+                        html += `<div class="mb-2">
+                            <div class="text-muted small mb-2"><i class="bi bi-calendar-event me-1"></i> Reuniões de Conselho</div>
+                            ${reunioes.slice(0, 5).map(r => {
+                                const date = r.data ? new Date(r.data) : null;
+                                const dateStr = date ? date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+                                const isPast = date && date < new Date();
+                                const statusIcon = r.status === 'concluida' ? 'check-circle-fill text-success' :
+                                                   r.status === 'agendada' ? 'calendar-check text-primary' :
+                                                   r.status === 'cancelada' ? 'x-circle text-danger' : 'clock';
+                                return `
+                                    <div class="d-flex justify-content-between align-items-center p-2 rounded mb-1" style="background: rgba(26, 26, 46, 0.03);">
+                                        <div class="d-flex align-items-center">
+                                            <i class="bi bi-${statusIcon} me-2"></i>
+                                            <div>
+                                                <div style="font-size: 0.9rem;">${r.empresa_nome}</div>
+                                                <div class="text-muted" style="font-size: 0.75rem;">${r.titulo || 'Reunião'} - ${dateStr}</div>
+                                            </div>
+                                        </div>
+                                        ${r.calendar_link ? `<a href="${r.calendar_link}" target="_blank" class="btn btn-sm btn-link p-0"><i class="bi bi-calendar"></i></a>` : ''}
+                                    </div>
+                                `;
+                            }).join('')}
+                            ${reunioes.length > 5 ? `<div class="text-center mt-2"><a href="https://conselho.almeida-prado.com" target="_blank" class="small text-muted">Ver todas (${reunioes.length})</a></div>` : ''}
+                        </div>`;
+                    }
+
+                    container.innerHTML = html;
                 } else {
                     section.style.display = 'block';
                     container.innerHTML = `
@@ -3377,7 +3422,7 @@
 
         function openLinkConselhoOSModal() {
             // For now, open ConselhoOS in a new tab - modal can be added later
-            window.open('https://conselhoos.vercel.app', '_blank');
+            window.open('https://conselho.almeida-prado.com', '_blank');
             showToast('Vincule o contato pelo ConselhoOS');
         }
 
