@@ -442,12 +442,8 @@
         const circleClass = circle ? `c${circle}` : '';
         const circleLabel = circle ? `C${circle}` : '';
 
-        // Parse metadata to get from_name
-        let metadata = email.metadata;
-        if (typeof metadata === 'string') {
-            try { metadata = JSON.parse(metadata); } catch(e) { metadata = {}; }
-        }
-        const senderName = email.contact_nome || metadata?.from_name || metadata?.from || 'Desconhecido';
+        // Get sender name: prefer contact name, then from_name from metadata
+        const senderName = email.contact_nome || email.from_name_meta || email.from_email_meta || 'Desconhecido';
 
         const classification = email.classification || 'fyi';
         const classLabels = {

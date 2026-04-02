@@ -9226,6 +9226,91 @@ async def sync_gmail_labels(request: Request, label: str = "!!Renato"):
         raise HTTPException(status_code=500, detail=f"Erro ao sincronizar: {str(e)}")
 
 
+@app.post("/api/email-triage/fix-metadata")
+async def fix_email_metadata(request: Request):
+    """Corrige metadata dos emails importados que estão sem from_name"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    try:
+        from integrations.gmail import GmailIntegration
+        import json
+
+        gmail = GmailIntegration()
+        fixed = 0
+        errors = []
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Buscar emails sem from_name no metadata
+            cursor.execute("""
+                SELECT m.id, m.external_id, ga.access_token, ga.refresh_token, ga.email as account_email
+                FROM messages m
+                JOIN email_triage et ON et.message_id = m.id
+                JOIN google_accounts ga ON m.metadata->>'account' = ga.email
+                WHERE m.external_id IS NOT NULL
+                  AND (m.metadata->>'from_name' IS NULL OR m.metadata->>'from_name' = '')
+            """)
+            messages = cursor.fetchall()
+
+            for msg in messages:
+                try:
+                    access_token = msg['access_token']
+                    gmail_id = msg['external_id']
+
+                    # Buscar detalhes do email
+                    msg_details = await gmail.get_message(access_token, gmail_id)
+
+                    if "error" in msg_details:
+                        if msg_details.get("error") == "token_expired":
+                            # Tentar refresh
+                            refresh_result = await gmail.refresh_access_token(msg['refresh_token'])
+                            if "access_token" in refresh_result:
+                                access_token = refresh_result["access_token"]
+                                cursor.execute("""
+                                    UPDATE google_accounts SET access_token = %s WHERE email = %s
+                                """, (access_token, msg['account_email']))
+                                conn.commit()
+                                msg_details = await gmail.get_message(access_token, gmail_id)
+                            else:
+                                continue
+                        else:
+                            continue
+
+                    if "error" in msg_details:
+                        continue
+
+                    headers = gmail.parse_message_headers(msg_details)
+                    from_header = headers.get("from", "")
+                    from_email = gmail.extract_email_address(from_header)
+                    from_name = from_header.split('<')[0].strip().strip('"') if '<' in from_header else from_email
+
+                    # Atualizar metadata
+                    cursor.execute("""
+                        UPDATE messages
+                        SET metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                        WHERE id = %s
+                    """, (
+                        json.dumps({"from": from_email, "from_name": from_name}),
+                        msg['id']
+                    ))
+                    fixed += 1
+
+                except Exception as e:
+                    errors.append(f"Message {msg['id']}: {str(e)}")
+
+            conn.commit()
+
+        return {"fixed": fixed, "errors": errors}
+
+    except Exception as e:
+        import traceback
+        print(f"Error fixing metadata: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
+
+
 # === REGRAS DE TRIAGEM ===
 
 @app.get("/api/email-triage/rules")

@@ -474,6 +474,8 @@ class EmailTriageService:
                 SELECT
                     et.*,
                     m.conteudo, m.metadata, m.enviado_em,
+                    m.metadata->>'from_name' as from_name_meta,
+                    m.metadata->>'from' as from_email_meta,
                     c.assunto, c.ultimo_mensagem,
                     ct.nome as contact_nome, ct.empresa, ct.foto_url,
                     ct.circulo, ct.circulo_pessoal, ct.circulo_profissional
