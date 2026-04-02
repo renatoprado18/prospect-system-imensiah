@@ -841,13 +841,34 @@ class EmailTriageService:
 
                         # Verificar se já existe na triagem
                         cursor.execute("""
-                            SELECT et.id FROM email_triage et
+                            SELECT et.id, et.message_id FROM email_triage et
                             JOIN messages m ON m.id = et.message_id
                             WHERE m.external_id = %s
                         """, (gmail_id,))
                         existing = cursor.fetchone()
 
                         if existing:
+                            # Atualizar metadata se from_name está faltando
+                            cursor.execute("""
+                                SELECT metadata->>'from_name' as from_name FROM messages WHERE id = %s
+                            """, (existing['message_id'],))
+                            msg_meta = cursor.fetchone()
+                            if not msg_meta or not msg_meta.get('from_name'):
+                                # Buscar detalhes do email para obter from_name
+                                msg_details = await gmail.get_message(access_token, gmail_id)
+                                if "error" not in msg_details:
+                                    headers = gmail.parse_message_headers(msg_details)
+                                    from_header = headers.get("from", "")
+                                    from_email = gmail.extract_email_address(from_header)
+                                    from_name = from_header.split('<')[0].strip().strip('"') if '<' in from_header else from_email
+                                    cursor.execute("""
+                                        UPDATE messages
+                                        SET metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                                        WHERE id = %s
+                                    """, (
+                                        json.dumps({"from": from_email, "from_name": from_name}),
+                                        existing['message_id']
+                                    ))
                             stats["emails_skipped"] += 1
                             continue
 
@@ -896,6 +917,15 @@ class EmailTriageService:
                         if existing_msg:
                             message_id = existing_msg['id']
                             conversation_id = existing_msg['conversation_id']
+                            # Atualizar metadata com from_name se não existir
+                            cursor.execute("""
+                                UPDATE messages
+                                SET metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                                WHERE id = %s AND (metadata->>'from_name' IS NULL)
+                            """, (
+                                json.dumps({"from": from_email, "from_name": from_name}),
+                                message_id
+                            ))
                         else:
                             # Criar conversa
                             cursor.execute("""

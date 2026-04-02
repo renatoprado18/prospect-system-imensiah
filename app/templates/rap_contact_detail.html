@@ -3897,29 +3897,30 @@
 
             try {
                 const response = await fetch(`/api/contacts/${contactId}/calendar`);
-                if (!response.ok) throw new Error('API not available');
-
                 const data = await response.json();
+                console.log('Calendar API response:', data);
+
+                if (data.error) {
+                    console.error('Calendar API error:', data.error);
+                    container.innerHTML = `
+                        <div class="empty-state" style="padding: 16px;">
+                            <i class="bi bi-exclamation-triangle" style="font-size: 2rem; color: var(--warning);"></i>
+                            <p style="margin: 8px 0 0; font-size: 0.85rem;">Erro: ${data.error}</p>
+                        </div>
+                    `;
+                    return;
+                }
+
                 const events = data.events || [];
                 renderMeetings(events);
             } catch (error) {
-                console.log('Meetings API not available, using mock data');
-                // Mock data for demonstration
-                const mockMeetings = [
-                    {
-                        id: 1,
-                        summary: 'Reuniao de Alinhamento',
-                        start_datetime: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
-                        status: 'confirmed'
-                    },
-                    {
-                        id: 2,
-                        summary: 'Follow-up Proposta',
-                        start_datetime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-                        status: 'completed'
-                    }
-                ];
-                renderMeetings(mockMeetings);
+                console.error('Meetings API error:', error);
+                container.innerHTML = `
+                    <div class="empty-state" style="padding: 16px;">
+                        <i class="bi bi-calendar-x" style="font-size: 2rem; color: var(--gray-300);"></i>
+                        <p style="margin: 8px 0 0; font-size: 0.85rem;">Erro ao carregar reunioes</p>
+                    </div>
+                `;
             }
         }
 

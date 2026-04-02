@@ -442,6 +442,13 @@
         const circleClass = circle ? `c${circle}` : '';
         const circleLabel = circle ? `C${circle}` : '';
 
+        // Parse metadata to get from_name
+        let metadata = email.metadata;
+        if (typeof metadata === 'string') {
+            try { metadata = JSON.parse(metadata); } catch(e) { metadata = {}; }
+        }
+        const senderName = email.contact_nome || metadata?.from_name || metadata?.from || 'Desconhecido';
+
         const classification = email.classification || 'fyi';
         const classLabels = {
             urgent: 'Urgente',
@@ -470,7 +477,7 @@
                     <div class="email-header">
                         <div class="email-sender">
                             <span class="classification-badge ${classification}">${classLabels[classification] || classification}</span>
-                            <span class="email-sender-name">${email.contact_nome || 'Desconhecido'}</span>
+                            <span class="email-sender-name">${senderName}</span>
                             ${circleLabel ? `<span class="email-circle-badge ${circleClass}">${circleLabel}</span>` : ''}
                             ${email.empresa ? `<span style="color: var(--gray-500); font-size: 0.8rem;">- ${email.empresa}</span>` : ''}
                         </div>

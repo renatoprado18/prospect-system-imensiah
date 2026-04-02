@@ -11212,7 +11212,8 @@ async def get_contact_calendar_events(request: Request, contact_id: int, limit: 
         return {"events": [], "total": 0, "error": "token_refresh_failed"}
 
     access_token = tokens.get("access_token")
-    calendar = get_calendar_integration()
+    from integrations.google_calendar import GoogleCalendarIntegration
+    calendar = GoogleCalendarIntegration()
 
     # Buscar eventos pelo nome do contato
     contact_name = contact["nome"]
