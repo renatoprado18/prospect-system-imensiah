@@ -1247,6 +1247,68 @@ def init_db():
             ON action_proposals(urgency, criado_em DESC) WHERE status = 'pending'
         ''')
 
+        # Editorial Calendar - posts para redes sociais
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS editorial_posts (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+
+                -- Conteúdo original (do site)
+                article_slug TEXT,
+                article_title TEXT NOT NULL,
+                article_url TEXT,
+                article_description TEXT,
+
+                -- Adaptação para redes
+                canal TEXT NOT NULL DEFAULT 'linkedin',
+                tipo TEXT DEFAULT 'repost',
+                titulo_adaptado TEXT,
+                conteudo_adaptado TEXT,
+                hashtags JSONB DEFAULT '[]',
+                imagem_url TEXT,
+
+                -- Agendamento
+                status TEXT DEFAULT 'draft',
+                data_publicacao TIMESTAMP,
+                data_publicado TIMESTAMP,
+
+                -- Integração com Tasks e Calendar
+                task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+                calendar_event_id INTEGER REFERENCES calendar_events(id) ON DELETE SET NULL,
+
+                -- Métricas pós-publicação
+                metricas JSONB DEFAULT '{}',
+                url_publicado TEXT,
+
+                -- Metadata
+                prioridade INTEGER DEFAULT 5,
+                notas TEXT,
+                tags JSONB DEFAULT '[]',
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_posts_status
+            ON editorial_posts(status)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_posts_canal
+            ON editorial_posts(canal)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_posts_data_publicacao
+            ON editorial_posts(data_publicacao)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_posts_project
+            ON editorial_posts(project_id)
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True

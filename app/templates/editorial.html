@@ -1,0 +1,788 @@
+{% extends "rap_base.html" %}
+{% block title %}Calendario Editorial - INTEL{% endblock %}
+{% block page_title %}Calendario Editorial{% endblock %}
+
+{% block extra_css %}
+<style>
+    .editorial-container {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 24px;
+    }
+
+    .editorial-main {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .editorial-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    /* Stats Cards */
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+    }
+
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .stat-card .icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        margin-bottom: 12px;
+    }
+
+    .stat-card .value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--dark);
+    }
+
+    .stat-card .label {
+        font-size: 0.875rem;
+        color: var(--gray-500);
+    }
+
+    /* Posts List */
+    .posts-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .posts-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .posts-header h2 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 0;
+    }
+
+    .posts-filters {
+        display: flex;
+        gap: 12px;
+    }
+
+    .filter-select {
+        padding: 8px 12px;
+        border: 1px solid var(--gray-200);
+        border-radius: 8px;
+        font-size: 0.875rem;
+        background: white;
+        color: var(--dark);
+        cursor: pointer;
+    }
+
+    .posts-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .post-item {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 16px;
+        background: var(--gray-100);
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .post-item:hover {
+        background: var(--gray-200);
+        transform: translateX(4px);
+    }
+
+    .post-canal {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        flex-shrink: 0;
+    }
+
+    .post-canal.linkedin {
+        background: rgba(0, 119, 181, 0.1);
+        color: #0077b5;
+    }
+
+    .post-canal.instagram {
+        background: rgba(228, 64, 95, 0.1);
+        color: #e4405f;
+    }
+
+    .post-canal.both {
+        background: rgba(99, 102, 241, 0.1);
+        color: var(--primary);
+    }
+
+    .post-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .post-title {
+        font-weight: 500;
+        color: var(--dark);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin-bottom: 4px;
+    }
+
+    .post-meta {
+        font-size: 0.75rem;
+        color: var(--gray-500);
+        display: flex;
+        gap: 12px;
+    }
+
+    .post-status {
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        flex-shrink: 0;
+    }
+
+    .post-status.draft { background: #e5e7eb; color: #374151; }
+    .post-status.scheduled { background: #dbeafe; color: #1d4ed8; }
+    .post-status.ready { background: #d1fae5; color: #047857; }
+    .post-status.published { background: #ede9fe; color: #6d28d9; }
+
+    .post-date {
+        font-size: 0.875rem;
+        color: var(--gray-500);
+        flex-shrink: 0;
+    }
+
+    /* Sidebar Cards */
+    .sidebar-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .sidebar-card h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 0 0 16px 0;
+    }
+
+    .upcoming-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .upcoming-item {
+        display: flex;
+        gap: 12px;
+        padding: 12px;
+        background: var(--gray-100);
+        border-radius: 10px;
+    }
+
+    .upcoming-date {
+        width: 50px;
+        text-align: center;
+        flex-shrink: 0;
+    }
+
+    .upcoming-date .day {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--primary);
+        line-height: 1;
+    }
+
+    .upcoming-date .month {
+        font-size: 0.75rem;
+        color: var(--gray-500);
+        text-transform: uppercase;
+    }
+
+    .upcoming-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .upcoming-title {
+        font-weight: 500;
+        color: var(--dark);
+        font-size: 0.875rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .upcoming-canal {
+        font-size: 0.75rem;
+        color: var(--gray-500);
+    }
+
+    /* Quick Actions */
+    .quick-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .quick-action {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        background: var(--gray-100);
+        border-radius: 10px;
+        color: var(--dark);
+        text-decoration: none;
+        font-size: 0.875rem;
+        transition: all 0.2s;
+        border: none;
+        cursor: pointer;
+        width: 100%;
+        text-align: left;
+    }
+
+    .quick-action:hover {
+        background: var(--primary);
+        color: white;
+    }
+
+    .quick-action i {
+        font-size: 1.25rem;
+    }
+
+    /* Modal */
+    .modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .modal-backdrop.show {
+        display: flex;
+    }
+
+    .modal-content {
+        background: white;
+        border-radius: 16px;
+        width: 90%;
+        max-width: 600px;
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+
+    .modal-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--gray-200);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .modal-header h3 {
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 600;
+    }
+
+    .modal-close {
+        background: none;
+        border: none;
+        font-size: 1.5rem;
+        cursor: pointer;
+        color: var(--gray-500);
+    }
+
+    .modal-body {
+        padding: 24px;
+    }
+
+    .form-group {
+        margin-bottom: 20px;
+    }
+
+    .form-group label {
+        display: block;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--dark);
+        margin-bottom: 8px;
+    }
+
+    .form-control {
+        width: 100%;
+        padding: 12px 16px;
+        border: 1px solid var(--gray-200);
+        border-radius: 10px;
+        font-size: 0.875rem;
+        transition: all 0.2s;
+    }
+
+    .form-control:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+
+    .btn-primary {
+        background: var(--primary);
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 10px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .btn-primary:hover {
+        background: var(--primary-dark);
+    }
+
+    .btn-secondary {
+        background: var(--gray-200);
+        color: var(--dark);
+        border: none;
+        padding: 12px 24px;
+        border-radius: 10px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--gray-500);
+    }
+
+    .empty-state i {
+        font-size: 4rem;
+        margin-bottom: 16px;
+        opacity: 0.3;
+    }
+
+    @media (max-width: 1024px) {
+        .editorial-container {
+            grid-template-columns: 1fr;
+        }
+        .stats-row {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="editorial-container">
+    <div class="editorial-main">
+        <!-- Stats -->
+        <div class="stats-row">
+            <div class="stat-card">
+                <div class="icon" style="background: rgba(107, 114, 128, 0.1); color: #6b7280;">
+                    <i class="bi bi-pencil"></i>
+                </div>
+                <div class="value">{{ stats.drafts or 0 }}</div>
+                <div class="label">Rascunhos</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon" style="background: rgba(59, 130, 246, 0.1); color: #3b82f6;">
+                    <i class="bi bi-clock"></i>
+                </div>
+                <div class="value">{{ stats.scheduled or 0 }}</div>
+                <div class="label">Agendados</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;">
+                    <i class="bi bi-check-circle"></i>
+                </div>
+                <div class="value">{{ stats.published or 0 }}</div>
+                <div class="label">Publicados</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon" style="background: rgba(99, 102, 241, 0.1); color: #6366f1;">
+                    <i class="bi bi-collection"></i>
+                </div>
+                <div class="value">{{ stats.total or 0 }}</div>
+                <div class="label">Total</div>
+            </div>
+        </div>
+
+        <!-- Posts List -->
+        <div class="posts-card">
+            <div class="posts-header">
+                <h2>Posts Editoriais</h2>
+                <div class="posts-filters">
+                    <select class="filter-select" id="filter-status" onchange="filterPosts()">
+                        <option value="">Todos os status</option>
+                        {% for key, val in status_options.items() %}
+                        <option value="{{ key }}">{{ val.label }}</option>
+                        {% endfor %}
+                    </select>
+                    <select class="filter-select" id="filter-canal" onchange="filterPosts()">
+                        <option value="">Todos os canais</option>
+                        {% for key, val in canais.items() %}
+                        <option value="{{ key }}">{{ val.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="posts-list" id="posts-list">
+                {% if posts %}
+                    {% for post in posts %}
+                    <div class="post-item" data-status="{{ post.status }}" data-canal="{{ post.canal }}" onclick="openPostModal({{ post.id }})">
+                        <div class="post-canal {{ post.canal }}">
+                            <i class="bi bi-{% if post.canal == 'linkedin' %}linkedin{% elif post.canal == 'instagram' %}instagram{% else %}share{% endif %}"></i>
+                        </div>
+                        <div class="post-info">
+                            <div class="post-title">{{ post.article_title }}</div>
+                            <div class="post-meta">
+                                <span><i class="bi bi-tag"></i> {{ post.tipo }}</span>
+                                {% if post.project_nome %}
+                                <span><i class="bi bi-folder"></i> {{ post.project_nome }}</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <span class="post-status {{ post.status }}">{{ status_options[post.status].label if post.status in status_options else post.status }}</span>
+                        {% if post.data_publicacao %}
+                        <span class="post-date">{{ post.data_publicacao.strftime('%d/%m') }}</span>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-calendar-plus"></i>
+                        <h3>Nenhum post ainda</h3>
+                        <p>Importe artigos do site ou crie um novo post</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="editorial-sidebar">
+        <!-- Quick Actions -->
+        <div class="sidebar-card">
+            <h3>Acoes Rapidas</h3>
+            <div class="quick-actions">
+                <button class="quick-action" onclick="openImportModal()">
+                    <i class="bi bi-cloud-download"></i>
+                    Importar Artigos do Site
+                </button>
+                <button class="quick-action" onclick="openNewPostModal()">
+                    <i class="bi bi-plus-circle"></i>
+                    Novo Post Manual
+                </button>
+                <a href="/calendario" class="quick-action">
+                    <i class="bi bi-calendar3"></i>
+                    Ver no Calendario
+                </a>
+            </div>
+        </div>
+
+        <!-- Upcoming -->
+        <div class="sidebar-card">
+            <h3>Proximos Posts</h3>
+            <div class="upcoming-list">
+                {% if stats.upcoming %}
+                    {% for post in stats.upcoming %}
+                    <div class="upcoming-item">
+                        <div class="upcoming-date">
+                            <div class="day">{{ post.data_publicacao.strftime('%d') }}</div>
+                            <div class="month">{{ post.data_publicacao.strftime('%b') }}</div>
+                        </div>
+                        <div class="upcoming-info">
+                            <div class="upcoming-title">{{ post.article_title[:40] }}{% if post.article_title|length > 40 %}...{% endif %}</div>
+                            <div class="upcoming-canal">
+                                <i class="bi bi-{% if post.canal == 'linkedin' %}linkedin{% elif post.canal == 'instagram' %}instagram{% else %}share{% endif %}"></i>
+                                {{ canais[post.canal].label if post.canal in canais else post.canal }}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p style="color: var(--gray-500); font-size: 0.875rem;">Nenhum post agendado</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Por Canal -->
+        <div class="sidebar-card">
+            <h3>Por Canal</h3>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="display: flex; align-items: center; gap: 8px;">
+                        <i class="bi bi-linkedin" style="color: #0077b5;"></i> LinkedIn
+                    </span>
+                    <strong>{{ stats.linkedin or 0 }}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="display: flex; align-items: center; gap: 8px;">
+                        <i class="bi bi-instagram" style="color: #e4405f;"></i> Instagram
+                    </span>
+                    <strong>{{ stats.instagram or 0 }}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="display: flex; align-items: center; gap: 8px;">
+                        <i class="bi bi-share" style="color: #6366f1;"></i> Ambos
+                    </span>
+                    <strong>{{ stats.both or 0 }}</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Import Modal -->
+<div class="modal-backdrop" id="import-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Importar Artigos do Site</h3>
+            <button class="modal-close" onclick="closeImportModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p style="margin-bottom: 20px; color: var(--gray-600);">
+                Importar os 145 artigos do site almeida-prado.com para o calendario editorial.
+                Artigos ja importados serao ignorados.
+            </p>
+            <div class="form-group">
+                <label>Projeto (opcional)</label>
+                <select class="form-control" id="import-project">
+                    <option value="">Sem projeto</option>
+                    {% for project in projects %}
+                    <option value="{{ project.id }}">{{ project.nome }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                <button class="btn-secondary" onclick="closeImportModal()">Cancelar</button>
+                <button class="btn-primary" onclick="importArticles()">
+                    <i class="bi bi-cloud-download"></i> Importar Artigos
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Post Detail Modal -->
+<div class="modal-backdrop" id="post-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="post-modal-title">Detalhes do Post</h3>
+            <button class="modal-close" onclick="closePostModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="post-modal-body">
+            <!-- Filled by JS -->
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const ARTICLES_URL = 'https://almeida-prado.com';
+
+// Load articles from static file on page load
+fetch('/static/articles.json')
+    .then(r => r.json())
+    .then(data => { window.SITE_ARTICLES = data; })
+    .catch(err => console.error('Failed to load articles:', err));
+
+function filterPosts() {
+    const status = document.getElementById('filter-status').value;
+    const canal = document.getElementById('filter-canal').value;
+    const items = document.querySelectorAll('.post-item');
+
+    items.forEach(item => {
+        const matchStatus = !status || item.dataset.status === status;
+        const matchCanal = !canal || item.dataset.canal === canal;
+        item.style.display = matchStatus && matchCanal ? 'flex' : 'none';
+    });
+}
+
+function openImportModal() {
+    document.getElementById('import-modal').classList.add('show');
+}
+
+function closeImportModal() {
+    document.getElementById('import-modal').classList.remove('show');
+}
+
+async function importArticles() {
+    const projectId = document.getElementById('import-project').value;
+
+    // Fetch articles list from site
+    try {
+        // We'll call our API with the article data
+        // For now, use a static list - in production this would fetch from the site
+        const response = await fetch('/api/editorial/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                articles: window.SITE_ARTICLES || [],
+                project_id: projectId ? parseInt(projectId) : null
+            })
+        });
+
+        const data = await response.json();
+        if (data.status === 'success') {
+            alert(`Importados: ${data.imported} artigos\nJa existentes: ${data.skipped}`);
+            location.reload();
+        } else {
+            alert('Erro ao importar: ' + (data.detail || 'Erro desconhecido'));
+        }
+    } catch (err) {
+        alert('Erro: ' + err.message);
+    }
+}
+
+async function openPostModal(postId) {
+    try {
+        const response = await fetch(`/api/editorial/${postId}`);
+        const post = await response.json();
+
+        document.getElementById('post-modal-title').textContent = post.article_title;
+        document.getElementById('post-modal-body').innerHTML = `
+            <div class="form-group">
+                <label>Status</label>
+                <select class="form-control" id="edit-status">
+                    ${Object.entries({{ status_options | tojson }}).map(([k, v]) =>
+                        `<option value="${k}" ${post.status === k ? 'selected' : ''}>${v.label}</option>`
+                    ).join('')}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Canal</label>
+                <select class="form-control" id="edit-canal">
+                    ${Object.entries({{ canais | tojson }}).map(([k, v]) =>
+                        `<option value="${k}" ${post.canal === k ? 'selected' : ''}>${v.label}</option>`
+                    ).join('')}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Data de Publicacao</label>
+                <input type="datetime-local" class="form-control" id="edit-date"
+                    value="${post.data_publicacao ? new Date(post.data_publicacao).toISOString().slice(0,16) : ''}">
+            </div>
+            <div class="form-group">
+                <label>Conteudo Adaptado</label>
+                <textarea class="form-control" id="edit-conteudo" rows="4"
+                    placeholder="Texto adaptado para a rede social...">${post.conteudo_adaptado || ''}</textarea>
+            </div>
+            <div class="form-group">
+                <label>URL do Artigo</label>
+                <input type="text" class="form-control" readonly value="${post.article_url || ''}">
+            </div>
+            <div style="display: flex; gap: 12px; justify-content: space-between; margin-top: 24px;">
+                <button class="btn-secondary" onclick="deletePost(${post.id})" style="color: var(--danger);">
+                    <i class="bi bi-trash"></i> Excluir
+                </button>
+                <div style="display: flex; gap: 12px;">
+                    <button class="btn-secondary" onclick="closePostModal()">Cancelar</button>
+                    <button class="btn-primary" onclick="savePost(${post.id})">Salvar</button>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('post-modal').classList.add('show');
+    } catch (err) {
+        alert('Erro ao carregar post: ' + err.message);
+    }
+}
+
+function closePostModal() {
+    document.getElementById('post-modal').classList.remove('show');
+}
+
+async function savePost(postId) {
+    const data = {
+        status: document.getElementById('edit-status').value,
+        canal: document.getElementById('edit-canal').value,
+        data_publicacao: document.getElementById('edit-date').value || null,
+        conteudo_adaptado: document.getElementById('edit-conteudo').value || null
+    };
+
+    try {
+        const response = await fetch(`/api/editorial/${postId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        if (response.ok) {
+            location.reload();
+        } else {
+            const err = await response.json();
+            alert('Erro: ' + (err.detail || 'Erro ao salvar'));
+        }
+    } catch (err) {
+        alert('Erro: ' + err.message);
+    }
+}
+
+async function deletePost(postId) {
+    if (!confirm('Tem certeza que deseja excluir este post?')) return;
+
+    try {
+        const response = await fetch(`/api/editorial/${postId}`, { method: 'DELETE' });
+        if (response.ok) {
+            location.reload();
+        } else {
+            alert('Erro ao excluir');
+        }
+    } catch (err) {
+        alert('Erro: ' + err.message);
+    }
+}
+
+function openNewPostModal() {
+    alert('Em breve: criacao de post manual');
+}
+
+// Close modals on backdrop click
+document.querySelectorAll('.modal-backdrop').forEach(modal => {
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.classList.remove('show');
+        }
+    });
+});
+</script>
+{% endblock %}

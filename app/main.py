@@ -11919,5 +11919,176 @@ async def rap_projeto_detail_redirect(project_id: int):
     return RedirectResponse(url=f"/projetos/{project_id}", status_code=301)
 
 
+# ============== EDITORIAL CALENDAR API ==============
+
+from app.services.editorial_calendar import (
+    get_editorial_posts, get_editorial_post, create_editorial_post,
+    update_editorial_post, delete_editorial_post, schedule_post,
+    mark_as_published, import_articles_from_site, get_calendar_view,
+    get_stats as get_editorial_stats, EDITORIAL_STATUS, EDITORIAL_CANAIS, EDITORIAL_TIPOS
+)
+
+
+@app.get("/api/editorial")
+async def api_editorial_list(
+    status: str = None,
+    canal: str = None,
+    project_id: int = None,
+    from_date: str = None,
+    to_date: str = None,
+    limit: int = 100
+):
+    """Lista posts do calendario editorial"""
+    from_dt = datetime.fromisoformat(from_date) if from_date else None
+    to_dt = datetime.fromisoformat(to_date) if to_date else None
+
+    posts = get_editorial_posts(
+        status=status, canal=canal, project_id=project_id,
+        from_date=from_dt, to_date=to_dt, limit=limit
+    )
+    return {"posts": posts, "total": len(posts)}
+
+
+@app.get("/api/editorial/stats")
+async def api_editorial_stats():
+    """Estatisticas do calendario editorial"""
+    return get_editorial_stats()
+
+
+@app.get("/api/editorial/calendar/{year}/{month}")
+async def api_editorial_calendar_view(year: int, month: int):
+    """Visualizacao de calendario mensal"""
+    return get_calendar_view(year, month)
+
+
+@app.get("/api/editorial/meta")
+async def api_editorial_meta():
+    """Retorna constantes do calendario editorial"""
+    return {
+        "status": EDITORIAL_STATUS,
+        "canais": EDITORIAL_CANAIS,
+        "tipos": EDITORIAL_TIPOS
+    }
+
+
+@app.get("/api/editorial/{post_id}")
+async def api_editorial_get(post_id: int):
+    """Retorna um post especifico"""
+    post = get_editorial_post(post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post nao encontrado")
+    return post
+
+
+@app.post("/api/editorial")
+async def api_editorial_create(request: Request):
+    """Cria novo post editorial"""
+    data = await request.json()
+    if not data.get('article_title'):
+        raise HTTPException(status_code=400, detail="article_title e obrigatorio")
+
+    post = create_editorial_post(data)
+    return {"status": "success", "post": post}
+
+
+@app.put("/api/editorial/{post_id}")
+async def api_editorial_update(post_id: int, request: Request):
+    """Atualiza post editorial"""
+    data = await request.json()
+    post = update_editorial_post(post_id, data)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post nao encontrado")
+    return {"status": "success", "post": post}
+
+
+@app.delete("/api/editorial/{post_id}")
+async def api_editorial_delete(post_id: int):
+    """Remove post editorial"""
+    if delete_editorial_post(post_id):
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="Post nao encontrado")
+
+
+@app.post("/api/editorial/{post_id}/schedule")
+async def api_editorial_schedule(post_id: int, request: Request):
+    """Agenda post para publicacao"""
+    data = await request.json()
+    data_publicacao = data.get('data_publicacao')
+    if not data_publicacao:
+        raise HTTPException(status_code=400, detail="data_publicacao e obrigatoria")
+
+    try:
+        dt = datetime.fromisoformat(data_publicacao.replace('Z', '+00:00'))
+    except:
+        raise HTTPException(status_code=400, detail="Formato de data invalido")
+
+    post = schedule_post(
+        post_id, dt,
+        create_task=data.get('create_task', True),
+        create_event=data.get('create_event', True)
+    )
+    return {"status": "success", "post": post}
+
+
+@app.post("/api/editorial/{post_id}/publish")
+async def api_editorial_publish(post_id: int, request: Request):
+    """Marca post como publicado"""
+    data = await request.json()
+    post = mark_as_published(
+        post_id,
+        url_publicado=data.get('url_publicado'),
+        metricas=data.get('metricas')
+    )
+    if not post:
+        raise HTTPException(status_code=404, detail="Post nao encontrado")
+    return {"status": "success", "post": post}
+
+
+@app.post("/api/editorial/import")
+async def api_editorial_import(request: Request):
+    """Importa artigos do site para o calendario editorial"""
+    data = await request.json()
+    articles = data.get('articles', [])
+    project_id = data.get('project_id')
+
+    if not articles:
+        raise HTTPException(status_code=400, detail="Lista de artigos vazia")
+
+    result = import_articles_from_site(articles, project_id)
+    return {"status": "success", **result}
+
+
+@app.get("/api/projects/{project_id}/editorial")
+async def api_project_editorial(project_id: int):
+    """Lista posts editoriais de um projeto"""
+    posts = get_editorial_posts(project_id=project_id)
+    return {"posts": posts, "total": len(posts)}
+
+
+# ============== EDITORIAL CALENDAR PAGE ==============
+
+@app.get("/editorial", response_class=HTMLResponse)
+async def editorial_page(request: Request):
+    """Pagina do calendario editorial"""
+    stats = get_editorial_stats()
+    posts = get_editorial_posts(limit=50)
+
+    # Get projects for filter
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, nome FROM projects WHERE status = 'ativo' ORDER BY nome")
+        projects = [dict(p) for p in cursor.fetchall()]
+
+    return templates.TemplateResponse("editorial.html", {
+        "request": request,
+        "stats": stats,
+        "posts": posts,
+        "projects": projects,
+        "canais": EDITORIAL_CANAIS,
+        "status_options": EDITORIAL_STATUS,
+        "tipos": EDITORIAL_TIPOS
+    })
+
+
 # Vercel handler
 app_handler = app
