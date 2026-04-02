@@ -509,6 +509,7 @@ class WhatsAppIntegration:
 
         async with httpx.AsyncClient() as client:
             try:
+                # First try standard remoteJid format
                 response = await client.post(
                     f"{self.base_url}/chat/findMessages/{self.instance}",
                     headers=self._get_headers(),
@@ -525,13 +526,44 @@ class WhatsAppIntegration:
                 data = response.json()
 
                 # API returns {"messages": {"records": [...]}}
+                messages = []
                 if isinstance(data, dict):
-                    messages = data.get("messages", {})
-                    if isinstance(messages, dict):
-                        return messages.get("records", [])
-                    return messages if isinstance(messages, list) else []
+                    msg_data = data.get("messages", {})
+                    if isinstance(msg_data, dict):
+                        messages = msg_data.get("records", [])
+                    elif isinstance(msg_data, list):
+                        messages = msg_data
 
-                return data if isinstance(data, list) else []
+                # If no messages found, try fetching recent and filter by remoteJidAlt
+                # (Evolution API uses LID format for some contacts)
+                if not messages:
+                    response = await client.post(
+                        f"{self.base_url}/chat/findMessages/{self.instance}",
+                        headers=self._get_headers(),
+                        json={"limit": 500},  # Fetch more to find matches
+                        timeout=60.0
+                    )
+                    data = response.json()
+
+                    all_messages = []
+                    if isinstance(data, dict):
+                        msg_data = data.get("messages", {})
+                        if isinstance(msg_data, dict):
+                            all_messages = msg_data.get("records", [])
+                        elif isinstance(msg_data, list):
+                            all_messages = msg_data
+
+                    # Filter by remoteJidAlt (contains phone in @s.whatsapp.net format)
+                    for msg in all_messages:
+                        key = msg.get("key", {})
+                        jid_alt = key.get("remoteJidAlt", "")
+                        if remote_jid in jid_alt or jid_alt == remote_jid:
+                            messages.append(msg)
+                            if len(messages) >= limit:
+                                break
+
+                return messages
+
             except Exception as e:
                 print(f"Error fetching messages for {phone}: {e}")
                 return []
@@ -550,12 +582,25 @@ class WhatsAppIntegration:
             key = msg.get("key", {})
             message = msg.get("message", {})
 
-            # Get phone from remoteJid
+            # Get phone from remoteJid or remoteJidAlt (for LID format)
             remote_jid = key.get("remoteJid", "")
-            if not remote_jid.endswith("@s.whatsapp.net"):
-                return None
+            remote_jid_alt = key.get("remoteJidAlt", "")
 
-            phone = remote_jid.replace("@s.whatsapp.net", "")
+            # Try standard format first
+            if remote_jid.endswith("@s.whatsapp.net"):
+                phone = remote_jid.replace("@s.whatsapp.net", "")
+            # Fall back to remoteJidAlt for LID format
+            elif remote_jid_alt.endswith("@s.whatsapp.net"):
+                phone = remote_jid_alt.replace("@s.whatsapp.net", "")
+            # Skip group messages
+            elif "@g.us" in remote_jid or "@lid" in remote_jid:
+                # Check if it's a 1-1 chat using remoteJidAlt
+                if remote_jid_alt and "@s.whatsapp.net" in remote_jid_alt:
+                    phone = remote_jid_alt.replace("@s.whatsapp.net", "")
+                else:
+                    return None
+            else:
+                return None
 
             # Direction
             from_me = key.get("fromMe", False)
