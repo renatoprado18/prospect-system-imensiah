@@ -2844,8 +2844,25 @@
             const container = document.getElementById('webSearchResultsContainer');
             const content = document.getElementById('webSearchContent');
 
-            let html = '<dl class="row mb-0">';
+            let html = '';
 
+            // Se encontrou info do contato, mostrar primeiro
+            if (info.cargo_encontrado || info.bio_encontrada) {
+                html += '<div class="alert alert-success mb-2"><h6><i class="bi bi-person-check me-1"></i>Contato encontrado no site!</h6><dl class="row mb-0">';
+                if (info.cargo_encontrado) {
+                    html += `<dt class="col-sm-4">Cargo:</dt><dd class="col-sm-8"><strong>${info.cargo_encontrado}</strong></dd>`;
+                }
+                if (info.bio_encontrada) {
+                    html += `<dt class="col-sm-4">Bio:</dt><dd class="col-sm-8">${info.bio_encontrada}</dd>`;
+                }
+                if (info.linkedin_encontrado) {
+                    html += `<dt class="col-sm-4">LinkedIn:</dt><dd class="col-sm-8"><a href="${info.linkedin_encontrado}" target="_blank">${info.linkedin_encontrado}</a></dd>`;
+                }
+                html += '</dl></div>';
+            }
+
+            // Info da empresa
+            html += '<dl class="row mb-0">';
             if (info.nome_empresa) {
                 html += `<dt class="col-sm-4">Empresa:</dt><dd class="col-sm-8"><strong>${info.nome_empresa}</strong></dd>`;
             }
@@ -2893,6 +2910,20 @@
                 const websiteField = document.getElementById('enrichCompanyWebsite');
                 if (!websiteField.value) {
                     websiteField.value = webSearchData.source_url;
+                }
+            }
+            // Aplicar cargo encontrado
+            if (webSearchData.cargo_encontrado) {
+                const cargoField = document.getElementById('enrichCargo');
+                if (!cargoField.value) {
+                    cargoField.value = webSearchData.cargo_encontrado;
+                }
+            }
+            // Aplicar LinkedIn encontrado
+            if (webSearchData.linkedin_encontrado) {
+                const linkedinField = document.getElementById('enrichLinkedIn');
+                if (!linkedinField.value) {
+                    linkedinField.value = webSearchData.linkedin_encontrado;
                 }
             }
 

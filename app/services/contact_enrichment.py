@@ -789,15 +789,17 @@ Responda APENAS com JSON valido:
 async def search_company_info(
     company_name: str = None,
     domain: str = None,
-    website_url: str = None
+    website_url: str = None,
+    contact_name: str = None
 ) -> Dict[str, Any]:
     """
-    Busca informacoes da empresa na web.
+    Busca informacoes da empresa e do contato na web.
 
     Estrategia:
     1. Se tiver website_url, busca metadados da pagina
     2. Se tiver domain (do email), tenta acessar www.domain
-    3. Usa AI para extrair informacoes do conteudo
+    3. Tenta buscar paginas de equipe/sobre para encontrar o contato
+    4. Usa AI para extrair informacoes do conteudo
     """
     if not ANTHROPIC_API_KEY:
         return {"status": "error", "error": "ANTHROPIC_API_KEY not configured"}
@@ -900,18 +902,69 @@ async def search_company_info(
     if not page_content and not page_title:
         return {"status": "error", "error": "Nenhum conteudo encontrado na pagina. Verifique se a URL esta correta."}
 
+    # Se tiver nome do contato, tentar buscar pagina de equipe
+    team_content = ""
+    if contact_name:
+        team_paths = ['/equipe', '/team', '/sobre', '/about', '/quem-somos', '/about-us', '/nosso-time', '/pessoas', '/people', '/socios', '/partners']
+        base_url = url_to_fetch.rstrip('/')
+
+        for path in team_paths:
+            try:
+                team_url = f"{base_url}{path}"
+                limits = httpx.Limits(max_keepalive_connections=1, max_connections=1)
+                async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, limits=limits) as client:
+                    team_response = await client.get(
+                        team_url,
+                        headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+                    )
+                    if team_response.status_code == 200:
+                        team_html = team_response.text
+                        # Verificar se o nome do contato aparece na pagina
+                        if contact_name.lower() in team_html.lower():
+                            # Extrair texto limpo
+                            clean_team = re.sub(r'<script[^>]*>.*?</script>', '', team_html, flags=re.DOTALL | re.IGNORECASE)
+                            clean_team = re.sub(r'<style[^>]*>.*?</style>', '', clean_team, flags=re.DOTALL | re.IGNORECASE)
+                            clean_team = re.sub(r'<[^>]+>', ' ', clean_team)
+                            clean_team = re.sub(r'\s+', ' ', clean_team)
+                            team_content = clean_team[:3000].strip()
+                            break
+            except:
+                continue
+
     # Usar AI para extrair informacoes estruturadas
-    prompt = f"""Analise o conteudo deste website empresarial e extraia informacoes da empresa.
+    contact_section = ""
+    if contact_name:
+        contact_section = f"""
+CONTATO A BUSCAR: {contact_name}
+
+Se encontrar informacoes sobre este contato no site, extraia:
+- **cargo_encontrado**: Cargo/titulo do contato
+- **bio_encontrada**: Mini biografia ou descricao (1-2 frases)
+- **foto_url**: URL da foto se encontrar
+- **email_encontrado**: Email se encontrar
+- **linkedin_encontrado**: URL do LinkedIn se encontrar
+"""
+
+    team_section = ""
+    if team_content:
+        team_section = f"""
+
+CONTEUDO DA PAGINA DE EQUIPE:
+{team_content}
+"""
+
+    prompt = f"""Analise o conteudo deste website empresarial e extraia informacoes.
 
 URL: {url_to_fetch}
 Titulo: {page_title}
 Descricao: {page_description}
-
-Conteudo da pagina:
-{page_content[:3000]}
-
+{contact_section}
+Conteudo da pagina principal:
+{page_content[:2500]}
+{team_section}
 Extraia as seguintes informacoes (se disponiveis):
 
+EMPRESA:
 1. **nome_empresa**: Nome oficial da empresa
 2. **descricao**: O que a empresa faz (1-2 frases)
 3. **setor**: Setor de atuacao (tech, financas, saude, etc)
@@ -930,7 +983,12 @@ Responda APENAS com JSON valido:
     "localizacao": "...",
     "fundacao": "...",
     "palavras_chave": [...],
-    "potencial_governanca": "..."
+    "potencial_governanca": "...",
+    "cargo_encontrado": "...",
+    "bio_encontrada": "...",
+    "foto_url": "...",
+    "email_encontrado": "...",
+    "linkedin_encontrado": "..."
 }}
 
 Se alguma informacao nao estiver disponivel, use null.
@@ -1024,11 +1082,12 @@ async def enrich_contact_with_web_search(
     if not website_url and not domain:
         return {"status": "error", "error": "Sem website ou email corporativo para buscar"}
 
-    # Buscar informacoes
+    # Buscar informacoes (passando nome do contato para buscar na pagina de equipe)
     company_info = await search_company_info(
         company_name=contact.get('empresa'),
         domain=domain,
-        website_url=website_url
+        website_url=website_url,
+        contact_name=contact.get('nome')
     )
 
     if company_info.get('status') == 'error':
@@ -1041,6 +1100,11 @@ async def enrich_contact_with_web_search(
     if company_info.get('nome_empresa') and not contact.get('empresa'):
         updates.append("empresa = %s")
         values.append(company_info['nome_empresa'])
+
+    # Cargo encontrado no site
+    if company_info.get('cargo_encontrado') and not contact.get('cargo'):
+        updates.append("cargo = %s")
+        values.append(company_info['cargo_encontrado'])
 
     if company_info.get('source_url') and not contact.get('company_website'):
         updates.append("company_website = %s")
