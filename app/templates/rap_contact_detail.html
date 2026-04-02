@@ -504,6 +504,76 @@
             color: var(--gray-600);
         }
 
+        /* Circle Selector Dropdown */
+        .circle-selector {
+            position: relative;
+            display: inline-block;
+        }
+
+        .circle-selector .profile-badge {
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .circle-selector .profile-badge:hover {
+            transform: scale(1.05);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        .circle-dropdown {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            z-index: 1000;
+            min-width: 140px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            padding: 4px 0;
+            margin-top: 4px;
+        }
+
+        .circle-dropdown.show {
+            display: block;
+            animation: fadeIn 0.15s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .circle-dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: background 0.15s;
+        }
+
+        .circle-dropdown-item:hover {
+            background: var(--gray-100);
+        }
+
+        .circle-dropdown-item.active {
+            background: var(--primary-light);
+            font-weight: 600;
+        }
+
+        .circle-dropdown-item .circle-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .circle-dropdown-item.na {
+            color: var(--gray-500);
+            font-style: italic;
+        }
+
         .profile-actions-compact {
             display: flex;
             gap: 8px;
@@ -1944,51 +2014,155 @@
             }
         }
 
+        // Global configs for circles
+        const PESSOAL_CONFIG = {
+            1: { nome: 'Nucleo', cor: '#FF6B6B', icone: 'heart-fill' },
+            2: { nome: 'Proximo', cor: '#F87171', icone: 'heart' },
+            3: { nome: 'Relacionamento', cor: '#FB923C', icone: 'people' },
+            4: { nome: 'Ocasional', cor: '#FBBF24', icone: 'person' },
+            5: { nome: 'Distante', cor: '#A3A3A3', icone: 'archive' }
+        };
+
+        const PROF_CONFIG = {
+            1: { nome: 'Core', cor: '#6366F1', icone: 'briefcase-fill' },
+            2: { nome: 'Estrategico', cor: '#8B5CF6', icone: 'star-fill' },
+            3: { nome: 'Networking', cor: '#0EA5E9', icone: 'diagram-3' },
+            4: { nome: 'Ocasional', cor: '#14B8A6', icone: 'person-badge' },
+            5: { nome: 'Arquivo', cor: '#A3A3A3', icone: 'archive' }
+        };
+
         function renderCirculosBadges(contact) {
-            const pessoalConfig = {
-                1: { nome: 'Nucleo', cor: '#FF6B6B', icone: 'heart-fill' },
-                2: { nome: 'Proximo', cor: '#F87171', icone: 'heart' },
-                3: { nome: 'Relacionamento', cor: '#FB923C', icone: 'people' },
-                4: { nome: 'Ocasional', cor: '#FBBF24', icone: 'person' },
-                5: { nome: 'Distante', cor: '#A3A3A3', icone: 'archive' }
-            };
-
-            const profConfig = {
-                1: { nome: 'Core', cor: '#6366F1', icone: 'briefcase-fill' },
-                2: { nome: 'Estrategico', cor: '#8B5CF6', icone: 'star-fill' },
-                3: { nome: 'Networking', cor: '#0EA5E9', icone: 'diagram-3' },
-                4: { nome: 'Ocasional', cor: '#14B8A6', icone: 'person-badge' },
-                5: { nome: 'Arquivo', cor: '#A3A3A3', icone: 'archive' }
-            };
-
             let badges = '';
 
-            // Badge Pessoal
-            if (contact.circulo_pessoal) {
-                const cp = pessoalConfig[contact.circulo_pessoal] || pessoalConfig[5];
-                badges += `
-                    <span class="profile-badge" style="background: ${cp.cor}22; color: ${cp.cor}; border: 1px solid ${cp.cor}44;" title="Circulo Pessoal ${contact.circulo_pessoal}: ${cp.nome}">
-                        <i class="bi bi-${cp.icone}"></i> P${contact.circulo_pessoal}
-                    </span>
-                `;
-            }
+            // Dropdown Pessoal
+            const cp = contact.circulo_pessoal ? PESSOAL_CONFIG[contact.circulo_pessoal] : null;
+            const pLabel = cp ? `P${contact.circulo_pessoal}` : 'P-';
+            const pColor = cp ? cp.cor : '#9CA3AF';
+            const pIcon = cp ? cp.icone : 'heart';
 
-            // Badge Profissional
-            if (contact.circulo_profissional) {
-                const cr = profConfig[contact.circulo_profissional] || profConfig[5];
-                badges += `
-                    <span class="profile-badge" style="background: ${cr.cor}22; color: ${cr.cor}; border: 1px solid ${cr.cor}44;" title="Circulo Profissional ${contact.circulo_profissional}: ${cr.nome}">
-                        <i class="bi bi-${cr.icone}"></i> R${contact.circulo_profissional}
+            badges += `
+                <div class="circle-selector" data-type="pessoal">
+                    <span class="profile-badge"
+                          style="background: ${pColor}22; color: ${pColor}; border: 1px solid ${pColor}44;"
+                          onclick="toggleCircleDropdown(event, 'pessoal')"
+                          title="${cp ? `Pessoal ${contact.circulo_pessoal}: ${cp.nome}` : 'Sem circulo pessoal - clique para definir'}">
+                        <i class="bi bi-${pIcon}"></i> ${pLabel}
                     </span>
-                `;
-            }
+                    <div class="circle-dropdown" id="dropdown-pessoal">
+                        <div class="circle-dropdown-item na ${!contact.circulo_pessoal ? 'active' : ''}"
+                             onclick="setCircle('pessoal', null)">
+                            <span class="circle-dot" style="background: #9CA3AF;"></span>
+                            N/A
+                        </div>
+                        ${Object.entries(PESSOAL_CONFIG).map(([n, c]) => `
+                            <div class="circle-dropdown-item ${contact.circulo_pessoal == n ? 'active' : ''}"
+                                 onclick="setCircle('pessoal', ${n})">
+                                <span class="circle-dot" style="background: ${c.cor};"></span>
+                                P${n} - ${c.nome}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
 
-            // Fallback para circulo antigo se nao tiver os novos
-            if (!contact.circulo_pessoal && !contact.circulo_profissional) {
-                badges = `<span class="profile-badge circulo">Circulo ${contact.circulo || 5}</span>`;
-            }
+            // Dropdown Profissional
+            const cr = contact.circulo_profissional ? PROF_CONFIG[contact.circulo_profissional] : null;
+            const rLabel = cr ? `R${contact.circulo_profissional}` : 'R-';
+            const rColor = cr ? cr.cor : '#9CA3AF';
+            const rIcon = cr ? cr.icone : 'briefcase';
+
+            badges += `
+                <div class="circle-selector" data-type="profissional">
+                    <span class="profile-badge"
+                          style="background: ${rColor}22; color: ${rColor}; border: 1px solid ${rColor}44;"
+                          onclick="toggleCircleDropdown(event, 'profissional')"
+                          title="${cr ? `Profissional ${contact.circulo_profissional}: ${cr.nome}` : 'Sem circulo profissional - clique para definir'}">
+                        <i class="bi bi-${rIcon}"></i> ${rLabel}
+                    </span>
+                    <div class="circle-dropdown" id="dropdown-profissional">
+                        <div class="circle-dropdown-item na ${!contact.circulo_profissional ? 'active' : ''}"
+                             onclick="setCircle('profissional', null)">
+                            <span class="circle-dot" style="background: #9CA3AF;"></span>
+                            N/A
+                        </div>
+                        ${Object.entries(PROF_CONFIG).map(([n, c]) => `
+                            <div class="circle-dropdown-item ${contact.circulo_profissional == n ? 'active' : ''}"
+                                 onclick="setCircle('profissional', ${n})">
+                                <span class="circle-dot" style="background: ${c.cor};"></span>
+                                R${n} - ${c.nome}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
 
             return badges;
+        }
+
+        function toggleCircleDropdown(event, type) {
+            event.stopPropagation();
+
+            // Close all dropdowns first
+            document.querySelectorAll('.circle-dropdown').forEach(d => {
+                if (d.id !== `dropdown-${type}`) d.classList.remove('show');
+            });
+
+            const dropdown = document.getElementById(`dropdown-${type}`);
+            dropdown.classList.toggle('show');
+        }
+
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.circle-selector')) {
+                document.querySelectorAll('.circle-dropdown').forEach(d => d.classList.remove('show'));
+            }
+        });
+
+        async function setCircle(type, value) {
+            // Close dropdown
+            document.querySelectorAll('.circle-dropdown').forEach(d => d.classList.remove('show'));
+
+            // If value is null, we're removing the circle
+            if (value === null) {
+                try {
+                    const res = await fetch(`/api/contatos/${contactId}/circulo-clear`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ contexto: type })
+                    });
+
+                    if (res.ok) {
+                        showToast(`Circulo ${type} removido`);
+                        loadContact(); // Reload to update UI
+                    } else {
+                        const err = await res.json();
+                        alert(err.detail || 'Erro ao atualizar');
+                    }
+                } catch (e) {
+                    alert('Erro de conexao');
+                }
+                return;
+            }
+
+            // Set the circle
+            try {
+                const res = await fetch(`/api/contatos/${contactId}/circulo`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contexto: type, circulo: value })
+                });
+
+                if (res.ok) {
+                    const config = type === 'pessoal' ? PESSOAL_CONFIG : PROF_CONFIG;
+                    showToast(`${type === 'pessoal' ? 'P' : 'R'}${value} - ${config[value].nome}`);
+                    loadContact(); // Reload to update UI
+                } else {
+                    const err = await res.json();
+                    alert(err.detail || 'Erro ao atualizar');
+                }
+            } catch (e) {
+                alert('Erro de conexao');
+            }
         }
 
         function renderHealthBadge(healthScore) {

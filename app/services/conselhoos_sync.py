@@ -254,6 +254,59 @@ class ConselhoOSSyncService:
             logger.error(f"Erro ao buscar empresas do contato: {e}")
             return []
 
+    def get_reunioes_by_contact(self, contact_id: int, limit: int = 20) -> List[Dict]:
+        """
+        Busca reuniões das empresas vinculadas a um contato.
+
+        Args:
+            contact_id: ID do contato no INTEL
+            limit: Número máximo de reuniões
+
+        Returns:
+            List of reuniões with empresa info
+        """
+        try:
+            # First get the empresas linked to this contact
+            empresas = self.get_contact_empresas(contact_id)
+            if not empresas:
+                return []
+
+            empresa_ids = [e['conselhoos_empresa_id'] for e in empresas]
+
+            with self._get_conselhoos_conn() as conn:
+                cursor = conn.cursor()
+
+                # Query reuniões for all linked empresas
+                cursor.execute("""
+                    SELECT
+                        r.id,
+                        r.titulo,
+                        r.data,
+                        r.status,
+                        r.calendar_link,
+                        e.id as empresa_id,
+                        e.nome as empresa_nome,
+                        e.cor_hex
+                    FROM reunioes r
+                    JOIN empresas e ON e.id = r.empresa_id
+                    WHERE r.empresa_id = ANY(%s)
+                    ORDER BY r.data DESC
+                    LIMIT %s
+                """, (empresa_ids, limit))
+
+                reunioes = [dict(row) for row in cursor.fetchall()]
+
+                # Add empresa_role from links
+                empresa_roles = {e['conselhoos_empresa_id']: e.get('role', 'stakeholder') for e in empresas}
+                for r in reunioes:
+                    r['contact_role'] = empresa_roles.get(str(r['empresa_id']), 'stakeholder')
+
+                return reunioes
+
+        except Exception as e:
+            logger.error(f"Erro ao buscar reuniões do contato {contact_id}: {e}")
+            return []
+
     def get_dashboard_summary(self) -> Dict:
         """
         Resumo para exibir no dashboard INTEL.

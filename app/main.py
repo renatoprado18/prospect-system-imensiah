@@ -6486,6 +6486,57 @@ async def update_contact_circulo_dual(contact_id: int, data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.put("/api/contatos/{contact_id}/circulo-clear")
+async def clear_contact_circulo(contact_id: int, data: dict):
+    """Remove o circulo de um contexto específico (define como NULL)."""
+    from database import get_db
+
+    contexto = data.get("contexto")  # 'pessoal' ou 'profissional'
+
+    if contexto not in ["pessoal", "profissional"]:
+        raise HTTPException(status_code=400, detail="contexto deve ser 'pessoal' ou 'profissional'")
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            if contexto == "pessoal":
+                cursor.execute("""
+                    UPDATE contacts
+                    SET circulo_pessoal = NULL,
+                        circulo_pessoal_manual = FALSE,
+                        circulo = COALESCE(circulo_profissional, 5),
+                        atualizado_em = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    RETURNING id, nome, circulo_pessoal, circulo_profissional, circulo
+                """, (contact_id,))
+            else:
+                cursor.execute("""
+                    UPDATE contacts
+                    SET circulo_profissional = NULL,
+                        circulo_profissional_manual = FALSE,
+                        circulo = COALESCE(circulo_pessoal, 5),
+                        atualizado_em = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                    RETURNING id, nome, circulo_pessoal, circulo_profissional, circulo
+                """, (contact_id,))
+
+            result = cursor.fetchone()
+            conn.commit()
+
+            if not result:
+                raise HTTPException(status_code=404, detail="Contato não encontrado")
+
+            return {
+                "success": True,
+                "contact": dict(result)
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/circulos/sync-effective")
 async def sync_effective_circles():
     """
@@ -7452,6 +7503,18 @@ async def get_contact_conselhoos(request: Request, contact_id: int):
     service = get_conselhoos_sync_service()
     empresas = service.get_contact_empresas(contact_id)
     return {"empresas": empresas}
+
+
+@app.get("/api/contacts/{contact_id}/conselhoos/reunioes")
+async def get_contact_conselhoos_reunioes(request: Request, contact_id: int, limit: int = 20):
+    """Get ConselhoOS reuniões for empresas linked to a contact."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    service = get_conselhoos_sync_service()
+    reunioes = service.get_reunioes_by_contact(contact_id, limit=limit)
+    return {"reunioes": reunioes}
 
 
 # ============== Google Calendar Endpoints ==============
