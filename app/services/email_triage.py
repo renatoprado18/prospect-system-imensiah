@@ -174,94 +174,103 @@ class EmailTriageService:
             "important": 0,
             "followup": 0,
             "skipped": 0,
-            "errors": 0
+            "errors": 0,
+            "error_details": []
         }
 
-        with get_db() as conn:
-            cursor = conn.cursor()
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
 
-            # Buscar emails não processados (incoming, últimas 48h)
-            query = """
-                SELECT DISTINCT m.id
-                FROM messages m
-                LEFT JOIN conversations c ON c.id = m.conversation_id
-                WHERE m.direcao = 'incoming'
-                AND c.canal = 'email'
-                AND m.criado_em > NOW() - INTERVAL '48 hours'
-                AND m.id NOT IN (SELECT message_id FROM email_triage WHERE message_id IS NOT NULL)
-            """
-            params = []
+                # Buscar emails não processados (incoming, últimas 48h)
+                query = """
+                    SELECT DISTINCT m.id
+                    FROM messages m
+                    LEFT JOIN conversations c ON c.id = m.conversation_id
+                    WHERE m.direcao = 'incoming'
+                    AND c.canal = 'email'
+                    AND m.criado_em > NOW() - INTERVAL '48 hours'
+                    AND m.id NOT IN (SELECT message_id FROM email_triage WHERE message_id IS NOT NULL)
+                """
+                params = []
 
-            if account_type:
-                query += " AND (m.metadata->>'account') IN (SELECT email FROM google_accounts WHERE tipo = %s)"
-                params.append(account_type)
+                if account_type:
+                    query += " AND (m.metadata->>'account') IN (SELECT email FROM google_accounts WHERE tipo = %s)"
+                    params.append(account_type)
 
-            query += " ORDER BY m.criado_em DESC LIMIT %s"
-            params.append(limit)
+                query += " ORDER BY m.criado_em DESC LIMIT %s"
+                params.append(limit)
 
-            cursor.execute(query, params)
-            message_ids = [row['id'] for row in cursor.fetchall()]
+                cursor.execute(query, params)
+                message_ids = [row['id'] for row in cursor.fetchall()]
 
-            for msg_id in message_ids:
-                try:
-                    analysis = self.analyze_email(msg_id)
-                    if not analysis:
-                        stats["skipped"] += 1
-                        continue
-
-                    # Verificar se precisa de atenção
-                    if not analysis.get('classification') or analysis['classification'] == 'fyi':
-                        if analysis.get('sender_circle') and analysis['sender_circle'] > 3:
+                for msg_id in message_ids:
+                    try:
+                        analysis = self.analyze_email(msg_id)
+                        if not analysis:
                             stats["skipped"] += 1
                             continue
 
-                    # Criar registro de triagem
-                    cursor.execute("""
-                        INSERT INTO email_triage (
-                            message_id, conversation_id, contact_id,
-                            needs_attention, priority, classification,
-                            classification_reasons, suggested_tags, suggested_actions,
-                            status, account_type, ai_confidence,
-                            expires_at
-                        ) VALUES (
-                            %s, %s, %s,
-                            %s, %s, %s,
-                            %s, %s, %s,
-                            %s, %s, %s,
-                            NOW() + INTERVAL '7 days'
-                        )
-                        RETURNING id
-                    """, (
-                        analysis['message_id'],
-                        analysis.get('conversation_id'),
-                        analysis.get('contact_id'),
-                        True,
-                        analysis.get('priority', 5),
-                        analysis.get('classification'),
-                        json.dumps(analysis.get('classification_reasons', [])),
-                        json.dumps(analysis.get('suggested_tags', [])),
-                        json.dumps(analysis.get('suggested_actions', [])),
-                        'approved' if not analysis.get('requires_approval') else 'pending',
-                        analysis.get('account_type'),
-                        0.85
-                    ))
+                        # Verificar se precisa de atenção
+                        if not analysis.get('classification') or analysis['classification'] == 'fyi':
+                            if analysis.get('sender_circle') and analysis['sender_circle'] > 3:
+                                stats["skipped"] += 1
+                                continue
 
-                    stats["processed"] += 1
-                    classification = analysis.get('classification', '')
-                    if classification == 'urgent':
-                        stats["urgent"] += 1
-                    elif classification == 'important':
-                        stats["important"] += 1
-                    elif classification == 'followup':
-                        stats["followup"] += 1
+                        # Criar registro de triagem
+                        cursor.execute("""
+                            INSERT INTO email_triage (
+                                message_id, conversation_id, contact_id,
+                                needs_attention, priority, classification,
+                                classification_reasons, suggested_tags, suggested_actions,
+                                status, account_type, ai_confidence,
+                                expires_at
+                            ) VALUES (
+                                %s, %s, %s,
+                                %s, %s, %s,
+                                %s, %s, %s,
+                                %s, %s, %s,
+                                NOW() + INTERVAL '7 days'
+                            )
+                            RETURNING id
+                        """, (
+                            analysis['message_id'],
+                            analysis.get('conversation_id'),
+                            analysis.get('contact_id'),
+                            True,
+                            analysis.get('priority', 5),
+                            analysis.get('classification'),
+                            json.dumps(analysis.get('classification_reasons', [])),
+                            json.dumps(analysis.get('suggested_tags', [])),
+                            json.dumps(analysis.get('suggested_actions', [])),
+                            'approved' if not analysis.get('requires_approval') else 'pending',
+                            analysis.get('account_type'),
+                            0.85
+                        ))
 
-                except Exception as e:
-                    print(f"Error processing message {msg_id}: {e}")
-                    stats["errors"] += 1
+                        stats["processed"] += 1
+                        classification = analysis.get('classification', '')
+                        if classification == 'urgent':
+                            stats["urgent"] += 1
+                        elif classification == 'important':
+                            stats["important"] += 1
+                        elif classification == 'followup':
+                            stats["followup"] += 1
 
-            conn.commit()
+                    except Exception as e:
+                        print(f"Error processing message {msg_id}: {e}")
+                        stats["errors"] += 1
+                        stats["error_details"].append(f"msg {msg_id}: {str(e)}")
 
-        return stats
+                conn.commit()
+
+                return stats
+        except Exception as e:
+            import traceback
+            stats["error_details"].append(str(e))
+            stats["traceback"] = traceback.format_exc()
+            print(f"Error in process_new_emails: {traceback.format_exc()}")
+            return stats
 
     def _get_effective_circle(self, email_data: Dict) -> Optional[int]:
         """Retorna o círculo efetivo do contato"""
