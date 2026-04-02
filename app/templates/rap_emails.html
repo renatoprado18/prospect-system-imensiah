@@ -488,7 +488,7 @@
                         </div>
                     ` : ''}
                     <div class="email-actions">
-                        <button class="action-btn primary" onclick="openReply(${email.id})">
+                        <button class="action-btn" onclick="openReply(${email.id})">
                             <i class="bi bi-reply"></i> Responder
                         </button>
                         <button class="action-btn" onclick="scheduleFromEmail(${email.id})">
@@ -499,6 +499,9 @@
                         </button>
                         <button class="action-btn" onclick="createProjectFromEmail(${email.id})">
                             <i class="bi bi-folder"></i> Projeto
+                        </button>
+                        <button class="action-btn primary" onclick="archiveEmail(${email.id})" title="Arquivar no Gmail e remover tag">
+                            <i class="bi bi-archive"></i> Arquivar
                         </button>
                     </div>
                 </div>
@@ -692,6 +695,36 @@
     function createProjectFromEmail(triageId) {
         showToast('Criar projeto - Em desenvolvimento');
         markAction(triageId, 'project_created');
+    }
+
+    async function archiveEmail(triageId) {
+        const btn = event.target.closest('button');
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Arquivando...';
+        btn.disabled = true;
+
+        try {
+            const response = await fetch(`/api/email-triage/${triageId}/archive`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await response.json();
+
+            if (response.ok) {
+                showToast('Email arquivado com sucesso!');
+                loadEmails();
+                loadStats();
+            } else {
+                showToast(data.detail || 'Erro ao arquivar');
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+            }
+        } catch (e) {
+            console.error('Erro ao arquivar:', e);
+            showToast('Erro ao arquivar email');
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+        }
     }
 
     async function markAction(triageId, action) {

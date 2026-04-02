@@ -9109,6 +9109,89 @@ async def mark_email_triage_action(request: Request, triage_id: int, data: dict)
     return service.mark_actioned(triage_id, action)
 
 
+@app.post("/api/email-triage/{triage_id}/archive")
+async def archive_email_triage(request: Request, triage_id: int):
+    """Arquiva email no Gmail e remove label !!Renato"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Buscar triage com dados da mensagem
+            cursor.execute("""
+                SELECT et.*, m.external_id as gmail_id, m.metadata
+                FROM email_triage et
+                LEFT JOIN messages m ON m.id = et.message_id
+                WHERE et.id = %s
+            """, (triage_id,))
+            triage = cursor.fetchone()
+
+            if not triage:
+                raise HTTPException(status_code=404, detail="Email não encontrado")
+
+            gmail_id = triage.get('gmail_id')
+            if not gmail_id:
+                raise HTTPException(status_code=400, detail="Email sem ID do Gmail")
+
+            # Buscar conta do email
+            metadata = triage.get('metadata') or {}
+            account_email = metadata.get('account')
+
+            if not account_email:
+                raise HTTPException(status_code=400, detail="Email sem conta associada")
+
+            # Buscar access token da conta
+            cursor.execute("""
+                SELECT access_token, refresh_token
+                FROM google_accounts
+                WHERE email = %s
+            """, (account_email,))
+            account = cursor.fetchone()
+
+            if not account:
+                raise HTTPException(status_code=400, detail=f"Conta {account_email} não encontrada")
+
+            access_token = account.get('access_token')
+
+            # Se o token expirou, tentar refresh
+            from integrations.gmail import GmailIntegration
+            gmail = GmailIntegration()
+
+            # Arquivar e remover label
+            result = await gmail.archive_and_remove_label(
+                access_token,
+                gmail_id,
+                "!!Renato"
+            )
+
+            # Marcar como arquivado no sistema
+            cursor.execute("""
+                UPDATE email_triage
+                SET status = 'actioned',
+                    action_taken = 'archived',
+                    actioned_at = NOW()
+                WHERE id = %s
+            """, (triage_id,))
+            conn.commit()
+
+            return {
+                "success": True,
+                "gmail_archived": result.get('archived'),
+                "label_removed": result.get('label_removed'),
+                "triage_id": triage_id
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"Error archiving email: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Erro ao arquivar: {str(e)}")
+
+
 # === REGRAS DE TRIAGEM ===
 
 @app.get("/api/email-triage/rules")
