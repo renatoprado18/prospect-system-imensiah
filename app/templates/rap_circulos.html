@@ -536,7 +536,13 @@ async function loadData() {
 function render(ctx, d) {
     document.getElementById(`count${cap(ctx)}`).textContent = fmt(d.total);
     renderTiles(ctx, d.por_circulo, d.config);
-    renderList(ctx, d.prioridades);
+
+    // If a circle is selected, re-apply the filter; otherwise show prioridades
+    if (selected[ctx]) {
+        filterByCircle(ctx, selected[ctx]);
+    } else {
+        renderList(ctx, d.prioridades);
+    }
 }
 
 function renderTiles(ctx, porCirculo, config) {
