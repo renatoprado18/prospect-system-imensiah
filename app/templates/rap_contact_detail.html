@@ -881,6 +881,7 @@
         .timeline-dot.note { border-color: var(--warning); color: var(--warning); }
         .timeline-dot.call { border-color: var(--primary); color: var(--primary); }
         .timeline-dot.interaction { border-color: #8b5cf6; color: #8b5cf6; background: rgba(139, 92, 246, 0.1); }
+        .timeline-dot.fact { border-color: #f59e0b; color: #f59e0b; background: rgba(245, 158, 11, 0.1); }
 
         .timeline-content {
             background: var(--gray-100);
@@ -2074,38 +2075,18 @@
                 <div class="tab-content" id="tab-timeline">
                     <div class="card">
                         <div class="card-header">
-                            <h2 class="card-title"><i class="bi bi-clock-history"></i> Timeline de Interacoes</h2>
+                            <h2 class="card-title"><i class="bi bi-clock-history"></i> Timeline Completa</h2>
                             <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
                                 <i class="bi bi-plus"></i> Adicionar
                             </button>
                         </div>
-                        <div class="card-body">
-                            ${memories.length > 0 ? `
-                                <div class="timeline">
-                                    ${memories.map(m => renderTimelineItem(m)).join('')}
-                                </div>
-                            ` : `
-                                <div class="empty-state">
-                                    <i class="bi bi-clock"></i>
-                                    <p>Nenhuma interacao registrada</p>
-                                    <button class="btn btn-sm btn-primary mt-2" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
-                                        <i class="bi bi-plus me-1"></i>Adicionar primeira interacao
-                                    </button>
-                                </div>
-                            `}
+                        <div class="card-body" id="unifiedTimelineContainer">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                                <p class="mt-2 mb-0">Carregando timeline...</p>
+                            </div>
                         </div>
                     </div>
-
-                    ${conversations.length > 0 ? `
-                        <div class="card mt-3">
-                            <div class="card-header">
-                                <h2 class="card-title"><i class="bi bi-chat-dots"></i> Conversas Recentes</h2>
-                            </div>
-                            <div class="card-body">
-                                ${conversations.map(c => renderConversation(c)).join('')}
-                            </div>
-                        </div>
-                    ` : ''}
                 </div>
 
                 <!-- Tab: AI -->
@@ -2208,9 +2189,11 @@
             document.querySelector(`.contact-tab[onclick="switchTab('${tabName}')"]`)?.classList.add('active');
             document.getElementById(`tab-${tabName}`)?.classList.add('active');
 
-            // Load meetings when reunioes tab is selected
+            // Load content based on tab
             if (tabName === 'reunioes') {
                 loadContactMeetings();
+            } else if (tabName === 'timeline') {
+                loadUnifiedTimeline();
             }
         }
 
@@ -2437,24 +2420,64 @@
             return parts.join('<br>');
         }
 
-        function renderTimelineItem(memory) {
-            const typeIcons = {
-                'meeting': 'bi-camera-video',
-                'email': 'bi-envelope',
-                'whatsapp': 'bi-whatsapp',
-                'call': 'bi-telephone',
-                'note': 'bi-sticky',
-                'Telefonema': 'bi-telephone',
-                'Reuniao': 'bi-camera-video',
-                'Email': 'bi-envelope',
-                'LinkedIn': 'bi-linkedin',
-                'Evento': 'bi-calendar-event',
-                'Nota': 'bi-sticky'
+        function renderTimelineItem(item) {
+            // Unified timeline item renderer - handles all types
+            const typeConfig = {
+                'message': {
+                    getIcon: (item) => item.channel === 'whatsapp' ? 'bi-whatsapp' : 'bi-envelope',
+                    getClass: (item) => item.channel === 'whatsapp' ? 'whatsapp' : 'email',
+                    getTitle: (item) => item.channel === 'whatsapp' ? 'WhatsApp' : 'Email'
+                },
+                'note': {
+                    getIcon: () => 'bi-sticky',
+                    getClass: () => 'note',
+                    getTitle: (item) => item.title || 'Nota'
+                },
+                'fact': {
+                    getIcon: () => 'bi-lightbulb',
+                    getClass: () => 'fact',
+                    getTitle: () => 'Fato identificado'
+                },
+                'interaction': {
+                    getIcon: (item) => {
+                        const icons = {
+                            'Telefonema': 'bi-telephone',
+                            'Reuniao': 'bi-camera-video',
+                            'Email': 'bi-envelope',
+                            'LinkedIn': 'bi-linkedin',
+                            'Evento': 'bi-calendar-event',
+                            'Nota': 'bi-sticky',
+                            'call': 'bi-telephone',
+                            'meeting': 'bi-camera-video'
+                        };
+                        return icons[item.interaction_type] || 'bi-chat-dots';
+                    },
+                    getClass: (item) => 'interaction',
+                    getTitle: (item) => item.title || item.interaction_type || 'Interacao'
+                }
             };
 
-            const icon = typeIcons[memory.tipo] || 'bi-circle';
-            const dotClass = memory.item_type === 'interaction' ? 'interaction' : (memory.tipo || '');
-            const content = memory.resumo || memory.descricao || '';
+            // Legacy support for old format
+            if (!item.type && item.tipo) {
+                item.type = 'interaction';
+                item.interaction_type = item.tipo;
+                item.title = item.titulo;
+                item.content = item.resumo || item.descricao;
+                item.timestamp = item.data_ocorrencia;
+            }
+
+            const config = typeConfig[item.type] || typeConfig['note'];
+            const icon = config.getIcon(item);
+            const dotClass = config.getClass(item);
+            const title = config.getTitle(item);
+            const content = item.content || '';
+            const timestamp = item.timestamp;
+
+            // Direction indicator for messages
+            const directionBadge = item.type === 'message' ?
+                `<span class="badge ${item.title?.includes('enviada') ? 'bg-primary' : 'bg-secondary'} ms-2" style="font-size: 0.65rem;">
+                    ${item.title?.includes('enviada') ? 'Enviada' : 'Recebida'}
+                </span>` : '';
 
             return `
                 <div class="timeline-item">
@@ -2463,18 +2486,59 @@
                     </div>
                     <div class="timeline-content">
                         <div class="timeline-header">
-                            <span class="timeline-title">${memory.titulo || memory.tipo}</span>
-                            <span class="timeline-date">${formatDateTime(memory.data_ocorrencia)}</span>
+                            <span class="timeline-title">${title}${directionBadge}</span>
+                            <span class="timeline-date">${formatMessageTime(timestamp)}</span>
                         </div>
                         <div class="timeline-text">${content}</div>
-                        ${memory.fatos_importantes && memory.fatos_importantes.length > 0 ? `
+                        ${item.type === 'fact' && item.confidence ? `
                             <div class="timeline-meta">
-                                <span><i class="bi bi-lightbulb"></i> ${memory.fatos_importantes.length} fatos extraidos</span>
+                                <span class="badge bg-light text-dark"><i class="bi bi-check-circle me-1"></i>${Math.round(item.confidence * 100)}% confianca</span>
                             </div>
                         ` : ''}
                     </div>
                 </div>
             `;
+        }
+
+        // Load unified timeline
+        async function loadUnifiedTimeline() {
+            const container = document.getElementById('unifiedTimelineContainer');
+            if (!container) return;
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/timeline?limit=50`);
+                if (!response.ok) throw new Error('API error');
+
+                const data = await response.json();
+                const timeline = data.timeline || [];
+
+                if (timeline.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <i class="bi bi-clock"></i>
+                            <p>Nenhuma interacao registrada</p>
+                            <button class="btn btn-sm btn-primary mt-2" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
+                                <i class="bi bi-plus me-1"></i>Adicionar primeira interacao
+                            </button>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = `
+                    <div class="timeline">
+                        ${timeline.map(item => renderTimelineItem(item)).join('')}
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error loading timeline:', error);
+                container.innerHTML = `
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-exclamation-circle"></i>
+                        <p>Erro ao carregar timeline</p>
+                    </div>
+                `;
+            }
         }
 
         function renderConversation(conv) {
