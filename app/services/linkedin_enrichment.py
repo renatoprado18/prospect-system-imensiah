@@ -48,6 +48,45 @@ class LinkedInEnrichmentService:
                 return match.group(1)
         return None
 
+    def parse_headline(self, headline: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Parse LinkedIn headline to extract title and company.
+
+        Examples:
+        - "Sócio Fundador na Aptus Management" -> ("Sócio Fundador", "Aptus Management")
+        - "CEO at Google" -> ("CEO", "Google")
+        - "Software Engineer | Microsoft" -> ("Software Engineer", "Microsoft")
+        - "Diretor de Marketing - Empresa XYZ" -> ("Diretor de Marketing", "Empresa XYZ")
+
+        Returns (cargo, empresa) tuple
+        """
+        if not headline:
+            return None, None
+
+        headline = headline.strip()
+
+        # Patterns to split title from company
+        # Order matters - check more specific patterns first
+        separators = [
+            r'\s+(?:na|no|at|@)\s+',      # "na", "no", "at", "@"
+            r'\s+[-–—]\s+',                # " - ", " – ", " — "
+            r'\s*\|\s*',                   # " | "
+            r'\s+em\s+',                   # "em"
+        ]
+
+        for sep in separators:
+            parts = re.split(sep, headline, maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) == 2:
+                cargo = parts[0].strip()
+                empresa = parts[1].strip()
+                # Validate - both should have reasonable length
+                if len(cargo) >= 2 and len(empresa) >= 2:
+                    return cargo, empresa
+
+        # If no separator found, try to detect if it's just a title or just a company
+        # For now, return None for both if we can't parse
+        return None, None
+
     async def fetch_profile(self, linkedin_url: str) -> Dict:
         """
         Busca dados do perfil LinkedIn via RapidAPI
@@ -301,6 +340,21 @@ class LinkedInEnrichmentService:
                     str(profile)
                 ))
 
+            # Extract company/title from profile or parse from headline
+            current_company = profile.get("current_company")
+            current_title = profile.get("current_title")
+
+            # If company/title not provided, try to parse from headline
+            if not current_company or not current_title:
+                headline = profile.get("headline", "")
+                parsed_title, parsed_company = self.parse_headline(headline)
+                if not current_company and parsed_company:
+                    current_company = parsed_company
+                    logger.info(f"Parsed company from headline: {parsed_company}")
+                if not current_title and parsed_title:
+                    current_title = parsed_title
+                    logger.info(f"Parsed title from headline: {parsed_title}")
+
             # Atualizar contato com novos dados
             cursor.execute("""
                 UPDATE contacts
@@ -325,8 +379,8 @@ class LinkedInEnrichmentService:
                     atualizado_em = CURRENT_TIMESTAMP
                 WHERE id = %s
             """, (
-                profile.get("current_company"),
-                profile.get("current_title"),
+                current_company,
+                current_title,
                 profile.get("headline"),
                 profile.get("location"),
                 profile.get("about"),
