@@ -222,62 +222,6 @@
             color: white;
         }
 
-        /* Chat Input Section */
-        .chat-input-section {
-            background: white;
-            border-radius: 12px;
-            padding: 12px;
-            margin-bottom: 16px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        }
-        .chat-input-wrapper {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-        .chat-input-wrapper input {
-            flex: 1;
-            border: 1px solid var(--gray-200);
-            border-radius: 8px;
-            padding: 10px 14px;
-            font-size: 0.9rem;
-            outline: none;
-            transition: border-color 0.2s;
-        }
-        .chat-input-wrapper input:focus { border-color: var(--primary); }
-        .chat-input-wrapper button {
-            width: 40px;
-            height: 40px;
-            border-radius: 8px;
-            border: none;
-            background: var(--primary);
-            color: white;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .chat-input-wrapper button:hover { background: var(--primary-dark); }
-        .chat-suggestions {
-            display: flex;
-            gap: 8px;
-            margin-top: 10px;
-            flex-wrap: wrap;
-        }
-        .chat-suggestion {
-            padding: 6px 12px;
-            border-radius: 16px;
-            border: 1px solid var(--gray-200);
-            background: var(--gray-100);
-            color: var(--gray-600);
-            font-size: 0.8rem;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .chat-suggestion:hover {
-            background: var(--primary);
-            color: white;
-            border-color: var(--primary);
-        }
-
         /* Summary Card (Resumo IA destaque) */
         .summary-highlight {
             background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
@@ -348,6 +292,31 @@
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 12px;
+        }
+        .tile-grid-asymmetric {
+            display: grid;
+            grid-template-columns: 1.2fr 0.8fr;
+            gap: 12px;
+        }
+        .tile-grid-3col {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+        @media (max-width: 768px) {
+            .tile-grid-asymmetric, .tile-grid-3col { grid-template-columns: 1fr; }
+        }
+        .stacked-column {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .tile-card.compact {
+            padding: 10px 12px;
+        }
+        .tile-card.compact h5 {
+            font-size: 0.8rem;
+            margin-bottom: 6px;
         }
         .tile-card {
             background: white;
@@ -2128,23 +2097,6 @@
                     </div>
                 </div>
 
-                <!-- Chat Input Section -->
-                <div class="chat-input-section">
-                    <div class="chat-input-wrapper">
-                        <input type="text" id="intelChatInput"
-                               placeholder="Pergunte sobre ${contact.nome.split(' ')[0]}..."
-                               onkeypress="if(event.key==='Enter') sendIntelChat()">
-                        <button onclick="sendIntelChat()">
-                            <i class="bi bi-send"></i>
-                        </button>
-                    </div>
-                    <div class="chat-suggestions">
-                        <button class="chat-suggestion" onclick="askIntel('O que ele faz profissionalmente?')">O que ele faz?</button>
-                        <button class="chat-suggestion" onclick="askIntel('Quando foi nosso último contato?')">Último contato?</button>
-                        <button class="chat-suggestion" onclick="suggestIntelResponse()">Sugerir resposta</button>
-                    </div>
-                </div>
-
                 <!-- Tabs Navigation (2 tabs only) -->
                 <div class="contact-tabs">
                     <button class="contact-tab active" onclick="switchTab('resumo')">
@@ -2159,8 +2111,8 @@
 
                 <!-- Tab: Resumo -->
                 <div class="tab-content active" id="tab-resumo">
-                    <!-- Row 1: Resumo IA + Insights -->
-                    <div class="tile-grid mb-3">
+                    <!-- Row 1: Resumo IA (60%) + Fatos/Insights stacked (40%) -->
+                    <div class="tile-grid-asymmetric mb-3">
                         <div class="summary-highlight">
                             <h4><i class="bi bi-robot"></i> Resumo IA
                                 <button class="btn btn-sm btn-link p-0 ms-auto" onclick="enrichContact()" title="Atualizar">
@@ -2170,48 +2122,36 @@
                             <p id="aiSummaryText">${contact.resumo_ai || '<em class="text-muted">Nenhum resumo gerado. Clique em atualizar para gerar.</em>'}</p>
                             ${contact.ultimo_enriquecimento ? `<small class="text-muted">Atualizado: ${formatDateTime(contact.ultimo_enriquecimento)}</small>` : ''}
                         </div>
-                        <div class="insights-card">
-                            <h4><i class="bi bi-graph-up"></i> Insights</h4>
-                            <div id="insightsContainer">
-                                ${contact.insights_ai ? renderInsightsCompact(contact.insights_ai) : '<span class="text-muted" style="font-size: 0.85rem;">Sem insights disponíveis</span>'}
+                        <div class="stacked-column">
+                            <div class="tile-card compact">
+                                <h5><i class="bi bi-lightbulb text-warning"></i> Fatos
+                                    <span class="actions">
+                                        <button onclick="openAddFactModal()" title="Adicionar"><i class="bi bi-plus-lg"></i></button>
+                                        <button onclick="extractFacts()" title="Extrair com IA"><i class="bi bi-magic"></i></button>
+                                    </span>
+                                </h5>
+                                <div class="tile-content" id="factsContainer" style="max-height: 120px; overflow-y: auto;">
+                                    <!-- Loaded dynamically -->
+                                </div>
+                            </div>
+                            <div class="tile-card compact">
+                                <h5><i class="bi bi-graph-up text-info"></i> Insights</h5>
+                                <div class="tile-content" id="insightsContainer">
+                                    ${contact.insights_ai ? renderInsightsCompact(contact.insights_ai) : '<span class="text-muted" style="font-size: 0.85rem;">Sem insights</span>'}
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Row 2: Fatos + Reuniões -->
+                    <!-- Row 2: Reuniões + Mensagens -->
                     <div class="tile-grid mb-3">
-                        <div class="tile-card">
-                            <h5><i class="bi bi-lightbulb text-warning"></i> Fatos
-                                <span class="actions">
-                                    <button onclick="openAddFactModal()" title="Adicionar"><i class="bi bi-plus-lg"></i></button>
-                                    <button onclick="extractFacts()" title="Extrair com IA"><i class="bi bi-magic"></i></button>
-                                </span>
-                            </h5>
-                            <div class="tile-content" id="factsContainer" style="max-height: 200px; overflow-y: auto;">
-                                <!-- Loaded dynamically -->
-                            </div>
-                        </div>
                         <div class="tile-card">
                             <h5><i class="bi bi-calendar-event text-success"></i> Reuniões
                                 <span class="actions">
                                     <button onclick="scheduleWithContact()" title="Agendar"><i class="bi bi-plus-lg"></i></button>
                                 </span>
                             </h5>
-                            <div class="tile-content" id="meetingsContainerCompact" style="max-height: 200px; overflow-y: auto;">
-                                <!-- Loaded dynamically -->
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Row 3: Projetos + Mensagens -->
-                    <div class="tile-grid mb-3">
-                        <div class="tile-card">
-                            <h5><i class="bi bi-folder2 text-primary"></i> Projetos
-                                <span class="actions">
-                                    <button onclick="openAddToProjectModal()" title="Adicionar a projeto"><i class="bi bi-plus-lg"></i></button>
-                                </span>
-                            </h5>
-                            <div class="tile-content" id="projectsContainer" style="max-height: 200px; overflow-y: auto;">
+                            <div class="tile-content" id="meetingsContainerCompact" style="max-height: 180px; overflow-y: auto;">
                                 <!-- Loaded dynamically -->
                             </div>
                         </div>
@@ -2222,32 +2162,40 @@
                                     <a href="#" onclick="switchTab('timeline'); return false;" title="Ver todas"><i class="bi bi-arrow-right"></i></a>
                                 </span>
                             </h5>
-                            <div class="tile-content messages-compact" id="messagesContainerCompact" style="max-height: 200px; overflow-y: auto;">
+                            <div class="tile-content messages-compact" id="messagesContainerCompact" style="max-height: 180px; overflow-y: auto;">
                                 <!-- Loaded dynamically -->
                             </div>
                         </div>
                     </div>
 
-                    <!-- Row 4: LinkedIn + ConselhoOS -->
-                    <div class="tile-grid mb-3">
+                    <!-- Row 3: Projetos + LinkedIn + ConselhoOS -->
+                    <div class="tile-grid-3col mb-3">
+                        <div class="tile-card">
+                            <h5><i class="bi bi-folder2 text-primary"></i> Projetos
+                                <span class="actions">
+                                    <button onclick="openAddToProjectModal()" title="Adicionar"><i class="bi bi-plus-lg"></i></button>
+                                </span>
+                            </h5>
+                            <div class="tile-content" id="projectsContainer" style="max-height: 150px; overflow-y: auto;">
+                                <!-- Loaded dynamically -->
+                            </div>
+                        </div>
                         ${contact.linkedin ? `
                         <div class="tile-card" id="linkedinTile">
                             <h5><i class="bi bi-linkedin text-primary"></i> LinkedIn
                                 <span class="actions">
                                     <a href="${contact.linkedin}" target="_blank" title="Abrir"><i class="bi bi-box-arrow-up-right"></i></a>
-                                    <button onclick="enrichLinkedIn()" title="Atualizar"><i class="bi bi-arrow-clockwise"></i></button>
                                 </span>
                             </h5>
                             <div class="tile-content">
-                                ${contact.linkedin_headline ? `<div class="fw-semibold" style="font-size: 0.85rem;">${contact.linkedin_headline}</div>` : ''}
-                                ${contact.linkedin_location ? `<div class="text-muted small"><i class="bi bi-geo-alt me-1"></i>${contact.linkedin_location}</div>` : ''}
-                                ${contact.linkedin_enriched_at ? `<div class="text-muted small mt-2"><i class="bi bi-clock me-1"></i>Atualizado: ${formatDate(contact.linkedin_enriched_at)}</div>` : '<div class="empty">Dados não carregados</div>'}
+                                ${contact.linkedin_headline ? `<div class="fw-semibold" style="font-size: 0.8rem;">${contact.linkedin_headline}</div>` : ''}
+                                ${contact.linkedin_location ? `<div class="text-muted small"><i class="bi bi-geo-alt me-1"></i>${contact.linkedin_location}</div>` : '<div class="empty">Clique para ver</div>'}
                             </div>
                         </div>
                         ` : `
                         <div class="tile-card">
                             <h5><i class="bi bi-linkedin text-primary"></i> LinkedIn</h5>
-                            <div class="tile-content empty">Sem perfil vinculado</div>
+                            <div class="tile-content empty">Sem perfil</div>
                         </div>
                         `}
                         <div class="tile-card" id="conselhoosSection">
@@ -5162,19 +5110,23 @@
                     return;
                 }
 
-                // Sort by date descending (most recent first)
+                // API returns start_datetime directly
                 const sortedEvents = [...events].sort((a, b) => {
-                    const dateA = new Date(a.start?.dateTime || a.start?.date || a.start);
-                    const dateB = new Date(b.start?.dateTime || b.start?.date || b.start);
+                    const dateA = new Date(a.start_datetime || '');
+                    const dateB = new Date(b.start_datetime || '');
                     return dateB - dateA;
                 });
 
                 container.innerHTML = sortedEvents.slice(0, 5).map(ev => {
-                    const startStr = ev.start?.dateTime || ev.start?.date || ev.start;
+                    const startStr = ev.start_datetime || '';
+                    if (!startStr) return '';
+
                     const date = new Date(startStr);
+                    if (isNaN(date.getTime())) return '';
+
                     const isPast = date < new Date();
-                    const dateFormatted = date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
-                    const timeFormatted = ev.start?.dateTime ? date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : 'Dia todo';
+                    const isAllDay = ev.is_all_day;
+                    const timeFormatted = isAllDay ? 'Dia todo' : date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
                     const statusClass = isPast ? 'past' : 'upcoming';
 
                     return `
@@ -5187,10 +5139,14 @@
                                 <span class="meeting-title">${ev.summary || 'Reunião'}</span>
                                 <span class="meeting-time">${timeFormatted}</span>
                             </div>
-                            ${ev.htmlLink ? `<a href="${ev.htmlLink}" target="_blank" class="meeting-link"><i class="bi bi-box-arrow-up-right"></i></a>` : ''}
+                            ${ev.html_link ? `<a href="${ev.html_link}" target="_blank" class="meeting-link"><i class="bi bi-box-arrow-up-right"></i></a>` : ''}
                         </div>
                     `;
-                }).join('');
+                }).filter(html => html).join('');
+
+                if (!container.innerHTML.trim()) {
+                    container.innerHTML = '<span class="empty">Nenhuma reunião encontrada</span>';
+                }
 
             } catch (error) {
                 console.error('Error loading compact meetings:', error);
