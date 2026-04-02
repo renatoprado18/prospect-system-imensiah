@@ -127,6 +127,33 @@ class TimelineService:
                     item['timestamp'] = item['timestamp'].isoformat() if hasattr(item['timestamp'], 'isoformat') else str(item['timestamp'])
                 timeline.append(item)
 
+            # Reunioes/Eventos de calendario
+            cursor.execute("""
+                SELECT
+                    'meeting' as type,
+                    id,
+                    summary as title,
+                    description as content,
+                    start_datetime as timestamp,
+                    end_datetime,
+                    location,
+                    status,
+                    conference_url,
+                    CASE WHEN start_datetime < NOW() THEN 'past' ELSE 'future' END as time_status
+                FROM calendar_events
+                WHERE contact_id = %s
+                ORDER BY start_datetime DESC
+                LIMIT %s
+            """, (contact_id, limit))
+
+            for row in cursor.fetchall():
+                item = dict(row)
+                if item.get('timestamp'):
+                    item['timestamp'] = item['timestamp'].isoformat() if hasattr(item['timestamp'], 'isoformat') else str(item['timestamp'])
+                if item.get('end_datetime'):
+                    item['end_datetime'] = item['end_datetime'].isoformat() if hasattr(item['end_datetime'], 'isoformat') else str(item['end_datetime'])
+                timeline.append(item)
+
         # Ordenar por timestamp (mais recente primeiro)
         def get_timestamp(x):
             ts = x.get('timestamp')

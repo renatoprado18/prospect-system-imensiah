@@ -404,6 +404,10 @@
         document.querySelectorAll('.stat-badge').forEach(b => b.classList.remove('active'));
         if (classification) {
             document.getElementById(`stat-${classification}`).classList.add('active');
+            // When filtering by classification, show all statuses
+            currentStatus = '';
+            document.querySelectorAll('.filter-btn[data-status]').forEach(b => b.classList.remove('active'));
+            document.querySelector('.filter-btn[data-status=""]').classList.add('active');
         }
 
         loadEmails();

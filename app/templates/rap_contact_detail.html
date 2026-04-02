@@ -1002,6 +1002,20 @@
             text-align: right;
         }
 
+        /* Meetings in Timeline */
+        .timeline-dot.meeting-past { border-color: var(--success); color: var(--success); background: rgba(16, 185, 129, 0.1); }
+        .timeline-dot.meeting-future { border-color: var(--primary); color: var(--primary); background: rgba(99, 102, 241, 0.1); }
+
+        .meeting-item .meeting-location {
+            font-size: 0.8rem;
+            color: var(--gray-500);
+            margin: 4px 0 8px 0;
+        }
+
+        .meeting-item .meeting-location i {
+            color: var(--gray-400);
+        }
+
         /* Facts */
         .fact-item {
             display: flex;
@@ -2524,6 +2538,11 @@
                     getClass: () => 'fact',
                     getTitle: () => 'Fato identificado'
                 },
+                'meeting': {
+                    getIcon: (item) => item.time_status === 'past' ? 'bi-camera-video-fill' : 'bi-calendar-event',
+                    getClass: (item) => item.time_status === 'past' ? 'meeting-past' : 'meeting-future',
+                    getTitle: (item) => item.title || 'Reuniao'
+                },
                 'interaction': {
                     getIcon: (item) => {
                         const icons = {
@@ -2555,6 +2574,11 @@
             // Handle message_group type (grouped messages with AI summary)
             if (item.type === 'message_group') {
                 return renderMessageGroup(item);
+            }
+
+            // Handle meeting type (calendar events)
+            if (item.type === 'meeting') {
+                return renderMeetingItem(item);
             }
 
             const config = typeConfig[item.type] || typeConfig['note'];
@@ -2629,6 +2653,54 @@
                             </button>
                         </div>
                         <div class="group-details" id="${groupId}-details" style="display: none;"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Render meeting/calendar event item
+        function renderMeetingItem(item) {
+            const isPast = item.time_status === 'past';
+            const icon = isPast ? 'bi-camera-video-fill' : 'bi-calendar-event';
+            const dotClass = isPast ? 'meeting-past' : 'meeting-future';
+
+            // Format meeting time
+            let timeStr = '';
+            if (item.timestamp) {
+                const date = new Date(item.timestamp);
+                const dateStr = date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+                const hourStr = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                timeStr = `${dateStr} às ${hourStr}`;
+            }
+
+            // Status badge
+            const statusBadge = isPast
+                ? '<span class="badge bg-secondary ms-2" style="font-size: 0.65rem;">Realizada</span>'
+                : '<span class="badge bg-success ms-2" style="font-size: 0.65rem;">Agendada</span>';
+
+            // Location
+            const locationHtml = item.location
+                ? `<div class="meeting-location"><i class="bi bi-geo-alt me-1"></i>${item.location}</div>`
+                : '';
+
+            // Conference link
+            const conferenceHtml = item.conference_url
+                ? `<a href="${item.conference_url}" target="_blank" class="btn btn-sm btn-outline-primary mt-2"><i class="bi bi-camera-video me-1"></i>Entrar na reuniao</a>`
+                : '';
+
+            return `
+                <div class="timeline-item meeting-item">
+                    <div class="timeline-dot ${dotClass}">
+                        <i class="bi ${icon}"></i>
+                    </div>
+                    <div class="timeline-content">
+                        <div class="timeline-header">
+                            <span class="timeline-title">${item.title || 'Reuniao'}${statusBadge}</span>
+                            <span class="timeline-date">${timeStr}</span>
+                        </div>
+                        ${locationHtml}
+                        ${item.content ? `<div class="timeline-text">${item.content}</div>` : ''}
+                        ${conferenceHtml}
                     </div>
                 </div>
             `;
