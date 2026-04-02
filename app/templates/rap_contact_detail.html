@@ -146,98 +146,352 @@
         .user-name { font-weight: 500; font-size: 0.9rem; }
         .user-role { font-size: 0.75rem; color: var(--gray-400); }
 
-        /* INTEL Insight Panel */
-        .intel-insight-panel {
+        /* INTEL Status Bar (Compact) */
+        .intel-status-bar {
             background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-            border-radius: 16px;
-            padding: 20px;
-            margin-bottom: 20px;
+            border-radius: 12px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
             color: white;
-            position: relative;
-            overflow: hidden;
-        }
-        .intel-insight-panel::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            right: 0;
-            width: 200px;
-            height: 200px;
-            background: radial-gradient(circle, rgba(99, 102, 241, 0.3) 0%, transparent 70%);
-            pointer-events: none;
-        }
-        .intel-header {
             display: flex;
             align-items: center;
-            gap: 10px;
-            margin-bottom: 16px;
+            gap: 12px;
         }
-        .intel-header i {
-            font-size: 1.5rem;
-            color: #a5b4fc;
-        }
-        .intel-header h3 {
-            margin: 0;
-            font-size: 1rem;
-            font-weight: 600;
-            color: #e2e8f0;
-        }
-        .intel-header .refresh-btn {
-            margin-left: auto;
-            background: rgba(255,255,255,0.1);
-            border: none;
-            color: #94a3b8;
-            padding: 6px 10px;
+        .intel-status-icon {
+            width: 32px;
+            height: 32px;
+            background: rgba(99, 102, 241, 0.3);
             border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .intel-status-icon i { color: #a5b4fc; font-size: 1rem; }
+        .intel-status-content { flex: 1; min-width: 0; }
+        .intel-status-title {
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: #e2e8f0;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .intel-status-title .status-badge {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+        .intel-status-title .status-badge.waiting { background: #f59e0b; color: #1e293b; }
+        .intel-status-title .status-badge.ok { background: #10b981; color: white; }
+        .intel-status-title .status-badge.urgent { background: #ef4444; color: white; }
+        .intel-status-detail {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            margin-top: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .intel-status-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .intel-status-actions button {
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: none;
+            font-size: 0.8rem;
+            font-weight: 500;
             cursor: pointer;
             transition: all 0.2s;
         }
-        .intel-header .refresh-btn:hover {
+        .intel-status-actions .btn-action {
+            background: var(--primary);
+            color: white;
+        }
+        .intel-status-actions .btn-action:hover { background: var(--primary-dark); }
+        .intel-status-actions .btn-secondary {
+            background: rgba(255,255,255,0.1);
+            color: #94a3b8;
+        }
+        .intel-status-actions .btn-secondary:hover {
             background: rgba(255,255,255,0.2);
             color: white;
         }
-        .intel-content {
-            background: rgba(255,255,255,0.05);
+
+        /* Chat Input Section */
+        .chat-input-section {
+            background: white;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .chat-input-wrapper {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .chat-input-wrapper input {
+            flex: 1;
+            border: 1px solid var(--gray-200);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .chat-input-wrapper input:focus { border-color: var(--primary); }
+        .chat-input-wrapper button {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            border: none;
+            background: var(--primary);
+            color: white;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .chat-input-wrapper button:hover { background: var(--primary-dark); }
+        .chat-suggestions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+        .chat-suggestion {
+            padding: 6px 12px;
+            border-radius: 16px;
+            border: 1px solid var(--gray-200);
+            background: var(--gray-100);
+            color: var(--gray-600);
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .chat-suggestion:hover {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        /* Summary Card (Resumo IA destaque) */
+        .summary-highlight {
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border: 1px solid #bae6fd;
             border-radius: 12px;
             padding: 16px;
-            margin-bottom: 16px;
         }
-        .intel-situation {
-            font-size: 1rem;
-            font-weight: 500;
-            color: white;
-            margin-bottom: 12px;
-            line-height: 1.5;
-        }
-        .intel-context-list {
-            margin: 0;
-            padding-left: 20px;
-            color: #cbd5e1;
+        .summary-highlight h4 {
             font-size: 0.9rem;
-            line-height: 1.8;
-        }
-        .intel-context-list li {
-            margin-bottom: 4px;
-        }
-        .intel-recommendation {
+            font-weight: 600;
+            color: #0369a1;
+            margin-bottom: 10px;
             display: flex;
-            gap: 10px;
-            background: rgba(99, 102, 241, 0.2);
-            border-left: 3px solid #6366f1;
-            padding: 12px 16px;
-            border-radius: 0 8px 8px 0;
-            margin-top: 12px;
+            align-items: center;
+            gap: 8px;
         }
-        .intel-recommendation i {
-            color: #a5b4fc;
-            font-size: 1.2rem;
-        }
-        .intel-recommendation p {
+        .summary-highlight p {
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: #334155;
             margin: 0;
-            color: #e2e8f0;
-            font-size: 0.9rem;
-            line-height: 1.5;
         }
+
+        /* Insights Card */
+        .insights-card {
+            background: white;
+            border-radius: 12px;
+            padding: 16px;
+            height: 100%;
+        }
+        .insights-card h4 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--gray-600);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .insight-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 0;
+            font-size: 0.85rem;
+            color: var(--gray-600);
+        }
+        .insight-item .value { font-weight: 600; color: var(--dark); }
+        .insight-item .value.high { color: var(--success); }
+        .insight-item .value.medium { color: var(--warning); }
+        .insight-item .value.low { color: var(--danger); }
+        .insight-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+        }
+        .insight-tag {
+            padding: 4px 10px;
+            background: var(--gray-100);
+            border-radius: 12px;
+            font-size: 0.75rem;
+            color: var(--gray-600);
+        }
+
+        /* Tile Cards (2 columns) */
+        .tile-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+        .tile-card {
+            background: white;
+            border-radius: 12px;
+            padding: 14px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .tile-card h5 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--gray-600);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .tile-card h5 .actions { margin-left: auto; display: flex; gap: 6px; }
+        .tile-card h5 .actions a, .tile-card h5 .actions button {
+            color: var(--gray-400);
+            font-size: 0.85rem;
+            background: none;
+            border: none;
+            padding: 0;
+            cursor: pointer;
+        }
+        .tile-card h5 .actions a:hover, .tile-card h5 .actions button:hover { color: var(--primary); }
+        .tile-content { font-size: 0.85rem; color: var(--gray-600); }
+        .tile-content .empty { color: var(--gray-400); font-style: italic; }
+
+        /* Compact list items */
+        .compact-list { margin: 0; padding: 0; list-style: none; }
+        .compact-list li {
+            padding: 8px 0;
+            border-bottom: 1px solid var(--gray-100);
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .compact-list li:last-child { border-bottom: none; }
+        .compact-list .item-icon { color: var(--gray-400); }
+        .compact-list .item-content { flex: 1; }
+        .compact-list .item-meta { color: var(--gray-400); font-size: 0.75rem; }
+
+        /* Meeting compact card */
+        .meeting-compact {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px;
+            background: var(--gray-50);
+            border-radius: 8px;
+            margin-bottom: 6px;
+        }
+        .meeting-compact.past { opacity: 0.7; }
+        .meeting-compact.upcoming { background: linear-gradient(135deg, #f0fdf4, #dcfce7); }
+        .meeting-compact .meeting-date {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 36px;
+            padding: 4px 6px;
+            background: white;
+            border-radius: 6px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        .meeting-compact .meeting-date .day {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--dark);
+            line-height: 1;
+        }
+        .meeting-compact .meeting-date .month {
+            font-size: 0.6rem;
+            color: var(--gray-500);
+            text-transform: uppercase;
+        }
+        .meeting-compact .meeting-info {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+        }
+        .meeting-compact .meeting-title {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--dark);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .meeting-compact .meeting-time {
+            font-size: 0.7rem;
+            color: var(--gray-500);
+        }
+        .meeting-compact .meeting-link {
+            color: var(--gray-400);
+            font-size: 0.75rem;
+        }
+        .meeting-compact .meeting-link:hover { color: var(--primary); }
+
+        /* Messages compact */
+        .msg-compact {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            padding: 6px 8px;
+            background: var(--gray-50);
+            border-radius: 8px;
+            margin-bottom: 4px;
+            font-size: 0.8rem;
+        }
+        .msg-compact.outgoing {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1));
+        }
+        .msg-compact .msg-text {
+            flex: 1;
+            color: var(--gray-700);
+            line-height: 1.3;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+        .msg-compact .msg-time {
+            font-size: 0.65rem;
+            color: var(--gray-400);
+            white-space: nowrap;
+        }
+
+        /* ConselhoOS compact items */
+        .conselhoos-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 0;
+            font-size: 0.85rem;
+            border-bottom: 1px solid var(--gray-100);
+        }
+        .conselhoos-item:last-child { border-bottom: none; }
+        .conselhoos-item.reuniao { background: rgba(16, 185, 129, 0.05); padding: 6px 8px; border-radius: 6px; }
+
+        /* Legacy - keeping for compatibility */
         .intel-actions {
             display: flex;
             gap: 10px;
@@ -1854,64 +2108,44 @@
                     </div>
                 </div>
 
-                <!-- INTEL Insight Panel -->
-                <div class="intel-insight-panel" id="intelPanel">
-                    <div class="intel-loading" id="intelLoading">
-                        <div class="spinner-border spinner-border-sm" role="status"></div>
-                        <span>Analisando contexto...</span>
+                <!-- INTEL Status Bar (Compact) -->
+                <div class="intel-status-bar" id="intelPanel">
+                    <div class="intel-status-icon">
+                        <i class="bi bi-cpu"></i>
                     </div>
-                    <div id="intelContent" style="display: none;">
-                        <div class="intel-header">
-                            <i class="bi bi-cpu"></i>
-                            <h3>INTEL Insight</h3>
-                            <button class="refresh-btn" onclick="loadIntelInsight()" title="Atualizar análise">
-                                <i class="bi bi-arrow-clockwise"></i>
-                            </button>
+                    <div class="intel-status-content">
+                        <div class="intel-status-title" id="intelStatusTitle">
+                            <span>Analisando...</span>
                         </div>
-                        <div class="intel-content">
-                            <div class="intel-situation" id="intelSituation">
-                                <!-- Preenchido via JS -->
-                            </div>
-                            <ul class="intel-context-list" id="intelContextList">
-                                <!-- Preenchido via JS -->
-                            </ul>
-                            <div class="intel-recommendation" id="intelRecommendation">
-                                <i class="bi bi-lightbulb"></i>
-                                <p id="intelRecommendationText"><!-- Preenchido via JS --></p>
-                            </div>
+                        <div class="intel-status-detail" id="intelStatusDetail">
+                            Carregando contexto do relacionamento
                         </div>
-                        <div class="intel-actions" id="intelActions">
-                            <!-- Preenchido via JS -->
-                        </div>
-                        <div class="intel-chat-section">
-                            <div class="intel-chat-label">
-                                <i class="bi bi-chat-dots"></i>
-                                <span>Pergunte sobre ${contact.nome.split(' ')[0]}</span>
-                            </div>
-                            <div class="intel-chat-input-wrapper">
-                                <input type="text" class="intel-chat-input" id="intelChatInput"
-                                       placeholder="Ex: O que ele faz profissionalmente?"
-                                       onkeypress="if(event.key==='Enter') sendIntelChat()">
-                                <button class="intel-chat-send" onclick="sendIntelChat()">
-                                    <i class="bi bi-send"></i>
-                                </button>
-                            </div>
-                            <div class="intel-suggestions" id="intelSuggestions">
-                                <button class="intel-suggestion" onclick="askIntel('O que ele faz profissionalmente?')">
-                                    O que ele faz?
-                                </button>
-                                <button class="intel-suggestion" onclick="askIntel('Quando foi nosso último contato?')">
-                                    Último contato?
-                                </button>
-                                <button class="intel-suggestion" onclick="suggestIntelResponse()">
-                                    Sugerir resposta
-                                </button>
-                            </div>
-                        </div>
+                    </div>
+                    <div class="intel-status-actions" id="intelStatusActions">
+                        <button class="btn-secondary" onclick="loadIntelInsight()" title="Atualizar">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
                     </div>
                 </div>
 
-                <!-- Tabs Navigation -->
+                <!-- Chat Input Section -->
+                <div class="chat-input-section">
+                    <div class="chat-input-wrapper">
+                        <input type="text" id="intelChatInput"
+                               placeholder="Pergunte sobre ${contact.nome.split(' ')[0]}..."
+                               onkeypress="if(event.key==='Enter') sendIntelChat()">
+                        <button onclick="sendIntelChat()">
+                            <i class="bi bi-send"></i>
+                        </button>
+                    </div>
+                    <div class="chat-suggestions">
+                        <button class="chat-suggestion" onclick="askIntel('O que ele faz profissionalmente?')">O que ele faz?</button>
+                        <button class="chat-suggestion" onclick="askIntel('Quando foi nosso último contato?')">Último contato?</button>
+                        <button class="chat-suggestion" onclick="suggestIntelResponse()">Sugerir resposta</button>
+                    </div>
+                </div>
+
+                <!-- Tabs Navigation (2 tabs only) -->
                 <div class="contact-tabs">
                     <button class="contact-tab active" onclick="switchTab('resumo')">
                         <i class="bi bi-person-vcard"></i>
@@ -1921,249 +2155,113 @@
                         <i class="bi bi-clock-history"></i>
                         <span>Timeline</span>
                     </button>
-                    <button class="contact-tab" onclick="switchTab('ai')">
-                        <i class="bi bi-robot"></i>
-                        <span>IA</span>
-                    </button>
-                    <button class="contact-tab" onclick="switchTab('reunioes')">
-                        <i class="bi bi-calendar-event"></i>
-                        <span>Reunioes</span>
-                    </button>
                 </div>
 
                 <!-- Tab: Resumo -->
                 <div class="tab-content active" id="tab-resumo">
-                    <!-- Main 3-column grid -->
-                    <div class="row g-3">
-                        <!-- Column 1: Fatos -->
-                        <div class="col-md-4">
-                            <div class="card h-100">
-                                <div class="card-header d-flex justify-content-between align-items-center py-2">
-                                    <h2 class="card-title mb-0" style="font-size: 0.95rem;">
-                                        <i class="bi bi-lightbulb text-warning"></i> Fatos
-                                    </h2>
-                                    <div>
-                                        <button class="btn btn-sm btn-link p-0 text-success me-2" onclick="openAddFactModal()" title="Adicionar fato">
-                                            <i class="bi bi-plus-lg"></i>
-                                        </button>
-                                        <button class="btn btn-sm btn-link p-0 text-primary" onclick="extractFacts()" title="Extrair fatos com IA">
-                                            <i class="bi bi-magic"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="card-body py-2" id="factsContainer" style="max-height: 350px; overflow-y: auto;">
-                                    <!-- Loaded dynamically -->
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Column 2: Projetos -->
-                        <div class="col-md-4">
-                            <div class="card h-100" id="projectsCard">
-                                <div class="card-header d-flex justify-content-between align-items-center py-2">
-                                    <h2 class="card-title mb-0" style="font-size: 0.95rem;">
-                                        <i class="bi bi-folder2 text-primary"></i> Projetos
-                                    </h2>
-                                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="openAddToProjectModal()" title="Adicionar a projeto">
-                                        <i class="bi bi-plus-lg"></i>
-                                    </button>
-                                </div>
-                                <div class="card-body py-2" id="projectsContainer" style="max-height: 350px; overflow-y: auto;">
-                                    <div class="text-center text-muted py-3">
-                                        <div class="spinner-border spinner-border-sm" role="status"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Column 3: Tarefas -->
-                        <div class="col-md-4">
-                            <div class="card h-100" id="tasksCard">
-                                <div class="card-header d-flex justify-content-between align-items-center py-2">
-                                    <h2 class="card-title mb-0" style="font-size: 0.95rem;">
-                                        <i class="bi bi-check2-square text-success"></i> Tarefas
-                                    </h2>
-                                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="quickCreateTask()" title="Criar tarefa">
-                                        <i class="bi bi-plus-lg"></i>
-                                    </button>
-                                </div>
-                                <div class="card-body py-2" id="tasksContainer" style="max-height: 350px; overflow-y: auto;">
-                                    <div class="text-center text-muted py-3">
-                                        <div class="spinner-border spinner-border-sm" role="status"></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- AI Summary (if available) -->
-                    ${contact.resumo_ai ? `
-                        <div class="card mt-3">
-                            <div class="card-header py-2">
-                                <h2 class="card-title mb-0" style="font-size: 0.95rem;">
-                                    <i class="bi bi-robot text-info"></i> Resumo IA
-                                </h2>
-                            </div>
-                            <div class="card-body py-2">
-                                <p style="font-size: 0.85rem; line-height: 1.5; white-space: pre-line; margin: 0;">${contact.resumo_ai}</p>
-                            </div>
-                        </div>
-                    ` : ''}
-
-                    <!-- LinkedIn Profile Section -->
-                    ${contact.linkedin ? `
-                        <div class="card mt-3" id="linkedinProfileCard">
-                            <div class="card-header d-flex justify-content-between align-items-center py-2">
-                                <h2 class="card-title mb-0" style="font-size: 0.95rem;">
-                                    <i class="bi bi-linkedin text-primary"></i> LinkedIn
-                                    ${contact.linkedin_job_changed_at ? '<span class="badge bg-warning text-dark ms-2"><i class="bi bi-arrow-repeat"></i> Mudou de emprego!</span>' : ''}
-                                </h2>
-                                <div>
-                                    <a href="${contact.linkedin}" target="_blank" class="btn btn-sm btn-link p-0 me-2" title="Abrir LinkedIn">
-                                        <i class="bi bi-box-arrow-up-right"></i>
-                                    </a>
-                                    <button class="btn btn-sm btn-link p-0 text-primary" onclick="enrichLinkedIn()" title="Atualizar dados">
-                                        <i class="bi bi-arrow-clockwise"></i>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="card-body py-2" id="linkedinProfileContent">
-                                ${contact.linkedin_headline ? `
-                                    <div class="mb-2">
-                                        <strong style="font-size: 0.9rem;">${contact.linkedin_headline}</strong>
-                                    </div>
-                                ` : ''}
-                                ${contact.linkedin_location ? `
-                                    <div class="text-muted small mb-2">
-                                        <i class="bi bi-geo-alt me-1"></i>${contact.linkedin_location}
-                                    </div>
-                                ` : ''}
-                                ${contact.linkedin_about ? `
-                                    <div class="mb-2" style="font-size: 0.85rem;">
-                                        <p class="mb-0" style="white-space: pre-line;">${contact.linkedin_about.substring(0, 300)}${contact.linkedin_about.length > 300 ? '...' : ''}</p>
-                                    </div>
-                                ` : ''}
-                                ${contact.linkedin_experience && contact.linkedin_experience.length > 0 ? `
-                                    <div class="mt-2">
-                                        <h6 class="small text-muted mb-1"><i class="bi bi-briefcase me-1"></i>Experiencia</h6>
-                                        <ul class="list-unstyled mb-0" style="font-size: 0.85rem;">
-                                            ${renderLinkedInExperience(contact.linkedin_experience)}
-                                        </ul>
-                                    </div>
-                                ` : ''}
-                                ${contact.linkedin_skills && contact.linkedin_skills.length > 0 ? `
-                                    <div class="mt-2">
-                                        <h6 class="small text-muted mb-1"><i class="bi bi-star me-1"></i>Skills</h6>
-                                        <div>
-                                            ${renderLinkedInSkills(contact.linkedin_skills)}
-                                        </div>
-                                    </div>
-                                ` : ''}
-                                ${contact.linkedin_enriched_at ? `
-                                    <div class="text-muted small mt-2 pt-2 border-top">
-                                        <i class="bi bi-clock me-1"></i>Atualizado em ${formatDate(contact.linkedin_enriched_at)}
-                                    </div>
-                                ` : `
-                                    <div class="text-center py-3">
-                                        <p class="text-muted small mb-2">Dados do LinkedIn nao carregados</p>
-                                        <button class="btn btn-sm btn-outline-primary" onclick="enrichLinkedIn()">
-                                            <i class="bi bi-download me-1"></i>Carregar Dados
-                                        </button>
-                                    </div>
-                                `}
-                            </div>
-                        </div>
-                    ` : ''}
-
-                    <!-- ConselhoOS Section -->
-                    <div class="card mt-3" id="conselhoosSection" style="display: none;">
-                        <div class="card-header d-flex justify-content-between align-items-center py-2">
-                            <h2 class="card-title mb-0" style="font-size: 0.95rem;">
-                                <i class="bi bi-briefcase text-warning"></i> ConselhoOS
-                            </h2>
-                            <a href="https://conselho.almeida-prado.com" target="_blank" class="btn btn-sm btn-link p-0">
-                                <i class="bi bi-box-arrow-up-right"></i>
-                            </a>
-                        </div>
-                        <div class="card-body py-2" id="conselhoosLinks">
-                            <div class="text-center text-muted py-2">
-                                <div class="spinner-border spinner-border-sm" role="status"></div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Current Briefing (loaded dynamically) -->
-                    <div class="card mt-3" id="current-briefing-card" style="display: none;">
-                        <div class="card-header d-flex justify-content-between align-items-center py-2">
-                            <h2 class="card-title mb-0" style="font-size: 0.95rem;">
-                                <i class="bi bi-file-text text-purple"></i> Briefing Atual
-                            </h2>
-                            <small class="text-muted" id="briefing-date"></small>
-                        </div>
-                        <div class="card-body py-2">
-                            <div id="briefing-content" style="font-size: 0.85rem;"></div>
-                            <div id="briefing-opportunities" class="mt-2" style="display: none;">
-                                <h6 class="text-primary small mb-1"><i class="bi bi-lightbulb"></i> Oportunidades</h6>
-                                <ul class="mb-0 small" id="briefing-opportunities-list"></ul>
-                            </div>
-                            <div id="briefing-talking-points" class="mt-2" style="display: none;">
-                                <h6 class="text-success small mb-1"><i class="bi bi-chat-dots"></i> Sugestoes</h6>
-                                <ul class="mb-0 small" id="briefing-talking-points-list"></ul>
-                            </div>
-                            <div class="mt-2 d-flex gap-2">
-                                <button class="btn btn-sm btn-outline-success" onclick="useBriefingForWhatsApp()">
-                                    <i class="bi bi-whatsapp"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-secondary" onclick="useBriefingForEmail()">
-                                    <i class="bi bi-envelope"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-info" onclick="generateBriefing()">
+                    <!-- Row 1: Resumo IA + Insights -->
+                    <div class="tile-grid mb-3">
+                        <div class="summary-highlight">
+                            <h4><i class="bi bi-robot"></i> Resumo IA
+                                <button class="btn btn-sm btn-link p-0 ms-auto" onclick="enrichContact()" title="Atualizar">
                                     <i class="bi bi-arrow-clockwise"></i>
                                 </button>
+                            </h4>
+                            <p id="aiSummaryText">${contact.resumo_ai || '<em class="text-muted">Nenhum resumo gerado. Clique em atualizar para gerar.</em>'}</p>
+                            ${contact.ultimo_enriquecimento ? `<small class="text-muted">Atualizado: ${formatDateTime(contact.ultimo_enriquecimento)}</small>` : ''}
+                        </div>
+                        <div class="insights-card">
+                            <h4><i class="bi bi-graph-up"></i> Insights</h4>
+                            <div id="insightsContainer">
+                                ${contact.insights_ai ? renderInsightsCompact(contact.insights_ai) : '<span class="text-muted" style="font-size: 0.85rem;">Sem insights disponíveis</span>'}
                             </div>
                         </div>
                     </div>
 
-                    <!-- Recent Messages (WhatsApp + Email) -->
-                    <div class="card mt-3">
-                        <div class="card-header d-flex justify-content-between align-items-center py-2">
-                            <h2 class="card-title mb-0" style="font-size: 0.95rem;">
-                                <i class="bi bi-chat-dots text-info"></i> Mensagens Recentes
-                            </h2>
-                            <div class="d-flex gap-2 align-items-center">
-                                <button class="btn btn-sm btn-outline-primary" onclick="suggestMeeting()" id="btnSuggestMeeting" title="Sugerir evento baseado nas mensagens">
-                                    <i class="bi bi-calendar-plus"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-success" onclick="syncWhatsApp()" id="btnSyncWhatsApp" title="Sincronizar WhatsApp">
-                                    <i class="bi bi-whatsapp"></i>
-                                </button>
-                                <a href="#" onclick="switchTab('timeline'); return false;" class="small text-decoration-none">
-                                    Ver todas <i class="bi bi-arrow-right"></i>
-                                </a>
+                    <!-- Row 2: Fatos + Reuniões -->
+                    <div class="tile-grid mb-3">
+                        <div class="tile-card">
+                            <h5><i class="bi bi-lightbulb text-warning"></i> Fatos
+                                <span class="actions">
+                                    <button onclick="openAddFactModal()" title="Adicionar"><i class="bi bi-plus-lg"></i></button>
+                                    <button onclick="extractFacts()" title="Extrair com IA"><i class="bi bi-magic"></i></button>
+                                </span>
+                            </h5>
+                            <div class="tile-content" id="factsContainer" style="max-height: 200px; overflow-y: auto;">
+                                <!-- Loaded dynamically -->
                             </div>
                         </div>
-                        <div class="card-body py-2" id="messagesContainer">
-                            <div class="text-center text-muted py-2">
-                                <div class="spinner-border spinner-border-sm" role="status"></div>
-                            </div>
-                        </div>
-                        <!-- Meeting Suggestion Banner -->
-                        <div id="meetingSuggestionBanner" class="card-footer bg-light border-top" style="display: none;">
-                            <div class="d-flex align-items-center gap-2">
-                                <i class="bi bi-calendar-event text-primary fs-5"></i>
-                                <div class="flex-grow-1">
-                                    <div class="fw-semibold small" id="suggestionTitle">Reuniao detectada</div>
-                                    <div class="text-muted small" id="suggestionDetails"></div>
-                                </div>
-                                <button class="btn btn-sm btn-primary" onclick="openMeetingModal()">
-                                    <i class="bi bi-plus-circle me-1"></i>Criar Evento
-                                </button>
-                                <button class="btn btn-sm btn-outline-secondary" onclick="dismissMeetingSuggestion()">
-                                    <i class="bi bi-x"></i>
-                                </button>
+                        <div class="tile-card">
+                            <h5><i class="bi bi-calendar-event text-success"></i> Reuniões
+                                <span class="actions">
+                                    <button onclick="scheduleWithContact()" title="Agendar"><i class="bi bi-plus-lg"></i></button>
+                                </span>
+                            </h5>
+                            <div class="tile-content" id="meetingsContainerCompact" style="max-height: 200px; overflow-y: auto;">
+                                <!-- Loaded dynamically -->
                             </div>
                         </div>
                     </div>
+
+                    <!-- Row 3: Projetos + Mensagens -->
+                    <div class="tile-grid mb-3">
+                        <div class="tile-card">
+                            <h5><i class="bi bi-folder2 text-primary"></i> Projetos
+                                <span class="actions">
+                                    <button onclick="openAddToProjectModal()" title="Adicionar a projeto"><i class="bi bi-plus-lg"></i></button>
+                                </span>
+                            </h5>
+                            <div class="tile-content" id="projectsContainer" style="max-height: 200px; overflow-y: auto;">
+                                <!-- Loaded dynamically -->
+                            </div>
+                        </div>
+                        <div class="tile-card">
+                            <h5><i class="bi bi-chat-dots text-info"></i> Mensagens
+                                <span class="actions">
+                                    <button onclick="syncWhatsApp()" title="Sincronizar"><i class="bi bi-whatsapp"></i></button>
+                                    <a href="#" onclick="switchTab('timeline'); return false;" title="Ver todas"><i class="bi bi-arrow-right"></i></a>
+                                </span>
+                            </h5>
+                            <div class="tile-content messages-compact" id="messagesContainerCompact" style="max-height: 200px; overflow-y: auto;">
+                                <!-- Loaded dynamically -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Row 4: LinkedIn + ConselhoOS -->
+                    <div class="tile-grid mb-3">
+                        ${contact.linkedin ? `
+                        <div class="tile-card" id="linkedinTile">
+                            <h5><i class="bi bi-linkedin text-primary"></i> LinkedIn
+                                <span class="actions">
+                                    <a href="${contact.linkedin}" target="_blank" title="Abrir"><i class="bi bi-box-arrow-up-right"></i></a>
+                                    <button onclick="enrichLinkedIn()" title="Atualizar"><i class="bi bi-arrow-clockwise"></i></button>
+                                </span>
+                            </h5>
+                            <div class="tile-content">
+                                ${contact.linkedin_headline ? `<div class="fw-semibold" style="font-size: 0.85rem;">${contact.linkedin_headline}</div>` : ''}
+                                ${contact.linkedin_location ? `<div class="text-muted small"><i class="bi bi-geo-alt me-1"></i>${contact.linkedin_location}</div>` : ''}
+                                ${contact.linkedin_enriched_at ? `<div class="text-muted small mt-2"><i class="bi bi-clock me-1"></i>Atualizado: ${formatDate(contact.linkedin_enriched_at)}</div>` : '<div class="empty">Dados não carregados</div>'}
+                            </div>
+                        </div>
+                        ` : `
+                        <div class="tile-card">
+                            <h5><i class="bi bi-linkedin text-primary"></i> LinkedIn</h5>
+                            <div class="tile-content empty">Sem perfil vinculado</div>
+                        </div>
+                        `}
+                        <div class="tile-card" id="conselhoosSection">
+                            <h5><i class="bi bi-briefcase text-warning"></i> ConselhoOS
+                                <span class="actions">
+                                    <a href="https://conselho.almeida-prado.com" target="_blank" title="Abrir"><i class="bi bi-box-arrow-up-right"></i></a>
+                                </span>
+                            </h5>
+                            <div class="tile-content" id="conselhoosLinks">
+                                <span class="empty">Carregando...</span>
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
 
                 <!-- Tab: Timeline -->
@@ -2184,93 +2282,15 @@
                     </div>
                 </div>
 
-                <!-- Tab: AI -->
-                <div class="tab-content" id="tab-ai">
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <!-- AI Summary -->
-                            <div class="card h-100">
-                                <div class="card-header">
-                                    <h2 class="card-title"><i class="bi bi-robot"></i> Resumo IA</h2>
-                                    <button class="btn btn-sm btn-outline-primary" onclick="enrichContact()" id="enrichBtn">
-                                        <i class="bi bi-magic"></i> Atualizar
-                                    </button>
-                                </div>
-                                <div class="card-body" id="aiSummaryBody">
-                                    ${contact.resumo_ai ? `
-                                        <p style="font-size: 0.9rem; line-height: 1.6; white-space: pre-line;">${contact.resumo_ai}</p>
-                                        ${contact.ultimo_enriquecimento ? `<small class="text-muted">Atualizado: ${formatDateTime(contact.ultimo_enriquecimento)}</small>` : ''}
-                                    ` : `
-                                        <div class="empty-state">
-                                            <i class="bi bi-robot"></i>
-                                            <p>Nenhum resumo gerado</p>
-                                            <button class="btn btn-sm btn-primary mt-2" onclick="enrichContact()">
-                                                <i class="bi bi-magic me-1"></i>Gerar com IA
-                                            </button>
-                                        </div>
-                                    `}
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <!-- AI Insights -->
-                            <div class="card h-100">
-                                <div class="card-header">
-                                    <h2 class="card-title"><i class="bi bi-graph-up"></i> Insights</h2>
-                                </div>
-                                <div class="card-body">
-                                    ${contact.insights_ai && Object.keys(contact.insights_ai).length > 0 ? `
-                                        ${renderInsights(contact.insights_ai)}
-                                    ` : `
-                                        <div class="empty-state">
-                                            <i class="bi bi-graph-up"></i>
-                                            <p>Nenhum insight disponivel</p>
-                                        </div>
-                                    `}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    ${contact.insights_ai?.oportunidades?.length > 0 ? `
-                        <div class="card mt-3" style="border: 1px solid var(--success);">
-                            <div class="card-header" style="background: rgba(16, 185, 129, 0.05);">
-                                <h2 class="card-title" style="color: var(--success);"><i class="bi bi-rocket-takeoff"></i> Oportunidades</h2>
-                            </div>
-                            <div class="card-body">
-                                <ul class="list-unstyled mb-0">
-                                    ${contact.insights_ai.oportunidades.map(o => `<li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i>${o}</li>`).join('')}
-                                </ul>
-                            </div>
-                        </div>
-                    ` : ''}
-                </div>
-
-                <!-- Tab: Reunioes -->
-                <div class="tab-content" id="tab-reunioes">
-                    <div class="card" id="meetingsCard">
-                        <div class="card-header">
-                            <h2 class="card-title" style="color: var(--success);"><i class="bi bi-calendar-event"></i> Reunioes</h2>
-                            <button class="btn btn-sm btn-success" onclick="scheduleWithContact()">
-                                <i class="bi bi-plus"></i> Agendar Nova
-                            </button>
-                        </div>
-                        <div class="card-body" id="meetingsContainer">
-                            <div class="text-center text-muted py-3">
-                                <div class="spinner-border spinner-border-sm" role="status"></div>
-                                <div class="mt-2" style="font-size: 0.85rem;">Carregando...</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             `;
 
-            // Load data for the 3-column grid immediately after rendering
+            // Load data for the tiles
             Promise.all([
                 loadContactProjects().catch(e => console.log('Projects error:', e)),
-                loadContactTasks().catch(e => console.log('Tasks error:', e)),
                 loadContactFacts().catch(e => console.log('Facts error:', e)),
-                loadContactMessages().catch(e => console.log('Messages error:', e))
+                loadContactMessagesCompact().catch(e => console.log('Messages error:', e)),
+                loadContactMeetingsCompact().catch(e => console.log('Meetings error:', e)),
+                loadConselhoOS().catch(e => console.log('ConselhoOS error:', e))
             ]);
         }
 
@@ -3157,6 +3177,53 @@
                         </div>
                     </div>
                 `;
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function renderInsightsCompact(insights) {
+            if (!insights || Object.keys(insights).length === 0) return '<span class="text-muted" style="font-size: 0.85rem;">Sem insights</span>';
+
+            const strengthColors = {
+                'forte': '#10b981',
+                'medio': '#f59e0b',
+                'fraco': '#ef4444'
+            };
+
+            let html = '<div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.85rem;">';
+
+            // Relationship strength + sentiment in one line
+            if (insights.forca_relacionamento || insights.sentimento_geral) {
+                html += '<div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">';
+                if (insights.forca_relacionamento) {
+                    const color = strengthColors[insights.forca_relacionamento] || '#6b7280';
+                    html += `<span style="display: flex; align-items: center; gap: 4px;">
+                        <span style="width: 8px; height: 8px; border-radius: 50%; background: ${color};"></span>
+                        Rel.: <strong>${insights.forca_relacionamento}</strong>
+                    </span>`;
+                }
+                if (insights.sentimento_geral) {
+                    const sentimentIcon = insights.sentimento_geral === 'positivo' ? '😊' :
+                                          insights.sentimento_geral === 'negativo' ? '😟' : '😐';
+                    html += `<span>${sentimentIcon} ${insights.sentimento_geral}</span>`;
+                }
+                html += '</div>';
+            }
+
+            // Topics as tags
+            if (insights.topicos_frequentes && insights.topicos_frequentes.length > 0) {
+                html += `<div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                    ${insights.topicos_frequentes.slice(0, 3).map(t => `
+                        <span style="background: #f1f5f9; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem;">${t}</span>
+                    `).join('')}
+                </div>`;
+            }
+
+            // Business potential
+            if (insights.potencial_negocio) {
+                html += `<span><i class="bi bi-briefcase me-1"></i>Potencial: <strong>${insights.potencial_negocio}</strong></span>`;
             }
 
             html += '</div>';
@@ -4070,9 +4137,6 @@
             window.open('https://conselho.almeida-prado.com', '_blank');
             showToast('Vincule o contato pelo ConselhoOS');
         }
-
-        // Load ConselhoOS links when page loads
-        setTimeout(() => loadConselhoOSLinks(), 500);
 
         // LinkedIn Modal functions
         document.getElementById('editLinkedInModal').addEventListener('show.bs.modal', function() {
@@ -5039,6 +5103,157 @@
             `;
         }
 
+        // ============ COMPACT TILE LOADERS ============
+
+        async function loadContactMessagesCompact() {
+            const container = document.getElementById('messagesContainerCompact');
+            if (!container) return;
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/messages?limit=4`);
+                if (!response.ok) throw new Error('API error');
+
+                const data = await response.json();
+                const messages = data.messages || [];
+
+                if (messages.length === 0) {
+                    container.innerHTML = '<span class="empty">Nenhuma mensagem recente</span>';
+                    return;
+                }
+
+                // Reverter para ordem cronológica
+                const sortedMessages = [...messages].reverse();
+
+                container.innerHTML = sortedMessages.map(m => {
+                    const isWhatsApp = m.canal === 'whatsapp';
+                    const isOutgoing = m.direcao === 'outgoing';
+                    const channelIcon = isWhatsApp ? 'bi-whatsapp text-success' : 'bi-envelope text-primary';
+                    const preview = (m.conteudo || '').substring(0, 60) + ((m.conteudo || '').length > 60 ? '...' : '');
+                    const bubbleClass = isOutgoing ? 'msg-compact outgoing' : 'msg-compact';
+
+                    return `
+                        <div class="${bubbleClass}">
+                            <i class="bi ${channelIcon}" style="font-size: 0.7rem;"></i>
+                            <span class="msg-text">${preview}</span>
+                            <span class="msg-time">${formatMessageTime(m.enviado_em || m.created_at)}</span>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                console.error('Error loading compact messages:', error);
+                container.innerHTML = '<span class="empty">Erro ao carregar</span>';
+            }
+        }
+
+        async function loadContactMeetingsCompact() {
+            const container = document.getElementById('meetingsContainerCompact');
+            if (!container) return;
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/calendar`);
+                if (!response.ok) throw new Error('API error');
+
+                const data = await response.json();
+                const events = data.events || [];
+
+                if (events.length === 0) {
+                    container.innerHTML = '<span class="empty">Nenhuma reunião encontrada</span>';
+                    return;
+                }
+
+                // Sort by date descending (most recent first)
+                const sortedEvents = [...events].sort((a, b) => {
+                    const dateA = new Date(a.start?.dateTime || a.start?.date || a.start);
+                    const dateB = new Date(b.start?.dateTime || b.start?.date || b.start);
+                    return dateB - dateA;
+                });
+
+                container.innerHTML = sortedEvents.slice(0, 5).map(ev => {
+                    const startStr = ev.start?.dateTime || ev.start?.date || ev.start;
+                    const date = new Date(startStr);
+                    const isPast = date < new Date();
+                    const dateFormatted = date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+                    const timeFormatted = ev.start?.dateTime ? date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : 'Dia todo';
+                    const statusClass = isPast ? 'past' : 'upcoming';
+
+                    return `
+                        <div class="meeting-compact ${statusClass}">
+                            <div class="meeting-date">
+                                <span class="day">${date.getDate()}</span>
+                                <span class="month">${date.toLocaleDateString('pt-BR', { month: 'short' }).toUpperCase()}</span>
+                            </div>
+                            <div class="meeting-info">
+                                <span class="meeting-title">${ev.summary || 'Reunião'}</span>
+                                <span class="meeting-time">${timeFormatted}</span>
+                            </div>
+                            ${ev.htmlLink ? `<a href="${ev.htmlLink}" target="_blank" class="meeting-link"><i class="bi bi-box-arrow-up-right"></i></a>` : ''}
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                console.error('Error loading compact meetings:', error);
+                container.innerHTML = '<span class="empty">Erro ao carregar</span>';
+            }
+        }
+
+        async function loadConselhoOS() {
+            const container = document.getElementById('conselhoosLinks');
+            if (!container) return;
+
+            try {
+                const [empresasRes, reunioesRes] = await Promise.all([
+                    fetch(`/api/contacts/${contactId}/conselhoos`),
+                    fetch(`/api/contacts/${contactId}/conselhoos/reunioes?limit=5`)
+                ]);
+
+                const empresasData = empresasRes.ok ? await empresasRes.json() : { empresas: [] };
+                const reunioesData = reunioesRes.ok ? await reunioesRes.json() : { reunioes: [] };
+
+                const empresas = empresasData.empresas || [];
+                const reunioes = reunioesData.reunioes || [];
+
+                if (empresas.length === 0 && reunioes.length === 0) {
+                    container.innerHTML = '<span class="empty">Sem vínculos no ConselhoOS</span>';
+                    return;
+                }
+
+                let html = '';
+
+                // Empresas (compact)
+                if (empresas.length > 0) {
+                    html += empresas.slice(0, 3).map(e => `
+                        <div class="conselhoos-item">
+                            <i class="bi bi-building text-warning"></i>
+                            <span>${e.conselhoos_empresa_nome}</span>
+                            <span class="text-muted small">${e.role || ''}</span>
+                        </div>
+                    `).join('');
+                }
+
+                // Reuniões (compact)
+                if (reunioes.length > 0) {
+                    html += reunioes.slice(0, 2).map(r => {
+                        const date = r.data ? new Date(r.data).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : '';
+                        return `
+                            <div class="conselhoos-item reuniao">
+                                <i class="bi bi-calendar-check text-success"></i>
+                                <span>${r.empresa_nome}</span>
+                                <span class="text-muted small">${date}</span>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+                container.innerHTML = html;
+
+            } catch (error) {
+                console.error('Error loading ConselhoOS:', error);
+                container.innerHTML = '<span class="empty">Erro ao carregar</span>';
+            }
+        }
+
         // ============ INTEL INSIGHT FUNCTIONS ============
 
         // Store messages data for insight analysis
@@ -5193,43 +5408,44 @@
                 actions.push({ id: 'meeting', label: 'Agendar', icon: 'calendar-plus' });
             }
 
-            // Render situation
-            const situationEl = document.getElementById('intelSituation');
-            if (situationEl) {
-                situationEl.textContent = situation || 'Análise do relacionamento';
+            // Determine status badge
+            let statusBadge = '';
+            if (situation.includes('Aguardando')) {
+                statusBadge = '<span class="status-badge waiting">Aguardando</span>';
+            } else if (situation.includes('⚠️') || situation.includes('🔴')) {
+                statusBadge = '<span class="status-badge urgent">Atenção</span>';
+            } else if (situation.includes('✓')) {
+                statusBadge = '<span class="status-badge ok">OK</span>';
             }
 
-            // Render context list
-            const contextListEl = document.getElementById('intelContextList');
-            if (contextListEl) {
-                if (contextItems.length > 0) {
-                    contextListEl.innerHTML = contextItems.map(item => `<li>${item}</li>`).join('');
-                    contextListEl.style.display = 'block';
-                } else {
-                    contextListEl.style.display = 'none';
-                }
+            // Render compact status bar
+            const titleEl = document.getElementById('intelStatusTitle');
+            const detailEl = document.getElementById('intelStatusDetail');
+            const actionsEl = document.getElementById('intelStatusActions');
+
+            if (titleEl) {
+                titleEl.innerHTML = `${statusBadge} <span>${situation || 'Análise do relacionamento'}</span>`;
             }
 
-            // Render recommendation
-            const recEl = document.getElementById('intelRecommendation');
-            const recTextEl = document.getElementById('intelRecommendationText');
-            if (recEl && recTextEl) {
-                if (recommendation) {
-                    recTextEl.textContent = recommendation;
-                    recEl.style.display = 'flex';
-                } else {
-                    recEl.style.display = 'none';
-                }
+            if (detailEl) {
+                const detailText = contextItems.length > 0 ? contextItems[0] : (recommendation || 'Relacionamento em dia');
+                detailEl.textContent = detailText;
             }
 
-            // Render actions
-            const actionsEl = document.getElementById('intelActions');
             if (actionsEl) {
-                actionsEl.innerHTML = actions.map(a => `
-                    <button class="intel-action-btn ${a.primary ? 'primary' : 'secondary'}" onclick="executeIntelAction('${a.id}')">
-                        <i class="bi bi-${a.icon}"></i> ${a.label}
+                const primaryAction = actions.find(a => a.primary) || actions[0];
+                actionsEl.innerHTML = primaryAction ? `
+                    <button class="btn-action" onclick="executeIntelAction('${primaryAction.id}')">
+                        <i class="bi bi-${primaryAction.icon}"></i> ${primaryAction.label}
                     </button>
-                `).join('');
+                    <button class="btn-secondary" onclick="loadIntelInsight()" title="Atualizar">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                ` : `
+                    <button class="btn-secondary" onclick="loadIntelInsight()" title="Atualizar">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                `;
             }
         }
 
