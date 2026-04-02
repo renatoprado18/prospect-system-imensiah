@@ -74,10 +74,10 @@ async def gather_contact_context(contact_id: int, db_connection) -> Dict[str, An
 
     # Get projects
     cursor.execute("""
-        SELECT p.nome, p.tipo, p.descricao, p.status, pc.papel
+        SELECT p.nome, p.tipo, p.descricao, p.status, pm.papel
         FROM projects p
-        JOIN project_contacts pc ON p.id = pc.project_id
-        WHERE pc.contact_id = %s AND p.status = 'active'
+        JOIN project_members pm ON p.id = pm.project_id
+        WHERE pm.contact_id = %s AND p.status = 'active'
     """, (contact_id,))
     projects = [dict(row) for row in cursor.fetchall()]
 
