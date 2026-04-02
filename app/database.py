@@ -1247,6 +1247,31 @@ def init_db():
             ON action_proposals(urgency, criado_em DESC) WHERE status = 'pending'
         ''')
 
+        # Timeline Summaries - Cache de resumos IA para grupos de mensagens
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS timeline_summaries (
+                id SERIAL PRIMARY KEY,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                cache_hash VARCHAR(16) NOT NULL,
+                summary TEXT,
+                message_count INTEGER,
+                channel VARCHAR(50),
+                msg_date DATE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(contact_id, cache_hash)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_timeline_summaries_contact
+            ON timeline_summaries(contact_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_timeline_summaries_hash
+            ON timeline_summaries(contact_id, cache_hash)
+        ''')
+
         # Editorial Calendar - posts para redes sociais
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS editorial_posts (

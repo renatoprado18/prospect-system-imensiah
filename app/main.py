@@ -8653,6 +8653,33 @@ async def get_contact_timeline_summary(
     return summary
 
 
+@app.get("/api/contacts/{contact_id}/timeline/messages")
+async def get_timeline_message_details(
+    request: Request,
+    contact_id: int,
+    ids: str = ""
+):
+    """
+    Retorna detalhes de um grupo de mensagens para expandir na timeline.
+    IDs sao passados como string separada por virgulas.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    if not ids:
+        return []
+
+    try:
+        message_ids = [int(id.strip()) for id in ids.split(',') if id.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="IDs invalidos")
+
+    service = get_timeline_service()
+    messages = service.get_message_group_details(contact_id, message_ids)
+    return messages
+
+
 # ============== CONTACT INTERACTIONS ==============
 
 class InteractionCreate(BaseModel):

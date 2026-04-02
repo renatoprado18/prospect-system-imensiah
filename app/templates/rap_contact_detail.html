@@ -921,6 +921,87 @@
             color: var(--gray-500);
         }
 
+        /* Message Groups (AI Summary) */
+        .message-group .timeline-summary {
+            font-size: 0.9rem;
+            color: var(--dark);
+            font-weight: 500;
+            margin-bottom: 8px;
+            line-height: 1.4;
+        }
+
+        .message-preview {
+            background: white;
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            font-size: 0.8rem;
+            max-height: 100px;
+            overflow: hidden;
+        }
+
+        .preview-msg {
+            padding: 4px 0;
+            color: var(--gray-600);
+            border-left: 2px solid transparent;
+            padding-left: 8px;
+            margin-bottom: 4px;
+        }
+
+        .preview-msg.sent { border-left-color: var(--primary); }
+        .preview-msg.received { border-left-color: var(--gray-300); }
+
+        .group-expand {
+            margin-top: 8px;
+        }
+
+        .group-expand button {
+            font-size: 0.8rem;
+            text-decoration: none;
+        }
+
+        .group-details {
+            margin-top: 12px;
+            background: white;
+            border-radius: 8px;
+            padding: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .detail-msg {
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+        }
+
+        .detail-msg.sent {
+            background: linear-gradient(135deg, var(--primary), #818cf8);
+            color: white;
+            margin-left: 20%;
+            border-bottom-right-radius: 4px;
+        }
+
+        .detail-msg.received {
+            background: var(--gray-100);
+            color: var(--dark);
+            margin-right: 20%;
+            border-bottom-left-radius: 4px;
+        }
+
+        .detail-msg .msg-content {
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+
+        .detail-msg .msg-time {
+            font-size: 0.7rem;
+            opacity: 0.7;
+            margin-top: 4px;
+            text-align: right;
+        }
+
         /* Facts */
         .fact-item {
             display: flex;
@@ -2423,6 +2504,11 @@
         function renderTimelineItem(item) {
             // Unified timeline item renderer - handles all types
             const typeConfig = {
+                'message_group': {
+                    getIcon: (item) => item.channel === 'whatsapp' ? 'bi-whatsapp' : 'bi-envelope',
+                    getClass: (item) => item.channel === 'whatsapp' ? 'whatsapp' : 'email',
+                    getTitle: (item) => item.channel === 'whatsapp' ? 'WhatsApp' : 'Email'
+                },
                 'message': {
                     getIcon: (item) => item.channel === 'whatsapp' ? 'bi-whatsapp' : 'bi-envelope',
                     getClass: (item) => item.channel === 'whatsapp' ? 'whatsapp' : 'email',
@@ -2466,6 +2552,11 @@
                 item.timestamp = item.data_ocorrencia;
             }
 
+            // Handle message_group type (grouped messages with AI summary)
+            if (item.type === 'message_group') {
+                return renderMessageGroup(item);
+            }
+
             const config = typeConfig[item.type] || typeConfig['note'];
             const icon = config.getIcon(item);
             const dotClass = config.getClass(item);
@@ -2498,6 +2589,102 @@
                     </div>
                 </div>
             `;
+        }
+
+        // Render message group with AI summary (expandable)
+        function renderMessageGroup(item) {
+            const icon = item.channel === 'whatsapp' ? 'bi-whatsapp' : 'bi-envelope';
+            const dotClass = item.channel === 'whatsapp' ? 'whatsapp' : 'email';
+            const channelLabel = item.channel === 'whatsapp' ? 'WhatsApp' : 'Email';
+            const groupId = `msg-group-${item.date}-${item.channel}`.replace(/[^a-zA-Z0-9]/g, '-');
+
+            // Format preview messages (most recent 3)
+            let previewHtml = '';
+            if (item.preview && item.preview.length > 0) {
+                previewHtml = item.preview.map(msg => {
+                    const direction = msg.direcao === 'outgoing' || msg.direcao === 'outbound' ? 'sent' : 'received';
+                    const shortContent = (msg.conteudo || '').substring(0, 80);
+                    return `<div class="preview-msg ${direction}">${shortContent}${msg.conteudo?.length > 80 ? '...' : ''}</div>`;
+                }).join('');
+            }
+
+            return `
+                <div class="timeline-item message-group" data-group-id="${groupId}">
+                    <div class="timeline-dot ${dotClass}">
+                        <i class="bi ${icon}"></i>
+                    </div>
+                    <div class="timeline-content">
+                        <div class="timeline-header">
+                            <span class="timeline-title">${channelLabel}</span>
+                            <span class="badge bg-light text-dark ms-2" style="font-size: 0.7rem;">
+                                ${item.message_count} ${item.message_count === 1 ? 'mensagem' : 'mensagens'}
+                            </span>
+                            <span class="timeline-date">${formatGroupDate(item.date)}</span>
+                        </div>
+                        <div class="timeline-summary">${item.summary || 'Conversa'}</div>
+                        ${previewHtml ? `<div class="message-preview">${previewHtml}</div>` : ''}
+                        <div class="group-expand">
+                            <button class="btn btn-sm btn-link p-0 text-muted" onclick="toggleMessageGroupDetails('${groupId}', ${JSON.stringify(item.message_ids).replace(/"/g, '&quot;')})">
+                                <i class="bi bi-chevron-down me-1"></i>Ver conversa completa
+                            </button>
+                        </div>
+                        <div class="group-details" id="${groupId}-details" style="display: none;"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Format date for message groups (shows "Hoje", "Ontem", or formatted date)
+        function formatGroupDate(dateStr) {
+            if (!dateStr) return '';
+            const date = new Date(dateStr + 'T12:00:00');
+            const today = new Date();
+            today.setHours(12, 0, 0, 0);
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+
+            if (date.toDateString() === today.toDateString()) return 'Hoje';
+            if (date.toDateString() === yesterday.toDateString()) return 'Ontem';
+
+            return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        }
+
+        // Toggle message group details (expand/collapse)
+        async function toggleMessageGroupDetails(groupId, messageIds) {
+            const detailsContainer = document.getElementById(`${groupId}-details`);
+            const button = detailsContainer.previousElementSibling.querySelector('button');
+
+            if (detailsContainer.style.display === 'none') {
+                // Expand - load full messages
+                detailsContainer.innerHTML = '<div class="text-center py-2"><div class="spinner-border spinner-border-sm"></div></div>';
+                detailsContainer.style.display = 'block';
+                button.innerHTML = '<i class="bi bi-chevron-up me-1"></i>Ocultar conversa';
+
+                try {
+                    const response = await fetch(`/api/contacts/${contactId}/timeline/messages?ids=${messageIds.join(',')}`);
+                    if (response.ok) {
+                        const messages = await response.json();
+                        detailsContainer.innerHTML = messages.map(msg => {
+                            const direction = msg.direcao === 'outgoing' || msg.direcao === 'outbound' ? 'sent' : 'received';
+                            const time = formatMessageTime(msg.enviado_em);
+                            return `
+                                <div class="detail-msg ${direction}">
+                                    <div class="msg-content">${msg.conteudo || ''}</div>
+                                    <div class="msg-time">${time}</div>
+                                </div>
+                            `;
+                        }).join('');
+                    } else {
+                        detailsContainer.innerHTML = '<div class="text-muted small">Erro ao carregar mensagens</div>';
+                    }
+                } catch (err) {
+                    detailsContainer.innerHTML = '<div class="text-muted small">Erro ao carregar mensagens</div>';
+                }
+            } else {
+                // Collapse
+                detailsContainer.style.display = 'none';
+                button.innerHTML = '<i class="bi bi-chevron-down me-1"></i>Ver conversa completa';
+            }
         }
 
         // Load unified timeline

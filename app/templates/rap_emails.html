@@ -4,32 +4,34 @@
 
 {% block extra_css %}
 <style>
-    /* Stats Cards */
-    .stats-row {
+    /* Stats Inline */
+    .stats-inline {
         display: flex;
-        gap: 16px;
-        margin-bottom: 24px;
+        gap: 12px;
+        margin-bottom: 16px;
+        align-items: center;
     }
-    .stat-card {
-        background: white;
-        border-radius: 12px;
-        padding: 16px 20px;
-        flex: 1;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-    .stat-card .stat-value {
-        font-size: 1.75rem;
-        font-weight: 700;
-        color: var(--gray-800);
-    }
-    .stat-card .stat-label {
+    .stat-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 20px;
         font-size: 0.8rem;
-        color: var(--gray-500);
-        margin-top: 4px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+        border: 1px solid transparent;
     }
-    .stat-card.urgent { border-left: 4px solid #ef4444; }
-    .stat-card.important { border-left: 4px solid #f59e0b; }
-    .stat-card.followup { border-left: 4px solid #3b82f6; }
+    .stat-badge:hover { opacity: 0.8; }
+    .stat-badge.active { box-shadow: 0 0 0 2px rgba(0,0,0,0.1); }
+    .stat-badge .count {
+        font-weight: 700;
+    }
+    .stat-badge.urgent { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
+    .stat-badge.important { background: #fffbeb; color: #d97706; border-color: #fde68a; }
+    .stat-badge.followup { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
+    .stat-badge.pending { background: #f3f4f6; color: #4b5563; border-color: #d1d5db; }
 
     /* Filters */
     .filters-row {
@@ -283,26 +285,6 @@
         <button class="btn btn-primary" onclick="processEmails()">
             <i class="bi bi-arrow-repeat me-1"></i> Processar Novos
         </button>
-    </div>
-
-    <!-- Stats -->
-    <div class="stats-row">
-        <div class="stat-card urgent">
-            <div class="stat-value" id="stat-urgent">-</div>
-            <div class="stat-label">Urgentes</div>
-        </div>
-        <div class="stat-card important">
-            <div class="stat-value" id="stat-important">-</div>
-            <div class="stat-label">Importantes</div>
-        </div>
-        <div class="stat-card followup">
-            <div class="stat-value" id="stat-followup">-</div>
-            <div class="stat-label">Follow-up</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value" id="stat-pending">-</div>
-            <div class="stat-label">Pendentes</div>
-        </div>
     </div>
 
     <!-- Filters & Batch Actions -->
