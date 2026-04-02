@@ -6437,24 +6437,31 @@ async def update_contact_circulo_dual(contact_id: int, data: dict):
             cursor = conn.cursor()
 
             # Map contexto to database field
+            # Also update the effective 'circulo' field and set manual flag
             if contexto == "pessoal":
                 cursor.execute("""
                     UPDATE contacts
                     SET circulo_pessoal = %s,
+                        circulo_pessoal_manual = TRUE,
                         contexto = 'personal',
+                        circulo = LEAST(%s, COALESCE(circulo_profissional, 5)),
+                        circulo_manual = TRUE,
                         atualizado_em = CURRENT_TIMESTAMP
                     WHERE id = %s
-                    RETURNING id, nome, circulo_pessoal, circulo_profissional, contexto
-                """, (circulo, contact_id))
+                    RETURNING id, nome, circulo_pessoal, circulo_profissional, circulo, contexto
+                """, (circulo, circulo, contact_id))
             else:  # profissional
                 cursor.execute("""
                     UPDATE contacts
                     SET circulo_profissional = %s,
+                        circulo_profissional_manual = TRUE,
                         contexto = 'professional',
+                        circulo = LEAST(COALESCE(circulo_pessoal, 5), %s),
+                        circulo_manual = TRUE,
                         atualizado_em = CURRENT_TIMESTAMP
                     WHERE id = %s
-                    RETURNING id, nome, circulo_pessoal, circulo_profissional, contexto
-                """, (circulo, contact_id))
+                    RETURNING id, nome, circulo_pessoal, circulo_profissional, circulo, contexto
+                """, (circulo, circulo, contact_id))
 
             result = cursor.fetchone()
             conn.commit()
@@ -6469,11 +6476,49 @@ async def update_contact_circulo_dual(contact_id: int, data: dict):
                     "nome": result["nome"],
                     "circulo_pessoal": result["circulo_pessoal"],
                     "circulo_profissional": result["circulo_profissional"],
+                    "circulo": result["circulo"],
                     "contexto": result["contexto"]
                 }
             }
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/circulos/sync-effective")
+async def sync_effective_circles():
+    """
+    Sincroniza o campo 'circulo' (efetivo) baseado em circulo_pessoal e circulo_profissional.
+    Corrige contatos que foram reorganizados mas não tiveram o círculo efetivo atualizado.
+    """
+    from database import get_db
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Update effective circle = MIN(pessoal, profissional)
+            # Only update where at least one dual circle is set
+            cursor.execute("""
+                UPDATE contacts
+                SET circulo = LEAST(
+                    COALESCE(circulo_pessoal, 5),
+                    COALESCE(circulo_profissional, 5)
+                ),
+                atualizado_em = CURRENT_TIMESTAMP
+                WHERE circulo_pessoal IS NOT NULL OR circulo_profissional IS NOT NULL
+                RETURNING id
+            """)
+
+            updated = cursor.rowcount
+            conn.commit()
+
+            return {
+                "success": True,
+                "updated": updated,
+                "message": f"Sincronizado {updated} contatos"
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
