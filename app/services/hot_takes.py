@@ -286,25 +286,38 @@ Responda em JSON:
                 },
                 timeout=60.0
             )
-            response.raise_for_status()
+
+        if response.status_code != 200:
+            error_text = response.text[:500]
+            logger.error(f"API error {response.status_code}: {error_text}")
+            return {"error": f"API error {response.status_code}: {error_text}"}
 
         result = response.json()
         content = result["content"][0]["text"]
+        logger.info(f"Claude response length: {len(content)}")
 
         # Parse JSON
         json_match = re.search(r'\{[\s\S]*\}', content)
         if json_match:
-            hot_take = json.loads(json_match.group())
-            hot_take["news_title"] = news_item.get("title", "")
-            hot_take["news_link"] = news_item.get("link", "")
-            hot_take["generated_at"] = datetime.now().isoformat()
-            return hot_take
+            try:
+                hot_take = json.loads(json_match.group())
+                hot_take["news_title"] = news_item.get("title", "")
+                hot_take["news_link"] = news_item.get("link", "")
+                hot_take["generated_at"] = datetime.now().isoformat()
+                return hot_take
+            except json.JSONDecodeError as je:
+                logger.error(f"JSON parse error: {je}")
+                return {"error": f"JSON parse error: {je}"}
+        else:
+            logger.error(f"No JSON found in response: {content[:200]}")
+            return {"error": "No JSON in response"}
 
+    except httpx.TimeoutException:
+        logger.error("Timeout calling Claude API")
+        return {"error": "Timeout calling Claude API"}
     except Exception as e:
         logger.error(f"Erro ao gerar hot take: {e}")
         return {"error": str(e)}
-
-    return {"error": "Falha ao gerar hot take"}
 
 
 def save_hot_take(hot_take: dict, status: str = "draft") -> int:
@@ -421,17 +434,23 @@ async def generate_weekly_digest(limit: int = 5) -> dict:
 
         # 5. Gera hot takes para cada notícia selecionada
         hot_takes = []
+        errors = []
         for news in selected_news:
             try:
+                logger.info(f"Gerando hot take para: {news.get('title', '')[:50]}")
                 hot_take = await generate_hot_take(news, articles)
                 if "error" not in hot_take:
                     hot_take_id = save_hot_take(hot_take)
                     hot_take["id"] = hot_take_id
                     hot_takes.append(hot_take)
+                    logger.info(f"Hot take gerado com sucesso: {hot_take_id}")
                 else:
-                    logger.warning(f"Erro ao gerar hot take: {hot_take.get('error')}")
+                    error_msg = hot_take.get('error', 'Unknown error')
+                    logger.warning(f"Erro ao gerar hot take: {error_msg}")
+                    errors.append(error_msg)
             except Exception as e:
                 logger.error(f"Erro ao processar notícia: {e}")
+                errors.append(str(e))
                 continue
 
         return {
@@ -439,7 +458,8 @@ async def generate_weekly_digest(limit: int = 5) -> dict:
             "news_filtered": len(filtered_news),
             "news_selected": len(selected_news),
             "hot_takes_generated": len(hot_takes),
-            "hot_takes": hot_takes
+            "hot_takes": hot_takes,
+            "errors": errors if errors else None
         }
 
     except Exception as e:
