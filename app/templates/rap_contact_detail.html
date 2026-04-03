@@ -5400,9 +5400,10 @@
                     situation = `📅 Reunião em ${daysUntil} dias (${dateStr})`;
                     recommendation = nextMeeting.summary;
                     actions.push({ id: 'meeting', label: 'Preparar', icon: 'calendar-event', primary: true });
-                } else {
-                    // Meeting is more than 7 days away, show message status instead but mention meeting
-                    contextItems.push(`📅 Reunião agendada ${dateStr} ${timeStr}`);
+                } else if (daysUntil <= 30) {
+                    situation = `📅 Reunião agendada ${dateStr} às ${timeStr}`;
+                    recommendation = nextMeeting.summary;
+                    actions.push({ id: 'meeting', label: 'Ver Detalhes', icon: 'calendar-event', primary: false });
                 }
             }
 
