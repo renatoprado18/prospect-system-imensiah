@@ -9484,25 +9484,25 @@ async def test_proposal_notification(request: Request, contact_name: str = "Pedr
     proposals_service = get_action_proposals()
     notifications = get_whatsapp_notifications()
 
-    # Criar proposta de teste
+    # Criar proposta de teste - usando action_type que funciona sem dados reais
     test_proposal = {
-        'action_type': 'reschedule_event',
+        'action_type': 'pending_response',  # Tipo que funciona sem event_id
         'contact_id': None,
         'message_id': None,
-        'title': f'Remarcar reuniao com {contact_name}',
-        'description': f'{contact_name} pediu para remarcar a reuniao de hoje.',
-        'trigger_text': 'Oi Renato, consegue remarcar nossa reuniao de hoje? Surgiu um imprevisto aqui.',
-        'ai_reasoning': 'Mensagem indica pedido de remarcacao',
-        'confidence': 0.95,
+        'title': f'Responder {contact_name}',
+        'description': f'{contact_name} fez uma pergunta que aguarda resposta.',
+        'trigger_text': 'Oi Renato, consegue me enviar o orcamento atualizado? Preciso apresentar amanha.',
+        'ai_reasoning': 'Mensagem contem pergunta que requer resposta',
+        'confidence': 0.92,
         'urgency': 'high',
         'action_params': {
-            'event_id': None,
-            'original_date': '2024-03-30T15:00:00'
+            'contact_name': contact_name,
+            'question_type': 'orcamento'
         },
         'options': [
-            {'id': 'reschedule_tomorrow', 'label': 'Remarcar amanha mesmo horario', 'action': 'reschedule'},
-            {'id': 'reschedule_next_week', 'label': 'Remarcar proxima semana', 'action': 'reschedule'},
-            {'id': 'cancel', 'label': 'Cancelar reuniao', 'action': 'cancel'},
+            {'id': 'open_conversation', 'label': 'Abrir conversa', 'action': 'open_conversation'},
+            {'id': 'create_task', 'label': 'Criar tarefa', 'action': 'create_task'},
+            {'id': 'acknowledge', 'label': 'Marcar como visto', 'action': 'acknowledge'},
             {'id': 'ignore', 'label': 'Ignorar', 'action': 'dismiss'}
         ]
     }
@@ -9524,6 +9524,25 @@ async def test_proposal_notification(request: Request, contact_name: str = "Pedr
         "proposal_id": proposal['id'],
         "message": "Notificacao enviada! Clique nos links para executar" if sent else "Falha ao enviar notificacao"
     }
+
+
+@app.delete("/api/action-proposals/test-cleanup")
+async def cleanup_test_proposals():
+    """Remove todas as proposals de teste (sem contact_id)"""
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM action_proposals
+            WHERE contact_id IS NULL
+            RETURNING id
+        """)
+        deleted = cursor.fetchall()
+        conn.commit()
+        return {
+            "success": True,
+            "deleted_count": len(deleted),
+            "message": f"Removidas {len(deleted)} proposals de teste"
+        }
 
 
 @app.get("/api/action-proposals/{proposal_id}/quick-action")
