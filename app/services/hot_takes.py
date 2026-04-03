@@ -1,5 +1,6 @@
 """
 Hot Takes Service - Conecta notícias quentes com conteúdo de governança
+Version: 2.0 - With comprehensive error handling
 
 Fluxo:
 1. Busca notícias de fontes RSS (Google News, etc)
