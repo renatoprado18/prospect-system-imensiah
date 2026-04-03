@@ -283,8 +283,8 @@
         font-size: 1.25rem;
     }
 
-    /* Modal */
-    .modal-backdrop {
+    /* Modal - using custom class names to avoid Bootstrap conflicts */
+    .ed-modal {
         position: fixed;
         top: 0;
         left: 0;
@@ -299,12 +299,12 @@
         z-index: 9999;
     }
 
-    .modal-backdrop.show {
+    .ed-modal.show {
         display: flex;
     }
 
-    .modal-content {
-        background: #fff;
+    .ed-modal-box {
+        background-color: #ffffff;
         border-radius: 16px;
         width: 90%;
         max-width: 600px;
@@ -315,23 +315,23 @@
         z-index: 10000;
     }
 
-    .modal-header {
+    .ed-modal-header {
         padding: 20px 24px;
         border-bottom: 1px solid var(--gray-200);
         display: flex;
         justify-content: space-between;
         align-items: center;
-        background: #fff;
+        background-color: #ffffff;
     }
 
-    .modal-header h3 {
+    .ed-modal-header h3 {
         margin: 0;
         font-size: 1.25rem;
         font-weight: 600;
         color: var(--dark);
     }
 
-    .modal-close {
+    .ed-modal-close {
         background: none;
         border: none;
         font-size: 1.5rem;
@@ -339,9 +339,9 @@
         color: var(--gray-500);
     }
 
-    .modal-body {
+    .ed-modal-body {
         padding: 24px;
-        background: #fff;
+        background-color: #ffffff;
     }
 
     .form-group {
@@ -587,13 +587,13 @@
 
 {% block modals %}
 <!-- Import Modal -->
-<div class="modal-backdrop" id="import-modal">
-    <div class="modal-content">
-        <div class="modal-header">
+<div class="ed-modal" id="import-modal">
+    <div class="ed-modal-box">
+        <div class="ed-modal-header">
             <h3>Importar Artigos do Site</h3>
-            <button class="modal-close" onclick="closeImportModal()">&times;</button>
+            <button class="ed-modal-close" onclick="closeImportModal()">&times;</button>
         </div>
-        <div class="modal-body">
+        <div class="ed-modal-body">
             <p style="margin-bottom: 20px; color: var(--gray-600);">
                 Importar os 145 artigos do site almeida-prado.com para o calendario editorial.
                 Artigos ja importados serao ignorados.
@@ -618,13 +618,13 @@
 </div>
 
 <!-- Post Detail Modal -->
-<div class="modal-backdrop" id="post-modal">
-    <div class="modal-content">
-        <div class="modal-header">
+<div class="ed-modal" id="post-modal">
+    <div class="ed-modal-box">
+        <div class="ed-modal-header">
             <h3 id="post-modal-title">Detalhes do Post</h3>
-            <button class="modal-close" onclick="closePostModal()">&times;</button>
+            <button class="ed-modal-close" onclick="closePostModal()">&times;</button>
         </div>
-        <div class="modal-body" id="post-modal-body">
+        <div class="ed-modal-body" id="post-modal-body">
             <!-- Filled by JS -->
         </div>
     </div>
@@ -793,7 +793,7 @@ function openNewPostModal() {
 }
 
 // Close modals on backdrop click
-document.querySelectorAll('.modal-backdrop').forEach(modal => {
+document.querySelectorAll('.ed-modal').forEach(modal => {
     modal.addEventListener('click', (e) => {
         if (e.target === modal) {
             modal.classList.remove('show');
