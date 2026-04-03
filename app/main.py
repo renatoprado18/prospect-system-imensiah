@@ -11344,12 +11344,9 @@ async def get_contact_calendar_events(request: Request, contact_id: int, limit: 
                 elif isinstance(e, str):
                     contact_emails.append(e.lower())
 
-    # Se não tem email, não há como filtrar por participante
-    if not contact_emails:
-        return {"events": [], "total": 0, "message": "Contato sem email cadastrado"}
-
-    # Buscar eventos e filtrar APENAS por email do participante
     from datetime import datetime, timedelta
+
+    # Buscar todos os eventos do período
     all_events = await calendar.list_events(
         access_token=access_token,
         time_min=datetime.utcnow() - timedelta(days=365),  # Último ano
@@ -11357,15 +11354,37 @@ async def get_contact_calendar_events(request: Request, contact_id: int, limit: 
         max_results=100
     )
 
-    # Filtrar apenas eventos onde o contato é participante
     unique_items = []
-    if "items" in all_events:
+    seen_ids = set()
+
+    # 1. Primeiro: eventos onde o contato é participante (por email)
+    if contact_emails and "items" in all_events:
         for item in all_events.get("items", []):
             attendees = item.get("attendees", [])
             for attendee in attendees:
                 if attendee.get("email", "").lower() in contact_emails:
-                    unique_items.append(item)
+                    if item.get("id") not in seen_ids:
+                        unique_items.append(item)
+                        seen_ids.add(item.get("id"))
                     break
+
+    # 2. Se não encontrou por email, buscar pelo nome no título do evento
+    if not unique_items:
+        contact_name = contact["nome"]
+        name_parts = contact_name.split()
+        # Usar sobrenome (mais específico) se disponível
+        search_names = [name_parts[-1].lower()] if name_parts else []
+        if len(name_parts) > 1:
+            search_names.append(name_parts[0].lower())  # Primeiro nome também
+
+        if search_names and "items" in all_events:
+            for item in all_events.get("items", []):
+                summary = (item.get("summary") or "").lower()
+                for name in search_names:
+                    if name in summary and item.get("id") not in seen_ids:
+                        unique_items.append(item)
+                        seen_ids.add(item.get("id"))
+                        break
 
     # Formatar eventos
     events = []
