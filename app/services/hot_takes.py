@@ -382,43 +382,76 @@ def get_weekly_digest_stats() -> dict:
 async def generate_weekly_digest(limit: int = 5) -> dict:
     """Gera digest semanal de hot takes"""
 
-    # 1. Busca notícias
-    all_news = await fetch_all_news()
+    try:
+        # 1. Busca notícias
+        all_news = await fetch_all_news()
+        logger.info(f"Buscadas {len(all_news)} notícias")
 
-    # 2. Pré-filtro por keywords
-    filtered_news = pre_filter_news(all_news)
+        # 2. Pré-filtro por keywords
+        filtered_news = pre_filter_news(all_news)
+        logger.info(f"Filtradas {len(filtered_news)} notícias por keywords")
 
-    # 3. Filtro IA para selecionar as melhores
-    selected_news = await filter_news_with_ai(filtered_news, limit=limit)
+        if not filtered_news:
+            # Se não há notícias filtradas, usa as primeiras 10
+            filtered_news = all_news[:10]
 
-    # 4. Busca artigos disponíveis
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT article_title as title, article_description as description, article_slug as slug
-            FROM editorial_posts
-            WHERE status != 'archived'
-            ORDER BY created_at DESC
-            LIMIT 50
-        ''')
-        articles = [dict(row) for row in cursor.fetchall()]
+        # 3. Filtro IA para selecionar as melhores
+        selected_news = await filter_news_with_ai(filtered_news, limit=limit)
+        logger.info(f"IA selecionou {len(selected_news)} notícias")
 
-    # 5. Gera hot takes para cada notícia selecionada
-    hot_takes = []
-    for news in selected_news:
-        hot_take = await generate_hot_take(news, articles)
-        if "error" not in hot_take:
-            hot_take_id = save_hot_take(hot_take)
-            hot_take["id"] = hot_take_id
-            hot_takes.append(hot_take)
+        if not selected_news:
+            selected_news = filtered_news[:limit]
 
-    return {
-        "news_fetched": len(all_news),
-        "news_filtered": len(filtered_news),
-        "news_selected": len(selected_news),
-        "hot_takes_generated": len(hot_takes),
-        "hot_takes": hot_takes
-    }
+        # 4. Busca artigos disponíveis (opcional - não falha se não existir)
+        articles = []
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT article_title as title, article_description as description, article_slug as slug
+                    FROM editorial_posts
+                    WHERE status != 'archived'
+                    ORDER BY created_at DESC
+                    LIMIT 50
+                ''')
+                articles = [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.warning(f"Não foi possível buscar artigos: {e}")
+            articles = []
+
+        # 5. Gera hot takes para cada notícia selecionada
+        hot_takes = []
+        for news in selected_news:
+            try:
+                hot_take = await generate_hot_take(news, articles)
+                if "error" not in hot_take:
+                    hot_take_id = save_hot_take(hot_take)
+                    hot_take["id"] = hot_take_id
+                    hot_takes.append(hot_take)
+                else:
+                    logger.warning(f"Erro ao gerar hot take: {hot_take.get('error')}")
+            except Exception as e:
+                logger.error(f"Erro ao processar notícia: {e}")
+                continue
+
+        return {
+            "news_fetched": len(all_news),
+            "news_filtered": len(filtered_news),
+            "news_selected": len(selected_news),
+            "hot_takes_generated": len(hot_takes),
+            "hot_takes": hot_takes
+        }
+
+    except Exception as e:
+        logger.error(f"Erro no generate_weekly_digest: {e}")
+        return {
+            "error": str(e),
+            "news_fetched": 0,
+            "news_filtered": 0,
+            "news_selected": 0,
+            "hot_takes_generated": 0,
+            "hot_takes": []
+        }
 
 
 async def generate_hot_take_from_url(url: str) -> dict:
