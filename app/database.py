@@ -1340,6 +1340,23 @@ def init_db():
             )
         ''')
 
+        # AI categorization fields for editorial posts
+        cursor.execute('''
+            ALTER TABLE editorial_posts
+            ADD COLUMN IF NOT EXISTS ai_categoria TEXT,
+            ADD COLUMN IF NOT EXISTS ai_subcategoria TEXT,
+            ADD COLUMN IF NOT EXISTS ai_publico_alvo JSONB DEFAULT '[]',
+            ADD COLUMN IF NOT EXISTS ai_tipo_conteudo TEXT,
+            ADD COLUMN IF NOT EXISTS ai_complexidade TEXT,
+            ADD COLUMN IF NOT EXISTS ai_evergreen BOOLEAN DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS ai_keywords JSONB DEFAULT '[]',
+            ADD COLUMN IF NOT EXISTS ai_gancho_linkedin TEXT,
+            ADD COLUMN IF NOT EXISTS ai_tempo_leitura INTEGER,
+            ADD COLUMN IF NOT EXISTS ai_score_relevancia INTEGER,
+            ADD COLUMN IF NOT EXISTS ai_analise_completa JSONB DEFAULT '{}',
+            ADD COLUMN IF NOT EXISTS ai_analisado_em TIMESTAMP
+        ''')
+
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_editorial_posts_status
             ON editorial_posts(status)

@@ -571,6 +571,10 @@
         <div class="sidebar-card">
             <h3>Acoes Rapidas</h3>
             <div class="quick-actions">
+                <button class="quick-action" onclick="openAIAnalysisModal()" style="background: linear-gradient(135deg, #8b5cf6, #a78bfa); color: white;">
+                    <i class="bi bi-cpu"></i>
+                    Analisar com IA
+                </button>
                 <button class="quick-action" onclick="openBulkScheduleModal()" style="background: linear-gradient(135deg, #0077b5, #00a0dc); color: white;">
                     <i class="bi bi-calendar-plus"></i>
                     Agendar em Lote (LinkedIn)
@@ -640,6 +644,14 @@
                 </div>
             </div>
         </div>
+
+        <!-- AI Analysis Status -->
+        <div class="sidebar-card" id="ai-stats-card">
+            <h3><i class="bi bi-cpu me-2" style="color: #8b5cf6;"></i>Análise IA</h3>
+            <div id="ai-stats-content">
+                <p style="color: var(--gray-500); font-size: 0.875rem;">Carregando...</p>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -670,6 +682,67 @@
                 <button class="btn-secondary" onclick="closeImportModal()">Cancelar</button>
                 <button class="btn-primary" onclick="importArticles()">
                     <i class="bi bi-cloud-download"></i> Importar Artigos
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- AI Analysis Modal -->
+<div class="ed-modal" id="ai-analysis-modal">
+    <div class="ed-modal-box" style="max-width: 700px;">
+        <div class="ed-modal-header">
+            <h3><i class="bi bi-cpu me-2" style="color: #8b5cf6;"></i>Análise de Conteúdo com IA</h3>
+            <button class="ed-modal-close" onclick="closeAIAnalysisModal()">&times;</button>
+        </div>
+        <div class="ed-modal-body">
+            <div style="background: linear-gradient(135deg, #f5f3ff, #ede9fe); border-radius: 10px; padding: 16px; margin-bottom: 20px;">
+                <h4 style="margin: 0 0 8px 0; font-size: 0.9rem; color: #5b21b6;">
+                    <i class="bi bi-magic me-1"></i> O que a IA analisa?
+                </h4>
+                <p style="margin: 0; font-size: 0.85rem; color: #6b21a8;">
+                    Categoria, público-alvo, complexidade, keywords, score de relevância e sugere o gancho ideal para LinkedIn.
+                </p>
+            </div>
+
+            <div id="ai-analysis-status" style="margin-bottom: 20px;">
+                <!-- Filled by JS -->
+            </div>
+
+            <div class="form-group">
+                <label>Quantos artigos analisar?</label>
+                <select class="form-control" id="ai-analysis-limit">
+                    <option value="5">5 artigos (teste)</option>
+                    <option value="10">10 artigos</option>
+                    <option value="25">25 artigos</option>
+                    <option value="50">50 artigos</option>
+                    <option value="">Todos pendentes</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="ai-force-reanalyze">
+                    <span>Reanalisar artigos já analisados</span>
+                </label>
+            </div>
+
+            <div id="ai-analysis-progress" style="display: none; margin-bottom: 20px;">
+                <div style="background: var(--gray-100); border-radius: 8px; padding: 16px; text-align: center;">
+                    <div class="spinner-border text-primary" role="status" style="width: 2rem; height: 2rem;"></div>
+                    <p style="margin: 12px 0 0; color: var(--gray-600);">Analisando artigos com IA...</p>
+                    <p style="margin: 4px 0 0; font-size: 0.8rem; color: var(--gray-500);" id="ai-progress-text">Isso pode levar alguns minutos</p>
+                </div>
+            </div>
+
+            <div id="ai-analysis-results" style="display: none; margin-bottom: 20px;">
+                <!-- Filled by JS after analysis -->
+            </div>
+
+            <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--gray-200);">
+                <button class="btn-secondary" onclick="closeAIAnalysisModal()">Fechar</button>
+                <button class="btn-primary" id="btn-run-analysis" onclick="runAIAnalysis()" style="background: #8b5cf6;">
+                    <i class="bi bi-play-fill me-1"></i> Iniciar Análise
                 </button>
             </div>
         </div>
@@ -1088,6 +1161,184 @@ async function executeBulkSchedule() {
         alert('Erro: ' + err.message);
     }
 }
+
+// =============================================================================
+// AI ANALYSIS FUNCTIONS
+// =============================================================================
+
+async function loadAIStats() {
+    try {
+        const response = await fetch('/api/editorial/ai/stats');
+        const stats = await response.json();
+
+        const container = document.getElementById('ai-stats-content');
+        const analyzed = stats.analyzed || 0;
+        const pending = stats.pending || 0;
+        const total = stats.total || 0;
+        const avgScore = stats.avg_score ? stats.avg_score.toFixed(1) : '-';
+
+        const percent = total > 0 ? Math.round((analyzed / total) * 100) : 0;
+
+        container.innerHTML = `
+            <div style="margin-bottom: 12px;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;">
+                    <span>${analyzed} analisados</span>
+                    <span>${pending} pendentes</span>
+                </div>
+                <div style="background: var(--gray-200); border-radius: 4px; height: 8px; overflow: hidden;">
+                    <div style="background: linear-gradient(135deg, #8b5cf6, #a78bfa); height: 100%; width: ${percent}%; transition: width 0.3s;"></div>
+                </div>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
+                <span style="color: var(--gray-500);">Score médio</span>
+                <strong style="color: #8b5cf6;">${avgScore}/10</strong>
+            </div>
+            ${stats.por_categoria && stats.por_categoria.length > 0 ? `
+                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--gray-200);">
+                    <div style="font-size: 0.75rem; color: var(--gray-500); margin-bottom: 8px;">Top categorias:</div>
+                    ${stats.por_categoria.slice(0, 3).map(c => `
+                        <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;">
+                            <span>${c.ai_categoria || 'Sem categoria'}</span>
+                            <span style="color: var(--gray-500);">${c.count}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            ` : ''}
+        `;
+    } catch (err) {
+        console.error('Error loading AI stats:', err);
+    }
+}
+
+function openAIAnalysisModal() {
+    loadAIAnalysisStatus();
+    document.getElementById('ai-analysis-modal').classList.add('show');
+}
+
+function closeAIAnalysisModal() {
+    document.getElementById('ai-analysis-modal').classList.remove('show');
+}
+
+async function loadAIAnalysisStatus() {
+    try {
+        const response = await fetch('/api/editorial/ai/stats');
+        const stats = await response.json();
+
+        const container = document.getElementById('ai-analysis-status');
+        const analyzed = stats.analyzed || 0;
+        const pending = stats.pending || 0;
+        const total = stats.total || 0;
+
+        container.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+                <div style="background: var(--gray-100); padding: 16px; border-radius: 10px; text-align: center;">
+                    <div style="font-size: 1.5rem; font-weight: 700; color: var(--dark);">${total}</div>
+                    <div style="font-size: 0.8rem; color: var(--gray-500);">Total</div>
+                </div>
+                <div style="background: #d1fae5; padding: 16px; border-radius: 10px; text-align: center;">
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #047857;">${analyzed}</div>
+                    <div style="font-size: 0.8rem; color: #065f46;">Analisados</div>
+                </div>
+                <div style="background: #fef3c7; padding: 16px; border-radius: 10px; text-align: center;">
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #d97706;">${pending}</div>
+                    <div style="font-size: 0.8rem; color: #92400e;">Pendentes</div>
+                </div>
+            </div>
+        `;
+    } catch (err) {
+        console.error('Error loading AI status:', err);
+    }
+}
+
+async function runAIAnalysis() {
+    const limit = document.getElementById('ai-analysis-limit').value;
+    const force = document.getElementById('ai-force-reanalyze').checked;
+
+    // Show progress
+    document.getElementById('ai-analysis-progress').style.display = 'block';
+    document.getElementById('ai-analysis-results').style.display = 'none';
+    document.getElementById('btn-run-analysis').disabled = true;
+
+    try {
+        const response = await fetch('/api/editorial/ai/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                limit: limit ? parseInt(limit) : null,
+                force: force
+            })
+        });
+
+        const result = await response.json();
+
+        // Hide progress
+        document.getElementById('ai-analysis-progress').style.display = 'none';
+        document.getElementById('btn-run-analysis').disabled = false;
+
+        // Show results
+        const resultsContainer = document.getElementById('ai-analysis-results');
+        resultsContainer.style.display = 'block';
+
+        if (result.status === 'success') {
+            resultsContainer.innerHTML = `
+                <div style="background: #d1fae5; border-radius: 10px; padding: 16px; margin-bottom: 16px;">
+                    <h4 style="margin: 0 0 8px; color: #047857;">
+                        <i class="bi bi-check-circle me-1"></i> Análise Concluída!
+                    </h4>
+                    <p style="margin: 0; font-size: 0.9rem; color: #065f46;">
+                        ${result.analyzed} artigos analisados${result.errors > 0 ? `, ${result.errors} erros` : ''}
+                    </p>
+                </div>
+                ${result.details && result.details.length > 0 ? `
+                    <div style="max-height: 200px; overflow-y: auto;">
+                        <table style="width: 100%; font-size: 0.85rem;">
+                            <thead>
+                                <tr style="background: var(--gray-100);">
+                                    <th style="padding: 8px; text-align: left;">Artigo</th>
+                                    <th style="padding: 8px; text-align: left;">Categoria</th>
+                                    <th style="padding: 8px; text-align: center;">Score</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${result.details.slice(0, 20).map(d => `
+                                    <tr>
+                                        <td style="padding: 8px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${d.title || '-'}</td>
+                                        <td style="padding: 8px;">${d.categoria || '-'}</td>
+                                        <td style="padding: 8px; text-align: center;">
+                                            ${d.score ? `<span style="background: ${d.score >= 7 ? '#d1fae5' : d.score >= 5 ? '#fef3c7' : '#fee2e2'}; padding: 2px 8px; border-radius: 10px;">${d.score}</span>` : '-'}
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                ` : ''}
+            `;
+
+            // Reload stats
+            loadAIStats();
+            loadAIAnalysisStatus();
+        } else {
+            resultsContainer.innerHTML = `
+                <div style="background: #fee2e2; border-radius: 10px; padding: 16px;">
+                    <h4 style="margin: 0 0 8px; color: #dc2626;">
+                        <i class="bi bi-exclamation-triangle me-1"></i> Erro
+                    </h4>
+                    <p style="margin: 0; font-size: 0.9rem; color: #991b1b;">
+                        ${result.detail || 'Erro desconhecido'}
+                    </p>
+                </div>
+            `;
+        }
+    } catch (err) {
+        document.getElementById('ai-analysis-progress').style.display = 'none';
+        document.getElementById('btn-run-analysis').disabled = false;
+        alert('Erro: ' + err.message);
+    }
+}
+
+// Load AI stats on page load
+document.addEventListener('DOMContentLoaded', loadAIStats);
 
 // Close modals on backdrop click
 document.querySelectorAll('.ed-modal').forEach(modal => {

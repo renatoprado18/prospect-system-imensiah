@@ -13021,7 +13021,98 @@ async def api_editorial_meta():
     }
 
 
+# =============================================================================
+# EDITORIAL AI ANALYSIS
+# =============================================================================
+
+@app.get("/api/editorial/ai/stats")
+async def api_editorial_ai_stats():
+    """Estatísticas da análise IA dos artigos"""
+    from app.services.editorial_calendar import get_analysis_stats
+    return get_analysis_stats()
+
+
+@app.post("/api/editorial/ai/analyze")
+async def api_editorial_ai_analyze(request: Request):
+    """
+    Analisa artigos com IA.
+
+    Body:
+    {
+        "post_ids": [1, 2, 3],  // opcional - se vazio, analisa todos pendentes
+        "limit": 10,            // opcional - máximo de artigos
+        "force": false          // opcional - reanalisar já analisados
+    }
+    """
+    from app.services.editorial_calendar import analyze_all_articles, analyze_article_with_ai
+
+    data = await request.json()
+    post_ids = data.get('post_ids', [])
+    limit = data.get('limit')
+    force = data.get('force', False)
+
+    if post_ids:
+        # Analyze specific posts
+        results = {
+            'total': len(post_ids),
+            'analyzed': 0,
+            'errors': 0,
+            'details': []
+        }
+        for post_id in post_ids:
+            try:
+                analysis = analyze_article_with_ai(post_id)
+                if analysis:
+                    results['analyzed'] += 1
+                    results['details'].append({
+                        'id': post_id,
+                        'categoria': analysis.get('categoria'),
+                        'score': analysis.get('score_relevancia'),
+                        'status': 'success'
+                    })
+                else:
+                    results['errors'] += 1
+                    results['details'].append({'id': post_id, 'status': 'error'})
+            except Exception as e:
+                results['errors'] += 1
+                results['details'].append({'id': post_id, 'status': 'error', 'error': str(e)})
+        return {"status": "success", **results}
+    else:
+        # Analyze all pending
+        results = analyze_all_articles(limit=limit, force=force)
+        return {"status": "success", **results}
+
+
+@app.get("/api/editorial/{post_id}/analysis")
+async def api_editorial_get_analysis(post_id: int):
+    """Retorna análise IA de um post específico"""
+    post = get_editorial_post(post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post não encontrado")
+
+    return {
+        "post_id": post_id,
+        "title": post.get('article_title'),
+        "analyzed": post.get('ai_analisado_em') is not None,
+        "analysis": {
+            "categoria": post.get('ai_categoria'),
+            "subcategoria": post.get('ai_subcategoria'),
+            "publico_alvo": post.get('ai_publico_alvo'),
+            "tipo_conteudo": post.get('ai_tipo_conteudo'),
+            "complexidade": post.get('ai_complexidade'),
+            "evergreen": post.get('ai_evergreen'),
+            "keywords": post.get('ai_keywords'),
+            "gancho_linkedin": post.get('ai_gancho_linkedin'),
+            "tempo_leitura": post.get('ai_tempo_leitura'),
+            "score_relevancia": post.get('ai_score_relevancia'),
+            "analise_completa": post.get('ai_analise_completa'),
+            "analisado_em": post.get('ai_analisado_em').isoformat() if post.get('ai_analisado_em') else None
+        }
+    }
+
+
 @app.get("/api/editorial/{post_id}")
+async def api_editorial_get(post_id: int):
 async def api_editorial_get(post_id: int):
     """Retorna um post especifico"""
     post = get_editorial_post(post_id)

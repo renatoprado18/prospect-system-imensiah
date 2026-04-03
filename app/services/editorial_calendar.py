@@ -1,11 +1,18 @@
 """
 Editorial Calendar Service
 Manages content scheduling for LinkedIn and Instagram
+Includes AI-powered content analysis and categorization
 """
+import os
+import httpx
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from app.database import get_db
 import json
+
+logger = logging.getLogger(__name__)
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 
 # Status constants
@@ -524,5 +531,273 @@ def get_stats() -> Dict:
             LIMIT 5
         """)
         stats['upcoming'] = [dict(p) for p in cursor.fetchall()]
+
+        return stats
+
+
+# =============================================================================
+# AI CONTENT ANALYSIS
+# =============================================================================
+
+CATEGORIAS_PRINCIPAIS = [
+    "Governança Corporativa",
+    "NeoGovernança",
+    "Conselho de Administração",
+    "M&A e Fusões",
+    "Empresa Familiar",
+    "Liderança Executiva",
+    "ESG e Sustentabilidade",
+    "Transformação Digital",
+    "Estratégia Empresarial",
+    "Gestão de Riscos",
+    "Inovação",
+    "Complexidade e Adaptação"
+]
+
+TIPOS_CONTEUDO = ["educativo", "opiniao", "case", "tendencia", "reflexao", "pratico"]
+COMPLEXIDADES = ["iniciante", "intermediario", "avancado"]
+PUBLICOS = ["ceos", "conselheiros", "empresarios_familiares", "executivos", "investidores", "consultores"]
+
+
+def analyze_article_with_ai(post_id: int) -> Optional[Dict]:
+    """
+    Analyzes a single article using Claude AI and extracts rich metadata.
+
+    Returns dict with:
+    - categoria, subcategoria
+    - publico_alvo (list)
+    - tipo_conteudo
+    - complexidade
+    - evergreen (bool)
+    - keywords (list)
+    - gancho_linkedin (hook text)
+    - tempo_leitura (minutes)
+    - score_relevancia (1-10)
+    """
+    if not ANTHROPIC_API_KEY:
+        logger.warning("ANTHROPIC_API_KEY not set, skipping AI analysis")
+        return None
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM editorial_posts WHERE id = %s", (post_id,))
+        post = cursor.fetchone()
+
+        if not post:
+            return None
+
+        post = dict(post)
+
+    # Build prompt
+    prompt = f"""Analise este artigo de blog sobre governança corporativa e negócios.
+
+TÍTULO: {post.get('article_title', '')}
+
+DESCRIÇÃO: {post.get('article_description', '')}
+
+CATEGORIA ORIGINAL: {post.get('tags', '[]')}
+
+URL: {post.get('article_url', '')}
+
+---
+
+Classifique este artigo respondendo em JSON válido:
+
+{{
+    "categoria": "<uma das: {', '.join(CATEGORIAS_PRINCIPAIS)}>",
+    "subcategoria": "<subcategoria específica>",
+    "publico_alvo": ["<lista de: {', '.join(PUBLICOS)}>"],
+    "tipo_conteudo": "<uma das: {', '.join(TIPOS_CONTEUDO)}>",
+    "complexidade": "<uma das: {', '.join(COMPLEXIDADES)}>",
+    "evergreen": <true se o conteúdo é atemporal, false se datado>,
+    "keywords": ["<5-8 palavras-chave principais>"],
+    "gancho_linkedin": "<primeira frase impactante para LinkedIn, max 150 chars, que gere curiosidade>",
+    "tempo_leitura": <estimativa em minutos baseado na descrição>,
+    "score_relevancia": <1-10, considerando potencial de engajamento no LinkedIn>,
+    "razao_score": "<breve explicação do score>"
+}}
+
+Responda APENAS com o JSON, sem explicações adicionais."""
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 1000,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+            )
+
+            if response.status_code != 200:
+                logger.error(f"AI API error: {response.status_code} - {response.text}")
+                return None
+
+            result = response.json()
+            content = result.get("content", [{}])[0].get("text", "").strip()
+
+            # Parse JSON response
+            # Handle potential markdown code blocks
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+
+            analysis = json.loads(content)
+
+            # Save to database
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE editorial_posts SET
+                        ai_categoria = %s,
+                        ai_subcategoria = %s,
+                        ai_publico_alvo = %s,
+                        ai_tipo_conteudo = %s,
+                        ai_complexidade = %s,
+                        ai_evergreen = %s,
+                        ai_keywords = %s,
+                        ai_gancho_linkedin = %s,
+                        ai_tempo_leitura = %s,
+                        ai_score_relevancia = %s,
+                        ai_analise_completa = %s,
+                        ai_analisado_em = NOW(),
+                        atualizado_em = NOW()
+                    WHERE id = %s
+                """, (
+                    analysis.get('categoria'),
+                    analysis.get('subcategoria'),
+                    json.dumps(analysis.get('publico_alvo', [])),
+                    analysis.get('tipo_conteudo'),
+                    analysis.get('complexidade'),
+                    analysis.get('evergreen', True),
+                    json.dumps(analysis.get('keywords', [])),
+                    analysis.get('gancho_linkedin'),
+                    analysis.get('tempo_leitura'),
+                    analysis.get('score_relevancia'),
+                    json.dumps(analysis),
+                    post_id
+                ))
+
+            return analysis
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse AI response as JSON: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"AI analysis error: {e}")
+        return None
+
+
+def analyze_all_articles(limit: int = None, force: bool = False) -> Dict:
+    """
+    Analyzes all editorial posts that haven't been analyzed yet.
+
+    Args:
+        limit: Max number of articles to analyze (for testing/batching)
+        force: Re-analyze even if already analyzed
+
+    Returns:
+        Dict with analyzed count, errors, and results
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        if force:
+            query = "SELECT id, article_title FROM editorial_posts ORDER BY criado_em ASC"
+            params = []
+        else:
+            query = "SELECT id, article_title FROM editorial_posts WHERE ai_analisado_em IS NULL ORDER BY criado_em ASC"
+            params = []
+
+        if limit:
+            query += " LIMIT %s"
+            params.append(limit)
+
+        cursor.execute(query, params if params else None)
+        posts = cursor.fetchall()
+
+    results = {
+        'total': len(posts),
+        'analyzed': 0,
+        'errors': 0,
+        'details': []
+    }
+
+    for post in posts:
+        post_id = post['id']
+        title = post['article_title']
+
+        try:
+            analysis = analyze_article_with_ai(post_id)
+            if analysis:
+                results['analyzed'] += 1
+                results['details'].append({
+                    'id': post_id,
+                    'title': title[:50],
+                    'categoria': analysis.get('categoria'),
+                    'score': analysis.get('score_relevancia'),
+                    'status': 'success'
+                })
+            else:
+                results['errors'] += 1
+                results['details'].append({
+                    'id': post_id,
+                    'title': title[:50],
+                    'status': 'error'
+                })
+        except Exception as e:
+            results['errors'] += 1
+            results['details'].append({
+                'id': post_id,
+                'title': title[:50],
+                'status': 'error',
+                'error': str(e)
+            })
+
+    return results
+
+
+def get_analysis_stats() -> Dict:
+    """Get statistics about article analysis status."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(ai_analisado_em) as analyzed,
+                COUNT(*) - COUNT(ai_analisado_em) as pending,
+                COUNT(DISTINCT ai_categoria) as categorias,
+                AVG(ai_score_relevancia) as avg_score
+            FROM editorial_posts
+        """)
+        stats = dict(cursor.fetchone())
+
+        # Get category distribution
+        cursor.execute("""
+            SELECT ai_categoria, COUNT(*) as count
+            FROM editorial_posts
+            WHERE ai_categoria IS NOT NULL
+            GROUP BY ai_categoria
+            ORDER BY count DESC
+        """)
+        stats['por_categoria'] = [dict(r) for r in cursor.fetchall()]
+
+        # Get top scoring articles
+        cursor.execute("""
+            SELECT id, article_title, ai_categoria, ai_score_relevancia, ai_gancho_linkedin
+            FROM editorial_posts
+            WHERE ai_score_relevancia IS NOT NULL
+            ORDER BY ai_score_relevancia DESC
+            LIMIT 10
+        """)
+        stats['top_relevancia'] = [dict(r) for r in cursor.fetchall()]
 
         return stats
