@@ -229,6 +229,8 @@ async def generate_hot_take(news_item: dict, articles: list[dict] = None) -> dic
     if not ANTHROPIC_API_KEY:
         return {"error": "ANTHROPIC_API_KEY não configurada"}
 
+    logger.info(f"API key present: {bool(ANTHROPIC_API_KEY)}, length: {len(ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else 0}")
+
     # Lista de artigos disponíveis
     articles_text = ""
     if articles:
@@ -497,7 +499,9 @@ async def generate_weekly_digest(limit: int = 5) -> dict:
                 else:
                     error_msg = hot_take.get('error', 'Unknown error')
                     logger.warning(f"Erro ao gerar hot take: {error_msg} (type: {type(error_msg).__name__})")
-                    errors.append(str(error_msg))
+                    # Include full hot_take keys for debugging
+                    error_detail = f"{str(error_msg)} [keys: {list(hot_take.keys())}]"
+                    errors.append(error_detail)
             except Exception as e:
                 logger.error(f"Erro ao processar notícia: {e}")
                 errors.append(str(e))
