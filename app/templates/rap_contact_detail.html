@@ -776,6 +776,129 @@
             display: block;
         }
 
+        /* Editable Sections */
+        .edit-section-inline h6 {
+            font-weight: 600;
+            color: var(--gray-600);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .editable-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--gray-100);
+        }
+
+        .editable-item:last-child {
+            border-bottom: none;
+        }
+
+        .editable-item input {
+            flex: 1;
+        }
+
+        .editable-address {
+            background: var(--gray-100);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+
+        .address-header-edit {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .editable-relationship {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: var(--gray-100);
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .editable-relationship.inferred {
+            background: var(--gray-50);
+            border: 1px dashed var(--gray-300);
+        }
+
+        .rel-avatar {
+            width: 36px;
+            height: 36px;
+            background: var(--primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 0.85rem;
+            flex-shrink: 0;
+        }
+
+        .editable-relationship input {
+            flex: 1;
+        }
+
+        .rel-link {
+            flex-shrink: 0;
+        }
+
+        .rel-info {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .rel-name {
+            font-weight: 500;
+        }
+
+        /* Search Modal Styles */
+        .search-result-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .search-result-item:hover {
+            background: var(--gray-100);
+        }
+
+        .result-avatar {
+            width: 36px;
+            height: 36px;
+            background: var(--primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+
+        .result-info {
+            flex: 1;
+        }
+
+        .result-name {
+            font-weight: 500;
+        }
+
         /* Compact Profile Header */
         .profile-header-compact {
             background: white;
@@ -1629,6 +1752,30 @@
         </div>
     </div>
 
+    <!-- Relationship Search Modal -->
+    <div class="modal fade" id="relationshipSearchModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-search me-2"></i>
+                        Vincular Contato
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <input type="text" class="form-control" id="relSearchInput"
+                               placeholder="Buscar contato..." oninput="searchRelContacts()">
+                    </div>
+                    <div id="relSearchResults" style="max-height: 300px; overflow-y: auto;">
+                        <p class="text-muted text-center">Digite para buscar contatos</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- WhatsApp Send Modal -->
     <div class="modal fade" id="whatsappModal" tabindex="-1">
         <div class="modal-dialog">
@@ -2172,9 +2319,9 @@
                         <button class="btn btn-sm btn-outline-primary" onclick="enrichContact()" title="Enriquecer com IA">
                             <i class="bi bi-magic"></i>
                         </button>
-                        <a href="/contatos/{{ contact_id }}/editar" class="btn btn-sm btn-outline-warning" title="Editar Contato">
+                        <button class="btn btn-sm btn-outline-warning" onclick="switchTab('info')" title="Editar Contato">
                             <i class="bi bi-pencil"></i>
-                        </a>
+                        </button>
                         <div class="dropdown">
                             <button class="btn btn-sm btn-info dropdown-toggle" type="button" data-bs-toggle="dropdown" title="Acoes Rapidas">
                                 <i class="bi bi-lightning-charge"></i>
@@ -2210,7 +2357,7 @@
                     </div>
                 </div>
 
-                <!-- Tabs Navigation (2 tabs only) -->
+                <!-- Tabs Navigation -->
                 <div class="contact-tabs">
                     <button class="contact-tab active" onclick="switchTab('resumo')">
                         <i class="bi bi-person-vcard"></i>
@@ -2219,6 +2366,14 @@
                     <button class="contact-tab" onclick="switchTab('timeline')">
                         <i class="bi bi-clock-history"></i>
                         <span>Timeline</span>
+                    </button>
+                    <button class="contact-tab" onclick="switchTab('info')">
+                        <i class="bi bi-pencil-square"></i>
+                        <span>Informacoes</span>
+                    </button>
+                    <button class="contact-tab" onclick="switchTab('relacionamentos')">
+                        <i class="bi bi-diagram-3"></i>
+                        <span>Relacionamentos</span>
                     </button>
                 </div>
 
@@ -2343,6 +2498,121 @@
                     </div>
                 </div>
 
+                <!-- Tab: Informacoes (Editable) -->
+                <div class="tab-content" id="tab-info">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title"><i class="bi bi-pencil-square"></i> Informacoes do Contato</h2>
+                            <button class="btn btn-sm btn-primary" onclick="saveContactInfo()">
+                                <i class="bi bi-check2"></i> Salvar Alteracoes
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <!-- Basic Info -->
+                            <div class="edit-section-inline">
+                                <h6><i class="bi bi-person"></i> Dados Basicos</h6>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Nome Completo</label>
+                                        <input type="text" class="form-control" id="edit-nome" value="${contact.nome || ''}">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Apelido</label>
+                                        <input type="text" class="form-control" id="edit-apelido" value="${contact.apelido || ''}">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Empresa</label>
+                                        <input type="text" class="form-control" id="edit-empresa" value="${contact.empresa || ''}">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Cargo</label>
+                                        <input type="text" class="form-control" id="edit-cargo" value="${contact.cargo || ''}">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">LinkedIn</label>
+                                        <input type="url" class="form-control" id="edit-linkedin" value="${contact.linkedin || ''}" placeholder="https://linkedin.com/in/...">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Aniversario</label>
+                                        <input type="date" class="form-control" id="edit-aniversario" value="${contact.aniversario || ''}">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Emails -->
+                            <div class="edit-section-inline mt-4">
+                                <h6><i class="bi bi-envelope"></i> Emails
+                                    <button class="btn btn-sm btn-outline-primary ms-2" onclick="addEmailField()">
+                                        <i class="bi bi-plus"></i>
+                                    </button>
+                                </h6>
+                                <div id="edit-emails-container">
+                                    ${renderEditableEmails(emails)}
+                                </div>
+                            </div>
+
+                            <!-- Phones -->
+                            <div class="edit-section-inline mt-4">
+                                <h6><i class="bi bi-telephone"></i> Telefones
+                                    <button class="btn btn-sm btn-outline-primary ms-2" onclick="addPhoneField()">
+                                        <i class="bi bi-plus"></i>
+                                    </button>
+                                </h6>
+                                <div id="edit-phones-container">
+                                    ${renderEditablePhones(telefones)}
+                                </div>
+                            </div>
+
+                            <!-- Addresses -->
+                            <div class="edit-section-inline mt-4">
+                                <h6><i class="bi bi-geo-alt"></i> Enderecos
+                                    <button class="btn btn-sm btn-outline-primary ms-2" onclick="addAddressField()">
+                                        <i class="bi bi-plus"></i>
+                                    </button>
+                                </h6>
+                                <div id="edit-addresses-container">
+                                    ${renderEditableAddresses(parseJsonField(contact.enderecos))}
+                                </div>
+                            </div>
+
+                            <!-- Notes -->
+                            <div class="edit-section-inline mt-4">
+                                <h6><i class="bi bi-journal-text"></i> Notas</h6>
+                                <textarea class="form-control" id="edit-notes" rows="4" placeholder="Notas e observacoes...">${contact.manual_notes || ''}</textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Relacionamentos -->
+                <div class="tab-content" id="tab-relacionamentos">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title"><i class="bi bi-diagram-3"></i> Relacionamentos</h2>
+                            <button class="btn btn-sm btn-primary" onclick="addRelationshipInline()">
+                                <i class="bi bi-plus"></i> Adicionar
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <!-- Direct Relationships -->
+                            <div class="edit-section-inline">
+                                <h6><i class="bi bi-people"></i> Pessoas Relacionadas</h6>
+                                <div id="relationships-container">
+                                    ${renderEditableRelationships(parseJsonField(contact.relacionamentos))}
+                                </div>
+                            </div>
+
+                            <!-- Inferred Relationships -->
+                            <div class="edit-section-inline mt-4" id="inferred-relationships-section" style="display: none;">
+                                <h6><i class="bi bi-diagram-2"></i> Relacionamentos Inferidos
+                                    <small class="text-muted ms-2">(calculados automaticamente)</small>
+                                </h6>
+                                <div id="inferred-relationships-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             `;
 
             // Load data for the tiles
@@ -2351,7 +2621,8 @@
                 loadContactFacts().catch(e => console.log('Facts error:', e)),
                 loadContactMessagesCompact().catch(e => console.log('Messages error:', e)),
                 loadContactMeetingsCompact().catch(e => console.log('Meetings error:', e)),
-                loadConselhoOS().catch(e => console.log('ConselhoOS error:', e))
+                loadConselhoOS().catch(e => console.log('ConselhoOS error:', e)),
+                loadInferredRelationshipsDetail().catch(e => console.log('Inferred relationships error:', e))
             ]);
         }
 
@@ -2370,7 +2641,472 @@
                 loadContactMeetings();
             } else if (tabName === 'timeline') {
                 loadUnifiedTimeline();
+            } else if (tabName === 'relacionamentos') {
+                loadInferredRelationshipsDetail();
             }
+        }
+
+        // ========== EDITABLE FIELDS FUNCTIONS ==========
+
+        const RELATIONSHIP_TYPES = [
+            { value: 'conjuge', label: 'Conjuge' },
+            { value: 'filho', label: 'Filho(a)' },
+            { value: 'pai', label: 'Pai' },
+            { value: 'mae', label: 'Mae' },
+            { value: 'irmao', label: 'Irmao(a)' },
+            { value: 'avo', label: 'Avo(a)' },
+            { value: 'neto', label: 'Neto(a)' },
+            { value: 'tio', label: 'Tio(a)' },
+            { value: 'sobrinho', label: 'Sobrinho(a)' },
+            { value: 'primo', label: 'Primo(a)' },
+            { value: 'sogro', label: 'Sogro(a)' },
+            { value: 'genro', label: 'Genro/Nora' },
+            { value: 'cunhado', label: 'Cunhado(a)' },
+            { value: 'chefe', label: 'Chefe' },
+            { value: 'subordinado', label: 'Subordinado' },
+            { value: 'assistente', label: 'Assistente' },
+            { value: 'socio', label: 'Socio(a)' },
+            { value: 'colega', label: 'Colega' },
+            { value: 'amigo', label: 'Amigo(a)' },
+        ];
+
+        function renderEditableEmails(emails) {
+            if (!emails || emails.length === 0) {
+                return '<div class="text-muted small">Nenhum email cadastrado</div>';
+            }
+            return emails.map((e, i) => `
+                <div class="editable-item" data-index="${i}">
+                    <input type="email" class="form-control form-control-sm" value="${e.email || ''}" placeholder="email@exemplo.com">
+                    <select class="form-select form-select-sm" style="width: 120px;">
+                        <option value="pessoal" ${e.tipo === 'pessoal' ? 'selected' : ''}>Pessoal</option>
+                        <option value="trabalho" ${e.tipo === 'trabalho' ? 'selected' : ''}>Trabalho</option>
+                        <option value="outro" ${e.tipo === 'outro' ? 'selected' : ''}>Outro</option>
+                    </select>
+                    <button class="btn btn-sm btn-outline-danger" onclick="removeEditableItem(this)">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function renderEditablePhones(phones) {
+            if (!phones || phones.length === 0) {
+                return '<div class="text-muted small">Nenhum telefone cadastrado</div>';
+            }
+            return phones.map((p, i) => `
+                <div class="editable-item" data-index="${i}">
+                    <input type="tel" class="form-control form-control-sm" value="${p.number || ''}" placeholder="+55 11 99999-9999">
+                    <select class="form-select form-select-sm" style="width: 120px;">
+                        <option value="celular" ${p.tipo === 'celular' ? 'selected' : ''}>Celular</option>
+                        <option value="trabalho" ${p.tipo === 'trabalho' ? 'selected' : ''}>Trabalho</option>
+                        <option value="residencial" ${p.tipo === 'residencial' ? 'selected' : ''}>Residencial</option>
+                        <option value="outro" ${p.tipo === 'outro' ? 'selected' : ''}>Outro</option>
+                    </select>
+                    <button class="btn btn-sm btn-outline-danger" onclick="removeEditableItem(this)">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function renderEditableAddresses(addresses) {
+            if (!addresses || addresses.length === 0) {
+                return '<div class="text-muted small">Nenhum endereco cadastrado</div>';
+            }
+            return addresses.map((a, i) => `
+                <div class="editable-address" data-index="${i}">
+                    <div class="address-header-edit">
+                        <select class="form-select form-select-sm" style="width: 130px;">
+                            <option value="residencial" ${a.tipo === 'residencial' ? 'selected' : ''}>Residencial</option>
+                            <option value="comercial" ${a.tipo === 'comercial' ? 'selected' : ''}>Comercial</option>
+                            <option value="outro" ${a.tipo === 'outro' ? 'selected' : ''}>Outro</option>
+                        </select>
+                        <button class="btn btn-sm btn-outline-danger" onclick="removeEditableItem(this)">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                    <input type="text" class="form-control form-control-sm mb-2" value="${a.logradouro || ''}" placeholder="Logradouro">
+                    <div class="row g-2">
+                        <div class="col-5"><input type="text" class="form-control form-control-sm" value="${a.cidade || ''}" placeholder="Cidade"></div>
+                        <div class="col-3"><input type="text" class="form-control form-control-sm" value="${a.estado || ''}" placeholder="Estado"></div>
+                        <div class="col-4"><input type="text" class="form-control form-control-sm" value="${a.cep || ''}" placeholder="CEP"></div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderEditableRelationships(relationships) {
+            if (!relationships || relationships.length === 0) {
+                return '<div class="text-muted small">Nenhum relacionamento cadastrado</div>';
+            }
+
+            const typeOptions = RELATIONSHIP_TYPES.map(t =>
+                `<option value="${t.value}">${t.label}</option>`
+            ).join('');
+
+            return relationships.map((r, i) => {
+                const initials = (r.nome || 'N').substring(0, 2).toUpperCase();
+                const linkedBadge = r.contact_id
+                    ? `<a href="/contatos/${r.contact_id}" class="badge bg-success text-white text-decoration-none" target="_blank">
+                         Vinculado <i class="bi bi-box-arrow-up-right"></i>
+                       </a>`
+                    : `<button class="btn btn-sm btn-outline-secondary" onclick="openRelationshipSearch(${i})">
+                         <i class="bi bi-search"></i> Vincular
+                       </button>`;
+
+                return `
+                    <div class="editable-relationship" data-index="${i}" data-contact-id="${r.contact_id || ''}">
+                        <div class="rel-avatar">${initials}</div>
+                        <input type="text" class="form-control form-control-sm" value="${r.nome || ''}"
+                               placeholder="Nome da pessoa" oninput="updateRelAvatar(this)">
+                        <select class="form-select form-select-sm" style="width: 140px;">
+                            ${RELATIONSHIP_TYPES.map(t =>
+                                `<option value="${t.value}" ${r.tipo === t.value ? 'selected' : ''}>${t.label}</option>`
+                            ).join('')}
+                        </select>
+                        <div class="rel-link">${linkedBadge}</div>
+                        <button class="btn btn-sm btn-outline-danger" onclick="removeRelationshipItem(this, ${r.contact_id || 'null'})">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateRelAvatar(input) {
+            const item = input.closest('.editable-relationship');
+            const avatar = item.querySelector('.rel-avatar');
+            const name = input.value || 'N';
+            avatar.textContent = name.substring(0, 2).toUpperCase();
+        }
+
+        function addEmailField() {
+            const container = document.getElementById('edit-emails-container');
+            if (container.querySelector('.text-muted')) {
+                container.innerHTML = '';
+            }
+            container.insertAdjacentHTML('beforeend', `
+                <div class="editable-item">
+                    <input type="email" class="form-control form-control-sm" placeholder="email@exemplo.com">
+                    <select class="form-select form-select-sm" style="width: 120px;">
+                        <option value="pessoal">Pessoal</option>
+                        <option value="trabalho" selected>Trabalho</option>
+                        <option value="outro">Outro</option>
+                    </select>
+                    <button class="btn btn-sm btn-outline-danger" onclick="removeEditableItem(this)">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            `);
+        }
+
+        function addPhoneField() {
+            const container = document.getElementById('edit-phones-container');
+            if (container.querySelector('.text-muted')) {
+                container.innerHTML = '';
+            }
+            container.insertAdjacentHTML('beforeend', `
+                <div class="editable-item">
+                    <input type="tel" class="form-control form-control-sm" placeholder="+55 11 99999-9999">
+                    <select class="form-select form-select-sm" style="width: 120px;">
+                        <option value="celular" selected>Celular</option>
+                        <option value="trabalho">Trabalho</option>
+                        <option value="residencial">Residencial</option>
+                        <option value="outro">Outro</option>
+                    </select>
+                    <button class="btn btn-sm btn-outline-danger" onclick="removeEditableItem(this)">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            `);
+        }
+
+        function addAddressField() {
+            const container = document.getElementById('edit-addresses-container');
+            if (container.querySelector('.text-muted')) {
+                container.innerHTML = '';
+            }
+            container.insertAdjacentHTML('beforeend', `
+                <div class="editable-address">
+                    <div class="address-header-edit">
+                        <select class="form-select form-select-sm" style="width: 130px;">
+                            <option value="residencial" selected>Residencial</option>
+                            <option value="comercial">Comercial</option>
+                            <option value="outro">Outro</option>
+                        </select>
+                        <button class="btn btn-sm btn-outline-danger" onclick="removeEditableItem(this)">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                    <input type="text" class="form-control form-control-sm mb-2" placeholder="Logradouro">
+                    <div class="row g-2">
+                        <div class="col-5"><input type="text" class="form-control form-control-sm" placeholder="Cidade"></div>
+                        <div class="col-3"><input type="text" class="form-control form-control-sm" placeholder="Estado"></div>
+                        <div class="col-4"><input type="text" class="form-control form-control-sm" placeholder="CEP"></div>
+                    </div>
+                </div>
+            `);
+        }
+
+        function addRelationshipInline() {
+            const container = document.getElementById('relationships-container');
+            if (container.querySelector('.text-muted')) {
+                container.innerHTML = '';
+            }
+
+            const typeOptions = RELATIONSHIP_TYPES.map(t =>
+                `<option value="${t.value}">${t.label}</option>`
+            ).join('');
+
+            container.insertAdjacentHTML('beforeend', `
+                <div class="editable-relationship" data-contact-id="">
+                    <div class="rel-avatar">N</div>
+                    <input type="text" class="form-control form-control-sm" placeholder="Nome da pessoa" oninput="updateRelAvatar(this)">
+                    <select class="form-select form-select-sm" style="width: 140px;">
+                        ${typeOptions}
+                    </select>
+                    <div class="rel-link">
+                        <button class="btn btn-sm btn-outline-secondary" onclick="openRelationshipSearch(this)">
+                            <i class="bi bi-search"></i> Vincular
+                        </button>
+                    </div>
+                    <button class="btn btn-sm btn-outline-danger" onclick="removeRelationshipItem(this, null)">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            `);
+        }
+
+        function removeEditableItem(btn) {
+            btn.closest('.editable-item, .editable-address').remove();
+        }
+
+        async function removeRelationshipItem(btn, relatedContactId) {
+            const item = btn.closest('.editable-relationship');
+
+            if (relatedContactId && relatedContactId !== 'null') {
+                try {
+                    await fetch(`/api/contacts/${contactId}/relationships/${relatedContactId}`, {
+                        method: 'DELETE'
+                    });
+                } catch (e) {
+                    console.error('Erro ao remover relacionamento:', e);
+                }
+            }
+
+            item.remove();
+        }
+
+        // Save contact info
+        async function saveContactInfo() {
+            const btn = document.querySelector('#tab-info .btn-primary');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Salvando...';
+
+            try {
+                // Collect basic data
+                const data = {
+                    nome: document.getElementById('edit-nome').value,
+                    apelido: document.getElementById('edit-apelido').value || null,
+                    empresa: document.getElementById('edit-empresa').value || null,
+                    cargo: document.getElementById('edit-cargo').value || null,
+                    linkedin: document.getElementById('edit-linkedin').value || null,
+                    aniversario: document.getElementById('edit-aniversario').value || null,
+                    manual_notes: document.getElementById('edit-notes').value || null,
+                    emails: [],
+                    telefones: [],
+                    enderecos: [],
+                    relacionamentos: []
+                };
+
+                // Collect emails
+                document.querySelectorAll('#edit-emails-container .editable-item').forEach(item => {
+                    const email = item.querySelector('input[type="email"]').value.trim();
+                    if (email) {
+                        data.emails.push({
+                            email: email,
+                            tipo: item.querySelector('select').value
+                        });
+                    }
+                });
+
+                // Collect phones
+                document.querySelectorAll('#edit-phones-container .editable-item').forEach(item => {
+                    const number = item.querySelector('input[type="tel"]').value.trim();
+                    if (number) {
+                        data.telefones.push({
+                            number: number,
+                            tipo: item.querySelector('select').value
+                        });
+                    }
+                });
+
+                // Collect addresses
+                document.querySelectorAll('#edit-addresses-container .editable-address').forEach(item => {
+                    const inputs = item.querySelectorAll('input');
+                    const logradouro = inputs[0].value.trim();
+                    if (logradouro) {
+                        data.enderecos.push({
+                            tipo: item.querySelector('select').value,
+                            logradouro: logradouro,
+                            cidade: inputs[1].value.trim(),
+                            estado: inputs[2].value.trim(),
+                            cep: inputs[3].value.trim()
+                        });
+                    }
+                });
+
+                // Collect relationships
+                document.querySelectorAll('#relationships-container .editable-relationship').forEach(item => {
+                    const nome = item.querySelector('input').value.trim();
+                    if (nome) {
+                        const contactIdAttr = item.dataset.contactId;
+                        data.relacionamentos.push({
+                            tipo: item.querySelector('select').value,
+                            nome: nome,
+                            contact_id: contactIdAttr ? parseInt(contactIdAttr) : null
+                        });
+                    }
+                });
+
+                // Save via API
+                const response = await fetch(`/api/contacts/${contactId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || 'Erro ao salvar');
+                }
+
+                // Update bidirectional relationships
+                const linkedRels = data.relacionamentos.filter(r => r.contact_id);
+                for (const rel of linkedRels) {
+                    try {
+                        await fetch(`/api/contacts/${contactId}/relationships`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(rel)
+                        });
+                    } catch (e) {
+                        console.warn('Erro ao criar relacao bidirecional:', e);
+                    }
+                }
+
+                showToast('Contato salvo com sucesso!', 'success');
+
+                // Update header
+                document.querySelector('.profile-info-compact h1').textContent = data.nome;
+
+            } catch (error) {
+                showToast(error.message, 'error');
+                console.error(error);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check2"></i> Salvar Alteracoes';
+            }
+        }
+
+        // Load inferred relationships for detail page
+        async function loadInferredRelationshipsDetail() {
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/relationships/inferred`);
+                const data = await response.json();
+
+                if (data.inferred && data.inferred.length > 0) {
+                    const section = document.getElementById('inferred-relationships-section');
+                    const container = document.getElementById('inferred-relationships-container');
+
+                    container.innerHTML = data.inferred.map(rel => {
+                        const initials = (rel.nome || 'N').substring(0, 2).toUpperCase();
+                        const viaText = rel.via ? `via ${rel.via.nome} (${rel.via.tipo})` : '';
+                        const linkBtn = rel.contact_id
+                            ? `<a href="/contatos/${rel.contact_id}" class="badge bg-info text-white text-decoration-none" target="_blank">Ver</a>`
+                            : '';
+
+                        return `
+                            <div class="editable-relationship inferred">
+                                <div class="rel-avatar" style="background: var(--gray-400);">${initials}</div>
+                                <div class="rel-info">
+                                    <span class="rel-name">${rel.nome || 'Desconhecido'}</span>
+                                    <small class="text-muted">${rel.tipo} ${viaText}</small>
+                                </div>
+                                <div class="rel-link">${linkBtn}</div>
+                            </div>
+                        `;
+                    }).join('');
+
+                    section.style.display = 'block';
+                }
+            } catch (e) {
+                console.error('Erro ao carregar relacionamentos inferidos:', e);
+            }
+        }
+
+        // Relationship search modal
+        let currentRelIndex = null;
+
+        function openRelationshipSearch(indexOrEl) {
+            if (typeof indexOrEl === 'number') {
+                currentRelIndex = indexOrEl;
+            } else {
+                // It's a button element, find the index
+                const item = indexOrEl.closest('.editable-relationship');
+                const items = document.querySelectorAll('#relationships-container .editable-relationship');
+                currentRelIndex = Array.from(items).indexOf(item);
+            }
+            const modal = new bootstrap.Modal(document.getElementById('relationshipSearchModal'));
+            modal.show();
+            document.getElementById('relSearchInput').focus();
+        }
+
+        async function searchRelContacts() {
+            const query = document.getElementById('relSearchInput').value;
+            if (query.length < 2) {
+                document.getElementById('relSearchResults').innerHTML = '<p class="text-muted text-center">Digite pelo menos 2 caracteres</p>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/contacts?search=${encodeURIComponent(query)}&limit=10`);
+                const data = await response.json();
+
+                document.getElementById('relSearchResults').innerHTML = data.contacts.map(c => `
+                    <div class="search-result-item" onclick="selectRelContact(${c.id}, '${escapeHtml(c.nome)}')">
+                        <div class="result-avatar">${(c.nome || 'N').substring(0, 2).toUpperCase()}</div>
+                        <div class="result-info">
+                            <div class="result-name">${c.nome}</div>
+                            ${c.empresa ? `<small class="text-muted">${c.empresa}</small>` : ''}
+                        </div>
+                    </div>
+                `).join('') || '<p class="text-muted text-center">Nenhum contato encontrado</p>';
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function selectRelContact(cid, name) {
+            const items = document.querySelectorAll('#relationships-container .editable-relationship');
+            if (currentRelIndex !== null && items[currentRelIndex]) {
+                const item = items[currentRelIndex];
+                item.dataset.contactId = cid;
+                item.querySelector('input').value = name;
+                item.querySelector('.rel-avatar').textContent = name.substring(0, 2).toUpperCase();
+                item.querySelector('.rel-link').innerHTML = `
+                    <a href="/contatos/${cid}" class="badge bg-success text-white text-decoration-none" target="_blank">
+                        Vinculado <i class="bi bi-box-arrow-up-right"></i>
+                    </a>
+                `;
+            }
+            bootstrap.Modal.getInstance(document.getElementById('relationshipSearchModal')).hide();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML.replace(/'/g, "\\'");
         }
 
         // Global configs for circles
