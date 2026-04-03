@@ -286,12 +286,17 @@
     /* Modal */
     .modal-backdrop {
         position: fixed;
-        inset: 0;
-        background: rgba(15, 23, 42, 0.75);
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100vw;
+        height: 100vh;
+        background-color: rgba(15, 23, 42, 0.8);
         display: none;
         align-items: center;
         justify-content: center;
-        z-index: 1000;
+        z-index: 9999;
     }
 
     .modal-backdrop.show {
@@ -299,18 +304,15 @@
     }
 
     .modal-content {
-        background-color: #ffffff !important;
+        background: #fff;
         border-radius: 16px;
         width: 90%;
         max-width: 600px;
         max-height: 90vh;
         overflow-y: auto;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
         position: relative;
-        z-index: 1001;
-        opacity: 1 !important;
-        isolation: isolate;
-        transform: translateZ(0);
+        z-index: 10000;
     }
 
     .modal-header {
@@ -319,13 +321,14 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        background-color: #ffffff;
+        background: #fff;
     }
 
     .modal-header h3 {
         margin: 0;
         font-size: 1.25rem;
         font-weight: 600;
+        color: var(--dark);
     }
 
     .modal-close {
@@ -338,11 +341,12 @@
 
     .modal-body {
         padding: 24px;
-        background-color: #ffffff;
+        background: #fff;
     }
 
     .form-group {
         margin-bottom: 20px;
+        background: #fff;
     }
 
     .form-group label {
@@ -351,6 +355,7 @@
         font-weight: 500;
         color: var(--dark);
         margin-bottom: 8px;
+        background: #fff;
     }
 
     .form-control {
@@ -360,6 +365,7 @@
         border-radius: 10px;
         font-size: 0.875rem;
         transition: all 0.2s;
+        background-color: #ffffff;
     }
 
     .form-control:focus {
@@ -577,7 +583,9 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
+{% block modals %}
 <!-- Import Modal -->
 <div class="modal-backdrop" id="import-modal">
     <div class="modal-content">
