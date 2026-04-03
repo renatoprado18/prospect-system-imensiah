@@ -9527,6 +9527,7 @@ async def test_proposal_notification(request: Request, contact_name: str = "Pedr
 
 
 @app.delete("/api/action-proposals/test-cleanup")
+@app.get("/api/action-proposals/test-cleanup")
 async def cleanup_test_proposals():
     """Remove todas as proposals de teste (sem contact_id)"""
     with get_pg_db() as conn:
