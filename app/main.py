@@ -13113,7 +13113,6 @@ async def api_editorial_get_analysis(post_id: int):
 
 @app.get("/api/editorial/{post_id}")
 async def api_editorial_get(post_id: int):
-async def api_editorial_get(post_id: int):
     """Retorna um post especifico"""
     post = get_editorial_post(post_id)
     if not post:
