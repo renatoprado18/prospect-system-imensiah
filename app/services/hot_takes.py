@@ -294,20 +294,40 @@ Responda em JSON:
 
         result = response.json()
 
+        # Debug: log full response structure
+        logger.info(f"Response keys: {list(result.keys())}")
+
+        # Check for API error
+        if "error" in result:
+            error_info = result.get("error", {})
+            error_msg = error_info.get("message", str(error_info)) if isinstance(error_info, dict) else str(error_info)
+            logger.error(f"API returned error: {error_msg}")
+            return {"error": f"API error: {error_msg}"}
+
         # Validate response structure
         if "content" not in result:
             logger.error(f"No 'content' in response: {list(result.keys())}")
             return {"error": f"Invalid response structure: {list(result.keys())}"}
 
-        if not result["content"] or len(result["content"]) == 0:
+        # Check content is a list
+        if not isinstance(result["content"], list):
+            logger.error(f"content is not a list: {type(result['content'])}")
+            return {"error": f"content is not a list: {type(result['content']).__name__}"}
+
+        if len(result["content"]) == 0:
             logger.error("Empty content array in response")
             return {"error": "Empty content array"}
 
-        if "text" not in result["content"][0]:
-            logger.error(f"No 'text' in content[0]: {result['content'][0]}")
-            return {"error": f"No text in response: {result['content'][0].get('type', 'unknown')}"}
+        first_content = result["content"][0]
+        if not isinstance(first_content, dict):
+            logger.error(f"content[0] is not a dict: {type(first_content)}")
+            return {"error": f"content[0] is not a dict: {type(first_content).__name__}"}
 
-        content = result["content"][0]["text"]
+        if "text" not in first_content:
+            logger.error(f"No 'text' in content[0]: {first_content}")
+            return {"error": f"No text in response: {first_content.get('type', 'unknown')}"}
+
+        content = first_content["text"]
         logger.info(f"Claude response length: {len(content)}")
 
         # Parse JSON
@@ -329,9 +349,12 @@ Responda em JSON:
     except httpx.TimeoutException:
         logger.error("Timeout calling Claude API")
         return {"error": "Timeout calling Claude API"}
+    except KeyError as ke:
+        logger.error(f"KeyError in generate_hot_take: {ke} (type: {type(ke.args[0]) if ke.args else 'no args'})")
+        return {"error": f"KeyError: {ke}"}
     except Exception as e:
-        logger.error(f"Erro ao gerar hot take: {e}")
-        return {"error": str(e)}
+        logger.error(f"Exception in generate_hot_take: {type(e).__name__}: {e}")
+        return {"error": f"{type(e).__name__}: {e}"}
 
 
 def save_hot_take(hot_take: dict, status: str = "draft") -> int:
