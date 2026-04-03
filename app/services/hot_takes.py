@@ -509,7 +509,8 @@ async def generate_weekly_digest(limit: int = 5) -> dict:
             "news_selected": len(selected_news),
             "hot_takes_generated": len(hot_takes),
             "hot_takes": hot_takes,
-            "errors": errors if errors else None
+            "errors": errors if errors else None,
+            "debug_news": [{"title": n.get("title", "")[:50]} for n in selected_news[:3]] if selected_news else None
         }
 
     except Exception as e:
