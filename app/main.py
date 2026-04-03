@@ -156,6 +156,21 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # Static files
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+
+# Service Worker - must be served from root for full scope
+@app.get("/sw.js")
+async def service_worker():
+    """Serve service worker from root for full site scope."""
+    from fastapi.responses import FileResponse
+    import os
+    sw_path = os.path.join(STATIC_DIR, "sw.js")
+    return FileResponse(
+        sw_path,
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/"}
+    )
+
+
 # Services
 scorer = DynamicScorer()  # Now uses PostgreSQL
 calendar = GoogleCalendarIntegration()

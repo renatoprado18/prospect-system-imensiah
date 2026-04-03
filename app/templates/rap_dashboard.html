@@ -2999,16 +2999,27 @@
         let pushSubscription = null;
 
         async function initPushNotifications() {
+            const btn = document.getElementById('pushNotificationBtn');
+
+            // Set initial click handler immediately
+            if (btn) {
+                btn.onclick = subscribeToPush;
+            }
+
             // Check if push notifications are supported
             if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-                console.log('Push notifications not supported');
+                console.log('Push notifications not supported in this browser');
+                if (btn) {
+                    btn.style.display = 'none';
+                }
                 return;
             }
 
             try {
-                // Register service worker
-                const registration = await navigator.serviceWorker.register('/static/sw.js');
-                console.log('Service Worker registered');
+                // Register service worker from root for full site scope
+                console.log('Registering service worker...');
+                const registration = await navigator.serviceWorker.register('/sw.js');
+                console.log('Service Worker registered successfully');
 
                 // Check if already subscribed
                 pushSubscription = await registration.pushManager.getSubscription();
@@ -3017,22 +3028,31 @@
                     console.log('Already subscribed to push');
                     updatePushUI(true);
                 } else {
+                    console.log('Not subscribed yet');
                     updatePushUI(false);
                 }
 
             } catch (error) {
                 console.error('Error initializing push:', error);
+                // Still allow clicking to try subscribing
+                if (btn) {
+                    btn.onclick = subscribeToPush;
+                }
             }
         }
 
         async function subscribeToPush() {
+            console.log('subscribeToPush called');
             try {
                 // Get VAPID public key from server
+                console.log('Fetching VAPID public key...');
                 const keyResponse = await fetch('/api/push/vapid-public-key');
                 const keyData = await keyResponse.json();
+                console.log('VAPID response:', keyData);
 
                 if (!keyData.configured || !keyData.key) {
                     showToast('Push notifications nao configuradas no servidor', 'error');
+                    console.error('VAPID not configured:', keyData);
                     return;
                 }
 
