@@ -1735,12 +1735,48 @@
                     <span>Acoes Sugeridas</span>
                     <span class="proposals-count badge bg-danger" id="proposalsCount">0</span>
                 </div>
-                <button class="btn btn-sm btn-link" onclick="refreshProposals()">
-                    <i class="bi bi-arrow-clockwise"></i>
-                </button>
+                <div style="display: flex; gap: 4px;">
+                    <button class="btn btn-sm btn-link" onclick="refreshProposals()" title="Atualizar">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                    <button class="btn btn-sm btn-link" onclick="openAnalyzerSettings()" title="Configuracoes">
+                        <i class="bi bi-gear"></i>
+                    </button>
+                </div>
             </div>
             <div class="proposals-list" id="proposalsList">
                 <!-- Preenchido via JS -->
+            </div>
+        </div>
+
+        <!-- Analyzer Settings Modal -->
+        <div class="modal fade" id="analyzerSettingsModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-gear me-2"></i>Configuracoes do Analisador</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Confianca Minima</label>
+                            <input type="range" class="form-range" id="minConfidence" min="0.5" max="0.95" step="0.05" value="0.7">
+                            <small class="text-muted">Atual: <span id="minConfidenceValue">70%</span></small>
+                            <p class="small text-muted mt-1">Apenas sugestoes com confianca acima deste valor serao mostradas</p>
+                        </div>
+                        <hr>
+                        <div class="mb-3">
+                            <label class="form-label">Estatisticas de Aprendizado</label>
+                            <div id="learningStats" class="small">
+                                <p class="text-muted">Carregando...</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                        <button type="button" class="btn btn-primary" onclick="saveAnalyzerSettings()">Salvar</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -2683,7 +2719,12 @@
                 'confirm_event': 'bi-calendar-check',
                 'urgent_alert': 'bi-exclamation-triangle-fill',
                 'pending_response': 'bi-chat-dots',
-                'financial_alert': 'bi-currency-dollar'
+                'financial_alert': 'bi-currency-dollar',
+                'introduction_request': 'bi-people',
+                'opportunity_alert': 'bi-star-fill',
+                'complaint_alert': 'bi-emoji-frown',
+                'meeting_request': 'bi-calendar-plus',
+                'follow_up_alert': 'bi-arrow-repeat'
             };
             return icons[actionType] || 'bi-lightning';
         }
@@ -2744,6 +2785,89 @@
 
         function refreshProposals() {
             loadActionProposals();
+        }
+
+        // ============== Analyzer Settings ==============
+        async function openAnalyzerSettings() {
+            const modal = new bootstrap.Modal(document.getElementById('analyzerSettingsModal'));
+            modal.show();
+
+            // Load current settings
+            try {
+                const response = await fetch('/api/analyzer/settings');
+                const settings = await response.json();
+
+                const slider = document.getElementById('minConfidence');
+                const valueDisplay = document.getElementById('minConfidenceValue');
+
+                if (settings.min_confidence) {
+                    slider.value = settings.min_confidence;
+                    valueDisplay.textContent = Math.round(settings.min_confidence * 100) + '%';
+                }
+
+                slider.oninput = () => {
+                    valueDisplay.textContent = Math.round(slider.value * 100) + '%';
+                };
+
+                // Load learning stats
+                loadLearningStats();
+            } catch (error) {
+                console.error('Error loading settings:', error);
+            }
+        }
+
+        async function loadLearningStats() {
+            const container = document.getElementById('learningStats');
+            try {
+                const response = await fetch('/api/analyzer/learning-summary');
+                const summary = await response.json();
+
+                if (summary.total_feedback === 0) {
+                    container.innerHTML = '<p class="text-muted">Nenhum feedback registrado ainda. Use o sistema para comecar a aprender.</p>';
+                    return;
+                }
+
+                let html = `
+                    <p><strong>Total de feedbacks:</strong> ${summary.total_feedback}</p>
+                    <p><strong>Taxa de aceitacao geral:</strong> ${Math.round(summary.overall_acceptance_rate * 100)}%</p>
+                `;
+
+                if (summary.recommendations && summary.recommendations.length > 0) {
+                    html += '<p class="mt-2"><strong>Recomendacoes:</strong></p><ul class="mb-0">';
+                    summary.recommendations.forEach(rec => {
+                        html += `<li><small>${rec.intent_type}: ${rec.reason}</small></li>`;
+                    });
+                    html += '</ul>';
+                }
+
+                container.innerHTML = html;
+            } catch (error) {
+                container.innerHTML = '<p class="text-danger">Erro ao carregar estatisticas</p>';
+            }
+        }
+
+        async function saveAnalyzerSettings() {
+            const slider = document.getElementById('minConfidence');
+            const value = parseFloat(slider.value);
+
+            try {
+                const response = await fetch('/api/analyzer/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({key: 'min_confidence', value: value})
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showToast('Configuracoes salvas!', 'success');
+                    bootstrap.Modal.getInstance(document.getElementById('analyzerSettingsModal')).hide();
+                } else {
+                    showToast('Erro ao salvar', 'error');
+                }
+            } catch (error) {
+                showToast('Erro ao salvar configuracoes', 'error');
+            }
         }
 
         function showToast(message, type = 'info') {
