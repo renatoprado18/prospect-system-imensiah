@@ -11344,53 +11344,28 @@ async def get_contact_calendar_events(request: Request, contact_id: int, limit: 
                 elif isinstance(e, str):
                     contact_emails.append(e.lower())
 
-    # Buscar eventos pelo nome do contato
-    contact_name = contact["nome"]
-    name_parts = contact_name.split()
-    search_term = name_parts[-1] if len(name_parts) > 1 else contact_name
+    # Se não tem email, não há como filtrar por participante
+    if not contact_emails:
+        return {"events": [], "total": 0, "message": "Contato sem email cadastrado"}
 
-    result = await calendar.search_events(
+    # Buscar eventos e filtrar APENAS por email do participante
+    from datetime import datetime, timedelta
+    all_events = await calendar.list_events(
         access_token=access_token,
-        query=search_term,
-        max_results=limit
+        time_min=datetime.utcnow() - timedelta(days=365),  # Último ano
+        time_max=datetime.utcnow() + timedelta(days=365),  # Próximo ano
+        max_results=100
     )
 
-    all_items = result.get("items", []) if "error" not in result else []
-
-    # Também buscar pelo primeiro nome se diferente
-    if len(name_parts) > 1:
-        first_name_result = await calendar.search_events(
-            access_token=access_token,
-            query=name_parts[0],
-            max_results=limit
-        )
-        if "items" in first_name_result:
-            all_items.extend(first_name_result["items"])
-
-    # Buscar eventos futuros e filtrar por email do participante
-    if contact_emails:
-        from datetime import datetime, timedelta
-        upcoming = await calendar.list_events(
-            access_token=access_token,
-            time_min=datetime.utcnow() - timedelta(days=30),
-            time_max=datetime.utcnow() + timedelta(days=90),
-            max_results=50
-        )
-        if "items" in upcoming:
-            for item in upcoming.get("items", []):
-                attendees = item.get("attendees", [])
-                for attendee in attendees:
-                    if attendee.get("email", "").lower() in contact_emails:
-                        all_items.append(item)
-                        break
-
-    # Deduplicar por ID
-    seen_ids = set()
+    # Filtrar apenas eventos onde o contato é participante
     unique_items = []
-    for item in all_items:
-        if item.get("id") not in seen_ids:
-            seen_ids.add(item.get("id"))
-            unique_items.append(item)
+    if "items" in all_events:
+        for item in all_events.get("items", []):
+            attendees = item.get("attendees", [])
+            for attendee in attendees:
+                if attendee.get("email", "").lower() in contact_emails:
+                    unique_items.append(item)
+                    break
 
     # Formatar eventos
     events = []
