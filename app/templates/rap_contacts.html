@@ -588,6 +588,172 @@
             .contacts-grid { grid-template-columns: 1fr; }
             .filters-bar { flex-direction: column; }
         }
+
+        /* Merge Selection Mode */
+        .contact-card-wrapper {
+            position: relative;
+        }
+        .contact-checkbox {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            width: 22px;
+            height: 22px;
+            z-index: 10;
+            cursor: pointer;
+            accent-color: var(--primary);
+        }
+        .contact-card.selected {
+            outline: 2px solid var(--primary);
+            background: linear-gradient(to bottom, rgba(99, 102, 241, 0.05), white);
+        }
+
+        /* Merge Floating Bar */
+        .merge-bar {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--dark);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 50px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            z-index: 1000;
+            animation: slideUp 0.3s ease;
+        }
+        @keyframes slideUp {
+            from { transform: translateX(-50%) translateY(100px); opacity: 0; }
+            to { transform: translateX(-50%) translateY(0); opacity: 1; }
+        }
+        .merge-bar .count {
+            font-weight: 600;
+        }
+        .merge-bar .btn-merge {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .merge-bar .btn-merge:hover {
+            background: var(--primary-dark);
+        }
+        .merge-bar .btn-cancel {
+            background: transparent;
+            color: var(--gray-400);
+            border: none;
+            cursor: pointer;
+            padding: 8px;
+        }
+        .merge-bar .btn-cancel:hover {
+            color: white;
+        }
+
+        /* Merge Modal */
+        .merge-modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .merge-modal {
+            background: white;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 700px;
+            max-height: 85vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .merge-modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--gray-200);
+        }
+        .merge-modal-header h4 {
+            margin: 0 0 4px 0;
+            font-weight: 600;
+        }
+        .merge-modal-header p {
+            margin: 0;
+            color: var(--gray-500);
+            font-size: 0.9rem;
+        }
+        .merge-modal-body {
+            padding: 24px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        .merge-field {
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--gray-100);
+        }
+        .merge-field:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+        .merge-field-label {
+            font-weight: 500;
+            color: var(--gray-600);
+            margin-bottom: 10px;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .merge-options {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .merge-option {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border: 1px solid var(--gray-200);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .merge-option:hover {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.02);
+        }
+        .merge-option.selected {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.05);
+        }
+        .merge-option input[type="radio"] {
+            accent-color: var(--primary);
+        }
+        .merge-option-value {
+            flex: 1;
+            font-size: 0.95rem;
+        }
+        .merge-option-source {
+            font-size: 0.8rem;
+            color: var(--gray-400);
+        }
+        .merge-modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid var(--gray-200);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
     </style>
 </head>
 <body>
@@ -768,6 +934,36 @@
             </button>
         </div>
     </main>
+
+    <!-- Merge Floating Bar (hidden by default) -->
+    <div class="merge-bar" id="mergeBar" style="display: none;">
+        <span><span class="count" id="mergeCount">0</span> contatos selecionados</span>
+        <button class="btn-merge" onclick="openMergeModal()">
+            <i class="bi bi-arrow-left-right"></i> Mesclar
+        </button>
+        <button class="btn-cancel" onclick="clearSelection()">
+            <i class="bi bi-x-lg"></i>
+        </button>
+    </div>
+
+    <!-- Merge Modal -->
+    <div class="merge-modal-backdrop" id="mergeModalBackdrop" style="display: none;">
+        <div class="merge-modal">
+            <div class="merge-modal-header">
+                <h4><i class="bi bi-arrow-left-right me-2"></i>Mesclar Contatos</h4>
+                <p>Escolha quais dados manter para cada campo com valores diferentes</p>
+            </div>
+            <div class="merge-modal-body" id="mergeModalBody">
+                <!-- Generated by JS -->
+            </div>
+            <div class="merge-modal-footer">
+                <button class="btn btn-outline-secondary" onclick="closeMergeModal()">Cancelar</button>
+                <button class="btn btn-primary" onclick="executeMerge()">
+                    <i class="bi bi-check-lg me-1"></i>Mesclar Contatos
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- New Contact Modal -->
     <div class="modal fade" id="newContactModal" tabindex="-1">
@@ -1012,6 +1208,9 @@
             `;
         }
 
+        // Selection state for merge
+        let selectedContacts = new Map(); // id -> contact data
+
         function renderContactCard(contact) {
             const initials = contact.nome.split(' ')
                 .filter(n => n.length > 0)
@@ -1040,44 +1239,275 @@
 
             const contextClass = contact.contexto === 'personal' ? 'personal' : 'professional';
             const contextLabel = contact.contexto === 'personal' ? 'Pessoal' : 'Profissional';
+            const isSelected = selectedContacts.has(contact.id);
 
             return `
-                <a href="/contatos/${contact.id}" class="contact-card">
-                    <div class="contact-header">
-                        <div class="contact-avatar">
-                            ${contact.foto_url
-                                ? `<img src="${contact.foto_url}" alt="${contact.nome}">`
-                                : initials
-                            }
+                <div class="contact-card-wrapper">
+                    <input type="checkbox" class="contact-checkbox"
+                           data-id="${contact.id}"
+                           ${isSelected ? 'checked' : ''}
+                           onclick="toggleContactSelection(event, ${contact.id})"
+                           title="Selecionar para mesclar">
+                    <a href="/contatos/${contact.id}" class="contact-card ${isSelected ? 'selected' : ''}"
+                       onclick="handleCardClick(event, ${contact.id})">
+                        <div class="contact-header">
+                            <div class="contact-avatar">
+                                ${contact.foto_url
+                                    ? `<img src="${contact.foto_url}" alt="${contact.nome}">`
+                                    : initials
+                                }
+                            </div>
+                            <div class="contact-info">
+                                <div class="contact-name">${contact.nome}</div>
+                                ${contact.cargo
+                                    ? `<div class="contact-role"><i class="bi bi-briefcase"></i> ${contact.cargo}</div>`
+                                    : ''
+                                }
+                                ${contact.empresa
+                                    ? `<div class="contact-company">${contact.empresa}</div>`
+                                    : ''
+                                }
+                            </div>
                         </div>
-                        <div class="contact-info">
-                            <div class="contact-name">${contact.nome}</div>
-                            ${contact.cargo
-                                ? `<div class="contact-role"><i class="bi bi-briefcase"></i> ${contact.cargo}</div>`
+                        <div class="contact-meta">
+                            ${primaryEmail
+                                ? `<div class="meta-item"><i class="bi bi-envelope"></i> ${primaryEmail}</div>`
                                 : ''
                             }
-                            ${contact.empresa
-                                ? `<div class="contact-company">${contact.empresa}</div>`
+                            ${primaryPhone
+                                ? `<div class="meta-item"><i class="bi bi-phone"></i> ${primaryPhone}</div>`
                                 : ''
                             }
                         </div>
-                    </div>
-                    <div class="contact-meta">
-                        ${primaryEmail
-                            ? `<div class="meta-item"><i class="bi bi-envelope"></i> ${primaryEmail}</div>`
-                            : ''
-                        }
-                        ${primaryPhone
-                            ? `<div class="meta-item"><i class="bi bi-phone"></i> ${primaryPhone}</div>`
-                            : ''
-                        }
-                    </div>
-                    <div class="contact-tags">
-                        <span class="tag ${contextClass}">${contextLabel}</span>
-                        ${contact.linkedin ? '<span class="tag"><i class="bi bi-linkedin"></i> LinkedIn</span>' : ''}
-                    </div>
-                </a>
+                        <div class="contact-tags">
+                            <span class="tag ${contextClass}">${contextLabel}</span>
+                            ${contact.linkedin ? '<span class="tag"><i class="bi bi-linkedin"></i> LinkedIn</span>' : ''}
+                        </div>
+                    </a>
+                </div>
             `;
+        }
+
+        function handleCardClick(event, contactId) {
+            // If there are selected contacts, toggle selection instead of navigating
+            if (selectedContacts.size > 0) {
+                event.preventDefault();
+                const contact = contacts.find(c => c.id === contactId);
+                if (contact) {
+                    if (selectedContacts.has(contactId)) {
+                        selectedContacts.delete(contactId);
+                    } else {
+                        selectedContacts.set(contactId, contact);
+                    }
+                    renderContacts();
+                    updateMergeBar();
+                }
+            }
+            // Otherwise, let the link navigate normally
+        }
+
+        function toggleContactSelection(event, contactId) {
+            event.stopPropagation();
+            const contact = contacts.find(c => c.id === contactId);
+            if (!contact) return;
+
+            if (selectedContacts.has(contactId)) {
+                selectedContacts.delete(contactId);
+            } else {
+                selectedContacts.set(contactId, contact);
+            }
+            renderContacts();
+            updateMergeBar();
+        }
+
+        function updateMergeBar() {
+            const bar = document.getElementById('mergeBar');
+            const count = document.getElementById('mergeCount');
+            count.textContent = selectedContacts.size;
+
+            if (selectedContacts.size >= 2) {
+                bar.style.display = 'flex';
+            } else {
+                bar.style.display = 'none';
+            }
+        }
+
+        function clearSelection() {
+            selectedContacts.clear();
+            renderContacts();
+            updateMergeBar();
+        }
+
+        // Merge modal functions
+        let mergeChoices = {};
+
+        function openMergeModal() {
+            if (selectedContacts.size < 2) return;
+
+            const contactsArray = Array.from(selectedContacts.values());
+            const fields = getMergeableFields(contactsArray);
+
+            const body = document.getElementById('mergeModalBody');
+            body.innerHTML = renderMergeFields(fields, contactsArray);
+
+            document.getElementById('mergeModalBackdrop').style.display = 'flex';
+        }
+
+        function closeMergeModal() {
+            document.getElementById('mergeModalBackdrop').style.display = 'none';
+            mergeChoices = {};
+        }
+
+        function getMergeableFields(contactsArray) {
+            const fieldLabels = {
+                nome: 'Nome',
+                cargo: 'Cargo',
+                empresa: 'Empresa',
+                emails: 'Emails',
+                telefones: 'Telefones',
+                linkedin: 'LinkedIn',
+                contexto: 'Contexto',
+                notas: 'Notas',
+                circulo: 'Círculo',
+                data_nascimento: 'Data de Nascimento'
+            };
+
+            const fields = [];
+            const checked = new Set();
+
+            for (const [fieldKey, label] of Object.entries(fieldLabels)) {
+                const values = contactsArray.map(c => {
+                    let val = c[fieldKey];
+                    if (fieldKey === 'emails' || fieldKey === 'telefones') {
+                        if (typeof val === 'string') val = JSON.parse(val || '[]');
+                        return val && val.length > 0 ? val : null;
+                    }
+                    return val || null;
+                }).filter(v => v !== null);
+
+                // Check if there are different values
+                const uniqueValues = new Set(values.map(v => JSON.stringify(v)));
+                if (uniqueValues.size > 1) {
+                    fields.push({
+                        key: fieldKey,
+                        label: label,
+                        values: contactsArray.map((c, i) => ({
+                            contactId: c.id,
+                            contactName: c.nome,
+                            value: c[fieldKey]
+                        })).filter(v => v.value)
+                    });
+                }
+            }
+
+            return fields;
+        }
+
+        function renderMergeFields(fields, contactsArray) {
+            if (fields.length === 0) {
+                // No conflicts, just show summary
+                return `
+                    <div class="text-center py-4">
+                        <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                        <h5 class="mt-3">Sem conflitos!</h5>
+                        <p class="text-muted">Os contatos serão mesclados combinando todos os dados.</p>
+                        <p><strong>Contato principal:</strong> ${contactsArray[0].nome}</p>
+                        <p class="text-muted small">Os outros contatos serão excluídos e suas mensagens/histórico transferidos.</p>
+                    </div>
+                `;
+            }
+
+            // Set defaults (first contact with value wins)
+            fields.forEach(field => {
+                if (field.values.length > 0) {
+                    mergeChoices[field.key] = field.values[0].contactId;
+                }
+            });
+
+            return `
+                <p class="text-muted mb-4">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Contato principal: <strong>${contactsArray[0].nome}</strong> (os outros serão excluídos)
+                </p>
+                ${fields.map(field => `
+                    <div class="merge-field">
+                        <div class="merge-field-label">${field.label}</div>
+                        <div class="merge-options">
+                            ${field.values.map(v => `
+                                <label class="merge-option ${mergeChoices[field.key] === v.contactId ? 'selected' : ''}"
+                                       onclick="selectMergeOption('${field.key}', ${v.contactId}, this)">
+                                    <input type="radio" name="merge_${field.key}"
+                                           value="${v.contactId}"
+                                           ${mergeChoices[field.key] === v.contactId ? 'checked' : ''}>
+                                    <span class="merge-option-value">${formatFieldValue(field.key, v.value)}</span>
+                                    <span class="merge-option-source">${v.contactName}</span>
+                                </label>
+                            `).join('')}
+                        </div>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        function formatFieldValue(key, value) {
+            if (key === 'emails') {
+                const emails = typeof value === 'string' ? JSON.parse(value) : value;
+                return emails.map(e => e.email).join(', ');
+            }
+            if (key === 'telefones') {
+                const phones = typeof value === 'string' ? JSON.parse(value) : value;
+                return phones.map(p => p.number).join(', ');
+            }
+            if (key === 'contexto') {
+                return value === 'personal' ? 'Pessoal' : 'Profissional';
+            }
+            return value || '-';
+        }
+
+        function selectMergeOption(fieldKey, contactId, element) {
+            mergeChoices[fieldKey] = contactId;
+            // Update UI
+            element.closest('.merge-options').querySelectorAll('.merge-option').forEach(opt => {
+                opt.classList.remove('selected');
+            });
+            element.classList.add('selected');
+        }
+
+        async function executeMerge() {
+            const contactsArray = Array.from(selectedContacts.values());
+            if (contactsArray.length < 2) return;
+
+            const primaryId = contactsArray[0].id;
+            const mergeIds = contactsArray.slice(1).map(c => c.id);
+
+            // Build merge data with field choices
+            const mergeData = {
+                keep_id: primaryId,
+                merge_id: mergeIds[0], // For now, merge one at a time
+                field_choices: mergeChoices
+            };
+
+            try {
+                const response = await fetch('/api/contacts/merge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(mergeData)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    alert(`Contatos mesclados com sucesso!`);
+                    closeMergeModal();
+                    clearSelection();
+                    loadContacts();
+                } else {
+                    alert(result.detail || 'Erro ao mesclar contatos');
+                }
+            } catch (error) {
+                console.error('Merge error:', error);
+                alert('Erro ao mesclar contatos');
+            }
         }
 
         function updatePagination() {
