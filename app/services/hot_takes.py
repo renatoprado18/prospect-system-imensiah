@@ -199,6 +199,12 @@ Responda APENAS com JSON:
             response.raise_for_status()
 
         result = response.json()
+
+        # Validate response structure
+        if "content" not in result or not isinstance(result["content"], list) or len(result["content"]) == 0:
+            logger.error(f"Invalid filter response: {list(result.keys())}")
+            return news_items[:limit]
+
         content = result["content"][0]["text"]
 
         # Parse JSON da resposta
