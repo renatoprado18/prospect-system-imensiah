@@ -114,15 +114,24 @@ class ActionExecutor:
                 result = {'generic': True, 'action_type': action_type}
                 message = f'Acao {action_type} registrada'
 
-            # Marcar proposta como executada
-            self.proposals_service.mark_executed(proposal_id, result)
-
-            return {
-                'success': True,
-                'action_type': action_type,
-                'result': result,
-                'message': message
-            }
+            # Verificar se a acao teve sucesso antes de marcar como executada
+            if result.get('success', True) is not False:
+                # Marcar proposta como executada apenas se teve sucesso
+                self.proposals_service.mark_executed(proposal_id, result)
+                return {
+                    'success': True,
+                    'action_type': action_type,
+                    'result': result,
+                    'message': message
+                }
+            else:
+                # Acao falhou - nao marcar como executada
+                return {
+                    'success': False,
+                    'action_type': action_type,
+                    'result': result,
+                    'message': result.get('message', 'Acao falhou')
+                }
 
         except Exception as e:
             return {
