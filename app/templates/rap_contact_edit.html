@@ -510,6 +510,52 @@
             font-weight: 500;
         }
 
+        /* Inline Search Results */
+        .relationship-item {
+            position: relative;
+        }
+
+        .inline-search-results {
+            position: absolute;
+            top: 100%;
+            left: 52px;
+            right: 100px;
+            background: white;
+            border: 1px solid var(--gray-200);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 50;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .inline-result {
+            padding: 10px 12px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--gray-100);
+        }
+
+        .inline-result:last-child {
+            border-bottom: none;
+        }
+
+        .inline-result:hover {
+            background: var(--gray-100);
+        }
+
+        .inline-result .result-name {
+            font-weight: 500;
+            color: var(--dark);
+        }
+
+        .inline-result .result-empresa {
+            font-size: 0.8rem;
+            color: var(--gray-500);
+        }
+
         /* Circle Select */
         .circle-select {
             display: flex;
@@ -927,6 +973,14 @@
                 </button>
             </div>
             <div class="dynamic-items" id="relationshipsList"></div>
+
+            <!-- Relacionamentos Inferidos -->
+            <div id="inferredSection" style="display: none; margin-top: 24px;">
+                <div class="section-title" style="color: var(--gray-500); font-size: 0.9rem;">
+                    <i class="bi bi-diagram-2"></i> Relacionamentos Inferidos
+                </div>
+                <div id="inferredList" class="dynamic-items"></div>
+            </div>
         </div>
 
         <!-- Section: Notas -->
@@ -963,6 +1017,13 @@
         // Initialize
         document.addEventListener('DOMContentLoaded', loadContact);
 
+        // Fechar busca inline ao clicar fora
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.relationship-item')) {
+                document.querySelectorAll('.inline-search-results').forEach(d => d.style.display = 'none');
+            }
+        });
+
         async function loadContact() {
             try {
                 const response = await fetch(`/api/contacts/${contactId}`);
@@ -972,6 +1033,9 @@
                 contactData = data.contact || data;  // API returns {contact: {...}}
                 populateForm(contactData);
                 document.getElementById('loadingOverlay').style.display = 'none';
+
+                // Carregar relacionamentos inferidos apos carregar o contato
+                setTimeout(() => loadInferredRelationships(), 500);
             } catch (error) {
                 showToast('Erro ao carregar contato', 'error');
                 console.error(error);
@@ -1195,41 +1259,175 @@
         }
 
         // Relationship Management
+        const RELATIONSHIP_TYPES = [
+            { value: 'conjuge', label: 'Conjuge', icon: '💑' },
+            { value: 'filho', label: 'Filho(a)', icon: '👶' },
+            { value: 'pai', label: 'Pai', icon: '👨' },
+            { value: 'mae', label: 'Mae', icon: '👩' },
+            { value: 'irmao', label: 'Irmao(a)', icon: '👫' },
+            { value: 'avo', label: 'Avo(a)', icon: '👴' },
+            { value: 'neto', label: 'Neto(a)', icon: '👶' },
+            { value: 'tio', label: 'Tio(a)', icon: '👨‍👩‍👧' },
+            { value: 'sobrinho', label: 'Sobrinho(a)', icon: '🧒' },
+            { value: 'primo', label: 'Primo(a)', icon: '👥' },
+            { value: 'sogro', label: 'Sogro(a)', icon: '👴' },
+            { value: 'genro', label: 'Genro/Nora', icon: '👨‍👩‍👧' },
+            { value: 'cunhado', label: 'Cunhado(a)', icon: '👫' },
+            { value: 'chefe', label: 'Chefe', icon: '💼' },
+            { value: 'subordinado', label: 'Subordinado', icon: '👔' },
+            { value: 'assistente', label: 'Assistente', icon: '📋' },
+            { value: 'socio', label: 'Socio(a)', icon: '🤝' },
+            { value: 'colega', label: 'Colega', icon: '👥' },
+            { value: 'amigo', label: 'Amigo(a)', icon: '😊' },
+        ];
+
         function addRelationship(data = {}) {
             const container = document.getElementById('relationshipsList');
             const index = container.children.length;
 
             const initials = (data.nome || 'N').substring(0, 2).toUpperCase();
             const linkedBadge = data.contact_id
-                ? `<span class="linked-badge">Vinculado</span>`
-                : `<button class="btn-link-contact" onclick="openContactSelector(${index})">Vincular</button>`;
+                ? `<span class="linked-badge" onclick="goToContact(${data.contact_id})" style="cursor: pointer;" title="Ir para contato">Vinculado <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem;"></i></span>`
+                : `<button class="btn-link-contact" onclick="openContactSelector(${index})"><i class="bi bi-search"></i> Buscar</button>`;
+
+            const typeOptions = RELATIONSHIP_TYPES.map(t =>
+                `<option value="${t.value}" ${data.tipo === t.value ? 'selected' : ''}>${t.label}</option>`
+            ).join('');
 
             const html = `
                 <div class="dynamic-item relationship-item" data-index="${index}" data-contact-id="${data.contact_id || ''}">
                     <div class="relationship-avatar">${initials}</div>
                     <div class="relationship-content">
-                        <input type="text" placeholder="Nome da pessoa" value="${data.nome || ''}" oninput="updateRelationshipAvatar(this)">
-                        <select>
-                            <option value="conjuge" ${data.tipo === 'conjuge' ? 'selected' : ''}>Conjuge</option>
-                            <option value="filho" ${data.tipo === 'filho' ? 'selected' : ''}>Filho(a)</option>
-                            <option value="pai" ${data.tipo === 'pai' ? 'selected' : ''}>Pai</option>
-                            <option value="mae" ${data.tipo === 'mae' ? 'selected' : ''}>Mae</option>
-                            <option value="irmao" ${data.tipo === 'irmao' ? 'selected' : ''}>Irmao(a)</option>
-                            <option value="assistente" ${data.tipo === 'assistente' ? 'selected' : ''}>Assistente</option>
-                            <option value="chefe" ${data.tipo === 'chefe' ? 'selected' : ''}>Chefe</option>
-                            <option value="socio" ${data.tipo === 'socio' ? 'selected' : ''}>Socio</option>
-                            <option value="amigo" ${data.tipo === 'amigo' ? 'selected' : ''}>Amigo(a)</option>
-                        </select>
+                        <input type="text" placeholder="Buscar ou digitar nome..." value="${data.nome || ''}"
+                               oninput="updateRelationshipAvatar(this); searchContactInline(this)"
+                               onfocus="showInlineSearch(this)"
+                               autocomplete="off">
+                        <select>${typeOptions}</select>
                     </div>
                     <div class="relationship-link">${linkedBadge}</div>
                     <div class="item-actions">
-                        <button class="btn-remove" onclick="removeItem(this)" title="Remover">
+                        <button class="btn-remove" onclick="removeRelationship(this, ${data.contact_id || 'null'})" title="Remover">
                             <i class="bi bi-trash"></i>
                         </button>
                     </div>
+                    <div class="inline-search-results" style="display: none;"></div>
                 </div>
             `;
             container.insertAdjacentHTML('beforeend', html);
+        }
+
+        function goToContact(cid) {
+            window.open(`/contatos/${cid}`, '_blank');
+        }
+
+        // Inline search while typing name
+        let searchTimeout;
+        async function searchContactInline(input) {
+            const query = input.value.trim();
+            const item = input.closest('.relationship-item');
+            const resultsDiv = item.querySelector('.inline-search-results');
+
+            if (query.length < 2) {
+                resultsDiv.style.display = 'none';
+                return;
+            }
+
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(async () => {
+                try {
+                    const response = await fetch(`/api/contacts?search=${encodeURIComponent(query)}&limit=5`);
+                    const data = await response.json();
+
+                    if (data.contacts && data.contacts.length > 0) {
+                        resultsDiv.innerHTML = data.contacts.map(c => `
+                            <div class="inline-result" onclick="selectInlineContact(this, ${c.id}, '${escapeHtml(c.nome)}')">
+                                <span class="result-name">${c.nome}</span>
+                                ${c.empresa ? `<span class="result-empresa">${c.empresa}</span>` : ''}
+                            </div>
+                        `).join('');
+                        resultsDiv.style.display = 'block';
+                    } else {
+                        resultsDiv.style.display = 'none';
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+            }, 300);
+        }
+
+        function showInlineSearch(input) {
+            // Hide other search results
+            document.querySelectorAll('.inline-search-results').forEach(d => d.style.display = 'none');
+        }
+
+        function selectInlineContact(el, cid, name) {
+            const item = el.closest('.relationship-item');
+            item.dataset.contactId = cid;
+            item.querySelector('input').value = name;
+            item.querySelector('.relationship-link').innerHTML =
+                `<span class="linked-badge" onclick="goToContact(${cid})" style="cursor: pointer;" title="Ir para contato">Vinculado <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem;"></i></span>`;
+            item.querySelector('.inline-search-results').style.display = 'none';
+            updateRelationshipAvatar(item.querySelector('input'));
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML.replace(/'/g, "\\'");
+        }
+
+        // Remove relationship (bidirectional)
+        async function removeRelationship(btn, relatedContactId) {
+            const item = btn.closest('.relationship-item');
+
+            if (relatedContactId && relatedContactId !== 'null') {
+                // Remove from both contacts via API
+                try {
+                    await fetch(`/api/contacts/${contactId}/relationships/${relatedContactId}`, {
+                        method: 'DELETE'
+                    });
+                } catch (e) {
+                    console.error('Erro ao remover relacionamento bidirecional:', e);
+                }
+            }
+
+            item.remove();
+        }
+
+        // Load inferred relationships
+        async function loadInferredRelationships() {
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/relationships/inferred`);
+                const data = await response.json();
+
+                if (data.inferred && data.inferred.length > 0) {
+                    const section = document.getElementById('inferredSection');
+                    const list = document.getElementById('inferredList');
+
+                    list.innerHTML = data.inferred.map(rel => {
+                        const initials = (rel.nome || 'N').substring(0, 2).toUpperCase();
+                        const viaText = rel.via ? `via ${rel.via.nome} (${rel.via.tipo})` : '';
+                        const linkBtn = rel.contact_id
+                            ? `<span class="linked-badge" onclick="goToContact(${rel.contact_id})" style="cursor: pointer;">Ver <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem;"></i></span>`
+                            : '';
+
+                        return `
+                            <div class="dynamic-item relationship-item" style="background: var(--gray-100); opacity: 0.8;">
+                                <div class="relationship-avatar" style="background: var(--gray-400);">${initials}</div>
+                                <div class="relationship-content" style="flex-direction: column; align-items: flex-start; gap: 2px;">
+                                    <span style="font-weight: 500;">${rel.nome || 'Desconhecido'}</span>
+                                    <span style="font-size: 0.75rem; color: var(--gray-500);">${rel.tipo} ${viaText}</span>
+                                </div>
+                                <div class="relationship-link">${linkBtn}</div>
+                            </div>
+                        `;
+                    }).join('');
+
+                    section.style.display = 'block';
+                }
+            } catch (e) {
+                console.error('Erro ao carregar relacionamentos inferidos:', e);
+            }
         }
 
         function updateRelationshipAvatar(input) {
@@ -1391,6 +1589,7 @@
             try {
                 const data = collectFormData();
 
+                // Salvar contato principal
                 const response = await fetch(`/api/contacts/${contactId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
@@ -1402,10 +1601,27 @@
                     throw new Error(err.detail || 'Erro ao salvar');
                 }
 
+                // Atualizar relacionamentos bidirecionais para contatos vinculados
+                const linkedRelationships = data.relacionamentos.filter(r => r.contact_id);
+                for (const rel of linkedRelationships) {
+                    try {
+                        await fetch(`/api/contacts/${contactId}/relationships`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(rel)
+                        });
+                    } catch (e) {
+                        console.warn('Erro ao criar relacao bidirecional:', e);
+                    }
+                }
+
                 showToast('Contato salvo com sucesso!', 'success');
 
                 // Update header name
                 document.getElementById('contactName').textContent = data.nome;
+
+                // Recarregar relacionamentos inferidos
+                loadInferredRelationships();
 
             } catch (error) {
                 showToast(error.message, 'error');

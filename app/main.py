@@ -4626,6 +4626,282 @@ async def create_contact(contact: ContactCreate):
     return {"id": contact_id, "status": "created"}
 
 
+# Mapeamento de relacionamentos inversos
+RELACIONAMENTOS_INVERSOS = {
+    'conjuge': 'conjuge',
+    'pai': 'filho',
+    'mae': 'filho',
+    'filho': 'pai',  # ou mae - determinado pelo contexto se disponivel
+    'irmao': 'irmao',
+    'avo': 'neto',
+    'neto': 'avo',
+    'tio': 'sobrinho',
+    'sobrinho': 'tio',
+    'primo': 'primo',
+    'cunhado': 'cunhado',
+    'sogro': 'genro',
+    'sogra': 'genro',
+    'genro': 'sogro',
+    'nora': 'sogro',
+    'chefe': 'subordinado',
+    'subordinado': 'chefe',
+    'assistente': 'chefe',
+    'socio': 'socio',
+    'amigo': 'amigo',
+}
+
+# Relacionamentos profissionais (nao sao familia)
+RELACIONAMENTOS_PROFISSIONAIS = {'chefe', 'subordinado', 'assistente', 'socio', 'amigo', 'colega'}
+
+
+class RelationshipUpdate(BaseModel):
+    tipo: str
+    nome: str
+    contact_id: Optional[int] = None
+
+
+@app.post("/api/contacts/{contact_id}/relationships")
+async def add_relationship(contact_id: int, relationship: RelationshipUpdate):
+    """
+    Adiciona um relacionamento bidirecional.
+    Se o contato relacionado existir (contact_id), adiciona a relacao inversa nele.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Verificar se contato existe
+    cursor.execute("SELECT id, nome, relacionamentos FROM contacts WHERE id = %s", (contact_id,))
+    contact = cursor.fetchone()
+    if not contact:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+    contact = row_to_dict(contact)
+    relacionamentos = contact.get('relacionamentos') or []
+    if isinstance(relacionamentos, str):
+        relacionamentos = json.loads(relacionamentos)
+
+    # Adicionar nova relacao (ou atualizar existente)
+    existing_idx = None
+    for i, rel in enumerate(relacionamentos):
+        if rel.get('contact_id') == relationship.contact_id and relationship.contact_id:
+            existing_idx = i
+            break
+        if rel.get('nome', '').lower() == relationship.nome.lower() and not relationship.contact_id:
+            existing_idx = i
+            break
+
+    new_rel = {
+        'tipo': relationship.tipo,
+        'nome': relationship.nome,
+        'contact_id': relationship.contact_id
+    }
+
+    if existing_idx is not None:
+        relacionamentos[existing_idx] = new_rel
+    else:
+        relacionamentos.append(new_rel)
+
+    # Atualizar contato principal
+    cursor.execute(
+        "UPDATE contacts SET relacionamentos = %s, atualizado_em = NOW() WHERE id = %s",
+        (json.dumps(relacionamentos), contact_id)
+    )
+
+    # Se ha um contato vinculado, adicionar relacao inversa
+    inverse_added = False
+    if relationship.contact_id:
+        cursor.execute(
+            "SELECT id, nome, relacionamentos FROM contacts WHERE id = %s",
+            (relationship.contact_id,)
+        )
+        related_contact = cursor.fetchone()
+
+        if related_contact:
+            related_contact = row_to_dict(related_contact)
+            related_rels = related_contact.get('relacionamentos') or []
+            if isinstance(related_rels, str):
+                related_rels = json.loads(related_rels)
+
+            # Determinar tipo inverso
+            tipo_inverso = RELACIONAMENTOS_INVERSOS.get(relationship.tipo, 'parente')
+
+            # Verificar se ja existe relacao inversa
+            inverse_exists = False
+            for i, rel in enumerate(related_rels):
+                if rel.get('contact_id') == contact_id:
+                    # Atualizar relacao existente
+                    related_rels[i] = {
+                        'tipo': tipo_inverso,
+                        'nome': contact['nome'],
+                        'contact_id': contact_id
+                    }
+                    inverse_exists = True
+                    break
+
+            if not inverse_exists:
+                related_rels.append({
+                    'tipo': tipo_inverso,
+                    'nome': contact['nome'],
+                    'contact_id': contact_id
+                })
+
+            cursor.execute(
+                "UPDATE contacts SET relacionamentos = %s, atualizado_em = NOW() WHERE id = %s",
+                (json.dumps(related_rels), relationship.contact_id)
+            )
+            inverse_added = True
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "status": "ok",
+        "relationship": new_rel,
+        "inverse_added": inverse_added,
+        "inverse_type": RELACIONAMENTOS_INVERSOS.get(relationship.tipo) if inverse_added else None
+    }
+
+
+@app.delete("/api/contacts/{contact_id}/relationships/{related_contact_id}")
+async def remove_relationship(contact_id: int, related_contact_id: int):
+    """
+    Remove um relacionamento de ambos os contatos (bidirecional).
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Atualizar contato principal
+    cursor.execute("SELECT relacionamentos FROM contacts WHERE id = %s", (contact_id,))
+    result = cursor.fetchone()
+    if result:
+        rels = result['relacionamentos'] or []
+        if isinstance(rels, str):
+            rels = json.loads(rels)
+        rels = [r for r in rels if r.get('contact_id') != related_contact_id]
+        cursor.execute(
+            "UPDATE contacts SET relacionamentos = %s, atualizado_em = NOW() WHERE id = %s",
+            (json.dumps(rels), contact_id)
+        )
+
+    # Atualizar contato relacionado
+    cursor.execute("SELECT relacionamentos FROM contacts WHERE id = %s", (related_contact_id,))
+    result = cursor.fetchone()
+    if result:
+        rels = result['relacionamentos'] or []
+        if isinstance(rels, str):
+            rels = json.loads(rels)
+        rels = [r for r in rels if r.get('contact_id') != contact_id]
+        cursor.execute(
+            "UPDATE contacts SET relacionamentos = %s, atualizado_em = NOW() WHERE id = %s",
+            (json.dumps(rels), related_contact_id)
+        )
+
+    conn.commit()
+    conn.close()
+
+    return {"status": "ok", "message": "Relacionamento removido de ambos os contatos"}
+
+
+@app.get("/api/contacts/{contact_id}/relationships/inferred")
+async def get_inferred_relationships(contact_id: int):
+    """
+    Retorna relacionamentos inferidos com base nas relacoes familiares.
+    Ex: Se A e pai de B, e B e pai de C, entao A e avo de C.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id, nome, relacionamentos FROM contacts WHERE id = %s", (contact_id,))
+    contact = cursor.fetchone()
+    if not contact:
+        conn.close()
+        return {"inferred": []}
+
+    contact = row_to_dict(contact)
+    relacionamentos = contact.get('relacionamentos') or []
+    if isinstance(relacionamentos, str):
+        relacionamentos = json.loads(relacionamentos)
+
+    inferred = []
+
+    # Para cada pessoa relacionada diretamente
+    for rel in relacionamentos:
+        if not rel.get('contact_id'):
+            continue
+
+        rel_tipo = rel['tipo']
+        rel_id = rel['contact_id']
+
+        # Buscar relacionamentos dessa pessoa
+        cursor.execute("SELECT id, nome, relacionamentos FROM contacts WHERE id = %s", (rel_id,))
+        rel_contact = cursor.fetchone()
+        if not rel_contact:
+            continue
+
+        rel_contact = row_to_dict(rel_contact)
+        rel_rels = rel_contact.get('relacionamentos') or []
+        if isinstance(rel_rels, str):
+            rel_rels = json.loads(rel_rels)
+
+        # Inferir relacoes de segundo grau
+        for rel2 in rel_rels:
+            if rel2.get('contact_id') == contact_id:
+                continue  # Pular o proprio contato
+
+            rel2_tipo = rel2['tipo']
+            inferred_tipo = infer_relationship(rel_tipo, rel2_tipo)
+
+            if inferred_tipo and inferred_tipo != 'desconhecido':
+                inferred.append({
+                    'tipo': inferred_tipo,
+                    'nome': rel2.get('nome'),
+                    'contact_id': rel2.get('contact_id'),
+                    'via': {
+                        'nome': rel['nome'],
+                        'tipo': rel_tipo,
+                        'contact_id': rel_id
+                    }
+                })
+
+    conn.close()
+
+    return {"inferred": inferred}
+
+
+def infer_relationship(rel1: str, rel2: str) -> str:
+    """
+    Infere o tipo de relacionamento baseado em dois relacionamentos.
+    Ex: pai + irmao = tio, pai + pai = avo
+    """
+    # Matriz de inferencia familiar
+    inference_matrix = {
+        ('pai', 'pai'): 'avo',
+        ('pai', 'mae'): 'avo',
+        ('mae', 'pai'): 'avo',
+        ('mae', 'mae'): 'avo',
+        ('pai', 'irmao'): 'tio',
+        ('pai', 'irmao'): 'tio',
+        ('mae', 'irmao'): 'tio',
+        ('mae', 'irmao'): 'tio',
+        ('tio', 'filho'): 'primo',
+        ('tio', 'filho'): 'primo',
+        ('irmao', 'filho'): 'sobrinho',
+        ('irmao', 'filho'): 'sobrinho',
+        ('filho', 'filho'): 'neto',
+        ('filho', 'filho'): 'neto',
+        ('conjuge', 'pai'): 'sogro',
+        ('conjuge', 'mae'): 'sogra',
+        ('conjuge', 'irmao'): 'cunhado',
+        ('conjuge', 'irmao'): 'cunhado',
+        ('pai', 'conjuge'): 'madrasta',  # ou padrasto
+        ('mae', 'conjuge'): 'padrasto',  # ou madrasta
+        ('irmao', 'conjuge'): 'cunhado',
+    }
+
+    return inference_matrix.get((rel1, rel2), 'desconhecido')
+
+
 @app.post("/api/contacts/import")
 async def import_contacts(data: ContactsImportData):
     """
