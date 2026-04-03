@@ -55,6 +55,30 @@ TOPICS_OF_INTEREST = [
 ]
 
 
+def ensure_table_exists():
+    """Garante que a tabela hot_takes existe"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS hot_takes (
+                id SERIAL PRIMARY KEY,
+                news_title TEXT,
+                news_link TEXT,
+                hook TEXT,
+                body TEXT,
+                cta TEXT,
+                linkedin_post TEXT,
+                article_slug TEXT,
+                hashtags JSONB DEFAULT '[]',
+                status TEXT DEFAULT 'draft',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                scheduled_for TIMESTAMP,
+                published_at TIMESTAMP
+            )
+        ''')
+        conn.commit()
+
+
 async def fetch_rss_feed(url: str) -> list[dict]:
     """Busca e parseia um feed RSS"""
     try:
@@ -285,27 +309,9 @@ Responda em JSON:
 
 def save_hot_take(hot_take: dict, status: str = "draft") -> int:
     """Salva hot take no banco de dados"""
+    ensure_table_exists()
     with get_db() as conn:
         cursor = conn.cursor()
-
-        # Verifica se tabela existe, se não cria
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS hot_takes (
-                id SERIAL PRIMARY KEY,
-                news_title TEXT,
-                news_link TEXT,
-                hook TEXT,
-                body TEXT,
-                cta TEXT,
-                linkedin_post TEXT,
-                article_slug TEXT,
-                hashtags JSONB DEFAULT '[]',
-                status TEXT DEFAULT 'draft',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                scheduled_for TIMESTAMP,
-                published_at TIMESTAMP
-            )
-        ''')
 
         cursor.execute('''
             INSERT INTO hot_takes (news_title, news_link, hook, body, cta, linkedin_post, article_slug, hashtags, status)
@@ -331,6 +337,7 @@ def save_hot_take(hot_take: dict, status: str = "draft") -> int:
 
 def get_hot_takes(status: str = None, limit: int = 20) -> list[dict]:
     """Lista hot takes salvos"""
+    ensure_table_exists()
     with get_db() as conn:
         cursor = conn.cursor()
 
@@ -353,6 +360,7 @@ def get_hot_takes(status: str = None, limit: int = 20) -> list[dict]:
 
 def get_weekly_digest_stats() -> dict:
     """Estatísticas do digest semanal"""
+    ensure_table_exists()
     with get_db() as conn:
         cursor = conn.cursor()
 
