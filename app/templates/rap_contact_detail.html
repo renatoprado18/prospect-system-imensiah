@@ -297,6 +297,7 @@
             display: grid;
             grid-template-columns: 1.2fr 0.8fr;
             gap: 12px;
+            align-items: stretch;
         }
         .tile-grid-3col {
             display: grid;
@@ -309,7 +310,8 @@
         .stacked-column {
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 8px;
+            height: 100%;
         }
         .tile-card.compact {
             padding: 10px 12px;
@@ -317,6 +319,18 @@
         .tile-card.compact h5 {
             font-size: 0.8rem;
             margin-bottom: 6px;
+        }
+        .tile-card.insights-top {
+            flex-shrink: 0;
+        }
+        .tile-card.facts-expand {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .tile-card.facts-expand .tile-content {
+            flex: 1;
+            max-height: none;
         }
         .tile-card {
             background: white;
@@ -916,12 +930,17 @@
 
         .profile-actions-compact {
             display: flex;
-            gap: 8px;
+            gap: 5px;
         }
 
         .profile-actions-compact .btn {
-            padding: 8px 12px;
-            font-size: 0.85rem;
+            padding: 5px 8px;
+            font-size: 0.75rem;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         /* Main Content */
@@ -2213,21 +2232,21 @@
                             ${contact.ultimo_enriquecimento ? `<small class="text-muted">Atualizado: ${formatDateTime(contact.ultimo_enriquecimento)}</small>` : ''}
                         </div>
                         <div class="stacked-column">
-                            <div class="tile-card compact">
+                            <div class="tile-card compact insights-top">
+                                <h5><i class="bi bi-graph-up text-info"></i> Insights</h5>
+                                <div class="tile-content" id="insightsContainer">
+                                    ${contact.insights_ai ? renderInsightsCompact(contact.insights_ai) : '<span class="text-muted" style="font-size: 0.8rem;">Sem insights</span>'}
+                                </div>
+                            </div>
+                            <div class="tile-card compact facts-expand">
                                 <h5><i class="bi bi-lightbulb text-warning"></i> Fatos
                                     <span class="actions">
                                         <button onclick="openAddFactModal()" title="Adicionar"><i class="bi bi-plus-lg"></i></button>
                                         <button onclick="extractFacts()" title="Extrair com IA"><i class="bi bi-magic"></i></button>
                                     </span>
                                 </h5>
-                                <div class="tile-content" id="factsContainer" style="max-height: 120px; overflow-y: auto;">
+                                <div class="tile-content" id="factsContainer" style="overflow-y: auto;">
                                     <!-- Loaded dynamically -->
-                                </div>
-                            </div>
-                            <div class="tile-card compact">
-                                <h5><i class="bi bi-graph-up text-info"></i> Insights</h5>
-                                <div class="tile-content" id="insightsContainer">
-                                    ${contact.insights_ai ? renderInsightsCompact(contact.insights_ai) : '<span class="text-muted" style="font-size: 0.85rem;">Sem insights</span>'}
                                 </div>
                             </div>
                         </div>
