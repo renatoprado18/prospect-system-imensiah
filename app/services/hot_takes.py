@@ -271,6 +271,7 @@ Responda em JSON:
 }}"""
 
     try:
+        logger.info(f"Calling Claude API for hot take...")
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://api.anthropic.com/v1/messages",
@@ -286,6 +287,7 @@ Responda em JSON:
                 },
                 timeout=60.0
             )
+        logger.info(f"Claude API response status: {response.status_code}")
 
         if response.status_code != 200:
             error_text = response.text[:500]
