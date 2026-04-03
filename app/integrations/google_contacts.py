@@ -185,7 +185,7 @@ async def fetch_all_contacts(access_token: str, page_size: int = 1000) -> List[D
         while True:
             params = {
                 "pageSize": page_size,
-                "personFields": "names,emailAddresses,phoneNumbers,organizations,photos,birthdays,urls,biographies,memberships",
+                "personFields": "names,emailAddresses,phoneNumbers,organizations,photos,birthdays,urls,biographies,memberships,addresses,relations",
                 "sources": "READ_SOURCE_TYPE_CONTACT"
             }
 
@@ -282,6 +282,41 @@ def parse_google_contact(person: Dict, account_email: str) -> Dict:
             linkedin = url
             break
 
+    # Extract addresses
+    enderecos = []
+    for addr_obj in person.get("addresses", []):
+        tipo_map = {"home": "residencial", "work": "comercial", "other": "outro"}
+        addr_type = addr_obj.get("type", "other").lower()
+        enderecos.append({
+            "tipo": tipo_map.get(addr_type, "outro"),
+            "logradouro": addr_obj.get("streetAddress", ""),
+            "cidade": addr_obj.get("city", ""),
+            "estado": addr_obj.get("region", ""),
+            "cep": addr_obj.get("postalCode", ""),
+            "pais": addr_obj.get("country", "Brasil")
+        })
+
+    # Extract relations
+    relacionamentos = []
+    tipo_map = {
+        "spouse": "conjuge",
+        "child": "filho",
+        "parent": "pai",
+        "sibling": "irmao",
+        "friend": "amigo",
+        "manager": "chefe",
+        "assistant": "assistente",
+        "domesticPartner": "conjuge",
+        "relative": "parente"
+    }
+    for rel_obj in person.get("relations", []):
+        rel_type = rel_obj.get("type", "").lower()
+        relacionamentos.append({
+            "tipo": tipo_map.get(rel_type, rel_type),
+            "nome": rel_obj.get("person", ""),
+            "contact_id": None  # Will be linked later if possible
+        })
+
     # Resource name is the unique Google ID
     resource_name = person.get("resourceName", "")
     google_contact_id = resource_name.replace("people/", "") if resource_name else None
@@ -298,6 +333,8 @@ def parse_google_contact(person: Dict, account_email: str) -> Dict:
         "foto_url": foto_url,
         "linkedin": linkedin,
         "aniversario": aniversario,
+        "enderecos": enderecos,
+        "relacionamentos": relacionamentos,
         "google_contact_id": google_contact_id,
         "contexto": contexto,
         "origem": f"google_{account_email}"
@@ -374,6 +411,8 @@ async def sync_contacts_from_google(
                             foto_url = COALESCE(%s, foto_url),
                             linkedin = COALESCE(%s, linkedin),
                             aniversario = COALESCE(%s, aniversario),
+                            enderecos = COALESCE(%s, enderecos),
+                            relacionamentos = COALESCE(%s, relacionamentos),
                             contexto = %s,
                             atualizado_em = CURRENT_TIMESTAMP
                         WHERE google_contact_id = %s
@@ -386,6 +425,8 @@ async def sync_contacts_from_google(
                         contact["foto_url"],
                         contact["linkedin"],
                         contact["aniversario"],
+                        json.dumps(contact.get("enderecos", [])),
+                        json.dumps(contact.get("relacionamentos", [])),
                         contact["contexto"],
                         contact["google_contact_id"]
                     ))
@@ -425,8 +466,9 @@ async def sync_contacts_from_google(
             cursor.execute('''
                 INSERT INTO contacts (
                     nome, empresa, cargo, emails, telefones, foto_url,
-                    linkedin, aniversario, google_contact_id, contexto, origem
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    linkedin, aniversario, enderecos, relacionamentos,
+                    google_contact_id, contexto, origem
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ''', (
                 contact["nome"],
                 contact["empresa"],
@@ -436,6 +478,8 @@ async def sync_contacts_from_google(
                 contact["foto_url"],
                 contact["linkedin"],
                 contact["aniversario"],
+                json.dumps(contact.get("enderecos", [])),
+                json.dumps(contact.get("relacionamentos", [])),
                 contact["google_contact_id"],
                 contact["contexto"],
                 contact["origem"]
@@ -493,6 +537,43 @@ async def create_google_contact(access_token: str, contact_data: Dict) -> Option
             "title": contact_data.get("cargo", "")
         }]
 
+    # Add addresses
+    if contact_data.get("enderecos"):
+        tipo_map = {"residencial": "home", "comercial": "work", "outro": "other"}
+        person["addresses"] = [
+            {
+                "streetAddress": a.get("logradouro", ""),
+                "city": a.get("cidade", ""),
+                "region": a.get("estado", ""),
+                "postalCode": a.get("cep", ""),
+                "country": a.get("pais", "Brasil"),
+                "type": tipo_map.get(a.get("tipo", "outro"), "other")
+            }
+            for a in contact_data["enderecos"]
+        ]
+
+    # Add relations
+    if contact_data.get("relacionamentos"):
+        tipo_map = {
+            "conjuge": "spouse",
+            "filho": "child",
+            "pai": "parent",
+            "mae": "parent",
+            "irmao": "sibling",
+            "amigo": "friend",
+            "chefe": "manager",
+            "assistente": "assistant",
+            "socio": "relative",
+            "parente": "relative"
+        }
+        person["relations"] = [
+            {
+                "person": r.get("nome", ""),
+                "type": tipo_map.get(r.get("tipo", ""), r.get("tipo", ""))
+            }
+            for r in contact_data["relacionamentos"]
+        ]
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{GOOGLE_PEOPLE_API}/people:createContact",
@@ -514,7 +595,7 @@ async def update_google_contact(
     access_token: str,
     resource_name: str,
     contact_data: Dict,
-    update_person_fields: str = "names,emailAddresses,phoneNumbers,organizations"
+    update_person_fields: str = "names,emailAddresses,phoneNumbers,organizations,addresses,relations"
 ) -> bool:
     """Update an existing Google contact"""
     person = {}
@@ -547,6 +628,43 @@ async def update_google_contact(
             "name": contact_data.get("empresa", ""),
             "title": contact_data.get("cargo", "")
         }]
+
+    # Addresses
+    if contact_data.get("enderecos"):
+        tipo_map = {"residencial": "home", "comercial": "work", "outro": "other"}
+        person["addresses"] = [
+            {
+                "streetAddress": a.get("logradouro", ""),
+                "city": a.get("cidade", ""),
+                "region": a.get("estado", ""),
+                "postalCode": a.get("cep", ""),
+                "country": a.get("pais", "Brasil"),
+                "type": tipo_map.get(a.get("tipo", "outro"), "other")
+            }
+            for a in contact_data["enderecos"]
+        ]
+
+    # Relations
+    if contact_data.get("relacionamentos"):
+        tipo_map = {
+            "conjuge": "spouse",
+            "filho": "child",
+            "pai": "parent",
+            "mae": "parent",
+            "irmao": "sibling",
+            "amigo": "friend",
+            "chefe": "manager",
+            "assistente": "assistant",
+            "socio": "relative",
+            "parente": "relative"
+        }
+        person["relations"] = [
+            {
+                "person": r.get("nome", ""),
+                "type": tipo_map.get(r.get("tipo", ""), r.get("tipo", ""))
+            }
+            for r in contact_data["relacionamentos"]
+        ]
 
     async with httpx.AsyncClient() as client:
         response = await client.patch(
@@ -590,7 +708,7 @@ async def fetch_contacts_incremental(
         while True:
             params = {
                 "pageSize": page_size,
-                "personFields": "names,emailAddresses,phoneNumbers,organizations,photos,birthdays,urls,biographies,memberships",
+                "personFields": "names,emailAddresses,phoneNumbers,organizations,photos,birthdays,urls,biographies,memberships,addresses,relations",
                 "sources": "READ_SOURCE_TYPE_CONTACT",
                 "requestSyncToken": True  # Request a sync token in response
             }

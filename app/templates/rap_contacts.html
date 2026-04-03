@@ -632,6 +632,34 @@
             background: linear-gradient(to bottom, rgba(99, 102, 241, 0.03), white);
         }
 
+        /* Edit Button */
+        .contact-edit-btn {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            width: 28px;
+            height: 28px;
+            z-index: 10;
+            border-radius: 6px;
+            background: white;
+            border: 1px solid var(--gray-200);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--gray-400);
+            text-decoration: none;
+            transition: all 0.2s ease;
+            opacity: 0;
+        }
+        .contact-card-wrapper:hover .contact-edit-btn {
+            opacity: 1;
+        }
+        .contact-edit-btn:hover {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+
         /* Merge Floating Bar */
         .merge-bar {
             position: fixed;
@@ -1272,6 +1300,10 @@
                            ${isSelected ? 'checked' : ''}
                            onclick="toggleContactSelection(event, ${contact.id})"
                            title="Selecionar para mesclar">
+                    <a href="/contatos/${contact.id}/editar" class="contact-edit-btn"
+                       onclick="event.stopPropagation();" title="Editar contato">
+                        <i class="bi bi-pencil"></i>
+                    </a>
                     <a href="/contatos/${contact.id}" class="contact-card ${isSelected ? 'selected' : ''}"
                        onclick="handleCardClick(event, ${contact.id})">
                         <div class="contact-header">
@@ -1385,25 +1417,33 @@
         function getMergeableFields(contactsArray) {
             const fieldLabels = {
                 nome: 'Nome',
+                apelido: 'Apelido',
                 cargo: 'Cargo',
                 empresa: 'Empresa',
                 emails: 'Emails',
                 telefones: 'Telefones',
+                enderecos: 'Enderecos',
                 linkedin: 'LinkedIn',
                 contexto: 'Contexto',
-                notas: 'Notas',
-                circulo: 'Círculo',
-                data_nascimento: 'Data de Nascimento'
+                circulo: 'Circulo',
+                aniversario: 'Aniversario',
+                datas_importantes: 'Datas Importantes',
+                relacionamentos: 'Relacionamentos',
+                manual_notes: 'Notas'
             };
 
+            // Fields that can be combined instead of choosing one
+            const combinableFields = ['emails', 'telefones', 'enderecos', 'datas_importantes', 'relacionamentos'];
+
             const fields = [];
-            const checked = new Set();
 
             for (const [fieldKey, label] of Object.entries(fieldLabels)) {
                 const values = contactsArray.map(c => {
                     let val = c[fieldKey];
-                    if (fieldKey === 'emails' || fieldKey === 'telefones') {
-                        if (typeof val === 'string') val = JSON.parse(val || '[]');
+                    if (combinableFields.includes(fieldKey)) {
+                        if (typeof val === 'string') {
+                            try { val = JSON.parse(val || '[]'); } catch { val = []; }
+                        }
                         return val && val.length > 0 ? val : null;
                     }
                     return val || null;
@@ -1411,10 +1451,11 @@
 
                 // Check if there are different values
                 const uniqueValues = new Set(values.map(v => JSON.stringify(v)));
-                if (uniqueValues.size > 1) {
+                if (uniqueValues.size > 1 || (combinableFields.includes(fieldKey) && values.length > 1)) {
                     fields.push({
                         key: fieldKey,
                         label: label,
+                        combinable: combinableFields.includes(fieldKey),
                         values: contactsArray.map((c, i) => ({
                             contactId: c.id,
                             contactName: c.nome,
@@ -1434,16 +1475,18 @@
                     <div class="text-center py-4">
                         <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
                         <h5 class="mt-3">Sem conflitos!</h5>
-                        <p class="text-muted">Os contatos serão mesclados combinando todos os dados.</p>
+                        <p class="text-muted">Os contatos serao mesclados combinando todos os dados.</p>
                         <p><strong>Contato principal:</strong> ${contactsArray[0].nome}</p>
-                        <p class="text-muted small">Os outros contatos serão excluídos e suas mensagens/histórico transferidos.</p>
+                        <p class="text-muted small">Os outros contatos serao excluidos e suas mensagens/historico transferidos.</p>
                     </div>
                 `;
             }
 
-            // Set defaults (first contact with value wins)
+            // Set defaults (combine for combinable fields, first contact for others)
             fields.forEach(field => {
-                if (field.values.length > 0) {
+                if (field.combinable) {
+                    mergeChoices[field.key] = 'combine';
+                } else if (field.values.length > 0) {
                     mergeChoices[field.key] = field.values[0].contactId;
                 }
             });
@@ -1451,12 +1494,22 @@
             return `
                 <p class="text-muted mb-4">
                     <i class="bi bi-info-circle me-1"></i>
-                    Contato principal: <strong>${contactsArray[0].nome}</strong> (os outros serão excluídos)
+                    Contato principal: <strong>${contactsArray[0].nome}</strong> (os outros serao excluidos)
                 </p>
                 ${fields.map(field => `
                     <div class="merge-field">
                         <div class="merge-field-label">${field.label}</div>
                         <div class="merge-options">
+                            ${field.combinable ? `
+                                <label class="merge-option ${mergeChoices[field.key] === 'combine' ? 'selected' : ''}"
+                                       onclick="selectMergeOption('${field.key}', 'combine', this)">
+                                    <input type="radio" name="merge_${field.key}"
+                                           value="combine"
+                                           ${mergeChoices[field.key] === 'combine' ? 'checked' : ''}>
+                                    <span class="merge-option-value"><i class="bi bi-plus-circle me-1"></i>Combinar todos</span>
+                                    <span class="merge-option-source" style="color: var(--success);">Recomendado</span>
+                                </label>
+                            ` : ''}
                             ${field.values.map(v => `
                                 <label class="merge-option ${mergeChoices[field.key] === v.contactId ? 'selected' : ''}"
                                        onclick="selectMergeOption('${field.key}', ${v.contactId}, this)">
@@ -1482,14 +1535,30 @@
                 const phones = typeof value === 'string' ? JSON.parse(value) : value;
                 return phones.map(p => p.number).join(', ');
             }
+            if (key === 'enderecos') {
+                const addrs = typeof value === 'string' ? JSON.parse(value) : value;
+                return addrs.map(a => `${a.logradouro || ''}, ${a.cidade || ''}`).join('; ');
+            }
+            if (key === 'relacionamentos') {
+                const rels = typeof value === 'string' ? JSON.parse(value) : value;
+                return rels.map(r => `${r.nome} (${r.tipo})`).join(', ');
+            }
+            if (key === 'datas_importantes') {
+                const dates = typeof value === 'string' ? JSON.parse(value) : value;
+                return dates.map(d => `${d.tipo}: ${d.data}`).join(', ');
+            }
             if (key === 'contexto') {
                 return value === 'personal' ? 'Pessoal' : 'Profissional';
+            }
+            if (key === 'circulo') {
+                return `Circulo ${value}`;
             }
             return value || '-';
         }
 
-        function selectMergeOption(fieldKey, contactId, element) {
-            mergeChoices[fieldKey] = contactId;
+        function selectMergeOption(fieldKey, value, element) {
+            // value can be 'combine' or a contact ID (number)
+            mergeChoices[fieldKey] = value === 'combine' ? 'combine' : parseInt(value);
             // Update UI
             element.closest('.merge-options').querySelectorAll('.merge-option').forEach(opt => {
                 opt.classList.remove('selected');
@@ -1501,10 +1570,17 @@
             const contactsArray = Array.from(selectedContacts.values());
             if (contactsArray.length < 2) return;
 
+            // Build field_choices from user selections
+            const fieldChoices = {};
+            for (const [key, value] of Object.entries(mergeChoices)) {
+                fieldChoices[key] = value;
+            }
+
             // Build merge data - all contact IDs, first one is kept
             const mergeData = {
                 contact_ids: contactsArray.map(c => c.id),
-                propagate: true
+                propagate: true,
+                field_choices: Object.keys(fieldChoices).length > 0 ? fieldChoices : null
             };
 
             try {

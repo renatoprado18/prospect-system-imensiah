@@ -12818,6 +12818,52 @@ async def api_editorial_publish(post_id: int, request: Request):
     return {"status": "success", "post": post}
 
 
+@app.post("/api/editorial/bulk-schedule")
+async def api_editorial_bulk_schedule(request: Request):
+    """
+    Agenda multiplos posts em lote com horarios ideais.
+
+    Body:
+    {
+        "post_ids": [1, 2, 3],
+        "start_date": "2026-04-07",
+        "frequency_per_week": 3,
+        "preferred_days": [1, 2, 3],  // 0=Mon, 1=Tue, etc
+        "preferred_hours": [9, 12],
+        "create_tasks": true,
+        "create_events": true
+    }
+    """
+    from app.services.editorial_calendar import bulk_schedule_posts
+
+    data = await request.json()
+    post_ids = data.get('post_ids', [])
+
+    if not post_ids:
+        raise HTTPException(status_code=400, detail="post_ids e obrigatorio")
+
+    start_date_str = data.get('start_date')
+    if not start_date_str:
+        start_date = datetime.now()
+    else:
+        try:
+            start_date = datetime.fromisoformat(start_date_str)
+        except:
+            raise HTTPException(status_code=400, detail="Formato de data invalido")
+
+    result = bulk_schedule_posts(
+        post_ids=post_ids,
+        start_date=start_date,
+        frequency_per_week=data.get('frequency_per_week', 3),
+        preferred_days=data.get('preferred_days'),
+        preferred_hours=data.get('preferred_hours'),
+        create_tasks=data.get('create_tasks', True),
+        create_events=data.get('create_events', True)
+    )
+
+    return {"status": "success", **result}
+
+
 @app.post("/api/editorial/import")
 async def api_editorial_import(request: Request):
     """Importa artigos do site para o calendario editorial"""
