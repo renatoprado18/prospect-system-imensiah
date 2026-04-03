@@ -3,6 +3,7 @@ PostgreSQL Database Module for Vercel Postgres
 Simplified: direct connections without pooling for serverless reliability
 """
 import os
+import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
@@ -1272,6 +1273,64 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user
             ON push_subscriptions(user_id)
         ''')
+
+        # Analyzer Feedback - Learning from user responses to proposals
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS analyzer_feedback (
+                id SERIAL PRIMARY KEY,
+                proposal_id INTEGER REFERENCES action_proposals(id) ON DELETE CASCADE,
+                intent_type TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                confidence FLOAT,
+                urgency TEXT,
+
+                -- User response
+                user_action TEXT NOT NULL,  -- 'accepted', 'rejected', 'dismissed', 'expired'
+                option_chosen TEXT,
+
+                -- Context for learning
+                contact_id INTEGER,
+                message_preview TEXT,
+
+                -- Timestamps
+                responded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_analyzer_feedback_intent
+            ON analyzer_feedback(intent_type)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_analyzer_feedback_action
+            ON analyzer_feedback(user_action)
+        ''')
+
+        # Analyzer Settings - User preferences for sensitivity
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS analyzer_settings (
+                id SERIAL PRIMARY KEY,
+                setting_key TEXT UNIQUE NOT NULL,
+                setting_value JSONB NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Insert default settings if not exist
+        default_intents = [
+            'reschedule_meeting', 'cancel_meeting', 'confirm_meeting', 'urgent_request',
+            'question', 'payment_mention', 'deadline_mention', 'important_info',
+            'introduction_request', 'opportunity_signal', 'complaint', 'meeting_request', 'follow_up_needed'
+        ]
+        cursor.execute('''
+            INSERT INTO analyzer_settings (setting_key, setting_value)
+            VALUES
+                ('min_confidence', '0.7'),
+                ('enabled_intents', %s),
+                ('urgency_threshold', '"medium"')
+            ON CONFLICT (setting_key) DO NOTHING
+        ''', (json.dumps(default_intents),))
 
         # Timeline Summaries - Cache de resumos IA para grupos de mensagens
         cursor.execute('''

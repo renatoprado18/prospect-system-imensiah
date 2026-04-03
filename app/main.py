@@ -18,7 +18,7 @@ import json
 import asyncio
 import httpx
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request, Depends, File, UploadFile
@@ -10097,6 +10097,72 @@ async def expire_old_proposals(request: Request):
 
     count = service.expire_old_proposals()
     return {"expired": count}
+
+
+# =============================================================================
+# ANALYZER FEEDBACK & LEARNING ENDPOINTS
+# =============================================================================
+
+@app.get("/api/analyzer/feedback/stats")
+async def get_analyzer_feedback_stats(request: Request, days: int = 30):
+    """Get feedback statistics for intent learning."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.analyzer_feedback import get_feedback_service
+    service = get_feedback_service()
+
+    return service.get_intent_stats(days=days)
+
+
+@app.get("/api/analyzer/learning-summary")
+async def get_analyzer_learning_summary(request: Request):
+    """Get summary of what the analyzer has learned from feedback."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.analyzer_feedback import get_feedback_service
+    service = get_feedback_service()
+
+    return service.get_learning_summary()
+
+
+@app.get("/api/analyzer/settings")
+async def get_analyzer_settings(request: Request):
+    """Get current analyzer settings."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.analyzer_feedback import get_feedback_service
+    service = get_feedback_service()
+
+    return service.get_settings()
+
+
+class AnalyzerSettingUpdate(BaseModel):
+    key: str
+    value: Any
+
+
+@app.post("/api/analyzer/settings")
+async def update_analyzer_setting(request: Request, setting: AnalyzerSettingUpdate):
+    """Update an analyzer setting."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.analyzer_feedback import get_feedback_service
+    service = get_feedback_service()
+
+    valid_keys = ['min_confidence', 'enabled_intents', 'urgency_threshold']
+    if setting.key not in valid_keys:
+        raise HTTPException(status_code=400, detail=f"Invalid setting key. Valid: {valid_keys}")
+
+    success = service.update_setting(setting.key, setting.value)
+    return {"success": success}
 
 
 # =============================================================================

@@ -10,6 +10,11 @@ Detecta intencoes em mensagens WhatsApp/Email e sugere acoes:
 - payment_mention: Mencao a pagamento/cobranca
 - deadline_mention: Mencao a prazo
 - important_info: Informacao importante
+- introduction_request: Pedido de apresentacao/indicacao
+- opportunity_signal: Sinal de oportunidade de negocio
+- complaint: Reclamacao ou feedback negativo
+- meeting_request: Pedido de nova reuniao
+- follow_up_needed: Precisa de follow-up
 """
 import os
 import json
@@ -31,6 +36,11 @@ INTENT_TYPES = [
     'payment_mention',
     'deadline_mention',
     'important_info',
+    'introduction_request',
+    'opportunity_signal',
+    'complaint',
+    'meeting_request',
+    'follow_up_needed',
 ]
 
 
@@ -228,7 +238,9 @@ class RealtimeAnalyzer:
 
         # Determinar se requer acao e urgencia
         action_intents = ['reschedule_meeting', 'cancel_meeting', 'urgent_request',
-                         'question', 'payment_mention', 'deadline_mention']
+                         'question', 'payment_mention', 'deadline_mention',
+                         'introduction_request', 'opportunity_signal', 'complaint',
+                         'meeting_request', 'follow_up_needed']
 
         max_confidence = 0
         highest_urgency = 'low'
@@ -306,10 +318,15 @@ Identifique se a mensagem contem alguma destas intencoes:
 - reschedule_meeting: Pedido para remarcar reuniao/encontro
 - cancel_meeting: Cancelamento de reuniao/encontro
 - confirm_meeting: Confirmacao de reuniao/encontro
+- meeting_request: Pedido para agendar NOVA reuniao/call
 - urgent_request: Pedido urgente que precisa atencao imediata
 - question: Pergunta que precisa de resposta
 - payment_mention: Mencao a pagamento, cobranca ou valores
 - deadline_mention: Mencao a prazo, data limite
+- introduction_request: Pedido de apresentacao, indicacao ou conexao com outra pessoa
+- opportunity_signal: Sinal de interesse em fazer negocio, contratar servico, comprar
+- complaint: Reclamacao, insatisfacao ou feedback negativo
+- follow_up_needed: Assunto que ficou pendente e precisa de acompanhamento
 - important_info: Informacao importante que Renato precisa saber
 - none: Mensagem trivial, agradecimento, etc.
 
@@ -419,6 +436,51 @@ Se nao detectar nenhuma intencao relevante, retorne intents como array vazio."""
                 'confidence': 0.75,
                 'urgency': 'medium',
                 'details': {'action_needed': 'Verificar prazo e planejar'}
+            })
+
+        # Pedido de apresentacao/indicacao
+        if any(word in text_lower for word in ['apresentar', 'indicar', 'conhece alguem', 'voce conhece', 'pode me conectar', 'contato de']):
+            intents.append({
+                'type': 'introduction_request',
+                'confidence': 0.75,
+                'urgency': 'medium',
+                'details': {'action_needed': 'Avaliar indicacao'}
+            })
+
+        # Sinal de oportunidade
+        if any(word in text_lower for word in ['interesse', 'orcamento', 'proposta', 'quanto custa', 'preciso de', 'gostaria de contratar', 'fechar negocio', 'vamos fechar']):
+            intents.append({
+                'type': 'opportunity_signal',
+                'confidence': 0.80,
+                'urgency': 'high',
+                'details': {'action_needed': 'Explorar oportunidade'}
+            })
+
+        # Reclamacao
+        if any(word in text_lower for word in ['insatisfeito', 'reclamar', 'problema', 'nao funcionou', 'decepcionado', 'ruim', 'pessimo', 'horrivel']):
+            intents.append({
+                'type': 'complaint',
+                'confidence': 0.80,
+                'urgency': 'high',
+                'details': {'action_needed': 'Resolver reclamacao'}
+            })
+
+        # Pedido de reuniao nova
+        if any(word in text_lower for word in ['marcar reuniao', 'agendar call', 'podemos conversar', 'bater um papo', 'tomar um cafe', 'encontrar']):
+            intents.append({
+                'type': 'meeting_request',
+                'confidence': 0.75,
+                'urgency': 'medium',
+                'details': {'action_needed': 'Agendar reuniao'}
+            })
+
+        # Follow-up necessario
+        if any(word in text_lower for word in ['e aquele', 'como ficou', 'alguma novidade', 'tem retorno', 'e sobre', 'lembra que']):
+            intents.append({
+                'type': 'follow_up_needed',
+                'confidence': 0.70,
+                'urgency': 'medium',
+                'details': {'action_needed': 'Dar retorno'}
             })
 
         return intents
@@ -580,6 +642,109 @@ Se nao detectar nenhuma intencao relevante, retorne intents como array vazio."""
                     'action_params': {},
                     'options': [
                         {'id': 'review', 'label': 'Revisar agora', 'action': 'open_conversation'},
+                        {'id': 'task', 'label': 'Criar tarefa', 'action': 'create_task'},
+                        {'id': 'ignore', 'label': 'Ignorar', 'action': 'dismiss'}
+                    ]
+                }
+                proposals.append(proposal)
+
+            elif intent_type == 'introduction_request' and confidence >= 0.7:
+                proposal = {
+                    'action_type': 'introduction_request',
+                    'contact_id': contact_id,
+                    'message_id': message_id,
+                    'confidence': confidence,
+                    'urgency': urgency,
+                    'trigger_text': message_text[:300],
+                    'ai_reasoning': f"Pedido de apresentacao ou indicacao",
+                    'title': f"Indicacao: {contact_name}",
+                    'description': f"Pedido de apresentacao: {message_text[:150]}",
+                    'action_params': {},
+                    'options': [
+                        {'id': 'respond', 'label': 'Responder agora', 'action': 'open_conversation'},
+                        {'id': 'task', 'label': 'Avaliar indicacao', 'action': 'create_task'},
+                        {'id': 'ignore', 'label': 'Ignorar', 'action': 'dismiss'}
+                    ]
+                }
+                proposals.append(proposal)
+
+            elif intent_type == 'opportunity_signal' and confidence >= 0.7:
+                proposal = {
+                    'action_type': 'opportunity_alert',
+                    'contact_id': contact_id,
+                    'message_id': message_id,
+                    'confidence': confidence,
+                    'urgency': 'high',  # Oportunidades sao sempre alta prioridade
+                    'trigger_text': message_text[:300],
+                    'ai_reasoning': f"Sinal de oportunidade de negocio detectado",
+                    'title': f"🎯 Oportunidade: {contact_name}",
+                    'description': f"Possivel interesse comercial: {message_text[:150]}",
+                    'action_params': {},
+                    'options': [
+                        {'id': 'respond_now', 'label': 'Responder AGORA', 'action': 'open_conversation'},
+                        {'id': 'schedule_call', 'label': 'Agendar call', 'action': 'create_task'},
+                        {'id': 'ignore', 'label': 'Ignorar', 'action': 'dismiss'}
+                    ]
+                }
+                proposals.append(proposal)
+
+            elif intent_type == 'complaint' and confidence >= 0.7:
+                proposal = {
+                    'action_type': 'complaint_alert',
+                    'contact_id': contact_id,
+                    'message_id': message_id,
+                    'confidence': confidence,
+                    'urgency': 'high',  # Reclamacoes sao sempre alta prioridade
+                    'trigger_text': message_text[:300],
+                    'ai_reasoning': f"Reclamacao ou feedback negativo detectado",
+                    'title': f"⚠️ Reclamacao: {contact_name}",
+                    'description': f"Feedback negativo: {message_text[:150]}",
+                    'action_params': {},
+                    'options': [
+                        {'id': 'respond_now', 'label': 'Resolver agora', 'action': 'open_conversation'},
+                        {'id': 'task', 'label': 'Criar tarefa', 'action': 'create_task'},
+                        {'id': 'ignore', 'label': 'Ignorar', 'action': 'dismiss'}
+                    ]
+                }
+                proposals.append(proposal)
+
+            elif intent_type == 'meeting_request' and confidence >= 0.7:
+                proposal = {
+                    'action_type': 'meeting_request',
+                    'contact_id': contact_id,
+                    'message_id': message_id,
+                    'confidence': confidence,
+                    'urgency': urgency,
+                    'trigger_text': message_text[:300],
+                    'ai_reasoning': f"Pedido de nova reuniao",
+                    'title': f"Agendar: {contact_name}",
+                    'description': f"Pedido de reuniao: {message_text[:150]}",
+                    'action_params': {
+                        'suggested_date': details.get('extracted_date'),
+                        'suggested_time': details.get('extracted_time')
+                    },
+                    'options': [
+                        {'id': 'schedule', 'label': 'Abrir agenda', 'action': 'open_conversation'},
+                        {'id': 'task', 'label': 'Criar tarefa', 'action': 'create_task'},
+                        {'id': 'ignore', 'label': 'Ignorar', 'action': 'dismiss'}
+                    ]
+                }
+                proposals.append(proposal)
+
+            elif intent_type == 'follow_up_needed' and confidence >= 0.7:
+                proposal = {
+                    'action_type': 'follow_up_alert',
+                    'contact_id': contact_id,
+                    'message_id': message_id,
+                    'confidence': confidence,
+                    'urgency': urgency,
+                    'trigger_text': message_text[:300],
+                    'ai_reasoning': f"Assunto pendente precisa de retorno",
+                    'title': f"Follow-up: {contact_name}",
+                    'description': f"Aguardando retorno: {message_text[:150]}",
+                    'action_params': {},
+                    'options': [
+                        {'id': 'respond', 'label': 'Dar retorno', 'action': 'open_conversation'},
                         {'id': 'task', 'label': 'Criar tarefa', 'action': 'create_task'},
                         {'id': 'ignore', 'label': 'Ignorar', 'action': 'dismiss'}
                     ]

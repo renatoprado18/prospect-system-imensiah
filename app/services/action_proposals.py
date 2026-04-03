@@ -243,9 +243,13 @@ class ActionProposalsService:
                 return None
 
             conn.commit()
+
+            # Record feedback for learning
+            self._record_feedback(proposal_id, 'rejected')
+
             return self.get_proposal(proposal_id)
 
-    def mark_executed(self, proposal_id: int, result: Dict = None) -> Optional[Dict]:
+    def mark_executed(self, proposal_id: int, result: Dict = None, option_chosen: str = None) -> Optional[Dict]:
         """Marca proposta como executada"""
         with get_db() as conn:
             cursor = conn.cursor()
@@ -263,11 +267,35 @@ class ActionProposalsService:
                 return None
 
             conn.commit()
+
+            # Record feedback for learning
+            self._record_feedback(proposal_id, 'accepted', option_chosen)
+
             return self.get_proposal(proposal_id)
 
     def dismiss_proposal(self, proposal_id: int) -> Optional[Dict]:
         """Ignora uma proposta (mesmo que rejeitar mas sem conotacao negativa)"""
-        return self.reject_proposal(proposal_id, reason="Ignorado pelo usuario")
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE action_proposals
+                SET status = 'rejected',
+                    responded_at = NOW(),
+                    ai_reasoning = COALESCE(ai_reasoning, '') || ' | Ignorado pelo usuario'
+                WHERE id = %s AND status = 'pending'
+                RETURNING id
+            """, (proposal_id,))
+
+            result = cursor.fetchone()
+            if not result:
+                return None
+
+            conn.commit()
+
+            # Record feedback for learning (dismissed is different from rejected)
+            self._record_feedback(proposal_id, 'dismissed')
+
+            return self.get_proposal(proposal_id)
 
     def expire_old_proposals(self) -> int:
         """Marca propostas expiradas"""
@@ -322,6 +350,17 @@ class ActionProposalsService:
 
             row = cursor.fetchone()
             return dict(row) if row else {}
+
+    def _record_feedback(self, proposal_id: int, user_action: str, option_chosen: str = None):
+        """Record feedback for learning system."""
+        try:
+            from services.analyzer_feedback import get_feedback_service
+            feedback_service = get_feedback_service()
+            feedback_service.record_feedback(proposal_id, user_action, option_chosen)
+        except Exception as e:
+            # Don't fail the main operation if feedback recording fails
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to record feedback: {e}")
 
     def _serialize_proposal(self, row: Dict) -> Dict:
         """Serializa proposta para JSON"""

@@ -293,6 +293,20 @@ Responda em JSON:
             return {"error": f"API error {response.status_code}: {error_text}"}
 
         result = response.json()
+
+        # Validate response structure
+        if "content" not in result:
+            logger.error(f"No 'content' in response: {list(result.keys())}")
+            return {"error": f"Invalid response structure: {list(result.keys())}"}
+
+        if not result["content"] or len(result["content"]) == 0:
+            logger.error("Empty content array in response")
+            return {"error": "Empty content array"}
+
+        if "text" not in result["content"][0]:
+            logger.error(f"No 'text' in content[0]: {result['content'][0]}")
+            return {"error": f"No text in response: {result['content'][0].get('type', 'unknown')}"}
+
         content = result["content"][0]["text"]
         logger.info(f"Claude response length: {len(content)}")
 
