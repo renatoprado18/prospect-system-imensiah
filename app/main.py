@@ -9527,10 +9527,11 @@ async def test_proposal_notification(request: Request, contact_name: str = "Pedr
 
 
 @app.get("/api/action-proposals/{proposal_id}/quick-action")
-async def quick_action_proposal(proposal_id: int, option: str):
+async def quick_action_proposal(proposal_id: int, option: str, confirm: bool = False):
     """
     Endpoint para executar acao rapidamente via link (sem auth).
     Usado pelos links enviados via WhatsApp.
+    Requer confirm=true para executar (evita execucao por preview de link).
     """
     from services.action_proposals import get_action_proposals
     from services.action_executor import get_action_executor
@@ -9558,7 +9559,39 @@ async def quick_action_proposal(proposal_id: int, option: str):
             </body></html>
         """)
 
-    # Executar acao
+    # Se não confirmou, mostrar página de confirmação
+    if not confirm:
+        option_label = option.replace('_', ' ').title()
+        return HTMLResponse(content=f"""
+            <html>
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                    body {{ font-family: -apple-system, sans-serif; padding: 20px; text-align: center; background: #f5f5f5; }}
+                    .card {{ background: white; border-radius: 12px; padding: 24px; max-width: 400px; margin: 20px auto; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
+                    h2 {{ color: #333; margin-bottom: 8px; }}
+                    .desc {{ color: #666; margin-bottom: 20px; }}
+                    .action {{ font-weight: 600; color: #6366f1; margin: 16px 0; }}
+                    .btn {{ display: inline-block; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-weight: 600; margin: 8px; }}
+                    .btn-primary {{ background: #6366f1; color: white; }}
+                    .btn-secondary {{ background: #e5e7eb; color: #374151; }}
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <h2>📋 {proposal['title']}</h2>
+                    <p class="desc">{proposal.get('description', '')}</p>
+                    <p class="action">Ação: {option_label}</p>
+                    <div>
+                        <a href="?option={option}&confirm=true" class="btn btn-primary">✓ Confirmar</a>
+                        <a href="/" class="btn btn-secondary">✕ Cancelar</a>
+                    </div>
+                </div>
+            </body>
+            </html>
+        """)
+
+    # Executar acao (confirmado)
     result = await executor.execute(proposal_id, option_id=option)
 
     if result.get('success'):
