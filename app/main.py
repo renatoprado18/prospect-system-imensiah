@@ -11344,46 +11344,34 @@ async def get_contact_calendar_events(request: Request, contact_id: int, limit: 
                 elif isinstance(e, str):
                     contact_emails.append(e.lower())
 
-    from datetime import datetime, timedelta
+    # Se não tem email, não há como filtrar por participante
+    if not contact_emails:
+        return {"events": [], "total": 0, "message": "Contato sem email cadastrado"}
 
     unique_items = []
     seen_ids = set()
 
-    # 1. Primeiro: buscar eventos onde o contato é participante (por email)
-    if contact_emails:
-        all_events = await calendar.list_events(
-            access_token=access_token,
-            time_min=datetime.utcnow() - timedelta(days=365),
-            time_max=datetime.utcnow() + timedelta(days=365),
-            max_results=100
-        )
-        if "items" in all_events:
-            for item in all_events.get("items", []):
-                attendees = item.get("attendees", [])
-                for attendee in attendees:
-                    if attendee.get("email", "").lower() in contact_emails:
-                        if item.get("id") not in seen_ids:
-                            unique_items.append(item)
-                            seen_ids.add(item.get("id"))
-                        break
+    # Buscar pelo nome do contato usando search_events (busca em todos os calendários)
+    contact_name = contact["nome"]
+    name_parts = contact_name.split()
+    search_term = name_parts[0] if name_parts else contact_name
 
-    # 2. Se não encontrou por email, buscar pelo nome usando search_events
-    if not unique_items:
-        contact_name = contact["nome"]
-        name_parts = contact_name.split()
-        # Buscar pelo primeiro nome (mais comum em títulos de reunião)
-        search_term = name_parts[0] if name_parts else contact_name
+    search_result = await calendar.search_events(
+        access_token=access_token,
+        query=search_term,
+        max_results=50
+    )
 
-        search_result = await calendar.search_events(
-            access_token=access_token,
-            query=search_term,
-            max_results=20
-        )
-        if "items" in search_result:
-            for item in search_result.get("items", []):
-                if item.get("id") not in seen_ids:
-                    unique_items.append(item)
-                    seen_ids.add(item.get("id"))
+    # Filtrar APENAS eventos onde o email do contato está nos participantes
+    if "items" in search_result:
+        for item in search_result.get("items", []):
+            attendees = item.get("attendees", [])
+            for attendee in attendees:
+                if attendee.get("email", "").lower() in contact_emails:
+                    if item.get("id") not in seen_ids:
+                        unique_items.append(item)
+                        seen_ids.add(item.get("id"))
+                    break
 
     # Formatar eventos
     events = []
