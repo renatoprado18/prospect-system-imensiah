@@ -530,8 +530,10 @@ async def generate_weekly_digest(limit: int = 5) -> dict:
                     error_detail = f"{str(error_msg)} [keys: {list(hot_take.keys())}]"
                     errors.append(error_detail)
             except Exception as e:
-                logger.error(f"Erro ao processar notícia: {type(e).__name__}: {e}")
-                errors.append(f"{type(e).__name__}: {e}")
+                import traceback
+                tb = traceback.format_exc()
+                logger.error(f"Erro ao processar notícia: {type(e).__name__}: {e}\n{tb}")
+                errors.append(f"{type(e).__name__}: {e} | Traceback: {tb[-200:]}")
                 continue
 
         return {
