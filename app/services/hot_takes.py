@@ -498,9 +498,11 @@ async def generate_weekly_digest(limit: int = 5) -> dict:
         # 5. Gera hot takes para cada notícia selecionada
         hot_takes = []
         errors = []
-        for news in selected_news:
+        for i, news in enumerate(selected_news):
             try:
-                logger.info(f"Gerando hot take para: {news.get('title', '')[:50]}")
+                logger.info(f"Processing news {i}: type={type(news).__name__}, keys={list(news.keys()) if isinstance(news, dict) else 'N/A'}")
+                news_title = news.get('title', '') if isinstance(news, dict) else str(news)
+                logger.info(f"Gerando hot take para: {news_title[:50]}")
                 hot_take = await generate_hot_take(news, articles)
                 if "error" not in hot_take:
                     hot_take_id = save_hot_take(hot_take)
