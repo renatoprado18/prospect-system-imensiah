@@ -1256,6 +1256,23 @@ def init_db():
             ON action_proposals(urgency, criado_em DESC) WHERE status = 'pending'
         ''')
 
+        # Push Subscriptions - Browser push notification subscriptions
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id SERIAL PRIMARY KEY,
+                endpoint TEXT UNIQUE NOT NULL,
+                keys JSONB NOT NULL,
+                user_id TEXT,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user
+            ON push_subscriptions(user_id)
+        ''')
+
         # Timeline Summaries - Cache de resumos IA para grupos de mensagens
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS timeline_summaries (

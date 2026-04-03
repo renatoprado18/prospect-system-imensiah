@@ -490,6 +490,19 @@ async def intel_duplicados(request: Request):
 
 
 # NOTE: Parameterized route MUST come AFTER specific routes
+@app.get("/contatos/{contact_id}/editar", response_class=HTMLResponse)
+async def intel_contato_editar(request: Request, contact_id: int):
+    """INTEL Contato - Edicao completa do contato"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_contact_edit.html", {
+        "request": request,
+        "user": user,
+        "contact_id": contact_id
+    })
+
+
 @app.get("/contatos/{contact_id}", response_class=HTMLResponse)
 async def intel_contato_detail(request: Request, contact_id: int):
     """INTEL Contato - Detalhe do contato"""
@@ -3439,6 +3452,12 @@ async def merge_contacts_endpoint(request: Request):
     """
     Merge duplicate contacts.
     Also propagates changes to Google Contacts (updates merged, deletes duplicates).
+
+    Body:
+    - contact_ids: List of contact IDs to merge (first one is primary)
+    - propagate: bool - Propagate to Google Contacts (default True)
+    - field_choices: Optional dict mapping field -> contact_id or 'combine'
+      Ex: {"nome": 123, "emails": "combine", "empresa": 456}
     """
     user = get_current_user(request)
     if not user or user.get("role") != "admin":
@@ -3447,6 +3466,7 @@ async def merge_contacts_endpoint(request: Request):
     body = await request.json()
     contact_ids = body.get('contact_ids', [])
     propagate = body.get('propagate', True)
+    field_choices = body.get('field_choices')
 
     if len(contact_ids) < 2:
         raise HTTPException(status_code=400, detail="Precisa de pelo menos 2 contatos para merge")
@@ -3465,6 +3485,52 @@ async def merge_contacts_endpoint(request: Request):
         conn.close()
         raise HTTPException(status_code=404, detail="Contatos nao encontrados")
 
+    # When field_choices is provided and we have exactly 2 contacts,
+    # use the merge_contatos function that respects user choices
+    if field_choices and len(contacts) == 2:
+        keep_id = contact_ids[0]  # First ID is primary
+        merge_id = contact_ids[1]
+
+        # Use merge_contatos from duplicados.py which now supports field_choices
+        merge_result = merge_contatos(keep_id, merge_id, field_choices)
+
+        if "error" in merge_result:
+            conn.close()
+            raise HTTPException(status_code=400, detail=merge_result["error"])
+
+        # Propagate to Google if requested
+        google_results = {}
+        if propagate:
+            try:
+                # Get updated contact and deleted contact info
+                cursor.execute("SELECT * FROM contacts WHERE id = %s", (keep_id,))
+                merged_contact = row_to_dict(cursor.fetchone())
+
+                # Find the deleted contact's Google ID for propagation
+                deleted_contact = next((c for c in contacts if c['id'] == merge_id), None)
+                if deleted_contact and deleted_contact.get('google_contact_id'):
+                    google_results = await propagate_merge_to_google(
+                        merged_contact,
+                        [deleted_contact],
+                        conn,
+                        google_contacts_module
+                    )
+            except Exception as e:
+                google_results = {"error": str(e)}
+
+        conn.close()
+        return {
+            'status': 'merged',
+            'primary_id': keep_id,
+            'deleted_ids': [merge_id],
+            'merged_fields': merge_result.get('merged_fields', []),
+            'messages_transferred': merge_result.get('messages_transferred', 0),
+            'conversations_transferred': merge_result.get('conversations_transferred', 0),
+            'tasks_transferred': merge_result.get('tasks_transferred', 0),
+            'google_propagation': google_results
+        }
+
+    # Original logic for automatic merge (no field_choices)
     if propagate:
         result = await merge_duplicate_contacts_with_propagation(
             contacts, conn, google_contacts_module
@@ -10178,6 +10244,89 @@ async def notifications_stream(
 
     # Note: SSE may not work well on Vercel serverless, better for local dev
     return EventSourceResponse(notification_event_generator(request, interval))
+
+
+# =============================================================================
+# PUSH NOTIFICATIONS ENDPOINTS
+# =============================================================================
+
+from pydantic import BaseModel
+
+class PushSubscription(BaseModel):
+    endpoint: str
+    keys: dict
+
+
+@app.get("/api/push/vapid-public-key")
+async def get_vapid_public_key():
+    """Get VAPID public key for push subscription."""
+    from services.push_notifications import get_push_service
+    service = get_push_service()
+    public_key = service.get_public_key()
+
+    if not public_key:
+        return {"configured": False, "key": None}
+
+    return {"configured": True, "key": public_key}
+
+
+@app.post("/api/push/subscribe")
+async def subscribe_push(request: Request, subscription: PushSubscription):
+    """Subscribe to push notifications."""
+    from services.push_notifications import get_push_service
+
+    user = get_current_user(request)
+    user_id = user.get('email') if user else None
+
+    service = get_push_service()
+
+    if not service.is_configured():
+        return {"success": False, "error": "Push notifications not configured on server"}
+
+    success = service.save_subscription(
+        {
+            'endpoint': subscription.endpoint,
+            'keys': subscription.keys
+        },
+        user_id=user_id
+    )
+
+    return {"success": success}
+
+
+@app.post("/api/push/unsubscribe")
+async def unsubscribe_push(request: Request, subscription: PushSubscription):
+    """Unsubscribe from push notifications."""
+    from services.push_notifications import get_push_service
+
+    service = get_push_service()
+    success = service.remove_subscription(subscription.endpoint)
+
+    return {"success": success}
+
+
+@app.post("/api/push/test")
+async def test_push_notification(request: Request):
+    """Send a test push notification (for debugging)."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.push_notifications import get_push_service
+
+    service = get_push_service()
+
+    if not service.is_configured():
+        return {"success": False, "error": "Push notifications not configured"}
+
+    result = service.send_notification(
+        title="INTEL Test",
+        body="Push notifications estao funcionando!",
+        data={"url": "/rap"},
+        tag="test-notification"
+    )
+
+    return result
 
 
 @app.get("/api/activity/recent")

@@ -368,15 +368,18 @@ def encontrar_duplicados(
     }
 
 
-def merge_contatos(keep_id: int, merge_id: int) -> Dict:
+def merge_contatos(keep_id: int, merge_id: int, field_choices: Optional[Dict] = None) -> Dict:
     """
-    Merge dois contatos, mantendo dados mais completos.
+    Merge dois contatos, mantendo dados mais completos ou respeitando escolhas do usuario.
 
     O contato merge_id sera excluido apos transferir dados para keep_id.
 
     Args:
         keep_id: ID do contato a manter
         merge_id: ID do contato a ser mergeado
+        field_choices: Opcional. Dict mapeando campo -> contact_id ou 'combine'
+            Ex: {"nome": 123, "emails": "combine", "empresa": 456}
+            Se nao fornecido, usa logica automatica (comportamento atual)
 
     Returns:
         Dict com resultado do merge
@@ -404,23 +407,57 @@ def merge_contatos(keep_id: int, merge_id: int) -> Dict:
         updates = {}
         merged_fields = []
 
-        # Para cada campo, manter o valor mais completo
-        text_fields = ["empresa", "cargo", "linkedin", "foto_url", "apelido"]
+        # Helper para decidir valor de um campo
+        def get_field_value(field, keep_val, merge_val, is_combine_field=False):
+            """Decide qual valor usar para um campo."""
+            if field_choices and field in field_choices:
+                choice = field_choices[field]
+                if choice == "combine" and is_combine_field:
+                    return "combine"  # Flag especial para combinar
+                elif choice == keep_id:
+                    return keep_val
+                elif choice == merge_id:
+                    return merge_val
+                else:
+                    # Se o choice nao for nem keep_id nem merge_id, assume keep
+                    return keep_val
+            # Se nao tem field_choices ou o campo nao esta nele, usa logica automatica
+            return None  # Sinaliza para usar logica automatica
+
+        # Para cada campo texto, respeitar escolha do usuario ou manter o mais completo
+        text_fields = ["nome", "empresa", "cargo", "linkedin", "foto_url", "apelido",
+                       "contexto", "aniversario", "circulo", "manual_notes"]
         for field in text_fields:
             keep_val = keep.get(field)
             merge_val = merge.get(field)
-            if not keep_val and merge_val:
-                updates[field] = merge_val
-                merged_fields.append(field)
+
+            chosen = get_field_value(field, keep_val, merge_val)
+            if chosen is not None:
+                # Usuario escolheu
+                if chosen != keep_val and chosen:
+                    updates[field] = chosen
+                    merged_fields.append(field)
+            else:
+                # Logica automatica: manter valor mais completo
+                if not keep_val and merge_val:
+                    updates[field] = merge_val
+                    merged_fields.append(field)
 
         # Mesclar emails
         keep_emails = extract_emails(keep.get("emails"))
         merge_emails = extract_emails(merge.get("emails"))
-        all_emails = keep_emails | merge_emails
-        if len(all_emails) > len(keep_emails):
-            # Converter para formato JSON
-            email_list = [{"email": e} for e in all_emails]
-            updates["emails"] = json.dumps(email_list)
+
+        email_choice = get_field_value("emails", keep.get("emails"), merge.get("emails"), is_combine_field=True)
+        if email_choice == "combine" or email_choice is None:
+            # Combinar todos
+            all_emails = keep_emails | merge_emails
+            if len(all_emails) > len(keep_emails):
+                email_list = [{"email": e} for e in all_emails]
+                updates["emails"] = json.dumps(email_list)
+                merged_fields.append("emails")
+        elif email_choice:
+            # Usuario escolheu um especifico
+            updates["emails"] = json.dumps(json.loads(email_choice) if isinstance(email_choice, str) else email_choice)
             merged_fields.append("emails")
 
         # Mesclar telefones
@@ -437,13 +474,20 @@ def merge_contatos(keep_id: int, merge_id: int) -> Dict:
         except:
             pass
 
-        all_phones = keep_phones | merge_phones
-        if len(all_phones) > len(keep_phones):
-            phone_list = [json.loads(p) for p in all_phones]
-            updates["telefones"] = json.dumps(phone_list)
+        phone_choice = get_field_value("telefones", keep.get("telefones"), merge.get("telefones"), is_combine_field=True)
+        if phone_choice == "combine" or phone_choice is None:
+            # Combinar todos
+            all_phones = keep_phones | merge_phones
+            if len(all_phones) > len(keep_phones):
+                phone_list = [json.loads(p) for p in all_phones]
+                updates["telefones"] = json.dumps(phone_list)
+                merged_fields.append("telefones")
+        elif phone_choice:
+            # Usuario escolheu um especifico
+            updates["telefones"] = json.dumps(json.loads(phone_choice) if isinstance(phone_choice, str) else phone_choice)
             merged_fields.append("telefones")
 
-        # Mesclar tags
+        # Mesclar tags (sempre combina por padrao)
         keep_tags = set()
         merge_tags = set()
         try:
@@ -462,8 +506,39 @@ def merge_contatos(keep_id: int, merge_id: int) -> Dict:
             updates["tags"] = json.dumps(list(all_tags))
             merged_fields.append("tags")
 
-        # Manter maior score
-        if (merge.get("score") or 0) > (keep.get("score") or 0):
+        # Mesclar enderecos e relacionamentos (novos campos)
+        for json_field in ["enderecos", "relacionamentos", "datas_importantes"]:
+            keep_data = []
+            merge_data = []
+            try:
+                keep_data = json.loads(keep.get(json_field) or "[]")
+            except:
+                pass
+            try:
+                merge_data = json.loads(merge.get(json_field) or "[]")
+            except:
+                pass
+
+            field_choice = get_field_value(json_field, keep.get(json_field), merge.get(json_field), is_combine_field=True)
+            if field_choice == "combine" or field_choice is None:
+                # Combinar (evitar duplicatas por comparacao serializada)
+                keep_set = set(json.dumps(d, sort_keys=True) for d in keep_data)
+                merge_set = set(json.dumps(d, sort_keys=True) for d in merge_data)
+                all_data = keep_set | merge_set
+                if len(all_data) > len(keep_set):
+                    updates[json_field] = json.dumps([json.loads(d) for d in all_data])
+                    merged_fields.append(json_field)
+            elif field_choice:
+                # Usuario escolheu um especifico
+                updates[json_field] = json.dumps(json.loads(field_choice) if isinstance(field_choice, str) else field_choice)
+                merged_fields.append(json_field)
+
+        # Manter maior score (se nao especificado)
+        score_choice = get_field_value("score", keep.get("score"), merge.get("score"))
+        if score_choice is not None and score_choice != keep.get("score"):
+            updates["score"] = score_choice
+            merged_fields.append("score")
+        elif score_choice is None and (merge.get("score") or 0) > (keep.get("score") or 0):
             updates["score"] = merge.get("score")
             merged_fields.append("score")
 

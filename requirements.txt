@@ -18,3 +18,6 @@ psycopg2-binary==2.9.9
 # SSE for real-time notifications
 sse-starlette==1.8.2
 python-dotenv
+
+# Web Push Notifications
+pywebpush==1.14.0

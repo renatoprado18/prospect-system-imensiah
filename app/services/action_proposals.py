@@ -74,7 +74,26 @@ class ActionProposalsService:
             proposal_id = cursor.fetchone()['id']
             conn.commit()
 
-            return self.get_proposal(proposal_id)
+            proposal = self.get_proposal(proposal_id)
+
+            # Send push notification for new proposals
+            if proposal:
+                self._send_push_notification(proposal)
+
+            return proposal
+
+    def _send_push_notification(self, proposal: Dict):
+        """Send browser push notification for a new proposal."""
+        try:
+            from services.push_notifications import get_push_service
+            push_service = get_push_service()
+
+            if push_service.is_configured():
+                push_service.send_proposal_notification(proposal)
+        except Exception as e:
+            # Don't fail proposal creation if push fails
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to send push notification: {e}")
 
     def create_from_analysis(
         self,
