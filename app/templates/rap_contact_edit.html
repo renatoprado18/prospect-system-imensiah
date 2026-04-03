@@ -968,7 +968,8 @@
                 const response = await fetch(`/api/contacts/${contactId}`);
                 if (!response.ok) throw new Error('Contato nao encontrado');
 
-                contactData = await response.json();
+                const data = await response.json();
+                contactData = data.contact || data;  // API returns {contact: {...}}
                 populateForm(contactData);
                 document.getElementById('loadingOverlay').style.display = 'none';
             } catch (error) {
