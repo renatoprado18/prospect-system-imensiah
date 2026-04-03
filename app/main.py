@@ -11294,15 +11294,15 @@ def link_event_to_prospect(request: Request, event_id: int, prospect_id: int):
 
 @app.get("/api/contacts/{contact_id}/calendar")
 async def get_contact_calendar_events(request: Request, contact_id: int, limit: int = 20):
-    """Lista eventos de um contato - busca no Google Calendar pelo nome"""
+    """Lista eventos de um contato - busca no Google Calendar pelo nome e email"""
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
-    # Buscar dados do contato
+    # Buscar dados do contato incluindo emails
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT nome, empresa FROM contacts WHERE id = %s", (contact_id,))
+        cursor.execute("SELECT nome, empresa, emails FROM contacts WHERE id = %s", (contact_id,))
         contact = cursor.fetchone()
 
         if not contact:
@@ -11327,9 +11327,25 @@ async def get_contact_calendar_events(request: Request, contact_id: int, limit: 
     from integrations.google_calendar import GoogleCalendarIntegration
     calendar = GoogleCalendarIntegration()
 
+    # Extrair emails do contato
+    contact_emails = []
+    if contact.get("emails"):
+        emails_data = contact["emails"]
+        if isinstance(emails_data, str):
+            import json
+            try:
+                emails_data = json.loads(emails_data)
+            except:
+                emails_data = []
+        if isinstance(emails_data, list):
+            for e in emails_data:
+                if isinstance(e, dict) and e.get("email"):
+                    contact_emails.append(e["email"].lower())
+                elif isinstance(e, str):
+                    contact_emails.append(e.lower())
+
     # Buscar eventos pelo nome do contato
     contact_name = contact["nome"]
-    # Pegar sobrenome se tiver mais de um nome
     name_parts = contact_name.split()
     search_term = name_parts[-1] if len(name_parts) > 1 else contact_name
 
@@ -11339,12 +11355,46 @@ async def get_contact_calendar_events(request: Request, contact_id: int, limit: 
         max_results=limit
     )
 
-    if "error" in result:
-        return {"events": [], "total": 0, "error": result.get("error")}
+    all_items = result.get("items", []) if "error" not in result else []
+
+    # Também buscar pelo primeiro nome se diferente
+    if len(name_parts) > 1:
+        first_name_result = await calendar.search_events(
+            access_token=access_token,
+            query=name_parts[0],
+            max_results=limit
+        )
+        if "items" in first_name_result:
+            all_items.extend(first_name_result["items"])
+
+    # Buscar eventos futuros e filtrar por email do participante
+    if contact_emails:
+        from datetime import datetime, timedelta
+        upcoming = await calendar.list_events(
+            access_token=access_token,
+            time_min=datetime.utcnow() - timedelta(days=30),
+            time_max=datetime.utcnow() + timedelta(days=90),
+            max_results=50
+        )
+        if "items" in upcoming:
+            for item in upcoming.get("items", []):
+                attendees = item.get("attendees", [])
+                for attendee in attendees:
+                    if attendee.get("email", "").lower() in contact_emails:
+                        all_items.append(item)
+                        break
+
+    # Deduplicar por ID
+    seen_ids = set()
+    unique_items = []
+    for item in all_items:
+        if item.get("id") not in seen_ids:
+            seen_ids.add(item.get("id"))
+            unique_items.append(item)
 
     # Formatar eventos
     events = []
-    for item in result.get("items", []):
+    for item in unique_items:
         start_info = item.get("start", {})
         end_info = item.get("end", {})
 
