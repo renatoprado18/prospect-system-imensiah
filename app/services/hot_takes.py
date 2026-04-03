@@ -258,11 +258,19 @@ async def generate_hot_take(news_item: dict, articles: list[dict] = None) -> dic
         logger.error(f"Error building articles_text: {e}")
         articles_text = "(erro ao processar artigos)"
 
+    # Build prompt with error handling
+    try:
+        news_title = news_item.get('title', '') if isinstance(news_item, dict) else str(news_item)
+        news_desc = news_item.get('description', '') if isinstance(news_item, dict) else ''
+    except Exception as pe:
+        logger.error(f"Error accessing news_item: {type(pe).__name__}: {pe}, news_item type: {type(news_item)}")
+        return {"error": f"Error accessing news_item: {pe}"}
+
     prompt = f"""Você é Renato Almeida Prado, especialista em NeoGovernança e Governança na Era da Complexidade.
 
 NOTÍCIA:
-Título: {news_item.get('title', '')}
-Descrição: {news_item.get('description', '')}
+Título: {news_title}
+Descrição: {news_desc}
 
 ARTIGOS DISPONÍVEIS:
 {articles_text}
