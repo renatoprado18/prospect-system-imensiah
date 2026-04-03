@@ -339,6 +339,15 @@ def init_db():
             ADD COLUMN IF NOT EXISTS health_profissional INTEGER
         ''')
 
+        # Enderecos e Relacionamentos - Gestão completa de contatos
+        cursor.execute('''
+            ALTER TABLE contacts
+            ADD COLUMN IF NOT EXISTS enderecos JSONB DEFAULT '[]',
+            ADD COLUMN IF NOT EXISTS relacionamentos JSONB DEFAULT '[]'
+        ''')
+        # enderecos: [{"tipo": "residencial", "logradouro": "...", "cidade": "...", "estado": "...", "cep": "...", "pais": "Brasil"}]
+        # relacionamentos: [{"tipo": "conjuge", "nome": "João", "contact_id": 123}]
+
         # Adicionar colunas de Enriquecimento Avancado
         cursor.execute('''
             ALTER TABLE contacts

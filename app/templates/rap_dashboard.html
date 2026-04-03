@@ -765,6 +765,15 @@
             50% { box-shadow: 0 2px 16px rgba(239, 68, 68, 0.2); }
         }
 
+        .pulse-urgent {
+            animation: pulse-new 0.5s ease-in-out 3;
+        }
+
+        @keyframes pulse-new {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+
         .proposals-header {
             display: flex;
             justify-content: space-between;
@@ -2862,6 +2871,126 @@
         }
 
         initDashboard();
+
+        // ============== SSE Real-time Updates ==============
+        let sseConnection = null;
+        let sseReconnectAttempts = 0;
+        const SSE_MAX_RECONNECTS = 5;
+
+        function connectSSE() {
+            // Skip SSE on Vercel (serverless doesn't support long connections well)
+            // Use polling fallback instead
+            if (window.location.hostname.includes('vercel.app')) {
+                console.log('SSE: Using polling fallback for Vercel');
+                startPolling();
+                return;
+            }
+
+            try {
+                sseConnection = new EventSource('/api/notifications/stream?interval=15');
+
+                sseConnection.addEventListener('notifications', (event) => {
+                    const data = JSON.parse(event.data);
+
+                    // Update action proposals widget
+                    if (data.action_proposals) {
+                        updateProposalsFromSSE(data.action_proposals, data.proposals_count);
+                    }
+
+                    // Update header indicator
+                    updateHeaderIndicator(data.proposals_count || 0);
+                });
+
+                sseConnection.onerror = (error) => {
+                    console.warn('SSE connection error, falling back to polling');
+                    sseConnection.close();
+                    sseConnection = null;
+
+                    if (sseReconnectAttempts < SSE_MAX_RECONNECTS) {
+                        sseReconnectAttempts++;
+                        setTimeout(connectSSE, 5000 * sseReconnectAttempts);
+                    } else {
+                        startPolling();
+                    }
+                };
+
+                sseConnection.onopen = () => {
+                    console.log('SSE connected');
+                    sseReconnectAttempts = 0;
+                };
+
+            } catch (e) {
+                console.log('SSE not supported, using polling');
+                startPolling();
+            }
+        }
+
+        function startPolling() {
+            // Fallback polling every 30 seconds
+            setInterval(() => {
+                loadActionProposals();
+            }, 30000);
+        }
+
+        function updateProposalsFromSSE(proposals, count) {
+            const widget = document.getElementById('actionProposalsWidget');
+            const listEl = document.getElementById('proposalsList');
+            const countEl = document.getElementById('proposalsCount');
+
+            if (!proposals || proposals.length === 0) {
+                if (widget) widget.style.display = 'none';
+                return;
+            }
+
+            // Show widget
+            if (widget) widget.style.display = 'block';
+            if (countEl) countEl.textContent = count || proposals.length;
+
+            // Check for urgent
+            const hasUrgent = proposals.some(p => p.urgency === 'high');
+            if (widget) widget.classList.toggle('has-urgent', hasUrgent);
+
+            // Render proposals
+            if (listEl) listEl.innerHTML = proposals.map(p => renderProposalCard(p)).join('');
+
+            // Flash animation for new proposals
+            if (widget && hasUrgent) {
+                widget.classList.add('pulse-urgent');
+                setTimeout(() => widget.classList.remove('pulse-urgent'), 2000);
+            }
+        }
+
+        function updateHeaderIndicator(count) {
+            let indicator = document.getElementById('proposalsHeaderIndicator');
+
+            if (count > 0) {
+                if (!indicator) {
+                    // Create indicator if it doesn't exist
+                    const nav = document.querySelector('.navbar-nav');
+                    if (nav) {
+                        const indicatorHtml = `
+                            <li class="nav-item" id="proposalsHeaderIndicator">
+                                <a class="nav-link position-relative" href="#actionProposalsWidget" onclick="document.getElementById('actionProposalsWidget').scrollIntoView({behavior:'smooth'})">
+                                    <i class="bi bi-bell-fill text-warning"></i>
+                                    <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" id="proposalsHeaderBadge">
+                                        ${count}
+                                    </span>
+                                </a>
+                            </li>
+                        `;
+                        nav.insertAdjacentHTML('beforeend', indicatorHtml);
+                    }
+                } else {
+                    const badge = document.getElementById('proposalsHeaderBadge');
+                    if (badge) badge.textContent = count;
+                }
+            } else {
+                if (indicator) indicator.remove();
+            }
+        }
+
+        // Start SSE or polling
+        connectSSE();
 
         // ============== AI Suggestions ==============
         let currentSuggestions = [];

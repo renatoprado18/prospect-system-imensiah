@@ -3211,6 +3211,9 @@ class ContactCreate(BaseModel):
     categorias: Optional[List[str]] = []
     tags: Optional[List[str]] = []
     aniversario: Optional[str] = None
+    datas_importantes: Optional[List[dict]] = []
+    enderecos: Optional[List[dict]] = []
+    relacionamentos: Optional[List[dict]] = []
     google_contact_id: Optional[str] = None
     origem: Optional[str] = 'manual'
 
@@ -4489,7 +4492,8 @@ async def update_contact(contact_id: int, request: Request):
     # Build update query dynamically
     allowed_fields = ['nome', 'apelido', 'empresa', 'cargo', 'emails', 'telefones',
                       'linkedin', 'contexto', 'categorias', 'tags', 'aniversario',
-                      'circulo', 'circulo_manual', 'foto_url']
+                      'circulo', 'circulo_manual', 'foto_url', 'enderecos',
+                      'relacionamentos', 'datas_importantes', 'manual_notes']
 
     updates = []
     values = []
@@ -4526,8 +4530,9 @@ async def create_contact(contact: ContactCreate):
     cursor.execute('''
         INSERT INTO contacts (nome, apelido, empresa, cargo, emails, telefones,
                              linkedin, contexto, categorias, tags, aniversario,
+                             datas_importantes, enderecos, relacionamentos,
                              google_contact_id, origem)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
     ''', (
         contact.nome,
@@ -4541,6 +4546,9 @@ async def create_contact(contact: ContactCreate):
         json.dumps(contact.categorias),
         json.dumps(contact.tags),
         contact.aniversario,
+        json.dumps(contact.datas_importantes),
+        json.dumps(contact.enderecos),
+        json.dumps(contact.relacionamentos),
         contact.google_contact_id,
         contact.origem
     ))
@@ -10116,10 +10124,12 @@ from sse_starlette.sse import EventSourceResponse
 from services.notifications import get_notification_service
 
 async def notification_event_generator(request: Request, interval: int = 30):
-    """Generator para SSE de notificacoes"""
+    """Generator para SSE de notificacoes e action proposals"""
     import json
+    from services.action_proposals import get_action_proposals
 
     service = get_notification_service()
+    proposals_service = get_action_proposals()
 
     while True:
         if await request.is_disconnected():
@@ -10128,11 +10138,17 @@ async def notification_event_generator(request: Request, interval: int = 30):
         notifications = service.get_notifications(limit=10)
         counts = service.get_notification_count()
 
+        # Incluir action proposals pendentes
+        proposals = proposals_service.list_pending(limit=10)
+        proposals_count = len(proposals)
+
         yield {
             "event": "notifications",
             "data": json.dumps({
                 "notifications": notifications,
                 "counts": counts,
+                "action_proposals": proposals,
+                "proposals_count": proposals_count,
                 "timestamp": datetime.now().isoformat()
             })
         }
