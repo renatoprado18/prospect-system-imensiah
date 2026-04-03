@@ -11346,45 +11346,44 @@ async def get_contact_calendar_events(request: Request, contact_id: int, limit: 
 
     from datetime import datetime, timedelta
 
-    # Buscar todos os eventos do período
-    all_events = await calendar.list_events(
-        access_token=access_token,
-        time_min=datetime.utcnow() - timedelta(days=365),  # Último ano
-        time_max=datetime.utcnow() + timedelta(days=365),  # Próximo ano
-        max_results=100
-    )
-
     unique_items = []
     seen_ids = set()
 
-    # 1. Primeiro: eventos onde o contato é participante (por email)
-    if contact_emails and "items" in all_events:
-        for item in all_events.get("items", []):
-            attendees = item.get("attendees", [])
-            for attendee in attendees:
-                if attendee.get("email", "").lower() in contact_emails:
-                    if item.get("id") not in seen_ids:
-                        unique_items.append(item)
-                        seen_ids.add(item.get("id"))
-                    break
+    # 1. Primeiro: buscar eventos onde o contato é participante (por email)
+    if contact_emails:
+        all_events = await calendar.list_events(
+            access_token=access_token,
+            time_min=datetime.utcnow() - timedelta(days=365),
+            time_max=datetime.utcnow() + timedelta(days=365),
+            max_results=100
+        )
+        if "items" in all_events:
+            for item in all_events.get("items", []):
+                attendees = item.get("attendees", [])
+                for attendee in attendees:
+                    if attendee.get("email", "").lower() in contact_emails:
+                        if item.get("id") not in seen_ids:
+                            unique_items.append(item)
+                            seen_ids.add(item.get("id"))
+                        break
 
-    # 2. Se não encontrou por email, buscar pelo nome no título do evento
+    # 2. Se não encontrou por email, buscar pelo nome usando search_events
     if not unique_items:
         contact_name = contact["nome"]
         name_parts = contact_name.split()
-        # Usar sobrenome (mais específico) se disponível
-        search_names = [name_parts[-1].lower()] if name_parts else []
-        if len(name_parts) > 1:
-            search_names.append(name_parts[0].lower())  # Primeiro nome também
+        # Buscar pelo primeiro nome (mais comum em títulos de reunião)
+        search_term = name_parts[0] if name_parts else contact_name
 
-        if search_names and "items" in all_events:
-            for item in all_events.get("items", []):
-                summary = (item.get("summary") or "").lower()
-                for name in search_names:
-                    if name in summary and item.get("id") not in seen_ids:
-                        unique_items.append(item)
-                        seen_ids.add(item.get("id"))
-                        break
+        search_result = await calendar.search_events(
+            access_token=access_token,
+            query=search_term,
+            max_results=20
+        )
+        if "items" in search_result:
+            for item in search_result.get("items", []):
+                if item.get("id") not in seen_ids:
+                    unique_items.append(item)
+                    seen_ids.add(item.get("id"))
 
     # Formatar eventos
     events = []
