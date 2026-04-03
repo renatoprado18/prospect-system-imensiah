@@ -990,9 +990,13 @@
             document.getElementById('cargo').value = data.cargo || '';
             document.getElementById('manualNotes').value = data.manual_notes || '';
 
-            // Context
-            const contexto = data.contexto || 'professional';
-            document.querySelector(`input[name="contexto"][value="${contexto}"]`).checked = true;
+            // Context (handle comma-separated values like "personal,professional")
+            let contexto = data.contexto || 'professional';
+            if (contexto.includes(',')) {
+                contexto = contexto.includes('personal') ? 'personal' : 'professional';
+            }
+            const contextoRadio = document.querySelector(`input[name="contexto"][value="${contexto}"]`);
+            if (contextoRadio) contextoRadio.checked = true;
 
             // Circle
             const circulo = data.circulo || 5;
