@@ -332,12 +332,22 @@ Responda em JSON:
 
         content = first_content["text"]
         logger.info(f"Claude response length: {len(content)}")
+        logger.info(f"Claude response preview: {content[:500]}")
 
         # Parse JSON
         json_match = re.search(r'\{[\s\S]*\}', content)
         if json_match:
             try:
-                hot_take = json.loads(json_match.group())
+                parsed_json = json.loads(json_match.group())
+                logger.info(f"Parsed JSON keys: {list(parsed_json.keys())}")
+
+                # Check if Claude returned an error in JSON
+                if "error" in parsed_json and not all(k in parsed_json for k in ["hook", "body"]):
+                    error_val = parsed_json.get("error")
+                    logger.error(f"Claude returned error in JSON: {error_val}")
+                    return {"error": f"Claude JSON error: {error_val}"}
+
+                hot_take = parsed_json
                 hot_take["news_title"] = news_item.get("title", "")
                 hot_take["news_link"] = news_item.get("link", "")
                 hot_take["generated_at"] = datetime.now().isoformat()
@@ -486,8 +496,8 @@ async def generate_weekly_digest(limit: int = 5) -> dict:
                     logger.info(f"Hot take gerado com sucesso: {hot_take_id}")
                 else:
                     error_msg = hot_take.get('error', 'Unknown error')
-                    logger.warning(f"Erro ao gerar hot take: {error_msg}")
-                    errors.append(error_msg)
+                    logger.warning(f"Erro ao gerar hot take: {error_msg} (type: {type(error_msg).__name__})")
+                    errors.append(str(error_msg))
             except Exception as e:
                 logger.error(f"Erro ao processar notícia: {e}")
                 errors.append(str(e))
