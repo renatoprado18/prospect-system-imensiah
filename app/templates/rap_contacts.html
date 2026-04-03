@@ -1501,14 +1501,10 @@
             const contactsArray = Array.from(selectedContacts.values());
             if (contactsArray.length < 2) return;
 
-            const primaryId = contactsArray[0].id;
-            const mergeIds = contactsArray.slice(1).map(c => c.id);
-
-            // Build merge data with field choices
+            // Build merge data - all contact IDs, first one is kept
             const mergeData = {
-                keep_id: primaryId,
-                merge_id: mergeIds[0], // For now, merge one at a time
-                field_choices: mergeChoices
+                contact_ids: contactsArray.map(c => c.id),
+                propagate: true
             };
 
             try {
@@ -1521,7 +1517,8 @@
                 const result = await response.json();
 
                 if (response.ok) {
-                    alert(`Contatos mesclados com sucesso!`);
+                    const merged = result.merged_fields?.length || 0;
+                    alert(`Contatos mesclados com sucesso! ${merged} campos combinados.`);
                     closeMergeModal();
                     clearSelection();
                     loadContacts();
