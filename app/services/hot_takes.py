@@ -419,7 +419,7 @@ def save_hot_take(hot_take: dict, status: str = "draft") -> int:
             status
         ))
 
-        hot_take_id = cursor.fetchone()[0]
+        hot_take_id = cursor.fetchone()['id']
         conn.commit()
 
         return hot_take_id
