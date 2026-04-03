@@ -789,8 +789,8 @@
         }
 
         .profile-avatar-sm {
-            width: 52px;
-            height: 52px;
+            width: 80px;
+            height: 80px;
             border-radius: 50%;
             background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
             color: white;
@@ -798,7 +798,7 @@
             align-items: center;
             justify-content: center;
             font-weight: 700;
-            font-size: 1.2rem;
+            font-size: 1.8rem;
             flex-shrink: 0;
         }
 
@@ -5315,6 +5315,9 @@
         // Store messages data for insight analysis
         let intelMessagesData = null;
 
+        // Store calendar data for insight analysis
+        let intelCalendarData = null;
+
         async function loadIntelInsight() {
             const panel = document.getElementById('intelPanel');
             if (!panel) return;
@@ -5325,16 +5328,26 @@
             if (loadingDiv) loadingDiv.style.display = 'flex';
             if (contentDiv) contentDiv.style.display = 'none';
 
-            // Fetch messages to analyze conversation status
+            // Fetch messages and calendar in parallel
             try {
-                const response = await fetch(`/api/contacts/${contactId}/messages?limit=10`);
-                if (response.ok) {
-                    const data = await response.json();
+                const [messagesRes, calendarRes] = await Promise.all([
+                    fetch(`/api/contacts/${contactId}/messages?limit=10`),
+                    fetch(`/api/contacts/${contactId}/calendar`)
+                ]);
+
+                if (messagesRes.ok) {
+                    const data = await messagesRes.json();
                     intelMessagesData = data.messages || [];
                 }
+
+                if (calendarRes.ok) {
+                    const data = await calendarRes.json();
+                    intelCalendarData = data.events || [];
+                }
             } catch (e) {
-                console.log('Could not fetch messages for insight:', e);
+                console.log('Could not fetch data for insight:', e);
                 intelMessagesData = [];
+                intelCalendarData = [];
             }
 
             // Render insight with real data
@@ -5347,6 +5360,7 @@
 
             const contact = contactData.contact;
             const messages = intelMessagesData || [];
+            const calendarEvents = intelCalendarData || [];
 
             // Hide loading, show content
             const loadingDiv = document.getElementById('intelLoading');
@@ -5360,11 +5374,43 @@
             let recommendation = '';
             const actions = [];
 
-            // Analyze messages to determine conversation status
-            if (messages.length > 0) {
+            // Check for upcoming meetings FIRST (priority over messages)
+            const now = new Date();
+            const upcomingMeetings = calendarEvents.filter(ev => {
+                const eventDate = new Date(ev.start_datetime);
+                return eventDate > now;
+            }).sort((a, b) => new Date(a.start_datetime) - new Date(b.start_datetime));
+
+            if (upcomingMeetings.length > 0) {
+                const nextMeeting = upcomingMeetings[0];
+                const meetingDate = new Date(nextMeeting.start_datetime);
+                const daysUntil = Math.ceil((meetingDate - now) / (1000 * 60 * 60 * 24));
+                const timeStr = meetingDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                const dateStr = meetingDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+
+                if (daysUntil === 0) {
+                    situation = `📅 Reunião HOJE às ${timeStr}`;
+                    recommendation = nextMeeting.summary;
+                    actions.push({ id: 'meeting', label: 'Ver Detalhes', icon: 'calendar-event', primary: true });
+                } else if (daysUntil === 1) {
+                    situation = `📅 Reunião AMANHÃ às ${timeStr}`;
+                    recommendation = nextMeeting.summary;
+                    actions.push({ id: 'meeting', label: 'Ver Detalhes', icon: 'calendar-event', primary: true });
+                } else if (daysUntil <= 7) {
+                    situation = `📅 Reunião em ${daysUntil} dias (${dateStr})`;
+                    recommendation = nextMeeting.summary;
+                    actions.push({ id: 'meeting', label: 'Preparar', icon: 'calendar-event', primary: true });
+                } else {
+                    // Meeting is more than 7 days away, show message status instead but mention meeting
+                    contextItems.push(`📅 Reunião agendada ${dateStr} ${timeStr}`);
+                }
+            }
+
+            // If no upcoming meeting determined the situation, analyze messages
+            if (!situation && messages.length > 0) {
                 const lastMsg = messages[0]; // Most recent
                 const lastMsgDate = new Date(lastMsg.enviado_em || lastMsg.created_at);
-                const daysSince = Math.floor((new Date() - lastMsgDate) / (1000 * 60 * 60 * 24));
+                const daysSince = Math.floor((now - lastMsgDate) / (1000 * 60 * 60 * 24));
                 const isIncoming = lastMsg.direcao === 'incoming';
                 const preview = (lastMsg.conteudo || '').substring(0, 50);
 
@@ -5377,7 +5423,7 @@
                         actions.push({ id: 'reply', label: 'Responder', icon: 'reply', primary: true });
                     } else if (daysSince <= 3) {
                         situation = `💬 Aguardando resposta há ${daysSince} dia${daysSince > 1 ? 's' : ''}`;
-                        contextItems.push(`Última mensagem dele: "${preview}..."`);
+                        contextItems.push(`Última mensagem: "${preview}..."`);
                         recommendation = 'Não deixe a conversa esfriar - responda!';
                         actions.push({ id: 'reply', label: 'Responder', icon: 'reply', primary: true });
                     } else if (daysSince <= 7) {
@@ -5386,8 +5432,8 @@
                         actions.push({ id: 'reply', label: 'Responder Agora', icon: 'reply', primary: true });
                     } else {
                         situation = `🔴 Mensagem ignorada há ${daysSince} dias`;
-                        recommendation = 'Retome o contato com uma resposta ou nova mensagem';
-                        actions.push({ id: 'reconnect', label: 'Retomar Contato', icon: 'arrow-repeat', primary: true });
+                        recommendation = 'Retome o contato';
+                        actions.push({ id: 'reconnect', label: 'Retomar', icon: 'arrow-repeat', primary: true });
                     }
                 } else {
                     // Last message was from you - waiting for their reply
@@ -5397,23 +5443,23 @@
                         contextItems.push(`Você enviou mensagem ${diasTexto}`);
                     } else if (daysSince <= 14) {
                         situation = `Sem resposta há ${daysSince} dias`;
-                        contextItems.push('Considere um follow-up gentil');
+                        contextItems.push('Considere um follow-up');
                         actions.push({ id: 'reconnect', label: 'Follow-up', icon: 'arrow-repeat', primary: true });
                     } else {
                         situation = `⚠️ Conversa parada há ${daysSince} dias`;
-                        recommendation = 'Faça um novo contato para reativar o relacionamento';
+                        recommendation = 'Reative o relacionamento';
                         actions.push({ id: 'reconnect', label: 'Reativar', icon: 'arrow-repeat', primary: true });
                     }
                 }
-            } else {
-                // No messages - check for other interactions
+            } else if (!situation) {
+                // No meeting soon and no messages - check for other interactions
                 const lastInteraction = contact.ultima_interacao;
                 if (lastInteraction) {
                     const lastDate = new Date(lastInteraction);
-                    const daysSince = Math.floor((new Date() - lastDate) / (1000 * 60 * 60 * 24));
+                    const daysSince = Math.floor((now - lastDate) / (1000 * 60 * 60 * 24));
                     situation = `Última interação há ${daysSince} dias`;
                     if (daysSince > 30) {
-                        recommendation = 'Retome o contato para manter o relacionamento';
+                        recommendation = 'Retome o contato';
                         actions.push({ id: 'reconnect', label: 'Reconectar', icon: 'arrow-repeat', primary: true });
                     }
                 } else {
