@@ -13334,6 +13334,12 @@ async def api_project_editorial(project_id: int):
 
 # ============== HOT TAKES API ==============
 
+@app.get("/api/hot-takes/version")
+async def api_hot_takes_version():
+    """Versao do servico hot takes"""
+    return {"version": "2.1", "timestamp": "2026-04-03T17:00:00"}
+
+
 @app.get("/api/hot-takes")
 async def api_hot_takes_list(status: str = None, limit: int = 20):
     """Lista hot takes salvos"""
