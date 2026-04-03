@@ -12906,7 +12906,8 @@ async def editorial_page(request: Request):
         "projects": projects,
         "canais": EDITORIAL_CANAIS,
         "status_options": EDITORIAL_STATUS,
-        "tipos": EDITORIAL_TIPOS
+        "tipos": EDITORIAL_TIPOS,
+        "today": datetime.now()
     })
 
 

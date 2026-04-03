@@ -366,6 +366,137 @@ def get_calendar_view(year: int, month: int) -> Dict:
         }
 
 
+def bulk_schedule_posts(
+    post_ids: List[int],
+    start_date: datetime,
+    frequency_per_week: int = 3,
+    preferred_days: List[int] = None,  # 0=Mon, 1=Tue, etc
+    preferred_hours: List[int] = None,
+    create_tasks: bool = True,
+    create_events: bool = True
+) -> Dict:
+    """
+    Schedule multiple posts in bulk with optimal timing.
+
+    Args:
+        post_ids: List of post IDs to schedule
+        start_date: Starting date for scheduling
+        frequency_per_week: Posts per week (1-5)
+        preferred_days: Days of week (default: Tue=1, Wed=2, Thu=3)
+        preferred_hours: Hours to post (default: 9, 12)
+        create_tasks: Create tasks for each post
+        create_events: Create calendar events for each post
+
+    Returns:
+        Dict with scheduled posts and any errors
+    """
+    from datetime import date as date_type
+
+    # LinkedIn optimal defaults
+    if preferred_days is None:
+        preferred_days = [1, 2, 3]  # Tue, Wed, Thu
+    if preferred_hours is None:
+        preferred_hours = [9, 12]  # 9am, 12pm
+
+    scheduled = []
+    errors = []
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get posts to schedule (only drafts)
+        cursor.execute("""
+            SELECT * FROM editorial_posts
+            WHERE id = ANY(%s) AND status = 'draft'
+            ORDER BY criado_em ASC
+        """, (post_ids,))
+        posts = cursor.fetchall()
+
+        if not posts:
+            return {'scheduled': [], 'errors': ['No draft posts found']}
+
+        # Calculate scheduling slots
+        current_date = start_date.date() if isinstance(start_date, datetime) else start_date
+        hour_index = 0
+        day_index = 0
+        posts_this_week = 0
+        week_start = current_date
+
+        for post in posts:
+            # Find next available slot
+            while True:
+                # Check if we've exceeded posts per week
+                if posts_this_week >= frequency_per_week:
+                    # Move to next week
+                    days_until_next_week = 7 - current_date.weekday()
+                    current_date = current_date + timedelta(days=days_until_next_week)
+                    week_start = current_date
+                    posts_this_week = 0
+                    hour_index = 0
+                    day_index = 0
+
+                # Find next preferred day
+                target_day = preferred_days[day_index % len(preferred_days)]
+                days_until_target = (target_day - current_date.weekday()) % 7
+
+                if days_until_target == 0 and current_date == week_start:
+                    # If we're on the target day already, use it
+                    pass
+                elif days_until_target == 0:
+                    # Already used this day, go to next
+                    day_index += 1
+                    continue
+                else:
+                    current_date = current_date + timedelta(days=days_until_target)
+
+                # Check if still in same week
+                if (current_date - week_start).days >= 7:
+                    posts_this_week = frequency_per_week  # Force week change
+                    continue
+
+                break
+
+            # Set the time
+            hour = preferred_hours[hour_index % len(preferred_hours)]
+            pub_datetime = datetime.combine(current_date, datetime.min.time().replace(hour=hour, minute=0))
+
+            try:
+                # Schedule the post
+                result = schedule_post(
+                    post['id'],
+                    pub_datetime,
+                    create_task=create_tasks,
+                    create_event=create_events
+                )
+                scheduled.append({
+                    'post_id': post['id'],
+                    'title': post['article_title'],
+                    'scheduled_for': pub_datetime.isoformat()
+                })
+            except Exception as e:
+                errors.append({
+                    'post_id': post['id'],
+                    'error': str(e)
+                })
+
+            # Move to next slot
+            posts_this_week += 1
+            hour_index += 1
+            day_index += 1
+
+            # If we've used all hours for this day, move to next day
+            if hour_index >= len(preferred_hours):
+                hour_index = 0
+                current_date = current_date + timedelta(days=1)
+
+    return {
+        'scheduled': scheduled,
+        'errors': errors,
+        'total_scheduled': len(scheduled),
+        'total_errors': len(errors)
+    }
+
+
 def get_stats() -> Dict:
     """Get editorial calendar statistics"""
     with get_db() as conn:

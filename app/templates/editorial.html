@@ -412,6 +412,61 @@
         opacity: 0.3;
     }
 
+    /* Day/Hour checkboxes */
+    .day-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 12px;
+        background: var(--gray-100);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 0.875rem;
+        transition: all 0.2s;
+    }
+
+    .day-checkbox:has(input:checked) {
+        background: #0077b5;
+        color: white;
+    }
+
+    .day-checkbox input {
+        display: none;
+    }
+
+    /* Bulk post item */
+    .bulk-post-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .bulk-post-item:hover {
+        background: var(--gray-100);
+    }
+
+    .bulk-post-item.selected {
+        background: #e0f2fe;
+    }
+
+    .bulk-post-item input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+    }
+
+    .bulk-post-title {
+        flex: 1;
+        font-size: 0.875rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
     @media (max-width: 1024px) {
         .editorial-container {
             grid-template-columns: 1fr;
@@ -516,6 +571,10 @@
         <div class="sidebar-card">
             <h3>Acoes Rapidas</h3>
             <div class="quick-actions">
+                <button class="quick-action" onclick="openBulkScheduleModal()" style="background: linear-gradient(135deg, #0077b5, #00a0dc); color: white;">
+                    <i class="bi bi-calendar-plus"></i>
+                    Agendar em Lote (LinkedIn)
+                </button>
                 <button class="quick-action" onclick="openImportModal()">
                     <i class="bi bi-cloud-download"></i>
                     Importar Artigos do Site
@@ -611,6 +670,121 @@
                 <button class="btn-secondary" onclick="closeImportModal()">Cancelar</button>
                 <button class="btn-primary" onclick="importArticles()">
                     <i class="bi bi-cloud-download"></i> Importar Artigos
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk Schedule Modal -->
+<div class="ed-modal" id="bulk-schedule-modal">
+    <div class="ed-modal-box" style="max-width: 700px;">
+        <div class="ed-modal-header">
+            <h3><i class="bi bi-linkedin me-2" style="color: #0077b5;"></i>Agendar em Lote - LinkedIn</h3>
+            <button class="ed-modal-close" onclick="closeBulkScheduleModal()">&times;</button>
+        </div>
+        <div class="ed-modal-body">
+            <div style="background: #f0f9ff; border-radius: 10px; padding: 16px; margin-bottom: 20px;">
+                <h4 style="margin: 0 0 8px 0; font-size: 0.9rem; color: #0369a1;">
+                    <i class="bi bi-lightbulb me-1"></i> Horários Ideais para LinkedIn
+                </h4>
+                <p style="margin: 0; font-size: 0.85rem; color: #0c4a6e;">
+                    Terça, Quarta e Quinta às 9h ou 12h têm maior engajamento. O sistema vai distribuir os posts automaticamente.
+                </p>
+            </div>
+
+            <div class="form-group">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <label style="margin: 0;">Selecione os posts para agendar</label>
+                    <button type="button" onclick="selectAllPosts()" style="background: none; border: none; color: #0077b5; cursor: pointer; font-size: 0.875rem;">
+                        <i class="bi bi-check-all"></i> Selecionar Todos
+                    </button>
+                </div>
+                <div id="bulk-posts-list" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--gray-200); border-radius: 10px; padding: 8px;">
+                    <!-- Filled by JS -->
+                </div>
+                <small style="color: var(--gray-500);">
+                    <span id="selected-count">0</span> posts selecionados
+                </small>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div class="form-group">
+                    <label>Data de início</label>
+                    <input type="date" class="form-control" id="bulk-start-date"
+                        value="{{ today.strftime('%Y-%m-%d') if today else '' }}">
+                </div>
+                <div class="form-group">
+                    <label>Posts por semana</label>
+                    <select class="form-control" id="bulk-frequency">
+                        <option value="2">2x por semana</option>
+                        <option value="3" selected>3x por semana (Recomendado)</option>
+                        <option value="4">4x por semana</option>
+                        <option value="5">5x por semana</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Dias da semana</label>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <label class="day-checkbox">
+                        <input type="checkbox" value="0" id="day-mon"> Seg
+                    </label>
+                    <label class="day-checkbox">
+                        <input type="checkbox" value="1" id="day-tue" checked> Ter
+                    </label>
+                    <label class="day-checkbox">
+                        <input type="checkbox" value="2" id="day-wed" checked> Qua
+                    </label>
+                    <label class="day-checkbox">
+                        <input type="checkbox" value="3" id="day-thu" checked> Qui
+                    </label>
+                    <label class="day-checkbox">
+                        <input type="checkbox" value="4" id="day-fri"> Sex
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Horários</label>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <label class="day-checkbox">
+                        <input type="checkbox" value="8" id="hour-8"> 8h
+                    </label>
+                    <label class="day-checkbox">
+                        <input type="checkbox" value="9" id="hour-9" checked> 9h
+                    </label>
+                    <label class="day-checkbox">
+                        <input type="checkbox" value="12" id="hour-12" checked> 12h
+                    </label>
+                    <label class="day-checkbox">
+                        <input type="checkbox" value="17" id="hour-17"> 17h
+                    </label>
+                    <label class="day-checkbox">
+                        <input type="checkbox" value="18" id="hour-18"> 18h
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Automações</label>
+                <div style="display: flex; gap: 16px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="bulk-create-tasks" checked>
+                        <span>Criar tarefas</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="bulk-create-events" checked>
+                        <span>Criar eventos no calendário</span>
+                    </label>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--gray-200);">
+                <button class="btn-secondary" onclick="closeBulkScheduleModal()">Cancelar</button>
+                <button class="btn-primary" onclick="executeBulkSchedule()" style="background: #0077b5;">
+                    <i class="bi bi-calendar-check me-1"></i> Agendar Posts
                 </button>
             </div>
         </div>
@@ -790,6 +964,129 @@ async function deletePost(postId) {
 
 function openNewPostModal() {
     alert('Em breve: criacao de post manual');
+}
+
+// Bulk Schedule Functions
+let draftPosts = [];
+
+async function openBulkScheduleModal() {
+    // Load draft posts for LinkedIn
+    try {
+        const response = await fetch('/api/editorial?status=draft&canal=linkedin');
+        const data = await response.json();
+        draftPosts = data.posts || [];
+
+        const container = document.getElementById('bulk-posts-list');
+
+        if (draftPosts.length === 0) {
+            container.innerHTML = '<p style="text-align: center; color: var(--gray-500); padding: 20px;">Nenhum rascunho disponível para LinkedIn</p>';
+        } else {
+            container.innerHTML = draftPosts.map(post => `
+                <div class="bulk-post-item" onclick="togglePostSelection(${post.id}, this)">
+                    <input type="checkbox" id="bulk-post-${post.id}" onchange="updateSelectedCount()">
+                    <span class="bulk-post-title">${post.article_title}</span>
+                </div>
+            `).join('');
+        }
+
+        updateSelectedCount();
+        document.getElementById('bulk-schedule-modal').classList.add('show');
+    } catch (err) {
+        alert('Erro ao carregar posts: ' + err.message);
+    }
+}
+
+function closeBulkScheduleModal() {
+    document.getElementById('bulk-schedule-modal').classList.remove('show');
+}
+
+function togglePostSelection(postId, element) {
+    const checkbox = document.getElementById(`bulk-post-${postId}`);
+    checkbox.checked = !checkbox.checked;
+    element.classList.toggle('selected', checkbox.checked);
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const checkboxes = document.querySelectorAll('#bulk-posts-list input[type="checkbox"]:checked');
+    document.getElementById('selected-count').textContent = checkboxes.length;
+}
+
+function selectAllPosts() {
+    document.querySelectorAll('#bulk-posts-list input[type="checkbox"]').forEach(cb => {
+        cb.checked = true;
+        cb.closest('.bulk-post-item').classList.add('selected');
+    });
+    updateSelectedCount();
+}
+
+async function executeBulkSchedule() {
+    // Collect selected post IDs
+    const selectedIds = [];
+    document.querySelectorAll('#bulk-posts-list input[type="checkbox"]:checked').forEach(cb => {
+        const id = parseInt(cb.id.replace('bulk-post-', ''));
+        selectedIds.push(id);
+    });
+
+    if (selectedIds.length === 0) {
+        alert('Selecione pelo menos um post para agendar');
+        return;
+    }
+
+    // Collect settings
+    const startDate = document.getElementById('bulk-start-date').value;
+    const frequency = parseInt(document.getElementById('bulk-frequency').value);
+
+    const preferredDays = [];
+    document.querySelectorAll('[id^="day-"]:checked').forEach(cb => {
+        preferredDays.push(parseInt(cb.value));
+    });
+
+    const preferredHours = [];
+    document.querySelectorAll('[id^="hour-"]:checked').forEach(cb => {
+        preferredHours.push(parseInt(cb.value));
+    });
+
+    if (preferredDays.length === 0) {
+        alert('Selecione pelo menos um dia da semana');
+        return;
+    }
+
+    if (preferredHours.length === 0) {
+        alert('Selecione pelo menos um horário');
+        return;
+    }
+
+    const createTasks = document.getElementById('bulk-create-tasks').checked;
+    const createEvents = document.getElementById('bulk-create-events').checked;
+
+    // Execute
+    try {
+        const response = await fetch('/api/editorial/bulk-schedule', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                post_ids: selectedIds,
+                start_date: startDate,
+                frequency_per_week: frequency,
+                preferred_days: preferredDays,
+                preferred_hours: preferredHours,
+                create_tasks: createTasks,
+                create_events: createEvents
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            alert(`✅ ${result.total_scheduled} posts agendados com sucesso!${result.total_errors > 0 ? `\n⚠️ ${result.total_errors} erros` : ''}`);
+            location.reload();
+        } else {
+            alert('Erro: ' + (result.detail || 'Erro desconhecido'));
+        }
+    } catch (err) {
+        alert('Erro: ' + err.message);
+    }
 }
 
 // Close modals on backdrop click
