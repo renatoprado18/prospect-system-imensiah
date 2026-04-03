@@ -13337,7 +13337,7 @@ async def api_project_editorial(project_id: int):
 @app.get("/api/hot-takes/version")
 async def api_hot_takes_version():
     """Versao do servico hot takes"""
-    return {"version": "2.1", "timestamp": "2026-04-03T17:00:00"}
+    return {"version": "2.2", "timestamp": "2026-04-03T17:35:00"}
 
 
 @app.get("/api/hot-takes")
