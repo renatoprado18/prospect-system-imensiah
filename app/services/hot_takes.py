@@ -231,15 +231,26 @@ async def generate_hot_take(news_item: dict, articles: list[dict] = None) -> dic
 
     logger.info(f"API key present: {bool(ANTHROPIC_API_KEY)}, length: {len(ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else 0}")
 
-    # Lista de artigos disponíveis
-    articles_text = ""
-    if articles:
-        articles_text = "\n".join([
-            f"- {a.get('title', '')}: {a.get('description', '')[:100]}..."
-            for a in articles[:20]
-        ])
-    else:
-        articles_text = "(usar conhecimento geral sobre NeoGovernança e Governança na Complexidade)"
+    # Lista de artigos disponíveis - with error handling
+    try:
+        articles_text = ""
+        if articles:
+            safe_articles = []
+            for a in articles[:20]:
+                try:
+                    title = a.get('title', '') if isinstance(a, dict) else str(a)
+                    desc = a.get('description', '') if isinstance(a, dict) else ''
+                    desc_preview = desc[:100] if desc else ''
+                    safe_articles.append(f"- {title}: {desc_preview}...")
+                except Exception as ae:
+                    logger.warning(f"Error processing article: {ae}")
+                    continue
+            articles_text = "\n".join(safe_articles)
+        else:
+            articles_text = "(usar conhecimento geral sobre NeoGovernança e Governança na Complexidade)"
+    except Exception as e:
+        logger.error(f"Error building articles_text: {e}")
+        articles_text = "(erro ao processar artigos)"
 
     prompt = f"""Você é Renato Almeida Prado, especialista em NeoGovernança e Governança na Era da Complexidade.
 
