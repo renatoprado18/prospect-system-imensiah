@@ -1,0 +1,774 @@
+{% extends "rap_base.html" %}
+{% block title %}Hot Takes - INTEL{% endblock %}
+{% block page_title %}Hot Takes{% endblock %}
+
+{% block extra_css %}
+<style>
+    .hot-takes-container {
+        display: grid;
+        grid-template-columns: 1fr 350px;
+        gap: 24px;
+    }
+
+    .hot-takes-main {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .hot-takes-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    /* Stats Cards */
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+    }
+
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .stat-card .icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        margin-bottom: 12px;
+    }
+
+    .stat-card .value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--dark);
+    }
+
+    .stat-card .label {
+        font-size: 0.875rem;
+        color: var(--gray-500);
+    }
+
+    /* Hot Takes List */
+    .takes-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .takes-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .takes-header h2 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 0;
+    }
+
+    .takes-actions {
+        display: flex;
+        gap: 12px;
+    }
+
+    .btn-digest {
+        background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 10px;
+        font-weight: 500;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .btn-manual {
+        background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 10px;
+        font-weight: 500;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .takes-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .take-item {
+        border: 1px solid var(--gray-200);
+        border-radius: 12px;
+        padding: 20px;
+        transition: all 0.2s;
+    }
+
+    .take-item:hover {
+        border-color: var(--primary);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }
+
+    .take-news {
+        font-size: 0.75rem;
+        color: var(--gray-500);
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .take-news a {
+        color: var(--primary);
+        text-decoration: none;
+    }
+
+    .take-hook {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin-bottom: 12px;
+    }
+
+    .take-body {
+        font-size: 0.9rem;
+        color: var(--gray-600);
+        line-height: 1.6;
+        margin-bottom: 12px;
+        white-space: pre-line;
+    }
+
+    .take-hashtags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+
+    .take-hashtags span {
+        background: var(--gray-100);
+        color: var(--primary);
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+    }
+
+    .take-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-top: 12px;
+        border-top: 1px solid var(--gray-100);
+    }
+
+    .take-status {
+        font-size: 0.75rem;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-weight: 500;
+    }
+
+    .take-status.draft { background: #fef3c7; color: #92400e; }
+    .take-status.scheduled { background: #dbeafe; color: #1e40af; }
+    .take-status.published { background: #d1fae5; color: #065f46; }
+
+    .take-actions {
+        display: flex;
+        gap: 8px;
+    }
+
+    .take-actions button {
+        padding: 6px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--gray-200);
+        background: white;
+        cursor: pointer;
+        font-size: 0.75rem;
+    }
+
+    .take-actions button:hover {
+        background: var(--gray-50);
+    }
+
+    /* Sidebar */
+    .sidebar-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .sidebar-card h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 16px;
+        color: var(--dark);
+    }
+
+    /* Manual Input */
+    .manual-input-card {
+        background: linear-gradient(135deg, #f3e8ff 0%, #e9d5ff 100%);
+        border: 2px dashed #8b5cf6;
+    }
+
+    .manual-input-card textarea {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid var(--gray-200);
+        border-radius: 8px;
+        margin-bottom: 12px;
+        resize: vertical;
+        min-height: 80px;
+    }
+
+    .manual-input-card input {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid var(--gray-200);
+        border-radius: 8px;
+        margin-bottom: 12px;
+    }
+
+    /* Sources */
+    .source-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--gray-100);
+    }
+
+    .source-item:last-child {
+        border-bottom: none;
+    }
+
+    .source-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--gray-100);
+    }
+
+    .source-name {
+        font-size: 0.875rem;
+        color: var(--dark);
+    }
+
+    /* Modal */
+    .modal-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .modal-backdrop.active {
+        display: flex;
+    }
+
+    .modal-content {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        max-width: 600px;
+        width: 90%;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .modal-header h3 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin: 0;
+    }
+
+    .modal-close {
+        background: none;
+        border: none;
+        font-size: 1.5rem;
+        cursor: pointer;
+        color: var(--gray-400);
+    }
+
+    /* Progress */
+    .digest-progress {
+        display: none;
+        text-align: center;
+        padding: 40px;
+    }
+
+    .digest-progress.active {
+        display: block;
+    }
+
+    .spinner {
+        width: 50px;
+        height: 50px;
+        border: 4px solid var(--gray-200);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 20px;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--gray-500);
+    }
+
+    .empty-state i {
+        font-size: 4rem;
+        margin-bottom: 20px;
+        opacity: 0.3;
+    }
+
+    /* LinkedIn Preview */
+    .linkedin-preview {
+        background: #f3f2ef;
+        border-radius: 8px;
+        padding: 16px;
+        margin-top: 12px;
+    }
+
+    .linkedin-preview-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+
+    .linkedin-avatar {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #0077b5, #005885);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: bold;
+    }
+
+    .linkedin-name {
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+
+    .linkedin-title {
+        font-size: 0.75rem;
+        color: var(--gray-500);
+    }
+
+    .linkedin-content {
+        font-size: 0.875rem;
+        line-height: 1.5;
+        white-space: pre-line;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hot-takes-container">
+    <div class="hot-takes-main">
+        <!-- Stats -->
+        <div class="stats-row">
+            <div class="stat-card">
+                <div class="icon" style="background: #fef3c7; color: #f59e0b;">
+                    <i class="bi bi-fire"></i>
+                </div>
+                <div class="value">{{ stats.total or 0 }}</div>
+                <div class="label">Esta Semana</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon" style="background: #fef3c7; color: #92400e;">
+                    <i class="bi bi-pencil"></i>
+                </div>
+                <div class="value">{{ stats.drafts or 0 }}</div>
+                <div class="label">Rascunhos</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon" style="background: #dbeafe; color: #1e40af;">
+                    <i class="bi bi-calendar-check"></i>
+                </div>
+                <div class="value">{{ stats.scheduled or 0 }}</div>
+                <div class="label">Agendados</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon" style="background: #d1fae5; color: #065f46;">
+                    <i class="bi bi-check-circle"></i>
+                </div>
+                <div class="value">{{ stats.published or 0 }}</div>
+                <div class="label">Publicados</div>
+            </div>
+        </div>
+
+        <!-- Hot Takes List -->
+        <div class="takes-card">
+            <div class="takes-header">
+                <h2><i class="bi bi-fire text-warning me-2"></i>Hot Takes</h2>
+                <div class="takes-actions">
+                    <button class="btn-digest" onclick="openDigestModal()">
+                        <i class="bi bi-newspaper"></i> Gerar Digest Semanal
+                    </button>
+                    <button class="btn-manual" onclick="openManualModal()">
+                        <i class="bi bi-link-45deg"></i> Input Manual
+                    </button>
+                </div>
+            </div>
+
+            <div class="takes-list" id="takesList">
+                {% if hot_takes %}
+                    {% for take in hot_takes %}
+                    <div class="take-item" data-id="{{ take.id }}">
+                        <div class="take-news">
+                            <i class="bi bi-newspaper"></i>
+                            <a href="{{ take.news_link }}" target="_blank">{{ take.news_title[:80] }}...</a>
+                        </div>
+                        <div class="take-hook">{{ take.hook }}</div>
+                        <div class="take-body">{{ take.body[:300] }}{% if take.body|length > 300 %}...{% endif %}</div>
+                        <div class="take-hashtags">
+                            {% for tag in take.hashtags or [] %}
+                            <span>#{{ tag }}</span>
+                            {% endfor %}
+                        </div>
+                        <div class="take-footer">
+                            <span class="take-status {{ take.status }}">{{ take.status }}</span>
+                            <div class="take-actions">
+                                <button onclick="previewLinkedIn({{ take.id }})">
+                                    <i class="bi bi-linkedin"></i> Preview
+                                </button>
+                                <button onclick="copyToClipboard({{ take.id }})">
+                                    <i class="bi bi-clipboard"></i> Copiar
+                                </button>
+                                <button onclick="scheduleHotTake({{ take.id }})">
+                                    <i class="bi bi-calendar-plus"></i> Agendar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-fire"></i>
+                        <h4>Nenhum Hot Take ainda</h4>
+                        <p>Clique em "Gerar Digest Semanal" para buscar noticias e criar hot takes automaticamente.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="hot-takes-sidebar">
+        <!-- Manual Input -->
+        <div class="sidebar-card manual-input-card">
+            <h3><i class="bi bi-link-45deg me-2"></i>Input Manual</h3>
+            <p style="font-size: 0.85rem; color: var(--gray-600); margin-bottom: 12px;">
+                Cole uma URL de noticia para gerar um hot take
+            </p>
+            <input type="url" id="manualUrl" placeholder="https://...">
+            <button class="btn-manual w-100" onclick="generateFromUrl()">
+                <i class="bi bi-magic"></i> Gerar Hot Take
+            </button>
+        </div>
+
+        <!-- Sources -->
+        <div class="sidebar-card">
+            <h3><i class="bi bi-rss me-2"></i>Fontes de Noticias</h3>
+            <div class="source-item">
+                <div class="source-icon"><i class="bi bi-google"></i></div>
+                <span class="source-name">Google News - Business</span>
+            </div>
+            <div class="source-item">
+                <div class="source-icon"><i class="bi bi-cpu"></i></div>
+                <span class="source-name">Google News - Tech</span>
+            </div>
+            <div class="source-item">
+                <div class="source-icon"><i class="bi bi-globe"></i></div>
+                <span class="source-name">Google News - World</span>
+            </div>
+        </div>
+
+        <!-- Topics -->
+        <div class="sidebar-card">
+            <h3><i class="bi bi-tags me-2"></i>Topicos Monitorados</h3>
+            <div class="take-hashtags">
+                <span>governanca</span>
+                <span>conselho</span>
+                <span>CEO</span>
+                <span>M&A</span>
+                <span>ESG</span>
+                <span>IA</span>
+                <span>startup</span>
+                <span>crise</span>
+            </div>
+        </div>
+
+        <!-- Link to Editorial -->
+        <div class="sidebar-card" style="background: linear-gradient(135deg, #dbeafe, #bfdbfe);">
+            <h3><i class="bi bi-calendar3 me-2"></i>Calendario Editorial</h3>
+            <p style="font-size: 0.85rem; color: var(--gray-600);">
+                Agende seus hot takes no calendario editorial
+            </p>
+            <a href="/editorial" class="btn btn-primary w-100">
+                <i class="bi bi-arrow-right"></i> Ir para Calendario
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Digest Modal -->
+<div class="modal-backdrop" id="digestModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="bi bi-newspaper me-2"></i>Gerar Digest Semanal</h3>
+            <button class="modal-close" onclick="closeDigestModal()">&times;</button>
+        </div>
+        <div id="digestForm">
+            <p>O sistema ira:</p>
+            <ol>
+                <li>Buscar noticias de Google News (Business, Tech, World)</li>
+                <li>Filtrar por relevancia para governanca</li>
+                <li>Gerar hot takes conectando com seus artigos</li>
+            </ol>
+            <div class="mb-3">
+                <label class="form-label">Quantidade de hot takes:</label>
+                <select id="digestLimit" class="form-select">
+                    <option value="3">3 hot takes</option>
+                    <option value="5" selected>5 hot takes</option>
+                    <option value="10">10 hot takes</option>
+                </select>
+            </div>
+            <button class="btn-digest w-100" onclick="runDigest()">
+                <i class="bi bi-play-fill"></i> Iniciar
+            </button>
+        </div>
+        <div class="digest-progress" id="digestProgress">
+            <div class="spinner"></div>
+            <p id="digestStatus">Buscando noticias...</p>
+        </div>
+        <div id="digestResults" style="display: none;">
+            <div class="alert alert-success">
+                <strong id="digestResultCount">0</strong> hot takes gerados!
+            </div>
+            <button class="btn btn-primary w-100" onclick="closeDigestModal(); location.reload();">
+                Ver Hot Takes
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- LinkedIn Preview Modal -->
+<div class="modal-backdrop" id="linkedinModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="bi bi-linkedin me-2"></i>Preview LinkedIn</h3>
+            <button class="modal-close" onclick="closeLinkedinModal()">&times;</button>
+        </div>
+        <div class="linkedin-preview">
+            <div class="linkedin-preview-header">
+                <div class="linkedin-avatar">RA</div>
+                <div>
+                    <div class="linkedin-name">Renato Almeida Prado</div>
+                    <div class="linkedin-title">Especialista em NeoGovernanca</div>
+                </div>
+            </div>
+            <div class="linkedin-content" id="linkedinContent"></div>
+        </div>
+        <div class="mt-3 d-flex gap-2">
+            <button class="btn btn-outline-secondary flex-grow-1" onclick="copyLinkedInPost()">
+                <i class="bi bi-clipboard"></i> Copiar
+            </button>
+            <button class="btn btn-primary flex-grow-1" onclick="closeLinkedinModal()">
+                Fechar
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let hotTakesData = {{ hot_takes | tojson | safe }};
+let currentPreviewId = null;
+
+// Digest Modal
+function openDigestModal() {
+    document.getElementById('digestModal').classList.add('active');
+    document.getElementById('digestForm').style.display = 'block';
+    document.getElementById('digestProgress').classList.remove('active');
+    document.getElementById('digestResults').style.display = 'none';
+}
+
+function closeDigestModal() {
+    document.getElementById('digestModal').classList.remove('active');
+}
+
+async function runDigest() {
+    const limit = document.getElementById('digestLimit').value;
+
+    document.getElementById('digestForm').style.display = 'none';
+    document.getElementById('digestProgress').classList.add('active');
+    document.getElementById('digestStatus').textContent = 'Buscando noticias...';
+
+    try {
+        const response = await fetch('/api/hot-takes/digest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limit: parseInt(limit) })
+        });
+
+        const result = await response.json();
+
+        document.getElementById('digestProgress').classList.remove('active');
+        document.getElementById('digestResults').style.display = 'block';
+        document.getElementById('digestResultCount').textContent = result.hot_takes_generated || 0;
+
+    } catch (error) {
+        console.error('Erro:', error);
+        document.getElementById('digestStatus').textContent = 'Erro ao gerar digest';
+    }
+}
+
+// Manual URL
+function openManualModal() {
+    document.getElementById('manualUrl').focus();
+}
+
+async function generateFromUrl() {
+    const url = document.getElementById('manualUrl').value.trim();
+    if (!url) {
+        alert('Cole uma URL primeiro');
+        return;
+    }
+
+    const btn = event.target;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Gerando...';
+
+    try {
+        const response = await fetch('/api/hot-takes/from-url', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+        });
+
+        const result = await response.json();
+
+        if (result.error) {
+            alert('Erro: ' + result.error);
+        } else {
+            location.reload();
+        }
+    } catch (error) {
+        console.error('Erro:', error);
+        alert('Erro ao gerar hot take');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-magic"></i> Gerar Hot Take';
+    }
+}
+
+// LinkedIn Preview
+function previewLinkedIn(id) {
+    currentPreviewId = id;
+    const take = hotTakesData.find(t => t.id === id);
+    if (take) {
+        document.getElementById('linkedinContent').textContent = take.linkedin_post || `${take.hook}\n\n${take.body}\n\n${take.cta}`;
+        document.getElementById('linkedinModal').classList.add('active');
+    }
+}
+
+function closeLinkedinModal() {
+    document.getElementById('linkedinModal').classList.remove('active');
+}
+
+function copyLinkedInPost() {
+    const content = document.getElementById('linkedinContent').textContent;
+    navigator.clipboard.writeText(content).then(() => {
+        alert('Copiado para clipboard!');
+    });
+}
+
+function copyToClipboard(id) {
+    const take = hotTakesData.find(t => t.id === id);
+    if (take) {
+        const content = take.linkedin_post || `${take.hook}\n\n${take.body}\n\n${take.cta}`;
+        navigator.clipboard.writeText(content).then(() => {
+            alert('Copiado!');
+        });
+    }
+}
+
+// Schedule
+async function scheduleHotTake(id) {
+    const date = prompt('Data para publicacao (YYYY-MM-DD HH:MM):');
+    if (!date) return;
+
+    try {
+        const response = await fetch(`/api/hot-takes/${id}/schedule`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ scheduled_for: date })
+        });
+
+        if (response.ok) {
+            location.reload();
+        }
+    } catch (error) {
+        console.error('Erro:', error);
+    }
+}
+
+// Close modals on backdrop click
+document.querySelectorAll('.modal-backdrop').forEach(modal => {
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.classList.remove('active');
+        }
+    });
+});
+</script>
+{% endblock %}

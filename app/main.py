@@ -13266,6 +13266,88 @@ async def api_project_editorial(project_id: int):
     return {"posts": posts, "total": len(posts)}
 
 
+# ============== HOT TAKES API ==============
+
+@app.get("/api/hot-takes")
+async def api_hot_takes_list(status: str = None, limit: int = 20):
+    """Lista hot takes salvos"""
+    from app.services.hot_takes import get_hot_takes
+    return {"hot_takes": get_hot_takes(status=status, limit=limit)}
+
+
+@app.get("/api/hot-takes/stats")
+async def api_hot_takes_stats():
+    """Estatisticas de hot takes"""
+    from app.services.hot_takes import get_weekly_digest_stats
+    return get_weekly_digest_stats()
+
+
+@app.post("/api/hot-takes/digest")
+async def api_generate_digest(request: Request):
+    """Gera digest semanal de hot takes"""
+    from app.services.hot_takes import generate_weekly_digest
+    data = await request.json()
+    limit = data.get("limit", 5)
+    result = await generate_weekly_digest(limit=limit)
+    return result
+
+
+@app.post("/api/hot-takes/from-url")
+async def api_hot_take_from_url(request: Request):
+    """Gera hot take a partir de URL manual"""
+    from app.services.hot_takes import generate_hot_take_from_url
+    data = await request.json()
+    url = data.get("url")
+    if not url:
+        raise HTTPException(status_code=400, detail="URL e obrigatoria")
+    result = await generate_hot_take_from_url(url)
+    return result
+
+
+@app.get("/api/hot-takes/{hot_take_id}")
+async def api_hot_take_get(hot_take_id: int):
+    """Retorna um hot take especifico"""
+    from app.services.hot_takes import get_hot_takes
+    hot_takes = get_hot_takes()
+    for ht in hot_takes:
+        if ht.get("id") == hot_take_id:
+            return ht
+    raise HTTPException(status_code=404, detail="Hot take nao encontrado")
+
+
+@app.post("/api/hot-takes/{hot_take_id}/schedule")
+async def api_hot_take_schedule(hot_take_id: int, request: Request):
+    """Agenda hot take para publicacao"""
+    from app.database import get_db
+    data = await request.json()
+    scheduled_for = data.get("scheduled_for")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE hot_takes
+            SET status = 'scheduled', scheduled_for = %s
+            WHERE id = %s
+        ''', (scheduled_for, hot_take_id))
+        conn.commit()
+
+    return {"status": "scheduled", "id": hot_take_id}
+
+
+@app.get("/hot-takes", response_class=HTMLResponse)
+async def hot_takes_page(request: Request):
+    """Pagina de Hot Takes"""
+    from app.services.hot_takes import get_hot_takes, get_weekly_digest_stats
+    hot_takes = get_hot_takes(limit=50)
+    stats = get_weekly_digest_stats()
+
+    return templates.TemplateResponse("hot_takes.html", {
+        "request": request,
+        "hot_takes": hot_takes,
+        "stats": stats
+    })
+
+
 # ============== EDITORIAL CALENDAR PAGE ==============
 
 @app.get("/editorial", response_class=HTMLResponse)
