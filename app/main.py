@@ -13849,7 +13849,10 @@ async def hot_takes_page(request: Request):
 
 @app.get("/editorial", response_class=HTMLResponse)
 async def editorial_page(request: Request):
-    """Pagina do calendario editorial"""
+    """Pagina do calendario editorial - Hub unificado"""
+    from datetime import timedelta
+    from app.services.hot_takes import get_hot_takes
+
     stats = get_editorial_stats()
     posts = get_editorial_posts(limit=50)
 
@@ -13859,6 +13862,34 @@ async def editorial_page(request: Request):
         cursor.execute("SELECT id, nome FROM projects WHERE status = 'ativo' ORDER BY nome")
         projects = [dict(p) for p in cursor.fetchall()]
 
+    # Calculate this week's dates (Mon-Fri)
+    today = datetime.now()
+    # Find Monday of this week
+    days_since_monday = today.weekday()
+    monday = today - timedelta(days=days_since_monday)
+
+    week_days = []
+    for i in range(5):  # Mon to Fri
+        day = monday + timedelta(days=i)
+        day_posts = [p for p in posts if p.get('data_publicacao') and
+                     p['data_publicacao'].date() == day.date()]
+        week_days.append({
+            'date': day,
+            'day_name': ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'][i],
+            'day_num': day.day,
+            'is_today': day.date() == today.date(),
+            'is_past': day.date() < today.date(),
+            'posts': day_posts
+        })
+
+    # Today's posts
+    today_posts = [p for p in posts if p.get('data_publicacao') and
+                   p['data_publicacao'].date() == today.date() and
+                   p.get('status') in ['scheduled', 'ready']]
+
+    # Pending hot takes (drafts)
+    pending_hot_takes = get_hot_takes(status='draft', limit=10)
+
     return templates.TemplateResponse("editorial.html", {
         "request": request,
         "stats": stats,
@@ -13867,7 +13898,10 @@ async def editorial_page(request: Request):
         "canais": EDITORIAL_CANAIS,
         "status_options": EDITORIAL_STATUS,
         "tipos": EDITORIAL_TIPOS,
-        "today": datetime.now()
+        "today": today,
+        "week_days": week_days,
+        "today_posts": today_posts,
+        "pending_hot_takes": pending_hot_takes
     })
 
 

@@ -467,12 +467,224 @@
         text-overflow: ellipsis;
     }
 
+    /* Week Calendar */
+    .week-calendar {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 12px;
+    }
+
+    .week-day {
+        background: var(--gray-50);
+        border-radius: 12px;
+        padding: 12px;
+        min-height: 120px;
+    }
+
+    .week-day.today {
+        background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+        border: 2px solid #3b82f6;
+    }
+
+    .week-day.past {
+        opacity: 0.6;
+    }
+
+    .day-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--gray-200);
+    }
+
+    .day-name {
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: var(--dark);
+    }
+
+    .day-num {
+        font-size: 0.85rem;
+        color: var(--gray-500);
+    }
+
+    .week-day.today .day-name,
+    .week-day.today .day-num {
+        color: #1e40af;
+    }
+
+    .day-posts {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .day-post {
+        background: white;
+        padding: 8px 10px;
+        border-radius: 8px;
+        font-size: 0.75rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: all 0.2s;
+    }
+
+    .day-post:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .day-post.hot_take {
+        background: #fef3c7;
+        border-left: 3px solid #f59e0b;
+    }
+
+    .day-post i {
+        flex-shrink: 0;
+    }
+
+    .day-empty {
+        color: var(--gray-400);
+        font-size: 0.8rem;
+        text-align: center;
+        padding: 20px;
+    }
+
+    /* Action Cards */
+    .action-cards {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .action-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .today-card {
+        border-top: 4px solid #3b82f6;
+    }
+
+    .pending-card {
+        border-top: 4px solid #f59e0b;
+    }
+
+    .action-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .action-header h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 0;
+        color: var(--dark);
+    }
+
+    .action-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .action-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px;
+        background: var(--gray-50);
+        border-radius: 10px;
+    }
+
+    .action-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1rem;
+    }
+
+    .action-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .action-title {
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: var(--dark);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .action-meta {
+        font-size: 0.75rem;
+        color: var(--gray-500);
+    }
+
+    .action-empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 30px;
+        color: var(--gray-500);
+        font-size: 0.9rem;
+    }
+
+    .action-more {
+        text-align: center;
+        padding-top: 10px;
+        margin-top: 10px;
+        border-top: 1px solid var(--gray-100);
+    }
+
+    .action-more a {
+        color: var(--gray-500);
+        font-size: 0.85rem;
+        text-decoration: none;
+    }
+
+    .action-more a:hover {
+        color: var(--primary);
+    }
+
     @media (max-width: 1024px) {
         .editorial-container {
             grid-template-columns: 1fr;
         }
         .stats-row {
             grid-template-columns: repeat(2, 1fr);
+        }
+        .week-calendar {
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+        }
+        .action-cards {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    @media (max-width: 640px) {
+        .week-calendar {
+            grid-template-columns: repeat(3, 1fr);
+        }
+        .week-day:nth-child(4),
+        .week-day:nth-child(5) {
+            display: none;
         }
     }
 </style>
@@ -513,10 +725,108 @@
             </div>
         </div>
 
+        <!-- This Week Calendar -->
+        <div class="posts-card">
+            <div class="posts-header">
+                <h2><i class="bi bi-calendar-week me-2"></i>Esta Semana</h2>
+            </div>
+            <div class="week-calendar">
+                {% for day in week_days %}
+                <div class="week-day {{ 'today' if day.is_today else '' }} {{ 'past' if day.is_past else '' }}">
+                    <div class="day-header">
+                        <span class="day-name">{{ day.day_name }}</span>
+                        <span class="day-num">{{ day.day_num }}</span>
+                    </div>
+                    <div class="day-posts">
+                        {% for post in day.posts %}
+                        <div class="day-post {{ post.tipo }}" onclick="openPostModal({{ post.id }})" title="{{ post.article_title }}">
+                            {% if post.tipo == 'hot_take' %}
+                            <i class="bi bi-fire"></i>
+                            {% else %}
+                            <i class="bi bi-file-text"></i>
+                            {% endif %}
+                            <span>{{ post.article_title[:20] }}{% if post.article_title|length > 20 %}...{% endif %}</span>
+                        </div>
+                        {% else %}
+                        <div class="day-empty">-</div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Today's Tasks & Pending Hot Takes -->
+        <div class="action-cards">
+            <!-- Para Hoje -->
+            <div class="action-card today-card">
+                <div class="action-header">
+                    <h3><i class="bi bi-lightning-charge me-2"></i>Para Hoje</h3>
+                </div>
+                {% if today_posts %}
+                <div class="action-list">
+                    {% for post in today_posts %}
+                    <div class="action-item">
+                        <div class="action-icon">
+                            {% if post.tipo == 'hot_take' %}<i class="bi bi-fire text-warning"></i>{% else %}<i class="bi bi-file-text text-primary"></i>{% endif %}
+                        </div>
+                        <div class="action-info">
+                            <div class="action-title">{{ post.article_title[:40] }}{% if post.article_title|length > 40 %}...{% endif %}</div>
+                            <div class="action-meta">{{ post.data_publicacao.strftime('%H:%M') if post.data_publicacao else '' }}</div>
+                        </div>
+                        <button class="btn btn-sm btn-outline-primary" onclick="copyPostContent({{ post.id }})">
+                            <i class="bi bi-clipboard"></i> Copiar
+                        </button>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="action-empty">
+                    <i class="bi bi-check-circle text-success"></i>
+                    <span>Nenhum post para hoje</span>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Pending Hot Takes -->
+            <div class="action-card pending-card">
+                <div class="action-header">
+                    <h3><i class="bi bi-fire me-2"></i>Hot Takes Pendentes</h3>
+                    <a href="/hot-takes" class="btn btn-sm btn-outline-warning">Ver todos</a>
+                </div>
+                {% if pending_hot_takes %}
+                <div class="action-list">
+                    {% for ht in pending_hot_takes[:3] %}
+                    <div class="action-item">
+                        <div class="action-icon"><i class="bi bi-fire text-warning"></i></div>
+                        <div class="action-info">
+                            <div class="action-title">{{ ht.hook[:40] if ht.hook else 'Sem titulo' }}{% if ht.hook and ht.hook|length > 40 %}...{% endif %}</div>
+                            <div class="action-meta">{{ ht.created_at[:10] if ht.created_at else '' }}</div>
+                        </div>
+                        <a href="/hot-takes" class="btn btn-sm btn-warning">
+                            <i class="bi bi-calendar-plus"></i> Agendar
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% if pending_hot_takes|length > 3 %}
+                <div class="action-more">
+                    <a href="/hot-takes">+ {{ pending_hot_takes|length - 3 }} mais</a>
+                </div>
+                {% endif %}
+                {% else %}
+                <div class="action-empty">
+                    <i class="bi bi-inbox text-muted"></i>
+                    <span>Nenhum hot take pendente</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
         <!-- Posts List -->
         <div class="posts-card">
             <div class="posts-header">
-                <h2>Posts Editoriais</h2>
+                <h2>Todos os Posts</h2>
                 <div class="posts-filters">
                     <select class="filter-select" id="filter-tipo" onchange="filterPosts()">
                         <option value="">Todos os tipos</option>

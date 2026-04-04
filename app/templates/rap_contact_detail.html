@@ -6322,16 +6322,32 @@
             }
         }
 
+        // Flag to avoid duplicate calendar API calls
+        let calendarFetchPromise = null;
+
+        async function fetchCalendarOnce() {
+            if (!calendarFetchPromise) {
+                calendarFetchPromise = fetch(`/api/contacts/${contactId}/calendar`)
+                    .then(res => res.ok ? res.json() : {events: []})
+                    .catch(e => { console.log('Calendar error:', e); return {events: []}; });
+            }
+            return calendarFetchPromise;
+        }
+
         async function loadContactMeetingsCompact() {
             const container = document.getElementById('meetingsContainerCompact');
             if (!container) return;
 
-            try {
-                const response = await fetch(`/api/contacts/${contactId}/calendar`);
-                if (!response.ok) throw new Error('API error');
+            // Show loading
+            container.innerHTML = '<span class="text-muted small">Carregando...</span>';
 
-                const data = await response.json();
+            try {
+                const data = await fetchCalendarOnce();
                 const events = data.events || [];
+
+                // Also update intelCalendarData for the insight panel
+                intelCalendarData = events;
+                renderIntelInsight();
 
                 if (events.length === 0) {
                     container.innerHTML = '<span class="empty">Nenhuma reunião encontrada</span>';
@@ -6456,30 +6472,24 @@
             if (loadingDiv) loadingDiv.style.display = 'flex';
             if (contentDiv) contentDiv.style.display = 'none';
 
-            // Fetch messages and calendar in parallel
+            // Fetch only messages first (fast) - calendar is slow (external API)
             try {
-                const [messagesRes, calendarRes] = await Promise.all([
-                    fetch(`/api/contacts/${contactId}/messages?limit=10`),
-                    fetch(`/api/contacts/${contactId}/calendar`)
-                ]);
-
+                const messagesRes = await fetch(`/api/contacts/${contactId}/messages?limit=10`);
                 if (messagesRes.ok) {
                     const data = await messagesRes.json();
                     intelMessagesData = data.messages || [];
                 }
-
-                if (calendarRes.ok) {
-                    const data = await calendarRes.json();
-                    intelCalendarData = data.events || [];
-                }
             } catch (e) {
-                console.log('Could not fetch data for insight:', e);
+                console.log('Could not fetch messages for insight:', e);
                 intelMessagesData = [];
-                intelCalendarData = [];
             }
 
-            // Render insight with real data
+            // Render insight without calendar first (fast)
+            intelCalendarData = [];
             renderIntelInsight();
+
+            // Calendar will be fetched by loadContactMeetingsCompact() which shares the data
+            // via fetchCalendarOnce() - no duplicate API calls
         }
 
         function renderIntelInsight() {
