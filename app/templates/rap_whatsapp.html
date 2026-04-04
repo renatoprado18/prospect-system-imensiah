@@ -1,1607 +1,1406 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>INTEL - WhatsApp</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --primary: #6366f1;
-            --primary-dark: #4f46e5;
-            --secondary: #0ea5e9;
-            --success: #10b981;
-            --whatsapp: #25D366;
-            --whatsapp-dark: #128C7E;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --dark: #1e293b;
-            --light: #f8fafc;
-            --gray-100: #f1f5f9;
-            --gray-200: #e2e8f0;
-            --gray-300: #cbd5e1;
-            --gray-400: #94a3b8;
-            --gray-500: #64748b;
-            --gray-600: #475569;
-            --sidebar-width: 260px;
-        }
+{% extends "rap_base.html" %}
 
-        * { box-sizing: border-box; }
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--gray-100);
-            margin: 0;
-            min-height: 100vh;
-        }
+{% block title %}INTEL - WhatsApp{% endblock %}
 
-        /* Sidebar */
-        .sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: var(--sidebar-width);
-            background: linear-gradient(180deg, var(--dark) 0%, #0f172a 100%);
-            color: white;
-            z-index: 100;
-            display: flex;
-            flex-direction: column;
-        }
+{% block page_title %}<i class="bi bi-whatsapp me-2" style="color: #25D366;"></i> WhatsApp{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle">Gerenciar integracao com WhatsApp via Evolution API</p>{% endblock %}
 
-        .sidebar-header { padding: 24px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: space-between; }
-        .btn-global-sync { width: 36px; height: 36px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; }
-        .btn-global-sync:hover { background: rgba(255,255,255,0.2); color: white; }
-        .btn-global-sync.syncing { animation: spin 1s linear infinite; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .sidebar-logo { display: flex; align-items: center; gap: 12px; font-size: 1.5rem; font-weight: 700; text-decoration: none; color: white; }
-        .sidebar-logo .icon { width: 40px; height: 40px; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
-        .sidebar-nav { flex: 1; padding: 16px 0; overflow-y: auto; }
-        .nav-section { padding: 6px 16px; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--gray-400); margin-top: 10px; }
-        .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 20px; color: var(--gray-300); text-decoration: none; transition: all 0.2s; border-left: 3px solid transparent; font-size: 0.875rem; }
-        .nav-item:hover { background: rgba(255,255,255,0.05); color: white; }
-        .nav-item.active { background: rgba(99, 102, 241, 0.15); color: white; border-left-color: var(--primary); }
-        .nav-item i { font-size: 1rem; width: 20px; text-align: center; }
+{% block header_actions %}
+<div id="statusBadge">
+    <span class="status-badge connecting">
+        <span class="status-dot"></span>
+        Verificando...
+    </span>
+</div>
+{% endblock %}
 
-        /* Main Content */
-        .main-content { margin-left: var(--sidebar-width); padding: 24px 32px; min-height: 100vh; }
+{% block extra_css %}
+/* WhatsApp Colors */
+:root {
+    --whatsapp: #25D366;
+    --whatsapp-dark: #128C7E;
+}
 
-        /* Header */
-        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
-        .page-title { font-size: 1.75rem; font-weight: 700; color: var(--dark); margin: 0; }
-        .page-subtitle { color: var(--gray-500); font-size: 0.9rem; margin-top: 4px; }
+/* Status Badge */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 50px;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+.status-badge.connected {
+    background: rgba(37, 211, 102, 0.15);
+    color: var(--whatsapp-dark);
+}
+.status-badge.disconnected {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--danger);
+}
+.status-badge.connecting {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning);
+}
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: currentColor;
+}
+.status-badge.connected .status-dot { animation: pulse 2s infinite; }
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
 
-        /* Cards */
-        .card { background: white; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); border: none; margin-bottom: 24px; }
-        .card-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--gray-200); background: transparent; }
-        .card-title { font-size: 1rem; font-weight: 600; color: var(--dark); margin: 0; display: flex; align-items: center; gap: 10px; }
-        .card-body { padding: 24px; }
+/* WhatsApp Card */
+.whatsapp-card {
+    background: linear-gradient(135deg, var(--whatsapp) 0%, var(--whatsapp-dark) 100%);
+    color: white;
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 24px;
+}
+.whatsapp-card h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+.whatsapp-card p {
+    opacity: 0.9;
+    margin-bottom: 24px;
+}
+.whatsapp-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: rgba(255,255,255,0.15);
+    padding: 16px 20px;
+    border-radius: 12px;
+}
+.whatsapp-info i {
+    font-size: 2rem;
+}
+.whatsapp-info-text {
+    flex: 1;
+}
+.whatsapp-info-label {
+    font-size: 0.8rem;
+    opacity: 0.8;
+}
+.whatsapp-info-value {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
 
-        /* Status Badge */
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            border-radius: 50px;
-            font-size: 0.9rem;
-            font-weight: 500;
-        }
-        .status-badge.connected {
-            background: rgba(37, 211, 102, 0.15);
-            color: var(--whatsapp-dark);
-        }
-        .status-badge.disconnected {
-            background: rgba(239, 68, 68, 0.15);
-            color: var(--danger);
-        }
-        .status-badge.connecting {
-            background: rgba(245, 158, 11, 0.15);
-            color: var(--warning);
-        }
-        .status-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: currentColor;
-        }
-        .status-badge.connected .status-dot { animation: pulse 2s infinite; }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
+/* QR Code */
+.qr-container {
+    text-align: center;
+    padding: 32px;
+    background: var(--gray-100);
+    border-radius: 16px;
+}
+.qr-container img {
+    border-radius: 12px;
+    margin-bottom: 16px;
+}
+.qr-instructions {
+    color: var(--gray-600);
+    font-size: 0.9rem;
+}
+.qr-instructions ol {
+    text-align: left;
+    max-width: 300px;
+    margin: 16px auto 0;
+}
 
-        /* WhatsApp Card */
-        .whatsapp-card {
-            background: linear-gradient(135deg, var(--whatsapp) 0%, var(--whatsapp-dark) 100%);
-            color: white;
-            border-radius: 16px;
-            padding: 32px;
-            margin-bottom: 24px;
-        }
-        .whatsapp-card h3 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-        .whatsapp-card p {
-            opacity: 0.9;
-            margin-bottom: 24px;
-        }
-        .whatsapp-info {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            background: rgba(255,255,255,0.15);
-            padding: 16px 20px;
-            border-radius: 12px;
-        }
-        .whatsapp-info i {
-            font-size: 2rem;
-        }
-        .whatsapp-info-text {
-            flex: 1;
-        }
-        .whatsapp-info-label {
-            font-size: 0.8rem;
-            opacity: 0.8;
-        }
-        .whatsapp-info-value {
-            font-size: 1.1rem;
-            font-weight: 600;
-        }
+/* Stats Grid */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.stat-card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+}
+.stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--dark);
+}
+.stat-label {
+    color: var(--gray-500);
+    font-size: 0.85rem;
+    margin-top: 4px;
+}
 
-        /* QR Code */
-        .qr-container {
-            text-align: center;
-            padding: 32px;
-            background: var(--gray-100);
-            border-radius: 16px;
-        }
-        .qr-container img {
-            border-radius: 12px;
-            margin-bottom: 16px;
-        }
-        .qr-instructions {
-            color: var(--gray-600);
-            font-size: 0.9rem;
-        }
-        .qr-instructions ol {
-            text-align: left;
-            max-width: 300px;
-            margin: 16px auto 0;
-        }
+/* Send Message Form */
+.send-form {
+    background: var(--gray-100);
+    border-radius: 12px;
+    padding: 24px;
+}
+.send-form input, .send-form textarea {
+    border-radius: 10px;
+    border: 1px solid var(--gray-300);
+    padding: 12px 16px;
+}
+.send-form input:focus, .send-form textarea:focus {
+    border-color: var(--whatsapp);
+    box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.15);
+}
 
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-        .stat-card {
-            background: white;
-            border-radius: 12px;
-            padding: 20px;
-            text-align: center;
-        }
-        .stat-value {
-            font-size: 2rem;
-            font-weight: 700;
-            color: var(--dark);
-        }
-        .stat-label {
-            color: var(--gray-500);
-            font-size: 0.85rem;
-            margin-top: 4px;
-        }
+/* Buttons */
+.btn-whatsapp {
+    background: var(--whatsapp);
+    border-color: var(--whatsapp);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+.btn-whatsapp:hover {
+    background: var(--whatsapp-dark);
+    border-color: var(--whatsapp-dark);
+    color: white;
+}
+.btn-outline-danger { border-radius: 10px; }
 
-        /* Send Message Form */
-        .send-form {
-            background: var(--gray-100);
-            border-radius: 12px;
-            padding: 24px;
-        }
-        .send-form input, .send-form textarea {
-            border-radius: 10px;
-            border: 1px solid var(--gray-300);
-            padding: 12px 16px;
-        }
-        .send-form input:focus, .send-form textarea:focus {
-            border-color: var(--whatsapp);
-            box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.15);
-        }
+/* Toast */
+.toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 1000;
+}
+{% endblock %}
 
-        /* Buttons */
-        .btn-whatsapp {
-            background: var(--whatsapp);
-            border-color: var(--whatsapp);
-            color: white;
-            padding: 12px 24px;
-            border-radius: 10px;
-            font-weight: 500;
-        }
-        .btn-whatsapp:hover {
-            background: var(--whatsapp-dark);
-            border-color: var(--whatsapp-dark);
-            color: white;
-        }
-        .btn-outline-danger { border-radius: 10px; }
-
-        /* Toast */
-        .toast-container {
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            z-index: 1000;
-        }
-
-        @media (max-width: 768px) {
-            .sidebar { display: none; }
-            .main-content { margin-left: 0; padding: 16px; }
-        }
-    </style>
-</head>
-<body>
-    <!-- Sidebar -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <a href="/" class="sidebar-logo">
-                <div class="icon"><i class="bi bi-robot"></i></div>
-                <span>INTEL</span>
-            </a>
-            <button class="btn-global-sync" onclick="globalSync()" id="btnGlobalSync" title="Sincronizar tudo (WhatsApp, Gmail, etc)">
-                <i class="bi bi-arrow-repeat"></i>
+{% block content %}
+<!-- Connection Status Card -->
+<div id="connectionCard" class="whatsapp-card" style="display: none;">
+    <h3><i class="bi bi-check-circle me-2"></i> Conectado</h3>
+    <p>Sua conta WhatsApp esta conectada e pronta para enviar/receber mensagens.</p>
+    <div class="whatsapp-info">
+        <i class="bi bi-phone"></i>
+        <div class="whatsapp-info-text">
+            <div class="whatsapp-info-label">Numero conectado</div>
+            <div class="whatsapp-info-value" id="connectedNumber">+55 11 98415-3337</div>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-light btn-sm" id="webhookBtn" onclick="setupWebhook()">
+                <i class="bi bi-gear me-1"></i> Webhook
+            </button>
+            <button class="btn btn-outline-light btn-sm" onclick="disconnect()">
+                <i class="bi bi-x-circle me-1"></i> Desconectar
             </button>
         </div>
-
-        <nav class="sidebar-nav">
-            <!-- Dashboard -->
-            <a href="/" class="nav-item">
-                <i class="bi bi-grid-1x2"></i>
-                <span>Dashboard</span>
-            </a>
-
-            <!-- Relacionamentos -->
-            <div class="nav-section">Relacionamentos</div>
-            <a href="/contatos" class="nav-item">
-                <i class="bi bi-people"></i>
-                <span>Contatos</span>
-            </a>
-            <a href="/circulos" class="nav-item">
-                <i class="bi bi-bullseye"></i>
-                <span>Circulos</span>
-            </a>
-            <a href="/whatsapp" class="nav-item active">
-                <i class="bi bi-whatsapp"></i>
-                <span>WhatsApp</span>
-            </a>
-
-            <!-- Gestao -->
-            <div class="nav-section">Gestao</div>
-            <a href="/projetos" class="nav-item">
-                <i class="bi bi-folder"></i>
-                <span>Projetos</span>
-            </a>
-            <a href="/briefings" class="nav-item">
-                <i class="bi bi-file-text"></i>
-                <span>Briefings</span>
-            </a>
-            <a href="/calendario" class="nav-item">
-                <i class="bi bi-calendar-event"></i>
-                <span>Calendario</span>
-            </a>
-
-            <!-- Conteudo -->
-            <div class="nav-section">Conteudo</div>
-            <a href="/editorial" class="nav-item">
-                <i class="bi bi-newspaper"></i>
-                <span>Editorial</span>
-            </a>
-            <a href="/hot-takes" class="nav-item">
-                <i class="bi bi-fire"></i>
-                <span>Hot Takes</span>
-            </a>
-
-            <!-- Comunicacao -->
-            <div class="nav-section">Comunicacao</div>
-            <a href="/inbox" class="nav-item">
-                <i class="bi bi-inbox"></i>
-                <span>Inbox</span>
-            </a>
-            <a href="/emails" class="nav-item">
-                <i class="bi bi-envelope"></i>
-                <span>Emails</span>
-            </a>
-
-            <!-- Ferramentas -->
-            <div class="nav-section">Ferramentas</div>
-            <a href="/analytics" class="nav-item">
-                <i class="bi bi-graph-up"></i>
-                <span>Analytics</span>
-            </a>
-            <a href="/prospeccao" class="nav-item">
-                <i class="bi bi-funnel"></i>
-                <span>Prospeccao</span>
-            </a>
-            <a href="/automations" class="nav-item">
-                <i class="bi bi-robot"></i>
-                <span>Automacoes</span>
-            </a>
-            <a href="https://conselhoos.vercel.app" target="_blank" class="nav-item">
-                <i class="bi bi-briefcase"></i>
-                <span>ConselhoOS</span>
-                <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem; margin-left: auto;"></i>
-            </a>
-
-            <!-- Sistema -->
-            <div class="nav-section">Sistema</div>
-            <a href="/configuracoes" class="nav-item">
-                <i class="bi bi-gear"></i>
-                <span>Configuracoes</span>
-            </a>
-        </nav>
-    </aside>
-
-    <!-- Main Content -->
-    <main class="main-content">
-        <div class="page-header">
-            <div>
-                <h1 class="page-title"><i class="bi bi-whatsapp me-2" style="color: var(--whatsapp);"></i> WhatsApp</h1>
-                <p class="page-subtitle">Gerenciar integracao com WhatsApp via Evolution API</p>
-            </div>
-            <div id="statusBadge">
-                <span class="status-badge connecting">
-                    <span class="status-dot"></span>
-                    Verificando...
-                </span>
-            </div>
-        </div>
-
-        <!-- Connection Status Card -->
-        <div id="connectionCard" class="whatsapp-card" style="display: none;">
-            <h3><i class="bi bi-check-circle me-2"></i> Conectado</h3>
-            <p>Sua conta WhatsApp esta conectada e pronta para enviar/receber mensagens.</p>
-            <div class="whatsapp-info">
-                <i class="bi bi-phone"></i>
-                <div class="whatsapp-info-text">
-                    <div class="whatsapp-info-label">Numero conectado</div>
-                    <div class="whatsapp-info-value" id="connectedNumber">+55 11 98415-3337</div>
-                </div>
-                <div class="d-flex gap-2">
-                    <button class="btn btn-outline-light btn-sm" id="webhookBtn" onclick="setupWebhook()">
-                        <i class="bi bi-gear me-1"></i> Webhook
-                    </button>
-                    <button class="btn btn-outline-light btn-sm" onclick="disconnect()">
-                        <i class="bi bi-x-circle me-1"></i> Desconectar
-                    </button>
-                </div>
-            </div>
-            <div id="webhookStatus" class="mt-3" style="display: none;">
-                <div class="alert alert-info mb-0 py-2" style="background: rgba(255,255,255,0.2); border: none;">
-                    <i class="bi bi-info-circle me-1"></i>
-                    <span id="webhookStatusText"></span>
-                </div>
-            </div>
-        </div>
-
-        <!-- QR Code Card (when disconnected) -->
-        <div id="qrCard" class="card" style="display: none;">
-            <div class="card-header">
-                <h5 class="card-title"><i class="bi bi-qr-code"></i> Conectar WhatsApp</h5>
-                <button class="btn btn-outline-secondary btn-sm" onclick="refreshQR()">
-                    <i class="bi bi-arrow-clockwise me-1"></i> Atualizar QR
-                </button>
-            </div>
-            <div class="card-body">
-                <div class="qr-container">
-                    <img id="qrImage" src="" alt="QR Code" width="280" />
-                    <div class="qr-instructions">
-                        <p><strong>Para conectar:</strong></p>
-                        <ol>
-                            <li>Abra o WhatsApp no celular</li>
-                            <li>Toque em <strong>Aparelhos Conectados</strong></li>
-                            <li>Toque em <strong>Conectar Aparelho</strong></li>
-                            <li>Aponte a camera para este QR Code</li>
-                        </ol>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Stats -->
-        <div class="stats-grid" id="statsGrid" style="display: none;">
-            <div class="stat-card">
-                <div class="stat-value" id="totalMessages">0</div>
-                <div class="stat-label">Mensagens Hoje</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="totalConversations">0</div>
-                <div class="stat-label">Conversas Ativas</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-value" id="totalContacts">0</div>
-                <div class="stat-label">Contatos com WhatsApp</div>
-            </div>
-        </div>
-
-        <!-- Sync History Card -->
-        <div class="card" id="syncCard" style="display: none;">
-            <div class="card-header">
-                <h5 class="card-title"><i class="bi bi-cloud-download"></i> Sincronizar Historico</h5>
-            </div>
-            <div class="card-body">
-                <p class="text-muted mb-3">Buscar historico de mensagens do WhatsApp e vincular aos contatos existentes.</p>
-
-                <div class="mb-3">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="includeGroups">
-                        <label class="form-check-label" for="includeGroups">
-                            <strong>Incluir grupos</strong>
-                            <small class="text-muted d-block">Importa apenas mensagens onde voce participou (enviou ou foi mencionado)</small>
-                        </label>
-                    </div>
-                </div>
-
-                <div class="d-flex align-items-center gap-3 flex-wrap">
-                    <button class="btn btn-whatsapp" onclick="syncHistory()" id="syncBtn">
-                        <i class="bi bi-arrow-repeat me-2"></i> Sincronizar Mensagens
-                    </button>
-                    <button class="btn btn-outline-primary" onclick="autoSync()" id="autoSyncBtn">
-                        <i class="bi bi-play-circle me-2"></i> Auto-Sync (Todos)
-                    </button>
-                    <button class="btn btn-outline-secondary" onclick="relinkMessages()" id="relinkBtn">
-                        <i class="bi bi-link-45deg me-2"></i> Re-vincular
-                    </button>
-                    <button class="btn btn-outline-danger" onclick="stopAutoSync()" id="stopAutoSyncBtn" style="display: none;">
-                        <i class="bi bi-stop-circle me-2"></i> Parar
-                    </button>
-                    <div id="syncStatus" style="display: none;">
-                        <span class="spinner-border spinner-border-sm me-2"></span>
-                        <span id="syncStatusText">Sincronizando...</span>
-                    </div>
-                </div>
-                <div id="syncResult" class="mt-3" style="display: none;">
-                    <div class="alert alert-success mb-0">
-                        <i class="bi bi-check-circle me-2"></i>
-                        <span id="syncResultText"></span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Import History from .txt -->
-        <div class="card" id="importCard" style="display: none;">
-            <div class="card-header">
-                <h5 class="card-title"><i class="bi bi-file-text"></i> Importar Historico (.txt)</h5>
-            </div>
-            <div class="card-body">
-                <!-- Tabs para Single vs Batch -->
-                <ul class="nav nav-tabs mb-3" role="tablist">
-                    <li class="nav-item">
-                        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#batchImport">
-                            <i class="bi bi-files me-1"></i> Import em Lote
-                        </button>
-                    </li>
-                    <li class="nav-item">
-                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#singleImport">
-                            <i class="bi bi-file-text me-1"></i> Arquivo Unico
-                        </button>
-                    </li>
-                </ul>
-
-                <div class="tab-content">
-                    <!-- Batch Import Tab -->
-                    <div class="tab-pane fade show active" id="batchImport">
-                        <p class="text-muted mb-3">
-                            <i class="bi bi-info-circle me-1"></i>
-                            Arraste multiplos arquivos .txt - o sistema detecta os contatos automaticamente
-                        </p>
-
-                        <div id="batchUploadArea" class="border border-2 border-dashed rounded-3 p-5 text-center mb-3" style="cursor: pointer; border-color: var(--gray-300);">
-                            <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--whatsapp);"></i>
-                            <p class="mt-2 mb-1"><strong>Arraste multiplos arquivos .txt aqui</strong></p>
-                            <small class="text-muted">Ou clique para selecionar</small>
-                            <input type="file" id="batchFileInput" accept=".txt" multiple style="display: none;">
-                        </div>
-
-                        <!-- Batch Preview -->
-                        <div id="batchPreview" style="display: none;">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <h6 class="mb-0">
-                                    <span id="batchFileCount">0</span> arquivos selecionados
-                                </h6>
-                                <span class="text-muted" id="batchTotalMessages">0 mensagens</span>
-                            </div>
-
-                            <div id="batchFilesList" class="mb-3" style="max-height: 400px; overflow-y: auto;"></div>
-
-                            <div class="d-flex gap-2">
-                                <button class="btn btn-outline-secondary" onclick="clearBatchFiles()">
-                                    <i class="bi bi-x-circle me-1"></i> Limpar
-                                </button>
-                                <button class="btn btn-whatsapp flex-grow-1" onclick="confirmBatchImport()" id="batchImportBtn">
-                                    <i class="bi bi-check-circle me-2"></i> Importar Todos
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Batch Result -->
-                        <div id="batchResult" style="display: none;">
-                            <div class="alert alert-success">
-                                <h6><i class="bi bi-check-circle me-2"></i>Importacao Concluida</h6>
-                                <p class="mb-2" id="batchResultText"></p>
-                                <button class="btn btn-sm btn-outline-success" onclick="resetBatchImport()">
-                                    Importar mais arquivos
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Single Import Tab -->
-                    <div class="tab-pane fade" id="singleImport">
-                        <p class="text-muted mb-3">Importe uma conversa e selecione o contato manualmente</p>
-
-                        <div id="uploadArea" class="border border-2 border-dashed rounded-3 p-5 text-center mb-3" style="cursor: pointer; border-color: var(--gray-300);">
-                            <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--whatsapp);"></i>
-                            <p class="mt-2 mb-1"><strong>Clique ou arraste o arquivo .txt</strong></p>
-                            <small class="text-muted">Exportado do WhatsApp (iOS ou Android)</small>
-                            <input type="file" id="fileInput" accept=".txt" style="display: none;">
-                        </div>
-
-                        <div id="importPreview" style="display: none;">
-                            <h6 class="mb-3">Preview da Importacao</h6>
-
-                            <div class="row g-3 mb-3">
-                                <div class="col-md-4">
-                                    <div class="stat-card">
-                                        <div class="stat-value" id="previewMessages">0</div>
-                                        <div class="stat-label">Mensagens</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="stat-card">
-                                        <div class="stat-value" id="previewParticipants">0</div>
-                                        <div class="stat-label">Participantes</div>
-                                    </div>
-                                </div>
-                                <div class="col-md-4">
-                                    <div class="stat-card">
-                                        <div class="stat-value" id="previewDays">0</div>
-                                        <div class="stat-label">Dias</div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div id="participantsList" class="mb-3"></div>
-
-                            <div class="row g-3 align-items-end">
-                                <div class="col-md-6">
-                                    <label class="form-label">Seu nome no chat</label>
-                                    <input type="text" id="myNameInput" class="form-control" value="Renato" placeholder="Seu nome no chat">
-                                </div>
-                                <div class="col-md-6">
-                                    <button class="btn btn-whatsapp w-100" onclick="confirmImport()">
-                                        <i class="bi bi-check-circle me-2"></i> Importar Mensagens
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Send Test Message -->
-        <div class="card" id="sendCard" style="display: none;">
-            <div class="card-header">
-                <h5 class="card-title"><i class="bi bi-send"></i> Enviar Mensagem</h5>
-            </div>
-            <div class="card-body">
-                <div class="send-form">
-                    <div class="row g-3">
-                        <div class="col-md-4">
-                            <label class="form-label">Telefone</label>
-                            <input type="text" class="form-control" id="phoneInput" placeholder="+55 11 99999-9999">
-                        </div>
-                        <div class="col-md-8">
-                            <label class="form-label">Mensagem</label>
-                            <div class="input-group">
-                                <input type="text" class="form-control" id="messageInput" placeholder="Digite sua mensagem...">
-                                <button class="btn btn-whatsapp" onclick="sendMessage()">
-                                    <i class="bi bi-send"></i> Enviar
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Search Messages -->
-        <div class="card" id="searchCard" style="display: none;">
-            <div class="card-header">
-                <h5 class="card-title"><i class="bi bi-search"></i> Buscar Conversas</h5>
-            </div>
-            <div class="card-body">
-                <div class="input-group mb-3">
-                    <input type="text" class="form-control" id="searchInput" placeholder="Buscar mensagens..." minlength="3">
-                    <button class="btn btn-outline-secondary" type="button" onclick="searchMessages()">
-                        <i class="bi bi-search"></i>
-                    </button>
-                </div>
-                <div id="searchResults" style="display: none;">
-                    <small class="text-muted" id="searchCount"></small>
-                    <div id="searchResultsList" class="list-group list-group-flush mt-2"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Export Conversation -->
-        <div class="card" id="exportCard" style="display: none;">
-            <div class="card-header">
-                <h5 class="card-title"><i class="bi bi-download"></i> Exportar Conversa</h5>
-            </div>
-            <div class="card-body">
-                <div class="row g-3 align-items-end">
-                    <div class="col-md-6">
-                        <label class="form-label">Selecione o Contato</label>
-                        <select class="form-select" id="exportContactSelect">
-                            <option value="">Carregando contatos...</option>
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <label class="form-label">Formato</label>
-                        <select class="form-select" id="exportFormat">
-                            <option value="csv">CSV</option>
-                            <option value="json">JSON</option>
-                        </select>
-                    </div>
-                    <div class="col-md-3">
-                        <button class="btn btn-outline-primary w-100" onclick="exportConversation()">
-                            <i class="bi bi-download me-1"></i> Exportar
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Recent Activity -->
-        <div class="card" id="activityCard" style="display: none;">
-            <div class="card-header">
-                <h5 class="card-title"><i class="bi bi-clock-history"></i> Atividade Recente</h5>
-            </div>
-            <div class="card-body" id="activityBody">
-                <p class="text-muted">As mensagens recebidas aparecerao aqui e serao vinculadas automaticamente aos contatos.</p>
-            </div>
-        </div>
-    </main>
-
-    <!-- Toast -->
-    <div class="toast-container">
-        <div id="toast" class="toast" role="alert">
-            <div class="toast-header">
-                <i class="bi bi-whatsapp text-success me-2"></i>
-                <strong class="me-auto">WhatsApp</strong>
-                <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
-            </div>
-            <div class="toast-body" id="toastBody"></div>
+    </div>
+    <div id="webhookStatus" class="mt-3" style="display: none;">
+        <div class="alert alert-info mb-0 py-2" style="background: rgba(255,255,255,0.2); border: none;">
+            <i class="bi bi-info-circle me-1"></i>
+            <span id="webhookStatusText"></span>
         </div>
     </div>
+</div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // Global sync function
-        async function globalSync() {
-            const btn = document.getElementById('btnGlobalSync');
-            if (btn.classList.contains('syncing')) return;
-            btn.classList.add('syncing');
-            try {
-                const response = await fetch('/api/sync/global', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-                const data = await response.json();
-                const toast = document.createElement('div');
-                toast.innerHTML = '<i class="bi bi-check-circle"></i> Sincronização iniciada em background';
-                toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#10b981;color:white;padding:12px 20px;border-radius:8px;z-index:9999;display:flex;align-items:center;gap:8px;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-                document.body.appendChild(toast);
-                setTimeout(() => toast.remove(), 3000);
-            } catch (error) {
-                console.error('Erro no sync:', error);
-                const toast = document.createElement('div');
-                toast.innerHTML = '<i class="bi bi-exclamation-circle"></i> Erro na sincronização';
-                toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#ef4444;color:white;padding:12px 20px;border-radius:8px;z-index:9999;display:flex;align-items:center;gap:8px;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-                document.body.appendChild(toast);
-                setTimeout(() => toast.remove(), 3000);
-            } finally {
-                setTimeout(() => btn.classList.remove('syncing'), 2000);
-            }
+<!-- QR Code Card (when disconnected) -->
+<div id="qrCard" class="card" style="display: none;">
+    <div class="card-header">
+        <h5 class="card-title"><i class="bi bi-qr-code"></i> Conectar WhatsApp</h5>
+        <button class="btn btn-outline-secondary btn-sm" onclick="refreshQR()">
+            <i class="bi bi-arrow-clockwise me-1"></i> Atualizar QR
+        </button>
+    </div>
+    <div class="card-body">
+        <div class="qr-container">
+            <img id="qrImage" src="" alt="QR Code" width="280" />
+            <div class="qr-instructions">
+                <p><strong>Para conectar:</strong></p>
+                <ol>
+                    <li>Abra o WhatsApp no celular</li>
+                    <li>Toque em <strong>Aparelhos Conectados</strong></li>
+                    <li>Toque em <strong>Conectar Aparelho</strong></li>
+                    <li>Aponte a camera para este QR Code</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Stats -->
+<div class="stats-grid" id="statsGrid" style="display: none;">
+    <div class="stat-card">
+        <div class="stat-value" id="totalMessages">0</div>
+        <div class="stat-label">Mensagens Hoje</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="totalConversations">0</div>
+        <div class="stat-label">Conversas Ativas</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="totalContacts">0</div>
+        <div class="stat-label">Contatos com WhatsApp</div>
+    </div>
+</div>
+
+<!-- Sync History Card -->
+<div class="card" id="syncCard" style="display: none;">
+    <div class="card-header">
+        <h5 class="card-title"><i class="bi bi-cloud-download"></i> Sincronizar Historico</h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted mb-3">Buscar historico de mensagens do WhatsApp e vincular aos contatos existentes.</p>
+
+        <div class="mb-3">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="includeGroups">
+                <label class="form-check-label" for="includeGroups">
+                    <strong>Incluir grupos</strong>
+                    <small class="text-muted d-block">Importa apenas mensagens onde voce participou (enviou ou foi mencionado)</small>
+                </label>
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <button class="btn btn-whatsapp" onclick="syncHistory()" id="syncBtn">
+                <i class="bi bi-arrow-repeat me-2"></i> Sincronizar Mensagens
+            </button>
+            <button class="btn btn-outline-primary" onclick="autoSync()" id="autoSyncBtn">
+                <i class="bi bi-play-circle me-2"></i> Auto-Sync (Todos)
+            </button>
+            <button class="btn btn-outline-secondary" onclick="relinkMessages()" id="relinkBtn">
+                <i class="bi bi-link-45deg me-2"></i> Re-vincular
+            </button>
+            <button class="btn btn-outline-danger" onclick="stopAutoSync()" id="stopAutoSyncBtn" style="display: none;">
+                <i class="bi bi-stop-circle me-2"></i> Parar
+            </button>
+            <div id="syncStatus" style="display: none;">
+                <span class="spinner-border spinner-border-sm me-2"></span>
+                <span id="syncStatusText">Sincronizando...</span>
+            </div>
+        </div>
+        <div id="syncResult" class="mt-3" style="display: none;">
+            <div class="alert alert-success mb-0">
+                <i class="bi bi-check-circle me-2"></i>
+                <span id="syncResultText"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Import History from .txt -->
+<div class="card" id="importCard" style="display: none;">
+    <div class="card-header">
+        <h5 class="card-title"><i class="bi bi-file-text"></i> Importar Historico (.txt)</h5>
+    </div>
+    <div class="card-body">
+        <!-- Tabs para Single vs Batch -->
+        <ul class="nav nav-tabs mb-3" role="tablist">
+            <li class="nav-item">
+                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#batchImport">
+                    <i class="bi bi-files me-1"></i> Import em Lote
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#singleImport">
+                    <i class="bi bi-file-text me-1"></i> Arquivo Unico
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content">
+            <!-- Batch Import Tab -->
+            <div class="tab-pane fade show active" id="batchImport">
+                <p class="text-muted mb-3">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Arraste multiplos arquivos .txt - o sistema detecta os contatos automaticamente
+                </p>
+
+                <div id="batchUploadArea" class="border border-2 border-dashed rounded-3 p-5 text-center mb-3" style="cursor: pointer; border-color: var(--gray-300);">
+                    <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--whatsapp);"></i>
+                    <p class="mt-2 mb-1"><strong>Arraste multiplos arquivos .txt aqui</strong></p>
+                    <small class="text-muted">Ou clique para selecionar</small>
+                    <input type="file" id="batchFileInput" accept=".txt" multiple style="display: none;">
+                </div>
+
+                <!-- Batch Preview -->
+                <div id="batchPreview" style="display: none;">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="mb-0">
+                            <span id="batchFileCount">0</span> arquivos selecionados
+                        </h6>
+                        <span class="text-muted" id="batchTotalMessages">0 mensagens</span>
+                    </div>
+
+                    <div id="batchFilesList" class="mb-3" style="max-height: 400px; overflow-y: auto;"></div>
+
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-secondary" onclick="clearBatchFiles()">
+                            <i class="bi bi-x-circle me-1"></i> Limpar
+                        </button>
+                        <button class="btn btn-whatsapp flex-grow-1" onclick="confirmBatchImport()" id="batchImportBtn">
+                            <i class="bi bi-check-circle me-2"></i> Importar Todos
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Batch Result -->
+                <div id="batchResult" style="display: none;">
+                    <div class="alert alert-success">
+                        <h6><i class="bi bi-check-circle me-2"></i>Importacao Concluida</h6>
+                        <p class="mb-2" id="batchResultText"></p>
+                        <button class="btn btn-sm btn-outline-success" onclick="resetBatchImport()">
+                            Importar mais arquivos
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Single Import Tab -->
+            <div class="tab-pane fade" id="singleImport">
+                <p class="text-muted mb-3">Importe uma conversa e selecione o contato manualmente</p>
+
+                <div id="uploadArea" class="border border-2 border-dashed rounded-3 p-5 text-center mb-3" style="cursor: pointer; border-color: var(--gray-300);">
+                    <i class="bi bi-cloud-upload" style="font-size: 3rem; color: var(--whatsapp);"></i>
+                    <p class="mt-2 mb-1"><strong>Clique ou arraste o arquivo .txt</strong></p>
+                    <small class="text-muted">Exportado do WhatsApp (iOS ou Android)</small>
+                    <input type="file" id="fileInput" accept=".txt" style="display: none;">
+                </div>
+
+                <div id="importPreview" style="display: none;">
+                    <h6 class="mb-3">Preview da Importacao</h6>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <div class="stat-card">
+                                <div class="stat-value" id="previewMessages">0</div>
+                                <div class="stat-label">Mensagens</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="stat-card">
+                                <div class="stat-value" id="previewParticipants">0</div>
+                                <div class="stat-label">Participantes</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="stat-card">
+                                <div class="stat-value" id="previewDays">0</div>
+                                <div class="stat-label">Dias</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="participantsList" class="mb-3"></div>
+
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-6">
+                            <label class="form-label">Seu nome no chat</label>
+                            <input type="text" id="myNameInput" class="form-control" value="Renato" placeholder="Seu nome no chat">
+                        </div>
+                        <div class="col-md-6">
+                            <button class="btn btn-whatsapp w-100" onclick="confirmImport()">
+                                <i class="bi bi-check-circle me-2"></i> Importar Mensagens
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Send Test Message -->
+<div class="card" id="sendCard" style="display: none;">
+    <div class="card-header">
+        <h5 class="card-title"><i class="bi bi-send"></i> Enviar Mensagem</h5>
+    </div>
+    <div class="card-body">
+        <div class="send-form">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label">Telefone</label>
+                    <input type="text" class="form-control" id="phoneInput" placeholder="+55 11 99999-9999">
+                </div>
+                <div class="col-md-8">
+                    <label class="form-label">Mensagem</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="messageInput" placeholder="Digite sua mensagem...">
+                        <button class="btn btn-whatsapp" onclick="sendMessage()">
+                            <i class="bi bi-send"></i> Enviar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Search Messages -->
+<div class="card" id="searchCard" style="display: none;">
+    <div class="card-header">
+        <h5 class="card-title"><i class="bi bi-search"></i> Buscar Conversas</h5>
+    </div>
+    <div class="card-body">
+        <div class="input-group mb-3">
+            <input type="text" class="form-control" id="searchInput" placeholder="Buscar mensagens..." minlength="3">
+            <button class="btn btn-outline-secondary" type="button" onclick="searchMessages()">
+                <i class="bi bi-search"></i>
+            </button>
+        </div>
+        <div id="searchResults" style="display: none;">
+            <small class="text-muted" id="searchCount"></small>
+            <div id="searchResultsList" class="list-group list-group-flush mt-2"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Export Conversation -->
+<div class="card" id="exportCard" style="display: none;">
+    <div class="card-header">
+        <h5 class="card-title"><i class="bi bi-download"></i> Exportar Conversa</h5>
+    </div>
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-6">
+                <label class="form-label">Selecione o Contato</label>
+                <select class="form-select" id="exportContactSelect">
+                    <option value="">Carregando contatos...</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Formato</label>
+                <select class="form-select" id="exportFormat">
+                    <option value="csv">CSV</option>
+                    <option value="json">JSON</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-outline-primary w-100" onclick="exportConversation()">
+                    <i class="bi bi-download me-1"></i> Exportar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="card" id="activityCard" style="display: none;">
+    <div class="card-header">
+        <h5 class="card-title"><i class="bi bi-clock-history"></i> Atividade Recente</h5>
+    </div>
+    <div class="card-body" id="activityBody">
+        <p class="text-muted">As mensagens recebidas aparecerao aqui e serao vinculadas automaticamente aos contatos.</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+<!-- Toast -->
+<div class="toast-container">
+    <div id="toast" class="toast" role="alert">
+        <div class="toast-header">
+            <i class="bi bi-whatsapp text-success me-2"></i>
+            <strong class="me-auto">WhatsApp</strong>
+            <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+        </div>
+        <div class="toast-body" id="toastBody"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let connectionState = 'checking';
+    let autoSyncRunning = false;
+    let autoSyncAbort = false;
+    let parsedImportData = null;
+    let contactsList = [];
+    let batchFiles = []; // Para batch import
+
+    // Setup file drag and drop
+    document.addEventListener('DOMContentLoaded', function() {
+        // Single file upload
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        if (uploadArea && fileInput) {
+            uploadArea.addEventListener('click', () => fileInput.click());
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.style.borderColor = 'var(--whatsapp)';
+                uploadArea.style.background = 'rgba(37, 211, 102, 0.05)';
+            });
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.style.borderColor = 'var(--gray-300)';
+                uploadArea.style.background = '';
+            });
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.style.borderColor = 'var(--gray-300)';
+                uploadArea.style.background = '';
+                if (e.dataTransfer.files.length) processImportFile(e.dataTransfer.files[0]);
+            });
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length) processImportFile(e.target.files[0]);
+            });
         }
 
-        let connectionState = 'checking';
-        let autoSyncRunning = false;
-        let autoSyncAbort = false;
-        let parsedImportData = null;
-        let contactsList = [];
-        let batchFiles = []; // Para batch import
+        // Batch file upload
+        const batchUploadArea = document.getElementById('batchUploadArea');
+        const batchFileInput = document.getElementById('batchFileInput');
 
-        // Setup file drag and drop
-        document.addEventListener('DOMContentLoaded', function() {
-            // Single file upload
-            const uploadArea = document.getElementById('uploadArea');
-            const fileInput = document.getElementById('fileInput');
+        if (batchUploadArea && batchFileInput) {
+            batchUploadArea.addEventListener('click', () => batchFileInput.click());
+            batchUploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                batchUploadArea.style.borderColor = 'var(--whatsapp)';
+                batchUploadArea.style.background = 'rgba(37, 211, 102, 0.05)';
+            });
+            batchUploadArea.addEventListener('dragleave', () => {
+                batchUploadArea.style.borderColor = 'var(--gray-300)';
+                batchUploadArea.style.background = '';
+            });
+            batchUploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                batchUploadArea.style.borderColor = 'var(--gray-300)';
+                batchUploadArea.style.background = '';
+                if (e.dataTransfer.files.length) processBatchFiles(e.dataTransfer.files);
+            });
+            batchFileInput.addEventListener('change', (e) => {
+                if (e.target.files.length) processBatchFiles(e.target.files);
+            });
+        }
+    });
 
-            if (uploadArea && fileInput) {
-                uploadArea.addEventListener('click', () => fileInput.click());
-                uploadArea.addEventListener('dragover', (e) => {
-                    e.preventDefault();
-                    uploadArea.style.borderColor = 'var(--whatsapp)';
-                    uploadArea.style.background = 'rgba(37, 211, 102, 0.05)';
-                });
-                uploadArea.addEventListener('dragleave', () => {
-                    uploadArea.style.borderColor = 'var(--gray-300)';
-                    uploadArea.style.background = '';
-                });
-                uploadArea.addEventListener('drop', (e) => {
-                    e.preventDefault();
-                    uploadArea.style.borderColor = 'var(--gray-300)';
-                    uploadArea.style.background = '';
-                    if (e.dataTransfer.files.length) processImportFile(e.dataTransfer.files[0]);
-                });
-                fileInput.addEventListener('change', (e) => {
-                    if (e.target.files.length) processImportFile(e.target.files[0]);
-                });
+    // =============== BATCH IMPORT ===============
+
+    async function processBatchFiles(files) {
+        const txtFiles = Array.from(files).filter(f => f.name.endsWith('.txt'));
+        if (txtFiles.length === 0) {
+            showToast('Selecione arquivos .txt');
+            return;
+        }
+
+        showToast(`Analisando ${txtFiles.length} arquivos...`);
+
+        const formData = new FormData();
+        txtFiles.forEach(f => formData.append('files', f));
+
+        try {
+            const response = await fetch('/api/whatsapp/batch-import/preview', {
+                method: 'POST',
+                body: formData,
+                credentials: 'include'
+            });
+
+            if (!response.ok) throw new Error('Erro ao analisar arquivos');
+
+            const data = await response.json();
+            batchFiles = data.files || [];
+
+            // Read file contents for later import
+            for (let i = 0; i < txtFiles.length; i++) {
+                const content = await txtFiles[i].text();
+                if (batchFiles[i]) {
+                    batchFiles[i].content = content;
+                }
             }
 
-            // Batch file upload
-            const batchUploadArea = document.getElementById('batchUploadArea');
-            const batchFileInput = document.getElementById('batchFileInput');
+            renderBatchPreview();
+        } catch (e) {
+            showToast('Erro ao processar arquivos');
+            console.error(e);
+        }
+    }
 
-            if (batchUploadArea && batchFileInput) {
-                batchUploadArea.addEventListener('click', () => batchFileInput.click());
-                batchUploadArea.addEventListener('dragover', (e) => {
-                    e.preventDefault();
-                    batchUploadArea.style.borderColor = 'var(--whatsapp)';
-                    batchUploadArea.style.background = 'rgba(37, 211, 102, 0.05)';
-                });
-                batchUploadArea.addEventListener('dragleave', () => {
-                    batchUploadArea.style.borderColor = 'var(--gray-300)';
-                    batchUploadArea.style.background = '';
-                });
-                batchUploadArea.addEventListener('drop', (e) => {
-                    e.preventDefault();
-                    batchUploadArea.style.borderColor = 'var(--gray-300)';
-                    batchUploadArea.style.background = '';
-                    if (e.dataTransfer.files.length) processBatchFiles(e.dataTransfer.files);
-                });
-                batchFileInput.addEventListener('change', (e) => {
-                    if (e.target.files.length) processBatchFiles(e.target.files);
-                });
+    function renderBatchPreview() {
+        document.getElementById('batchPreview').style.display = 'block';
+        document.getElementById('batchFileCount').textContent = batchFiles.length;
+
+        const totalMsgs = batchFiles.reduce((sum, f) => sum + (f.messages_count || 0), 0);
+        document.getElementById('batchTotalMessages').textContent = `${totalMsgs.toLocaleString()} mensagens`;
+
+        const list = document.getElementById('batchFilesList');
+        list.innerHTML = batchFiles.map((file, idx) => {
+            const hasContact = file.contact_found;
+            const statusClass = hasContact ? 'bg-success' : 'bg-warning';
+            const statusIcon = hasContact ? 'bi-check-circle' : 'bi-question-circle';
+            const contactName = file.contact ? file.contact.nome : file.contact_name || 'Desconhecido';
+
+            return `
+            <div class="d-flex align-items-center gap-3 p-3 border rounded mb-2" data-idx="${idx}">
+                <div class="flex-shrink-0">
+                    <span class="badge ${statusClass}"><i class="bi ${statusIcon}"></i></span>
+                </div>
+                <div class="flex-grow-1 min-width-0">
+                    <div class="fw-medium text-truncate">${file.filename}</div>
+                    <small class="text-muted">
+                        ${file.messages_count || 0} msgs
+                        ${file.date_range?.start ? '• ' + new Date(file.date_range.start).toLocaleDateString('pt-BR') : ''}
+                    </small>
+                </div>
+                <div class="flex-shrink-0" style="min-width: 200px;">
+                    ${hasContact
+                        ? `<span class="text-success"><i class="bi bi-person-check me-1"></i>${contactName}</span>`
+                        : `<select class="form-select form-select-sm" onchange="setBatchContact(${idx}, this.value)">
+                                <option value="">Selecionar contato...</option>
+                                ${contactsList.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}
+                           </select>`
+                    }
+                </div>
+                <div class="flex-shrink-0">
+                    <button class="btn btn-sm btn-outline-danger" onclick="removeBatchFile(${idx})">
+                        <i class="bi bi-x"></i>
+                    </button>
+                </div>
+            </div>
+            `;
+        }).join('');
+
+        updateBatchImportButton();
+    }
+
+    function setBatchContact(idx, contactId) {
+        if (batchFiles[idx] && contactId) {
+            batchFiles[idx].contact_id = parseInt(contactId);
+            batchFiles[idx].contact_found = true;
+            const contact = contactsList.find(c => c.id == contactId);
+            if (contact) {
+                batchFiles[idx].contact = contact;
             }
+        }
+        updateBatchImportButton();
+    }
+
+    function removeBatchFile(idx) {
+        batchFiles.splice(idx, 1);
+        if (batchFiles.length === 0) {
+            clearBatchFiles();
+        } else {
+            renderBatchPreview();
+        }
+    }
+
+    function clearBatchFiles() {
+        batchFiles = [];
+        document.getElementById('batchPreview').style.display = 'none';
+        document.getElementById('batchResult').style.display = 'none';
+        document.getElementById('batchFileInput').value = '';
+    }
+
+    function updateBatchImportButton() {
+        const btn = document.getElementById('batchImportBtn');
+        const validFiles = batchFiles.filter(f => f.contact_found || f.contact_id);
+        btn.disabled = validFiles.length === 0;
+        btn.innerHTML = `<i class="bi bi-check-circle me-2"></i> Importar ${validFiles.length} de ${batchFiles.length}`;
+    }
+
+    async function confirmBatchImport() {
+        const filesToImport = batchFiles.filter(f => f.contact_found || f.contact_id);
+        if (filesToImport.length === 0) {
+            showToast('Selecione contatos para os arquivos');
+            return;
+        }
+
+        const btn = document.getElementById('batchImportBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Importando...';
+
+        try {
+            const payload = {
+                files: filesToImport.map(f => ({
+                    filename: f.filename,
+                    content: f.content,
+                    contact_id: f.contact?.id || f.contact_id
+                }))
+            };
+
+            const response = await fetch('/api/whatsapp/batch-import/confirm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                credentials: 'include'
+            });
+
+            const result = await response.json();
+
+            // Show result
+            document.getElementById('batchPreview').style.display = 'none';
+            document.getElementById('batchResult').style.display = 'block';
+            document.getElementById('batchResultText').innerHTML = `
+                <strong>${result.successful}</strong> arquivos importados com sucesso<br>
+                <strong>${result.total_messages_imported?.toLocaleString() || 0}</strong> mensagens adicionadas ao Inbox
+                ${result.failed > 0 ? `<br><span class="text-warning">${result.failed} arquivos com erro</span>` : ''}
+            `;
+
+            showToast(`Importado: ${result.total_messages_imported} mensagens`);
+            checkStatus();
+
+        } catch (e) {
+            showToast('Erro ao importar');
+            console.error(e);
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-circle me-2"></i> Importar Todos';
+        }
+    }
+
+    function resetBatchImport() {
+        clearBatchFiles();
+    }
+
+    async function loadContactsForImport() {
+        try {
+            const response = await fetch('/api/contacts?limit=500');
+            const data = await response.json();
+            contactsList = data.contacts || [];
+        } catch (e) {
+            console.error('Error loading contacts:', e);
+        }
+    }
+
+    async function processImportFile(file) {
+        if (!file.name.endsWith('.txt')) {
+            showToast('Por favor selecione um arquivo .txt');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            showToast('Analisando arquivo...');
+
+            const response = await fetch('/api/whatsapp/import/parse', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) throw new Error('Erro ao processar arquivo');
+
+            parsedImportData = await response.json();
+            showImportPreview(parsedImportData);
+
+        } catch (e) {
+            showToast('Erro ao processar arquivo');
+            console.error(e);
+        }
+    }
+
+    function showImportPreview(data) {
+        document.getElementById('importPreview').style.display = 'block';
+        document.getElementById('previewMessages').textContent = data.total_messages || 0;
+        document.getElementById('previewParticipants').textContent = (data.participants || []).length;
+
+        if (data.date_range && data.date_range.start && data.date_range.end) {
+            const start = new Date(data.date_range.start);
+            const end = new Date(data.date_range.end);
+            const days = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+            document.getElementById('previewDays').textContent = days;
+        }
+
+        // Show participants with contact selector
+        const participantsList = document.getElementById('participantsList');
+        participantsList.innerHTML = (data.participants || []).map(p => `
+            <div class="d-flex align-items-center justify-content-between p-2 bg-light rounded mb-2">
+                <span><strong>${p}</strong></span>
+                <select class="form-select form-select-sm" style="width: auto; min-width: 200px;" data-participant="${p}">
+                    <option value="">Selecionar contato...</option>
+                    ${contactsList.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}
+                </select>
+            </div>
+        `).join('');
+    }
+
+    async function confirmImport() {
+        if (!parsedImportData) return;
+
+        const selects = document.querySelectorAll('#participantsList select');
+        let selectedContactId = null;
+
+        selects.forEach(select => {
+            if (select.value) selectedContactId = parseInt(select.value);
         });
 
-        // =============== BATCH IMPORT ===============
+        if (!selectedContactId) {
+            showToast('Selecione um contato para importar');
+            return;
+        }
 
-        async function processBatchFiles(files) {
-            const txtFiles = Array.from(files).filter(f => f.name.endsWith('.txt'));
-            if (txtFiles.length === 0) {
-                showToast('Selecione arquivos .txt');
+        const myName = document.getElementById('myNameInput').value || 'Renato';
+
+        try {
+            showToast('Importando mensagens...');
+
+            const response = await fetch('/api/whatsapp/import/confirm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: parsedImportData.messages,
+                    contact_id: selectedContactId,
+                    my_name: myName
+                })
+            });
+
+            const result = await response.json();
+
+            if (result.error) {
+                showToast('Erro: ' + result.error);
+            } else {
+                showToast(`Importado: ${result.imported} mensagens`);
+                document.getElementById('importPreview').style.display = 'none';
+                parsedImportData = null;
+                checkStatus(); // Refresh stats
+            }
+
+        } catch (e) {
+            showToast('Erro ao importar');
+            console.error(e);
+        }
+    }
+
+    async function checkStatus() {
+        try {
+            const response = await fetch('/api/whatsapp/status');
+            const data = await response.json();
+
+            const state = data.instance?.state || data.error || 'unknown';
+            updateUI(state);
+
+            // Update stats if available
+            if (data.stats) {
+                document.getElementById('totalMessages').textContent = data.stats.messages_today || 0;
+                document.getElementById('totalConversations').textContent = data.stats.active_conversations || 0;
+                document.getElementById('totalContacts').textContent = data.stats.contacts_with_whatsapp || 0;
+            }
+
+            // Update recent activity
+            if (data.recent_activity && data.recent_activity.length > 0) {
+                renderRecentActivity(data.recent_activity);
+            }
+        } catch (error) {
+            console.error('Error checking status:', error);
+            updateUI('error');
+        }
+    }
+
+    function renderRecentActivity(messages) {
+        const activityBody = document.getElementById('activityBody');
+        if (!activityBody) return;
+
+        let html = '<div class="list-group list-group-flush">';
+        for (const msg of messages) {
+            const isOutgoing = msg.direction === 'outgoing';
+            const icon = isOutgoing ? 'bi-arrow-up-right text-primary' : 'bi-arrow-down-left text-success';
+            const time = msg.sent_at ? new Date(msg.sent_at).toLocaleString('pt-BR') : '';
+
+            let contactDisplay;
+            if (isOutgoing) {
+                // Outgoing message - show "Você → Contact"
+                const recipient = msg.contact_id
+                    ? `<a href="/contatos/${msg.contact_id}">${msg.contact_name || 'Contato'}</a>`
+                    : (msg.phone || 'Desconhecido');
+                contactDisplay = `<span class="text-primary">Você</span> → ${recipient}`;
+            } else {
+                // Incoming message - show contact name
+                contactDisplay = msg.contact_id
+                    ? `<a href="/contatos/${msg.contact_id}">${msg.contact_name || 'Contato'}</a>`
+                    : (msg.phone || 'Desconhecido');
+            }
+
+            html += `
+                <div class="list-group-item d-flex align-items-start gap-3 py-3">
+                    <i class="bi ${icon}" style="font-size: 1.2rem;"></i>
+                    <div class="flex-grow-1">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <strong>${contactDisplay}</strong>
+                            <small class="text-muted">${time}</small>
+                        </div>
+                        <p class="mb-0 text-muted small">${msg.content || '[midia]'}</p>
+                    </div>
+                </div>
+            `;
+        }
+        html += '</div>';
+        activityBody.innerHTML = html;
+    }
+
+    function updateUI(state) {
+        const statusBadge = document.getElementById('statusBadge');
+        const connectionCard = document.getElementById('connectionCard');
+        const qrCard = document.getElementById('qrCard');
+        const statsGrid = document.getElementById('statsGrid');
+        const sendCard = document.getElementById('sendCard');
+        const activityCard = document.getElementById('activityCard');
+        const syncCard = document.getElementById('syncCard');
+        const searchCard = document.getElementById('searchCard');
+        const exportCard = document.getElementById('exportCard');
+        const importCard = document.getElementById('importCard');
+
+        if (state === 'open') {
+            // Connected
+            statusBadge.innerHTML = `
+                <span class="status-badge connected">
+                    <span class="status-dot"></span>
+                    Conectado
+                </span>
+            `;
+            connectionCard.style.display = 'block';
+            qrCard.style.display = 'none';
+            statsGrid.style.display = 'grid';
+            sendCard.style.display = 'block';
+            activityCard.style.display = 'block';
+            syncCard.style.display = 'block';
+            searchCard.style.display = 'block';
+            exportCard.style.display = 'block';
+            if (importCard) importCard.style.display = 'block';
+            loadContactsForExport();
+            loadContactsForImport();
+            checkWebhookStatus();
+        } else if (state === 'connecting') {
+            // Connecting - show QR
+            statusBadge.innerHTML = `
+                <span class="status-badge connecting">
+                    <span class="status-dot"></span>
+                    Conectando...
+                </span>
+            `;
+            connectionCard.style.display = 'none';
+            qrCard.style.display = 'block';
+            statsGrid.style.display = 'none';
+            sendCard.style.display = 'none';
+            activityCard.style.display = 'none';
+            syncCard.style.display = 'none';
+            searchCard.style.display = 'none';
+            exportCard.style.display = 'none';
+            if (importCard) importCard.style.display = 'block'; // Import always visible
+            loadContactsForImport();
+            refreshQR();
+        } else {
+            // Disconnected
+            statusBadge.innerHTML = `
+                <span class="status-badge disconnected">
+                    <span class="status-dot"></span>
+                    Desconectado
+                </span>
+            `;
+            connectionCard.style.display = 'none';
+            qrCard.style.display = 'block';
+            statsGrid.style.display = 'none';
+            sendCard.style.display = 'none';
+            activityCard.style.display = 'none';
+            syncCard.style.display = 'none';
+            searchCard.style.display = 'none';
+            exportCard.style.display = 'none';
+            if (importCard) importCard.style.display = 'block'; // Import always visible
+            loadContactsForImport();
+            refreshQR();
+        }
+    }
+
+    async function loadContactsForExport() {
+        const select = document.getElementById('exportContactSelect');
+        if (!select) return;
+        try {
+            const response = await fetch('/api/contacts?limit=200');
+            const data = await response.json();
+            const contacts = data.contacts || [];
+            select.innerHTML = '<option value="">Selecione um contato...</option>';
+            for (const c of contacts) {
+                if (c.telefone) {
+                    const option = document.createElement('option');
+                    option.value = c.id;
+                    option.textContent = `${c.nome || 'Sem nome'} (${c.telefone})`;
+                    select.appendChild(option);
+                }
+            }
+        } catch (error) {
+            console.error('Error loading contacts:', error);
+            select.innerHTML = '<option value="">Erro ao carregar contatos</option>';
+        }
+    }
+
+    function exportConversation() {
+        const contactId = document.getElementById('exportContactSelect').value;
+        const format = document.getElementById('exportFormat').value;
+        if (!contactId) {
+            showToast('Selecione um contato');
+            return;
+        }
+        window.location.href = `/api/whatsapp/export/${contactId}?format=${format}`;
+    }
+
+    async function searchMessages() {
+        const query = document.getElementById('searchInput').value.trim();
+        const resultsDiv = document.getElementById('searchResults');
+        const resultsList = document.getElementById('searchResultsList');
+        const countSpan = document.getElementById('searchCount');
+
+        if (query.length < 3) {
+            showToast('Digite pelo menos 3 caracteres');
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/whatsapp/search?q=${encodeURIComponent(query)}&limit=50`);
+            const data = await response.json();
+
+            if (data.error) {
+                showToast('Erro na busca: ' + data.error);
                 return;
             }
 
-            showToast(`Analisando ${txtFiles.length} arquivos...`);
+            resultsDiv.style.display = 'block';
+            countSpan.textContent = `${data.total} resultado(s) encontrado(s)`;
 
-            const formData = new FormData();
-            txtFiles.forEach(f => formData.append('files', f));
-
-            try {
-                const response = await fetch('/api/whatsapp/batch-import/preview', {
-                    method: 'POST',
-                    body: formData,
-                    credentials: 'include'
-                });
-
-                if (!response.ok) throw new Error('Erro ao analisar arquivos');
-
-                const data = await response.json();
-                batchFiles = data.files || [];
-
-                // Read file contents for later import
-                for (let i = 0; i < txtFiles.length; i++) {
-                    const content = await txtFiles[i].text();
-                    if (batchFiles[i]) {
-                        batchFiles[i].content = content;
-                    }
-                }
-
-                renderBatchPreview();
-            } catch (e) {
-                showToast('Erro ao processar arquivos');
-                console.error(e);
+            if (data.results.length === 0) {
+                resultsList.innerHTML = '<div class="list-group-item text-muted">Nenhuma mensagem encontrada</div>';
+                return;
             }
-        }
 
-        function renderBatchPreview() {
-            document.getElementById('batchPreview').style.display = 'block';
-            document.getElementById('batchFileCount').textContent = batchFiles.length;
-
-            const totalMsgs = batchFiles.reduce((sum, f) => sum + (f.messages_count || 0), 0);
-            document.getElementById('batchTotalMessages').textContent = `${totalMsgs.toLocaleString()} mensagens`;
-
-            const list = document.getElementById('batchFilesList');
-            list.innerHTML = batchFiles.map((file, idx) => {
-                const hasContact = file.contact_found;
-                const statusClass = hasContact ? 'bg-success' : 'bg-warning';
-                const statusIcon = hasContact ? 'bi-check-circle' : 'bi-question-circle';
-                const contactName = file.contact ? file.contact.nome : file.contact_name || 'Desconhecido';
+            resultsList.innerHTML = data.results.map(msg => {
+                const regex = new RegExp(`(${query})`, 'gi');
+                const highlighted = msg.content.replace(regex, '<mark>$1</mark>');
+                const fromMe = msg.direction === 'outgoing';
+                const direction = fromMe ? 'Enviada' : 'Recebida';
+                const date = msg.sent_at ? new Date(msg.sent_at).toLocaleString('pt-BR') : '';
 
                 return `
-                <div class="d-flex align-items-center gap-3 p-3 border rounded mb-2" data-idx="${idx}">
-                    <div class="flex-shrink-0">
-                        <span class="badge ${statusClass}"><i class="bi ${statusIcon}"></i></span>
-                    </div>
-                    <div class="flex-grow-1 min-width-0">
-                        <div class="fw-medium text-truncate">${file.filename}</div>
-                        <small class="text-muted">
-                            ${file.messages_count || 0} msgs
-                            ${file.date_range?.start ? '• ' + new Date(file.date_range.start).toLocaleDateString('pt-BR') : ''}
-                        </small>
-                    </div>
-                    <div class="flex-shrink-0" style="min-width: 200px;">
-                        ${hasContact
-                            ? `<span class="text-success"><i class="bi bi-person-check me-1"></i>${contactName}</span>`
-                            : `<select class="form-select form-select-sm" onchange="setBatchContact(${idx}, this.value)">
-                                    <option value="">Selecionar contato...</option>
-                                    ${contactsList.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}
-                               </select>`
-                        }
-                    </div>
-                    <div class="flex-shrink-0">
-                        <button class="btn btn-sm btn-outline-danger" onclick="removeBatchFile(${idx})">
-                            <i class="bi bi-x"></i>
-                        </button>
-                    </div>
-                </div>
+                    <a href="/contatos/${msg.contact_id}" class="list-group-item list-group-item-action">
+                        <div class="d-flex justify-content-between">
+                            <strong>${msg.contact_name}</strong>
+                            <small class="text-muted">${date}</small>
+                        </div>
+                        <small class="badge bg-${fromMe ? 'primary' : 'secondary'}">${direction}</small>
+                        <p class="mb-0 small">${highlighted}</p>
+                    </a>
                 `;
             }).join('');
 
-            updateBatchImportButton();
+        } catch (error) {
+            showToast('Erro ao buscar mensagens');
+            console.error(error);
         }
+    }
 
-        function setBatchContact(idx, contactId) {
-            if (batchFiles[idx] && contactId) {
-                batchFiles[idx].contact_id = parseInt(contactId);
-                batchFiles[idx].contact_found = true;
-                const contact = contactsList.find(c => c.id == contactId);
-                if (contact) {
-                    batchFiles[idx].contact = contact;
-                }
+    // Search on Enter key
+    document.addEventListener('DOMContentLoaded', function() {
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) {
+            searchInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') searchMessages();
+            });
+        }
+    });
+
+    async function refreshQR() {
+        try {
+            const response = await fetch('/api/whatsapp/qr');
+            const data = await response.json();
+
+            if (data.qr_base64) {
+                const qrImage = document.getElementById('qrImage');
+                qrImage.src = data.qr_base64;
             }
-            updateBatchImportButton();
+        } catch (error) {
+            console.error('Error refreshing QR:', error);
+        }
+    }
+
+    async function sendMessage() {
+        const phone = document.getElementById('phoneInput').value;
+        const message = document.getElementById('messageInput').value;
+
+        if (!phone || !message) {
+            showToast('Preencha telefone e mensagem');
+            return;
         }
 
-        function removeBatchFile(idx) {
-            batchFiles.splice(idx, 1);
-            if (batchFiles.length === 0) {
-                clearBatchFiles();
-            } else {
-                renderBatchPreview();
-            }
-        }
-
-        function clearBatchFiles() {
-            batchFiles = [];
-            document.getElementById('batchPreview').style.display = 'none';
-            document.getElementById('batchResult').style.display = 'none';
-            document.getElementById('batchFileInput').value = '';
-        }
-
-        function updateBatchImportButton() {
-            const btn = document.getElementById('batchImportBtn');
-            const validFiles = batchFiles.filter(f => f.contact_found || f.contact_id);
-            btn.disabled = validFiles.length === 0;
-            btn.innerHTML = `<i class="bi bi-check-circle me-2"></i> Importar ${validFiles.length} de ${batchFiles.length}`;
-        }
-
-        async function confirmBatchImport() {
-            const filesToImport = batchFiles.filter(f => f.contact_found || f.contact_id);
-            if (filesToImport.length === 0) {
-                showToast('Selecione contatos para os arquivos');
-                return;
-            }
-
-            const btn = document.getElementById('batchImportBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Importando...';
-
-            try {
-                const payload = {
-                    files: filesToImport.map(f => ({
-                        filename: f.filename,
-                        content: f.content,
-                        contact_id: f.contact?.id || f.contact_id
-                    }))
-                };
-
-                const response = await fetch('/api/whatsapp/batch-import/confirm', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                    credentials: 'include'
-                });
-
-                const result = await response.json();
-
-                // Show result
-                document.getElementById('batchPreview').style.display = 'none';
-                document.getElementById('batchResult').style.display = 'block';
-                document.getElementById('batchResultText').innerHTML = `
-                    <strong>${result.successful}</strong> arquivos importados com sucesso<br>
-                    <strong>${result.total_messages_imported?.toLocaleString() || 0}</strong> mensagens adicionadas ao Inbox
-                    ${result.failed > 0 ? `<br><span class="text-warning">${result.failed} arquivos com erro</span>` : ''}
-                `;
-
-                showToast(`Importado: ${result.total_messages_imported} mensagens`);
-                checkStatus();
-
-            } catch (e) {
-                showToast('Erro ao importar');
-                console.error(e);
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-check-circle me-2"></i> Importar Todos';
-            }
-        }
-
-        function resetBatchImport() {
-            clearBatchFiles();
-        }
-
-        async function loadContactsForImport() {
-            try {
-                const response = await fetch('/api/contacts?limit=500');
-                const data = await response.json();
-                contactsList = data.contacts || [];
-            } catch (e) {
-                console.error('Error loading contacts:', e);
-            }
-        }
-
-        async function processImportFile(file) {
-            if (!file.name.endsWith('.txt')) {
-                showToast('Por favor selecione um arquivo .txt');
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append('file', file);
-
-            try {
-                showToast('Analisando arquivo...');
-
-                const response = await fetch('/api/whatsapp/import/parse', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (!response.ok) throw new Error('Erro ao processar arquivo');
-
-                parsedImportData = await response.json();
-                showImportPreview(parsedImportData);
-
-            } catch (e) {
-                showToast('Erro ao processar arquivo');
-                console.error(e);
-            }
-        }
-
-        function showImportPreview(data) {
-            document.getElementById('importPreview').style.display = 'block';
-            document.getElementById('previewMessages').textContent = data.total_messages || 0;
-            document.getElementById('previewParticipants').textContent = (data.participants || []).length;
-
-            if (data.date_range && data.date_range.start && data.date_range.end) {
-                const start = new Date(data.date_range.start);
-                const end = new Date(data.date_range.end);
-                const days = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
-                document.getElementById('previewDays').textContent = days;
-            }
-
-            // Show participants with contact selector
-            const participantsList = document.getElementById('participantsList');
-            participantsList.innerHTML = (data.participants || []).map(p => `
-                <div class="d-flex align-items-center justify-content-between p-2 bg-light rounded mb-2">
-                    <span><strong>${p}</strong></span>
-                    <select class="form-select form-select-sm" style="width: auto; min-width: 200px;" data-participant="${p}">
-                        <option value="">Selecionar contato...</option>
-                        ${contactsList.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}
-                    </select>
-                </div>
-            `).join('');
-        }
-
-        async function confirmImport() {
-            if (!parsedImportData) return;
-
-            const selects = document.querySelectorAll('#participantsList select');
-            let selectedContactId = null;
-
-            selects.forEach(select => {
-                if (select.value) selectedContactId = parseInt(select.value);
+        try {
+            const response = await fetch('/api/whatsapp/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone, message })
             });
 
-            if (!selectedContactId) {
-                showToast('Selecione um contato para importar');
-                return;
-            }
+            const data = await response.json();
 
-            const myName = document.getElementById('myNameInput').value || 'Renato';
-
-            try {
-                showToast('Importando mensagens...');
-
-                const response = await fetch('/api/whatsapp/import/confirm', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        messages: parsedImportData.messages,
-                        contact_id: selectedContactId,
-                        my_name: myName
-                    })
-                });
-
-                const result = await response.json();
-
-                if (result.error) {
-                    showToast('Erro: ' + result.error);
-                } else {
-                    showToast(`Importado: ${result.imported} mensagens`);
-                    document.getElementById('importPreview').style.display = 'none';
-                    parsedImportData = null;
-                    checkStatus(); // Refresh stats
-                }
-
-            } catch (e) {
-                showToast('Erro ao importar');
-                console.error(e);
-            }
-        }
-
-        async function checkStatus() {
-            try {
-                const response = await fetch('/api/whatsapp/status');
-                const data = await response.json();
-
-                const state = data.instance?.state || data.error || 'unknown';
-                updateUI(state);
-
-                // Update stats if available
-                if (data.stats) {
-                    document.getElementById('totalMessages').textContent = data.stats.messages_today || 0;
-                    document.getElementById('totalConversations').textContent = data.stats.active_conversations || 0;
-                    document.getElementById('totalContacts').textContent = data.stats.contacts_with_whatsapp || 0;
-                }
-
-                // Update recent activity
-                if (data.recent_activity && data.recent_activity.length > 0) {
-                    renderRecentActivity(data.recent_activity);
-                }
-            } catch (error) {
-                console.error('Error checking status:', error);
-                updateUI('error');
-            }
-        }
-
-        function renderRecentActivity(messages) {
-            const activityBody = document.getElementById('activityBody');
-            if (!activityBody) return;
-
-            let html = '<div class="list-group list-group-flush">';
-            for (const msg of messages) {
-                const isOutgoing = msg.direction === 'outgoing';
-                const icon = isOutgoing ? 'bi-arrow-up-right text-primary' : 'bi-arrow-down-left text-success';
-                const time = msg.sent_at ? new Date(msg.sent_at).toLocaleString('pt-BR') : '';
-
-                let contactDisplay;
-                if (isOutgoing) {
-                    // Outgoing message - show "Você → Contact"
-                    const recipient = msg.contact_id
-                        ? `<a href="/contatos/${msg.contact_id}">${msg.contact_name || 'Contato'}</a>`
-                        : (msg.phone || 'Desconhecido');
-                    contactDisplay = `<span class="text-primary">Você</span> → ${recipient}`;
-                } else {
-                    // Incoming message - show contact name
-                    contactDisplay = msg.contact_id
-                        ? `<a href="/contatos/${msg.contact_id}">${msg.contact_name || 'Contato'}</a>`
-                        : (msg.phone || 'Desconhecido');
-                }
-
-                html += `
-                    <div class="list-group-item d-flex align-items-start gap-3 py-3">
-                        <i class="bi ${icon}" style="font-size: 1.2rem;"></i>
-                        <div class="flex-grow-1">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <strong>${contactDisplay}</strong>
-                                <small class="text-muted">${time}</small>
-                            </div>
-                            <p class="mb-0 text-muted small">${msg.content || '[midia]'}</p>
-                        </div>
-                    </div>
-                `;
-            }
-            html += '</div>';
-            activityBody.innerHTML = html;
-        }
-
-        function updateUI(state) {
-            const statusBadge = document.getElementById('statusBadge');
-            const connectionCard = document.getElementById('connectionCard');
-            const qrCard = document.getElementById('qrCard');
-            const statsGrid = document.getElementById('statsGrid');
-            const sendCard = document.getElementById('sendCard');
-            const activityCard = document.getElementById('activityCard');
-            const syncCard = document.getElementById('syncCard');
-            const searchCard = document.getElementById('searchCard');
-            const exportCard = document.getElementById('exportCard');
-            const importCard = document.getElementById('importCard');
-
-            if (state === 'open') {
-                // Connected
-                statusBadge.innerHTML = `
-                    <span class="status-badge connected">
-                        <span class="status-dot"></span>
-                        Conectado
-                    </span>
-                `;
-                connectionCard.style.display = 'block';
-                qrCard.style.display = 'none';
-                statsGrid.style.display = 'grid';
-                sendCard.style.display = 'block';
-                activityCard.style.display = 'block';
-                syncCard.style.display = 'block';
-                searchCard.style.display = 'block';
-                exportCard.style.display = 'block';
-                if (importCard) importCard.style.display = 'block';
-                loadContactsForExport();
-                loadContactsForImport();
-                checkWebhookStatus();
-            } else if (state === 'connecting') {
-                // Connecting - show QR
-                statusBadge.innerHTML = `
-                    <span class="status-badge connecting">
-                        <span class="status-dot"></span>
-                        Conectando...
-                    </span>
-                `;
-                connectionCard.style.display = 'none';
-                qrCard.style.display = 'block';
-                statsGrid.style.display = 'none';
-                sendCard.style.display = 'none';
-                activityCard.style.display = 'none';
-                syncCard.style.display = 'none';
-                searchCard.style.display = 'none';
-                exportCard.style.display = 'none';
-                if (importCard) importCard.style.display = 'block'; // Import always visible
-                loadContactsForImport();
-                refreshQR();
+            if (data.status === 'sent') {
+                showToast('Mensagem enviada com sucesso!');
+                document.getElementById('messageInput').value = '';
             } else {
-                // Disconnected
-                statusBadge.innerHTML = `
-                    <span class="status-badge disconnected">
-                        <span class="status-dot"></span>
-                        Desconectado
-                    </span>
-                `;
-                connectionCard.style.display = 'none';
-                qrCard.style.display = 'block';
-                statsGrid.style.display = 'none';
-                sendCard.style.display = 'none';
-                activityCard.style.display = 'none';
-                syncCard.style.display = 'none';
-                searchCard.style.display = 'none';
-                exportCard.style.display = 'none';
-                if (importCard) importCard.style.display = 'block'; // Import always visible
-                loadContactsForImport();
-                refreshQR();
+                showToast('Erro ao enviar: ' + (data.detail || 'Erro desconhecido'));
             }
+        } catch (error) {
+            showToast('Erro ao enviar mensagem');
+            console.error(error);
         }
+    }
 
-        async function loadContactsForExport() {
-            const select = document.getElementById('exportContactSelect');
-            if (!select) return;
-            try {
-                const response = await fetch('/api/contacts?limit=200');
-                const data = await response.json();
-                const contacts = data.contacts || [];
-                select.innerHTML = '<option value="">Selecione um contato...</option>';
-                for (const c of contacts) {
-                    if (c.telefone) {
-                        const option = document.createElement('option');
-                        option.value = c.id;
-                        option.textContent = `${c.nome || 'Sem nome'} (${c.telefone})`;
-                        select.appendChild(option);
-                    }
-                }
-            } catch (error) {
-                console.error('Error loading contacts:', error);
-                select.innerHTML = '<option value="">Erro ao carregar contatos</option>';
-            }
+    async function disconnect() {
+        if (!confirm('Deseja realmente desconectar o WhatsApp?')) return;
+
+        try {
+            const response = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
+            const data = await response.json();
+            showToast('WhatsApp desconectado');
+            setTimeout(checkStatus, 2000);
+        } catch (error) {
+            showToast('Erro ao desconectar');
+            console.error(error);
         }
+    }
 
-        function exportConversation() {
-            const contactId = document.getElementById('exportContactSelect').value;
-            const format = document.getElementById('exportFormat').value;
-            if (!contactId) {
-                showToast('Selecione um contato');
-                return;
-            }
-            window.location.href = `/api/whatsapp/export/${contactId}?format=${format}`;
-        }
+    async function checkWebhookStatus() {
+        try {
+            const response = await fetch('/api/evolution/webhook', { credentials: 'include' });
+            const data = await response.json();
 
-        async function searchMessages() {
-            const query = document.getElementById('searchInput').value.trim();
-            const resultsDiv = document.getElementById('searchResults');
-            const resultsList = document.getElementById('searchResultsList');
-            const countSpan = document.getElementById('searchCount');
-
-            if (query.length < 3) {
-                showToast('Digite pelo menos 3 caracteres');
-                return;
-            }
-
-            try {
-                const response = await fetch(`/api/whatsapp/search?q=${encodeURIComponent(query)}&limit=50`);
-                const data = await response.json();
-
-                if (data.error) {
-                    showToast('Erro na busca: ' + data.error);
-                    return;
-                }
-
-                resultsDiv.style.display = 'block';
-                countSpan.textContent = `${data.total} resultado(s) encontrado(s)`;
-
-                if (data.results.length === 0) {
-                    resultsList.innerHTML = '<div class="list-group-item text-muted">Nenhuma mensagem encontrada</div>';
-                    return;
-                }
-
-                resultsList.innerHTML = data.results.map(msg => {
-                    const regex = new RegExp(`(${query})`, 'gi');
-                    const highlighted = msg.content.replace(regex, '<mark>$1</mark>');
-                    const fromMe = msg.direction === 'outgoing';
-                    const direction = fromMe ? 'Enviada' : 'Recebida';
-                    const date = msg.sent_at ? new Date(msg.sent_at).toLocaleString('pt-BR') : '';
-
-                    return `
-                        <a href="/contatos/${msg.contact_id}" class="list-group-item list-group-item-action">
-                            <div class="d-flex justify-content-between">
-                                <strong>${msg.contact_name}</strong>
-                                <small class="text-muted">${date}</small>
-                            </div>
-                            <small class="badge bg-${fromMe ? 'primary' : 'secondary'}">${direction}</small>
-                            <p class="mb-0 small">${highlighted}</p>
-                        </a>
-                    `;
-                }).join('');
-
-            } catch (error) {
-                showToast('Erro ao buscar mensagens');
-                console.error(error);
-            }
-        }
-
-        // Search on Enter key
-        document.addEventListener('DOMContentLoaded', function() {
-            const searchInput = document.getElementById('searchInput');
-            if (searchInput) {
-                searchInput.addEventListener('keypress', function(e) {
-                    if (e.key === 'Enter') searchMessages();
-                });
-            }
-        });
-
-        async function refreshQR() {
-            try {
-                const response = await fetch('/api/whatsapp/qr');
-                const data = await response.json();
-
-                if (data.qr_base64) {
-                    const qrImage = document.getElementById('qrImage');
-                    qrImage.src = data.qr_base64;
-                }
-            } catch (error) {
-                console.error('Error refreshing QR:', error);
-            }
-        }
-
-        async function sendMessage() {
-            const phone = document.getElementById('phoneInput').value;
-            const message = document.getElementById('messageInput').value;
-
-            if (!phone || !message) {
-                showToast('Preencha telefone e mensagem');
-                return;
-            }
-
-            try {
-                const response = await fetch('/api/whatsapp/send', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone, message })
-                });
-
-                const data = await response.json();
-
-                if (data.status === 'sent') {
-                    showToast('Mensagem enviada com sucesso!');
-                    document.getElementById('messageInput').value = '';
-                } else {
-                    showToast('Erro ao enviar: ' + (data.detail || 'Erro desconhecido'));
-                }
-            } catch (error) {
-                showToast('Erro ao enviar mensagem');
-                console.error(error);
-            }
-        }
-
-        async function disconnect() {
-            if (!confirm('Deseja realmente desconectar o WhatsApp?')) return;
-
-            try {
-                const response = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
-                const data = await response.json();
-                showToast('WhatsApp desconectado');
-                setTimeout(checkStatus, 2000);
-            } catch (error) {
-                showToast('Erro ao desconectar');
-                console.error(error);
-            }
-        }
-
-        async function checkWebhookStatus() {
-            try {
-                const response = await fetch('/api/evolution/webhook', { credentials: 'include' });
-                const data = await response.json();
-
-                const webhookStatus = document.getElementById('webhookStatus');
-                const webhookStatusText = document.getElementById('webhookStatusText');
-                const webhookBtn = document.getElementById('webhookBtn');
-
-                if (data.configured && data.is_correct) {
-                    webhookStatus.style.display = 'block';
-                    webhookStatusText.innerHTML = `<i class="bi bi-check-circle text-success me-1"></i> Webhook ativo - mensagens recebidas automaticamente`;
-                    webhookBtn.innerHTML = '<i class="bi bi-check me-1"></i> Webhook OK';
-                    webhookBtn.classList.remove('btn-outline-light');
-                    webhookBtn.classList.add('btn-success');
-                } else if (data.configured && !data.is_correct) {
-                    webhookStatus.style.display = 'block';
-                    webhookStatusText.innerHTML = `<i class="bi bi-exclamation-triangle text-warning me-1"></i> Webhook configurado para URL diferente. Clique para reconfigurar.`;
-                } else {
-                    webhookStatus.style.display = 'block';
-                    webhookStatusText.innerHTML = `<i class="bi bi-info-circle me-1"></i> Clique em "Webhook" para ativar recebimento automatico de mensagens`;
-                }
-            } catch (error) {
-                console.error('Error checking webhook:', error);
-            }
-        }
-
-        async function setupWebhook() {
-            const webhookBtn = document.getElementById('webhookBtn');
             const webhookStatus = document.getElementById('webhookStatus');
             const webhookStatusText = document.getElementById('webhookStatusText');
+            const webhookBtn = document.getElementById('webhookBtn');
 
-            webhookBtn.disabled = true;
-            webhookBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-
-            try {
-                const response = await fetch('/api/evolution/setup-webhook', {
-                    method: 'POST',
-                    credentials: 'include'
-                });
-
-                const data = await response.json();
-
+            if (data.configured && data.is_correct) {
                 webhookStatus.style.display = 'block';
-
-                if (data.result && !data.result.error) {
-                    webhookStatusText.innerHTML = `<i class="bi bi-check-circle text-success me-1"></i> Webhook configurado: ${data.webhook_url}`;
-                    showToast('Webhook configurado! Mensagens serao recebidas automaticamente.');
-                } else if (data.result?.error) {
-                    webhookStatusText.innerHTML = `<i class="bi bi-exclamation-triangle text-warning me-1"></i> ${data.result.error}`;
-                    showToast('Erro ao configurar webhook');
-                } else {
-                    webhookStatusText.innerHTML = `<i class="bi bi-check-circle text-success me-1"></i> Webhook: ${data.webhook_url}`;
-                    showToast('Webhook configurado!');
-                }
-            } catch (error) {
-                console.error('Webhook setup error:', error);
-                showToast('Erro ao configurar webhook');
-            } finally {
-                webhookBtn.disabled = false;
-                webhookBtn.innerHTML = '<i class="bi bi-gear me-1"></i> Webhook';
+                webhookStatusText.innerHTML = `<i class="bi bi-check-circle text-success me-1"></i> Webhook ativo - mensagens recebidas automaticamente`;
+                webhookBtn.innerHTML = '<i class="bi bi-check me-1"></i> Webhook OK';
+                webhookBtn.classList.remove('btn-outline-light');
+                webhookBtn.classList.add('btn-success');
+            } else if (data.configured && !data.is_correct) {
+                webhookStatus.style.display = 'block';
+                webhookStatusText.innerHTML = `<i class="bi bi-exclamation-triangle text-warning me-1"></i> Webhook configurado para URL diferente. Clique para reconfigurar.`;
+            } else {
+                webhookStatus.style.display = 'block';
+                webhookStatusText.innerHTML = `<i class="bi bi-info-circle me-1"></i> Clique em "Webhook" para ativar recebimento automatico de mensagens`;
             }
+        } catch (error) {
+            console.error('Error checking webhook:', error);
         }
+    }
 
-        async function syncHistory() {
-            const syncBtn = document.getElementById('syncBtn');
-            const syncStatus = document.getElementById('syncStatus');
-            const syncResult = document.getElementById('syncResult');
-            const includeGroups = document.getElementById('includeGroups').checked;
+    async function setupWebhook() {
+        const webhookBtn = document.getElementById('webhookBtn');
+        const webhookStatus = document.getElementById('webhookStatus');
+        const webhookStatusText = document.getElementById('webhookStatusText');
 
-            syncBtn.disabled = true;
-            syncStatus.style.display = 'inline-flex';
-            syncResult.style.display = 'none';
+        webhookBtn.disabled = true;
+        webhookBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
 
-            // Reset alert style
-            document.querySelector('#syncResult .alert').className = 'alert alert-success mb-0';
+        try {
+            const response = await fetch('/api/evolution/setup-webhook', {
+                method: 'POST',
+                credentials: 'include'
+            });
+
+            const data = await response.json();
+
+            webhookStatus.style.display = 'block';
+
+            if (data.result && !data.result.error) {
+                webhookStatusText.innerHTML = `<i class="bi bi-check-circle text-success me-1"></i> Webhook configurado: ${data.webhook_url}`;
+                showToast('Webhook configurado! Mensagens serao recebidas automaticamente.');
+            } else if (data.result?.error) {
+                webhookStatusText.innerHTML = `<i class="bi bi-exclamation-triangle text-warning me-1"></i> ${data.result.error}`;
+                showToast('Erro ao configurar webhook');
+            } else {
+                webhookStatusText.innerHTML = `<i class="bi bi-check-circle text-success me-1"></i> Webhook: ${data.webhook_url}`;
+                showToast('Webhook configurado!');
+            }
+        } catch (error) {
+            console.error('Webhook setup error:', error);
+            showToast('Erro ao configurar webhook');
+        } finally {
+            webhookBtn.disabled = false;
+            webhookBtn.innerHTML = '<i class="bi bi-gear me-1"></i> Webhook';
+        }
+    }
+
+    async function syncHistory() {
+        const syncBtn = document.getElementById('syncBtn');
+        const syncStatus = document.getElementById('syncStatus');
+        const syncResult = document.getElementById('syncResult');
+        const includeGroups = document.getElementById('includeGroups').checked;
+
+        syncBtn.disabled = true;
+        syncStatus.style.display = 'inline-flex';
+        syncResult.style.display = 'none';
+
+        // Reset alert style
+        document.querySelector('#syncResult .alert').className = 'alert alert-success mb-0';
+
+        try {
+            const url = `/api/whatsapp/sync?include_groups=${includeGroups}`;
+            const response = await fetch(url, { method: 'POST' });
+            const data = await response.json();
+
+            syncStatus.style.display = 'none';
+            syncResult.style.display = 'block';
+
+            if (data.status === 'ok') {
+                let resultText = `${data.messages_imported} mensagens importadas. `;
+                resultText += `${data.individual_chats || 0} conversas individuais. `;
+                if (includeGroups) {
+                    resultText += `${data.groups_processed || 0} grupos. `;
+                }
+                resultText += `${data.contacts_matched} contatos vinculados. `;
+                resultText += `${data.messages_skipped} ja existentes.`;
+                if (data.remaining > 0) {
+                    resultText += ` (${data.remaining} chats restantes - clique novamente para continuar)`;
+                }
+                document.getElementById('syncResultText').textContent = resultText;
+            } else if (data.status === 'no_chats') {
+                document.getElementById('syncResultText').textContent = 'Nenhuma conversa encontrada no WhatsApp.';
+            } else {
+                document.getElementById('syncResultText').textContent = 'Erro: ' + (data.errors?.join(', ') || 'Erro desconhecido');
+                document.querySelector('#syncResult .alert').className = 'alert alert-danger mb-0';
+            }
+        } catch (error) {
+            syncStatus.style.display = 'none';
+            syncResult.style.display = 'block';
+            document.getElementById('syncResultText').textContent = 'Erro ao sincronizar: ' + error.message;
+            document.querySelector('#syncResult .alert').className = 'alert alert-danger mb-0';
+        } finally {
+            syncBtn.disabled = false;
+        }
+    }
+
+    function showToast(message) {
+        document.getElementById('toastBody').textContent = message;
+        const toast = new bootstrap.Toast(document.getElementById('toast'));
+        toast.show();
+    }
+
+    async function autoSync() {
+        if (autoSyncRunning) return;
+
+        autoSyncRunning = true;
+        autoSyncAbort = false;
+
+        const autoSyncBtn = document.getElementById('autoSyncBtn');
+        const stopBtn = document.getElementById('stopAutoSyncBtn');
+        const syncBtn = document.getElementById('syncBtn');
+        const relinkBtn = document.getElementById('relinkBtn');
+        const syncStatus = document.getElementById('syncStatus');
+        const syncResult = document.getElementById('syncResult');
+        const includeGroups = document.getElementById('includeGroups').checked;
+
+        autoSyncBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+        syncBtn.disabled = true;
+        relinkBtn.disabled = true;
+        syncStatus.style.display = 'inline-flex';
+
+        let totalImported = 0;
+        let totalSkipped = 0;
+        let totalContacts = 0;
+        let round = 0;
+        let remaining = 1;
+        let currentOffset = 0;
+
+        while (remaining > 0 && !autoSyncAbort) {
+            round++;
+            document.getElementById('syncStatusText').textContent = `Rodada ${round}... Aguarde`;
 
             try {
-                const url = `/api/whatsapp/sync?include_groups=${includeGroups}`;
+                const url = `/api/whatsapp/sync?include_groups=${includeGroups}&limit=50&offset=${currentOffset}`;
                 const response = await fetch(url, { method: 'POST' });
                 const data = await response.json();
 
-                syncStatus.style.display = 'none';
-                syncResult.style.display = 'block';
-
                 if (data.status === 'ok') {
-                    let resultText = `${data.messages_imported} mensagens importadas. `;
-                    resultText += `${data.individual_chats || 0} conversas individuais. `;
-                    if (includeGroups) {
-                        resultText += `${data.groups_processed || 0} grupos. `;
-                    }
-                    resultText += `${data.contacts_matched} contatos vinculados. `;
-                    resultText += `${data.messages_skipped} ja existentes.`;
-                    if (data.remaining > 0) {
-                        resultText += ` (${data.remaining} chats restantes - clique novamente para continuar)`;
-                    }
-                    document.getElementById('syncResultText').textContent = resultText;
-                } else if (data.status === 'no_chats') {
-                    document.getElementById('syncResultText').textContent = 'Nenhuma conversa encontrada no WhatsApp.';
+                    totalImported += data.messages_imported || 0;
+                    totalSkipped += data.messages_skipped || 0;
+                    totalContacts += data.contacts_matched || 0;
+                    remaining = data.remaining || 0;
+                    currentOffset = data.next_offset || (currentOffset + 50);
+
+                    // Update result during sync
+                    syncResult.style.display = 'block';
+                    document.querySelector('#syncResult .alert').className = 'alert alert-info mb-0';
+                    document.getElementById('syncResultText').textContent =
+                        `Rodada ${round}: ${totalImported} importadas, ${totalSkipped} existentes, ${totalContacts} contatos. Restam ${remaining} chats...`;
+
+                    // Brief pause between rounds
+                    await new Promise(r => setTimeout(r, 1000));
+                } else if (data.status === 'complete') {
+                    remaining = 0;
                 } else {
-                    document.getElementById('syncResultText').textContent = 'Erro: ' + (data.errors?.join(', ') || 'Erro desconhecido');
-                    document.querySelector('#syncResult .alert').className = 'alert alert-danger mb-0';
-                }
-            } catch (error) {
-                syncStatus.style.display = 'none';
-                syncResult.style.display = 'block';
-                document.getElementById('syncResultText').textContent = 'Erro ao sincronizar: ' + error.message;
-                document.querySelector('#syncResult .alert').className = 'alert alert-danger mb-0';
-            } finally {
-                syncBtn.disabled = false;
-            }
-        }
-
-        function showToast(message) {
-            document.getElementById('toastBody').textContent = message;
-            const toast = new bootstrap.Toast(document.getElementById('toast'));
-            toast.show();
-        }
-
-        async function autoSync() {
-            if (autoSyncRunning) return;
-
-            autoSyncRunning = true;
-            autoSyncAbort = false;
-
-            const autoSyncBtn = document.getElementById('autoSyncBtn');
-            const stopBtn = document.getElementById('stopAutoSyncBtn');
-            const syncBtn = document.getElementById('syncBtn');
-            const relinkBtn = document.getElementById('relinkBtn');
-            const syncStatus = document.getElementById('syncStatus');
-            const syncResult = document.getElementById('syncResult');
-            const includeGroups = document.getElementById('includeGroups').checked;
-
-            autoSyncBtn.style.display = 'none';
-            stopBtn.style.display = 'inline-block';
-            syncBtn.disabled = true;
-            relinkBtn.disabled = true;
-            syncStatus.style.display = 'inline-flex';
-
-            let totalImported = 0;
-            let totalSkipped = 0;
-            let totalContacts = 0;
-            let round = 0;
-            let remaining = 1;
-            let currentOffset = 0;
-
-            while (remaining > 0 && !autoSyncAbort) {
-                round++;
-                document.getElementById('syncStatusText').textContent = `Rodada ${round}... Aguarde`;
-
-                try {
-                    const url = `/api/whatsapp/sync?include_groups=${includeGroups}&limit=50&offset=${currentOffset}`;
-                    const response = await fetch(url, { method: 'POST' });
-                    const data = await response.json();
-
-                    if (data.status === 'ok') {
-                        totalImported += data.messages_imported || 0;
-                        totalSkipped += data.messages_skipped || 0;
-                        totalContacts += data.contacts_matched || 0;
-                        remaining = data.remaining || 0;
-                        currentOffset = data.next_offset || (currentOffset + 50);
-
-                        // Update result during sync
-                        syncResult.style.display = 'block';
-                        document.querySelector('#syncResult .alert').className = 'alert alert-info mb-0';
-                        document.getElementById('syncResultText').textContent =
-                            `Rodada ${round}: ${totalImported} importadas, ${totalSkipped} existentes, ${totalContacts} contatos. Restam ${remaining} chats...`;
-
-                        // Brief pause between rounds
-                        await new Promise(r => setTimeout(r, 1000));
-                    } else if (data.status === 'complete') {
-                        remaining = 0;
-                    } else {
-                        showToast('Erro: ' + (data.errors?.join(', ') || 'Erro desconhecido'));
-                        break;
-                    }
-                } catch (error) {
-                    showToast('Erro: ' + error.message);
+                    showToast('Erro: ' + (data.errors?.join(', ') || 'Erro desconhecido'));
                     break;
                 }
+            } catch (error) {
+                showToast('Erro: ' + error.message);
+                break;
             }
+        }
 
-            // Final result
+        // Final result
+        syncStatus.style.display = 'none';
+        syncResult.style.display = 'block';
+        document.querySelector('#syncResult .alert').className = 'alert alert-success mb-0';
+        document.getElementById('syncResultText').textContent =
+            `Concluido! ${totalImported} mensagens importadas, ${totalSkipped} ja existentes, ${totalContacts} contatos. ${round} rodadas.`;
+
+        autoSyncRunning = false;
+        autoSyncBtn.style.display = 'inline-block';
+        stopBtn.style.display = 'none';
+        syncBtn.disabled = false;
+        relinkBtn.disabled = false;
+
+        // Refresh stats
+        checkStatus();
+    }
+
+    function stopAutoSync() {
+        autoSyncAbort = true;
+        showToast('Parando auto-sync...');
+    }
+
+    async function relinkMessages() {
+        const relinkBtn = document.getElementById('relinkBtn');
+        const syncStatus = document.getElementById('syncStatus');
+        const syncResult = document.getElementById('syncResult');
+
+        relinkBtn.disabled = true;
+        syncStatus.style.display = 'inline-flex';
+        document.getElementById('syncStatusText').textContent = 'Re-vinculando...';
+        syncResult.style.display = 'none';
+
+        try {
+            const response = await fetch('/api/whatsapp/relink', { method: 'POST' });
+            const data = await response.json();
+
             syncStatus.style.display = 'none';
             syncResult.style.display = 'block';
-            document.querySelector('#syncResult .alert').className = 'alert alert-success mb-0';
-            document.getElementById('syncResultText').textContent =
-                `Concluido! ${totalImported} mensagens importadas, ${totalSkipped} ja existentes, ${totalContacts} contatos. ${round} rodadas.`;
 
-            autoSyncRunning = false;
-            autoSyncBtn.style.display = 'inline-block';
-            stopBtn.style.display = 'none';
-            syncBtn.disabled = false;
-            relinkBtn.disabled = false;
-
-            // Refresh stats
-            checkStatus();
-        }
-
-        function stopAutoSync() {
-            autoSyncAbort = true;
-            showToast('Parando auto-sync...');
-        }
-
-        async function relinkMessages() {
-            const relinkBtn = document.getElementById('relinkBtn');
-            const syncStatus = document.getElementById('syncStatus');
-            const syncResult = document.getElementById('syncResult');
-
-            relinkBtn.disabled = true;
-            syncStatus.style.display = 'inline-flex';
-            document.getElementById('syncStatusText').textContent = 'Re-vinculando...';
-            syncResult.style.display = 'none';
-
-            try {
-                const response = await fetch('/api/whatsapp/relink', { method: 'POST' });
-                const data = await response.json();
-
-                syncStatus.style.display = 'none';
-                syncResult.style.display = 'block';
-
-                if (data.status === 'ok') {
-                    document.querySelector('#syncResult .alert').className = 'alert alert-success mb-0';
-                    document.getElementById('syncResultText').textContent =
-                        `Re-vinculado! ${data.messages_linked} mensagens vinculadas de ${data.messages_checked} verificadas. ${data.conversations_created} conversas criadas.`;
-                    // Refresh stats
-                    checkStatus();
-                } else {
-                    document.querySelector('#syncResult .alert').className = 'alert alert-danger mb-0';
-                    document.getElementById('syncResultText').textContent = 'Erro: ' + (data.errors?.join(', ') || 'Erro desconhecido');
-                }
-            } catch (error) {
-                syncStatus.style.display = 'none';
-                syncResult.style.display = 'block';
+            if (data.status === 'ok') {
+                document.querySelector('#syncResult .alert').className = 'alert alert-success mb-0';
+                document.getElementById('syncResultText').textContent =
+                    `Re-vinculado! ${data.messages_linked} mensagens vinculadas de ${data.messages_checked} verificadas. ${data.conversations_created} conversas criadas.`;
+                // Refresh stats
+                checkStatus();
+            } else {
                 document.querySelector('#syncResult .alert').className = 'alert alert-danger mb-0';
-                document.getElementById('syncResultText').textContent = 'Erro: ' + error.message;
-            } finally {
-                relinkBtn.disabled = false;
+                document.getElementById('syncResultText').textContent = 'Erro: ' + (data.errors?.join(', ') || 'Erro desconhecido');
             }
+        } catch (error) {
+            syncStatus.style.display = 'none';
+            syncResult.style.display = 'block';
+            document.querySelector('#syncResult .alert').className = 'alert alert-danger mb-0';
+            document.getElementById('syncResultText').textContent = 'Erro: ' + error.message;
+        } finally {
+            relinkBtn.disabled = false;
         }
+    }
 
-        // Check status on load and periodically
-        checkStatus();
-        loadContactsForImport(); // Pre-load contacts for batch import
-        setInterval(checkStatus, 30000);  // Check every 30 seconds
-    </script>
-</body>
-</html>
+    // Check status on load and periodically
+    checkStatus();
+    loadContactsForImport(); // Pre-load contacts for batch import
+    setInterval(checkStatus, 30000);  // Check every 30 seconds
+</script>
+{% endblock %}
