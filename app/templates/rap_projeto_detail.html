@@ -726,18 +726,25 @@
                 return;
             }
 
-            container.innerHTML = docs.slice(0, 5).map(doc => {
+            container.innerHTML = docs.slice(0, 8).map(doc => {
                 const icon = getDocIcon(doc.mime_type);
+                // Extract filename and path if contains /
+                const parts = doc.nome.split('/');
+                const fileName = parts.pop();
+                const folderPath = parts.length > 0 ? parts.join('/') + '/' : '';
                 return `
-                    <div class="d-flex align-items-center gap-2 py-1 doc-item" onclick="window.open('${doc.google_drive_url || '#'}', '_blank')" style="cursor: pointer;">
-                        <i class="bi ${icon.icon} ${icon.cls}"></i>
-                        <span class="small text-truncate flex-grow-1" title="${doc.nome}">${doc.nome}</span>
+                    <div class="d-flex align-items-center gap-2 py-1 doc-item" onclick="window.open('${doc.google_drive_url || '#'}', '_blank')" style="cursor: pointer; border-radius: 4px; padding: 4px 6px; margin: 1px 0;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='transparent'">
+                        <i class="bi ${icon.icon} ${icon.cls}" style="flex-shrink: 0;"></i>
+                        <div class="flex-grow-1" style="min-width: 0;">
+                            <div class="small text-truncate fw-medium" title="${doc.nome}">${fileName}</div>
+                            ${folderPath ? `<div class="text-muted" style="font-size: 0.7rem;" title="${folderPath}"><i class="bi bi-folder-fill text-warning"></i> ${folderPath}</div>` : ''}
+                        </div>
                     </div>
                 `;
             }).join('');
 
-            if (docs.length > 5) {
-                container.innerHTML += `<small class="text-muted">+${docs.length - 5} mais</small>`;
+            if (docs.length > 8) {
+                container.innerHTML += `<div class="text-center mt-2"><small class="text-muted">+${docs.length - 8} mais documentos</small></div>`;
             }
         } catch (error) {
             console.error('Error loading documents:', error);

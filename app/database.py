@@ -1434,6 +1434,19 @@ def init_db():
             ADD COLUMN IF NOT EXISTS ai_analisado_em TIMESTAMP
         ''')
 
+        # LinkedIn metrics columns for easier reporting
+        cursor.execute('''
+            ALTER TABLE editorial_posts
+            ADD COLUMN IF NOT EXISTS linkedin_post_url TEXT,
+            ADD COLUMN IF NOT EXISTS linkedin_impressoes INTEGER DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS linkedin_reacoes INTEGER DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS linkedin_comentarios INTEGER DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS linkedin_compartilhamentos INTEGER DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS linkedin_cliques INTEGER DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS linkedin_metricas_em TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS hot_take_id INTEGER
+        ''')
+
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_editorial_posts_status
             ON editorial_posts(status)

@@ -364,25 +364,47 @@ async def index_folder_documents(
     access_token: str,
     folder_id: str,
     entidade_tipo: str = None,
-    entidade_id: int = None
+    entidade_id: int = None,
+    recursive: bool = True,
+    _path_prefix: str = ""
 ) -> int:
     """
-    Index all documents in a folder and optionally link them to an entity
-    Returns count of indexed documents
+    Index all documents in a folder and optionally link them to an entity.
+    If recursive=True, also indexes documents in subfolders.
+    Returns count of indexed documents.
     """
     files = await get_folder_contents(access_token, folder_id)
     count = 0
 
     for file in files:
-        # Skip folders
-        if file.get('mimeType') == 'application/vnd.google-apps.folder':
+        mime_type = file.get('mimeType', '')
+
+        # Handle subfolders recursively
+        if mime_type == 'application/vnd.google-apps.folder':
+            if recursive:
+                subfolder_path = f"{_path_prefix}{file['name']}/"
+                subcount = await index_folder_documents(
+                    db_conn,
+                    access_token,
+                    file['id'],
+                    entidade_tipo,
+                    entidade_id,
+                    recursive=True,
+                    _path_prefix=subfolder_path
+                )
+                count += subcount
             continue
+
+        # Index document with path prefix for subfolder documents
+        doc_name = file['name']
+        if _path_prefix:
+            doc_name = f"{_path_prefix}{file['name']}"
 
         doc_id = index_document_to_db(
             db_conn,
             google_drive_id=file['id'],
-            nome=file['name'],
-            mime_type=file.get('mimeType', ''),
+            nome=doc_name,
+            mime_type=mime_type,
             web_view_link=file.get('webViewLink', ''),
             tamanho_bytes=int(file.get('size', 0)) if file.get('size') else None,
             pasta_id=folder_id

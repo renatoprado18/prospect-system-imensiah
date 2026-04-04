@@ -1562,9 +1562,73 @@ async function openPostModal(postId) {
         // If suggesting a new date for a draft, pre-select 'scheduled' status
         const effectiveStatus = (!post.data_publicacao && post.status === 'draft') ? 'scheduled' : post.status;
 
+        // Check if post is published and if 48h have passed
+        const isPublished = post.status === 'published';
+        const publishedDate = post.data_publicado ? new Date(post.data_publicado) : null;
+        const hoursSincePublished = publishedDate ? (Date.now() - publishedDate.getTime()) / (1000 * 60 * 60) : 0;
+        const canAddMetrics = isPublished && hoursSincePublished >= 48;
+        const hasMetrics = post.linkedin_impressoes > 0;
+
+        // Metrics section (only for published posts)
+        let metricsSection = '';
+        if (isPublished) {
+            metricsSection = `
+                <div style="background: linear-gradient(135deg, #f0f9ff, #e0f2fe); border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #0ea5e9;">
+                    <h4 style="margin: 0 0 12px; font-size: 0.9rem; color: #0369a1; display: flex; align-items: center; gap: 8px;">
+                        <i class="bi bi-linkedin"></i> Métricas do LinkedIn
+                        ${!canAddMetrics && !hasMetrics ? '<span style="font-size: 0.75rem; background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 8px;">Aguarde 48h para coletar</span>' : ''}
+                        ${hasMetrics ? '<span style="font-size: 0.75rem; background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 8px;">✓ Registradas</span>' : ''}
+                    </h4>
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label style="font-size: 0.8rem;">Link do Post no LinkedIn</label>
+                        <input type="text" class="form-control" id="edit-linkedin-url"
+                            placeholder="https://linkedin.com/feed/update/urn:li:activity:..."
+                            value="${post.linkedin_post_url || ''}"
+                            style="font-size: 0.85rem;">
+                    </div>
+                    ${canAddMetrics || hasMetrics ? `
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label style="font-size: 0.75rem;">Impressões</label>
+                                <input type="number" class="form-control" id="edit-impressoes"
+                                    value="${post.linkedin_impressoes || ''}" placeholder="0" style="font-size: 0.85rem;">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label style="font-size: 0.75rem;">Reações</label>
+                                <input type="number" class="form-control" id="edit-reacoes"
+                                    value="${post.linkedin_reacoes || ''}" placeholder="0" style="font-size: 0.85rem;">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label style="font-size: 0.75rem;">Comentários</label>
+                                <input type="number" class="form-control" id="edit-comentarios"
+                                    value="${post.linkedin_comentarios || ''}" placeholder="0" style="font-size: 0.85rem;">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label style="font-size: 0.75rem;">Compartilhamentos</label>
+                                <input type="number" class="form-control" id="edit-compartilhamentos"
+                                    value="${post.linkedin_compartilhamentos || ''}" placeholder="0" style="font-size: 0.85rem;">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label style="font-size: 0.75rem;">Cliques</label>
+                                <input type="number" class="form-control" id="edit-cliques"
+                                    value="${post.linkedin_cliques || ''}" placeholder="0" style="font-size: 0.85rem;">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label style="font-size: 0.75rem;">Engajamento</label>
+                                <div style="padding: 8px 12px; background: var(--gray-100); border-radius: 8px; font-size: 0.85rem; color: var(--gray-600);">
+                                    ${post.linkedin_impressoes > 0 ? ((((post.linkedin_reacoes || 0) + (post.linkedin_comentarios || 0)) / post.linkedin_impressoes) * 100).toFixed(2) + '%' : '-'}
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
         document.getElementById('post-modal-title').textContent = post.article_title;
         document.getElementById('post-modal-body').innerHTML = `
             ${aiInfo}
+            ${metricsSection}
             <div class="form-group">
                 <label>Status</label>
                 <select class="form-control" id="edit-status">
@@ -1592,11 +1656,8 @@ async function openPostModal(postId) {
                         <i class="bi bi-clipboard"></i> Copiar
                     </button>
                 </label>
-                <textarea class="form-control" id="edit-conteudo" rows="6"
+                <textarea class="form-control" id="edit-conteudo" rows="4"
                     placeholder="Texto para postar no LinkedIn...">${escapeHtml(conteudo)}</textarea>
-                <small style="color: var(--gray-500); margin-top: 4px; display: block;">
-                    💡 Dica: Poste este texto no LinkedIn e adicione o link nos comentários
-                </small>
             </div>
             <div class="form-group">
                 <label style="display: flex; justify-content: space-between; align-items: center;">
@@ -1614,7 +1675,7 @@ async function openPostModal(postId) {
                 <div style="display: flex; gap: 12px;">
                     <button class="btn-secondary" onclick="closePostModal()">Cancelar</button>
                     <button class="btn-primary" onclick="savePost(${post.id})">
-                        <i class="bi bi-calendar-check"></i> Agendar
+                        <i class="bi bi-${isPublished ? 'save' : 'calendar-check'}"></i> ${isPublished ? 'Salvar' : 'Agendar'}
                     </button>
                 </div>
             </div>
