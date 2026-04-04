@@ -2613,7 +2613,7 @@
                 const modal = document.createElement('div');
                 modal.className = 'modal fade';
                 modal.id = 'driveFolderPickerModal';
-                modal.innerHTML = \`
+                modal.innerHTML = `
                     <div class="modal-dialog modal-lg">
                         <div class="modal-content">
                             <div class="modal-header">
@@ -2641,7 +2641,7 @@
                             </div>
                         </div>
                     </div>
-                \`;
+                `;
                 document.body.appendChild(modal);
             }
 
@@ -2665,9 +2665,9 @@
                     select.innerHTML = '<option value="">Nenhuma conta conectada</option>';
                 } else {
                     select.innerHTML = folderPickerData.accounts.map(acc =>
-                        \`<option value="\${acc.type}" \${acc.type === folderPickerData.accountType ? 'selected' : ''}>
+                        `<option value="\${acc.type}" \${acc.type === folderPickerData.accountType ? 'selected' : ''}>
                             \${acc.label} (\${acc.email})
-                        </option>\`
+                        </option>`
                     ).join('');
                 }
             } catch (error) {
@@ -2698,7 +2698,7 @@
 
                 // Update breadcrumb
                 breadcrumb.innerHTML = folderPickerData.path.map((p, i) =>
-                    \`<span onclick="navigateToFolder(\${i})">\${p.name}</span>\${i < folderPickerData.path.length - 1 ? ' <i class="bi bi-chevron-right"></i> ' : ''}\`
+                    `<span onclick="navigateToFolder(\${i})">\${p.name}</span>\${i < folderPickerData.path.length - 1 ? ' <i class="bi bi-chevron-right"></i> ' : ''}`
                 ).join('');
 
                 // Render folders
@@ -2708,13 +2708,13 @@
                 }
 
                 folderPickerData.folders = data.folders;
-                container.innerHTML = data.folders.map(f => \`
+                container.innerHTML = data.folders.map(f => `
                     <div class="folder-item" data-id="\${f.id}" onclick="selectFolder('\${f.id}', '\${f.name.replace(/'/g, "\\\\'")}')">
                         <i class="bi bi-folder-fill text-warning"></i>
                         <span>\${f.name}</span>
                         <i class="bi bi-chevron-right ms-auto" onclick="event.stopPropagation(); enterFolder('\${f.id}', '\${f.name.replace(/'/g, "\\\\'")}')"></i>
                     </div>
-                \`).join('');
+                `).join('');
 
             } catch (error) {
                 console.error('Error loading folders:', error);
@@ -2746,7 +2746,7 @@
             if (!folderPickerData.selectedFolder) return;
 
             try {
-                const response = await fetch(\`/api/drive/folders/\${folderPickerData.selectedFolder.id}/link\`, {
+                const response = await fetch(`/api/drive/folders/\${folderPickerData.selectedFolder.id}/link`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -2757,7 +2757,7 @@
 
                 if (response.ok) {
                     // Also index the documents
-                    await fetch(\`/api/drive/folders/\${folderPickerData.selectedFolder.id}/index\`, {
+                    await fetch(`/api/drive/folders/\${folderPickerData.selectedFolder.id}/index`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -2770,12 +2770,12 @@
                     // Update UI - show which account the folder is from
                     const accountLabel = folderPickerData.accounts.find(a => a.type === folderPickerData.accountType)?.label || '';
                     document.getElementById('linked-folder-container').innerHTML =
-                        \`<div class="d-flex align-items-center gap-2">
+                        `<div class="d-flex align-items-center gap-2">
                             <i class="bi bi-folder-fill text-warning"></i>
                             <a href="https://drive.google.com/drive/folders/\${folderPickerData.selectedFolder.id}" target="_blank">\${folderPickerData.selectedFolder.name}</a>
                             <span class="badge bg-light text-dark">\${accountLabel}</span>
                             <button class="btn btn-sm btn-outline-danger ms-2" onclick="unlinkDriveFolder()"><i class="bi bi-x"></i></button>
-                        </div>\`;
+                        </div>`;
 
                     bootstrap.Modal.getInstance(document.getElementById('driveFolderPickerModal')).hide();
                     loadContactDocuments();
