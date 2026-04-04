@@ -2895,47 +2895,53 @@
         async function startWhatsAppFetch() {
             const btn = document.getElementById('btnFetchWA');
             const progress = document.getElementById('progressWA');
+            const progressBar = progress.querySelector('.progress-bar');
             const log = document.getElementById('avatarStatusLog');
 
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Buscando...';
             progress.classList.remove('d-none');
 
-            try {
-                const response = await fetch('/api/avatars/fetch?limit=50', {method: 'POST'});
-                const result = await response.json();
+            let totalProcessed = 0;
+            let totalSuccess = 0;
+            let totalFailed = 0;
+            let remaining = 999999;
 
-                if (result.started) {
-                    log.innerHTML = `<div class="text-success"><i class="bi bi-check"></i> ${result.message}</div>` + log.innerHTML;
-                    showToast(result.message, 'success');
+            // Loop até processar todos ou timeout
+            while (remaining > 0) {
+                try {
+                    const response = await fetch('/api/avatars/fetch-all-auto', {method: 'POST'});
+                    const result = await response.json();
 
-                    // Simulate progress (real progress would need SSE)
-                    let pct = 0;
-                    const progressBar = progress.querySelector('.progress-bar');
-                    const interval = setInterval(() => {
-                        pct += 2;
-                        if (pct >= 100) {
-                            clearInterval(interval);
-                            progress.classList.add('d-none');
-                            btn.disabled = false;
-                            btn.innerHTML = '<i class="bi bi-download me-1"></i>Buscar (50)';
-                            refreshAvatarStats();
-                        }
-                        progressBar.style.width = pct + '%';
-                        progressBar.textContent = pct + '%';
-                    }, 1500);
-                } else {
-                    log.innerHTML = `<div class="text-muted">${result.message}</div>` + log.innerHTML;
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="bi bi-download me-1"></i>Buscar (50)';
-                    progress.classList.add('d-none');
+                    totalProcessed += result.total_processed || 0;
+                    totalSuccess += result.results?.success || 0;
+                    totalFailed += result.results?.failed || 0;
+                    remaining = result.remaining || 0;
+
+                    // Atualizar progresso
+                    const stats = result.stats || {};
+                    const total = stats.pendentes_total || remaining;
+                    const pct = total > 0 ? Math.round(((total - remaining) / total) * 100) : 100;
+                    progressBar.style.width = pct + '%';
+                    progressBar.textContent = pct + '%';
+
+                    // Log do lote
+                    log.innerHTML = `<div class="text-success"><i class="bi bi-check"></i> +${result.total_processed} processados | Fotos: ${totalSuccess} | Restam: ${remaining}</div>` + log.innerHTML;
+
+                    if (result.done) {
+                        log.innerHTML = `<div class="text-primary fw-bold"><i class="bi bi-check-circle"></i> Concluído! Total: ${totalProcessed} | Fotos encontradas: ${totalSuccess}</div>` + log.innerHTML;
+                        break;
+                    }
+                } catch (error) {
+                    log.innerHTML = `<div class="text-danger"><i class="bi bi-x"></i> Erro: ${error.message}</div>` + log.innerHTML;
+                    break;
                 }
-            } catch (error) {
-                log.innerHTML = `<div class="text-danger"><i class="bi bi-x"></i> Erro: ${error.message}</div>` + log.innerHTML;
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-download me-1"></i>Buscar (50)';
-                progress.classList.add('d-none');
             }
+
+            progress.classList.add('d-none');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-download me-1"></i>Buscar Fotos';
+            refreshAvatarStats();
         }
 
         async function startGoogleFetch() {
