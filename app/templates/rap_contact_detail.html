@@ -899,6 +899,106 @@
             font-weight: 500;
         }
 
+        /* Documents Grid */
+        .documents-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 12px;
+        }
+
+        .doc-card {
+            background: var(--gray-100);
+            border-radius: 10px;
+            padding: 14px;
+            text-align: center;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: 1px solid transparent;
+        }
+
+        .doc-card:hover {
+            background: white;
+            border-color: var(--primary);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .doc-icon {
+            font-size: 2.5rem;
+            margin-bottom: 8px;
+        }
+
+        .doc-icon.pdf { color: #e53e3e; }
+        .doc-icon.doc { color: #3182ce; }
+        .doc-icon.sheet { color: #38a169; }
+        .doc-icon.slide { color: #dd6b20; }
+        .doc-icon.image { color: #805ad5; }
+        .doc-icon.folder { color: #d69e2e; }
+        .doc-icon.default { color: var(--gray-500); }
+
+        .doc-name {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--dark);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .doc-meta {
+            font-size: 0.75rem;
+            color: var(--gray-500);
+            margin-top: 4px;
+        }
+
+        /* Drive Folder Picker Modal */
+        .folder-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .folder-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .folder-item:hover {
+            background: var(--gray-100);
+        }
+
+        .folder-item.selected {
+            background: var(--primary);
+            color: white;
+        }
+
+        .folder-item i {
+            font-size: 1.25rem;
+        }
+
+        .breadcrumb-drive {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px;
+            background: var(--gray-100);
+            border-radius: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        .breadcrumb-drive span {
+            cursor: pointer;
+            color: var(--primary);
+        }
+
+        .breadcrumb-drive span:hover {
+            text-decoration: underline;
+        }
+
         /* Compact Profile Header */
         .profile-header-compact {
             background: white;
@@ -2375,6 +2475,10 @@
                         <i class="bi bi-diagram-3"></i>
                         <span>Relacionamentos</span>
                     </button>
+                    <button class="contact-tab" onclick="switchTab('documentos')">
+                        <i class="bi bi-folder2-open"></i>
+                        <span>Documentos</span>
+                    </button>
                 </div>
 
                 <!-- Tab: Resumo -->
@@ -2608,6 +2712,45 @@
                                     <small class="text-muted ms-2">(calculados automaticamente)</small>
                                 </h6>
                                 <div id="inferred-relationships-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab: Documentos -->
+                <div class="tab-content" id="tab-documentos">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title"><i class="bi bi-folder2-open"></i> Documentos</h2>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-outline-primary" onclick="openDriveFolderPicker()">
+                                    <i class="bi bi-link-45deg"></i> Vincular Pasta
+                                </button>
+                                <button class="btn btn-sm btn-primary" onclick="document.getElementById('fileUpload').click()">
+                                    <i class="bi bi-cloud-upload"></i> Upload
+                                </button>
+                                <input type="file" id="fileUpload" style="display:none" onchange="uploadDocumentToContact(this.files[0])" multiple>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- Linked Folder -->
+                            <div class="edit-section-inline mb-3" id="linked-folder-section">
+                                <h6><i class="bi bi-folder-symlink"></i> Pasta Vinculada no Drive</h6>
+                                <div id="linked-folder-container">
+                                    ${contact.google_drive_folder_id ?
+                                        '<div class="d-flex align-items-center gap-2"><i class="bi bi-folder-fill text-warning"></i> <a href="https://drive.google.com/drive/folders/' + contact.google_drive_folder_id + '" target="_blank">Abrir no Drive</a> <button class="btn btn-sm btn-outline-danger ms-2" onclick="unlinkDriveFolder()"><i class="bi bi-x"></i></button></div>'
+                                        : '<span class="text-muted">Nenhuma pasta vinculada</span>'}
+                                </div>
+                            </div>
+
+                            <!-- Documents Grid -->
+                            <div class="edit-section-inline">
+                                <h6><i class="bi bi-files"></i> Documentos Indexados</h6>
+                                <div id="documents-container" class="documents-grid">
+                                    <div class="text-center text-muted py-3">
+                                        <i class="bi bi-hourglass-split"></i> Carregando documentos...
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

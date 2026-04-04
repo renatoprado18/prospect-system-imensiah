@@ -5594,21 +5594,20 @@ from integrations.google_drive import (
 @app.get("/api/drive/folders")
 async def api_list_drive_folders(parent_id: str = None):
     """Lista pastas do Google Drive"""
-    conn = None
+    conn = get_db()
     try:
-        conn = get_db()
         access_token = await get_valid_token(conn)
         if not access_token:
-            return {"error": "Google Drive não conectado - token não encontrado"}
+            raise HTTPException(status_code=401, detail="Google Drive não conectado")
 
         folders = await list_folders(access_token, parent_id)
         return {"folders": folders}
+    except HTTPException:
+        raise
     except Exception as e:
-        import traceback
-        return {"error": str(e), "traceback": traceback.format_exc()}
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if conn:
-            conn.close()
+        conn.close()
 
 
 @app.get("/api/drive/folders/{folder_id}/contents")
@@ -10934,6 +10933,156 @@ async def test_push_notification(request: Request):
     )
 
     return result
+
+
+# =============================================================================
+# AVATAR FETCHER ENDPOINTS
+# =============================================================================
+
+@app.get("/api/avatars/stats")
+async def get_avatar_stats(request: Request):
+    """Retorna estatisticas de fotos dos contatos."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.avatar_fetcher import get_avatar_fetcher
+    fetcher = get_avatar_fetcher()
+    return fetcher.get_photo_stats()
+
+
+@app.post("/api/avatars/fetch")
+async def fetch_avatars(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    limit: int = 50
+):
+    """
+    Inicia busca de fotos de perfil do WhatsApp em background.
+    Retorna imediatamente com status de inicio.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.avatar_fetcher import get_avatar_fetcher
+
+    fetcher = get_avatar_fetcher()
+
+    # Verificar quantos contatos precisam de foto
+    contacts = fetcher.get_contacts_needing_photos(limit)
+
+    if not contacts:
+        return {
+            "started": False,
+            "message": "Nenhum contato precisa de foto",
+            "contacts_to_process": 0
+        }
+
+    # Executar em background
+    async def run_fetch():
+        await fetcher.fetch_photos_batch(limit=limit, delay_between=1.5)
+
+    background_tasks.add_task(asyncio.create_task, run_fetch())
+
+    return {
+        "started": True,
+        "message": f"Iniciando busca de fotos para {len(contacts)} contatos",
+        "contacts_to_process": len(contacts)
+    }
+
+
+@app.get("/api/avatars/fetch-single/{contact_id}")
+async def fetch_single_avatar(request: Request, contact_id: int):
+    """Busca foto de um contato especifico."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.avatar_fetcher import get_avatar_fetcher
+    from database import get_db
+
+    # Buscar contato
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, telefones FROM contacts WHERE id = %s
+        """, (contact_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+        contact = dict(row)
+
+    # Extrair telefone
+    telefones = contact.get('telefones', [])
+    if isinstance(telefones, str):
+        import json
+        try:
+            telefones = json.loads(telefones)
+        except:
+            telefones = []
+
+    if not telefones:
+        return {"success": False, "error": "Contato sem telefone"}
+
+    phone = telefones[0] if isinstance(telefones[0], str) else telefones[0].get('numero', '')
+
+    if not phone:
+        return {"success": False, "error": "Telefone invalido"}
+
+    # Buscar foto
+    fetcher = get_avatar_fetcher()
+    photo_url = await fetcher.fetch_whatsapp_photo(phone)
+
+    if photo_url:
+        success = fetcher.update_contact_photo(contact_id, photo_url)
+        return {
+            "success": success,
+            "photo_url": photo_url,
+            "contact_name": contact['nome']
+        }
+
+    return {"success": False, "error": "Foto nao encontrada no WhatsApp"}
+
+
+@app.post("/api/avatars/fetch-google")
+async def fetch_google_avatars(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    limit: int = 50
+):
+    """
+    Inicia busca de fotos do Google para contatos com google_contact_id.
+    Alguns contatos podem ter fotos reais no Google que nao foram importadas.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.avatar_fetcher import get_avatar_fetcher
+
+    fetcher = get_avatar_fetcher()
+    contacts = fetcher.get_contacts_needing_google_photos(limit)
+
+    if not contacts:
+        return {
+            "started": False,
+            "message": "Nenhum contato com google_contact_id precisa de foto",
+            "contacts_to_process": 0
+        }
+
+    async def run_fetch():
+        await fetcher.fetch_google_photos_batch(limit=limit, delay_between=0.5)
+
+    background_tasks.add_task(asyncio.create_task, run_fetch())
+
+    return {
+        "started": True,
+        "message": f"Iniciando busca de fotos Google para {len(contacts)} contatos",
+        "contacts_to_process": len(contacts)
+    }
 
 
 @app.get("/api/activity/recent")

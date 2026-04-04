@@ -244,6 +244,57 @@
         color: #065f46;
     }
 
+    /* Quick Dates */
+    .quick-dates {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .quick-date-btn {
+        padding: 10px 14px;
+        border: 2px solid var(--gray-200);
+        border-radius: 10px;
+        background: white;
+        cursor: pointer;
+        text-align: center;
+        transition: all 0.2s;
+        flex: 1;
+        min-width: 100px;
+    }
+
+    .quick-date-btn:hover {
+        border-color: #3b82f6;
+        background: #eff6ff;
+    }
+
+    .quick-date-btn.selected {
+        border-color: #3b82f6;
+        background: #3b82f6;
+        color: white;
+    }
+
+    .quick-date-btn.has-posts {
+        border-color: #f59e0b;
+        background: #fef3c7;
+    }
+
+    .quick-date-btn .day-name {
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+
+    .quick-date-btn .day-date {
+        font-size: 0.75rem;
+        opacity: 0.8;
+    }
+
+    .quick-date-btn .posts-count {
+        font-size: 0.7rem;
+        margin-top: 4px;
+        color: #92400e;
+    }
+
     /* Sidebar */
     .sidebar-card {
         background: white;
@@ -682,18 +733,29 @@
             <h3><i class="bi bi-calendar-plus me-2"></i>Agendar Hot Take</h3>
             <button class="modal-close" onclick="closeScheduleModal()">&times;</button>
         </div>
+
         <div class="mb-3">
-            <label class="form-label">Data de Publicacao:</label>
-            <input type="date" id="scheduleDate" class="form-control">
+            <label class="form-label">Dias Sugeridos (clique para selecionar):</label>
+            <div class="quick-dates" id="quickDates">
+                <!-- Populated by JavaScript -->
+            </div>
         </div>
+
+        <div class="mb-3">
+            <label class="form-label">Ou escolha uma data:</label>
+            <input type="date" id="scheduleDate" class="form-control">
+            <small class="text-muted">LinkedIn tem melhor engajamento Seg/Ter/Qua 9h</small>
+        </div>
+
         <div class="mb-3">
             <label class="form-label">Horario:</label>
             <select id="scheduleTime" class="form-select">
-                <option value="09:00">09:00 (Recomendado)</option>
+                <option value="09:00">09:00 (Melhor engajamento)</option>
                 <option value="12:00">12:00</option>
-                <option value="18:00">18:00</option>
+                <option value="17:00">17:00</option>
             </select>
         </div>
+
         <div class="mb-3">
             <div class="form-check">
                 <input class="form-check-input" type="checkbox" id="createEditorial" checked>
@@ -702,6 +764,7 @@
                 </label>
             </div>
         </div>
+
         <div class="d-flex gap-2">
             <button class="btn btn-outline-secondary flex-grow-1" onclick="closeScheduleModal()">
                 Cancelar
@@ -890,13 +953,73 @@ function copyToClipboard(id) {
 
 // Schedule Modal
 let currentScheduleId = null;
+let scheduledDates = {};
+
+// Get scheduled dates from hot takes data
+hotTakesData.forEach(ht => {
+    if (ht.scheduled_for) {
+        const dateKey = ht.scheduled_for.split('T')[0];
+        scheduledDates[dateKey] = (scheduledDates[dateKey] || 0) + 1;
+    }
+});
+
+function getNextWeekdays(count = 5) {
+    const days = [];
+    const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+    const today = new Date();
+
+    let current = new Date(today);
+    current.setDate(current.getDate() + 1); // Start from tomorrow
+
+    while (days.length < count) {
+        const dayOfWeek = current.getDay();
+        // Only include weekdays (Mon-Fri = 1-5)
+        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+            const dateStr = current.toISOString().split('T')[0];
+            days.push({
+                date: dateStr,
+                dayName: dayNames[dayOfWeek],
+                dayNum: current.getDate(),
+                month: current.getMonth() + 1,
+                postsCount: scheduledDates[dateStr] || 0
+            });
+        }
+        current.setDate(current.getDate() + 1);
+    }
+    return days;
+}
+
+function selectQuickDate(dateStr) {
+    document.getElementById('scheduleDate').value = dateStr;
+    document.querySelectorAll('.quick-date-btn').forEach(btn => {
+        btn.classList.remove('selected');
+        if (btn.dataset.date === dateStr) {
+            btn.classList.add('selected');
+        }
+    });
+}
 
 function openScheduleModal(id) {
     currentScheduleId = id;
-    // Set default date to tomorrow
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    document.getElementById('scheduleDate').value = tomorrow.toISOString().split('T')[0];
+
+    // Populate quick dates
+    const quickDatesContainer = document.getElementById('quickDates');
+    const nextDays = getNextWeekdays(5);
+
+    quickDatesContainer.innerHTML = nextDays.map(day => `
+        <button type="button" class="quick-date-btn ${day.postsCount > 0 ? 'has-posts' : ''}"
+                data-date="${day.date}"
+                onclick="selectQuickDate('${day.date}')">
+            <div class="day-name">${day.dayName}</div>
+            <div class="day-date">${day.dayNum}/${day.month}</div>
+            ${day.postsCount > 0 ? `<div class="posts-count">${day.postsCount} post${day.postsCount > 1 ? 's' : ''}</div>` : ''}
+        </button>
+    `).join('');
+
+    // Select first available day without posts
+    const firstAvailable = nextDays.find(d => d.postsCount === 0) || nextDays[0];
+    selectQuickDate(firstAvailable.date);
+
     document.getElementById('scheduleModal').classList.add('active');
 }
 

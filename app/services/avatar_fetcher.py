@@ -1,10 +1,12 @@
 """
-Avatar Fetcher Service - Busca fotos de perfil do WhatsApp
+Avatar Fetcher Service - Busca fotos de perfil do WhatsApp e Google
 
-Usa Evolution API para buscar fotos de perfil e atualizar contatos.
+Usa Evolution API para buscar fotos de perfil do WhatsApp
+e Google People API para re-sincronizar fotos de contatos Google.
 """
 import asyncio
 import logging
+import httpx
 from typing import Dict, List, Optional
 from datetime import datetime
 from database import get_db
@@ -164,6 +166,139 @@ class AvatarFetcherService:
         logger.info(f"Avatar fetch complete: {self.stats}")
         return self.stats
 
+    def get_contacts_needing_google_photos(self, limit: int = 100) -> List[Dict]:
+        """
+        Retorna contatos com google_contact_id que precisam de fotos reais.
+        Estes contatos podem ter fotos melhores no Google que nao foram importadas.
+        """
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, nome, google_contact_id, foto_url
+                FROM contacts
+                WHERE google_contact_id IS NOT NULL
+                AND (
+                    foto_url IS NULL
+                    OR foto_url = ''
+                    OR foto_url LIKE '%%googleusercontent%%'
+                )
+                ORDER BY circulo ASC, atualizado_em DESC
+                LIMIT %s
+            """, (limit,))
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def fetch_google_photo(self, google_contact_id: str) -> Optional[str]:
+        """
+        Busca foto de perfil diretamente do Google People API.
+        Retorna URL da foto se for uma foto real (nao iniciais).
+        """
+        from integrations.google_contacts import get_valid_token
+
+        try:
+            # Pegar token de uma conta Google conectada
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT email FROM google_accounts LIMIT 1")
+                row = cursor.fetchone()
+                if not row:
+                    logger.warning("No Google account connected")
+                    return None
+                account_email = row['email']
+
+            access_token = await get_valid_token(account_email)
+            if not access_token:
+                logger.warning("Could not get valid Google token")
+                return None
+
+            # Buscar contato com foto
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"https://people.googleapis.com/v1/people/{google_contact_id}",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params={"personFields": "photos"}
+                )
+
+                if response.status_code != 200:
+                    logger.warning(f"Google API error for {google_contact_id}: {response.status_code}")
+                    return None
+
+                data = response.json()
+                photos = data.get("photos", [])
+
+                for photo in photos:
+                    url = photo.get("url", "")
+                    # Verificar se e uma foto real (nao padrao/iniciais)
+                    # Fotos default tem metadata.default = true
+                    if photo.get("metadata", {}).get("default"):
+                        continue
+                    # URLs de iniciais geralmente tem "/s100/" pattern e sao muito genericas
+                    if url and "googleusercontent" in url:
+                        # Fotos reais tem patterns diferentes
+                        # Iniciais: lh3.googleusercontent.com/contacts/s100/...
+                        # Fotos reais: lh3.googleusercontent.com/a/...
+                        if "/a/" in url or "=s" in url:
+                            return url
+                    elif url:
+                        return url
+
+                return None
+
+        except Exception as e:
+            logger.warning(f"Error fetching Google photo for {google_contact_id}: {e}")
+            return None
+
+    async def fetch_google_photos_batch(
+        self,
+        limit: int = 50,
+        delay_between: float = 0.5,
+        progress_callback = None
+    ) -> Dict:
+        """
+        Busca fotos do Google em lote para contatos com google_contact_id.
+        """
+        stats = {'total': 0, 'success': 0, 'failed': 0, 'skipped': 0}
+
+        contacts = self.get_contacts_needing_google_photos(limit)
+        stats['total'] = len(contacts)
+
+        logger.info(f"Starting Google photo fetch for {len(contacts)} contacts")
+
+        for i, contact in enumerate(contacts):
+            google_id = contact.get('google_contact_id', '')
+
+            if not google_id:
+                stats['skipped'] += 1
+                continue
+
+            photo_url = await self.fetch_google_photo(google_id)
+
+            if photo_url:
+                success = self.update_contact_photo(contact['id'], photo_url)
+                if success:
+                    stats['success'] += 1
+                    logger.info(f"Updated Google photo for {contact['nome']}")
+                else:
+                    stats['failed'] += 1
+            else:
+                stats['failed'] += 1
+
+            if progress_callback:
+                progress_callback({
+                    'current': i + 1,
+                    'total': len(contacts),
+                    'contact': contact['nome'],
+                    'success': photo_url is not None,
+                    'stats': stats
+                })
+
+            if delay_between > 0 and i < len(contacts) - 1:
+                await asyncio.sleep(delay_between)
+
+        logger.info(f"Google photo fetch complete: {stats}")
+        return stats
+
     def get_photo_stats(self) -> Dict:
         """Retorna estatisticas de fotos dos contatos."""
         with get_db() as conn:
@@ -187,7 +322,7 @@ class AvatarFetcherService:
             row = cursor.fetchone()
             stats = dict(row)
 
-            # Contatos com telefone que podem ter foto buscada
+            # Contatos com telefone que podem ter foto buscada via WhatsApp
             cursor.execute("""
                 SELECT COUNT(*) as c FROM contacts
                 WHERE telefones IS NOT NULL
@@ -196,7 +331,15 @@ class AvatarFetcherService:
             """)
             stats['potencial_whatsapp'] = cursor.fetchone()['c']
 
-            # Contatos com LinkedIn que podem ter foto buscada
+            # Contatos com google_contact_id que podem ter foto real
+            cursor.execute("""
+                SELECT COUNT(*) as c FROM contacts
+                WHERE google_contact_id IS NOT NULL
+                AND (foto_url IS NULL OR foto_url LIKE '%%googleusercontent%%')
+            """)
+            stats['potencial_google'] = cursor.fetchone()['c']
+
+            # Contatos com LinkedIn que podem ter foto buscada (Proxycurl)
             cursor.execute("""
                 SELECT COUNT(*) as c FROM contacts
                 WHERE linkedin IS NOT NULL
