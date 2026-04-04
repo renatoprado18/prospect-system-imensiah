@@ -1456,87 +1456,6 @@
             justify-content: flex-end;
             gap: 12px;
         }
-
-        /* ConselhoOS Widget */
-        .conselhoos-widget {
-            background: linear-gradient(135deg, #1a1a2e, #16213e);
-            border-radius: 16px;
-            padding: 20px;
-            color: white;
-        }
-        .conselhoos-widget h3 {
-            display: flex;
-            align-items: center;
-            margin-bottom: 16px;
-            font-size: 1rem;
-            font-weight: 600;
-        }
-        .conselhoos-stats {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            margin-bottom: 16px;
-        }
-        .conselhoos-stat {
-            text-align: center;
-            padding: 12px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 8px;
-        }
-        .conselhoos-stat-value {
-            font-size: 1.5rem;
-            font-weight: 600;
-        }
-        .conselhoos-stat-label {
-            font-size: 0.75rem;
-            opacity: 0.8;
-        }
-        .conselhoos-next-meeting {
-            background: rgba(255,255,255,0.1);
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 12px;
-        }
-        .conselhoos-next-meeting .date {
-            font-size: 0.875rem;
-            opacity: 0.8;
-        }
-        .conselhoos-next-meeting .title {
-            font-weight: 500;
-        }
-        .conselhoos-next-meeting .empresa {
-            font-size: 0.875rem;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .conselhoos-next-meeting .empresa-color {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }
-        .conselhoos-raci-alert {
-            background: rgba(239, 68, 68, 0.2);
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            border-radius: 8px;
-            padding: 12px;
-            font-size: 0.875rem;
-            margin-bottom: 12px;
-        }
-        .conselhoos-link {
-            display: block;
-            text-align: center;
-            padding: 12px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 8px;
-            color: white;
-            text-decoration: none;
-            transition: background 0.2s;
-        }
-        .conselhoos-link:hover {
-            background: rgba(255,255,255,0.2);
-            color: white;
-        }
 {% endblock %}
 
 {% block content %}
@@ -3586,77 +3505,6 @@
             }
         }
 
-        // ============== Meeting Suggestions Widget ==============
-        async function loadMeetingSuggestions() {
-            const container = document.getElementById('meetingSuggestionsWidget');
-            if (!container) return;
-
-            try {
-                const response = await fetch('/api/ai/calendar-suggestions?limit=3');
-                if (!response.ok) throw new Error('API not available');
-
-                const data = await response.json();
-                const suggestions = data.suggestions || [];
-
-                if (suggestions.length === 0) {
-                    container.innerHTML = `
-                        <div class="text-center text-muted py-2">
-                            <i class="bi bi-check-circle" style="color: var(--success);"></i>
-                            <p class="mb-0 small">Todos os contatos em dia!</p>
-                        </div>
-                    `;
-                    return;
-                }
-
-                container.innerHTML = suggestions.map(s => `
-                    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--gray-100);">
-                        <div style="flex:1;min-width:0;">
-                            <div style="font-weight:500;color:var(--dark);">${s.contact_name || s.titulo}</div>
-                            <div style="font-size:0.75rem;color:var(--gray-500);">${s.descricao || ''}</div>
-                        </div>
-                        <button onclick="acceptCalendarSuggestion(${s.id})" class="btn btn-sm" style="background:linear-gradient(135deg, #a855f7, #6366f1);color:white;border:none;padding:4px 10px;">
-                            <i class="bi bi-calendar-plus"></i>
-                        </button>
-                    </div>
-                `).join('');
-
-            } catch (error) {
-                // Fallback with mock data
-                container.innerHTML = `
-                    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--gray-100);">
-                        <div>
-                            <div style="font-weight:500;">Contato exemplo</div>
-                            <div style="font-size:0.75rem;color:var(--gray-500);">30 dias sem contato</div>
-                        </div>
-                        <button class="btn btn-sm" style="background:linear-gradient(135deg, #a855f7, #6366f1);color:white;border:none;">
-                            <i class="bi bi-calendar-plus"></i>
-                        </button>
-                    </div>
-                `;
-            }
-        }
-
-        async function acceptCalendarSuggestion(id) {
-            try {
-                const response = await fetch(`/api/ai/calendar-suggestions/${id}/create-event`, { method: 'POST' });
-                if (response.ok) {
-                    if (typeof showToast === 'function') {
-                        showToast('Reuniao agendada!', 'success');
-                    } else {
-                        alert('Reuniao agendada!');
-                    }
-                    loadMeetingSuggestions();
-                    loadTodayAgenda();
-                }
-            } catch (e) {
-                if (typeof showToast === 'function') {
-                    showToast('Erro ao agendar', 'error');
-                } else {
-                    alert('Erro ao agendar');
-                }
-            }
-        }
-
         // ============== Morning Briefing ==============
         async function loadMorningBriefing() {
             const greetingEl = document.getElementById('briefingGreeting');
@@ -3948,64 +3796,6 @@
             }
         }
 
-        // ============== ConselhoOS Widget ==============
-        async function loadConselhoOSWidget() {
-            const widget = document.getElementById('conselhoosWidget');
-            if (!widget) return;
-
-            try {
-                const response = await fetch('/api/conselhoos/dashboard');
-                if (!response.ok) {
-                    widget.style.display = 'none';
-                    return;
-                }
-
-                const data = await response.json();
-
-                if (data.error || data.total_empresas === 0) {
-                    widget.style.display = 'none';
-                    return;
-                }
-
-                widget.style.display = 'block';
-
-                // Stats
-                document.getElementById('cosEmpresas').textContent = data.total_empresas;
-                document.getElementById('cosReunioes').textContent = data.proximas_reunioes;
-                document.getElementById('cosRaci').textContent = data.raci_pendentes;
-
-                // Next meeting
-                if (data.proxima_reuniao) {
-                    const nextMeeting = document.getElementById('cosNextMeeting');
-                    nextMeeting.style.display = 'block';
-
-                    const date = new Date(data.proxima_reuniao.data);
-                    document.getElementById('cosNextDate').textContent = date.toLocaleDateString('pt-BR', {
-                        weekday: 'short',
-                        day: 'numeric',
-                        month: 'short',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    });
-                    document.getElementById('cosNextTitle').textContent = data.proxima_reuniao.titulo || 'Reuniao do Conselho';
-                    document.getElementById('cosNextEmpresa').textContent = data.proxima_reuniao.empresa_nome;
-                    document.getElementById('cosNextColor').style.background = data.proxima_reuniao.cor_hex || '#B89C60';
-                }
-
-                // RACI alert
-                if (data.raci_atrasados > 0) {
-                    const alert = document.getElementById('cosRaciAlert');
-                    alert.style.display = 'block';
-                    document.getElementById('cosRaciAlertText').textContent =
-                        `${data.raci_atrasados} tarefa${data.raci_atrasados > 1 ? 's' : ''} RACI atrasada${data.raci_atrasados > 1 ? 's' : ''}`;
-                }
-
-            } catch (e) {
-                console.error('Error loading ConselhoOS widget:', e);
-                widget.style.display = 'none';
-            }
-        }
-
         // ============== Projects Widget ==============
         async function loadProjectsWidget() {
             const container = document.getElementById('projectsWidget');
@@ -4077,8 +3867,6 @@
         // Load secondary features after short delay (lower priority)
         setTimeout(() => {
             loadAISuggestions();
-            loadMeetingSuggestions();
-            loadConselhoOSWidget();
             loadProjectsWidget();
             loadTasks();
         }, 300);
