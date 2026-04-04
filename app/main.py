@@ -13409,15 +13409,20 @@ async def api_hot_take_schedule(hot_take_id: int, request: Request):
 @app.get("/hot-takes", response_class=HTMLResponse)
 async def hot_takes_page(request: Request):
     """Pagina de Hot Takes"""
-    from app.services.hot_takes import get_hot_takes, get_weekly_digest_stats
-    hot_takes = get_hot_takes(limit=50)
-    stats = get_weekly_digest_stats()
+    import traceback
+    try:
+        from app.services.hot_takes import get_hot_takes, get_weekly_digest_stats
+        hot_takes = get_hot_takes(limit=50)
+        stats = get_weekly_digest_stats()
 
-    return templates.TemplateResponse("hot_takes.html", {
-        "request": request,
-        "hot_takes": hot_takes,
-        "stats": stats
-    })
+        return templates.TemplateResponse("hot_takes.html", {
+            "request": request,
+            "hot_takes": hot_takes,
+            "stats": stats
+        })
+    except Exception as e:
+        error_detail = traceback.format_exc()
+        return HTMLResponse(f"<pre>Error: {e}\n\n{error_detail}</pre>", status_code=500)
 
 
 # ============== EDITORIAL CALENDAR PAGE ==============
