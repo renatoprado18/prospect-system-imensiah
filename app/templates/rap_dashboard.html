@@ -1780,6 +1780,96 @@
             </div>
         </div>
 
+        <!-- Avatar Manager Modal -->
+        <div class="modal fade" id="avatarManagerModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-person-circle me-2"></i>Gerenciador de Avatares</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-muted small mb-3">Busque fotos de perfil reais para seus contatos automaticamente.</p>
+
+                        <!-- Stats -->
+                        <div class="row mb-4" id="avatarStats">
+                            <div class="col-6 col-md-3 text-center">
+                                <div class="h4 mb-0" id="avatarTotal">-</div>
+                                <small class="text-muted">Total</small>
+                            </div>
+                            <div class="col-6 col-md-3 text-center">
+                                <div class="h4 mb-0 text-warning" id="avatarIniciais">-</div>
+                                <small class="text-muted">Iniciais (Google)</small>
+                            </div>
+                            <div class="col-6 col-md-3 text-center">
+                                <div class="h4 mb-0 text-success" id="avatarWhatsapp">-</div>
+                                <small class="text-muted">WhatsApp</small>
+                            </div>
+                            <div class="col-6 col-md-3 text-center">
+                                <div class="h4 mb-0 text-info" id="avatarOutras">-</div>
+                                <small class="text-muted">Outras</small>
+                            </div>
+                        </div>
+
+                        <hr>
+
+                        <!-- WhatsApp Photo Fetch -->
+                        <div class="mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div>
+                                    <h6 class="mb-1"><i class="bi bi-whatsapp text-success me-2"></i>Buscar Fotos do WhatsApp</h6>
+                                    <small class="text-muted">Contatos com telefone: <strong id="avatarPotencialWA">-</strong></small>
+                                </div>
+                                <button class="btn btn-success btn-sm" onclick="startWhatsAppFetch()" id="btnFetchWA">
+                                    <i class="bi bi-download me-1"></i>Buscar (50)
+                                </button>
+                            </div>
+                            <div class="progress d-none" id="progressWA" style="height: 20px;">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%">0%</div>
+                            </div>
+                        </div>
+
+                        <!-- Google Photo Re-fetch -->
+                        <div class="mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div>
+                                    <h6 class="mb-1"><i class="bi bi-google text-primary me-2"></i>Re-sincronizar Fotos do Google</h6>
+                                    <small class="text-muted">Contatos com Google ID: <strong id="avatarPotencialGoogle">-</strong></small>
+                                </div>
+                                <button class="btn btn-primary btn-sm" onclick="startGoogleFetch()" id="btnFetchGoogle">
+                                    <i class="bi bi-arrow-repeat me-1"></i>Sincronizar (50)
+                                </button>
+                            </div>
+                            <div class="progress d-none" id="progressGoogle" style="height: 20px;">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%">0%</div>
+                            </div>
+                        </div>
+
+                        <!-- LinkedIn (info only) -->
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="mb-1"><i class="bi bi-linkedin text-info me-2"></i>LinkedIn (Proxycurl)</h6>
+                                    <small class="text-muted">Contatos com LinkedIn: <strong id="avatarPotencialLinkedIn">-</strong></small>
+                                </div>
+                                <span class="badge bg-secondary">Requer API ($0.01/foto)</span>
+                            </div>
+                        </div>
+
+                        <!-- Status Log -->
+                        <div id="avatarStatusLog" class="small text-muted mt-3" style="max-height: 100px; overflow-y: auto;">
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                        <button type="button" class="btn btn-outline-primary" onclick="refreshAvatarStats()">
+                            <i class="bi bi-arrow-repeat me-1"></i>Atualizar Stats
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Stats - Compact clickable cards -->
         <div class="stats-grid">
             <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/contatos'">

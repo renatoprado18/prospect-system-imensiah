@@ -4574,7 +4574,8 @@ async def update_contact(contact_id: int, request: Request):
     allowed_fields = ['nome', 'apelido', 'empresa', 'cargo', 'emails', 'telefones',
                       'linkedin', 'contexto', 'categorias', 'tags', 'aniversario',
                       'circulo', 'circulo_manual', 'foto_url', 'enderecos',
-                      'relacionamentos', 'datas_importantes', 'manual_notes']
+                      'relacionamentos', 'datas_importantes', 'manual_notes',
+                      'google_drive_folder_id']
 
     updates = []
     values = []

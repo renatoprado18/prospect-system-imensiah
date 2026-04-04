@@ -2786,7 +2786,247 @@
                 loadUnifiedTimeline();
             } else if (tabName === 'relacionamentos') {
                 loadInferredRelationshipsDetail();
+            } else if (tabName === 'documentos') {
+                loadContactDocuments();
             }
+        }
+
+        // ========== DOCUMENTS FUNCTIONS ==========
+
+        async function loadContactDocuments() {
+            const container = document.getElementById('documents-container');
+            try {
+                const response = await fetch(`/api/documentos/contato/${contactId}`);
+                const docs = await response.json();
+
+                if (!docs || docs.length === 0) {
+                    container.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-folder-x fs-1 d-block mb-2"></i>Nenhum documento vinculado</div>';
+                    return;
+                }
+
+                container.innerHTML = docs.map(doc => renderDocumentCard(doc)).join('');
+            } catch (error) {
+                console.error('Error loading documents:', error);
+                container.innerHTML = '<div class="text-center text-danger py-3"><i class="bi bi-exclamation-triangle"></i> Erro ao carregar documentos</div>';
+            }
+        }
+
+        function getDocIcon(mimeType) {
+            if (!mimeType) return { icon: 'bi-file-earmark', cls: 'default' };
+            if (mimeType.includes('pdf')) return { icon: 'bi-file-earmark-pdf-fill', cls: 'pdf' };
+            if (mimeType.includes('word') || mimeType.includes('document')) return { icon: 'bi-file-earmark-word-fill', cls: 'doc' };
+            if (mimeType.includes('sheet') || mimeType.includes('excel')) return { icon: 'bi-file-earmark-excel-fill', cls: 'sheet' };
+            if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return { icon: 'bi-file-earmark-ppt-fill', cls: 'slide' };
+            if (mimeType.includes('image')) return { icon: 'bi-file-earmark-image-fill', cls: 'image' };
+            if (mimeType.includes('folder')) return { icon: 'bi-folder-fill', cls: 'folder' };
+            return { icon: 'bi-file-earmark', cls: 'default' };
+        }
+
+        function formatFileSize(bytes) {
+            if (!bytes) return '';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        function renderDocumentCard(doc) {
+            const icon = getDocIcon(doc.mime_type);
+            return \`
+                <div class="doc-card" onclick="window.open('\${doc.google_drive_url || '#'}', '_blank')">
+                    <div class="doc-icon \${icon.cls}"><i class="bi \${icon.icon}"></i></div>
+                    <div class="doc-name" title="\${doc.nome}">\${doc.nome}</div>
+                    <div class="doc-meta">\${formatFileSize(doc.tamanho_bytes)}</div>
+                </div>
+            \`;
+        }
+
+        let folderPickerData = {
+            path: [{ id: null, name: 'Meu Drive' }],
+            folders: [],
+            selectedFolder: null
+        };
+
+        async function openDriveFolderPicker() {
+            // Create modal if doesn't exist
+            if (!document.getElementById('driveFolderPickerModal')) {
+                const modal = document.createElement('div');
+                modal.className = 'modal fade';
+                modal.id = 'driveFolderPickerModal';
+                modal.innerHTML = \`
+                    <div class="modal-dialog modal-lg">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title"><i class="bi bi-google"></i> Selecionar Pasta do Drive</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="breadcrumb-drive" id="folderBreadcrumb"></div>
+                                <div class="folder-list" id="folderList">
+                                    <div class="text-center py-4"><i class="bi bi-hourglass-split"></i> Carregando...</div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                                <button type="button" class="btn btn-primary" onclick="linkSelectedFolder()" id="linkFolderBtn" disabled>
+                                    <i class="bi bi-link-45deg"></i> Vincular Pasta
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                \`;
+                document.body.appendChild(modal);
+            }
+
+            folderPickerData = { path: [{ id: null, name: 'Meu Drive' }], folders: [], selectedFolder: null };
+            const modal = new bootstrap.Modal(document.getElementById('driveFolderPickerModal'));
+            modal.show();
+            await loadDriveFolders(null);
+        }
+
+        async function loadDriveFolders(parentId) {
+            const container = document.getElementById('folderList');
+            const breadcrumb = document.getElementById('folderBreadcrumb');
+
+            container.innerHTML = '<div class="text-center py-4"><i class="bi bi-hourglass-split"></i> Carregando...</div>';
+
+            try {
+                const url = parentId ? \`/api/drive/folders?parent_id=\${parentId}\` : '/api/drive/folders';
+                const response = await fetch(url);
+                const data = await response.json();
+
+                // Update breadcrumb
+                breadcrumb.innerHTML = folderPickerData.path.map((p, i) =>
+                    \`<span onclick="navigateToFolder(\${i})">\${p.name}</span>\${i < folderPickerData.path.length - 1 ? ' <i class="bi bi-chevron-right"></i> ' : ''}\`
+                ).join('');
+
+                // Render folders
+                if (!data.folders || data.folders.length === 0) {
+                    container.innerHTML = '<div class="text-center text-muted py-4">Nenhuma subpasta</div>';
+                    return;
+                }
+
+                folderPickerData.folders = data.folders;
+                container.innerHTML = data.folders.map(f => \`
+                    <div class="folder-item" data-id="\${f.id}" onclick="selectFolder('\${f.id}', '\${f.name.replace(/'/g, "\\\\'")}')">
+                        <i class="bi bi-folder-fill text-warning"></i>
+                        <span>\${f.name}</span>
+                        <i class="bi bi-chevron-right ms-auto" onclick="event.stopPropagation(); enterFolder('\${f.id}', '\${f.name.replace(/'/g, "\\\\'")}')"></i>
+                    </div>
+                \`).join('');
+
+            } catch (error) {
+                console.error('Error loading folders:', error);
+                container.innerHTML = '<div class="text-center text-danger py-3"><i class="bi bi-exclamation-triangle"></i> Erro ao carregar pastas</div>';
+            }
+        }
+
+        function selectFolder(folderId, folderName) {
+            document.querySelectorAll('.folder-item').forEach(el => el.classList.remove('selected'));
+            document.querySelector(\`.folder-item[data-id="\${folderId}"]\`)?.classList.add('selected');
+            folderPickerData.selectedFolder = { id: folderId, name: folderName };
+            document.getElementById('linkFolderBtn').disabled = false;
+        }
+
+        function enterFolder(folderId, folderName) {
+            folderPickerData.path.push({ id: folderId, name: folderName });
+            folderPickerData.selectedFolder = null;
+            document.getElementById('linkFolderBtn').disabled = true;
+            loadDriveFolders(folderId);
+        }
+
+        function navigateToFolder(index) {
+            folderPickerData.path = folderPickerData.path.slice(0, index + 1);
+            const targetId = folderPickerData.path[index].id;
+            loadDriveFolders(targetId);
+        }
+
+        async function linkSelectedFolder() {
+            if (!folderPickerData.selectedFolder) return;
+
+            try {
+                const response = await fetch(\`/api/drive/folders/\${folderPickerData.selectedFolder.id}/link\`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        entidade_tipo: 'contato',
+                        entidade_id: contactId
+                    })
+                });
+
+                if (response.ok) {
+                    // Also index the documents
+                    await fetch(\`/api/drive/folders/\${folderPickerData.selectedFolder.id}/index\`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            entidade_tipo: 'contato',
+                            entidade_id: contactId
+                        })
+                    });
+
+                    // Update UI
+                    document.getElementById('linked-folder-container').innerHTML =
+                        \`<div class="d-flex align-items-center gap-2">
+                            <i class="bi bi-folder-fill text-warning"></i>
+                            <a href="https://drive.google.com/drive/folders/\${folderPickerData.selectedFolder.id}" target="_blank">\${folderPickerData.selectedFolder.name}</a>
+                            <button class="btn btn-sm btn-outline-danger ms-2" onclick="unlinkDriveFolder()"><i class="bi bi-x"></i></button>
+                        </div>\`;
+
+                    bootstrap.Modal.getInstance(document.getElementById('driveFolderPickerModal')).hide();
+                    loadContactDocuments();
+                    showToast('Pasta vinculada com sucesso!', 'success');
+                }
+            } catch (error) {
+                console.error('Error linking folder:', error);
+                showToast('Erro ao vincular pasta', 'error');
+            }
+        }
+
+        async function unlinkDriveFolder() {
+            if (!confirm('Desvincular a pasta? Os documentos indexados serao mantidos.')) return;
+
+            try {
+                await fetch(\`/api/contacts/\${contactId}\`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ google_drive_folder_id: null })
+                });
+
+                document.getElementById('linked-folder-container').innerHTML =
+                    '<span class="text-muted">Nenhuma pasta vinculada</span>';
+                showToast('Pasta desvinculada', 'info');
+            } catch (error) {
+                console.error('Error unlinking folder:', error);
+            }
+        }
+
+        async function uploadDocumentToContact(file) {
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('contato_id', contactId);
+
+            try {
+                showToast('Enviando arquivo...', 'info');
+                const response = await fetch('/api/drive/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    showToast('Arquivo enviado com sucesso!', 'success');
+                    loadContactDocuments();
+                } else {
+                    throw new Error('Upload failed');
+                }
+            } catch (error) {
+                console.error('Upload error:', error);
+                showToast('Erro ao enviar arquivo', 'error');
+            }
+
+            // Clear the file input
+            document.getElementById('fileUpload').value = '';
         }
 
         // ========== EDITABLE FIELDS FUNCTIONS ==========
@@ -5131,15 +5371,20 @@
             await saveLinkedIn();
         }
 
-        function showToast(message) {
-            // Simple toast notification
+        function showToast(message, type = 'success') {
+            const icons = {
+                success: 'bi-check-circle text-success',
+                error: 'bi-exclamation-triangle text-danger',
+                info: 'bi-info-circle text-info',
+                warning: 'bi-exclamation-circle text-warning'
+            };
             const toast = document.createElement('div');
             toast.className = 'position-fixed bottom-0 end-0 p-3';
             toast.style.zIndex = '1100';
             toast.innerHTML = `
                 <div class="toast show" role="alert">
                     <div class="toast-body d-flex align-items-center gap-2">
-                        <i class="bi bi-check-circle text-success"></i>
+                        <i class="bi ${icons[type] || icons.success}"></i>
                         ${message}
                     </div>
                 </div>
