@@ -2746,7 +2746,7 @@
             if (!folderPickerData.selectedFolder) return;
 
             try {
-                const response = await fetch(`/api/drive/folders/${folderPickerData.selectedFolder.id}/link`, {
+                const response = await fetch(\`/api/drive/folders/\${folderPickerData.selectedFolder.id}/link\`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -2757,22 +2757,25 @@
 
                 if (response.ok) {
                     // Also index the documents
-                    await fetch(`/api/drive/folders/${folderPickerData.selectedFolder.id}/index`, {
+                    await fetch(\`/api/drive/folders/\${folderPickerData.selectedFolder.id}/index\`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             entidade_tipo: 'contato',
-                            entidade_id: contactId
+                            entidade_id: contactId,
+                            account_type: folderPickerData.accountType
                         })
                     });
 
-                    // Update UI
+                    // Update UI - show which account the folder is from
+                    const accountLabel = folderPickerData.accounts.find(a => a.type === folderPickerData.accountType)?.label || '';
                     document.getElementById('linked-folder-container').innerHTML =
-                        `<div class="d-flex align-items-center gap-2">
+                        \`<div class="d-flex align-items-center gap-2">
                             <i class="bi bi-folder-fill text-warning"></i>
-                            <a href="https://drive.google.com/drive/folders/${folderPickerData.selectedFolder.id}" target="_blank">${folderPickerData.selectedFolder.name}</a>
+                            <a href="https://drive.google.com/drive/folders/\${folderPickerData.selectedFolder.id}" target="_blank">\${folderPickerData.selectedFolder.name}</a>
+                            <span class="badge bg-light text-dark">\${accountLabel}</span>
                             <button class="btn btn-sm btn-outline-danger ms-2" onclick="unlinkDriveFolder()"><i class="bi bi-x"></i></button>
-                        </div>`;
+                        </div>\`;
 
                     bootstrap.Modal.getInstance(document.getElementById('driveFolderPickerModal')).hide();
                     loadContactDocuments();

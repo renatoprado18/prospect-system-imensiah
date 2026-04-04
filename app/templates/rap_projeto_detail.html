@@ -757,7 +757,9 @@
     let projectFolderPickerData = {
         path: [{ id: null, name: 'Meu Drive' }],
         folders: [],
-        selectedFolder: null
+        selectedFolder: null,
+        accountType: 'professional',
+        accounts: []
     };
 
     async function openProjectDriveFolderPicker() {
@@ -773,6 +775,13 @@
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                         </div>
                         <div class="modal-body">
+                            <!-- Account Selector -->
+                            <div class="mb-3" id="projectDriveAccountSelector">
+                                <label class="form-label small text-muted">Conta Google Drive</label>
+                                <select class="form-select" id="projectDriveAccountSelect" onchange="switchProjectDriveAccount(this.value)">
+                                    <option value="professional">Carregando...</option>
+                                </select>
+                            </div>
                             <div class="breadcrumb-drive" id="projectFolderBreadcrumb" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: #f1f5f9; border-radius: 8px; margin-bottom: 12px; flex-wrap: wrap;"></div>
                             <div class="folder-list" id="projectFolderList" style="max-height: 400px; overflow-y: auto;">
                                 <div class="text-center py-4"><i class="bi bi-hourglass-split"></i> Carregando...</div>
@@ -790,10 +799,42 @@
             document.body.appendChild(modal);
         }
 
-        projectFolderPickerData = { path: [{ id: null, name: 'Meu Drive' }], folders: [], selectedFolder: null };
+        projectFolderPickerData = { path: [{ id: null, name: 'Meu Drive' }], folders: [], selectedFolder: null, accountType: 'professional', accounts: [] };
         const modal = new bootstrap.Modal(document.getElementById('projectDriveFolderPickerModal'));
         modal.show();
+
+        // Load available accounts
+        await loadProjectDriveAccounts();
         await loadProjectDriveFolders(null);
+    }
+
+    async function loadProjectDriveAccounts() {
+        try {
+            const response = await fetch('/api/drive/accounts');
+            const data = await response.json();
+            projectFolderPickerData.accounts = data.accounts || [];
+
+            const select = document.getElementById('projectDriveAccountSelect');
+            if (projectFolderPickerData.accounts.length === 0) {
+                select.innerHTML = '<option value="">Nenhuma conta conectada</option>';
+            } else {
+                select.innerHTML = projectFolderPickerData.accounts.map(acc =>
+                    `<option value="${acc.type}" ${acc.type === projectFolderPickerData.accountType ? 'selected' : ''}>
+                        ${acc.label} (${acc.email})
+                    </option>`
+                ).join('');
+            }
+        } catch (error) {
+            console.error('Error loading accounts:', error);
+        }
+    }
+
+    function switchProjectDriveAccount(accountType) {
+        projectFolderPickerData.accountType = accountType;
+        projectFolderPickerData.path = [{ id: null, name: 'Meu Drive' }];
+        projectFolderPickerData.selectedFolder = null;
+        document.getElementById('linkProjectFolderBtn').disabled = true;
+        loadProjectDriveFolders(null);
     }
 
     async function loadProjectDriveFolders(parentId) {
@@ -803,7 +844,9 @@
         container.innerHTML = '<div class="text-center py-4"><i class="bi bi-hourglass-split"></i> Carregando...</div>';
 
         try {
-            const url = parentId ? `/api/drive/folders?parent_id=${parentId}` : '/api/drive/folders';
+            let url = '/api/drive/folders?account_type=' + projectFolderPickerData.accountType;
+            if (parentId) url += '&parent_id=' + parentId;
+
             const response = await fetch(url);
             const data = await response.json();
 
@@ -877,14 +920,17 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         entidade_tipo: 'projeto',
-                        entidade_id: projectId
+                        entidade_id: projectId,
+                        account_type: projectFolderPickerData.accountType
                     })
                 });
 
+                const accountLabel = projectFolderPickerData.accounts.find(a => a.type === projectFolderPickerData.accountType)?.label || '';
                 document.getElementById('projectLinkedFolder').innerHTML =
                     `<div class="d-flex align-items-center gap-2">
                         <i class="bi bi-folder-fill text-warning"></i>
                         <a href="https://drive.google.com/drive/folders/${projectFolderPickerData.selectedFolder.id}" target="_blank" class="small">${projectFolderPickerData.selectedFolder.name}</a>
+                        <span class="badge bg-light text-dark small">${accountLabel}</span>
                         <button class="btn btn-sm btn-link text-danger p-0 ms-auto" onclick="unlinkProjectDriveFolder()"><i class="bi bi-x"></i></button>
                     </div>`;
 
