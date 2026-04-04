@@ -11139,131 +11139,144 @@ async def fetch_google_avatars(
     }
 
 
-@app.post("/api/avatars/fetch-all")
-async def fetch_all_avatars(request: Request, background_tasks: BackgroundTasks):
+@app.post("/api/avatars/fetch-batch")
+async def fetch_avatars_batch(request: Request, limit: int = 100):
     """
-    Inicia busca de fotos para TODOS os contatos com telefone.
-    Roda em background e salva progresso na tabela background_jobs.
-    Retorna job_id para acompanhar o progresso.
+    Processa um lote de contatos (default 100).
+    Chame repetidamente até processed == 0 para processar todos.
+    Funciona no Vercel (não ultrapassa timeout).
     """
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
     from services.avatar_fetcher import get_avatar_fetcher
-    from database import get_db
 
     fetcher = get_avatar_fetcher()
 
-    # Verificar quantos contatos precisam de foto
-    stats = fetcher.get_photo_stats()
-    total = stats.get('potencial_whatsapp', 0)
+    # Buscar contatos que precisam de foto
+    contacts = fetcher.get_contacts_needing_photos(limit)
 
-    if total == 0:
+    if not contacts:
+        # Buscar stats finais
+        stats = fetcher.get_photo_stats()
         return {
-            "started": False,
-            "message": "Nenhum contato precisa de foto",
-            "job_id": None
+            "done": True,
+            "message": "Todos os contatos foram processados!",
+            "processed": 0,
+            "stats": stats
         }
 
-    # Criar job na tabela
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO background_jobs (job_type, status, total_items)
-            VALUES ('avatar_fetch_all', 'running', %s)
-            RETURNING id
-        """, (total,))
-        job_id = cursor.fetchone()['id']
-        conn.commit()
+    results = {"success": 0, "failed": 0, "skipped": 0}
 
-    # Executar em background
-    async def run_fetch():
-        fetcher = get_avatar_fetcher()
-        await fetcher.fetch_all_whatsapp_photos_with_job(job_id, delay_between=1.0)
+    for contact in contacts:
+        phone = contact.get('phone', '')
 
-    background_tasks.add_task(asyncio.create_task, run_fetch())
+        if not phone:
+            results['skipped'] += 1
+            continue
 
-    # Estimar tempo (1 segundo por contato + overhead)
-    estimated_minutes = round(total * 1.2 / 60)
+        try:
+            photo_url = await fetcher.fetch_whatsapp_photo(phone)
+
+            if photo_url:
+                success = fetcher.update_contact_photo(contact['id'], photo_url)
+                if success:
+                    results['success'] += 1
+                else:
+                    results['failed'] += 1
+            else:
+                results['failed'] += 1
+        except Exception as e:
+            results['failed'] += 1
+
+    # Buscar stats atualizados
+    stats = fetcher.get_photo_stats()
 
     return {
-        "started": True,
-        "job_id": job_id,
-        "message": f"Iniciando busca de fotos para {total} contatos",
-        "total_contacts": total,
-        "estimated_time": f"~{estimated_minutes} minutos"
+        "done": False,
+        "processed": len(contacts),
+        "results": results,
+        "remaining": stats.get('potencial_whatsapp', 0),
+        "message": f"Processado {len(contacts)} contatos. Restam {stats.get('potencial_whatsapp', 0)}. Chame novamente para continuar."
     }
 
 
-@app.get("/api/avatars/job/{job_id}")
-async def get_avatar_job_status(request: Request, job_id: int):
+@app.post("/api/avatars/fetch-all-auto")
+async def fetch_all_avatars_auto(request: Request):
     """
-    Retorna o status de um job de busca de avatares.
-    """
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Nao autenticado")
-
-    from database import get_db
-
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM background_jobs WHERE id = %s
-        """, (job_id,))
-        job = cursor.fetchone()
-
-        if not job:
-            raise HTTPException(status_code=404, detail="Job nao encontrado")
-
-        job_dict = dict(job)
-
-        # Calcular porcentagem
-        total = job_dict.get('total_items', 0)
-        processed = job_dict.get('processed_items', 0)
-        percentage = round((processed / total * 100), 1) if total > 0 else 0
-
-        return {
-            "job_id": job_id,
-            "status": job_dict.get('status'),
-            "total": total,
-            "processed": processed,
-            "percentage": percentage,
-            "success": job_dict.get('success_count', 0),
-            "failed": job_dict.get('failed_count', 0),
-            "skipped": job_dict.get('skipped_count', 0),
-            "started_at": job_dict.get('started_at'),
-            "completed_at": job_dict.get('completed_at'),
-            "result": job_dict.get('result')
-        }
-
-
-@app.get("/api/avatars/jobs")
-async def list_avatar_jobs(request: Request, limit: int = 10):
-    """
-    Lista os jobs de busca de avatares mais recentes.
+    Processa TODOS os contatos automaticamente em lotes.
+    Usa loop interno com limite de tempo para não estourar timeout do Vercel.
     """
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
-    from database import get_db
+    import time
+    from services.avatar_fetcher import get_avatar_fetcher
 
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, job_type, status, total_items, processed_items,
-                   success_count, failed_count, skipped_count,
-                   started_at, completed_at
-            FROM background_jobs
-            WHERE job_type = 'avatar_fetch_all'
-            ORDER BY started_at DESC
-            LIMIT %s
-        """, (limit,))
+    fetcher = get_avatar_fetcher()
+    start_time = time.time()
+    max_time = 55  # 55 segundos (Vercel timeout é ~60s)
 
-        jobs = [dict(row) for row in cursor.fetchall()]
-        return {"jobs": jobs}
+    total_processed = 0
+    results = {"success": 0, "failed": 0, "skipped": 0}
+
+    while True:
+        # Verificar timeout
+        elapsed = time.time() - start_time
+        if elapsed > max_time:
+            break
+
+        # Buscar próximo lote
+        contacts = fetcher.get_contacts_needing_photos(limit=20)
+
+        if not contacts:
+            # Terminou!
+            stats = fetcher.get_photo_stats()
+            return {
+                "done": True,
+                "message": "Todos os contatos foram processados!",
+                "total_processed": total_processed,
+                "results": results,
+                "stats": stats
+            }
+
+        for contact in contacts:
+            # Verificar timeout novamente
+            if time.time() - start_time > max_time:
+                break
+
+            phone = contact.get('phone', '')
+            if not phone:
+                results['skipped'] += 1
+                continue
+
+            try:
+                photo_url = await fetcher.fetch_whatsapp_photo(phone)
+                if photo_url:
+                    if fetcher.update_contact_photo(contact['id'], photo_url):
+                        results['success'] += 1
+                    else:
+                        results['failed'] += 1
+                else:
+                    results['failed'] += 1
+            except:
+                results['failed'] += 1
+
+            total_processed += 1
+
+    # Stats atualizados
+    stats = fetcher.get_photo_stats()
+
+    return {
+        "done": False,
+        "message": f"Processado {total_processed} contatos em {round(time.time() - start_time)}s. Chame novamente para continuar.",
+        "total_processed": total_processed,
+        "results": results,
+        "remaining": stats.get('potencial_whatsapp', 0),
+        "stats": stats
+    }
 
 
 @app.get("/api/activity/recent")

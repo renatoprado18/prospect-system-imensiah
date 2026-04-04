@@ -4,22 +4,41 @@
 
 {% block extra_css %}
 <style>
-    .editorial-container {
+    /* New Two-Column Layout */
+    .editorial-two-col {
         display: grid;
-        grid-template-columns: 1fr 320px;
+        grid-template-columns: 1fr 340px;
         gap: 24px;
+        margin-top: 16px;
     }
 
-    .editorial-main {
+    .editorial-left {
         display: flex;
         flex-direction: column;
         gap: 16px;
     }
 
-    .editorial-sidebar {
+    .editorial-right {
         display: flex;
         flex-direction: column;
         gap: 16px;
+    }
+
+    @media (max-width: 1100px) {
+        .editorial-two-col {
+            grid-template-columns: 1fr;
+        }
+        .editorial-right {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+        }
+    }
+
+    @media (max-width: 768px) {
+        .editorial-right {
+            grid-template-columns: 1fr;
+        }
     }
 
     /* Stats Cards */
@@ -833,214 +852,153 @@
 {% endblock %}
 
 {% block content %}
-<div class="editorial-container">
-    <div class="editorial-main">
-        <!-- Stats -->
-        <div class="stats-row">
-            <div class="stat-card">
-                <div class="icon" style="background: rgba(107, 114, 128, 0.1); color: #6b7280;">
-                    <i class="bi bi-pencil"></i>
-                </div>
-                <div class="value">{{ stats.drafts or 0 }}</div>
-                <div class="label">Rascunhos</div>
-            </div>
-            <div class="stat-card">
-                <div class="icon" style="background: rgba(59, 130, 246, 0.1); color: #3b82f6;">
-                    <i class="bi bi-clock"></i>
-                </div>
-                <div class="value">{{ stats.scheduled or 0 }}</div>
-                <div class="label">Agendados</div>
-            </div>
-            <div class="stat-card">
-                <div class="icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;">
-                    <i class="bi bi-check-circle"></i>
-                </div>
-                <div class="value">{{ stats.published or 0 }}</div>
-                <div class="label">Publicados</div>
-            </div>
-            <div class="stat-card">
-                <div class="icon" style="background: rgba(99, 102, 241, 0.1); color: #6366f1;">
-                    <i class="bi bi-collection"></i>
-                </div>
-                <div class="value">{{ stats.total or 0 }}</div>
-                <div class="label">Total</div>
-            </div>
+<!-- Nova estrutura: Layout focado em ações -->
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="icon" style="background: rgba(59, 130, 246, 0.1); color: #3b82f6;">
+            <i class="bi bi-clock"></i>
         </div>
+        <div class="value">{{ stats.scheduled or 0 }}</div>
+        <div class="label">Agendados</div>
+    </div>
+    <div class="stat-card">
+        <div class="icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;">
+            <i class="bi bi-check-circle"></i>
+        </div>
+        <div class="value">{{ stats.published or 0 }}</div>
+        <div class="label">Publicados</div>
+    </div>
+    <div class="stat-card">
+        <div class="icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b;">
+            <i class="bi bi-fire"></i>
+        </div>
+        <div class="value">{{ pending_hot_takes|length if pending_hot_takes else 0 }}</div>
+        <div class="label">Hot Takes</div>
+    </div>
+    <div class="stat-card">
+        <div class="icon" style="background: rgba(107, 114, 128, 0.1); color: #6b7280;">
+            <i class="bi bi-archive"></i>
+        </div>
+        <div class="value">{{ stats.drafts or 0 }}</div>
+        <div class="label">Biblioteca</div>
+    </div>
+</div>
 
-        <!-- This Week Calendar -->
-        <div class="posts-card">
-            <div class="posts-header">
-                <h2><i class="bi bi-calendar-week me-2"></i>Esta Semana</h2>
+<!-- This Week Calendar - Full Width -->
+<div class="posts-card">
+    <div class="posts-header">
+        <h2><i class="bi bi-calendar-week me-2"></i>Esta Semana</h2>
+    </div>
+    <div class="week-calendar">
+        {% for day in week_days %}
+        <div class="week-day {{ 'today' if day.is_today else '' }} {{ 'past' if day.is_past else '' }}">
+            <div class="day-header">
+                <span class="day-name">{{ day.day_name }}</span>
+                <span class="day-num">{{ day.day_num }}</span>
             </div>
-            <div class="week-calendar">
-                {% for day in week_days %}
-                <div class="week-day {{ 'today' if day.is_today else '' }} {{ 'past' if day.is_past else '' }}">
-                    <div class="day-header">
-                        <span class="day-name">{{ day.day_name }}</span>
-                        <span class="day-num">{{ day.day_num }}</span>
-                    </div>
-                    <div class="day-posts">
-                        {% for post in day.posts %}
-                        <div class="day-post {{ post.tipo }}" onclick="openPostModal({{ post.id }})" title="{{ post.article_title }}">
-                            {% if post.tipo == 'hot_take' %}
-                            <i class="bi bi-fire"></i>
-                            {% else %}
-                            <i class="bi bi-file-text"></i>
-                            {% endif %}
-                            <span>{{ post.article_title[:20] }}{% if post.article_title|length > 20 %}...{% endif %}</span>
-                        </div>
-                        {% else %}
-                        <div class="day-empty">-</div>
-                        {% endfor %}
-                    </div>
+            <div class="day-posts">
+                {% for post in day.posts %}
+                <div class="day-post {{ post.tipo }}" onclick="openPostModal({{ post.id }})" title="{{ post.article_title }}">
+                    {% if post.tipo == 'hot_take' %}
+                    <i class="bi bi-fire"></i>
+                    {% else %}
+                    <i class="bi bi-file-text"></i>
+                    {% endif %}
+                    <span>{{ post.article_title[:20] }}{% if post.article_title|length > 20 %}...{% endif %}</span>
                 </div>
+                {% else %}
+                <div class="day-empty">-</div>
                 {% endfor %}
             </div>
         </div>
+        {% endfor %}
+    </div>
+</div>
 
-        <!-- Today's Tasks & Pending Hot Takes -->
-        <div class="action-cards">
-            <!-- Para Hoje -->
-            <div class="action-card today-card">
-                <div class="action-header">
-                    <h3><i class="bi bi-lightning-charge me-2"></i>Para Hoje</h3>
-                </div>
-                {% if today_posts %}
-                <div class="action-list">
-                    {% for post in today_posts %}
-                    <div class="action-item">
-                        <div class="action-icon">
-                            {% if post.tipo == 'hot_take' %}<i class="bi bi-fire text-warning"></i>{% else %}<i class="bi bi-file-text text-primary"></i>{% endif %}
-                        </div>
-                        <div class="action-info">
-                            <div class="action-title">{{ post.article_title[:40] }}{% if post.article_title|length > 40 %}...{% endif %}</div>
-                            <div class="action-meta">{{ post.data_publicacao.strftime('%H:%M') if post.data_publicacao else '' }}</div>
-                        </div>
-                        <button class="btn btn-sm btn-outline-primary" onclick="copyPostContent({{ post.id }})">
-                            <i class="bi bi-clipboard"></i> Copiar
-                        </button>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <div class="action-empty">
-                    <i class="bi bi-check-circle text-success"></i>
-                    <span>Nenhum post para hoje</span>
-                </div>
-                {% endif %}
+<!-- Two Column Layout: Actions -->
+<div class="editorial-two-col">
+    <!-- Left Column: Hot Takes & Today -->
+    <div class="editorial-left">
+        <!-- Pending Hot Takes -->
+        <div class="action-card pending-card">
+            <div class="action-header">
+                <h3><i class="bi bi-fire me-2"></i>Hot Takes para Agendar</h3>
+                <a href="/hot-takes" class="btn btn-sm btn-outline-warning">Ver todos</a>
             </div>
-
-            <!-- Pending Hot Takes -->
-            <div class="action-card pending-card">
-                <div class="action-header">
-                    <h3><i class="bi bi-fire me-2"></i>Hot Takes Pendentes</h3>
-                    <a href="/hot-takes" class="btn btn-sm btn-outline-warning">Ver todos</a>
-                </div>
-                {% if pending_hot_takes %}
-                <div class="action-list">
-                    {% for ht in pending_hot_takes[:3] %}
-                    <div class="action-item">
-                        <div class="action-icon"><i class="bi bi-fire text-warning"></i></div>
-                        <div class="action-info">
-                            <div class="action-title">{{ ht.hook[:40] if ht.hook else 'Sem titulo' }}{% if ht.hook and ht.hook|length > 40 %}...{% endif %}</div>
-                            <div class="action-meta">{{ ht.created_at[:10] if ht.created_at else '' }}</div>
-                        </div>
-                        <a href="/hot-takes" class="btn btn-sm btn-warning">
-                            <i class="bi bi-calendar-plus"></i> Agendar
-                        </a>
+            {% if pending_hot_takes %}
+            <div class="action-list">
+                {% for ht in pending_hot_takes[:5] %}
+                <div class="action-item">
+                    <div class="action-icon"><i class="bi bi-fire text-warning"></i></div>
+                    <div class="action-info">
+                        <div class="action-title">{{ ht.hook[:50] if ht.hook else 'Sem titulo' }}{% if ht.hook and ht.hook|length > 50 %}...{% endif %}</div>
+                        <div class="action-meta">{{ ht.created_at[:10] if ht.created_at else '' }}</div>
                     </div>
-                    {% endfor %}
+                    <a href="/hot-takes" class="btn btn-sm btn-warning">
+                        <i class="bi bi-calendar-plus"></i> Agendar
+                    </a>
                 </div>
-                {% if pending_hot_takes|length > 3 %}
-                <div class="action-more">
-                    <a href="/hot-takes">+ {{ pending_hot_takes|length - 3 }} mais</a>
-                </div>
-                {% endif %}
-                {% else %}
-                <div class="action-empty">
-                    <i class="bi bi-inbox text-muted"></i>
-                    <span>Nenhum hot take pendente</span>
-                </div>
-                {% endif %}
+                {% endfor %}
             </div>
+            {% if pending_hot_takes|length > 5 %}
+            <div class="action-more">
+                <a href="/hot-takes">+ {{ pending_hot_takes|length - 5 }} mais</a>
+            </div>
+            {% endif %}
+            {% else %}
+            <div class="action-empty">
+                <i class="bi bi-check-circle text-success"></i>
+                <span>Todos os hot takes foram agendados!</span>
+            </div>
+            {% endif %}
         </div>
 
-        <!-- Posts List -->
-        <div class="posts-card">
-            <div class="posts-header">
-                <h2>Todos os Posts</h2>
-                <div class="posts-filters">
-                    <select class="filter-select" id="filter-tipo" onchange="filterPosts()">
-                        <option value="">Todos os tipos</option>
-                        <option value="artigo">Artigos</option>
-                        <option value="hot_take">Hot Takes</option>
-                    </select>
-                    <select class="filter-select" id="filter-status" onchange="filterPosts()">
-                        <option value="">Todos os status</option>
-                        {% for key, val in status_options.items() %}
-                        <option value="{{ key }}">{{ val.label }}</option>
-                        {% endfor %}
-                    </select>
-                    <select class="filter-select" id="filter-canal" onchange="filterPosts()">
-                        <option value="">Todos os canais</option>
-                        {% for key, val in canais.items() %}
-                        <option value="{{ key }}">{{ val.label }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
+        <!-- Para Hoje -->
+        <div class="action-card today-card">
+            <div class="action-header">
+                <h3><i class="bi bi-lightning-charge me-2"></i>Publicar Hoje</h3>
             </div>
+            {% if today_posts %}
+            <div class="action-list">
+                {% for post in today_posts %}
+                <div class="action-item">
+                    <div class="action-icon">
+                        {% if post.tipo == 'hot_take' %}<i class="bi bi-fire text-warning"></i>{% else %}<i class="bi bi-file-text text-primary"></i>{% endif %}
+                    </div>
+                    <div class="action-info">
+                        <div class="action-title">{{ post.article_title[:40] }}{% if post.article_title|length > 40 %}...{% endif %}</div>
+                        <div class="action-meta">{{ post.data_publicacao.strftime('%H:%M') if post.data_publicacao else '' }}</div>
+                    </div>
+                    <button class="btn btn-sm btn-primary" onclick="copyAndPublish({{ post.id }})">
+                        <i class="bi bi-box-arrow-up-right"></i> Publicar
+                    </button>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="action-empty">
+                <i class="bi bi-check-circle text-success"></i>
+                <span>Nenhum post para hoje</span>
+            </div>
+            {% endif %}
+        </div>
 
-            <div class="posts-list" id="posts-list">
-                {% if posts %}
-                    {% for post in posts %}
-                    <div class="post-item" data-status="{{ post.status }}" data-canal="{{ post.canal }}" data-tipo="{{ post.tipo }}" onclick="openPostModal({{ post.id }})">
-                        <div class="post-canal {{ post.canal }}">
-                            <i class="bi bi-{% if post.canal == 'linkedin' %}linkedin{% elif post.canal == 'instagram' %}instagram{% else %}share{% endif %}"></i>
-                        </div>
-                        <div class="post-info">
-                            <div class="post-title">
-                                {% if post.tipo == 'hot_take' %}<i class="bi bi-fire text-warning"></i> {% endif %}{{ post.article_title }}
-                            </div>
-                            <div class="post-meta">
-                                <span><i class="bi bi-tag"></i> {% if post.tipo == 'hot_take' %}Hot Take{% else %}{{ post.tipo }}{% endif %}</span>
-                                {% if post.project_nome %}
-                                <span><i class="bi bi-folder"></i> {{ post.project_nome }}</span>
-                                {% endif %}
-                            </div>
-                        </div>
-                        <span class="post-status {{ post.status }}">{{ status_options[post.status].label if post.status in status_options else post.status }}</span>
-                        {% if post.data_publicacao %}
-                        <span class="post-date">{{ post.data_publicacao.strftime('%d/%m') }}</span>
-                        {% endif %}
-                    </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="empty-state">
-                        <i class="bi bi-calendar-plus"></i>
-                        <h3>Nenhum post ainda</h3>
-                        <p>Importe artigos do site ou crie um novo post</p>
-                    </div>
-                {% endif %}
+        <!-- Sugestões de Artigos para Repost -->
+        <div class="action-card suggestions-card">
+            <div class="action-header">
+                <h3><i class="bi bi-lightbulb me-2"></i>Sugestões de Repost</h3>
+            </div>
+            <div id="ai-suggestions-content">
+                <div class="action-empty">
+                    <i class="bi bi-hourglass-split"></i>
+                    <span>Carregando sugestões...</span>
+                </div>
             </div>
         </div>
     </div>
 
-    <div class="editorial-sidebar">
-        <!-- Pending Tasks Widget -->
-        <div class="sidebar-card tasks-card" id="pending-tasks-card">
-            <h3>
-                <i class="bi bi-list-check"></i>
-                Tarefas Pendentes
-                <span class="badge" id="tasks-count">0</span>
-            </h3>
-            <div id="pending-tasks-content">
-                <div class="no-tasks">
-                    <i class="bi bi-hourglass-split"></i>
-                    Carregando...
-                </div>
-            </div>
-        </div>
-
+    <!-- Right Column: Actions & Próximos -->
+    <div class="editorial-right">
         <!-- Quick Actions -->
         <div class="sidebar-card">
             <h3>Acoes Rapidas</h3>
@@ -1051,36 +1009,32 @@
                 </button>
                 <button class="quick-action" onclick="openBulkScheduleModal()" style="background: linear-gradient(135deg, #0077b5, #00a0dc); color: white;">
                     <i class="bi bi-calendar-plus"></i>
-                    Agendar em Lote (LinkedIn)
+                    Agendar em Lote
                 </button>
                 <button class="quick-action" onclick="openImportModal()">
                     <i class="bi bi-cloud-download"></i>
-                    Importar Artigos do Site
-                </button>
-                <button class="quick-action" onclick="openNewPostModal()">
-                    <i class="bi bi-plus-circle"></i>
-                    Novo Post Manual
+                    Importar Artigos
                 </button>
                 <a href="/calendario" class="quick-action">
                     <i class="bi bi-calendar3"></i>
-                    Ver no Calendario
+                    Ver Calendario
                 </a>
             </div>
         </div>
 
-        <!-- Upcoming -->
+        <!-- Próximos Posts -->
         <div class="sidebar-card">
-            <h3>Proximos Posts</h3>
+            <h3><i class="bi bi-calendar-check me-2"></i>Proximos Posts</h3>
             <div class="upcoming-list">
                 {% if stats.upcoming %}
                     {% for post in stats.upcoming %}
-                    <div class="upcoming-item">
+                    <div class="upcoming-item" onclick="openPostModal({{ post.id }})" style="cursor: pointer;">
                         <div class="upcoming-date">
                             <div class="day">{{ post.data_publicacao.strftime('%d') }}</div>
                             <div class="month">{{ post.data_publicacao.strftime('%b') }}</div>
                         </div>
                         <div class="upcoming-info">
-                            <div class="upcoming-title">{{ post.article_title[:40] }}{% if post.article_title|length > 40 %}...{% endif %}</div>
+                            <div class="upcoming-title">{{ post.article_title[:35] }}{% if post.article_title|length > 35 %}...{% endif %}</div>
                             <div class="upcoming-canal">
                                 <i class="bi bi-{% if post.canal == 'linkedin' %}linkedin{% elif post.canal == 'instagram' %}instagram{% else %}share{% endif %}"></i>
                                 {{ canais[post.canal].label if post.canal in canais else post.canal }}
@@ -1091,31 +1045,6 @@
                 {% else %}
                     <p style="color: var(--gray-500); font-size: 0.875rem;">Nenhum post agendado</p>
                 {% endif %}
-            </div>
-        </div>
-
-        <!-- Por Canal -->
-        <div class="sidebar-card">
-            <h3>Por Canal</h3>
-            <div style="display: flex; flex-direction: column; gap: 8px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="display: flex; align-items: center; gap: 8px;">
-                        <i class="bi bi-linkedin" style="color: #0077b5;"></i> LinkedIn
-                    </span>
-                    <strong>{{ stats.linkedin or 0 }}</strong>
-                </div>
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="display: flex; align-items: center; gap: 8px;">
-                        <i class="bi bi-instagram" style="color: #e4405f;"></i> Instagram
-                    </span>
-                    <strong>{{ stats.instagram or 0 }}</strong>
-                </div>
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="display: flex; align-items: center; gap: 8px;">
-                        <i class="bi bi-share" style="color: #6366f1;"></i> Ambos
-                    </span>
-                    <strong>{{ stats.both or 0 }}</strong>
-                </div>
             </div>
         </div>
 
