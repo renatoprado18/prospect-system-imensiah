@@ -518,6 +518,11 @@
             <div class="posts-header">
                 <h2>Posts Editoriais</h2>
                 <div class="posts-filters">
+                    <select class="filter-select" id="filter-tipo" onchange="filterPosts()">
+                        <option value="">Todos os tipos</option>
+                        <option value="artigo">Artigos</option>
+                        <option value="hot_take">Hot Takes</option>
+                    </select>
                     <select class="filter-select" id="filter-status" onchange="filterPosts()">
                         <option value="">Todos os status</option>
                         {% for key, val in status_options.items() %}
@@ -536,14 +541,16 @@
             <div class="posts-list" id="posts-list">
                 {% if posts %}
                     {% for post in posts %}
-                    <div class="post-item" data-status="{{ post.status }}" data-canal="{{ post.canal }}" onclick="openPostModal({{ post.id }})">
+                    <div class="post-item" data-status="{{ post.status }}" data-canal="{{ post.canal }}" data-tipo="{{ post.tipo }}" onclick="openPostModal({{ post.id }})">
                         <div class="post-canal {{ post.canal }}">
                             <i class="bi bi-{% if post.canal == 'linkedin' %}linkedin{% elif post.canal == 'instagram' %}instagram{% else %}share{% endif %}"></i>
                         </div>
                         <div class="post-info">
-                            <div class="post-title">{{ post.article_title }}</div>
+                            <div class="post-title">
+                                {% if post.tipo == 'hot_take' %}<i class="bi bi-fire text-warning"></i> {% endif %}{{ post.article_title }}
+                            </div>
                             <div class="post-meta">
-                                <span><i class="bi bi-tag"></i> {{ post.tipo }}</span>
+                                <span><i class="bi bi-tag"></i> {% if post.tipo == 'hot_take' %}Hot Take{% else %}{{ post.tipo }}{% endif %}</span>
                                 {% if post.project_nome %}
                                 <span><i class="bi bi-folder"></i> {{ post.project_nome }}</span>
                                 {% endif %}
@@ -889,14 +896,23 @@ fetch('/static/articles.json')
     .catch(err => console.error('Failed to load articles:', err));
 
 function filterPosts() {
+    const tipo = document.getElementById('filter-tipo').value;
     const status = document.getElementById('filter-status').value;
     const canal = document.getElementById('filter-canal').value;
     const items = document.querySelectorAll('.post-item');
 
     items.forEach(item => {
+        const itemTipo = item.dataset.tipo || '';
+        const isHotTake = itemTipo === 'hot_take';
+        const isArtigo = !isHotTake;
+
+        let matchTipo = !tipo;
+        if (tipo === 'hot_take') matchTipo = isHotTake;
+        if (tipo === 'artigo') matchTipo = isArtigo;
+
         const matchStatus = !status || item.dataset.status === status;
         const matchCanal = !canal || item.dataset.canal === canal;
-        item.style.display = matchStatus && matchCanal ? 'flex' : 'none';
+        item.style.display = matchTipo && matchStatus && matchCanal ? 'flex' : 'none';
     });
 }
 

@@ -210,6 +210,40 @@
         background: var(--gray-50);
     }
 
+    .take-actions .btn-schedule {
+        background: #dbeafe;
+        border-color: #3b82f6;
+        color: #1e40af;
+    }
+
+    .take-actions .btn-publish {
+        background: #d1fae5;
+        border-color: #10b981;
+        color: #065f46;
+    }
+
+    .take-actions .btn-metrics {
+        background: #fef3c7;
+        border-color: #f59e0b;
+        color: #92400e;
+    }
+
+    .take-date {
+        font-size: 0.75rem;
+        color: var(--gray-500);
+        margin-left: 8px;
+    }
+
+    .take-status.scheduled {
+        background: #dbeafe;
+        color: #1e40af;
+    }
+
+    .take-status.published {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
     /* Sidebar */
     .sidebar-card {
         background: white;
@@ -475,6 +509,9 @@
                         </div>
                         <div class="take-footer">
                             <span class="take-status {{ take.status }}">{{ take.status }}</span>
+                            {% if take.scheduled_for %}
+                            <span class="take-date"><i class="bi bi-calendar"></i> {{ take.scheduled_for[:16] if take.scheduled_for else '' }}</span>
+                            {% endif %}
                             <div class="take-actions">
                                 <button onclick="previewLinkedIn({{ take.id }})">
                                     <i class="bi bi-linkedin"></i> Preview
@@ -482,9 +519,19 @@
                                 <button onclick="copyToClipboard({{ take.id }})">
                                     <i class="bi bi-clipboard"></i> Copiar
                                 </button>
-                                <button onclick="scheduleHotTake({{ take.id }})">
+                                {% if take.status == 'draft' %}
+                                <button onclick="openScheduleModal({{ take.id }})" class="btn-schedule">
                                     <i class="bi bi-calendar-plus"></i> Agendar
                                 </button>
+                                {% elif take.status == 'scheduled' %}
+                                <button onclick="openPublishModal({{ take.id }})" class="btn-publish">
+                                    <i class="bi bi-check-circle"></i> Publicar
+                                </button>
+                                {% elif take.status == 'published' %}
+                                <button onclick="openMetricsModal({{ take.id }})" class="btn-metrics">
+                                    <i class="bi bi-graph-up"></i> Metricas
+                                </button>
+                                {% endif %}
                             </div>
                         </div>
                     </div>
@@ -627,6 +674,105 @@
         </div>
     </div>
 </div>
+
+<!-- Schedule Modal -->
+<div class="modal-backdrop" id="scheduleModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="bi bi-calendar-plus me-2"></i>Agendar Hot Take</h3>
+            <button class="modal-close" onclick="closeScheduleModal()">&times;</button>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Data de Publicacao:</label>
+            <input type="date" id="scheduleDate" class="form-control">
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Horario:</label>
+            <select id="scheduleTime" class="form-select">
+                <option value="09:00">09:00 (Recomendado)</option>
+                <option value="12:00">12:00</option>
+                <option value="18:00">18:00</option>
+            </select>
+        </div>
+        <div class="mb-3">
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="createEditorial" checked>
+                <label class="form-check-label" for="createEditorial">
+                    Adicionar ao Calendario Editorial
+                </label>
+            </div>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary flex-grow-1" onclick="closeScheduleModal()">
+                Cancelar
+            </button>
+            <button class="btn btn-primary flex-grow-1" onclick="confirmSchedule()">
+                <i class="bi bi-calendar-check"></i> Confirmar
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Publish Modal -->
+<div class="modal-backdrop" id="publishModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="bi bi-check-circle me-2"></i>Marcar como Publicado</h3>
+            <button class="modal-close" onclick="closePublishModal()">&times;</button>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">URL do Post no LinkedIn (opcional):</label>
+            <input type="url" id="linkedinUrl" class="form-control" placeholder="https://linkedin.com/posts/...">
+        </div>
+        <p class="text-muted small">
+            <i class="bi bi-info-circle"></i> Cole a URL do post publicado para acompanhar metricas.
+        </p>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary flex-grow-1" onclick="closePublishModal()">
+                Cancelar
+            </button>
+            <button class="btn btn-success flex-grow-1" onclick="confirmPublish()">
+                <i class="bi bi-check"></i> Confirmar Publicacao
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Metrics Modal -->
+<div class="modal-backdrop" id="metricsModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="bi bi-graph-up me-2"></i>Registrar Metricas</h3>
+            <button class="modal-close" onclick="closeMetricsModal()">&times;</button>
+        </div>
+        <div class="row g-3 mb-3">
+            <div class="col-6">
+                <label class="form-label">Likes</label>
+                <input type="number" id="metricLikes" class="form-control" value="0" min="0">
+            </div>
+            <div class="col-6">
+                <label class="form-label">Comentarios</label>
+                <input type="number" id="metricComments" class="form-control" value="0" min="0">
+            </div>
+            <div class="col-6">
+                <label class="form-label">Compartilhamentos</label>
+                <input type="number" id="metricShares" class="form-control" value="0" min="0">
+            </div>
+            <div class="col-6">
+                <label class="form-label">Impressoes</label>
+                <input type="number" id="metricImpressions" class="form-control" value="0" min="0">
+            </div>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary flex-grow-1" onclick="closeMetricsModal()">
+                Cancelar
+            </button>
+            <button class="btn btn-primary flex-grow-1" onclick="saveMetrics()">
+                <i class="bi bi-save"></i> Salvar Metricas
+            </button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -742,23 +888,145 @@ function copyToClipboard(id) {
     }
 }
 
-// Schedule
-async function scheduleHotTake(id) {
-    const date = prompt('Data para publicacao (YYYY-MM-DD HH:MM):');
-    if (!date) return;
+// Schedule Modal
+let currentScheduleId = null;
+
+function openScheduleModal(id) {
+    currentScheduleId = id;
+    // Set default date to tomorrow
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    document.getElementById('scheduleDate').value = tomorrow.toISOString().split('T')[0];
+    document.getElementById('scheduleModal').classList.add('active');
+}
+
+function closeScheduleModal() {
+    document.getElementById('scheduleModal').classList.remove('active');
+    currentScheduleId = null;
+}
+
+async function confirmSchedule() {
+    const date = document.getElementById('scheduleDate').value;
+    const time = document.getElementById('scheduleTime').value;
+    const createEditorial = document.getElementById('createEditorial').checked;
+
+    if (!date) {
+        alert('Selecione uma data');
+        return;
+    }
+
+    const scheduledFor = `${date} ${time}`;
 
     try {
-        const response = await fetch(`/api/hot-takes/${id}/schedule`, {
+        const response = await fetch(`/api/hot-takes/${currentScheduleId}/schedule`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ scheduled_for: date })
+            body: JSON.stringify({
+                scheduled_for: scheduledFor,
+                create_editorial: createEditorial
+            })
         });
 
-        if (response.ok) {
+        const result = await response.json();
+
+        if (response.ok && !result.error) {
+            alert('Hot Take agendado com sucesso!' + (createEditorial ? '\nAdicionado ao Calendario Editorial.' : ''));
             location.reload();
+        } else {
+            alert('Erro: ' + (result.error || 'Falha ao agendar'));
         }
     } catch (error) {
         console.error('Erro:', error);
+        alert('Erro ao agendar hot take');
+    }
+}
+
+// Publish Modal
+let currentPublishId = null;
+
+function openPublishModal(id) {
+    currentPublishId = id;
+    document.getElementById('linkedinUrl').value = '';
+    document.getElementById('publishModal').classList.add('active');
+}
+
+function closePublishModal() {
+    document.getElementById('publishModal').classList.remove('active');
+    currentPublishId = null;
+}
+
+async function confirmPublish() {
+    const linkedinUrl = document.getElementById('linkedinUrl').value;
+
+    try {
+        const response = await fetch(`/api/hot-takes/${currentPublishId}/publish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ linkedin_url: linkedinUrl })
+        });
+
+        if (response.ok) {
+            alert('Hot Take marcado como publicado!');
+            location.reload();
+        } else {
+            alert('Erro ao marcar como publicado');
+        }
+    } catch (error) {
+        console.error('Erro:', error);
+        alert('Erro ao marcar como publicado');
+    }
+}
+
+// Metrics Modal
+let currentMetricsId = null;
+
+function openMetricsModal(id) {
+    currentMetricsId = id;
+    // Load existing metrics if available
+    const take = hotTakesData.find(t => t.id === id);
+    if (take && take.metrics) {
+        document.getElementById('metricLikes').value = take.metrics.likes || 0;
+        document.getElementById('metricComments').value = take.metrics.comments || 0;
+        document.getElementById('metricShares').value = take.metrics.shares || 0;
+        document.getElementById('metricImpressions').value = take.metrics.impressions || 0;
+    } else {
+        document.getElementById('metricLikes').value = 0;
+        document.getElementById('metricComments').value = 0;
+        document.getElementById('metricShares').value = 0;
+        document.getElementById('metricImpressions').value = 0;
+    }
+    document.getElementById('metricsModal').classList.add('active');
+}
+
+function closeMetricsModal() {
+    document.getElementById('metricsModal').classList.remove('active');
+    currentMetricsId = null;
+}
+
+async function saveMetrics() {
+    const metrics = {
+        likes: parseInt(document.getElementById('metricLikes').value) || 0,
+        comments: parseInt(document.getElementById('metricComments').value) || 0,
+        shares: parseInt(document.getElementById('metricShares').value) || 0,
+        impressions: parseInt(document.getElementById('metricImpressions').value) || 0
+    };
+
+    try {
+        const response = await fetch(`/api/hot-takes/${currentMetricsId}/metrics`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(metrics)
+        });
+
+        if (response.ok) {
+            alert('Metricas salvas com sucesso!');
+            location.reload();
+        } else {
+            alert('Erro ao salvar metricas');
+        }
+    } catch (error) {
+        console.error('Erro:', error);
+        alert('Erro ao salvar metricas');
     }
 }
 

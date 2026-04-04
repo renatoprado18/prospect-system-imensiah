@@ -13638,21 +13638,41 @@ async def api_hot_take_get(hot_take_id: int):
 
 @app.post("/api/hot-takes/{hot_take_id}/schedule")
 async def api_hot_take_schedule(hot_take_id: int, request: Request):
-    """Agenda hot take para publicacao"""
-    from app.database import get_db
+    """Agenda hot take para publicacao e cria entrada no calendario editorial"""
+    from app.services.hot_takes import schedule_hot_take
     data = await request.json()
     scheduled_for = data.get("scheduled_for")
+    create_editorial = data.get("create_editorial", True)
 
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE hot_takes
-            SET status = 'scheduled', scheduled_for = %s
-            WHERE id = %s
-        ''', (scheduled_for, hot_take_id))
-        conn.commit()
+    result = schedule_hot_take(hot_take_id, scheduled_for, create_editorial)
+    return result
 
-    return {"status": "scheduled", "id": hot_take_id}
+
+@app.post("/api/hot-takes/{hot_take_id}/publish")
+async def api_hot_take_publish(hot_take_id: int, request: Request):
+    """Marca hot take como publicado"""
+    from app.services.hot_takes import mark_hot_take_published
+    data = await request.json()
+    linkedin_url = data.get("linkedin_url")
+
+    result = mark_hot_take_published(hot_take_id, linkedin_url)
+    return result
+
+
+@app.post("/api/hot-takes/{hot_take_id}/metrics")
+async def api_hot_take_metrics(hot_take_id: int, request: Request):
+    """Atualiza metricas de engajamento do hot take"""
+    from app.services.hot_takes import update_hot_take_metrics
+    data = await request.json()
+    metrics = {
+        "likes": data.get("likes", 0),
+        "comments": data.get("comments", 0),
+        "shares": data.get("shares", 0),
+        "impressions": data.get("impressions", 0)
+    }
+
+    result = update_hot_take_metrics(hot_take_id, metrics)
+    return result
 
 
 @app.get("/hot-takes", response_class=HTMLResponse)
