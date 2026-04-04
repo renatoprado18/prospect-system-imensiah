@@ -77,10 +77,10 @@ class AvatarFetcherService:
 
     async def fetch_whatsapp_photo(self, phone: str) -> Optional[str]:
         """Busca foto de perfil do WhatsApp via Evolution API."""
-        from integrations.evolution_api import get_evolution_api
+        from integrations.evolution_api import get_evolution_client
 
         try:
-            evolution = get_evolution_api()
+            evolution = get_evolution_client()
             result = await evolution.get_profile_picture(phone)
 
             if result and not result.get('error'):

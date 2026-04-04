@@ -1,1727 +1,781 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>INTEL - Editar Contato</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --primary: #6366f1;
-            --primary-dark: #4f46e5;
-            --secondary: #0ea5e9;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --dark: #1e293b;
-            --light: #f8fafc;
-            --gray-100: #f1f5f9;
-            --gray-200: #e2e8f0;
-            --gray-300: #cbd5e1;
-            --gray-400: #94a3b8;
-            --gray-500: #64748b;
-            --gray-600: #475569;
-            --sidebar-width: 260px;
-        }
-
-        * { box-sizing: border-box; }
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--gray-100);
-            margin: 0;
-            min-height: 100vh;
-        }
-
-        /* Sidebar */
-        .sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: var(--sidebar-width);
-            background: linear-gradient(180deg, var(--dark) 0%, #0f172a 100%);
-            color: white;
-            z-index: 100;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .sidebar-header {
-            padding: 24px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-        }
-
-        .sidebar-logo {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-size: 1.5rem;
-            font-weight: 700;
-            text-decoration: none;
-            color: white;
-        }
-
-        .sidebar-logo .icon {
-            width: 40px;
-            height: 40px;
-            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .sidebar-nav {
-            flex: 1;
-            padding: 16px 0;
-            overflow-y: auto;
-        }
-
-        .nav-section {
-            padding: 6px 16px;
-            font-size: 0.65rem;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--gray-400);
-            margin-top: 10px;
-        }
-
-        .nav-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px 20px;
-            color: var(--gray-300);
-            text-decoration: none;
-            transition: all 0.2s;
-            border-left: 3px solid transparent;
-            font-size: 0.875rem;
-        }
-
-        .nav-item:hover {
-            background: rgba(255,255,255,0.05);
-            color: white;
-        }
-
-        .nav-item.active {
-            background: rgba(99, 102, 241, 0.15);
-            color: white;
-            border-left-color: var(--primary);
-        }
-
-        .nav-item i { font-size: 1rem; width: 20px; text-align: center; }
-
-        /* Main Content */
-        .main-content {
-            margin-left: var(--sidebar-width);
-            padding: 24px 32px;
-            min-height: 100vh;
-        }
-
-        /* Header */
-        .page-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 24px;
-        }
-
-        .page-header h1 {
-            font-size: 1.75rem;
-            font-weight: 700;
-            color: var(--dark);
-            margin: 0;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .btn-back {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 16px;
-            background: white;
-            border: 1px solid var(--gray-200);
-            border-radius: 8px;
-            color: var(--gray-600);
-            text-decoration: none;
-            font-weight: 500;
-            transition: all 0.2s;
-        }
-
-        .btn-back:hover {
-            background: var(--gray-100);
-            color: var(--dark);
-        }
-
-        .header-actions {
-            display: flex;
-            gap: 12px;
-        }
-
-        .btn-save {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 10px 20px;
-            background: var(--primary);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .btn-save:hover {
-            background: var(--primary-dark);
-        }
-
-        .btn-save:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-
-        /* Tabs */
-        .edit-tabs {
-            display: flex;
-            gap: 4px;
-            background: white;
-            padding: 6px;
-            border-radius: 12px;
-            margin-bottom: 24px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }
-
-        .edit-tab {
-            padding: 10px 20px;
-            border: none;
-            background: transparent;
-            border-radius: 8px;
-            color: var(--gray-500);
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .edit-tab:hover {
-            background: var(--gray-100);
-            color: var(--dark);
-        }
-
-        .edit-tab.active {
-            background: var(--primary);
-            color: white;
-        }
-
-        /* Form Sections */
-        .edit-section {
-            display: none;
-            background: white;
-            border-radius: 16px;
-            padding: 24px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }
-
-        .edit-section.active {
-            display: block;
-        }
-
-        .section-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: var(--dark);
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .btn-add {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            background: var(--gray-100);
-            border: 1px dashed var(--gray-300);
-            border-radius: 6px;
-            color: var(--gray-600);
-            font-size: 0.85rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .btn-add:hover {
-            background: var(--primary);
-            border-color: var(--primary);
-            color: white;
-        }
-
-        /* Form Controls */
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        .form-label {
-            display: block;
-            font-size: 0.85rem;
-            font-weight: 500;
-            color: var(--gray-600);
-            margin-bottom: 6px;
-        }
-
-        .form-control {
-            width: 100%;
-            padding: 10px 14px;
-            border: 1px solid var(--gray-200);
-            border-radius: 8px;
-            font-size: 0.95rem;
-            transition: all 0.2s;
-        }
-
-        .form-control:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-        }
-
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-        }
-
-        .form-row-3 {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 16px;
-        }
-
-        /* Radio Group */
-        .radio-group {
-            display: flex;
-            gap: 16px;
-        }
-
-        .radio-option {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-        }
-
-        .radio-option input[type="radio"] {
-            width: 18px;
-            height: 18px;
-            accent-color: var(--primary);
-        }
-
-        /* Dynamic Items (emails, phones, etc) */
-        .dynamic-items {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .dynamic-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px;
-            background: var(--gray-100);
-            border-radius: 10px;
-        }
-
-        .dynamic-item .item-icon {
-            width: 36px;
-            height: 36px;
-            background: white;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--gray-500);
-            flex-shrink: 0;
-        }
-
-        .dynamic-item .item-content {
-            flex: 1;
-            display: flex;
-            gap: 12px;
-            align-items: center;
-        }
-
-        .dynamic-item .item-content input {
-            flex: 1;
-            padding: 8px 12px;
-            border: 1px solid var(--gray-200);
-            border-radius: 6px;
-            font-size: 0.9rem;
-        }
-
-        .dynamic-item .item-content select {
-            width: 140px;
-            padding: 8px 12px;
-            border: 1px solid var(--gray-200);
-            border-radius: 6px;
-            font-size: 0.9rem;
-            background: white;
-        }
-
-        .dynamic-item .item-actions {
-            display: flex;
-            gap: 8px;
-        }
-
-        .dynamic-item .btn-primary-flag {
-            width: 32px;
-            height: 32px;
-            border: none;
-            background: transparent;
-            border-radius: 6px;
-            color: var(--gray-400);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .dynamic-item .btn-primary-flag:hover {
-            background: var(--warning);
-            color: white;
-        }
-
-        .dynamic-item .btn-primary-flag.active {
-            background: var(--warning);
-            color: white;
-        }
-
-        .dynamic-item .btn-remove {
-            width: 32px;
-            height: 32px;
-            border: none;
-            background: transparent;
-            border-radius: 6px;
-            color: var(--gray-400);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .dynamic-item .btn-remove:hover {
-            background: var(--danger);
-            color: white;
-        }
-
-        /* Address Item */
-        .address-item {
-            padding: 16px;
-            background: var(--gray-100);
-            border-radius: 10px;
-            margin-bottom: 12px;
-        }
-
-        .address-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 12px;
-        }
-
-        .address-type {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .address-type i {
-            color: var(--gray-500);
-        }
-
-        .address-fields {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 10px;
-        }
-
-        .address-row {
-            display: grid;
-            grid-template-columns: 2fr 1fr 1fr;
-            gap: 10px;
-        }
-
-        /* Relationship Item */
-        .relationship-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px;
-            background: var(--gray-100);
-            border-radius: 10px;
-        }
-
-        .relationship-avatar {
-            width: 40px;
-            height: 40px;
-            background: var(--primary);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 600;
-        }
-
-        .relationship-content {
-            flex: 1;
-            display: flex;
-            gap: 12px;
-            align-items: center;
-        }
-
-        .relationship-link {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .relationship-link .btn-link-contact {
-            padding: 6px 10px;
-            background: white;
-            border: 1px solid var(--gray-200);
-            border-radius: 6px;
-            font-size: 0.8rem;
-            color: var(--gray-600);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .relationship-link .btn-link-contact:hover {
-            border-color: var(--primary);
-            color: var(--primary);
-        }
-
-        .relationship-link .linked-badge {
-            padding: 4px 8px;
-            background: var(--success);
-            color: white;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: 500;
-        }
-
-        /* Inline Search Results */
-        .relationship-item {
-            position: relative;
-        }
-
-        .inline-search-results {
-            position: absolute;
-            top: 100%;
-            left: 52px;
-            right: 100px;
-            background: white;
-            border: 1px solid var(--gray-200);
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            z-index: 50;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-
-        .inline-result {
-            padding: 10px 12px;
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--gray-100);
-        }
-
-        .inline-result:last-child {
-            border-bottom: none;
-        }
-
-        .inline-result:hover {
-            background: var(--gray-100);
-        }
-
-        .inline-result .result-name {
-            font-weight: 500;
-            color: var(--dark);
-        }
-
-        .inline-result .result-empresa {
-            font-size: 0.8rem;
-            color: var(--gray-500);
-        }
-
-        /* Circle Select */
-        .circle-select {
-            display: flex;
-            gap: 8px;
-        }
-
-        .circle-option {
-            width: 48px;
-            height: 48px;
-            border: 2px solid var(--gray-200);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .circle-option:hover {
-            border-color: var(--primary);
-        }
-
-        .circle-option.selected {
-            border-color: var(--primary);
-            background: var(--primary);
-            color: white;
-        }
-
-        .circle-option[data-circle="1"] { color: #10b981; }
-        .circle-option[data-circle="2"] { color: #0ea5e9; }
-        .circle-option[data-circle="3"] { color: #8b5cf6; }
-        .circle-option[data-circle="4"] { color: #f59e0b; }
-        .circle-option[data-circle="5"] { color: #64748b; }
-
-        .circle-option.selected { color: white; }
-
-        /* Date Item */
-        .date-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 12px;
-            background: var(--gray-100);
-            border-radius: 10px;
-        }
-
-        .date-icon {
-            width: 36px;
-            height: 36px;
-            background: white;
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-        }
-
-        /* Notes */
-        .notes-textarea {
-            width: 100%;
-            min-height: 200px;
-            padding: 14px;
-            border: 1px solid var(--gray-200);
-            border-radius: 8px;
-            font-size: 0.95rem;
-            resize: vertical;
-        }
-
-        .notes-textarea:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-        }
-
-        /* Toast Notification */
-        .toast-container {
-            position: fixed;
-            bottom: 24px;
-            right: 24px;
-            z-index: 1000;
-        }
-
-        .toast {
-            padding: 14px 20px;
-            background: var(--dark);
-            color: white;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            animation: slideIn 0.3s ease;
-        }
-
-        .toast.success { background: var(--success); }
-        .toast.error { background: var(--danger); }
-
-        @keyframes slideIn {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-
-        /* Loading */
-        .loading-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(255,255,255,0.9);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
-
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 3px solid var(--gray-200);
-            border-top-color: var(--primary);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            100% { transform: rotate(360deg); }
-        }
-
-        /* Contact Selector Modal */
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.5);
-            display: none;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
-
-        .modal-overlay.active {
-            display: flex;
-        }
-
-        .modal-content {
-            background: white;
-            border-radius: 16px;
-            width: 100%;
-            max-width: 500px;
-            max-height: 80vh;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .modal-header {
-            padding: 16px 20px;
-            border-bottom: 1px solid var(--gray-200);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .modal-header h3 {
-            margin: 0;
-            font-size: 1.1rem;
-        }
-
-        .modal-close {
-            width: 32px;
-            height: 32px;
-            border: none;
-            background: transparent;
-            border-radius: 6px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .modal-close:hover {
-            background: var(--gray-100);
-        }
-
-        .modal-search {
-            padding: 16px 20px;
-            border-bottom: 1px solid var(--gray-200);
-        }
-
-        .modal-search input {
-            width: 100%;
-            padding: 10px 14px;
-            border: 1px solid var(--gray-200);
-            border-radius: 8px;
-        }
-
-        .modal-body {
-            flex: 1;
-            overflow-y: auto;
-            padding: 12px;
-        }
-
-        .contact-option {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 10px 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .contact-option:hover {
-            background: var(--gray-100);
-        }
-
-        .contact-option .avatar {
-            width: 36px;
-            height: 36px;
-            background: var(--primary);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 600;
-            font-size: 0.85rem;
-        }
-
-        .contact-option .info {
-            flex: 1;
-        }
-
-        .contact-option .name {
-            font-weight: 500;
-            color: var(--dark);
-        }
-
-        .contact-option .empresa {
-            font-size: 0.8rem;
-            color: var(--gray-500);
-        }
-    </style>
-</head>
-<body>
-    <!-- Sidebar -->
-    <nav class="sidebar">
-        <div class="sidebar-header">
-            <a href="/" class="sidebar-logo">
-                <span class="icon"><i class="bi bi-cpu"></i></span>
-                INTEL
-            </a>
+{% extends "rap_base.html" %}
+
+{% block title %}INTEL - Editar Contato{% endblock %}
+
+{% block page_title %}<span id="contactName">Carregando...</span>{% endblock %}
+
+{% block header_actions %}
+<a href="/contatos/{{ contact_id }}" class="btn btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i> Voltar
+</a>
+<button class="btn btn-primary" id="btnSave" onclick="saveContact()">
+    <i class="bi bi-check2 me-1"></i> Salvar
+</button>
+{% endblock %}
+
+{% block extra_css %}
+/* Tabs */
+.edit-tabs {
+    display: flex;
+    gap: 4px;
+    background: white;
+    padding: 6px;
+    border-radius: 12px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.edit-tab {
+    padding: 10px 20px;
+    border: none;
+    background: transparent;
+    border-radius: 8px;
+    color: var(--gray-500);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.edit-tab:hover { background: var(--gray-100); color: var(--dark); }
+.edit-tab.active { background: var(--primary); color: white; }
+
+/* Form Sections */
+.edit-section {
+    display: none;
+    background: white;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.edit-section.active { display: block; }
+
+.section-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--dark);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.btn-add {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--gray-100);
+    border: 1px dashed var(--gray-300);
+    border-radius: 6px;
+    color: var(--gray-600);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-add:hover { background: var(--primary); border-color: var(--primary); color: white; }
+
+/* Form Controls */
+.form-group { margin-bottom: 20px; }
+.form-label { display: block; font-size: 0.85rem; font-weight: 500; color: var(--gray-600); margin-bottom: 6px; }
+.form-control { width: 100%; padding: 10px 14px; border: 1px solid var(--gray-200); border-radius: 8px; font-size: 0.95rem; }
+.form-control:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1); }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+/* Radio Group */
+.radio-group { display: flex; gap: 16px; }
+.radio-option { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.radio-option input[type="radio"] { width: 18px; height: 18px; accent-color: var(--primary); }
+
+/* Dynamic Items */
+.dynamic-items { display: flex; flex-direction: column; gap: 12px; }
+.dynamic-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: var(--gray-100);
+    border-radius: 10px;
+}
+.dynamic-item .item-icon {
+    width: 36px;
+    height: 36px;
+    background: white;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--gray-500);
+    flex-shrink: 0;
+}
+.dynamic-item .item-content { flex: 1; display: flex; gap: 12px; align-items: center; }
+.dynamic-item .item-content input { flex: 1; padding: 8px 12px; border: 1px solid var(--gray-200); border-radius: 6px; font-size: 0.9rem; }
+.dynamic-item .item-content select { width: 140px; padding: 8px 12px; border: 1px solid var(--gray-200); border-radius: 6px; font-size: 0.9rem; background: white; }
+.dynamic-item .item-actions { display: flex; gap: 8px; }
+
+.dynamic-item .btn-primary-flag, .dynamic-item .btn-remove {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    color: var(--gray-400);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.dynamic-item .btn-primary-flag:hover { background: var(--warning); color: white; }
+.dynamic-item .btn-primary-flag.active { background: var(--warning); color: white; }
+.dynamic-item .btn-remove:hover { background: var(--danger); color: white; }
+
+/* Address Item */
+.address-item { padding: 16px; background: var(--gray-100); border-radius: 10px; margin-bottom: 12px; }
+.address-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.address-type { display: flex; align-items: center; gap: 8px; }
+.address-type i { color: var(--gray-500); }
+.address-fields { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.address-row { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; }
+
+/* Relationship Item */
+.relationship-item { position: relative; }
+.relationship-avatar {
+    width: 40px;
+    height: 40px;
+    background: var(--primary);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 600;
+}
+.relationship-content { flex: 1; display: flex; gap: 12px; align-items: center; }
+.relationship-link .btn-link-contact {
+    padding: 6px 10px;
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: var(--gray-600);
+    cursor: pointer;
+}
+.relationship-link .btn-link-contact:hover { border-color: var(--primary); color: var(--primary); }
+.relationship-link .linked-badge {
+    padding: 4px 8px;
+    background: var(--success);
+    color: white;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+/* Inline Search Results */
+.inline-search-results {
+    position: absolute;
+    top: 100%;
+    left: 52px;
+    right: 100px;
+    background: white;
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 50;
+    max-height: 200px;
+    overflow-y: auto;
+}
+.inline-result {
+    padding: 10px 12px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--gray-100);
+}
+.inline-result:hover { background: var(--gray-100); }
+.inline-result .result-name { font-weight: 500; color: var(--dark); }
+.inline-result .result-empresa { font-size: 0.8rem; color: var(--gray-500); }
+
+/* Circle Select */
+.circle-select { display: flex; gap: 8px; }
+.circle-option {
+    width: 48px;
+    height: 48px;
+    border: 2px solid var(--gray-200);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.circle-option:hover { border-color: var(--primary); }
+.circle-option.selected { border-color: var(--primary); background: var(--primary); color: white; }
+.circle-option[data-circle="1"] { color: #10b981; }
+.circle-option[data-circle="2"] { color: #0ea5e9; }
+.circle-option[data-circle="3"] { color: #8b5cf6; }
+.circle-option[data-circle="4"] { color: #f59e0b; }
+.circle-option[data-circle="5"] { color: #64748b; }
+.circle-option.selected { color: white; }
+
+/* Date Item */
+.date-item .date-icon {
+    width: 36px;
+    height: 36px;
+    background: white;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+}
+
+/* Notes */
+.notes-textarea {
+    width: 100%;
+    min-height: 200px;
+    padding: 14px;
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    font-size: 0.95rem;
+    resize: vertical;
+}
+.notes-textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1); }
+
+/* Toast */
+.toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 1000; }
+.toast {
+    padding: 14px 20px;
+    background: var(--dark);
+    color: white;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    animation: slideIn 0.3s ease;
+}
+.toast.success { background: var(--success); }
+.toast.error { background: var(--danger); }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* Loading */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255,255,255,0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.spinner { width: 40px; height: 40px; border: 3px solid var(--gray-200); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
+/* Modal */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.modal-overlay.active { display: flex; }
+.modal-content { background: white; border-radius: 16px; width: 100%; max-width: 500px; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+.modal-header { padding: 16px 20px; border-bottom: 1px solid var(--gray-200); display: flex; align-items: center; justify-content: space-between; }
+.modal-header h3 { margin: 0; font-size: 1.1rem; }
+.modal-close { width: 32px; height: 32px; border: none; background: transparent; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.modal-close:hover { background: var(--gray-100); }
+.modal-search { padding: 16px 20px; border-bottom: 1px solid var(--gray-200); }
+.modal-search input { width: 100%; padding: 10px 14px; border: 1px solid var(--gray-200); border-radius: 8px; }
+.modal-body { flex: 1; overflow-y: auto; padding: 12px; }
+.contact-option { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
+.contact-option:hover { background: var(--gray-100); }
+.contact-option .avatar { width: 36px; height: 36px; background: var(--primary); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 0.85rem; }
+.contact-option .info { flex: 1; }
+.contact-option .name { font-weight: 500; color: var(--dark); }
+.contact-option .empresa { font-size: 0.8rem; color: var(--gray-500); }
+{% endblock %}
+
+{% block content %}
+<!-- Loading Overlay -->
+<div id="loadingOverlay" class="loading-overlay">
+    <div class="spinner"></div>
+</div>
+
+<!-- Tabs -->
+<div class="edit-tabs">
+    <button class="edit-tab active" data-tab="info" onclick="switchTab('info')"><i class="bi bi-person"></i> Informacoes</button>
+    <button class="edit-tab" data-tab="contato" onclick="switchTab('contato')"><i class="bi bi-telephone"></i> Contato</button>
+    <button class="edit-tab" data-tab="datas" onclick="switchTab('datas')"><i class="bi bi-calendar-event"></i> Datas</button>
+    <button class="edit-tab" data-tab="relacionamentos" onclick="switchTab('relacionamentos')"><i class="bi bi-diagram-3"></i> Relacionamentos</button>
+    <button class="edit-tab" data-tab="notas" onclick="switchTab('notas')"><i class="bi bi-journal-text"></i> Notas</button>
+</div>
+
+<!-- Section: Informacoes -->
+<div class="edit-section active" id="section-info">
+    <div class="section-title">Informacoes Basicas</div>
+    <div class="form-group">
+        <label class="form-label">Nome Completo</label>
+        <input type="text" class="form-control" id="nome" placeholder="Nome completo">
+    </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label class="form-label">Apelido</label>
+            <input type="text" class="form-control" id="apelido" placeholder="Como prefere ser chamado">
         </div>
-        <nav class="sidebar-nav">
-            <!-- Dashboard -->
-            <a href="/" class="nav-item">
-                <i class="bi bi-grid-1x2"></i>
-                <span>Dashboard</span>
-            </a>
-
-            <!-- Relacionamentos -->
-            <div class="nav-section">Relacionamentos</div>
-            <a href="/contatos" class="nav-item active">
-                <i class="bi bi-people"></i>
-                <span>Contatos</span>
-            </a>
-            <a href="/circulos" class="nav-item">
-                <i class="bi bi-bullseye"></i>
-                <span>Circulos</span>
-            </a>
-            <a href="/whatsapp" class="nav-item">
-                <i class="bi bi-whatsapp"></i>
-                <span>WhatsApp</span>
-            </a>
-
-            <!-- Gestao -->
-            <div class="nav-section">Gestao</div>
-            <a href="/projetos" class="nav-item">
-                <i class="bi bi-folder"></i>
-                <span>Projetos</span>
-            </a>
-            <a href="/briefings" class="nav-item">
-                <i class="bi bi-file-text"></i>
-                <span>Briefings</span>
-            </a>
-            <a href="/calendario" class="nav-item">
-                <i class="bi bi-calendar-event"></i>
-                <span>Calendario</span>
-            </a>
-
-            <!-- Conteudo -->
-            <div class="nav-section">Conteudo</div>
-            <a href="/editorial" class="nav-item">
-                <i class="bi bi-newspaper"></i>
-                <span>Editorial</span>
-            </a>
-            <a href="/hot-takes" class="nav-item">
-                <i class="bi bi-fire"></i>
-                <span>Hot Takes</span>
-            </a>
-
-            <!-- Comunicacao -->
-            <div class="nav-section">Comunicacao</div>
-            <a href="/inbox" class="nav-item">
-                <i class="bi bi-inbox"></i>
-                <span>Inbox</span>
-            </a>
-            <a href="/emails" class="nav-item">
-                <i class="bi bi-envelope"></i>
-                <span>Emails</span>
-            </a>
-
-            <!-- Ferramentas -->
-            <div class="nav-section">Ferramentas</div>
-            <a href="/linkedin/import" class="nav-item">
-                <i class="bi bi-linkedin"></i>
-                <span>LinkedIn Import</span>
-            </a>
-            <a href="/contatos/limpeza" class="nav-item">
-                <i class="bi bi-magic"></i>
-                <span>Limpeza</span>
-            </a>
-            <a href="/automations" class="nav-item">
-                <i class="bi bi-gear-wide-connected"></i>
-                <span>Automacoes</span>
-            </a>
-
-            <!-- Sistema -->
-            <div class="nav-section">Sistema</div>
-            <a href="/analytics" class="nav-item">
-                <i class="bi bi-graph-up"></i>
-                <span>Analytics</span>
-            </a>
-            <a href="/settings" class="nav-item">
-                <i class="bi bi-gear"></i>
-                <span>Configuracoes</span>
-            </a>
-        </nav>
-    </nav>
-
-    <!-- Main Content -->
-    <main class="main-content">
-        <!-- Loading Overlay -->
-        <div id="loadingOverlay" class="loading-overlay">
-            <div class="spinner"></div>
-        </div>
-
-        <!-- Header -->
-        <div class="page-header">
-            <div style="display: flex; align-items: center; gap: 16px;">
-                <a href="/contatos/{{ contact_id }}" class="btn-back">
-                    <i class="bi bi-arrow-left"></i> Voltar
-                </a>
-                <h1 id="contactName">Carregando...</h1>
-            </div>
-            <div class="header-actions">
-                <button class="btn-save" id="btnSave" onclick="saveContact()">
-                    <i class="bi bi-check2"></i> Salvar
-                </button>
-            </div>
-        </div>
-
-        <!-- Tabs -->
-        <div class="edit-tabs">
-            <button class="edit-tab active" data-tab="info" onclick="switchTab('info')">
-                <i class="bi bi-person"></i> Informacoes
-            </button>
-            <button class="edit-tab" data-tab="contato" onclick="switchTab('contato')">
-                <i class="bi bi-telephone"></i> Contato
-            </button>
-            <button class="edit-tab" data-tab="datas" onclick="switchTab('datas')">
-                <i class="bi bi-calendar-event"></i> Datas
-            </button>
-            <button class="edit-tab" data-tab="relacionamentos" onclick="switchTab('relacionamentos')">
-                <i class="bi bi-diagram-3"></i> Relacionamentos
-            </button>
-            <button class="edit-tab" data-tab="notas" onclick="switchTab('notas')">
-                <i class="bi bi-journal-text"></i> Notas
-            </button>
-        </div>
-
-        <!-- Section: Informacoes -->
-        <div class="edit-section active" id="section-info">
-            <div class="section-title">Informacoes Basicas</div>
-
-            <div class="form-group">
-                <label class="form-label">Nome Completo</label>
-                <input type="text" class="form-control" id="nome" placeholder="Nome completo">
-            </div>
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Apelido</label>
-                    <input type="text" class="form-control" id="apelido" placeholder="Como prefere ser chamado">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">LinkedIn</label>
-                    <input type="text" class="form-control" id="linkedin" placeholder="URL do LinkedIn">
-                </div>
-            </div>
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Empresa</label>
-                    <input type="text" class="form-control" id="empresa" placeholder="Empresa atual">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Cargo</label>
-                    <input type="text" class="form-control" id="cargo" placeholder="Cargo ou funcao">
-                </div>
-            </div>
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Contexto</label>
-                    <div class="radio-group">
-                        <label class="radio-option">
-                            <input type="radio" name="contexto" value="personal"> Pessoal
-                        </label>
-                        <label class="radio-option">
-                            <input type="radio" name="contexto" value="professional" checked> Profissional
-                        </label>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Circulo</label>
-                    <div class="circle-select">
-                        <div class="circle-option" data-circle="1" onclick="selectCircle(1)">1</div>
-                        <div class="circle-option" data-circle="2" onclick="selectCircle(2)">2</div>
-                        <div class="circle-option" data-circle="3" onclick="selectCircle(3)">3</div>
-                        <div class="circle-option" data-circle="4" onclick="selectCircle(4)">4</div>
-                        <div class="circle-option" data-circle="5" onclick="selectCircle(5)">5</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Section: Contato (Emails, Phones, Addresses) -->
-        <div class="edit-section" id="section-contato">
-            <div class="section-title">
-                Emails
-                <button class="btn-add" onclick="addEmail()">
-                    <i class="bi bi-plus"></i> Adicionar
-                </button>
-            </div>
-            <div class="dynamic-items" id="emailsList"></div>
-
-            <div class="section-title" style="margin-top: 32px;">
-                Telefones
-                <button class="btn-add" onclick="addPhone()">
-                    <i class="bi bi-plus"></i> Adicionar
-                </button>
-            </div>
-            <div class="dynamic-items" id="phonesList"></div>
-
-            <div class="section-title" style="margin-top: 32px;">
-                Enderecos
-                <button class="btn-add" onclick="addAddress()">
-                    <i class="bi bi-plus"></i> Adicionar
-                </button>
-            </div>
-            <div id="addressesList"></div>
-        </div>
-
-        <!-- Section: Datas -->
-        <div class="edit-section" id="section-datas">
-            <div class="section-title">Aniversario</div>
-            <div class="form-group">
-                <input type="date" class="form-control" id="aniversario" style="max-width: 250px;">
-            </div>
-
-            <div class="section-title" style="margin-top: 32px;">
-                Outras Datas Importantes
-                <button class="btn-add" onclick="addDate()">
-                    <i class="bi bi-plus"></i> Adicionar
-                </button>
-            </div>
-            <div class="dynamic-items" id="datesList"></div>
-        </div>
-
-        <!-- Section: Relacionamentos -->
-        <div class="edit-section" id="section-relacionamentos">
-            <div class="section-title">
-                Pessoas Relacionadas
-                <button class="btn-add" onclick="addRelationship()">
-                    <i class="bi bi-plus"></i> Adicionar
-                </button>
-            </div>
-            <div class="dynamic-items" id="relationshipsList"></div>
-
-            <!-- Relacionamentos Inferidos -->
-            <div id="inferredSection" style="display: none; margin-top: 24px;">
-                <div class="section-title" style="color: var(--gray-500); font-size: 0.9rem;">
-                    <i class="bi bi-diagram-2"></i> Relacionamentos Inferidos
-                </div>
-                <div id="inferredList" class="dynamic-items"></div>
-            </div>
-        </div>
-
-        <!-- Section: Notas -->
-        <div class="edit-section" id="section-notas">
-            <div class="section-title">Notas e Observacoes</div>
-            <textarea class="notes-textarea" id="manualNotes" placeholder="Adicione notas, observacoes ou informacoes importantes sobre este contato..."></textarea>
-        </div>
-    </main>
-
-    <!-- Contact Selector Modal -->
-    <div class="modal-overlay" id="contactSelectorModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>Vincular Contato</h3>
-                <button class="modal-close" onclick="closeContactSelector()">
-                    <i class="bi bi-x-lg"></i>
-                </button>
-            </div>
-            <div class="modal-search">
-                <input type="text" id="contactSearchInput" placeholder="Buscar contato..." oninput="searchContacts()">
-            </div>
-            <div class="modal-body" id="contactSearchResults"></div>
+        <div class="form-group">
+            <label class="form-label">LinkedIn</label>
+            <input type="text" class="form-control" id="linkedin" placeholder="URL do LinkedIn">
         </div>
     </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label class="form-label">Empresa</label>
+            <input type="text" class="form-control" id="empresa" placeholder="Empresa atual">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Cargo</label>
+            <input type="text" class="form-control" id="cargo" placeholder="Cargo ou funcao">
+        </div>
+    </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label class="form-label">Contexto</label>
+            <div class="radio-group">
+                <label class="radio-option"><input type="radio" name="contexto" value="personal"> Pessoal</label>
+                <label class="radio-option"><input type="radio" name="contexto" value="professional" checked> Profissional</label>
+            </div>
+        </div>
+        <div class="form-group">
+            <label class="form-label">Circulo</label>
+            <div class="circle-select">
+                <div class="circle-option" data-circle="1" onclick="selectCircle(1)">1</div>
+                <div class="circle-option" data-circle="2" onclick="selectCircle(2)">2</div>
+                <div class="circle-option" data-circle="3" onclick="selectCircle(3)">3</div>
+                <div class="circle-option" data-circle="4" onclick="selectCircle(4)">4</div>
+                <div class="circle-option" data-circle="5" onclick="selectCircle(5)">5</div>
+            </div>
+        </div>
+    </div>
+</div>
 
-    <!-- Toast Container -->
-    <div class="toast-container" id="toastContainer"></div>
+<!-- Section: Contato -->
+<div class="edit-section" id="section-contato">
+    <div class="section-title">Emails <button class="btn-add" onclick="addEmail()"><i class="bi bi-plus"></i> Adicionar</button></div>
+    <div class="dynamic-items" id="emailsList"></div>
+    <div class="section-title" style="margin-top: 32px;">Telefones <button class="btn-add" onclick="addPhone()"><i class="bi bi-plus"></i> Adicionar</button></div>
+    <div class="dynamic-items" id="phonesList"></div>
+    <div class="section-title" style="margin-top: 32px;">Enderecos <button class="btn-add" onclick="addAddress()"><i class="bi bi-plus"></i> Adicionar</button></div>
+    <div id="addressesList"></div>
+</div>
 
-    <script>
-        const contactId = {{ contact_id }};
-        let contactData = {};
-        let currentRelationshipIndex = null;
+<!-- Section: Datas -->
+<div class="edit-section" id="section-datas">
+    <div class="section-title">Aniversario</div>
+    <div class="form-group"><input type="date" class="form-control" id="aniversario" style="max-width: 250px;"></div>
+    <div class="section-title" style="margin-top: 32px;">Outras Datas Importantes <button class="btn-add" onclick="addDate()"><i class="bi bi-plus"></i> Adicionar</button></div>
+    <div class="dynamic-items" id="datesList"></div>
+</div>
 
-        // Initialize
-        document.addEventListener('DOMContentLoaded', loadContact);
+<!-- Section: Relacionamentos -->
+<div class="edit-section" id="section-relacionamentos">
+    <div class="section-title">Pessoas Relacionadas <button class="btn-add" onclick="addRelationship()"><i class="bi bi-plus"></i> Adicionar</button></div>
+    <div class="dynamic-items" id="relationshipsList"></div>
+    <div id="inferredSection" style="display: none; margin-top: 24px;">
+        <div class="section-title" style="color: var(--gray-500); font-size: 0.9rem;"><i class="bi bi-diagram-2"></i> Relacionamentos Inferidos</div>
+        <div id="inferredList" class="dynamic-items"></div>
+    </div>
+</div>
 
-        // Fechar busca inline ao clicar fora
-        document.addEventListener('click', (e) => {
-            if (!e.target.closest('.relationship-item')) {
-                document.querySelectorAll('.inline-search-results').forEach(d => d.style.display = 'none');
-            }
-        });
+<!-- Section: Notas -->
+<div class="edit-section" id="section-notas">
+    <div class="section-title">Notas e Observacoes</div>
+    <textarea class="notes-textarea" id="manualNotes" placeholder="Adicione notas, observacoes ou informacoes importantes..."></textarea>
+</div>
+{% endblock %}
 
-        async function loadContact() {
-            try {
-                const response = await fetch(`/api/contacts/${contactId}`);
-                if (!response.ok) throw new Error('Contato nao encontrado');
+{% block modals %}
+<!-- Contact Selector Modal -->
+<div class="modal-overlay" id="contactSelectorModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Vincular Contato</h3>
+            <button class="modal-close" onclick="closeContactSelector()"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <div class="modal-search">
+            <input type="text" id="contactSearchInput" placeholder="Buscar contato..." oninput="searchContacts()">
+        </div>
+        <div class="modal-body" id="contactSearchResults"></div>
+    </div>
+</div>
 
-                const data = await response.json();
-                contactData = data.contact || data;  // API returns {contact: {...}}
-                populateForm(contactData);
-                document.getElementById('loadingOverlay').style.display = 'none';
+<!-- Toast Container -->
+<div class="toast-container" id="toastContainer"></div>
+{% endblock %}
 
-                // Carregar relacionamentos inferidos apos carregar o contato
-                setTimeout(() => loadInferredRelationships(), 500);
-            } catch (error) {
-                showToast('Erro ao carregar contato', 'error');
-                console.error(error);
-            }
-        }
+{% block extra_js %}
+<script>
+    const contactId = {{ contact_id }};
+    let contactData = {};
+    let currentRelationshipIndex = null;
 
-        function populateForm(data) {
-            // Header
-            document.getElementById('contactName').textContent = data.nome || 'Sem nome';
-
-            // Basic Info
-            document.getElementById('nome').value = data.nome || '';
-            document.getElementById('apelido').value = data.apelido || '';
-            document.getElementById('linkedin').value = data.linkedin || '';
-            document.getElementById('empresa').value = data.empresa || '';
-            document.getElementById('cargo').value = data.cargo || '';
-            document.getElementById('manualNotes').value = data.manual_notes || '';
-
-            // Context (handle comma-separated values like "personal,professional")
-            let contexto = data.contexto || 'professional';
-            if (contexto.includes(',')) {
-                contexto = contexto.includes('personal') ? 'personal' : 'professional';
-            }
-            const contextoRadio = document.querySelector(`input[name="contexto"][value="${contexto}"]`);
-            if (contextoRadio) contextoRadio.checked = true;
-
-            // Circle
-            const circulo = data.circulo || 5;
-            selectCircle(circulo);
-
-            // Birthday
-            if (data.aniversario) {
-                document.getElementById('aniversario').value = data.aniversario;
-            }
-
-            // Emails
-            const emails = parseJSON(data.emails) || [];
-            emails.forEach(email => addEmail(email));
-            if (emails.length === 0) addEmail();
-
-            // Phones
-            const phones = parseJSON(data.telefones) || [];
-            phones.forEach(phone => addPhone(phone));
-            if (phones.length === 0) addPhone();
-
-            // Addresses
-            const addresses = parseJSON(data.enderecos) || [];
-            addresses.forEach(addr => addAddress(addr));
-
-            // Dates
-            const dates = parseJSON(data.datas_importantes) || [];
-            dates.forEach(d => addDate(d));
-
-            // Relationships
-            const relationships = parseJSON(data.relacionamentos) || [];
-            relationships.forEach(rel => addRelationship(rel));
-        }
-
-        function parseJSON(data) {
-            if (!data) return null;
-            if (typeof data === 'object') return data;
-            try {
-                return JSON.parse(data);
-            } catch {
-                return null;
-            }
-        }
-
-        function switchTab(tabName) {
-            // Update tabs
-            document.querySelectorAll('.edit-tab').forEach(tab => {
-                tab.classList.toggle('active', tab.dataset.tab === tabName);
-            });
-
-            // Update sections
-            document.querySelectorAll('.edit-section').forEach(section => {
-                section.classList.toggle('active', section.id === `section-${tabName}`);
-            });
-        }
-
-        function selectCircle(num) {
-            document.querySelectorAll('.circle-option').forEach(opt => {
-                opt.classList.toggle('selected', parseInt(opt.dataset.circle) === num);
-            });
-            contactData.circulo = num;
-        }
-
-        // Email Management
-        function addEmail(data = {}) {
-            const container = document.getElementById('emailsList');
-            const index = container.children.length;
-            const isPrimary = data.primary || index === 0;
-
-            const html = `
-                <div class="dynamic-item" data-index="${index}">
-                    <div class="item-icon"><i class="bi bi-envelope"></i></div>
-                    <div class="item-content">
-                        <input type="email" placeholder="email@exemplo.com" value="${data.email || ''}">
-                        <select>
-                            <option value="pessoal" ${data.tipo === 'pessoal' ? 'selected' : ''}>Pessoal</option>
-                            <option value="trabalho" ${data.tipo === 'trabalho' ? 'selected' : ''}>Trabalho</option>
-                            <option value="outro" ${data.tipo === 'outro' ? 'selected' : ''}>Outro</option>
-                        </select>
-                    </div>
-                    <div class="item-actions">
-                        <button class="btn-primary-flag ${isPrimary ? 'active' : ''}" onclick="setPrimaryEmail(${index})" title="Definir como principal">
-                            <i class="bi bi-star-fill"></i>
-                        </button>
-                        <button class="btn-remove" onclick="removeItem(this)" title="Remover">
-                            <i class="bi bi-trash"></i>
-                        </button>
-                    </div>
-                </div>
-            `;
-            container.insertAdjacentHTML('beforeend', html);
-        }
-
-        function setPrimaryEmail(index) {
-            document.querySelectorAll('#emailsList .btn-primary-flag').forEach((btn, i) => {
-                btn.classList.toggle('active', i === index);
-            });
-        }
-
-        // Phone Management
-        function addPhone(data = {}) {
-            const container = document.getElementById('phonesList');
-            const index = container.children.length;
-
-            const html = `
-                <div class="dynamic-item" data-index="${index}">
-                    <div class="item-icon"><i class="bi bi-telephone"></i></div>
-                    <div class="item-content">
-                        <input type="tel" placeholder="+55 11 99999-9999" value="${data.number || ''}">
-                        <select>
-                            <option value="celular" ${data.tipo === 'celular' ? 'selected' : ''}>Celular</option>
-                            <option value="trabalho" ${data.tipo === 'trabalho' ? 'selected' : ''}>Trabalho</option>
-                            <option value="residencial" ${data.tipo === 'residencial' ? 'selected' : ''}>Residencial</option>
-                            <option value="outro" ${data.tipo === 'outro' ? 'selected' : ''}>Outro</option>
-                        </select>
-                    </div>
-                    <div class="item-actions">
-                        <button class="btn-remove" onclick="removeItem(this)" title="Remover">
-                            <i class="bi bi-trash"></i>
-                        </button>
-                    </div>
-                </div>
-            `;
-            container.insertAdjacentHTML('beforeend', html);
-        }
-
-        // Address Management
-        function addAddress(data = {}) {
-            const container = document.getElementById('addressesList');
-            const index = container.children.length;
-
-            const html = `
-                <div class="address-item" data-index="${index}">
-                    <div class="address-header">
-                        <div class="address-type">
-                            <i class="bi bi-geo-alt"></i>
-                            <select class="form-control" style="width: 150px;">
-                                <option value="residencial" ${data.tipo === 'residencial' ? 'selected' : ''}>Residencial</option>
-                                <option value="comercial" ${data.tipo === 'comercial' ? 'selected' : ''}>Comercial</option>
-                                <option value="outro" ${data.tipo === 'outro' ? 'selected' : ''}>Outro</option>
-                            </select>
-                        </div>
-                        <button class="btn-remove" onclick="removeItem(this)" title="Remover">
-                            <i class="bi bi-trash"></i> Excluir
-                        </button>
-                    </div>
-                    <div class="address-fields">
-                        <input type="text" class="form-control" placeholder="Logradouro (Rua, numero, complemento)" value="${data.logradouro || ''}">
-                        <div class="address-row">
-                            <input type="text" class="form-control" placeholder="Cidade" value="${data.cidade || ''}">
-                            <input type="text" class="form-control" placeholder="Estado" value="${data.estado || ''}">
-                            <input type="text" class="form-control" placeholder="CEP" value="${data.cep || ''}">
-                        </div>
-                        <input type="text" class="form-control" placeholder="Pais" value="${data.pais || 'Brasil'}" style="max-width: 200px;">
-                    </div>
-                </div>
-            `;
-            container.insertAdjacentHTML('beforeend', html);
-        }
-
-        // Date Management
-        function addDate(data = {}) {
-            const container = document.getElementById('datesList');
-            const index = container.children.length;
-
-            const icons = {
-                'casamento': '💍',
-                'outro': '📅',
-                '': '📅'
-            };
-
-            const html = `
-                <div class="dynamic-item date-item" data-index="${index}">
-                    <div class="date-icon">${icons[data.tipo] || '📅'}</div>
-                    <div class="item-content">
-                        <select onchange="updateDateIcon(this)">
-                            <option value="casamento" ${data.tipo === 'casamento' ? 'selected' : ''}>Casamento</option>
-                            <option value="outro" ${data.tipo === 'outro' ? 'selected' : ''}>Outro</option>
-                        </select>
-                        <input type="date" value="${data.data || ''}">
-                        <input type="text" placeholder="Descricao" value="${data.descricao || ''}" style="flex: 2;">
-                    </div>
-                    <div class="item-actions">
-                        <button class="btn-remove" onclick="removeItem(this)" title="Remover">
-                            <i class="bi bi-trash"></i>
-                        </button>
-                    </div>
-                </div>
-            `;
-            container.insertAdjacentHTML('beforeend', html);
-        }
-
-        function updateDateIcon(select) {
-            const icons = { 'casamento': '💍', 'outro': '📅' };
-            const item = select.closest('.date-item');
-            item.querySelector('.date-icon').textContent = icons[select.value] || '📅';
-        }
-
-        // Relationship Management
-        const RELATIONSHIP_TYPES = [
-            { value: 'conjuge', label: 'Conjuge', icon: '💑' },
-            { value: 'filho', label: 'Filho(a)', icon: '👶' },
-            { value: 'pai', label: 'Pai', icon: '👨' },
-            { value: 'mae', label: 'Mae', icon: '👩' },
-            { value: 'irmao', label: 'Irmao(a)', icon: '👫' },
-            { value: 'avo', label: 'Avo(a)', icon: '👴' },
-            { value: 'neto', label: 'Neto(a)', icon: '👶' },
-            { value: 'tio', label: 'Tio(a)', icon: '👨‍👩‍👧' },
-            { value: 'sobrinho', label: 'Sobrinho(a)', icon: '🧒' },
-            { value: 'primo', label: 'Primo(a)', icon: '👥' },
-            { value: 'sogro', label: 'Sogro(a)', icon: '👴' },
-            { value: 'genro', label: 'Genro/Nora', icon: '👨‍👩‍👧' },
-            { value: 'cunhado', label: 'Cunhado(a)', icon: '👫' },
-            { value: 'chefe', label: 'Chefe', icon: '💼' },
-            { value: 'subordinado', label: 'Subordinado', icon: '👔' },
-            { value: 'assistente', label: 'Assistente', icon: '📋' },
-            { value: 'socio', label: 'Socio(a)', icon: '🤝' },
-            { value: 'colega', label: 'Colega', icon: '👥' },
-            { value: 'amigo', label: 'Amigo(a)', icon: '😊' },
-        ];
-
-        function addRelationship(data = {}) {
-            const container = document.getElementById('relationshipsList');
-            const index = container.children.length;
-
-            const initials = (data.nome || 'N').substring(0, 2).toUpperCase();
-            const linkedBadge = data.contact_id
-                ? `<span class="linked-badge" onclick="goToContact(${data.contact_id})" style="cursor: pointer;" title="Ir para contato">Vinculado <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem;"></i></span>`
-                : `<button class="btn-link-contact" onclick="openContactSelector(${index})"><i class="bi bi-search"></i> Buscar</button>`;
-
-            const typeOptions = RELATIONSHIP_TYPES.map(t =>
-                `<option value="${t.value}" ${data.tipo === t.value ? 'selected' : ''}>${t.label}</option>`
-            ).join('');
-
-            const html = `
-                <div class="dynamic-item relationship-item" data-index="${index}" data-contact-id="${data.contact_id || ''}">
-                    <div class="relationship-avatar">${initials}</div>
-                    <div class="relationship-content">
-                        <input type="text" placeholder="Buscar ou digitar nome..." value="${data.nome || ''}"
-                               oninput="updateRelationshipAvatar(this); searchContactInline(this)"
-                               onfocus="showInlineSearch(this)"
-                               autocomplete="off">
-                        <select>${typeOptions}</select>
-                    </div>
-                    <div class="relationship-link">${linkedBadge}</div>
-                    <div class="item-actions">
-                        <button class="btn-remove" onclick="removeRelationship(this, ${data.contact_id || 'null'})" title="Remover">
-                            <i class="bi bi-trash"></i>
-                        </button>
-                    </div>
-                    <div class="inline-search-results" style="display: none;"></div>
-                </div>
-            `;
-            container.insertAdjacentHTML('beforeend', html);
-        }
-
-        function goToContact(cid) {
-            window.open(`/contatos/${cid}`, '_blank');
-        }
-
-        // Inline search while typing name
-        let searchTimeout;
-        async function searchContactInline(input) {
-            const query = input.value.trim();
-            const item = input.closest('.relationship-item');
-            const resultsDiv = item.querySelector('.inline-search-results');
-
-            if (query.length < 2) {
-                resultsDiv.style.display = 'none';
-                return;
-            }
-
-            clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(async () => {
-                try {
-                    const response = await fetch(`/api/contacts?search=${encodeURIComponent(query)}&limit=5`);
-                    const data = await response.json();
-
-                    if (data.contacts && data.contacts.length > 0) {
-                        resultsDiv.innerHTML = data.contacts.map(c => `
-                            <div class="inline-result" onclick="selectInlineContact(this, ${c.id}, '${escapeHtml(c.nome)}')">
-                                <span class="result-name">${c.nome}</span>
-                                ${c.empresa ? `<span class="result-empresa">${c.empresa}</span>` : ''}
-                            </div>
-                        `).join('');
-                        resultsDiv.style.display = 'block';
-                    } else {
-                        resultsDiv.style.display = 'none';
-                    }
-                } catch (e) {
-                    console.error(e);
-                }
-            }, 300);
-        }
-
-        function showInlineSearch(input) {
-            // Hide other search results
+    document.addEventListener('DOMContentLoaded', loadContact);
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.relationship-item')) {
             document.querySelectorAll('.inline-search-results').forEach(d => d.style.display = 'none');
         }
+    });
 
-        function selectInlineContact(el, cid, name) {
-            const item = el.closest('.relationship-item');
+    async function loadContact() {
+        try {
+            const response = await fetch(`/api/contacts/${contactId}`);
+            if (!response.ok) throw new Error('Contato nao encontrado');
+            const data = await response.json();
+            contactData = data.contact || data;
+            populateForm(contactData);
+            document.getElementById('loadingOverlay').style.display = 'none';
+            setTimeout(() => loadInferredRelationships(), 500);
+        } catch (error) {
+            showToast('Erro ao carregar contato', 'error');
+            console.error(error);
+        }
+    }
+
+    function populateForm(data) {
+        document.getElementById('contactName').textContent = data.nome || 'Sem nome';
+        document.getElementById('nome').value = data.nome || '';
+        document.getElementById('apelido').value = data.apelido || '';
+        document.getElementById('linkedin').value = data.linkedin || '';
+        document.getElementById('empresa').value = data.empresa || '';
+        document.getElementById('cargo').value = data.cargo || '';
+        document.getElementById('manualNotes').value = data.manual_notes || '';
+
+        let contexto = data.contexto || 'professional';
+        if (contexto.includes(',')) contexto = contexto.includes('personal') ? 'personal' : 'professional';
+        const contextoRadio = document.querySelector(`input[name="contexto"][value="${contexto}"]`);
+        if (contextoRadio) contextoRadio.checked = true;
+
+        selectCircle(data.circulo || 5);
+        if (data.aniversario) document.getElementById('aniversario').value = data.aniversario;
+
+        const emails = parseJSON(data.emails) || [];
+        emails.forEach(email => addEmail(email));
+        if (emails.length === 0) addEmail();
+
+        const phones = parseJSON(data.telefones) || [];
+        phones.forEach(phone => addPhone(phone));
+        if (phones.length === 0) addPhone();
+
+        const addresses = parseJSON(data.enderecos) || [];
+        addresses.forEach(addr => addAddress(addr));
+
+        const dates = parseJSON(data.datas_importantes) || [];
+        dates.forEach(d => addDate(d));
+
+        const relationships = parseJSON(data.relacionamentos) || [];
+        relationships.forEach(rel => addRelationship(rel));
+    }
+
+    function parseJSON(data) {
+        if (!data) return null;
+        if (typeof data === 'object') return data;
+        try { return JSON.parse(data); } catch { return null; }
+    }
+
+    function switchTab(tabName) {
+        document.querySelectorAll('.edit-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.tab === tabName));
+        document.querySelectorAll('.edit-section').forEach(section => section.classList.toggle('active', section.id === `section-${tabName}`));
+    }
+
+    function selectCircle(num) {
+        document.querySelectorAll('.circle-option').forEach(opt => opt.classList.toggle('selected', parseInt(opt.dataset.circle) === num));
+        contactData.circulo = num;
+    }
+
+    function addEmail(data = {}) {
+        const container = document.getElementById('emailsList');
+        const index = container.children.length;
+        const isPrimary = data.primary || index === 0;
+        container.insertAdjacentHTML('beforeend', `
+            <div class="dynamic-item" data-index="${index}">
+                <div class="item-icon"><i class="bi bi-envelope"></i></div>
+                <div class="item-content">
+                    <input type="email" placeholder="email@exemplo.com" value="${data.email || ''}">
+                    <select>
+                        <option value="pessoal" ${data.tipo === 'pessoal' ? 'selected' : ''}>Pessoal</option>
+                        <option value="trabalho" ${data.tipo === 'trabalho' ? 'selected' : ''}>Trabalho</option>
+                        <option value="outro" ${data.tipo === 'outro' ? 'selected' : ''}>Outro</option>
+                    </select>
+                </div>
+                <div class="item-actions">
+                    <button class="btn-primary-flag ${isPrimary ? 'active' : ''}" onclick="setPrimaryEmail(${index})" title="Principal"><i class="bi bi-star-fill"></i></button>
+                    <button class="btn-remove" onclick="removeItem(this)" title="Remover"><i class="bi bi-trash"></i></button>
+                </div>
+            </div>
+        `);
+    }
+
+    function setPrimaryEmail(index) {
+        document.querySelectorAll('#emailsList .btn-primary-flag').forEach((btn, i) => btn.classList.toggle('active', i === index));
+    }
+
+    function addPhone(data = {}) {
+        const container = document.getElementById('phonesList');
+        container.insertAdjacentHTML('beforeend', `
+            <div class="dynamic-item">
+                <div class="item-icon"><i class="bi bi-telephone"></i></div>
+                <div class="item-content">
+                    <input type="tel" placeholder="+55 11 99999-9999" value="${data.number || ''}">
+                    <select>
+                        <option value="celular" ${data.tipo === 'celular' ? 'selected' : ''}>Celular</option>
+                        <option value="trabalho" ${data.tipo === 'trabalho' ? 'selected' : ''}>Trabalho</option>
+                        <option value="residencial" ${data.tipo === 'residencial' ? 'selected' : ''}>Residencial</option>
+                    </select>
+                </div>
+                <div class="item-actions">
+                    <button class="btn-remove" onclick="removeItem(this)"><i class="bi bi-trash"></i></button>
+                </div>
+            </div>
+        `);
+    }
+
+    function addAddress(data = {}) {
+        const container = document.getElementById('addressesList');
+        container.insertAdjacentHTML('beforeend', `
+            <div class="address-item">
+                <div class="address-header">
+                    <div class="address-type">
+                        <i class="bi bi-geo-alt"></i>
+                        <select class="form-control" style="width: 150px;">
+                            <option value="residencial" ${data.tipo === 'residencial' ? 'selected' : ''}>Residencial</option>
+                            <option value="comercial" ${data.tipo === 'comercial' ? 'selected' : ''}>Comercial</option>
+                        </select>
+                    </div>
+                    <button class="btn-remove" onclick="removeItem(this)"><i class="bi bi-trash"></i> Excluir</button>
+                </div>
+                <div class="address-fields">
+                    <input type="text" class="form-control" placeholder="Logradouro" value="${data.logradouro || ''}">
+                    <div class="address-row">
+                        <input type="text" class="form-control" placeholder="Cidade" value="${data.cidade || ''}">
+                        <input type="text" class="form-control" placeholder="Estado" value="${data.estado || ''}">
+                        <input type="text" class="form-control" placeholder="CEP" value="${data.cep || ''}">
+                    </div>
+                </div>
+            </div>
+        `);
+    }
+
+    function addDate(data = {}) {
+        const container = document.getElementById('datesList');
+        const icons = { 'casamento': '💍', 'outro': '📅' };
+        container.insertAdjacentHTML('beforeend', `
+            <div class="dynamic-item date-item">
+                <div class="date-icon">${icons[data.tipo] || '📅'}</div>
+                <div class="item-content">
+                    <select onchange="this.closest('.date-item').querySelector('.date-icon').textContent={'casamento':'💍','outro':'📅'}[this.value]||'📅'">
+                        <option value="casamento" ${data.tipo === 'casamento' ? 'selected' : ''}>Casamento</option>
+                        <option value="outro" ${data.tipo === 'outro' ? 'selected' : ''}>Outro</option>
+                    </select>
+                    <input type="date" value="${data.data || ''}">
+                    <input type="text" placeholder="Descricao" value="${data.descricao || ''}" style="flex: 2;">
+                </div>
+                <div class="item-actions"><button class="btn-remove" onclick="removeItem(this)"><i class="bi bi-trash"></i></button></div>
+            </div>
+        `);
+    }
+
+    const RELATIONSHIP_TYPES = [
+        { value: 'conjuge', label: 'Conjuge' }, { value: 'filho', label: 'Filho(a)' },
+        { value: 'pai', label: 'Pai' }, { value: 'mae', label: 'Mae' }, { value: 'irmao', label: 'Irmao(a)' },
+        { value: 'chefe', label: 'Chefe' }, { value: 'socio', label: 'Socio(a)' },
+        { value: 'colega', label: 'Colega' }, { value: 'amigo', label: 'Amigo(a)' },
+        { value: 'assistente', label: 'Assistente' },
+    ];
+
+    function addRelationship(data = {}) {
+        const container = document.getElementById('relationshipsList');
+        const index = container.children.length;
+        const initials = (data.nome || 'N').substring(0, 2).toUpperCase();
+        const linkedBadge = data.contact_id
+            ? `<span class="linked-badge" onclick="window.open('/contatos/${data.contact_id}','_blank')" style="cursor:pointer">Vinculado</span>`
+            : `<button class="btn-link-contact" onclick="openContactSelector(${index})"><i class="bi bi-search"></i> Buscar</button>`;
+        const typeOptions = RELATIONSHIP_TYPES.map(t => `<option value="${t.value}" ${data.tipo === t.value ? 'selected' : ''}>${t.label}</option>`).join('');
+
+        container.insertAdjacentHTML('beforeend', `
+            <div class="dynamic-item relationship-item" data-index="${index}" data-contact-id="${data.contact_id || ''}">
+                <div class="relationship-avatar">${initials}</div>
+                <div class="relationship-content">
+                    <input type="text" placeholder="Nome..." value="${data.nome || ''}" oninput="this.closest('.relationship-item').querySelector('.relationship-avatar').textContent=(this.value||'N').substring(0,2).toUpperCase();searchContactInline(this)" onfocus="showInlineSearch(this)" autocomplete="off">
+                    <select>${typeOptions}</select>
+                </div>
+                <div class="relationship-link">${linkedBadge}</div>
+                <div class="item-actions"><button class="btn-remove" onclick="removeRelationship(this, ${data.contact_id || 'null'})"><i class="bi bi-trash"></i></button></div>
+                <div class="inline-search-results" style="display: none;"></div>
+            </div>
+        `);
+    }
+
+    let searchTimeout;
+    async function searchContactInline(input) {
+        const query = input.value.trim();
+        const item = input.closest('.relationship-item');
+        const resultsDiv = item.querySelector('.inline-search-results');
+        if (query.length < 2) { resultsDiv.style.display = 'none'; return; }
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(async () => {
+            try {
+                const response = await fetch(`/api/contacts?search=${encodeURIComponent(query)}&limit=5`);
+                const data = await response.json();
+                if (data.contacts && data.contacts.length > 0) {
+                    resultsDiv.innerHTML = data.contacts.map(c => `<div class="inline-result" onclick="selectInlineContact(this, ${c.id}, '${c.nome.replace(/'/g, "\\'")}')"><span class="result-name">${c.nome}</span>${c.empresa ? `<span class="result-empresa">${c.empresa}</span>` : ''}</div>`).join('');
+                    resultsDiv.style.display = 'block';
+                } else { resultsDiv.style.display = 'none'; }
+            } catch (e) { console.error(e); }
+        }, 300);
+    }
+
+    function showInlineSearch(input) { document.querySelectorAll('.inline-search-results').forEach(d => d.style.display = 'none'); }
+
+    function selectInlineContact(el, cid, name) {
+        const item = el.closest('.relationship-item');
+        item.dataset.contactId = cid;
+        item.querySelector('input').value = name;
+        item.querySelector('.relationship-link').innerHTML = `<span class="linked-badge" onclick="window.open('/contatos/${cid}','_blank')" style="cursor:pointer">Vinculado</span>`;
+        item.querySelector('.inline-search-results').style.display = 'none';
+        item.querySelector('.relationship-avatar').textContent = name.substring(0, 2).toUpperCase();
+    }
+
+    async function removeRelationship(btn, relatedContactId) {
+        const item = btn.closest('.relationship-item');
+        if (relatedContactId && relatedContactId !== 'null') {
+            try { await fetch(`/api/contacts/${contactId}/relationships/${relatedContactId}`, { method: 'DELETE' }); } catch (e) { console.error(e); }
+        }
+        item.remove();
+    }
+
+    async function loadInferredRelationships() {
+        try {
+            const response = await fetch(`/api/contacts/${contactId}/relationships/inferred`);
+            const data = await response.json();
+            if (data.inferred && data.inferred.length > 0) {
+                const section = document.getElementById('inferredSection');
+                const list = document.getElementById('inferredList');
+                list.innerHTML = data.inferred.map(rel => {
+                    const initials = (rel.nome || 'N').substring(0, 2).toUpperCase();
+                    return `<div class="dynamic-item relationship-item" style="opacity:0.8;"><div class="relationship-avatar" style="background:var(--gray-400);">${initials}</div><div class="relationship-content" style="flex-direction:column;align-items:flex-start;gap:2px;"><span style="font-weight:500;">${rel.nome || 'Desconhecido'}</span><span style="font-size:0.75rem;color:var(--gray-500);">${rel.tipo}</span></div></div>`;
+                }).join('');
+                section.style.display = 'block';
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    function openContactSelector(relationshipIndex) {
+        currentRelationshipIndex = relationshipIndex;
+        document.getElementById('contactSelectorModal').classList.add('active');
+        document.getElementById('contactSearchInput').focus();
+    }
+
+    function closeContactSelector() {
+        document.getElementById('contactSelectorModal').classList.remove('active');
+        currentRelationshipIndex = null;
+    }
+
+    async function searchContacts() {
+        const query = document.getElementById('contactSearchInput').value;
+        if (query.length < 2) { document.getElementById('contactSearchResults').innerHTML = '<p style="text-align:center;color:var(--gray-400);padding:20px;">Digite pelo menos 2 caracteres</p>'; return; }
+        try {
+            const response = await fetch(`/api/contacts?search=${encodeURIComponent(query)}&limit=10`);
+            const data = await response.json();
+            document.getElementById('contactSearchResults').innerHTML = data.contacts.map(c => `<div class="contact-option" onclick="selectContactForRelationship(${c.id}, '${c.nome}')"><div class="avatar">${(c.nome||'N').substring(0,2).toUpperCase()}</div><div class="info"><div class="name">${c.nome}</div>${c.empresa ? `<div class="empresa">${c.empresa}</div>` : ''}</div></div>`).join('') || '<p style="text-align:center;color:var(--gray-400);padding:20px;">Nenhum encontrado</p>';
+        } catch (error) { console.error(error); }
+    }
+
+    function selectContactForRelationship(cid, name) {
+        const items = document.querySelectorAll('#relationshipsList .relationship-item');
+        const item = items[currentRelationshipIndex];
+        if (item) {
             item.dataset.contactId = cid;
             item.querySelector('input').value = name;
-            item.querySelector('.relationship-link').innerHTML =
-                `<span class="linked-badge" onclick="goToContact(${cid})" style="cursor: pointer;" title="Ir para contato">Vinculado <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem;"></i></span>`;
-            item.querySelector('.inline-search-results').style.display = 'none';
-            updateRelationshipAvatar(item.querySelector('input'));
+            item.querySelector('.relationship-link').innerHTML = '<span class="linked-badge">Vinculado</span>';
+            item.querySelector('.relationship-avatar').textContent = name.substring(0, 2).toUpperCase();
         }
+        closeContactSelector();
+    }
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML.replace(/'/g, "\\'");
-        }
+    function removeItem(btn) { btn.closest('.dynamic-item, .address-item').remove(); }
 
-        // Remove relationship (bidirectional)
-        async function removeRelationship(btn, relatedContactId) {
-            const item = btn.closest('.relationship-item');
+    function collectFormData() {
+        const data = {
+            nome: document.getElementById('nome').value,
+            apelido: document.getElementById('apelido').value || null,
+            linkedin: document.getElementById('linkedin').value || null,
+            empresa: document.getElementById('empresa').value || null,
+            cargo: document.getElementById('cargo').value || null,
+            contexto: document.querySelector('input[name="contexto"]:checked').value,
+            circulo: contactData.circulo || 5,
+            circulo_manual: true,
+            aniversario: document.getElementById('aniversario').value || null,
+            manual_notes: document.getElementById('manualNotes').value || null,
+            emails: [], telefones: [], enderecos: [], datas_importantes: [], relacionamentos: []
+        };
 
-            if (relatedContactId && relatedContactId !== 'null') {
-                // Remove from both contacts via API
-                try {
-                    await fetch(`/api/contacts/${contactId}/relationships/${relatedContactId}`, {
-                        method: 'DELETE'
-                    });
-                } catch (e) {
-                    console.error('Erro ao remover relacionamento bidirecional:', e);
-                }
+        document.querySelectorAll('#emailsList .dynamic-item').forEach((item, i) => {
+            const email = item.querySelector('input[type="email"]').value.trim();
+            if (email) data.emails.push({ email, tipo: item.querySelector('select').value, primary: item.querySelector('.btn-primary-flag').classList.contains('active') });
+        });
+        document.querySelectorAll('#phonesList .dynamic-item').forEach(item => {
+            const number = item.querySelector('input[type="tel"]').value.trim();
+            if (number) data.telefones.push({ number, tipo: item.querySelector('select').value });
+        });
+        document.querySelectorAll('#addressesList .address-item').forEach(item => {
+            const inputs = item.querySelectorAll('input');
+            if (inputs[0].value.trim()) data.enderecos.push({ tipo: item.querySelector('select').value, logradouro: inputs[0].value.trim(), cidade: inputs[1].value.trim(), estado: inputs[2].value.trim(), cep: inputs[3].value.trim() });
+        });
+        document.querySelectorAll('#datesList .date-item').forEach(item => {
+            const dateVal = item.querySelector('input[type="date"]').value;
+            if (dateVal) data.datas_importantes.push({ tipo: item.querySelector('select').value, data: dateVal, descricao: item.querySelectorAll('input')[1].value.trim() });
+        });
+        document.querySelectorAll('#relationshipsList .relationship-item').forEach(item => {
+            const nome = item.querySelector('input').value.trim();
+            if (nome) data.relacionamentos.push({ tipo: item.querySelector('select').value, nome, contact_id: item.dataset.contactId ? parseInt(item.dataset.contactId) : null });
+        });
+        return data;
+    }
+
+    async function saveContact() {
+        const btn = document.getElementById('btnSave');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Salvando...';
+        try {
+            const data = collectFormData();
+            const response = await fetch(`/api/contacts/${contactId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+            if (!response.ok) { const err = await response.json(); throw new Error(err.detail || 'Erro ao salvar'); }
+            const linkedRelationships = data.relacionamentos.filter(r => r.contact_id);
+            for (const rel of linkedRelationships) {
+                try { await fetch(`/api/contacts/${contactId}/relationships`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rel) }); } catch (e) { console.warn(e); }
             }
+            showToast('Contato salvo!', 'success');
+            document.getElementById('contactName').textContent = data.nome;
+            loadInferredRelationships();
+        } catch (error) { showToast(error.message, 'error'); console.error(error); }
+        finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2 me-1"></i> Salvar'; }
+    }
 
-            item.remove();
-        }
-
-        // Load inferred relationships
-        async function loadInferredRelationships() {
-            try {
-                const response = await fetch(`/api/contacts/${contactId}/relationships/inferred`);
-                const data = await response.json();
-
-                if (data.inferred && data.inferred.length > 0) {
-                    const section = document.getElementById('inferredSection');
-                    const list = document.getElementById('inferredList');
-
-                    list.innerHTML = data.inferred.map(rel => {
-                        const initials = (rel.nome || 'N').substring(0, 2).toUpperCase();
-                        const viaText = rel.via ? `via ${rel.via.nome} (${rel.via.tipo})` : '';
-                        const linkBtn = rel.contact_id
-                            ? `<span class="linked-badge" onclick="goToContact(${rel.contact_id})" style="cursor: pointer;">Ver <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem;"></i></span>`
-                            : '';
-
-                        return `
-                            <div class="dynamic-item relationship-item" style="background: var(--gray-100); opacity: 0.8;">
-                                <div class="relationship-avatar" style="background: var(--gray-400);">${initials}</div>
-                                <div class="relationship-content" style="flex-direction: column; align-items: flex-start; gap: 2px;">
-                                    <span style="font-weight: 500;">${rel.nome || 'Desconhecido'}</span>
-                                    <span style="font-size: 0.75rem; color: var(--gray-500);">${rel.tipo} ${viaText}</span>
-                                </div>
-                                <div class="relationship-link">${linkBtn}</div>
-                            </div>
-                        `;
-                    }).join('');
-
-                    section.style.display = 'block';
-                }
-            } catch (e) {
-                console.error('Erro ao carregar relacionamentos inferidos:', e);
-            }
-        }
-
-        function updateRelationshipAvatar(input) {
-            const item = input.closest('.relationship-item');
-            const avatar = item.querySelector('.relationship-avatar');
-            const name = input.value || 'N';
-            avatar.textContent = name.substring(0, 2).toUpperCase();
-        }
-
-        // Contact Selector
-        function openContactSelector(relationshipIndex) {
-            currentRelationshipIndex = relationshipIndex;
-            document.getElementById('contactSelectorModal').classList.add('active');
-            document.getElementById('contactSearchInput').focus();
-        }
-
-        function closeContactSelector() {
-            document.getElementById('contactSelectorModal').classList.remove('active');
-            currentRelationshipIndex = null;
-        }
-
-        async function searchContacts() {
-            const query = document.getElementById('contactSearchInput').value;
-            if (query.length < 2) {
-                document.getElementById('contactSearchResults').innerHTML = '<p style="text-align: center; color: var(--gray-400); padding: 20px;">Digite pelo menos 2 caracteres</p>';
-                return;
-            }
-
-            try {
-                const response = await fetch(`/api/contacts?search=${encodeURIComponent(query)}&limit=10`);
-                const data = await response.json();
-
-                const resultsHtml = data.contacts.map(c => `
-                    <div class="contact-option" onclick="selectContactForRelationship(${c.id}, '${c.nome}')">
-                        <div class="avatar">${(c.nome || 'N').substring(0, 2).toUpperCase()}</div>
-                        <div class="info">
-                            <div class="name">${c.nome}</div>
-                            ${c.empresa ? `<div class="empresa">${c.empresa}</div>` : ''}
-                        </div>
-                    </div>
-                `).join('');
-
-                document.getElementById('contactSearchResults').innerHTML = resultsHtml || '<p style="text-align: center; color: var(--gray-400); padding: 20px;">Nenhum contato encontrado</p>';
-            } catch (error) {
-                console.error(error);
-            }
-        }
-
-        function selectContactForRelationship(cid, name) {
-            const items = document.querySelectorAll('#relationshipsList .relationship-item');
-            const item = items[currentRelationshipIndex];
-            if (item) {
-                item.dataset.contactId = cid;
-                item.querySelector('input').value = name;
-                item.querySelector('.relationship-link').innerHTML = '<span class="linked-badge">Vinculado</span>';
-                updateRelationshipAvatar(item.querySelector('input'));
-            }
-            closeContactSelector();
-        }
-
-        // Generic remove
-        function removeItem(btn) {
-            btn.closest('.dynamic-item, .address-item').remove();
-        }
-
-        // Collect Form Data
-        function collectFormData() {
-            const data = {
-                nome: document.getElementById('nome').value,
-                apelido: document.getElementById('apelido').value || null,
-                linkedin: document.getElementById('linkedin').value || null,
-                empresa: document.getElementById('empresa').value || null,
-                cargo: document.getElementById('cargo').value || null,
-                contexto: document.querySelector('input[name="contexto"]:checked').value,
-                circulo: contactData.circulo || 5,
-                circulo_manual: true,
-                aniversario: document.getElementById('aniversario').value || null,
-                manual_notes: document.getElementById('manualNotes').value || null,
-                emails: [],
-                telefones: [],
-                enderecos: [],
-                datas_importantes: [],
-                relacionamentos: []
-            };
-
-            // Collect emails
-            document.querySelectorAll('#emailsList .dynamic-item').forEach((item, i) => {
-                const email = item.querySelector('input[type="email"]').value.trim();
-                if (email) {
-                    data.emails.push({
-                        email: email,
-                        tipo: item.querySelector('select').value,
-                        primary: item.querySelector('.btn-primary-flag').classList.contains('active')
-                    });
-                }
-            });
-
-            // Collect phones
-            document.querySelectorAll('#phonesList .dynamic-item').forEach(item => {
-                const number = item.querySelector('input[type="tel"]').value.trim();
-                if (number) {
-                    data.telefones.push({
-                        number: number,
-                        tipo: item.querySelector('select').value
-                    });
-                }
-            });
-
-            // Collect addresses
-            document.querySelectorAll('#addressesList .address-item').forEach(item => {
-                const inputs = item.querySelectorAll('input');
-                const logradouro = inputs[0].value.trim();
-                if (logradouro) {
-                    data.enderecos.push({
-                        tipo: item.querySelector('select').value,
-                        logradouro: logradouro,
-                        cidade: inputs[1].value.trim(),
-                        estado: inputs[2].value.trim(),
-                        cep: inputs[3].value.trim(),
-                        pais: inputs[4].value.trim() || 'Brasil'
-                    });
-                }
-            });
-
-            // Collect dates
-            document.querySelectorAll('#datesList .date-item').forEach(item => {
-                const dateVal = item.querySelector('input[type="date"]').value;
-                if (dateVal) {
-                    data.datas_importantes.push({
-                        tipo: item.querySelector('select').value,
-                        data: dateVal,
-                        descricao: item.querySelectorAll('input')[1].value.trim()
-                    });
-                }
-            });
-
-            // Collect relationships
-            document.querySelectorAll('#relationshipsList .relationship-item').forEach(item => {
-                const nome = item.querySelector('input').value.trim();
-                if (nome) {
-                    const contactId = item.dataset.contactId;
-                    data.relacionamentos.push({
-                        tipo: item.querySelector('select').value,
-                        nome: nome,
-                        contact_id: contactId ? parseInt(contactId) : null
-                    });
-                }
-            });
-
-            return data;
-        }
-
-        // Save Contact
-        async function saveContact() {
-            const btn = document.getElementById('btnSave');
-            btn.disabled = true;
-            btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Salvando...';
-
-            try {
-                const data = collectFormData();
-
-                // Salvar contato principal
-                const response = await fetch(`/api/contacts/${contactId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-
-                if (!response.ok) {
-                    const err = await response.json();
-                    throw new Error(err.detail || 'Erro ao salvar');
-                }
-
-                // Atualizar relacionamentos bidirecionais para contatos vinculados
-                const linkedRelationships = data.relacionamentos.filter(r => r.contact_id);
-                for (const rel of linkedRelationships) {
-                    try {
-                        await fetch(`/api/contacts/${contactId}/relationships`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(rel)
-                        });
-                    } catch (e) {
-                        console.warn('Erro ao criar relacao bidirecional:', e);
-                    }
-                }
-
-                showToast('Contato salvo com sucesso!', 'success');
-
-                // Update header name
-                document.getElementById('contactName').textContent = data.nome;
-
-                // Recarregar relacionamentos inferidos
-                loadInferredRelationships();
-
-            } catch (error) {
-                showToast(error.message, 'error');
-                console.error(error);
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-check2"></i> Salvar';
-            }
-        }
-
-        // Toast Notification
-        function showToast(message, type = 'info') {
-            const container = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
-            toast.className = `toast ${type}`;
-            toast.innerHTML = `<i class="bi bi-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i> ${message}`;
-            container.appendChild(toast);
-
-            setTimeout(() => {
-                toast.style.animation = 'slideIn 0.3s ease reverse';
-                setTimeout(() => toast.remove(), 300);
-            }, 3000);
-        }
-    </script>
-</body>
-</html>
+    function showToast(message, type = 'info') {
+        const container = document.getElementById('toastContainer');
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.innerHTML = `<i class="bi bi-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i> ${message}`;
+        container.appendChild(toast);
+        setTimeout(() => { toast.style.animation = 'slideIn 0.3s ease reverse'; setTimeout(() => toast.remove(), 300); }, 3000);
+    }
+</script>
+{% endblock %}
