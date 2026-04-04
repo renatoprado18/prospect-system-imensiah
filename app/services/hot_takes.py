@@ -445,7 +445,15 @@ def get_hot_takes(status: str = None, limit: int = 20) -> list[dict]:
                 LIMIT %s
             ''', (limit,))
 
-        return [dict(row) for row in cursor.fetchall()]
+        results = []
+        for row in cursor.fetchall():
+            item = dict(row)
+            # Convert datetime to string for JSON serialization
+            for key in ['created_at', 'scheduled_for', 'published_at']:
+                if item.get(key) and hasattr(item[key], 'isoformat'):
+                    item[key] = item[key].isoformat()
+            results.append(item)
+        return results
 
 
 def get_weekly_digest_stats() -> dict:
