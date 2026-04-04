@@ -162,7 +162,9 @@ def update_editorial_post(post_id: int, data: Dict) -> Optional[Dict]:
             'project_id', 'article_slug', 'article_title', 'article_url',
             'article_description', 'canal', 'tipo', 'titulo_adaptado',
             'conteudo_adaptado', 'imagem_url', 'status', 'data_publicacao',
-            'prioridade', 'notas', 'url_publicado', 'task_id', 'calendar_event_id'
+            'prioridade', 'notas', 'url_publicado', 'task_id', 'calendar_event_id',
+            'linkedin_post_url', 'linkedin_impressoes', 'linkedin_reacoes',
+            'linkedin_comentarios', 'linkedin_compartilhamentos', 'linkedin_cliques'
         ]
 
         for field in updatable_fields:
@@ -182,6 +184,16 @@ def update_editorial_post(post_id: int, data: Dict) -> Optional[Dict]:
         if 'metricas' in data:
             updates.append("metricas = %s")
             params.append(json.dumps(data['metricas']))
+
+        # Set linkedin_metricas_em timestamp when metrics are saved
+        metrics_fields = ['linkedin_impressoes', 'linkedin_reacoes', 'linkedin_comentarios',
+                          'linkedin_compartilhamentos', 'linkedin_cliques']
+        if any(data.get(f) for f in metrics_fields):
+            updates.append("linkedin_metricas_em = CURRENT_TIMESTAMP")
+
+        # Set data_publicado when LinkedIn URL is provided and post becomes published
+        if data.get('linkedin_post_url') and data.get('status') == 'published':
+            updates.append("data_publicado = COALESCE(data_publicado, CURRENT_TIMESTAMP)")
 
         if not updates:
             return get_editorial_post(post_id)

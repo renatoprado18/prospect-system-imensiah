@@ -1562,16 +1562,35 @@ async function openPostModal(postId) {
         // If suggesting a new date for a draft, pre-select 'scheduled' status
         const effectiveStatus = (!post.data_publicacao && post.status === 'draft') ? 'scheduled' : post.status;
 
-        // Check if post is published and if 48h have passed
+        // Check if post is published/scheduled and if 48h have passed
         const isPublished = post.status === 'published';
+        const isScheduled = post.status === 'scheduled';
         const publishedDate = post.data_publicado ? new Date(post.data_publicado) : null;
         const hoursSincePublished = publishedDate ? (Date.now() - publishedDate.getTime()) / (1000 * 60 * 60) : 0;
         const canAddMetrics = isPublished && hoursSincePublished >= 48;
         const hasMetrics = post.linkedin_impressoes > 0;
 
-        // Metrics section (only for published posts)
+        // LinkedIn section (for scheduled and published posts)
         let metricsSection = '';
-        if (isPublished) {
+        if (isScheduled) {
+            // For scheduled posts: show only URL field to mark as published
+            metricsSection = `
+                <div style="background: linear-gradient(135deg, #fef3c7, #fde68a); border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #f59e0b;">
+                    <h4 style="margin: 0 0 12px; font-size: 0.9rem; color: #92400e; display: flex; align-items: center; gap: 8px;">
+                        <i class="bi bi-linkedin"></i> Marcar como Publicado
+                    </h4>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 0.8rem;">Cole o link do post após publicar no LinkedIn</label>
+                        <input type="text" class="form-control" id="edit-linkedin-url"
+                            placeholder="https://linkedin.com/feed/update/urn:li:activity:..."
+                            value="${post.linkedin_post_url || ''}"
+                            style="font-size: 0.85rem;">
+                        <small style="color: #92400e;">Ao salvar com o link, o status mudará para "Publicado"</small>
+                    </div>
+                </div>
+            `;
+        } else if (isPublished) {
+            // For published posts: show URL field + metrics (if 48h passed)
             metricsSection = `
                 <div style="background: linear-gradient(135deg, #f0f9ff, #e0f2fe); border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #0ea5e9;">
                     <h4 style="margin: 0 0 12px; font-size: 0.9rem; color: #0369a1; display: flex; align-items: center; gap: 8px;">
@@ -1719,11 +1738,23 @@ async function savePost(postId) {
         status = 'scheduled';
     }
 
+    // Get LinkedIn URL - if provided and status is scheduled, auto-publish
+    const linkedinUrl = document.getElementById('edit-linkedin-url')?.value || null;
+    if (linkedinUrl && linkedinUrl.includes('linkedin.com') && status === 'scheduled') {
+        status = 'published';
+    }
+
     const data = {
         status: status,
         canal: document.getElementById('edit-canal').value,
         data_publicacao: dateValue || null,
-        conteudo_adaptado: document.getElementById('edit-conteudo').value || null
+        conteudo_adaptado: document.getElementById('edit-conteudo').value || null,
+        linkedin_post_url: linkedinUrl,
+        linkedin_impressoes: parseInt(document.getElementById('edit-impressoes')?.value) || null,
+        linkedin_reacoes: parseInt(document.getElementById('edit-reacoes')?.value) || null,
+        linkedin_comentarios: parseInt(document.getElementById('edit-comentarios')?.value) || null,
+        linkedin_compartilhamentos: parseInt(document.getElementById('edit-compartilhamentos')?.value) || null,
+        linkedin_cliques: parseInt(document.getElementById('edit-cliques')?.value) || null
     };
 
     try {
