@@ -64,10 +64,14 @@ async def list_folders(access_token: str, parent_id: str = None) -> List[Dict]:
     """
     List folders in Google Drive
     If parent_id is provided, list folders within that folder
+    If parent_id is None, list root-level folders
     """
     query = "mimeType='application/vnd.google-apps.folder' and trashed=false"
     if parent_id:
         query += f" and '{parent_id}' in parents"
+    else:
+        # Root-level folders
+        query += " and 'root' in parents"
 
     params = {
         "q": query,
