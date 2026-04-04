@@ -5594,20 +5594,21 @@ from integrations.google_drive import (
 @app.get("/api/drive/folders")
 async def api_list_drive_folders(parent_id: str = None):
     """Lista pastas do Google Drive"""
-    conn = get_db()
-
-    access_token = await get_valid_token(conn)
-    if not access_token:
-        conn.close()
-        raise HTTPException(status_code=401, detail="Google Drive não conectado")
-
+    conn = None
     try:
+        conn = get_db()
+        access_token = await get_valid_token(conn)
+        if not access_token:
+            return {"error": "Google Drive não conectado - token não encontrado"}
+
         folders = await list_folders(access_token, parent_id)
-        conn.close()
         return {"folders": folders}
     except Exception as e:
-        conn.close()
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+    finally:
+        if conn:
+            conn.close()
 
 
 @app.get("/api/drive/folders/{folder_id}/contents")
