@@ -1,1433 +1,971 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>INTEL - Configurações</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --primary: #6366f1;
-            --primary-dark: #4f46e5;
-            --secondary: #0ea5e9;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --danger: #ef4444;
-            --dark: #1e293b;
-            --light: #f8fafc;
-            --gray-100: #f1f5f9;
-            --gray-200: #e2e8f0;
-            --gray-300: #cbd5e1;
-            --gray-400: #94a3b8;
-            --gray-500: #64748b;
-            --gray-600: #475569;
-            --sidebar-width: 260px;
-        }
+{% extends "rap_base.html" %}
 
-        * { box-sizing: border-box; }
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--gray-100);
-            margin: 0;
-            min-height: 100vh;
-        }
+{% block title %}INTEL - Configurações{% endblock %}
 
-        /* Sidebar */
-        .sidebar {
-            position: fixed;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: var(--sidebar-width);
-            background: linear-gradient(180deg, var(--dark) 0%, #0f172a 100%);
-            color: white;
-            z-index: 100;
-            display: flex;
-            flex-direction: column;
-        }
+{% block page_title %}Configurações{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle">Gerencie suas integrações e preferências</p>{% endblock %}
 
-        .sidebar-header { padding: 24px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: space-between; }
-        .btn-global-sync { width: 36px; height: 36px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; }
-        .btn-global-sync:hover { background: rgba(255,255,255,0.2); color: white; }
-        .btn-global-sync.syncing { animation: spin 1s linear infinite; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .sidebar-logo { display: flex; align-items: center; gap: 12px; font-size: 1.5rem; font-weight: 700; text-decoration: none; color: white; }
-        .sidebar-logo .icon { width: 40px; height: 40px; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
-        .sidebar-nav { flex: 1; padding: 16px 0; overflow-y: auto; }
-        .nav-section { padding: 6px 16px; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--gray-400); margin-top: 10px; }
-        .nav-item { display: flex; align-items: center; gap: 10px; padding: 8px 20px; color: var(--gray-300); text-decoration: none; transition: all 0.2s; border-left: 3px solid transparent; font-size: 0.875rem; }
-        .nav-item:hover { background: rgba(255,255,255,0.05); color: white; }
-        .nav-item.active { background: rgba(99, 102, 241, 0.15); color: white; border-left-color: var(--primary); }
-        .nav-item i { font-size: 1rem; width: 20px; text-align: center; }
-        .nav-item .badge { margin-left: auto; background: var(--primary); padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; }
-        .sidebar-footer { padding: 16px 24px; border-top: 1px solid rgba(255,255,255,0.1); }
-        .user-info { display: flex; align-items: center; gap: 12px; }
-        .user-avatar { width: 40px; height: 40px; border-radius: 50%; background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%); display: flex; align-items: center; justify-content: center; font-weight: 600; }
-        .user-name { font-weight: 500; font-size: 0.9rem; }
-        .user-role { font-size: 0.75rem; color: var(--gray-400); }
+{% block extra_css %}
+/* Account Cards */
+.account-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 20px; }
 
-        /* Main Content */
-        .main-content { margin-left: var(--sidebar-width); padding: 24px 32px; min-height: 100vh; }
+.account-card {
+    background: var(--gray-100);
+    border-radius: 16px;
+    padding: 24px;
+    transition: all 0.2s;
+}
 
-        /* Header */
-        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
-        .page-title { font-size: 1.75rem; font-weight: 700; color: var(--dark); margin: 0; }
-        .page-subtitle { color: var(--gray-500); font-size: 0.9rem; margin-top: 4px; }
+.account-card.connected { background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2); }
+.account-card.disconnected { background: var(--gray-100); border: 1px dashed var(--gray-300); }
 
-        /* Cards */
-        .card { background: white; border-radius: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); border: none; margin-bottom: 24px; }
-        .card-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--gray-200); background: transparent; }
-        .card-title { font-size: 1rem; font-weight: 600; color: var(--dark); margin: 0; display: flex; align-items: center; gap: 10px; }
-        .card-body { padding: 24px; }
+.account-header { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
 
-        /* Account Cards */
-        .account-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 20px; }
+.account-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+}
 
-        .account-card {
-            background: var(--gray-100);
-            border-radius: 16px;
-            padding: 24px;
-            transition: all 0.2s;
-        }
+.account-icon.google { background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.account-icon.professional { background: linear-gradient(135deg, #4285f4 0%, #34a853 100%); color: white; }
+.account-icon.personal { background: linear-gradient(135deg, #ea4335 0%, #fbbc05 100%); color: white; }
 
-        .account-card.connected { background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2); }
-        .account-card.disconnected { background: var(--gray-100); border: 1px dashed var(--gray-300); }
+.account-info { flex: 1; }
+.account-type { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gray-500); margin-bottom: 4px; }
+.account-email { font-weight: 600; color: var(--dark); font-size: 1rem; }
+.account-status { font-size: 0.8rem; margin-top: 4px; }
+.account-status.connected { color: var(--success); }
+.account-status.disconnected { color: var(--gray-400); }
 
-        .account-header { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+.account-meta { display: flex; gap: 16px; margin-bottom: 16px; font-size: 0.85rem; color: var(--gray-500); }
+.account-meta i { margin-right: 6px; }
 
-        .account-icon {
-            width: 56px;
-            height: 56px;
-            border-radius: 14px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.5rem;
-        }
+.account-actions { display: flex; gap: 8px; }
 
-        .account-icon.google { background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        .account-icon.professional { background: linear-gradient(135deg, #4285f4 0%, #34a853 100%); color: white; }
-        .account-icon.personal { background: linear-gradient(135deg, #ea4335 0%, #fbbc05 100%); color: white; }
+/* Buttons */
+.btn-primary { background: var(--primary); border-color: var(--primary); padding: 10px 20px; border-radius: 10px; font-weight: 500; }
+.btn-primary:hover { background: var(--primary-dark); border-color: var(--primary-dark); }
+.btn-success { background: var(--success); border-color: var(--success); border-radius: 10px; }
+.btn-outline-secondary { border-radius: 10px; }
+.btn-outline-danger { border-radius: 10px; }
 
-        .account-info { flex: 1; }
-        .account-type { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gray-500); margin-bottom: 4px; }
-        .account-email { font-weight: 600; color: var(--dark); font-size: 1rem; }
-        .account-status { font-size: 0.8rem; margin-top: 4px; }
-        .account-status.connected { color: var(--success); }
-        .account-status.disconnected { color: var(--gray-400); }
+/* Connect Buttons */
+.connect-buttons { display: flex; gap: 16px; margin-top: 24px; }
 
-        .account-meta { display: flex; gap: 16px; margin-bottom: 16px; font-size: 0.85rem; color: var(--gray-500); }
-        .account-meta i { margin-right: 6px; }
+.connect-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 20px;
+    background: white;
+    border: 2px dashed var(--gray-300);
+    border-radius: 16px;
+    color: var(--gray-600);
+    text-decoration: none;
+    transition: all 0.2s;
+}
 
-        .account-actions { display: flex; gap: 8px; }
+.connect-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: rgba(99, 102, 241, 0.05);
+}
 
-        /* Buttons */
-        .btn-primary { background: var(--primary); border-color: var(--primary); padding: 10px 20px; border-radius: 10px; font-weight: 500; }
-        .btn-primary:hover { background: var(--primary-dark); border-color: var(--primary-dark); }
-        .btn-success { background: var(--success); border-color: var(--success); border-radius: 10px; }
-        .btn-outline-secondary { border-radius: 10px; }
-        .btn-outline-danger { border-radius: 10px; }
+.connect-btn i { font-size: 1.5rem; }
+.connect-btn-text { text-align: left; }
+.connect-btn-title { font-weight: 600; font-size: 0.95rem; }
+.connect-btn-desc { font-size: 0.8rem; opacity: 0.7; margin-top: 2px; }
 
-        /* Connect Buttons */
-        .connect-buttons { display: flex; gap: 16px; margin-top: 24px; }
+/* Alert */
+.alert-custom {
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
 
-        .connect-btn {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            padding: 20px;
-            background: white;
-            border: 2px dashed var(--gray-300);
-            border-radius: 16px;
-            color: var(--gray-600);
-            text-decoration: none;
-            transition: all 0.2s;
-        }
+.alert-success { background: rgba(16, 185, 129, 0.1); color: var(--success); border: none; }
+.alert-danger { background: rgba(239, 68, 68, 0.1); color: var(--danger); border: none; }
+.alert-info { background: rgba(14, 165, 233, 0.1); color: var(--secondary); border: none; }
 
-        .connect-btn:hover {
-            border-color: var(--primary);
-            color: var(--primary);
-            background: rgba(99, 102, 241, 0.05);
-        }
+/* Sync Progress */
+.sync-progress {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 16px;
+    background: rgba(99, 102, 241, 0.1);
+    border-radius: 12px;
+    margin-bottom: 16px;
+}
 
-        .connect-btn i { font-size: 1.5rem; }
-        .connect-btn-text { text-align: left; }
-        .connect-btn-title { font-weight: 600; font-size: 0.95rem; }
-        .connect-btn-desc { font-size: 0.8rem; opacity: 0.7; margin-top: 2px; }
+.sync-progress.active { display: flex; }
 
-        /* Alert */
-        .alert-custom {
-            border-radius: 12px;
-            padding: 16px 20px;
-            margin-bottom: 24px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
+/* Section */
+.settings-section { margin-bottom: 32px; }
+.section-title { font-size: 1.1rem; font-weight: 600; color: var(--dark); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
 
-        .alert-success { background: rgba(16, 185, 129, 0.1); color: var(--success); border: none; }
-        .alert-danger { background: rgba(239, 68, 68, 0.1); color: var(--danger); border: none; }
-        .alert-info { background: rgba(14, 165, 233, 0.1); color: var(--secondary); border: none; }
+/* WhatsApp Section */
+.whatsapp-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 50px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+.whatsapp-status.connected { background: rgba(37, 211, 102, 0.15); color: #128C7E; }
+.whatsapp-status.disconnected { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
+.whatsapp-status.connecting { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
+.whatsapp-status .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.whatsapp-status.connected .dot { animation: wapulse 2s infinite; }
+@keyframes wapulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
-        /* Sync Progress */
-        .sync-progress {
-            display: none;
-            align-items: center;
-            gap: 12px;
-            padding: 16px;
-            background: rgba(99, 102, 241, 0.1);
-            border-radius: 12px;
-            margin-bottom: 16px;
-        }
+.whatsapp-card {
+    background: linear-gradient(135deg, #25D366 0%, #128C7E 100%);
+    color: white;
+    border-radius: 12px;
+    padding: 20px;
+}
+.whatsapp-card .info-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(255,255,255,0.15);
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin-top: 16px;
+}
+.qr-container {
+    text-align: center;
+    padding: 24px;
+    background: var(--gray-100);
+    border-radius: 12px;
+}
+.qr-container img { border-radius: 8px; }
 
-        .sync-progress.active { display: flex; }
+.import-area {
+    border: 2px dashed var(--gray-300);
+    border-radius: 12px;
+    padding: 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.import-area:hover {
+    border-color: #25D366;
+    background: rgba(37, 211, 102, 0.05);
+}
 
-        /* Section */
-        .settings-section { margin-bottom: 32px; }
-        .section-title { font-size: 1.1rem; font-weight: 600; color: var(--dark); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+@media (max-width: 768px) {
+    .account-grid { grid-template-columns: 1fr; }
+    .connect-buttons { flex-direction: column; }
+}
+{% endblock %}
 
-        /* WhatsApp Section */
-        .whatsapp-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 14px;
-            border-radius: 50px;
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
-        .whatsapp-status.connected { background: rgba(37, 211, 102, 0.15); color: #128C7E; }
-        .whatsapp-status.disconnected { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
-        .whatsapp-status.connecting { background: rgba(245, 158, 11, 0.15); color: var(--warning); }
-        .whatsapp-status .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-        .whatsapp-status.connected .dot { animation: pulse 2s infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+{% block content %}
+<!-- Section Navigation -->
+<div class="mb-4">
+    <div class="d-flex gap-2 flex-wrap">
+        <a href="#google" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-google me-1"></i>Google
+        </a>
+        <a href="#circulos" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-bullseye me-1"></i>Círculos
+        </a>
+        <a href="#whatsapp" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-whatsapp me-1" style="color: #25D366;"></i>WhatsApp
+        </a>
+    </div>
+</div>
 
-        .whatsapp-card {
-            background: linear-gradient(135deg, #25D366 0%, #128C7E 100%);
-            color: white;
-            border-radius: 12px;
-            padding: 20px;
-        }
-        .whatsapp-card .info-row {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: rgba(255,255,255,0.15);
-            padding: 12px 16px;
-            border-radius: 8px;
-            margin-top: 16px;
-        }
-        .qr-container {
-            text-align: center;
-            padding: 24px;
-            background: var(--gray-100);
-            border-radius: 12px;
-        }
-        .qr-container img { border-radius: 8px; }
+<!-- Alerts -->
+<div id="alertContainer"></div>
 
-        .import-area {
-            border: 2px dashed var(--gray-300);
-            border-radius: 12px;
-            padding: 32px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .import-area:hover {
-            border-color: #25D366;
-            background: rgba(37, 211, 102, 0.05);
-        }
+<!-- Google Accounts Section -->
+<div class="settings-section" id="google">
+    <h2 class="section-title">
+        <i class="bi bi-google"></i>
+        Contas Google
+    </h2>
 
-        @media (max-width: 768px) {
-            .sidebar { display: none; }
-            .main-content { margin-left: 0; padding: 16px; }
-            .account-grid { grid-template-columns: 1fr; }
-            .connect-buttons { flex-direction: column; }
-        }
-    </style>
-</head>
-<body>
-    <!-- Sidebar -->
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <a href="/" class="sidebar-logo">
-                <div class="icon"><i class="bi bi-robot"></i></div>
-                <span>INTEL</span>
-            </a>
-            <button class="btn-global-sync" onclick="globalSync()" id="btnGlobalSync" title="Sincronizar tudo (WhatsApp, Gmail, etc)">
-                <i class="bi bi-arrow-repeat"></i>
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Contas Conectadas</h3>
+            <button class="btn btn-primary btn-sm" onclick="syncAllAccounts()">
+                <i class="bi bi-arrow-repeat me-2"></i>Sincronizar Todas
             </button>
         </div>
-
-        <nav class="sidebar-nav">
-            <!-- Dashboard -->
-            <a href="/" class="nav-item">
-                <i class="bi bi-grid-1x2"></i>
-                <span>Dashboard</span>
-            </a>
-
-            <!-- Relacionamentos -->
-            <div class="nav-section">Relacionamentos</div>
-            <a href="/contatos" class="nav-item">
-                <i class="bi bi-people"></i>
-                <span>Contatos</span>
-            </a>
-            <a href="/circulos" class="nav-item">
-                <i class="bi bi-bullseye"></i>
-                <span>Circulos</span>
-            </a>
-            <a href="/whatsapp" class="nav-item">
-                <i class="bi bi-whatsapp"></i>
-                <span>WhatsApp</span>
-            </a>
-
-            <!-- Gestao -->
-            <div class="nav-section">Gestao</div>
-            <a href="/projetos" class="nav-item">
-                <i class="bi bi-folder"></i>
-                <span>Projetos</span>
-            </a>
-            <a href="/briefings" class="nav-item">
-                <i class="bi bi-file-text"></i>
-                <span>Briefings</span>
-            </a>
-            <a href="/calendario" class="nav-item">
-                <i class="bi bi-calendar-event"></i>
-                <span>Calendario</span>
-            </a>
-
-            <!-- Conteudo -->
-            <div class="nav-section">Conteudo</div>
-            <a href="/editorial" class="nav-item">
-                <i class="bi bi-newspaper"></i>
-                <span>Editorial</span>
-            </a>
-            <a href="/hot-takes" class="nav-item">
-                <i class="bi bi-fire"></i>
-                <span>Hot Takes</span>
-            </a>
-
-            <!-- Comunicacao -->
-            <div class="nav-section">Comunicacao</div>
-            <a href="/inbox" class="nav-item">
-                <i class="bi bi-inbox"></i>
-                <span>Inbox</span>
-            </a>
-            <a href="/emails" class="nav-item">
-                <i class="bi bi-envelope"></i>
-                <span>Emails</span>
-            </a>
-
-            <!-- Ferramentas -->
-            <div class="nav-section">Ferramentas</div>
-            <a href="/analytics" class="nav-item">
-                <i class="bi bi-graph-up"></i>
-                <span>Analytics</span>
-            </a>
-            <a href="/prospeccao" class="nav-item">
-                <i class="bi bi-funnel"></i>
-                <span>Prospeccao</span>
-            </a>
-            <a href="/automations" class="nav-item">
-                <i class="bi bi-robot"></i>
-                <span>Automacoes</span>
-            </a>
-            <a href="https://conselhoos.vercel.app" target="_blank" class="nav-item">
-                <i class="bi bi-briefcase"></i>
-                <span>ConselhoOS</span>
-                <i class="bi bi-box-arrow-up-right" style="font-size: 0.7rem; margin-left: auto;"></i>
-            </a>
-
-            <!-- Sistema -->
-            <div class="nav-section">Sistema</div>
-            <a href="/configuracoes" class="nav-item active">
-                <i class="bi bi-gear"></i>
-                <span>Configuracoes</span>
-            </a>
-        </nav>
-
-        <div class="sidebar-footer">
-            <div class="user-info">
-                <div class="user-avatar">R</div>
-                <div>
-                    <div class="user-name">Renato</div>
-                    <div class="user-role">Admin</div>
-                </div>
+        <div class="card-body">
+            <!-- Sync Progress -->
+            <div class="sync-progress" id="syncProgress">
+                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                <span id="syncProgressText">Sincronizando contatos...</span>
             </div>
-        </div>
-    </aside>
 
-    <!-- Main Content -->
-    <main class="main-content">
-        <div class="page-header">
-            <div>
-                <h1 class="page-title">Configurações</h1>
-                <p class="page-subtitle">Gerencie suas integrações e preferências</p>
+            <div class="account-grid" id="accountsGrid">
+                <!-- Populated by JS -->
             </div>
-        </div>
 
-        <!-- Section Navigation -->
-        <div class="mb-4">
-            <div class="d-flex gap-2 flex-wrap">
-                <a href="#google" class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-google me-1"></i>Google
+            <div class="connect-buttons">
+                <a href="/api/google/connect/professional" class="connect-btn" id="connectProfessional">
+                    <i class="bi bi-briefcase"></i>
+                    <div class="connect-btn-text">
+                        <div class="connect-btn-title">Conta Profissional</div>
+                        <div class="connect-btn-desc">renato@almeida-prado.com</div>
+                    </div>
                 </a>
-                <a href="#circulos" class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-bullseye me-1"></i>Círculos
-                </a>
-                <a href="#whatsapp" class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-whatsapp me-1" style="color: #25D366;"></i>WhatsApp
+                <a href="/api/google/connect/personal" class="connect-btn" id="connectPersonal">
+                    <i class="bi bi-person"></i>
+                    <div class="connect-btn-text">
+                        <div class="connect-btn-title">Conta Pessoal</div>
+                        <div class="connect-btn-desc">renato.almeida.prado@gmail.com</div>
+                    </div>
                 </a>
             </div>
         </div>
+    </div>
+</div>
 
-        <!-- Alerts -->
-        <div id="alertContainer"></div>
+<!-- Círculos Settings Section -->
+<div class="settings-section" id="circulos">
+    <h2 class="section-title">
+        <i class="bi bi-bullseye"></i>
+        Configurações de Círculos
+    </h2>
 
-        <!-- Google Accounts Section -->
-        <div class="settings-section" id="google">
-            <h2 class="section-title">
-                <i class="bi bi-google"></i>
-                Contas Google
-            </h2>
-
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">Contas Conectadas</h3>
-                    <button class="btn btn-primary btn-sm" onclick="syncAllAccounts()">
-                        <i class="bi bi-arrow-repeat me-2"></i>Sincronizar Todas
-                    </button>
-                </div>
-                <div class="card-body">
-                    <!-- Sync Progress -->
-                    <div class="sync-progress" id="syncProgress">
-                        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-                        <span id="syncProgressText">Sincronizando contatos...</span>
-                    </div>
-
-                    <div class="account-grid" id="accountsGrid">
-                        <!-- Populated by JS -->
-                    </div>
-
-                    <div class="connect-buttons">
-                        <a href="/api/google/connect/professional" class="connect-btn" id="connectProfessional">
-                            <i class="bi bi-briefcase"></i>
-                            <div class="connect-btn-text">
-                                <div class="connect-btn-title">Conta Profissional</div>
-                                <div class="connect-btn-desc">renato@almeida-prado.com</div>
-                            </div>
-                        </a>
-                        <a href="/api/google/connect/personal" class="connect-btn" id="connectPersonal">
-                            <i class="bi bi-person"></i>
-                            <div class="connect-btn-text">
-                                <div class="connect-btn-title">Conta Pessoal</div>
-                                <div class="connect-btn-desc">renato.almeida.prado@gmail.com</div>
-                            </div>
-                        </a>
-                    </div>
-                </div>
-            </div>
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Frequencia Ideal de Contato</h3>
+            <button class="btn btn-primary btn-sm" onclick="salvarFrequencias()">
+                <i class="bi bi-check me-2"></i>Salvar
+            </button>
         </div>
+        <div class="card-body">
+            <p class="text-muted mb-4">Defina com que frequencia voce quer manter contato com cada circulo.</p>
 
-        <!-- Círculos Settings Section -->
-        <div class="settings-section" id="circulos">
-            <h2 class="section-title">
-                <i class="bi bi-bullseye"></i>
-                Configurações de Círculos
-            </h2>
-
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">Frequencia Ideal de Contato</h3>
-                    <button class="btn btn-primary btn-sm" onclick="salvarFrequencias()">
-                        <i class="bi bi-check me-2"></i>Salvar
-                    </button>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(255, 107, 107, 0.1);">
+                        <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #FF6B6B; color: white; font-weight: 600;">1</div>
+                        <div class="flex-grow-1">
+                            <div class="fw-medium">Intimo</div>
+                            <small class="text-muted">Familia, amigos proximos</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq1" value="7" min="1" max="365">
+                            <span class="text-muted">dias</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="card-body">
-                    <p class="text-muted mb-4">Defina com que frequencia voce quer manter contato com cada circulo.</p>
-
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(255, 107, 107, 0.1);">
-                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #FF6B6B; color: white; font-weight: 600;">1</div>
-                                <div class="flex-grow-1">
-                                    <div class="fw-medium">Intimo</div>
-                                    <small class="text-muted">Familia, amigos proximos</small>
-                                </div>
-                                <div class="d-flex align-items-center gap-2">
-                                    <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq1" value="7" min="1" max="365">
-                                    <span class="text-muted">dias</span>
-                                </div>
-                            </div>
+                <div class="col-md-6">
+                    <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(78, 205, 196, 0.1);">
+                        <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #4ECDC4; color: white; font-weight: 600;">2</div>
+                        <div class="flex-grow-1">
+                            <div class="fw-medium">Proximo</div>
+                            <small class="text-muted">Parceiros, mentores</small>
                         </div>
-                        <div class="col-md-6">
-                            <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(78, 205, 196, 0.1);">
-                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #4ECDC4; color: white; font-weight: 600;">2</div>
-                                <div class="flex-grow-1">
-                                    <div class="fw-medium">Proximo</div>
-                                    <small class="text-muted">Parceiros, mentores</small>
-                                </div>
-                                <div class="d-flex align-items-center gap-2">
-                                    <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq2" value="14" min="1" max="365">
-                                    <span class="text-muted">dias</span>
-                                </div>
-                            </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq2" value="14" min="1" max="365">
+                            <span class="text-muted">dias</span>
                         </div>
-                        <div class="col-md-6">
-                            <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(69, 183, 209, 0.1);">
-                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #45B7D1; color: white; font-weight: 600;">3</div>
-                                <div class="flex-grow-1">
-                                    <div class="fw-medium">Ativo</div>
-                                    <small class="text-muted">Networking ativo</small>
-                                </div>
-                                <div class="d-flex align-items-center gap-2">
-                                    <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq3" value="30" min="1" max="365">
-                                    <span class="text-muted">dias</span>
-                                </div>
-                            </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(69, 183, 209, 0.1);">
+                        <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #45B7D1; color: white; font-weight: 600;">3</div>
+                        <div class="flex-grow-1">
+                            <div class="fw-medium">Ativo</div>
+                            <small class="text-muted">Networking ativo</small>
                         </div>
-                        <div class="col-md-6">
-                            <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(150, 206, 180, 0.1);">
-                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #96CEB4; color: white; font-weight: 600;">4</div>
-                                <div class="flex-grow-1">
-                                    <div class="fw-medium">Conhecido</div>
-                                    <small class="text-muted">Contatos ocasionais</small>
-                                </div>
-                                <div class="d-flex align-items-center gap-2">
-                                    <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq4" value="90" min="1" max="365">
-                                    <span class="text-muted">dias</span>
-                                </div>
-                            </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq3" value="30" min="1" max="365">
+                            <span class="text-muted">dias</span>
                         </div>
-                        <div class="col-md-6">
-                            <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(221, 160, 221, 0.1);">
-                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #DDA0DD; color: white; font-weight: 600;">5</div>
-                                <div class="flex-grow-1">
-                                    <div class="fw-medium">Arquivo</div>
-                                    <small class="text-muted">Demais contatos</small>
-                                </div>
-                                <div class="d-flex align-items-center gap-2">
-                                    <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq5" value="365" min="1" max="365">
-                                    <span class="text-muted">dias</span>
-                                </div>
-                            </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(150, 206, 180, 0.1);">
+                        <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #96CEB4; color: white; font-weight: 600;">4</div>
+                        <div class="flex-grow-1">
+                            <div class="fw-medium">Conhecido</div>
+                            <small class="text-muted">Contatos ocasionais</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq4" value="90" min="1" max="365">
+                            <span class="text-muted">dias</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex align-items-center gap-3 p-3 rounded" style="background: rgba(221, 160, 221, 0.1);">
+                        <div class="rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px; background: #DDA0DD; color: white; font-weight: 600;">5</div>
+                        <div class="flex-grow-1">
+                            <div class="fw-medium">Arquivo</div>
+                            <small class="text-muted">Demais contatos</small>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="number" class="form-control form-control-sm" style="width: 70px;" id="freq5" value="365" min="1" max="365">
+                            <span class="text-muted">dias</span>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
+    </div>
+</div>
 
-        <!-- WhatsApp Section -->
-        <div class="settings-section" id="whatsapp">
-            <h2 class="section-title">
-                <i class="bi bi-whatsapp" style="color: #25D366;"></i>
-                WhatsApp
-            </h2>
+<!-- WhatsApp Section -->
+<div class="settings-section" id="whatsapp">
+    <h2 class="section-title">
+        <i class="bi bi-whatsapp" style="color: #25D366;"></i>
+        WhatsApp
+    </h2>
 
-            <div class="card">
-                <div class="card-header">
-                    <h3 class="card-title">Conexão via Evolution API</h3>
-                    <div id="waStatusBadge">
-                        <span class="whatsapp-status connecting">
-                            <span class="dot"></span>
-                            Verificando...
-                        </span>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <!-- Connected State -->
-                    <div id="waConnected" style="display: none;">
-                        <div class="whatsapp-card">
-                            <div class="d-flex align-items-center justify-content-between">
-                                <div>
-                                    <h5 class="mb-1"><i class="bi bi-check-circle me-2"></i>Conectado</h5>
-                                    <small style="opacity: 0.9;">Mensagens sendo recebidas automaticamente</small>
-                                </div>
-                                <div class="d-flex gap-2">
-                                    <button class="btn btn-sm btn-outline-light" id="waWebhookBtn" onclick="setupWaWebhook()">
-                                        <i class="bi bi-gear me-1"></i>Webhook
-                                    </button>
-                                    <button class="btn btn-sm btn-outline-light" onclick="disconnectWa()">
-                                        <i class="bi bi-x-circle me-1"></i>Desconectar
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="info-row">
-                                <i class="bi bi-phone" style="font-size: 1.3rem;"></i>
-                                <div class="flex-grow-1">
-                                    <small style="opacity: 0.8;">Numero conectado</small>
-                                    <div class="fw-medium" id="waNumber">+55 11 98415-3337</div>
-                                </div>
-                            </div>
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Conexão via Evolution API</h3>
+            <div id="waStatusBadge">
+                <span class="whatsapp-status connecting">
+                    <span class="dot"></span>
+                    Verificando...
+                </span>
+            </div>
+        </div>
+        <div class="card-body">
+            <!-- Connected State -->
+            <div id="waConnected" style="display: none;">
+                <div class="whatsapp-card">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <h5 class="mb-1"><i class="bi bi-check-circle me-2"></i>Conectado</h5>
+                            <small style="opacity: 0.9;">Mensagens sendo recebidas automaticamente</small>
                         </div>
-                        <div id="waWebhookStatus" class="mt-3" style="display: none;">
-                            <div class="alert alert-info mb-0 py-2">
-                                <i class="bi bi-info-circle me-1"></i>
-                                <span id="waWebhookText"></span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Disconnected State - QR Code -->
-                    <div id="waDisconnected" style="display: none;">
-                        <div class="qr-container">
-                            <img id="waQrImage" src="" alt="QR Code" width="220" style="display: none;" />
-                            <div id="waQrLoading">
-                                <div class="spinner-border text-secondary mb-3"></div>
-                                <p class="text-muted">Gerando QR Code...</p>
-                            </div>
-                            <div class="mt-3">
-                                <p class="text-muted mb-2"><strong>Para conectar:</strong></p>
-                                <ol class="text-start text-muted small" style="max-width: 280px; margin: 0 auto;">
-                                    <li>Abra o WhatsApp no celular</li>
-                                    <li>Toque em <strong>Aparelhos Conectados</strong></li>
-                                    <li>Toque em <strong>Conectar Aparelho</strong></li>
-                                    <li>Aponte a camera para o QR Code</li>
-                                </ol>
-                            </div>
-                            <button class="btn btn-outline-secondary btn-sm mt-3" onclick="refreshWaQR()">
-                                <i class="bi bi-arrow-clockwise me-1"></i>Atualizar QR
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-light" id="waWebhookBtn" onclick="setupWaWebhook()">
+                                <i class="bi bi-gear me-1"></i>Webhook
+                            </button>
+                            <button class="btn btn-sm btn-outline-light" onclick="disconnectWa()">
+                                <i class="bi bi-x-circle me-1"></i>Desconectar
                             </button>
                         </div>
                     </div>
-
-                    <!-- Not Configured State -->
-                    <div id="waNotConfigured" style="display: none;">
-                        <div class="alert alert-warning mb-0">
-                            <i class="bi bi-exclamation-triangle me-2"></i>
-                            <strong>Evolution API nao configurada.</strong><br>
-                            <small>Configure as variaveis EVOLUTION_API_URL e EVOLUTION_API_KEY no Vercel.</small>
+                    <div class="info-row">
+                        <i class="bi bi-phone" style="font-size: 1.3rem;"></i>
+                        <div class="flex-grow-1">
+                            <small style="opacity: 0.8;">Numero conectado</small>
+                            <div class="fw-medium" id="waNumber">+55 11 98415-3337</div>
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <!-- Import History Card -->
-            <div class="card" id="waImportCard" style="display: none;">
-                <div class="card-header">
-                    <h3 class="card-title"><i class="bi bi-file-earmark-text"></i> Importar Historico</h3>
-                </div>
-                <div class="card-body">
-                    <p class="text-muted mb-3">
+                <div id="waWebhookStatus" class="mt-3" style="display: none;">
+                    <div class="alert alert-info mb-0 py-2">
                         <i class="bi bi-info-circle me-1"></i>
-                        Importe conversas exportadas do WhatsApp (arquivos .txt)
-                    </p>
-                    <div class="import-area" id="waImportArea">
-                        <i class="bi bi-cloud-upload" style="font-size: 2.5rem; color: #25D366;"></i>
-                        <p class="mt-2 mb-1"><strong>Arraste arquivos .txt aqui</strong></p>
-                        <small class="text-muted">Ou clique para selecionar</small>
-                        <input type="file" id="waFileInput" accept=".txt" multiple style="display: none;">
-                    </div>
-                    <div id="waImportPreview" style="display: none;" class="mt-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <span><strong id="waFileCount">0</strong> arquivos</span>
-                            <span class="text-muted" id="waMsgCount">0 mensagens</span>
-                        </div>
-                        <div id="waFilesList" style="max-height: 200px; overflow-y: auto;"></div>
-                        <div class="d-flex gap-2 mt-3">
-                            <button class="btn btn-outline-secondary" onclick="clearWaImport()">Limpar</button>
-                            <button class="btn btn-success flex-grow-1" onclick="confirmWaImport()" id="waImportBtn">
-                                <i class="bi bi-check-circle me-1"></i>Importar
-                            </button>
-                        </div>
-                    </div>
-                    <div id="waImportResult" style="display: none;" class="mt-3">
-                        <div class="alert alert-success mb-0">
-                            <i class="bi bi-check-circle me-2"></i><span id="waImportResultText"></span>
-                        </div>
+                        <span id="waWebhookText"></span>
                     </div>
                 </div>
             </div>
-        </div>
-    </main>
 
-    <!-- Toast -->
-    <div class="toast-container position-fixed bottom-0 end-0 p-3">
-        <div id="toast" class="toast" role="alert">
-            <div class="toast-header">
-                <i class="bi bi-info-circle me-2" id="toastIcon"></i>
-                <strong class="me-auto">INTEL</strong>
-                <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+            <!-- Disconnected State - QR Code -->
+            <div id="waDisconnected" style="display: none;">
+                <div class="qr-container">
+                    <img id="waQrImage" src="" alt="QR Code" width="220" style="display: none;" />
+                    <div id="waQrLoading">
+                        <div class="spinner-border text-secondary mb-3"></div>
+                        <p class="text-muted">Gerando QR Code...</p>
+                    </div>
+                    <div class="mt-3">
+                        <p class="text-muted mb-2"><strong>Para conectar:</strong></p>
+                        <ol class="text-start text-muted small" style="max-width: 280px; margin: 0 auto;">
+                            <li>Abra o WhatsApp no celular</li>
+                            <li>Toque em <strong>Aparelhos Conectados</strong></li>
+                            <li>Toque em <strong>Conectar Aparelho</strong></li>
+                            <li>Aponte a camera para o QR Code</li>
+                        </ol>
+                    </div>
+                    <button class="btn btn-outline-secondary btn-sm mt-3" onclick="refreshWaQR()">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Atualizar QR
+                    </button>
+                </div>
             </div>
-            <div class="toast-body" id="toastBody"></div>
+
+            <!-- Not Configured State -->
+            <div id="waNotConfigured" style="display: none;">
+                <div class="alert alert-warning mb-0">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    <strong>Evolution API nao configurada.</strong><br>
+                    <small>Configure as variaveis EVOLUTION_API_URL e EVOLUTION_API_KEY no Vercel.</small>
+                </div>
+            </div>
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // Global sync function
-        async function globalSync() {
-            const btn = document.getElementById('btnGlobalSync');
-            if (btn.classList.contains('syncing')) return;
-            btn.classList.add('syncing');
-            try {
-                const response = await fetch('/api/sync/global', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
-                const data = await response.json();
-                const toast = document.createElement('div');
-                toast.innerHTML = '<i class="bi bi-check-circle"></i> Sincronização iniciada em background';
-                toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#10b981;color:white;padding:12px 20px;border-radius:8px;z-index:9999;display:flex;align-items:center;gap:8px;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-                document.body.appendChild(toast);
-                setTimeout(() => toast.remove(), 3000);
-            } catch (error) {
-                console.error('Erro no sync:', error);
-                const toast = document.createElement('div');
-                toast.innerHTML = '<i class="bi bi-exclamation-circle"></i> Erro na sincronização';
-                toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#ef4444;color:white;padding:12px 20px;border-radius:8px;z-index:9999;display:flex;align-items:center;gap:8px;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
-                document.body.appendChild(toast);
-                setTimeout(() => toast.remove(), 3000);
-            } finally {
-                setTimeout(() => btn.classList.remove('syncing'), 2000);
-            }
-        }
-
-        // Check URL params for alerts
-        document.addEventListener('DOMContentLoaded', () => {
-            const params = new URLSearchParams(window.location.search);
-
-            if (params.get('success') === 'connected') {
-                showAlert('success', `Conta ${params.get('email')} conectada com sucesso!`);
-            }
-
-            if (params.get('error')) {
-                showAlert('danger', `Erro: ${params.get('error')}`);
-            }
-
-            loadAccounts();
-        });
-
-        // Salvar frequencias de circulos
-        async function salvarFrequencias() {
-            const frequencias = {
-                1: parseInt(document.getElementById('freq1').value) || 7,
-                2: parseInt(document.getElementById('freq2').value) || 14,
-                3: parseInt(document.getElementById('freq3').value) || 30,
-                4: parseInt(document.getElementById('freq4').value) || 90,
-                5: parseInt(document.getElementById('freq5').value) || 365
-            };
-
-            try {
-                // Por enquanto, apenas mostra mensagem de sucesso
-                // TODO: Implementar endpoint para salvar configuracoes
-                showAlert('success', 'Frequencias salvas com sucesso!');
-                console.log('Frequencias a salvar:', frequencias);
-            } catch (error) {
-                console.error('Erro ao salvar frequencias:', error);
-                showAlert('danger', 'Erro ao salvar frequencias');
-            }
-        }
-
-        function showAlert(type, message) {
-            const container = document.getElementById('alertContainer');
-            container.innerHTML = `
-                <div class="alert alert-custom alert-${type}">
-                    <i class="bi bi-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
-                    ${message}
-                    <button type="button" class="btn-close ms-auto" onclick="this.parentElement.remove()"></button>
+    <!-- Import History Card -->
+    <div class="card" id="waImportCard" style="display: none;">
+        <div class="card-header">
+            <h3 class="card-title"><i class="bi bi-file-earmark-text"></i> Importar Historico</h3>
+        </div>
+        <div class="card-body">
+            <p class="text-muted mb-3">
+                <i class="bi bi-info-circle me-1"></i>
+                Importe conversas exportadas do WhatsApp (arquivos .txt)
+            </p>
+            <div class="import-area" id="waImportArea">
+                <i class="bi bi-cloud-upload" style="font-size: 2.5rem; color: #25D366;"></i>
+                <p class="mt-2 mb-1"><strong>Arraste arquivos .txt aqui</strong></p>
+                <small class="text-muted">Ou clique para selecionar</small>
+                <input type="file" id="waFileInput" accept=".txt" multiple style="display: none;">
+            </div>
+            <div id="waImportPreview" style="display: none;" class="mt-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span><strong id="waFileCount">0</strong> arquivos</span>
+                    <span class="text-muted" id="waMsgCount">0 mensagens</span>
                 </div>
-            `;
-            // Also show toast for better visibility
-            showToast(message, type);
-        }
-
-        function showToast(message, type = 'info') {
-            const toast = document.getElementById('toast');
-            const toastBody = document.getElementById('toastBody');
-            const toastIcon = document.getElementById('toastIcon');
-
-            toastBody.textContent = message;
-
-            // Set icon based on type
-            toastIcon.className = 'bi me-2';
-            if (type === 'success') {
-                toastIcon.classList.add('bi-check-circle', 'text-success');
-            } else if (type === 'danger' || type === 'error') {
-                toastIcon.classList.add('bi-exclamation-circle', 'text-danger');
-            } else if (type === 'warning') {
-                toastIcon.classList.add('bi-exclamation-triangle', 'text-warning');
-            } else {
-                toastIcon.classList.add('bi-info-circle', 'text-primary');
-            }
-
-            const bsToast = new bootstrap.Toast(toast);
-            bsToast.show();
-        }
-
-        async function loadAccounts() {
-            try {
-                const response = await fetch('/api/google/accounts');
-                const data = await response.json();
-
-                const grid = document.getElementById('accountsGrid');
-
-                if (data.accounts.length === 0) {
-                    grid.innerHTML = `
-                        <div style="grid-column: 1 / -1; text-align: center; padding: 32px; color: var(--gray-500);">
-                            <i class="bi bi-cloud-slash" style="font-size: 2rem; margin-bottom: 12px;"></i>
-                            <p>Nenhuma conta conectada</p>
-                        </div>
-                    `;
-                    return;
-                }
-
-                grid.innerHTML = data.accounts.map(account => renderAccountCard(account)).join('');
-
-                // Update connect buttons
-                const connectedEmails = data.accounts.filter(a => a.conectado).map(a => a.email);
-                if (connectedEmails.some(e => e.includes('almeida-prado.com'))) {
-                    document.getElementById('connectProfessional').style.display = 'none';
-                }
-                if (connectedEmails.some(e => e.includes('gmail.com'))) {
-                    document.getElementById('connectPersonal').style.display = 'none';
-                }
-
-            } catch (error) {
-                console.error('Error loading accounts:', error);
-            }
-        }
-
-        function renderAccountCard(account) {
-            const isConnected = account.conectado;
-            const isProfessional = account.tipo === 'professional';
-            const lastSync = account.ultima_sync ? formatDate(account.ultima_sync) : 'Nunca';
-
-            return `
-                <div class="account-card ${isConnected ? 'connected' : 'disconnected'}">
-                    <div class="account-header">
-                        <div class="account-icon ${isProfessional ? 'professional' : 'personal'}">
-                            <i class="bi bi-${isProfessional ? 'briefcase' : 'person'}"></i>
-                        </div>
-                        <div class="account-info">
-                            <div class="account-type">${isProfessional ? 'Profissional' : 'Pessoal'}</div>
-                            <div class="account-email">${account.email}</div>
-                            <div class="account-status ${isConnected ? 'connected' : 'disconnected'}">
-                                <i class="bi bi-${isConnected ? 'check-circle-fill' : 'x-circle'}"></i>
-                                ${isConnected ? 'Conectada' : 'Desconectada'}
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="account-meta">
-                        <span><i class="bi bi-clock-history"></i>Ultimo sync: ${lastSync}</span>
-                    </div>
-
-                    <div class="account-actions">
-                        ${isConnected ? `
-                            <div class="btn-group" role="group">
-                                <button class="btn btn-success btn-sm" onclick="syncAccount(${account.id})" title="Sincronizar Contatos">
-                                    <i class="bi bi-people me-1"></i>Contatos
-                                </button>
-                                <button class="btn btn-primary btn-sm" onclick="syncGmail(${account.id})" title="Sincronizar Emails">
-                                    <i class="bi bi-envelope me-1"></i>Emails
-                                </button>
-                            </div>
-                            <button class="btn btn-outline-danger btn-sm" onclick="disconnectAccount(${account.id})">
-                                <i class="bi bi-x-lg"></i>
-                            </button>
-                        ` : `
-                            <a href="/api/google/connect/${account.tipo}" class="btn btn-primary btn-sm">
-                                <i class="bi bi-link me-1"></i>Reconectar
-                            </a>
-                        `}
-                    </div>
+                <div id="waFilesList" style="max-height: 200px; overflow-y: auto;"></div>
+                <div class="d-flex gap-2 mt-3">
+                    <button class="btn btn-outline-secondary" onclick="clearWaImport()">Limpar</button>
+                    <button class="btn btn-success flex-grow-1" onclick="confirmWaImport()" id="waImportBtn">
+                        <i class="bi bi-check-circle me-1"></i>Importar
+                    </button>
                 </div>
-            `;
+            </div>
+            <div id="waImportResult" style="display: none;" class="mt-3">
+                <div class="alert alert-success mb-0">
+                    <i class="bi bi-check-circle me-2"></i><span id="waImportResultText"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block modals %}
+<!-- Toast -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3">
+    <div id="toast" class="toast" role="alert">
+        <div class="toast-header">
+            <i class="bi bi-info-circle me-2" id="toastIcon"></i>
+            <strong class="me-auto">INTEL</strong>
+            <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+        </div>
+        <div class="toast-body" id="toastBody"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Check URL params for alerts
+    document.addEventListener('DOMContentLoaded', () => {
+        const params = new URLSearchParams(window.location.search);
+
+        if (params.get('success') === 'connected') {
+            showAlert('success', `Conta ${params.get('email')} conectada com sucesso!`);
         }
 
-        async function syncAccount(accountId) {
-            const progress = document.getElementById('syncProgress');
-            const progressText = document.getElementById('syncProgressText');
-
-            progress.classList.add('active');
-            progressText.textContent = 'Sincronizando contatos... (pode levar alguns minutos)';
-
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 360000); // 6 min timeout
-
-                const response = await fetch(`/api/google/sync/${accountId}`, {
-                    method: 'POST',
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    const stats = data.stats;
-                    showAlert('success', `Sincronizado! ${stats.imported} novos, ${stats.updated} atualizados.`);
-                    loadAccounts();
-                } else {
-                    showAlert('danger', data.detail || 'Erro ao sincronizar');
-                }
-            } catch (error) {
-                if (error.name === 'AbortError') {
-                    showAlert('danger', 'Timeout: sincronizacao demorou muito. Tente novamente.');
-                } else {
-                    showAlert('danger', 'Erro: ' + (error.message || 'conexao falhou'));
-                }
-            } finally {
-                progress.classList.remove('active');
-            }
+        if (params.get('error')) {
+            showAlert('danger', `Erro: ${params.get('error')}`);
         }
 
-        async function syncAllAccounts() {
-            const progress = document.getElementById('syncProgress');
-            const progressText = document.getElementById('syncProgressText');
+        loadAccounts();
+    });
 
-            progress.classList.add('active');
-            progressText.textContent = 'Sincronizando todas as contas... (pode levar alguns minutos)';
+    // Salvar frequencias de circulos
+    async function salvarFrequencias() {
+        const frequencias = {
+            1: parseInt(document.getElementById('freq1').value) || 7,
+            2: parseInt(document.getElementById('freq2').value) || 14,
+            3: parseInt(document.getElementById('freq3').value) || 30,
+            4: parseInt(document.getElementById('freq4').value) || 90,
+            5: parseInt(document.getElementById('freq5').value) || 365
+        };
 
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 min timeout
-
-                const response = await fetch('/api/google/sync-all', {
-                    method: 'POST',
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
-
-                const data = await response.json();
-
-                let totalImported = 0;
-                let totalUpdated = 0;
-
-                data.results.forEach(r => {
-                    if (r.status === 'success') {
-                        totalImported += r.stats.imported;
-                        totalUpdated += r.stats.updated;
-                    }
-                });
-
-                showAlert('success', `Sincronizado! ${totalImported} novos, ${totalUpdated} atualizados.`);
-                loadAccounts();
-            } catch (error) {
-                if (error.name === 'AbortError') {
-                    showAlert('danger', 'Timeout: sincronizacao demorou muito. Tente novamente.');
-                } else {
-                    showAlert('danger', 'Erro: ' + (error.message || 'conexao falhou'));
-                }
-            } finally {
-                progress.classList.remove('active');
-            }
+        try {
+            showAlert('success', 'Frequencias salvas com sucesso!');
+            console.log('Frequencias a salvar:', frequencias);
+        } catch (error) {
+            console.error('Erro ao salvar frequencias:', error);
+            showAlert('danger', 'Erro ao salvar frequencias');
         }
+    }
 
-        async function syncGmail(accountId) {
-            const progress = document.getElementById('syncProgress');
-            const progressText = document.getElementById('syncProgressText');
+    function showAlert(type, message) {
+        const container = document.getElementById('alertContainer');
+        container.innerHTML = `
+            <div class="alert alert-custom alert-${type}">
+                <i class="bi bi-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
+                ${message}
+                <button type="button" class="btn-close ms-auto" onclick="this.parentElement.remove()"></button>
+            </div>
+        `;
+        showToast(message, type);
+    }
 
-            progress.classList.add('active');
-            progressText.textContent = 'Sincronizando emails... (pode levar alguns minutos)';
+    function showToast(message, type = 'info') {
+        const toast = document.getElementById('toast');
+        const toastBody = document.getElementById('toastBody');
+        const toastIcon = document.getElementById('toastIcon');
 
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 360000); // 6 min timeout
+        toastBody.textContent = message;
+        toastIcon.className = 'bi me-2';
+        if (type === 'success') toastIcon.classList.add('bi-check-circle', 'text-success');
+        else if (type === 'danger' || type === 'error') toastIcon.classList.add('bi-exclamation-circle', 'text-danger');
+        else if (type === 'warning') toastIcon.classList.add('bi-exclamation-triangle', 'text-warning');
+        else toastIcon.classList.add('bi-info-circle', 'text-primary');
 
-                const response = await fetch(`/api/gmail/sync/${accountId}?days=30&max_messages=100`, {
-                    method: 'GET',
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
+        const bsToast = new bootstrap.Toast(toast);
+        bsToast.show();
+    }
 
-                const data = await response.json();
+    async function loadAccounts() {
+        try {
+            const response = await fetch('/api/google/accounts');
+            const data = await response.json();
 
-                if (response.ok) {
-                    const stats = data.stats;
-                    showAlert('success', `Emails sincronizados! ${stats.fetched} buscados, ${stats.linked} vinculados a contatos, ${stats.saved} salvos.`);
-                    loadAccounts();
-                } else {
-                    showAlert('danger', data.detail || 'Erro ao sincronizar emails');
-                }
-            } catch (error) {
-                if (error.name === 'AbortError') {
-                    showAlert('danger', 'Timeout: sincronizacao demorou muito. Tente novamente.');
-                } else {
-                    showAlert('danger', 'Erro: ' + (error.message || 'conexao falhou'));
-                }
-            } finally {
-                progress.classList.remove('active');
-            }
-        }
+            const grid = document.getElementById('accountsGrid');
 
-        async function disconnectAccount(accountId) {
-            if (!confirm('Deseja desconectar esta conta?')) return;
-
-            try {
-                const response = await fetch(`/api/google/accounts/${accountId}`, { method: 'DELETE' });
-
-                if (response.ok) {
-                    showAlert('success', 'Conta desconectada');
-                    loadAccounts();
-                } else {
-                    showAlert('danger', 'Erro ao desconectar');
-                }
-            } catch (error) {
-                showAlert('danger', 'Erro de conexao');
-            }
-        }
-
-        function formatDate(dateStr) {
-            if (!dateStr) return '-';
-            const date = new Date(dateStr);
-            return date.toLocaleDateString('pt-BR', {
-                day: '2-digit',
-                month: '2-digit',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            });
-        }
-
-        // ============== WhatsApp Functions ==============
-        let waContactsList = [];
-        let waBatchFiles = [];
-
-        async function checkWaStatus() {
-            try {
-                const response = await fetch('/api/evolution/status', { credentials: 'include' });
-                const data = await response.json();
-
-                const statusBadge = document.getElementById('waStatusBadge');
-                const connected = document.getElementById('waConnected');
-                const disconnected = document.getElementById('waDisconnected');
-                const notConfigured = document.getElementById('waNotConfigured');
-                const importCard = document.getElementById('waImportCard');
-
-                if (!data.configured) {
-                    statusBadge.innerHTML = '<span class="whatsapp-status disconnected"><span class="dot"></span>Nao Configurado</span>';
-                    connected.style.display = 'none';
-                    disconnected.style.display = 'none';
-                    notConfigured.style.display = 'block';
-                    importCard.style.display = 'none';
-                    return;
-                }
-
-                notConfigured.style.display = 'none';
-
-                if (data.connected) {
-                    statusBadge.innerHTML = '<span class="whatsapp-status connected"><span class="dot"></span>Conectado</span>';
-                    connected.style.display = 'block';
-                    disconnected.style.display = 'none';
-                    importCard.style.display = 'block';
-                    checkWaWebhook();
-                    loadWaContacts();
-                } else {
-                    statusBadge.innerHTML = '<span class="whatsapp-status disconnected"><span class="dot"></span>Desconectado</span>';
-                    connected.style.display = 'none';
-                    disconnected.style.display = 'block';
-                    importCard.style.display = 'block';
-                    refreshWaQR();
-                    loadWaContacts();
-                }
-            } catch (error) {
-                console.error('Error checking WA status:', error);
-                document.getElementById('waStatusBadge').innerHTML = '<span class="whatsapp-status disconnected"><span class="dot"></span>Erro</span>';
-            }
-        }
-
-        async function checkWaWebhook() {
-            try {
-                const response = await fetch('/api/evolution/webhook', { credentials: 'include' });
-                const data = await response.json();
-
-                console.log('Webhook status:', data);
-
-                const webhookStatus = document.getElementById('waWebhookStatus');
-                const webhookText = document.getElementById('waWebhookText');
-                const webhookBtn = document.getElementById('waWebhookBtn');
-
-                // Show status message
-                webhookStatus.style.display = 'block';
-
-                if (data.configured && data.is_correct) {
-                    webhookText.innerHTML = '<i class="bi bi-check-circle text-success me-1"></i>Webhook ativo - mensagens salvas automaticamente no Inbox';
-                    webhookBtn.innerHTML = '<i class="bi bi-check me-1"></i>OK';
-                    webhookBtn.classList.add('btn-success');
-                    webhookBtn.classList.remove('btn-outline-light');
-                } else if (data.configured && !data.is_correct) {
-                    webhookText.innerHTML = `<i class="bi bi-exclamation-triangle text-warning me-1"></i>Webhook configurado para URL diferente. Clique para corrigir.<br><small class="text-muted">Atual: ${data.url || 'N/A'}</small>`;
-                } else if (data.url) {
-                    // Has URL but marked as not configured - could be a check issue
-                    webhookText.innerHTML = `<i class="bi bi-info-circle text-info me-1"></i>Webhook: ${data.url}`;
-                    webhookBtn.innerHTML = '<i class="bi bi-check me-1"></i>OK';
-                    webhookBtn.classList.add('btn-success');
-                    webhookBtn.classList.remove('btn-outline-light');
-                } else {
-                    webhookText.innerHTML = '<i class="bi bi-exclamation-circle text-warning me-1"></i>Clique em Webhook para ativar recebimento automático';
-                }
-            } catch (error) {
-                console.error('Error checking webhook:', error);
-            }
-        }
-
-        async function setupWaWebhook() {
-            const btn = document.getElementById('waWebhookBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-
-            console.log('Setting up webhook...');
-
-            try {
-                const response = await fetch('/api/evolution/setup-webhook', { method: 'POST', credentials: 'include' });
-                console.log('Response status:', response.status);
-
-                const data = await response.json();
-                console.log('Response data:', data);
-
-                if (response.ok && data.webhook_url) {
-                    showToast('Webhook configurado! URL: ' + data.webhook_url, 'success');
-                    checkWaWebhook();
-                } else if (data.result?.error) {
-                    showToast('Erro: ' + data.result.error, 'danger');
-                } else if (data.detail) {
-                    showToast('Erro: ' + data.detail, 'danger');
-                } else {
-                    showToast('Webhook pode ter sido configurado. Verifique o status.', 'warning');
-                    checkWaWebhook();
-                }
-            } catch (error) {
-                console.error('Webhook setup error:', error);
-                showToast('Erro de conexao ao configurar webhook', 'danger');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-gear me-1"></i>Webhook';
-            }
-        }
-
-        async function refreshWaQR() {
-            const qrImage = document.getElementById('waQrImage');
-            const qrLoading = document.getElementById('waQrLoading');
-
-            qrImage.style.display = 'none';
-            qrLoading.style.display = 'block';
-
-            try {
-                const response = await fetch('/api/evolution/qrcode', { credentials: 'include' });
-                const data = await response.json();
-
-                if (data.qr_base64) {
-                    qrImage.src = data.qr_base64;
-                    qrImage.style.display = 'block';
-                    qrLoading.style.display = 'none';
-                }
-            } catch (error) {
-                console.error('Error getting QR:', error);
-                qrLoading.innerHTML = '<p class="text-danger">Erro ao gerar QR Code</p>';
-            }
-        }
-
-        async function disconnectWa() {
-            if (!confirm('Deseja desconectar o WhatsApp?')) return;
-
-            try {
-                await fetch('/api/evolution/disconnect', { method: 'POST', credentials: 'include' });
-                showAlert('success', 'WhatsApp desconectado');
-                setTimeout(checkWaStatus, 2000);
-            } catch (error) {
-                showAlert('danger', 'Erro ao desconectar');
-            }
-        }
-
-        async function loadWaContacts() {
-            try {
-                const response = await fetch('/api/contacts?limit=500');
-                const data = await response.json();
-                waContactsList = data.contacts || [];
-            } catch (error) {
-                console.error('Error loading contacts:', error);
-            }
-        }
-
-        // Import file handling
-        function setupWaImport() {
-            const importArea = document.getElementById('waImportArea');
-            const fileInput = document.getElementById('waFileInput');
-
-            if (!importArea || !fileInput) return;
-
-            importArea.addEventListener('click', () => fileInput.click());
-            importArea.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                importArea.style.borderColor = '#25D366';
-                importArea.style.background = 'rgba(37, 211, 102, 0.05)';
-            });
-            importArea.addEventListener('dragleave', () => {
-                importArea.style.borderColor = '';
-                importArea.style.background = '';
-            });
-            importArea.addEventListener('drop', (e) => {
-                e.preventDefault();
-                importArea.style.borderColor = '';
-                importArea.style.background = '';
-                if (e.dataTransfer.files.length) processWaFiles(e.dataTransfer.files);
-            });
-            fileInput.addEventListener('change', (e) => {
-                if (e.target.files.length) processWaFiles(e.target.files);
-            });
-        }
-
-        async function processWaFiles(files) {
-            const txtFiles = Array.from(files).filter(f => f.name.endsWith('.txt'));
-            if (txtFiles.length === 0) {
-                showAlert('warning', 'Selecione arquivos .txt');
-                return;
-            }
-
-            const formData = new FormData();
-            txtFiles.forEach(f => formData.append('files', f));
-
-            try {
-                const response = await fetch('/api/whatsapp/batch-import/preview', {
-                    method: 'POST',
-                    body: formData,
-                    credentials: 'include'
-                });
-
-                const data = await response.json();
-                waBatchFiles = data.files || [];
-
-                for (let i = 0; i < txtFiles.length; i++) {
-                    const content = await txtFiles[i].text();
-                    if (waBatchFiles[i]) waBatchFiles[i].content = content;
-                }
-
-                renderWaImportPreview();
-            } catch (e) {
-                showAlert('danger', 'Erro ao processar arquivos');
-            }
-        }
-
-        function renderWaImportPreview() {
-            document.getElementById('waImportPreview').style.display = 'block';
-
-            const autoFiles = waBatchFiles.filter(f => f.auto_import && f.contact);
-            const reviewFiles = waBatchFiles.filter(f => f.needs_review || !f.contact);
-
-            document.getElementById('waFileCount').textContent = waBatchFiles.length;
-            const totalMsgs = waBatchFiles.reduce((sum, f) => sum + (f.messages_count || 0), 0);
-            document.getElementById('waMsgCount').textContent = `${totalMsgs.toLocaleString()} mensagens`;
-
-            const list = document.getElementById('waFilesList');
-            let html = '';
-
-            // Arquivos detectados automaticamente (prontos para importar)
-            if (autoFiles.length > 0) {
-                html += `<div class="mb-2 small text-success fw-medium"><i class="bi bi-check-circle me-1"></i>${autoFiles.length} arquivo(s) detectado(s) automaticamente</div>`;
-                html += autoFiles.map((file, idx) => {
-                    const realIdx = waBatchFiles.indexOf(file);
-                    const confidence = file.confidence === 'high' ? 'Alta' : 'Media';
-                    const confidenceColor = file.confidence === 'high' ? 'success' : 'info';
-                    return `
-                    <div class="p-2 border rounded mb-2 border-${confidenceColor}" style="background: rgba(25, 135, 84, 0.03);">
-                        <div class="d-flex align-items-center gap-2">
-                            <span class="badge bg-${confidenceColor}"><i class="bi bi-check"></i></span>
-                            <div class="flex-grow-1">
-                                <div class="small fw-medium text-truncate">${file.filename}</div>
-                                <div class="text-muted" style="font-size: 0.65rem;">
-                                    ${file.messages_count} msgs | ${file.match_reason}
-                                </div>
-                            </div>
-                            <div class="text-end">
-                                <div class="text-${confidenceColor} small fw-medium">${file.contact.nome}</div>
-                                <span class="badge bg-light text-muted" style="font-size: 0.6rem;">Conf. ${confidence}</span>
-                            </div>
-                        </div>
+            if (data.accounts.length === 0) {
+                grid.innerHTML = `
+                    <div style="grid-column: 1 / -1; text-align: center; padding: 32px; color: var(--gray-500);">
+                        <i class="bi bi-cloud-slash" style="font-size: 2rem; margin-bottom: 12px;"></i>
+                        <p>Nenhuma conta conectada</p>
                     </div>
-                    `;
-                }).join('');
-            }
-
-            // Arquivos que precisam de revisão
-            if (reviewFiles.length > 0) {
-                html += `<div class="mb-2 mt-3 small text-warning fw-medium"><i class="bi bi-exclamation-triangle me-1"></i>${reviewFiles.length} arquivo(s) precisa(m) de revisao</div>`;
-                html += reviewFiles.map((file, idx) => {
-                    const realIdx = waBatchFiles.indexOf(file);
-                    const chatName = file.contact_name || 'Desconhecido';
-                    const phones = file.all_phones?.slice(0, 2).join(', ') || '';
-
-                    // Se tem alternativas, mostrar
-                    let alternativesHtml = '';
-                    if (file.alternatives && file.alternatives.length > 0) {
-                        alternativesHtml = `
-                        <div class="mt-1 small text-muted">
-                            Sugestoes: ${file.alternatives.map(a =>
-                                `<a href="#" onclick="selectWaContact(${realIdx}, ${a.id}, '${a.nome.replace(/'/g, "\\'")}'); return false;" class="text-primary">${a.nome}</a>`
-                            ).join(', ')}
-                        </div>`;
-                    }
-
-                    return `
-                    <div class="p-2 border rounded mb-2 border-warning" style="background: rgba(255, 193, 7, 0.03);">
-                        <div class="d-flex align-items-center gap-2 mb-2">
-                            <span class="badge bg-warning text-dark"><i class="bi bi-question"></i></span>
-                            <div class="flex-grow-1">
-                                <div class="small fw-medium">${file.filename}</div>
-                                <div class="text-muted" style="font-size: 0.65rem;">
-                                    ${file.messages_count} msgs | Chat: "${chatName}" ${phones ? `| Tel: ${phones}` : ''}
-                                </div>
-                                ${file.match_reason ? `<div class="text-danger" style="font-size: 0.65rem;">${file.match_reason}</div>` : ''}
-                                ${alternativesHtml}
-                            </div>
-                        </div>
-                        <div class="position-relative">
-                            <input type="text"
-                                   class="form-control form-control-sm"
-                                   placeholder="Buscar contato por nome..."
-                                   id="waContactSearch_${realIdx}"
-                                   oninput="searchWaContact(${realIdx}, this.value)"
-                                   onfocus="showWaContactDropdown(${realIdx})"
-                                   autocomplete="off">
-                            <div id="waContactDropdown_${realIdx}"
-                                 class="position-absolute w-100 bg-white border rounded shadow-sm mt-1"
-                                 style="max-height: 150px; overflow-y: auto; z-index: 100; display: none;">
-                            </div>
-                        </div>
-                    </div>
-                    `;
-                }).join('');
-            }
-
-            list.innerHTML = html;
-
-            // Close dropdowns when clicking outside
-            document.addEventListener('click', (e) => {
-                if (!e.target.closest('[id^="waContactSearch_"]') && !e.target.closest('[id^="waContactDropdown_"]')) {
-                    document.querySelectorAll('[id^="waContactDropdown_"]').forEach(d => d.style.display = 'none');
-                }
-            });
-        }
-
-        function searchWaContact(idx, query) {
-            const dropdown = document.getElementById(`waContactDropdown_${idx}`);
-            if (!query || query.length < 2) {
-                dropdown.innerHTML = waContactsList.slice(0, 10).map(c =>
-                    `<div class="p-2 small hover-bg" style="cursor: pointer;" onclick="selectWaContact(${idx}, ${c.id}, '${c.nome.replace(/'/g, "\\'")}')">
-                        ${c.nome}
-                    </div>`
-                ).join('');
-                dropdown.style.display = 'block';
-                return;
-            }
-
-            const lowerQuery = query.toLowerCase();
-            const filtered = waContactsList.filter(c =>
-                c.nome.toLowerCase().includes(lowerQuery)
-            ).slice(0, 10);
-
-            if (filtered.length === 0) {
-                dropdown.innerHTML = '<div class="p-2 small text-muted">Nenhum contato encontrado</div>';
-            } else {
-                dropdown.innerHTML = filtered.map(c =>
-                    `<div class="p-2 small" style="cursor: pointer;" onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background=''" onclick="selectWaContact(${idx}, ${c.id}, '${c.nome.replace(/'/g, "\\'")}')">
-                        ${highlightMatch(c.nome, query)}
-                    </div>`
-                ).join('');
-            }
-            dropdown.style.display = 'block';
-        }
-
-        function showWaContactDropdown(idx) {
-            const input = document.getElementById(`waContactSearch_${idx}`);
-            searchWaContact(idx, input.value);
-        }
-
-        function highlightMatch(text, query) {
-            if (!query) return text;
-            const regex = new RegExp(`(${query})`, 'gi');
-            return text.replace(regex, '<strong>$1</strong>');
-        }
-
-        function selectWaContact(idx, contactId, contactName) {
-            if (waBatchFiles[idx]) {
-                waBatchFiles[idx].contact_id = contactId;
-                waBatchFiles[idx].contact_found = true;
-                waBatchFiles[idx].contact = { id: contactId, nome: contactName };
-            }
-            document.getElementById(`waContactDropdown_${idx}`).style.display = 'none';
-            renderWaImportPreview();
-        }
-
-        function setWaContact(idx, contactId) {
-            if (waBatchFiles[idx] && contactId) {
-                waBatchFiles[idx].contact_id = parseInt(contactId);
-                waBatchFiles[idx].contact_found = true;
-                const contact = waContactsList.find(c => c.id == contactId);
-                if (contact) waBatchFiles[idx].contact = contact;
-            }
-        }
-
-        function clearWaImport() {
-            waBatchFiles = [];
-            document.getElementById('waImportPreview').style.display = 'none';
-            document.getElementById('waImportResult').style.display = 'none';
-            document.getElementById('waFileInput').value = '';
-        }
-
-        async function confirmWaImport() {
-            // Arquivos prontos: auto-detectados OU manualmente selecionados
-            const filesToImport = waBatchFiles.filter(f =>
-                (f.auto_import && f.contact) || f.contact_id || (f.contact_found && f.contact)
-            );
-
-            if (filesToImport.length === 0) {
-                showAlert('warning', 'Nenhum arquivo pronto para importar. Selecione contatos para os arquivos pendentes.');
-                return;
-            }
-
-            const pendingFiles = waBatchFiles.filter(f => f.needs_review && !f.contact_id && !f.contact);
-            if (pendingFiles.length > 0) {
-                if (!confirm(`${pendingFiles.length} arquivo(s) serao ignorados pois nao tem contato definido. Continuar?`)) {
-                    return;
-                }
-            }
-
-            const btn = document.getElementById('waImportBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importando...';
-
-            try {
-                const response = await fetch('/api/whatsapp/batch-import/confirm', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        files: filesToImport.map(f => ({
-                            filename: f.filename,
-                            content: f.content,
-                            contact_id: f.contact?.id || f.contact_id
-                        }))
-                    }),
-                    credentials: 'include'
-                });
-
-                const result = await response.json();
-
-                document.getElementById('waImportPreview').style.display = 'none';
-                document.getElementById('waImportResult').style.display = 'block';
-                document.getElementById('waImportResultText').innerHTML = `
-                    <strong>${result.successful}</strong> arquivos importados,
-                    <strong>${result.total_messages_imported?.toLocaleString() || 0}</strong> mensagens adicionadas
                 `;
-
-                showAlert('success', `Importado: ${result.total_messages_imported} mensagens`);
-            } catch (e) {
-                showAlert('danger', 'Erro ao importar');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Importar';
+                return;
             }
+
+            grid.innerHTML = data.accounts.map(account => renderAccountCard(account)).join('');
+
+            const connectedEmails = data.accounts.filter(a => a.conectado).map(a => a.email);
+            if (connectedEmails.some(e => e.includes('almeida-prado.com'))) {
+                document.getElementById('connectProfessional').style.display = 'none';
+            }
+            if (connectedEmails.some(e => e.includes('gmail.com'))) {
+                document.getElementById('connectPersonal').style.display = 'none';
+            }
+        } catch (error) {
+            console.error('Error loading accounts:', error);
+        }
+    }
+
+    function renderAccountCard(account) {
+        const isConnected = account.conectado;
+        const isProfessional = account.tipo === 'professional';
+        const lastSync = account.ultima_sync ? formatDate(account.ultima_sync) : 'Nunca';
+
+        return `
+            <div class="account-card ${isConnected ? 'connected' : 'disconnected'}">
+                <div class="account-header">
+                    <div class="account-icon ${isProfessional ? 'professional' : 'personal'}">
+                        <i class="bi bi-${isProfessional ? 'briefcase' : 'person'}"></i>
+                    </div>
+                    <div class="account-info">
+                        <div class="account-type">${isProfessional ? 'Profissional' : 'Pessoal'}</div>
+                        <div class="account-email">${account.email}</div>
+                        <div class="account-status ${isConnected ? 'connected' : 'disconnected'}">
+                            <i class="bi bi-${isConnected ? 'check-circle-fill' : 'x-circle'}"></i>
+                            ${isConnected ? 'Conectada' : 'Desconectada'}
+                        </div>
+                    </div>
+                </div>
+                <div class="account-meta">
+                    <span><i class="bi bi-clock-history"></i>Ultimo sync: ${lastSync}</span>
+                </div>
+                <div class="account-actions">
+                    ${isConnected ? `
+                        <div class="btn-group" role="group">
+                            <button class="btn btn-success btn-sm" onclick="syncAccount(${account.id})" title="Sincronizar Contatos">
+                                <i class="bi bi-people me-1"></i>Contatos
+                            </button>
+                            <button class="btn btn-primary btn-sm" onclick="syncGmail(${account.id})" title="Sincronizar Emails">
+                                <i class="bi bi-envelope me-1"></i>Emails
+                            </button>
+                        </div>
+                        <button class="btn btn-outline-danger btn-sm" onclick="disconnectAccount(${account.id})">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    ` : `
+                        <a href="/api/google/connect/${account.tipo}" class="btn btn-primary btn-sm">
+                            <i class="bi bi-link me-1"></i>Reconectar
+                        </a>
+                    `}
+                </div>
+            </div>
+        `;
+    }
+
+    async function syncAccount(accountId) {
+        const progress = document.getElementById('syncProgress');
+        const progressText = document.getElementById('syncProgressText');
+        progress.classList.add('active');
+        progressText.textContent = 'Sincronizando contatos... (pode levar alguns minutos)';
+
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 360000);
+            const response = await fetch(`/api/google/sync/${accountId}`, { method: 'POST', signal: controller.signal });
+            clearTimeout(timeoutId);
+            const data = await response.json();
+
+            if (response.ok) {
+                const stats = data.stats;
+                showAlert('success', `Sincronizado! ${stats.imported} novos, ${stats.updated} atualizados.`);
+                loadAccounts();
+            } else {
+                showAlert('danger', data.detail || 'Erro ao sincronizar');
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') showAlert('danger', 'Timeout: sincronizacao demorou muito.');
+            else showAlert('danger', 'Erro: ' + (error.message || 'conexao falhou'));
+        } finally {
+            progress.classList.remove('active');
+        }
+    }
+
+    async function syncAllAccounts() {
+        const progress = document.getElementById('syncProgress');
+        const progressText = document.getElementById('syncProgressText');
+        progress.classList.add('active');
+        progressText.textContent = 'Sincronizando todas as contas...';
+
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 600000);
+            const response = await fetch('/api/google/sync-all', { method: 'POST', signal: controller.signal });
+            clearTimeout(timeoutId);
+            const data = await response.json();
+
+            let totalImported = 0, totalUpdated = 0;
+            data.results.forEach(r => {
+                if (r.status === 'success') {
+                    totalImported += r.stats.imported;
+                    totalUpdated += r.stats.updated;
+                }
+            });
+            showAlert('success', `Sincronizado! ${totalImported} novos, ${totalUpdated} atualizados.`);
+            loadAccounts();
+        } catch (error) {
+            if (error.name === 'AbortError') showAlert('danger', 'Timeout: sincronizacao demorou muito.');
+            else showAlert('danger', 'Erro: ' + (error.message || 'conexao falhou'));
+        } finally {
+            progress.classList.remove('active');
+        }
+    }
+
+    async function syncGmail(accountId) {
+        const progress = document.getElementById('syncProgress');
+        const progressText = document.getElementById('syncProgressText');
+        progress.classList.add('active');
+        progressText.textContent = 'Sincronizando emails...';
+
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 360000);
+            const response = await fetch(`/api/gmail/sync/${accountId}?days=30&max_messages=100`, { method: 'GET', signal: controller.signal });
+            clearTimeout(timeoutId);
+            const data = await response.json();
+
+            if (response.ok) {
+                const stats = data.stats;
+                showAlert('success', `Emails sincronizados! ${stats.fetched} buscados, ${stats.linked} vinculados, ${stats.saved} salvos.`);
+                loadAccounts();
+            } else {
+                showAlert('danger', data.detail || 'Erro ao sincronizar emails');
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') showAlert('danger', 'Timeout: sincronizacao demorou muito.');
+            else showAlert('danger', 'Erro: ' + (error.message || 'conexao falhou'));
+        } finally {
+            progress.classList.remove('active');
+        }
+    }
+
+    async function disconnectAccount(accountId) {
+        if (!confirm('Deseja desconectar esta conta?')) return;
+        try {
+            const response = await fetch(`/api/google/accounts/${accountId}`, { method: 'DELETE' });
+            if (response.ok) { showAlert('success', 'Conta desconectada'); loadAccounts(); }
+            else showAlert('danger', 'Erro ao desconectar');
+        } catch (error) { showAlert('danger', 'Erro de conexao'); }
+    }
+
+    function formatDate(dateStr) {
+        if (!dateStr) return '-';
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    // ============== WhatsApp Functions ==============
+    let waContactsList = [];
+    let waBatchFiles = [];
+
+    async function checkWaStatus() {
+        try {
+            const response = await fetch('/api/evolution/status', { credentials: 'include' });
+            const data = await response.json();
+
+            const statusBadge = document.getElementById('waStatusBadge');
+            const connected = document.getElementById('waConnected');
+            const disconnected = document.getElementById('waDisconnected');
+            const notConfigured = document.getElementById('waNotConfigured');
+            const importCard = document.getElementById('waImportCard');
+
+            if (!data.configured) {
+                statusBadge.innerHTML = '<span class="whatsapp-status disconnected"><span class="dot"></span>Nao Configurado</span>';
+                connected.style.display = 'none';
+                disconnected.style.display = 'none';
+                notConfigured.style.display = 'block';
+                importCard.style.display = 'none';
+                return;
+            }
+
+            notConfigured.style.display = 'none';
+
+            if (data.connected) {
+                statusBadge.innerHTML = '<span class="whatsapp-status connected"><span class="dot"></span>Conectado</span>';
+                connected.style.display = 'block';
+                disconnected.style.display = 'none';
+                importCard.style.display = 'block';
+                checkWaWebhook();
+                loadWaContacts();
+            } else {
+                statusBadge.innerHTML = '<span class="whatsapp-status disconnected"><span class="dot"></span>Desconectado</span>';
+                connected.style.display = 'none';
+                disconnected.style.display = 'block';
+                importCard.style.display = 'block';
+                refreshWaQR();
+                loadWaContacts();
+            }
+        } catch (error) {
+            console.error('Error checking WA status:', error);
+            document.getElementById('waStatusBadge').innerHTML = '<span class="whatsapp-status disconnected"><span class="dot"></span>Erro</span>';
+        }
+    }
+
+    async function checkWaWebhook() {
+        try {
+            const response = await fetch('/api/evolution/webhook', { credentials: 'include' });
+            const data = await response.json();
+
+            const webhookStatus = document.getElementById('waWebhookStatus');
+            const webhookText = document.getElementById('waWebhookText');
+            const webhookBtn = document.getElementById('waWebhookBtn');
+
+            webhookStatus.style.display = 'block';
+
+            if (data.configured && data.is_correct) {
+                webhookText.innerHTML = '<i class="bi bi-check-circle text-success me-1"></i>Webhook ativo - mensagens salvas automaticamente';
+                webhookBtn.innerHTML = '<i class="bi bi-check me-1"></i>OK';
+                webhookBtn.classList.add('btn-success');
+                webhookBtn.classList.remove('btn-outline-light');
+            } else if (data.url) {
+                webhookText.innerHTML = `<i class="bi bi-info-circle text-info me-1"></i>Webhook: ${data.url}`;
+                webhookBtn.innerHTML = '<i class="bi bi-check me-1"></i>OK';
+                webhookBtn.classList.add('btn-success');
+            } else {
+                webhookText.innerHTML = '<i class="bi bi-exclamation-circle text-warning me-1"></i>Clique em Webhook para ativar';
+            }
+        } catch (error) { console.error('Error checking webhook:', error); }
+    }
+
+    async function setupWaWebhook() {
+        const btn = document.getElementById('waWebhookBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+        try {
+            const response = await fetch('/api/evolution/setup-webhook', { method: 'POST', credentials: 'include' });
+            const data = await response.json();
+
+            if (response.ok && data.webhook_url) {
+                showToast('Webhook configurado!', 'success');
+                checkWaWebhook();
+            } else {
+                showToast('Erro ao configurar webhook', 'danger');
+            }
+        } catch (error) {
+            showToast('Erro de conexao', 'danger');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-gear me-1"></i>Webhook';
+        }
+    }
+
+    async function refreshWaQR() {
+        const qrImage = document.getElementById('waQrImage');
+        const qrLoading = document.getElementById('waQrLoading');
+        qrImage.style.display = 'none';
+        qrLoading.style.display = 'block';
+
+        try {
+            const response = await fetch('/api/evolution/qrcode', { credentials: 'include' });
+            const data = await response.json();
+            if (data.qr_base64) {
+                qrImage.src = data.qr_base64;
+                qrImage.style.display = 'block';
+                qrLoading.style.display = 'none';
+            }
+        } catch (error) {
+            qrLoading.innerHTML = '<p class="text-danger">Erro ao gerar QR Code</p>';
+        }
+    }
+
+    async function disconnectWa() {
+        if (!confirm('Deseja desconectar o WhatsApp?')) return;
+        try {
+            await fetch('/api/evolution/disconnect', { method: 'POST', credentials: 'include' });
+            showAlert('success', 'WhatsApp desconectado');
+            setTimeout(checkWaStatus, 2000);
+        } catch (error) { showAlert('danger', 'Erro ao desconectar'); }
+    }
+
+    async function loadWaContacts() {
+        try {
+            const response = await fetch('/api/contacts?limit=500');
+            const data = await response.json();
+            waContactsList = data.contacts || [];
+        } catch (error) { console.error('Error loading contacts:', error); }
+    }
+
+    function setupWaImport() {
+        const importArea = document.getElementById('waImportArea');
+        const fileInput = document.getElementById('waFileInput');
+        if (!importArea || !fileInput) return;
+
+        importArea.addEventListener('click', () => fileInput.click());
+        importArea.addEventListener('dragover', (e) => { e.preventDefault(); importArea.style.borderColor = '#25D366'; });
+        importArea.addEventListener('dragleave', () => { importArea.style.borderColor = ''; });
+        importArea.addEventListener('drop', (e) => { e.preventDefault(); importArea.style.borderColor = ''; if (e.dataTransfer.files.length) processWaFiles(e.dataTransfer.files); });
+        fileInput.addEventListener('change', (e) => { if (e.target.files.length) processWaFiles(e.target.files); });
+    }
+
+    async function processWaFiles(files) {
+        const txtFiles = Array.from(files).filter(f => f.name.endsWith('.txt'));
+        if (txtFiles.length === 0) { showAlert('warning', 'Selecione arquivos .txt'); return; }
+
+        const formData = new FormData();
+        txtFiles.forEach(f => formData.append('files', f));
+
+        try {
+            const response = await fetch('/api/whatsapp/batch-import/preview', { method: 'POST', body: formData, credentials: 'include' });
+            const data = await response.json();
+            waBatchFiles = data.files || [];
+            for (let i = 0; i < txtFiles.length; i++) {
+                const content = await txtFiles[i].text();
+                if (waBatchFiles[i]) waBatchFiles[i].content = content;
+            }
+            renderWaImportPreview();
+        } catch (e) { showAlert('danger', 'Erro ao processar arquivos'); }
+    }
+
+    function renderWaImportPreview() {
+        document.getElementById('waImportPreview').style.display = 'block';
+        const autoFiles = waBatchFiles.filter(f => f.auto_import && f.contact);
+        const reviewFiles = waBatchFiles.filter(f => f.needs_review || !f.contact);
+
+        document.getElementById('waFileCount').textContent = waBatchFiles.length;
+        const totalMsgs = waBatchFiles.reduce((sum, f) => sum + (f.messages_count || 0), 0);
+        document.getElementById('waMsgCount').textContent = `${totalMsgs.toLocaleString()} mensagens`;
+
+        const list = document.getElementById('waFilesList');
+        let html = '';
+
+        if (autoFiles.length > 0) {
+            html += `<div class="mb-2 small text-success fw-medium"><i class="bi bi-check-circle me-1"></i>${autoFiles.length} detectado(s)</div>`;
+            html += autoFiles.map(file => `
+                <div class="p-2 border rounded mb-2 border-success" style="background: rgba(25, 135, 84, 0.03);">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-success"><i class="bi bi-check"></i></span>
+                        <div class="flex-grow-1">
+                            <div class="small fw-medium text-truncate">${file.filename}</div>
+                            <div class="text-muted" style="font-size: 0.65rem;">${file.messages_count} msgs</div>
+                        </div>
+                        <div class="text-success small fw-medium">${file.contact.nome}</div>
+                    </div>
+                </div>
+            `).join('');
         }
 
-        // Initialize WhatsApp on page load
-        document.addEventListener('DOMContentLoaded', () => {
-            checkWaStatus();
-            setupWaImport();
-            setInterval(checkWaStatus, 30000);
-        });
-    </script>
-</body>
-</html>
+        if (reviewFiles.length > 0) {
+            html += `<div class="mb-2 mt-3 small text-warning fw-medium"><i class="bi bi-exclamation-triangle me-1"></i>${reviewFiles.length} precisa revisao</div>`;
+            html += reviewFiles.map((file, idx) => {
+                const realIdx = waBatchFiles.indexOf(file);
+                return `
+                <div class="p-2 border rounded mb-2 border-warning">
+                    <div class="small fw-medium">${file.filename}</div>
+                    <input type="text" class="form-control form-control-sm mt-2" placeholder="Buscar contato..." id="waContactSearch_${realIdx}" oninput="searchWaContact(${realIdx}, this.value)" onfocus="showWaContactDropdown(${realIdx})" autocomplete="off">
+                    <div id="waContactDropdown_${realIdx}" class="position-absolute bg-white border rounded shadow-sm" style="max-height: 150px; overflow-y: auto; z-index: 100; display: none;"></div>
+                </div>
+            `;
+            }).join('');
+        }
+        list.innerHTML = html;
+    }
+
+    function searchWaContact(idx, query) {
+        const dropdown = document.getElementById(`waContactDropdown_${idx}`);
+        const filtered = query.length < 2 ? waContactsList.slice(0, 10) : waContactsList.filter(c => c.nome.toLowerCase().includes(query.toLowerCase())).slice(0, 10);
+        dropdown.innerHTML = filtered.map(c => `<div class="p-2 small" style="cursor:pointer;" onclick="selectWaContact(${idx}, ${c.id}, '${c.nome.replace(/'/g, "\\'")}')">${c.nome}</div>`).join('');
+        dropdown.style.display = 'block';
+    }
+
+    function showWaContactDropdown(idx) { searchWaContact(idx, document.getElementById(`waContactSearch_${idx}`).value); }
+
+    function selectWaContact(idx, contactId, contactName) {
+        if (waBatchFiles[idx]) {
+            waBatchFiles[idx].contact_id = contactId;
+            waBatchFiles[idx].contact = { id: contactId, nome: contactName };
+        }
+        document.getElementById(`waContactDropdown_${idx}`).style.display = 'none';
+        renderWaImportPreview();
+    }
+
+    function clearWaImport() {
+        waBatchFiles = [];
+        document.getElementById('waImportPreview').style.display = 'none';
+        document.getElementById('waImportResult').style.display = 'none';
+        document.getElementById('waFileInput').value = '';
+    }
+
+    async function confirmWaImport() {
+        const filesToImport = waBatchFiles.filter(f => (f.auto_import && f.contact) || f.contact_id || f.contact);
+        if (filesToImport.length === 0) { showAlert('warning', 'Nenhum arquivo pronto'); return; }
+
+        const btn = document.getElementById('waImportBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Importando...';
+
+        try {
+            const response = await fetch('/api/whatsapp/batch-import/confirm', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ files: filesToImport.map(f => ({ filename: f.filename, content: f.content, contact_id: f.contact?.id || f.contact_id })) }),
+                credentials: 'include'
+            });
+            const result = await response.json();
+            document.getElementById('waImportPreview').style.display = 'none';
+            document.getElementById('waImportResult').style.display = 'block';
+            document.getElementById('waImportResultText').textContent = `${result.successful} arquivos, ${result.total_messages_imported || 0} mensagens`;
+            showAlert('success', `Importado: ${result.total_messages_imported} mensagens`);
+        } catch (e) { showAlert('danger', 'Erro ao importar'); }
+        finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Importar'; }
+    }
+
+    // Initialize on page load
+    document.addEventListener('DOMContentLoaded', () => {
+        checkWaStatus();
+        setupWaImport();
+        setInterval(checkWaStatus, 30000);
+    });
+</script>
+{% endblock %}
