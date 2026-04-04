@@ -1515,13 +1515,53 @@ async function importArticles() {
     }
 }
 
+// Get next available slot for scheduling (Tue/Thu at 9:00)
+function getNextAvailableSlot() {
+    const now = new Date();
+    const day = now.getDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+
+    // Find next Tuesday (2) or Thursday (4)
+    let daysToAdd;
+    if (day < 2) daysToAdd = 2 - day; // Before Tue -> go to Tue
+    else if (day === 2) daysToAdd = 2; // Tue -> go to Thu
+    else if (day < 4) daysToAdd = 4 - day; // Wed -> go to Thu
+    else if (day === 4) daysToAdd = 5; // Thu -> go to next Tue
+    else daysToAdd = (9 - day); // Fri/Sat/Sun -> go to next Tue
+
+    const nextSlot = new Date(now);
+    nextSlot.setDate(now.getDate() + daysToAdd);
+    nextSlot.setHours(9, 0, 0, 0);
+
+    return nextSlot.toISOString().slice(0, 16);
+}
+
 async function openPostModal(postId) {
     try {
         const response = await fetch(`/api/editorial/${postId}`);
         const post = await response.json();
 
+        // Use AI gancho if no custom content
+        const conteudo = post.conteudo_adaptado || post.ai_gancho_linkedin || '';
+
+        // Suggest date if not set
+        const suggestedDate = post.data_publicacao
+            ? new Date(post.data_publicacao).toISOString().slice(0,16)
+            : getNextAvailableSlot();
+
+        // AI info badge
+        const aiInfo = post.ai_score_relevancia
+            ? `<div style="display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;">
+                 <span style="background: #22c55e; color: white; padding: 4px 10px; border-radius: 12px; font-size: 0.8rem;">
+                   Score: ${post.ai_score_relevancia}/10
+                 </span>
+                 ${post.ai_categoria ? `<span style="background: #6366f1; color: white; padding: 4px 10px; border-radius: 12px; font-size: 0.8rem;">${post.ai_categoria}</span>` : ''}
+                 ${post.ai_evergreen ? `<span style="background: #059669; color: white; padding: 4px 10px; border-radius: 12px; font-size: 0.8rem;">🌲 Evergreen</span>` : ''}
+               </div>`
+            : '';
+
         document.getElementById('post-modal-title').textContent = post.article_title;
         document.getElementById('post-modal-body').innerHTML = `
+            ${aiInfo}
             <div class="form-group">
                 <label>Status</label>
                 <select class="form-control" id="edit-status">
@@ -1540,17 +1580,29 @@ async function openPostModal(postId) {
             </div>
             <div class="form-group">
                 <label>Data de Publicacao</label>
-                <input type="datetime-local" class="form-control" id="edit-date"
-                    value="${post.data_publicacao ? new Date(post.data_publicacao).toISOString().slice(0,16) : ''}">
+                <input type="datetime-local" class="form-control" id="edit-date" value="${suggestedDate}">
             </div>
             <div class="form-group">
-                <label>Conteudo Adaptado</label>
-                <textarea class="form-control" id="edit-conteudo" rows="4"
-                    placeholder="Texto adaptado para a rede social...">${post.conteudo_adaptado || ''}</textarea>
+                <label style="display: flex; justify-content: space-between; align-items: center;">
+                    Texto para LinkedIn
+                    <button type="button" class="btn btn-sm" onclick="copyModalContent()" style="background: #0077b5; color: white; border-radius: 6px; padding: 4px 12px;">
+                        <i class="bi bi-clipboard"></i> Copiar
+                    </button>
+                </label>
+                <textarea class="form-control" id="edit-conteudo" rows="6"
+                    placeholder="Texto para postar no LinkedIn...">${escapeHtml(conteudo)}</textarea>
+                <small style="color: var(--gray-500); margin-top: 4px; display: block;">
+                    💡 Dica: Poste este texto no LinkedIn e adicione o link nos comentários
+                </small>
             </div>
             <div class="form-group">
-                <label>URL do Artigo</label>
-                <input type="text" class="form-control" readonly value="${post.article_url || ''}">
+                <label style="display: flex; justify-content: space-between; align-items: center;">
+                    Link do Artigo
+                    <button type="button" class="btn btn-sm" onclick="copyArticleUrl('${post.article_url || ''}')" style="background: var(--gray-200); color: var(--dark); border-radius: 6px; padding: 4px 12px;">
+                        <i class="bi bi-link-45deg"></i> Copiar Link
+                    </button>
+                </label>
+                <input type="text" class="form-control" readonly value="${post.article_url || ''}" id="article-url-input">
             </div>
             <div style="display: flex; gap: 12px; justify-content: space-between; margin-top: 24px;">
                 <button class="btn-secondary" onclick="deletePost(${post.id})" style="color: var(--danger);">
@@ -1558,7 +1610,9 @@ async function openPostModal(postId) {
                 </button>
                 <div style="display: flex; gap: 12px;">
                     <button class="btn-secondary" onclick="closePostModal()">Cancelar</button>
-                    <button class="btn-primary" onclick="savePost(${post.id})">Salvar</button>
+                    <button class="btn-primary" onclick="savePost(${post.id})">
+                        <i class="bi bi-calendar-check"></i> Agendar
+                    </button>
                 </div>
             </div>
         `;
@@ -1567,6 +1621,25 @@ async function openPostModal(postId) {
     } catch (err) {
         alert('Erro ao carregar post: ' + err.message);
     }
+}
+
+function copyModalContent() {
+    const content = document.getElementById('edit-conteudo').value;
+    navigator.clipboard.writeText(content).then(() => {
+        const btn = event.target.closest('button');
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-check"></i> Copiado!';
+        setTimeout(() => btn.innerHTML = originalHtml, 2000);
+    });
+}
+
+function copyArticleUrl(url) {
+    navigator.clipboard.writeText(url).then(() => {
+        const btn = event.target.closest('button');
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-check"></i> Copiado!';
+        setTimeout(() => btn.innerHTML = originalHtml, 2000);
+    });
 }
 
 function closePostModal() {
