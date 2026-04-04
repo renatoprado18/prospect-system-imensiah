@@ -575,6 +575,23 @@ async def create_google_contact(access_token: str, contact_data: Dict) -> Option
             for r in contact_data["relacionamentos"]
         ]
 
+    # Add birthday
+    if contact_data.get("aniversario"):
+        try:
+            # Parse date string (format: YYYY-MM-DD)
+            date_str = str(contact_data["aniversario"])
+            if date_str and date_str != "None":
+                parts = date_str.split("-")
+                if len(parts) == 3:
+                    year, month, day = int(parts[0]), int(parts[1]), int(parts[2])
+                    birthday = {"date": {"month": month, "day": day}}
+                    # Only include year if it's not 1900 (placeholder year)
+                    if year != 1900:
+                        birthday["date"]["year"] = year
+                    person["birthdays"] = [birthday]
+        except (ValueError, IndexError):
+            pass  # Invalid date format, skip
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             f"{GOOGLE_PEOPLE_API}/people:createContact",
@@ -596,7 +613,7 @@ async def update_google_contact(
     access_token: str,
     resource_name: str,
     contact_data: Dict,
-    update_person_fields: str = "names,emailAddresses,phoneNumbers,organizations,addresses,relations"
+    update_person_fields: str = "names,emailAddresses,phoneNumbers,organizations,addresses,relations,birthdays"
 ) -> bool:
     """Update an existing Google contact"""
     person = {}
@@ -666,6 +683,21 @@ async def update_google_contact(
             }
             for r in contact_data["relacionamentos"]
         ]
+
+    # Birthday
+    if contact_data.get("aniversario"):
+        try:
+            date_str = str(contact_data["aniversario"])
+            if date_str and date_str != "None":
+                parts = date_str.split("-")
+                if len(parts) == 3:
+                    year, month, day = int(parts[0]), int(parts[1]), int(parts[2])
+                    birthday = {"date": {"month": month, "day": day}}
+                    if year != 1900:
+                        birthday["date"]["year"] = year
+                    person["birthdays"] = [birthday]
+        except (ValueError, IndexError):
+            pass
 
     async with httpx.AsyncClient() as client:
         response = await client.patch(
