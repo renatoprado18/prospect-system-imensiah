@@ -284,7 +284,8 @@ def update_project(project_id: int, data: Dict) -> Optional[Dict]:
         # Build update dynamically
         allowed = ['nome', 'descricao', 'tipo', 'status', 'prioridade',
                    'data_inicio', 'data_previsao', 'data_conclusao',
-                   'cor', 'icone', 'empresa_relacionada', 'valor_estimado', 'notas', 'tags']
+                   'cor', 'icone', 'empresa_relacionada', 'valor_estimado', 'notas', 'tags',
+                   'google_drive_folder_id']
 
         updates = []
         values = []

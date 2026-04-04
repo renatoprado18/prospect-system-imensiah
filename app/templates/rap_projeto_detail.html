@@ -483,6 +483,7 @@
             }
             project = await response.json();
             renderProject();
+            loadProjectDocuments();
         } catch (error) {
             console.error('Error:', error);
             document.getElementById('projectContainer').innerHTML = `
@@ -647,6 +648,38 @@
                             </table>
                         </div>
                     </div>
+
+                    <!-- Documentos -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h3 class="section-title">
+                                <i class="bi bi-folder2-open text-warning"></i> Documentos
+                            </h3>
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-sm btn-outline-primary" onclick="openProjectDriveFolderPicker()" title="Vincular Pasta">
+                                    <i class="bi bi-link-45deg"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('projectFileUpload').click()" title="Upload">
+                                    <i class="bi bi-cloud-upload"></i>
+                                </button>
+                                <input type="file" id="projectFileUpload" style="display:none" onchange="uploadDocumentToProject(this.files[0])">
+                            </div>
+                        </div>
+                        <div class="section-body">
+                            <!-- Linked Folder -->
+                            <div id="projectLinkedFolder" class="mb-3">
+                                ${project.google_drive_folder_id ?
+                                    '<div class="d-flex align-items-center gap-2"><i class="bi bi-folder-fill text-warning"></i> <a href="https://drive.google.com/drive/folders/' + project.google_drive_folder_id + '" target="_blank" class="small">Abrir no Drive</a> <button class="btn btn-sm btn-link text-danger p-0 ms-auto" onclick="unlinkProjectDriveFolder()"><i class="bi bi-x"></i></button></div>'
+                                    : '<span class="text-muted small">Nenhuma pasta vinculada</span>'}
+                            </div>
+                            <!-- Documents List -->
+                            <div id="projectDocumentsContainer">
+                                <div class="text-center text-muted py-2 small">
+                                    <i class="bi bi-hourglass-split"></i> Carregando...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         `;
@@ -675,6 +708,261 @@
                 </div>
             `;
         }).join('');
+    }
+
+    // ========== DOCUMENTS FUNCTIONS ==========
+
+    async function loadProjectDocuments() {
+        const container = document.getElementById('projectDocumentsContainer');
+        if (!container) return;
+
+        try {
+            const response = await fetch(`/api/documentos/projeto/${projectId}`);
+            const docs = await response.json();
+
+            if (!docs || docs.length === 0) {
+                container.innerHTML = '<p class="text-muted small mb-0">Nenhum documento</p>';
+                return;
+            }
+
+            container.innerHTML = docs.slice(0, 5).map(doc => {
+                const icon = getDocIcon(doc.mime_type);
+                return `
+                    <div class="d-flex align-items-center gap-2 py-1 doc-item" onclick="window.open('${doc.google_drive_url || '#'}', '_blank')" style="cursor: pointer;">
+                        <i class="bi ${icon.icon} ${icon.cls}"></i>
+                        <span class="small text-truncate flex-grow-1" title="${doc.nome}">${doc.nome}</span>
+                    </div>
+                `;
+            }).join('');
+
+            if (docs.length > 5) {
+                container.innerHTML += `<small class="text-muted">+${docs.length - 5} mais</small>`;
+            }
+        } catch (error) {
+            console.error('Error loading documents:', error);
+            container.innerHTML = '<p class="text-muted small mb-0">Erro ao carregar</p>';
+        }
+    }
+
+    function getDocIcon(mimeType) {
+        if (!mimeType) return { icon: 'bi-file-earmark', cls: 'text-secondary' };
+        if (mimeType.includes('pdf')) return { icon: 'bi-file-earmark-pdf-fill', cls: 'text-danger' };
+        if (mimeType.includes('word') || mimeType.includes('document')) return { icon: 'bi-file-earmark-word-fill', cls: 'text-primary' };
+        if (mimeType.includes('sheet') || mimeType.includes('excel')) return { icon: 'bi-file-earmark-excel-fill', cls: 'text-success' };
+        if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return { icon: 'bi-file-earmark-ppt-fill', cls: 'text-warning' };
+        if (mimeType.includes('image')) return { icon: 'bi-file-earmark-image-fill', cls: 'text-info' };
+        return { icon: 'bi-file-earmark', cls: 'text-secondary' };
+    }
+
+    let projectFolderPickerData = {
+        path: [{ id: null, name: 'Meu Drive' }],
+        folders: [],
+        selectedFolder: null
+    };
+
+    async function openProjectDriveFolderPicker() {
+        if (!document.getElementById('projectDriveFolderPickerModal')) {
+            const modal = document.createElement('div');
+            modal.className = 'modal fade';
+            modal.id = 'projectDriveFolderPickerModal';
+            modal.innerHTML = `
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title"><i class="bi bi-google"></i> Selecionar Pasta do Drive</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="breadcrumb-drive" id="projectFolderBreadcrumb" style="display: flex; align-items: center; gap: 8px; padding: 10px; background: #f1f5f9; border-radius: 8px; margin-bottom: 12px; flex-wrap: wrap;"></div>
+                            <div class="folder-list" id="projectFolderList" style="max-height: 400px; overflow-y: auto;">
+                                <div class="text-center py-4"><i class="bi bi-hourglass-split"></i> Carregando...</div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                            <button type="button" class="btn btn-primary" onclick="linkProjectSelectedFolder()" id="linkProjectFolderBtn" disabled>
+                                <i class="bi bi-link-45deg"></i> Vincular Pasta
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        projectFolderPickerData = { path: [{ id: null, name: 'Meu Drive' }], folders: [], selectedFolder: null };
+        const modal = new bootstrap.Modal(document.getElementById('projectDriveFolderPickerModal'));
+        modal.show();
+        await loadProjectDriveFolders(null);
+    }
+
+    async function loadProjectDriveFolders(parentId) {
+        const container = document.getElementById('projectFolderList');
+        const breadcrumb = document.getElementById('projectFolderBreadcrumb');
+
+        container.innerHTML = '<div class="text-center py-4"><i class="bi bi-hourglass-split"></i> Carregando...</div>';
+
+        try {
+            const url = parentId ? `/api/drive/folders?parent_id=${parentId}` : '/api/drive/folders';
+            const response = await fetch(url);
+            const data = await response.json();
+
+            breadcrumb.innerHTML = projectFolderPickerData.path.map((p, i) =>
+                `<span onclick="navigateProjectToFolder(${i})" style="cursor: pointer; color: #6366f1;">${p.name}</span>${i < projectFolderPickerData.path.length - 1 ? ' <i class="bi bi-chevron-right"></i> ' : ''}`
+            ).join('');
+
+            if (!data.folders || data.folders.length === 0) {
+                container.innerHTML = '<div class="text-center text-muted py-4">Nenhuma subpasta</div>';
+                return;
+            }
+
+            projectFolderPickerData.folders = data.folders;
+            container.innerHTML = data.folders.map(f => `
+                <div class="folder-item d-flex align-items-center gap-2 p-2 rounded" data-id="${f.id}" onclick="selectProjectFolder('${f.id}', '${f.name.replace(/'/g, "\\'")}')" style="cursor: pointer; transition: background 0.2s;">
+                    <i class="bi bi-folder-fill text-warning" style="font-size: 1.25rem;"></i>
+                    <span class="flex-grow-1">${f.name}</span>
+                    <i class="bi bi-chevron-right text-muted" onclick="event.stopPropagation(); enterProjectFolder('${f.id}', '${f.name.replace(/'/g, "\\'")}')" style="cursor: pointer;"></i>
+                </div>
+            `).join('');
+
+        } catch (error) {
+            console.error('Error loading folders:', error);
+            container.innerHTML = '<div class="text-center text-danger py-3"><i class="bi bi-exclamation-triangle"></i> Erro ao carregar pastas</div>';
+        }
+    }
+
+    function selectProjectFolder(folderId, folderName) {
+        document.querySelectorAll('#projectFolderList .folder-item').forEach(el => {
+            el.style.background = '';
+            el.style.border = '';
+        });
+        const selected = document.querySelector(`#projectFolderList .folder-item[data-id="${folderId}"]`);
+        if (selected) {
+            selected.style.background = '#6366f1';
+            selected.style.color = 'white';
+        }
+        projectFolderPickerData.selectedFolder = { id: folderId, name: folderName };
+        document.getElementById('linkProjectFolderBtn').disabled = false;
+    }
+
+    function enterProjectFolder(folderId, folderName) {
+        projectFolderPickerData.path.push({ id: folderId, name: folderName });
+        projectFolderPickerData.selectedFolder = null;
+        document.getElementById('linkProjectFolderBtn').disabled = true;
+        loadProjectDriveFolders(folderId);
+    }
+
+    function navigateProjectToFolder(index) {
+        projectFolderPickerData.path = projectFolderPickerData.path.slice(0, index + 1);
+        const targetId = projectFolderPickerData.path[index].id;
+        loadProjectDriveFolders(targetId);
+    }
+
+    async function linkProjectSelectedFolder() {
+        if (!projectFolderPickerData.selectedFolder) return;
+
+        try {
+            const response = await fetch(`/api/drive/folders/${projectFolderPickerData.selectedFolder.id}/link`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    entidade_tipo: 'projeto',
+                    entidade_id: projectId
+                })
+            });
+
+            if (response.ok) {
+                await fetch(`/api/drive/folders/${projectFolderPickerData.selectedFolder.id}/index`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        entidade_tipo: 'projeto',
+                        entidade_id: projectId
+                    })
+                });
+
+                document.getElementById('projectLinkedFolder').innerHTML =
+                    `<div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-folder-fill text-warning"></i>
+                        <a href="https://drive.google.com/drive/folders/${projectFolderPickerData.selectedFolder.id}" target="_blank" class="small">${projectFolderPickerData.selectedFolder.name}</a>
+                        <button class="btn btn-sm btn-link text-danger p-0 ms-auto" onclick="unlinkProjectDriveFolder()"><i class="bi bi-x"></i></button>
+                    </div>`;
+
+                bootstrap.Modal.getInstance(document.getElementById('projectDriveFolderPickerModal')).hide();
+                loadProjectDocuments();
+                showToast('Pasta vinculada com sucesso!');
+            }
+        } catch (error) {
+            console.error('Error linking folder:', error);
+            showToast('Erro ao vincular pasta', 'error');
+        }
+    }
+
+    async function unlinkProjectDriveFolder() {
+        if (!confirm('Desvincular a pasta?')) return;
+
+        try {
+            await fetch(`/api/projects/${projectId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ google_drive_folder_id: null })
+            });
+
+            document.getElementById('projectLinkedFolder').innerHTML =
+                '<span class="text-muted small">Nenhuma pasta vinculada</span>';
+            showToast('Pasta desvinculada');
+        } catch (error) {
+            console.error('Error unlinking folder:', error);
+        }
+    }
+
+    async function uploadDocumentToProject(file) {
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('projeto_id', projectId);
+
+        try {
+            showToast('Enviando arquivo...');
+            const response = await fetch('/api/drive/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (response.ok) {
+                showToast('Arquivo enviado!');
+                loadProjectDocuments();
+            } else {
+                throw new Error('Upload failed');
+            }
+        } catch (error) {
+            console.error('Upload error:', error);
+            showToast('Erro ao enviar arquivo', 'error');
+        }
+
+        document.getElementById('projectFileUpload').value = '';
+    }
+
+    function showToast(message, type = 'success') {
+        const icons = {
+            success: 'bi-check-circle text-success',
+            error: 'bi-exclamation-triangle text-danger',
+            info: 'bi-info-circle text-info'
+        };
+        const toast = document.createElement('div');
+        toast.className = 'position-fixed bottom-0 end-0 p-3';
+        toast.style.zIndex = '1100';
+        toast.innerHTML = `
+            <div class="toast show" role="alert">
+                <div class="toast-body d-flex align-items-center gap-2">
+                    <i class="bi ${icons[type] || icons.success}"></i>
+                    ${message}
+                </div>
+            </div>
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
     }
 
     function renderMilestones() {
