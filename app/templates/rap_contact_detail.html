@@ -2831,13 +2831,13 @@
 
         function renderDocumentCard(doc) {
             const icon = getDocIcon(doc.mime_type);
-            return \`
-                <div class="doc-card" onclick="window.open('\${doc.google_drive_url || '#'}', '_blank')">
-                    <div class="doc-icon \${icon.cls}"><i class="bi \${icon.icon}"></i></div>
-                    <div class="doc-name" title="\${doc.nome}">\${doc.nome}</div>
-                    <div class="doc-meta">\${formatFileSize(doc.tamanho_bytes)}</div>
+            return `
+                <div class="doc-card" onclick="window.open('${doc.google_drive_url || '#'}', '_blank')">
+                    <div class="doc-icon ${icon.cls}"><i class="bi ${icon.icon}"></i></div>
+                    <div class="doc-name" title="${doc.nome}">${doc.nome}</div>
+                    <div class="doc-meta">${formatFileSize(doc.tamanho_bytes)}</div>
                 </div>
-            \`;
+            `;
         }
 
         let folderPickerData = {
@@ -2852,7 +2852,7 @@
                 const modal = document.createElement('div');
                 modal.className = 'modal fade';
                 modal.id = 'driveFolderPickerModal';
-                modal.innerHTML = \`
+                modal.innerHTML = `
                     <div class="modal-dialog modal-lg">
                         <div class="modal-content">
                             <div class="modal-header">
@@ -2873,7 +2873,7 @@
                             </div>
                         </div>
                     </div>
-                \`;
+                `;
                 document.body.appendChild(modal);
             }
 
@@ -2890,13 +2890,13 @@
             container.innerHTML = '<div class="text-center py-4"><i class="bi bi-hourglass-split"></i> Carregando...</div>';
 
             try {
-                const url = parentId ? \`/api/drive/folders?parent_id=\${parentId}\` : '/api/drive/folders';
+                const url = parentId ? `/api/drive/folders?parent_id=${parentId}` : '/api/drive/folders';
                 const response = await fetch(url);
                 const data = await response.json();
 
                 // Update breadcrumb
                 breadcrumb.innerHTML = folderPickerData.path.map((p, i) =>
-                    \`<span onclick="navigateToFolder(\${i})">\${p.name}</span>\${i < folderPickerData.path.length - 1 ? ' <i class="bi bi-chevron-right"></i> ' : ''}\`
+                    `<span onclick="navigateToFolder(${i})">${p.name}</span>${i < folderPickerData.path.length - 1 ? ' <i class="bi bi-chevron-right"></i> ' : ''}`
                 ).join('');
 
                 // Render folders
@@ -2906,13 +2906,13 @@
                 }
 
                 folderPickerData.folders = data.folders;
-                container.innerHTML = data.folders.map(f => \`
-                    <div class="folder-item" data-id="\${f.id}" onclick="selectFolder('\${f.id}', '\${f.name.replace(/'/g, "\\\\'")}')">
+                container.innerHTML = data.folders.map(f => `
+                    <div class="folder-item" data-id="${f.id}" onclick="selectFolder('${f.id}', '${f.name.replace(/'/g, "\\\\'")}')">
                         <i class="bi bi-folder-fill text-warning"></i>
-                        <span>\${f.name}</span>
-                        <i class="bi bi-chevron-right ms-auto" onclick="event.stopPropagation(); enterFolder('\${f.id}', '\${f.name.replace(/'/g, "\\\\'")}')"></i>
+                        <span>${f.name}</span>
+                        <i class="bi bi-chevron-right ms-auto" onclick="event.stopPropagation(); enterFolder('${f.id}', '${f.name.replace(/'/g, "\\\\'")}')"></i>
                     </div>
-                \`).join('');
+                `).join('');
 
             } catch (error) {
                 console.error('Error loading folders:', error);
@@ -2922,7 +2922,7 @@
 
         function selectFolder(folderId, folderName) {
             document.querySelectorAll('.folder-item').forEach(el => el.classList.remove('selected'));
-            document.querySelector(\`.folder-item[data-id="\${folderId}"]\`)?.classList.add('selected');
+            document.querySelector(`.folder-item[data-id="${folderId}"]`)?.classList.add('selected');
             folderPickerData.selectedFolder = { id: folderId, name: folderName };
             document.getElementById('linkFolderBtn').disabled = false;
         }
@@ -2944,7 +2944,7 @@
             if (!folderPickerData.selectedFolder) return;
 
             try {
-                const response = await fetch(\`/api/drive/folders/\${folderPickerData.selectedFolder.id}/link\`, {
+                const response = await fetch(`/api/drive/folders/${folderPickerData.selectedFolder.id}/link`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -2955,7 +2955,7 @@
 
                 if (response.ok) {
                     // Also index the documents
-                    await fetch(\`/api/drive/folders/\${folderPickerData.selectedFolder.id}/index\`, {
+                    await fetch(`/api/drive/folders/${folderPickerData.selectedFolder.id}/index`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -2966,11 +2966,11 @@
 
                     // Update UI
                     document.getElementById('linked-folder-container').innerHTML =
-                        \`<div class="d-flex align-items-center gap-2">
+                        `<div class="d-flex align-items-center gap-2">
                             <i class="bi bi-folder-fill text-warning"></i>
-                            <a href="https://drive.google.com/drive/folders/\${folderPickerData.selectedFolder.id}" target="_blank">\${folderPickerData.selectedFolder.name}</a>
+                            <a href="https://drive.google.com/drive/folders/${folderPickerData.selectedFolder.id}" target="_blank">${folderPickerData.selectedFolder.name}</a>
                             <button class="btn btn-sm btn-outline-danger ms-2" onclick="unlinkDriveFolder()"><i class="bi bi-x"></i></button>
-                        </div>\`;
+                        </div>`;
 
                     bootstrap.Modal.getInstance(document.getElementById('driveFolderPickerModal')).hide();
                     loadContactDocuments();
@@ -2986,7 +2986,7 @@
             if (!confirm('Desvincular a pasta? Os documentos indexados serao mantidos.')) return;
 
             try {
-                await fetch(\`/api/contacts/\${contactId}\`, {
+                await fetch(`/api/contacts/${contactId}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ google_drive_folder_id: null })
