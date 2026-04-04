@@ -1205,6 +1205,20 @@ fetch('/static/articles.json')
     .then(data => { window.SITE_ARTICLES = data; })
     .catch(err => console.error('Failed to load articles:', err));
 
+// Copy post content to clipboard
+async function copyPostContent(postId) {
+    try {
+        const response = await fetch(`/api/editorial/posts/${postId}`);
+        const post = await response.json();
+        const content = post.conteudo_adaptado || post.article_description || post.article_title;
+        await navigator.clipboard.writeText(content);
+        alert('Conteudo copiado para clipboard!');
+    } catch (error) {
+        console.error('Erro ao copiar:', error);
+        alert('Erro ao copiar conteudo');
+    }
+}
+
 function filterPosts() {
     const tipo = document.getElementById('filter-tipo').value;
     const status = document.getElementById('filter-status').value;
