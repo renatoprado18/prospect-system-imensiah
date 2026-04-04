@@ -464,10 +464,10 @@
                     <div class="take-item" data-id="{{ take.id }}">
                         <div class="take-news">
                             <i class="bi bi-newspaper"></i>
-                            <a href="{{ take.news_link }}" target="_blank">{{ take.news_title[:80] }}...</a>
+                            <a href="{{ take.news_link or '#' }}" target="_blank">{{ (take.news_title or 'Sem titulo')[:80] }}...</a>
                         </div>
-                        <div class="take-hook">{{ take.hook }}</div>
-                        <div class="take-body">{{ take.body[:300] }}{% if take.body|length > 300 %}...{% endif %}</div>
+                        <div class="take-hook">{{ take.hook or '' }}</div>
+                        <div class="take-body">{{ (take.body or '')[:300] }}{% if (take.body or '')|length > 300 %}...{% endif %}</div>
                         <div class="take-hashtags">
                             {% for tag in take.hashtags or [] %}
                             <span>#{{ tag }}</span>
