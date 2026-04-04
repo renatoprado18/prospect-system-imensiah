@@ -756,36 +756,89 @@
             font-weight: 500;
         }
 
-        /* Documents List */
-        .documents-list {
-            display: flex !important;
-            flex-direction: column !important;
-            gap: 4px !important;
+        /* Documents Tree View */
+        .documents-tree {
+            font-size: 0.85rem;
+        }
+
+        .folder-node {
+            margin-bottom: 2px;
+        }
+
+        .folder-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+            user-select: none;
+        }
+
+        .folder-header:hover {
+            background: var(--gray-100);
+        }
+
+        .folder-toggle {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--gray-500);
+            transition: transform 0.2s;
+        }
+
+        .folder-toggle.expanded {
+            transform: rotate(90deg);
+        }
+
+        .folder-icon {
+            color: #f59e0b;
+            font-size: 1rem;
+        }
+
+        .folder-name {
+            font-weight: 500;
+            color: var(--dark);
+        }
+
+        .folder-count {
+            font-size: 0.7rem;
+            color: var(--gray-500);
+            margin-left: auto;
+        }
+
+        .folder-contents {
+            margin-left: 22px;
+            border-left: 1px solid var(--gray-200);
+            padding-left: 8px;
+            display: none;
+        }
+
+        .folder-contents.expanded {
+            display: block;
         }
 
         .doc-item {
-            display: flex !important;
-            align-items: center !important;
-            gap: 10px;
-            padding: 8px 12px;
-            background: var(--gray-50);
-            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 8px;
+            border-radius: 4px;
             transition: all 0.15s;
             cursor: pointer;
-            border: 1px solid transparent;
-            width: 100%;
         }
 
         .doc-item:hover {
-            background: white;
-            border-color: var(--primary);
-            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+            background: var(--gray-100);
         }
 
         .doc-icon {
-            font-size: 1.25rem;
+            font-size: 1.1rem;
             flex-shrink: 0;
-            width: 28px;
+            width: 24px;
             text-align: center;
         }
 
@@ -794,32 +847,18 @@
         .doc-icon.sheet { color: #38a169; }
         .doc-icon.slide { color: #dd6b20; }
         .doc-icon.image { color: #805ad5; }
-        .doc-icon.folder { color: #d69e2e; }
         .doc-icon.default { color: var(--gray-500); }
 
-        .doc-info {
+        .doc-name {
             flex: 1;
             min-width: 0;
-        }
-
-        .doc-name {
-            font-size: 0.85rem;
-            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
             color: var(--dark);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
         }
 
-        .doc-path {
-            font-size: 0.7rem;
-            color: var(--gray-500);
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .doc-meta {
+        .doc-size {
             font-size: 0.75rem;
             color: var(--gray-500);
             flex-shrink: 0;
@@ -2520,10 +2559,10 @@
                                 </div>
                             </div>
 
-                            <!-- Documents List -->
+                            <!-- Documents Tree -->
                             <div class="edit-section-inline">
                                 <h6><i class="bi bi-files"></i> Documentos Indexados</h6>
-                                <div id="documents-container" class="documents-list">
+                                <div id="documents-container" class="documents-tree">
                                     <div class="text-center text-muted py-3">
                                         <i class="bi bi-hourglass-split"></i> Carregando documentos...
                                     </div>
@@ -2582,11 +2621,95 @@
                     return;
                 }
 
-                container.innerHTML = docs.map(doc => renderDocumentItem(doc)).join('');
+                // Build folder tree from flat list
+                const tree = buildFolderTree(docs);
+                container.innerHTML = renderFolderTree(tree);
             } catch (error) {
                 console.error('Error loading documents:', error);
                 container.innerHTML = '<div class="text-center text-danger py-3"><i class="bi bi-exclamation-triangle"></i> Erro ao carregar documentos</div>';
             }
+        }
+
+        function buildFolderTree(docs) {
+            const tree = { folders: {}, files: [] };
+
+            docs.forEach(doc => {
+                const parts = doc.nome.split('/');
+                const fileName = parts.pop();
+
+                if (parts.length === 0) {
+                    // Root level file
+                    tree.files.push({ ...doc, displayName: fileName });
+                } else {
+                    // File in subfolder
+                    let current = tree;
+                    parts.forEach(folderName => {
+                        if (!current.folders[folderName]) {
+                            current.folders[folderName] = { folders: {}, files: [] };
+                        }
+                        current = current.folders[folderName];
+                    });
+                    current.files.push({ ...doc, displayName: fileName });
+                }
+            });
+
+            return tree;
+        }
+
+        function countTreeItems(node) {
+            let count = node.files.length;
+            Object.values(node.folders).forEach(folder => {
+                count += countTreeItems(folder);
+            });
+            return count;
+        }
+
+        function renderFolderTree(tree, level = 0) {
+            let html = '';
+
+            // Render folders first (sorted)
+            const folderNames = Object.keys(tree.folders).sort();
+            folderNames.forEach(folderName => {
+                const folder = tree.folders[folderName];
+                const itemCount = countTreeItems(folder);
+                const folderId = 'folder-' + Math.random().toString(36).substr(2, 9);
+
+                html += `
+                    <div class="folder-node">
+                        <div class="folder-header" onclick="toggleFolder('${folderId}')">
+                            <div class="folder-toggle" id="${folderId}-toggle"><i class="bi bi-chevron-right"></i></div>
+                            <i class="bi bi-folder-fill folder-icon"></i>
+                            <span class="folder-name">${folderName}</span>
+                            <span class="folder-count">${itemCount} ${itemCount === 1 ? 'item' : 'itens'}</span>
+                        </div>
+                        <div class="folder-contents" id="${folderId}-contents">
+                            ${renderFolderTree(folder, level + 1)}
+                        </div>
+                    </div>
+                `;
+            });
+
+            // Render files (sorted)
+            const sortedFiles = tree.files.sort((a, b) => a.displayName.localeCompare(b.displayName));
+            sortedFiles.forEach(doc => {
+                const icon = getDocIcon(doc.mime_type);
+                html += `
+                    <div class="doc-item" onclick="window.open('${doc.google_drive_url || '#'}', '_blank')">
+                        <div class="doc-icon ${icon.cls}"><i class="bi ${icon.icon}"></i></div>
+                        <span class="doc-name" title="${doc.displayName}">${doc.displayName}</span>
+                        <span class="doc-size">${formatFileSize(doc.tamanho_bytes)}</span>
+                    </div>
+                `;
+            });
+
+            return html;
+        }
+
+        function toggleFolder(folderId) {
+            const toggle = document.getElementById(folderId + '-toggle');
+            const contents = document.getElementById(folderId + '-contents');
+            toggle.classList.toggle('expanded');
+            contents.classList.toggle('expanded');
         }
 
         function getDocIcon(mimeType) {
@@ -2596,7 +2719,6 @@
             if (mimeType.includes('sheet') || mimeType.includes('excel')) return { icon: 'bi-file-earmark-excel-fill', cls: 'sheet' };
             if (mimeType.includes('presentation') || mimeType.includes('powerpoint')) return { icon: 'bi-file-earmark-ppt-fill', cls: 'slide' };
             if (mimeType.includes('image')) return { icon: 'bi-file-earmark-image-fill', cls: 'image' };
-            if (mimeType.includes('folder')) return { icon: 'bi-folder-fill', cls: 'folder' };
             return { icon: 'bi-file-earmark', cls: 'default' };
         }
 
@@ -2605,25 +2727,6 @@
             if (bytes < 1024) return bytes + ' B';
             if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
             return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-        }
-
-        function renderDocumentItem(doc) {
-            const icon = getDocIcon(doc.mime_type);
-            // Extract filename and path if contains /
-            const parts = doc.nome.split('/');
-            const fileName = parts.pop();
-            const folderPath = parts.length > 0 ? parts.join('/') + '/' : '';
-
-            return `
-                <div class="doc-item" onclick="window.open('${doc.google_drive_url || '#'}', '_blank')">
-                    <div class="doc-icon ${icon.cls}"><i class="bi ${icon.icon}"></i></div>
-                    <div class="doc-info">
-                        <div class="doc-name" title="${doc.nome}">${fileName}</div>
-                        ${folderPath ? `<div class="doc-path" title="${folderPath}"><i class="bi bi-folder-fill text-warning me-1"></i>${folderPath}</div>` : ''}
-                    </div>
-                    <div class="doc-meta">${formatFileSize(doc.tamanho_bytes)}</div>
-                </div>
-            `;
         }
 
         let folderPickerData = {
