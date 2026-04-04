@@ -11283,6 +11283,9 @@ async def fetch_all_avatars_auto(request: Request):
             phone = contact.get('phone', '')
             if not phone:
                 results['skipped'] += 1
+                # Marcar como verificado mesmo sem telefone válido
+                fetcher.mark_avatar_checked(contact['id'])
+                total_processed += 1
                 continue
 
             try:
@@ -11297,6 +11300,8 @@ async def fetch_all_avatars_auto(request: Request):
             except:
                 results['failed'] += 1
 
+            # Marcar contato como verificado (evita reprocessar)
+            fetcher.mark_avatar_checked(contact['id'])
             total_processed += 1
 
     # Stats atualizados

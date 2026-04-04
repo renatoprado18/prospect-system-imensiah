@@ -35,6 +35,7 @@ class AvatarFetcherService:
             cursor = conn.cursor()
 
             # Contatos com telefone mas sem foto real (só Google/iniciais)
+            # Exclui contatos já verificados (avatar_checked_at preenchido)
             cursor.execute("""
                 SELECT id, nome, telefones, foto_url
                 FROM contacts
@@ -46,6 +47,7 @@ class AvatarFetcherService:
                     OR foto_url = ''
                     OR foto_url LIKE '%%googleusercontent%%'
                 )
+                AND avatar_checked_at IS NULL
                 ORDER BY
                     circulo ASC,  -- Prioriza circulos mais proximos
                     atualizado_em DESC
@@ -106,6 +108,18 @@ class AvatarFetcherService:
                 SET foto_url = %s, atualizado_em = NOW()
                 WHERE id = %s
             """, (photo_url, contact_id))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def mark_avatar_checked(self, contact_id: int) -> bool:
+        """Marca que já tentamos buscar avatar deste contato (mesmo sem sucesso)."""
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE contacts
+                SET avatar_checked_at = NOW()
+                WHERE id = %s
+            """, (contact_id,))
             conn.commit()
             return cursor.rowcount > 0
 
@@ -328,13 +342,23 @@ class AvatarFetcherService:
             stats = dict(row)
 
             # Contatos com telefone que podem ter foto buscada via WhatsApp
+            # Exclui os já verificados
             cursor.execute("""
                 SELECT COUNT(*) as c FROM contacts
                 WHERE telefones IS NOT NULL
                 AND telefones::text != '[]'
                 AND (foto_url IS NULL OR foto_url LIKE '%%googleusercontent%%')
+                AND avatar_checked_at IS NULL
             """)
             stats['potencial_whatsapp'] = cursor.fetchone()['c']
+
+            # Contatos já verificados (tentamos buscar mas não tinha foto)
+            cursor.execute("""
+                SELECT COUNT(*) as c FROM contacts
+                WHERE avatar_checked_at IS NOT NULL
+                AND (foto_url IS NULL OR foto_url LIKE '%%googleusercontent%%')
+            """)
+            stats['ja_verificados_sem_foto'] = cursor.fetchone()['c']
 
             # Contatos com google_contact_id que podem ter foto real
             cursor.execute("""

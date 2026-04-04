@@ -359,6 +359,12 @@ def init_db():
             ADD COLUMN IF NOT EXISTS manual_notes TEXT
         ''')
 
+        # Coluna para controlar tentativa de busca de avatar
+        cursor.execute('''
+            ALTER TABLE contacts
+            ADD COLUMN IF NOT EXISTS avatar_checked_at TIMESTAMP
+        ''')
+
         # Indices para Circulos
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_contacts_circulo
