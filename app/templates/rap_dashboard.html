@@ -1872,12 +1872,16 @@
 
         <!-- Stats - Compact clickable cards -->
         <div class="stats-grid">
-            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/contatos'">
+            <div class="stat-card" style="cursor: pointer; position: relative;" onclick="window.location.href='/contatos'">
                 <div class="stat-icon contacts"><i class="bi bi-people"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statContacts">-</div>
                     <div class="stat-label">Contatos</div>
                 </div>
+                <button class="btn btn-link btn-sm position-absolute" style="top: 4px; right: 4px; padding: 2px 6px; font-size: 0.7rem;"
+                        onclick="event.stopPropagation(); openAvatarManager();" title="Gerenciar Avatares">
+                    <i class="bi bi-person-circle"></i>
+                </button>
             </div>
             <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/circulos'">
                 <div class="stat-icon" style="background: rgba(255, 107, 107, 0.1); color: #FF6B6B;"><i class="bi bi-bullseye"></i></div>
@@ -2957,6 +2961,122 @@
                 }
             } catch (error) {
                 showToast('Erro ao salvar configuracoes', 'error');
+            }
+        }
+
+        // === Avatar Manager Functions ===
+        async function openAvatarManager() {
+            const modal = new bootstrap.Modal(document.getElementById('avatarManagerModal'));
+            modal.show();
+            refreshAvatarStats();
+        }
+
+        async function refreshAvatarStats() {
+            try {
+                const response = await fetch('/api/avatars/stats');
+                const stats = await response.json();
+
+                document.getElementById('avatarTotal').textContent = stats.total || 0;
+                document.getElementById('avatarIniciais').textContent = stats.google_iniciais || 0;
+                document.getElementById('avatarWhatsapp').textContent = stats.whatsapp || 0;
+                document.getElementById('avatarOutras').textContent = (stats.linkedin || 0) + (stats.outras || 0);
+                document.getElementById('avatarPotencialWA').textContent = stats.potencial_whatsapp || 0;
+                document.getElementById('avatarPotencialGoogle').textContent = stats.potencial_google || 0;
+                document.getElementById('avatarPotencialLinkedIn').textContent = stats.potencial_linkedin || 0;
+            } catch (error) {
+                console.error('Error loading avatar stats:', error);
+            }
+        }
+
+        async function startWhatsAppFetch() {
+            const btn = document.getElementById('btnFetchWA');
+            const progress = document.getElementById('progressWA');
+            const log = document.getElementById('avatarStatusLog');
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Buscando...';
+            progress.classList.remove('d-none');
+
+            try {
+                const response = await fetch('/api/avatars/fetch?limit=50', {method: 'POST'});
+                const result = await response.json();
+
+                if (result.started) {
+                    log.innerHTML = `<div class="text-success"><i class="bi bi-check"></i> ${result.message}</div>` + log.innerHTML;
+                    showToast(result.message, 'success');
+
+                    // Simulate progress (real progress would need SSE)
+                    let pct = 0;
+                    const progressBar = progress.querySelector('.progress-bar');
+                    const interval = setInterval(() => {
+                        pct += 2;
+                        if (pct >= 100) {
+                            clearInterval(interval);
+                            progress.classList.add('d-none');
+                            btn.disabled = false;
+                            btn.innerHTML = '<i class="bi bi-download me-1"></i>Buscar (50)';
+                            refreshAvatarStats();
+                        }
+                        progressBar.style.width = pct + '%';
+                        progressBar.textContent = pct + '%';
+                    }, 1500);
+                } else {
+                    log.innerHTML = `<div class="text-muted">${result.message}</div>` + log.innerHTML;
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-download me-1"></i>Buscar (50)';
+                    progress.classList.add('d-none');
+                }
+            } catch (error) {
+                log.innerHTML = `<div class="text-danger"><i class="bi bi-x"></i> Erro: ${error.message}</div>` + log.innerHTML;
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-download me-1"></i>Buscar (50)';
+                progress.classList.add('d-none');
+            }
+        }
+
+        async function startGoogleFetch() {
+            const btn = document.getElementById('btnFetchGoogle');
+            const progress = document.getElementById('progressGoogle');
+            const log = document.getElementById('avatarStatusLog');
+
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando...';
+            progress.classList.remove('d-none');
+
+            try {
+                const response = await fetch('/api/avatars/fetch-google?limit=50', {method: 'POST'});
+                const result = await response.json();
+
+                if (result.started) {
+                    log.innerHTML = `<div class="text-primary"><i class="bi bi-check"></i> ${result.message}</div>` + log.innerHTML;
+                    showToast(result.message, 'success');
+
+                    // Simulate progress
+                    let pct = 0;
+                    const progressBar = progress.querySelector('.progress-bar');
+                    const interval = setInterval(() => {
+                        pct += 4;
+                        if (pct >= 100) {
+                            clearInterval(interval);
+                            progress.classList.add('d-none');
+                            btn.disabled = false;
+                            btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Sincronizar (50)';
+                            refreshAvatarStats();
+                        }
+                        progressBar.style.width = pct + '%';
+                        progressBar.textContent = pct + '%';
+                    }, 500);
+                } else {
+                    log.innerHTML = `<div class="text-muted">${result.message}</div>` + log.innerHTML;
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Sincronizar (50)';
+                    progress.classList.add('d-none');
+                }
+            } catch (error) {
+                log.innerHTML = `<div class="text-danger"><i class="bi bi-x"></i> Erro: ${error.message}</div>` + log.innerHTML;
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Sincronizar (50)';
+                progress.classList.add('d-none');
             }
         }
 
