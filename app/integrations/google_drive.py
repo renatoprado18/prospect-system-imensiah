@@ -14,17 +14,22 @@ GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3"
 GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3"
 
 
-async def get_valid_token(db_conn) -> Optional[str]:
-    """Get a valid access token, refreshing if needed"""
+async def get_valid_token(db_conn, account_type: str = 'professional') -> Optional[str]:
+    """Get a valid access token, refreshing if needed
+
+    Args:
+        db_conn: Database connection
+        account_type: 'professional' or 'personal'
+    """
     from integrations.google_contacts import refresh_access_token
 
     cursor = db_conn.cursor()
     cursor.execute("""
         SELECT access_token, refresh_token, token_expiry
         FROM google_accounts
-        WHERE tipo = 'professional'
+        WHERE tipo = %s
         LIMIT 1
-    """)
+    """, (account_type,))
     row = cursor.fetchone()
 
     if not row:
@@ -45,8 +50,8 @@ async def get_valid_token(db_conn) -> Optional[str]:
                 UPDATE google_accounts
                 SET access_token = %s,
                     token_expiry = NOW() + INTERVAL '1 hour'
-                WHERE tipo = 'professional'
-            """, (access_token,))
+                WHERE tipo = %s
+            """, (access_token, account_type))
             db_conn.commit()
         except Exception as e:
             print(f"Error refreshing token: {e}")

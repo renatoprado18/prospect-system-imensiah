@@ -2602,7 +2602,9 @@
         let folderPickerData = {
             path: [{ id: null, name: 'Meu Drive' }],
             folders: [],
-            selectedFolder: null
+            selectedFolder: null,
+            accountType: 'professional',
+            accounts: []
         };
 
         async function openDriveFolderPicker() {
@@ -2611,7 +2613,7 @@
                 const modal = document.createElement('div');
                 modal.className = 'modal fade';
                 modal.id = 'driveFolderPickerModal';
-                modal.innerHTML = `
+                modal.innerHTML = \`
                     <div class="modal-dialog modal-lg">
                         <div class="modal-content">
                             <div class="modal-header">
@@ -2619,6 +2621,13 @@
                                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                             </div>
                             <div class="modal-body">
+                                <!-- Account Selector -->
+                                <div class="mb-3" id="driveAccountSelector">
+                                    <label class="form-label small text-muted">Conta Google Drive</label>
+                                    <select class="form-select" id="driveAccountSelect" onchange="switchDriveAccount(this.value)">
+                                        <option value="professional">Carregando...</option>
+                                    </select>
+                                </div>
                                 <div class="breadcrumb-drive" id="folderBreadcrumb"></div>
                                 <div class="folder-list" id="folderList">
                                     <div class="text-center py-4"><i class="bi bi-hourglass-split"></i> Carregando...</div>
@@ -2632,14 +2641,46 @@
                             </div>
                         </div>
                     </div>
-                `;
+                \`;
                 document.body.appendChild(modal);
             }
 
-            folderPickerData = { path: [{ id: null, name: 'Meu Drive' }], folders: [], selectedFolder: null };
+            folderPickerData = { path: [{ id: null, name: 'Meu Drive' }], folders: [], selectedFolder: null, accountType: 'professional', accounts: [] };
             const modal = new bootstrap.Modal(document.getElementById('driveFolderPickerModal'));
             modal.show();
+
+            // Load available accounts
+            await loadDriveAccounts();
             await loadDriveFolders(null);
+        }
+
+        async function loadDriveAccounts() {
+            try {
+                const response = await fetch('/api/drive/accounts');
+                const data = await response.json();
+                folderPickerData.accounts = data.accounts || [];
+
+                const select = document.getElementById('driveAccountSelect');
+                if (folderPickerData.accounts.length === 0) {
+                    select.innerHTML = '<option value="">Nenhuma conta conectada</option>';
+                } else {
+                    select.innerHTML = folderPickerData.accounts.map(acc =>
+                        \`<option value="\${acc.type}" \${acc.type === folderPickerData.accountType ? 'selected' : ''}>
+                            \${acc.label} (\${acc.email})
+                        </option>\`
+                    ).join('');
+                }
+            } catch (error) {
+                console.error('Error loading accounts:', error);
+            }
+        }
+
+        function switchDriveAccount(accountType) {
+            folderPickerData.accountType = accountType;
+            folderPickerData.path = [{ id: null, name: 'Meu Drive' }];
+            folderPickerData.selectedFolder = null;
+            document.getElementById('linkFolderBtn').disabled = true;
+            loadDriveFolders(null);
         }
 
         async function loadDriveFolders(parentId) {
@@ -2649,13 +2690,15 @@
             container.innerHTML = '<div class="text-center py-4"><i class="bi bi-hourglass-split"></i> Carregando...</div>';
 
             try {
-                const url = parentId ? `/api/drive/folders?parent_id=${parentId}` : '/api/drive/folders';
+                let url = '/api/drive/folders?account_type=' + folderPickerData.accountType;
+                if (parentId) url += '&parent_id=' + parentId;
+
                 const response = await fetch(url);
                 const data = await response.json();
 
                 // Update breadcrumb
                 breadcrumb.innerHTML = folderPickerData.path.map((p, i) =>
-                    `<span onclick="navigateToFolder(${i})">${p.name}</span>${i < folderPickerData.path.length - 1 ? ' <i class="bi bi-chevron-right"></i> ' : ''}`
+                    \`<span onclick="navigateToFolder(\${i})">\${p.name}</span>\${i < folderPickerData.path.length - 1 ? ' <i class="bi bi-chevron-right"></i> ' : ''}\`
                 ).join('');
 
                 // Render folders
@@ -2665,13 +2708,13 @@
                 }
 
                 folderPickerData.folders = data.folders;
-                container.innerHTML = data.folders.map(f => `
-                    <div class="folder-item" data-id="${f.id}" onclick="selectFolder('${f.id}', '${f.name.replace(/'/g, "\\\\'")}')">
+                container.innerHTML = data.folders.map(f => \`
+                    <div class="folder-item" data-id="\${f.id}" onclick="selectFolder('\${f.id}', '\${f.name.replace(/'/g, "\\\\'")}')">
                         <i class="bi bi-folder-fill text-warning"></i>
-                        <span>${f.name}</span>
-                        <i class="bi bi-chevron-right ms-auto" onclick="event.stopPropagation(); enterFolder('${f.id}', '${f.name.replace(/'/g, "\\\\'")}')"></i>
+                        <span>\${f.name}</span>
+                        <i class="bi bi-chevron-right ms-auto" onclick="event.stopPropagation(); enterFolder('\${f.id}', '\${f.name.replace(/'/g, "\\\\'")}')"></i>
                     </div>
-                `).join('');
+                \`).join('');
 
             } catch (error) {
                 console.error('Error loading folders:', error);

@@ -5593,16 +5593,21 @@ from integrations.google_drive import (
 
 
 @app.get("/api/drive/folders")
-async def api_list_drive_folders(parent_id: str = None):
-    """Lista pastas do Google Drive"""
+async def api_list_drive_folders(parent_id: str = None, account_type: str = 'professional'):
+    """Lista pastas do Google Drive
+
+    Args:
+        parent_id: ID da pasta pai (opcional)
+        account_type: 'professional' ou 'personal'
+    """
     conn = get_db()
     try:
-        access_token = await get_valid_token(conn)
+        access_token = await get_valid_token(conn, account_type)
         if not access_token:
-            raise HTTPException(status_code=401, detail="Google Drive não conectado")
+            raise HTTPException(status_code=401, detail=f"Google Drive ({account_type}) não conectado")
 
         folders = await list_folders(access_token, parent_id)
-        return {"folders": folders}
+        return {"folders": folders, "account_type": account_type}
     except HTTPException:
         raise
     except Exception as e:
@@ -5611,15 +5616,41 @@ async def api_list_drive_folders(parent_id: str = None):
         conn.close()
 
 
+@app.get("/api/drive/accounts")
+async def api_list_drive_accounts():
+    """Lista contas do Google Drive disponíveis"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT tipo, email, conectado
+        FROM google_accounts
+        WHERE conectado = TRUE
+        ORDER BY tipo
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    accounts = []
+    for row in rows:
+        accounts.append({
+            "type": row['tipo'],
+            "email": row['email'],
+            "label": "Profissional" if row['tipo'] == 'professional' else "Pessoal"
+        })
+
+    return {"accounts": accounts}
+
+
 @app.get("/api/drive/folders/{folder_id}/contents")
-async def api_get_folder_contents(folder_id: str):
+async def api_get_folder_contents(folder_id: str, account_type: str = 'professional'):
     """Lista conteúdo de uma pasta"""
     conn = get_db()
 
-    access_token = await get_valid_token(conn)
+    access_token = await get_valid_token(conn, account_type)
     if not access_token:
         conn.close()
-        raise HTTPException(status_code=401, detail="Google Drive não conectado")
+        raise HTTPException(status_code=401, detail=f"Google Drive ({account_type}) não conectado")
 
     try:
         contents = await get_folder_contents(access_token, folder_id)
@@ -5673,13 +5704,14 @@ async def api_index_folder(folder_id: str, request: Request):
     body = await request.json()
     entidade_tipo = body.get("entidade_tipo")
     entidade_id = body.get("entidade_id")
+    account_type = body.get("account_type", "professional")
 
     conn = get_db()
 
-    access_token = await get_valid_token(conn)
+    access_token = await get_valid_token(conn, account_type)
     if not access_token:
         conn.close()
-        raise HTTPException(status_code=401, detail="Google Drive não conectado")
+        raise HTTPException(status_code=401, detail=f"Google Drive ({account_type}) não conectado")
 
     try:
         count = await index_folder_documents(
@@ -5701,17 +5733,18 @@ async def api_upload_file(
     file: UploadFile = File(...),
     folder_id: str = Query(None),
     projeto_id: int = Query(None),
-    contato_id: int = Query(None)
+    contato_id: int = Query(None),
+    account_type: str = Query('professional')
 ):
     """
     Upload de arquivo para o Google Drive com vinculação a projeto/contato
     """
     conn = get_db()
 
-    access_token = await get_valid_token(conn)
+    access_token = await get_valid_token(conn, account_type)
     if not access_token:
         conn.close()
-        raise HTTPException(status_code=401, detail="Google Drive não conectado")
+        raise HTTPException(status_code=401, detail=f"Google Drive ({account_type}) não conectado")
 
     try:
         # Se não especificou folder_id, mas especificou projeto, usar pasta do projeto
@@ -13711,6 +13744,40 @@ async def api_editorial_ai_stats():
     """Estatísticas da análise IA dos artigos"""
     from app.services.editorial_calendar import get_analysis_stats
     return get_analysis_stats()
+
+
+@app.get("/api/editorial/ai-top-suggestions")
+async def api_editorial_ai_top_suggestions():
+    """Retorna os artigos com melhor score de IA para sugestão de repost"""
+    from app.database import get_db
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, article_title, article_url, ai_categoria,
+                   ai_score_relevancia, ai_gancho_linkedin, ai_evergreen
+            FROM editorial_posts
+            WHERE status = 'draft'
+              AND ai_score_relevancia >= 7
+              AND ai_gancho_linkedin IS NOT NULL
+            ORDER BY ai_score_relevancia DESC, ai_evergreen DESC
+            LIMIT 10
+        """)
+
+        suggestions = []
+        for row in cursor.fetchall():
+            post = dict(row)
+            suggestions.append({
+                'id': post['id'],
+                'titulo': post['article_title'],
+                'url': post.get('article_url'),
+                'categoria': post.get('ai_categoria'),
+                'score': post.get('ai_score_relevancia'),
+                'gancho': post.get('ai_gancho_linkedin'),
+                'evergreen': post.get('ai_evergreen', False)
+            })
+
+    return {"suggestions": suggestions}
 
 
 @app.post("/api/editorial/ai/analyze")
