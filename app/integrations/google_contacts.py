@@ -14,7 +14,7 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_PEOPLE_API = "https://people.googleapis.com/v1"
 
-# Scopes for contacts + Gmail + Calendar + Tasks
+# Scopes for contacts + Gmail + Calendar + Tasks + Drive
 CONTACTS_SCOPES = [
     "openid",
     "email",
@@ -25,6 +25,7 @@ CONTACTS_SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",  # Modify emails (labels, read status)
     "https://www.googleapis.com/auth/calendar",  # Full calendar access (read/write)
     "https://www.googleapis.com/auth/tasks",  # Full tasks access (read/write)
+    "https://www.googleapis.com/auth/drive",  # Full Google Drive access
 ]
 
 

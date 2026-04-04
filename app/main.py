@@ -5573,6 +5573,255 @@ async def sync_all_google_contacts(request: Request):
     return {"results": results}
 
 
+# ============== Google Drive Integration ==============
+
+from integrations.google_drive import (
+    get_valid_token,
+    list_folders,
+    get_folder_contents,
+    get_file_metadata,
+    create_folder,
+    upload_file,
+    search_files,
+    get_folder_path,
+    index_document_to_db,
+    link_document_to_entity,
+    get_documents_for_entity,
+    index_folder_documents
+)
+
+
+@app.get("/api/drive/folders")
+async def api_list_drive_folders(parent_id: str = None):
+    """Lista pastas do Google Drive"""
+    conn = get_db()
+
+    access_token = await get_valid_token(conn)
+    if not access_token:
+        conn.close()
+        raise HTTPException(status_code=401, detail="Google Drive não conectado")
+
+    try:
+        folders = await list_folders(access_token, parent_id)
+        conn.close()
+        return {"folders": folders}
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/drive/folders/{folder_id}/contents")
+async def api_get_folder_contents(folder_id: str):
+    """Lista conteúdo de uma pasta"""
+    conn = get_db()
+
+    access_token = await get_valid_token(conn)
+    if not access_token:
+        conn.close()
+        raise HTTPException(status_code=401, detail="Google Drive não conectado")
+
+    try:
+        contents = await get_folder_contents(access_token, folder_id)
+        path = await get_folder_path(access_token, folder_id)
+        conn.close()
+        return {"contents": contents, "path": path}
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/drive/folders/{folder_id}/link")
+async def api_link_folder_to_entity(folder_id: str, request: Request):
+    """Vincula uma pasta do Drive a um projeto ou contato"""
+    body = await request.json()
+    entidade_tipo = body.get("entidade_tipo")  # 'projeto' ou 'contato'
+    entidade_id = body.get("entidade_id")
+
+    if not entidade_tipo or not entidade_id:
+        raise HTTPException(status_code=400, detail="entidade_tipo e entidade_id são obrigatórios")
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    try:
+        if entidade_tipo == "projeto":
+            cursor.execute(
+                "UPDATE projects SET google_drive_folder_id = %s WHERE id = %s",
+                (folder_id, entidade_id)
+            )
+        elif entidade_tipo == "contato":
+            cursor.execute(
+                "UPDATE contacts SET google_drive_folder_id = %s WHERE id = %s",
+                (folder_id, entidade_id)
+            )
+        else:
+            conn.close()
+            raise HTTPException(status_code=400, detail="entidade_tipo deve ser 'projeto' ou 'contato'")
+
+        conn.commit()
+        conn.close()
+        return {"status": "ok", "message": f"Pasta vinculada ao {entidade_tipo} {entidade_id}"}
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/drive/folders/{folder_id}/index")
+async def api_index_folder(folder_id: str, request: Request):
+    """Indexa todos os documentos de uma pasta"""
+    body = await request.json()
+    entidade_tipo = body.get("entidade_tipo")
+    entidade_id = body.get("entidade_id")
+
+    conn = get_db()
+
+    access_token = await get_valid_token(conn)
+    if not access_token:
+        conn.close()
+        raise HTTPException(status_code=401, detail="Google Drive não conectado")
+
+    try:
+        count = await index_folder_documents(
+            conn,
+            access_token,
+            folder_id,
+            entidade_tipo,
+            entidade_id
+        )
+        conn.close()
+        return {"status": "ok", "indexed": count}
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/drive/upload")
+async def api_upload_file(
+    file: UploadFile = File(...),
+    folder_id: str = Query(None),
+    projeto_id: int = Query(None),
+    contato_id: int = Query(None)
+):
+    """
+    Upload de arquivo para o Google Drive com vinculação a projeto/contato
+    """
+    conn = get_db()
+
+    access_token = await get_valid_token(conn)
+    if not access_token:
+        conn.close()
+        raise HTTPException(status_code=401, detail="Google Drive não conectado")
+
+    try:
+        # Se não especificou folder_id, mas especificou projeto, usar pasta do projeto
+        if not folder_id and projeto_id:
+            cursor = conn.cursor()
+            cursor.execute("SELECT google_drive_folder_id FROM projects WHERE id = %s", (projeto_id,))
+            row = cursor.fetchone()
+            if row and row['google_drive_folder_id']:
+                folder_id = row['google_drive_folder_id']
+
+        # Se não especificou folder_id, mas especificou contato, usar pasta do contato
+        if not folder_id and contato_id:
+            cursor = conn.cursor()
+            cursor.execute("SELECT google_drive_folder_id FROM contacts WHERE id = %s", (contato_id,))
+            row = cursor.fetchone()
+            if row and row['google_drive_folder_id']:
+                folder_id = row['google_drive_folder_id']
+
+        # Upload para o Drive
+        file_content = await file.read()
+        result = await upload_file(
+            access_token,
+            file_content,
+            file.filename,
+            file.content_type or "application/octet-stream",
+            folder_id
+        )
+
+        # Indexar no banco
+        doc_id = index_document_to_db(
+            conn,
+            google_drive_id=result['id'],
+            nome=file.filename,
+            mime_type=file.content_type,
+            web_view_link=f"https://drive.google.com/file/d/{result['id']}/view",
+            tamanho_bytes=len(file_content),
+            pasta_id=folder_id
+        )
+
+        # Vincular a projeto/contato
+        if projeto_id:
+            link_document_to_entity(conn, doc_id, 'projeto', projeto_id)
+        if contato_id:
+            link_document_to_entity(conn, doc_id, 'contato', contato_id)
+
+        conn.close()
+        return {
+            "status": "ok",
+            "documento_id": doc_id,
+            "google_drive_id": result['id'],
+            "nome": file.filename
+        }
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/documentos/{entidade_tipo}/{entidade_id}")
+async def api_get_entity_documents(entidade_tipo: str, entidade_id: int):
+    """Retorna todos os documentos vinculados a uma entidade"""
+    conn = get_db()
+
+    try:
+        docs = get_documents_for_entity(conn, entidade_tipo, entidade_id)
+        conn.close()
+        return {"documentos": docs}
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/documentos/{documento_id}/link")
+async def api_link_document(documento_id: int, request: Request):
+    """Vincula um documento existente a uma entidade adicional"""
+    body = await request.json()
+    entidade_tipo = body.get("entidade_tipo")
+    entidade_id = body.get("entidade_id")
+
+    if not entidade_tipo or not entidade_id:
+        raise HTTPException(status_code=400, detail="entidade_tipo e entidade_id são obrigatórios")
+
+    conn = get_db()
+
+    try:
+        link_document_to_entity(conn, documento_id, entidade_tipo, entidade_id)
+        conn.close()
+        return {"status": "ok"}
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/drive/search")
+async def api_search_drive(q: str, folder_id: str = None):
+    """Busca arquivos no Google Drive"""
+    conn = get_db()
+
+    access_token = await get_valid_token(conn)
+    if not access_token:
+        conn.close()
+        raise HTTPException(status_code=401, detail="Google Drive não conectado")
+
+    try:
+        results = await search_files(access_token, q, folder_id)
+        conn.close()
+        return {"results": results}
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/cron/sync-contacts")
 async def cron_sync_contacts(request: Request):
     """

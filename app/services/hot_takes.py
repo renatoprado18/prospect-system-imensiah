@@ -74,9 +74,22 @@ def ensure_table_exists():
                 status TEXT DEFAULT 'draft',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 scheduled_for TIMESTAMP,
-                published_at TIMESTAMP
+                published_at TIMESTAMP,
+                editorial_post_id INTEGER,
+                linkedin_url TEXT,
+                metrics JSONB DEFAULT '{}'
             )
         ''')
+        # Add columns if they don't exist (for existing tables)
+        for column, col_type in [
+            ('editorial_post_id', 'INTEGER'),
+            ('linkedin_url', 'TEXT'),
+            ('metrics', "JSONB DEFAULT '{}'")
+        ]:
+            try:
+                cursor.execute(f'ALTER TABLE hot_takes ADD COLUMN IF NOT EXISTS {column} {col_type}')
+            except Exception:
+                pass
         conn.commit()
 
 
@@ -615,3 +628,166 @@ async def generate_hot_take_from_url(url: str) -> dict:
         hot_take["id"] = hot_take_id
 
     return hot_take
+
+
+def schedule_hot_take(hot_take_id: int, scheduled_for: str, create_editorial: bool = True) -> dict:
+    """
+    Agenda um hot take e opcionalmente cria entrada no calendário editorial.
+
+    Args:
+        hot_take_id: ID do hot take
+        scheduled_for: Data/hora no formato ISO (YYYY-MM-DD HH:MM)
+        create_editorial: Se True, cria entrada no editorial_posts
+
+    Returns:
+        dict com status e editorial_post_id se criado
+    """
+    from datetime import datetime
+    from app.services.editorial_calendar import create_editorial_post
+
+    ensure_table_exists()
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Busca o hot take
+        cursor.execute('SELECT * FROM hot_takes WHERE id = %s', (hot_take_id,))
+        hot_take = cursor.fetchone()
+
+        if not hot_take:
+            return {"error": "Hot take não encontrado"}
+
+        hot_take = dict(hot_take)
+
+        # Parse da data
+        try:
+            if 'T' in scheduled_for:
+                scheduled_dt = datetime.fromisoformat(scheduled_for.replace('Z', ''))
+            else:
+                scheduled_dt = datetime.strptime(scheduled_for, '%Y-%m-%d %H:%M')
+        except ValueError:
+            try:
+                scheduled_dt = datetime.strptime(scheduled_for, '%Y-%m-%d')
+                scheduled_dt = scheduled_dt.replace(hour=9, minute=0)  # Default 9h
+            except ValueError:
+                return {"error": "Formato de data inválido. Use YYYY-MM-DD HH:MM"}
+
+        editorial_post_id = None
+
+        # Cria entrada no calendário editorial se solicitado
+        if create_editorial:
+            editorial_data = {
+                'article_title': hot_take.get('hook', 'Hot Take')[:100],
+                'article_description': hot_take.get('body', '')[:500],
+                'article_url': hot_take.get('news_link', ''),
+                'canal': 'linkedin',
+                'tipo': 'hot_take',
+                'titulo_adaptado': hot_take.get('hook', ''),
+                'conteudo_adaptado': hot_take.get('linkedin_post', ''),
+                'hashtags': hot_take.get('hashtags', []),
+                'status': 'scheduled',
+                'data_publicacao': scheduled_dt,
+                'notas': f"Hot Take #{hot_take_id} - {hot_take.get('news_title', '')[:100]}",
+                'tags': ['hot-take', 'neogovernanca']
+            }
+
+            try:
+                editorial_post = create_editorial_post(editorial_data)
+                editorial_post_id = editorial_post.get('id')
+            except Exception as e:
+                logger.error(f"Erro ao criar editorial post: {e}")
+
+        # Atualiza o hot take
+        cursor.execute('''
+            UPDATE hot_takes
+            SET status = 'scheduled',
+                scheduled_for = %s,
+                editorial_post_id = %s
+            WHERE id = %s
+        ''', (scheduled_dt, editorial_post_id, hot_take_id))
+        conn.commit()
+
+        return {
+            "status": "scheduled",
+            "hot_take_id": hot_take_id,
+            "editorial_post_id": editorial_post_id,
+            "scheduled_for": scheduled_dt.isoformat()
+        }
+
+
+def mark_hot_take_published(hot_take_id: int, linkedin_url: str = None) -> dict:
+    """
+    Marca hot take como publicado e registra URL do LinkedIn.
+    """
+    from datetime import datetime
+
+    ensure_table_exists()
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            UPDATE hot_takes
+            SET status = 'published',
+                published_at = %s,
+                linkedin_url = %s
+            WHERE id = %s
+            RETURNING editorial_post_id
+        ''', (datetime.now(), linkedin_url, hot_take_id))
+
+        result = cursor.fetchone()
+
+        # Atualiza também o editorial_post se existir
+        if result and result.get('editorial_post_id'):
+            cursor.execute('''
+                UPDATE editorial_posts
+                SET status = 'published',
+                    notas = COALESCE(notas, '') || %s
+                WHERE id = %s
+            ''', (f'\nURL: {linkedin_url}' if linkedin_url else '', result['editorial_post_id']))
+
+        conn.commit()
+
+        return {"status": "published", "hot_take_id": hot_take_id}
+
+
+def update_hot_take_metrics(hot_take_id: int, metrics: dict) -> dict:
+    """
+    Atualiza métricas de engajamento do hot take.
+
+    Args:
+        hot_take_id: ID do hot take
+        metrics: dict com {likes, comments, shares, impressions}
+    """
+    ensure_table_exists()
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            UPDATE hot_takes
+            SET metrics = %s
+            WHERE id = %s
+        ''', (json.dumps(metrics), hot_take_id))
+        conn.commit()
+
+        return {"status": "updated", "metrics": metrics}
+
+
+def get_hot_take_by_id(hot_take_id: int) -> dict:
+    """Busca hot take por ID"""
+    ensure_table_exists()
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM hot_takes WHERE id = %s', (hot_take_id,))
+        row = cursor.fetchone()
+
+        if not row:
+            return None
+
+        item = dict(row)
+        for key in ['created_at', 'scheduled_for', 'published_at']:
+            if item.get(key) and hasattr(item[key], 'isoformat'):
+                item[key] = item[key].isoformat()
+        return item

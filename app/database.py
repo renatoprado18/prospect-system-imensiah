@@ -1436,6 +1436,70 @@ def init_db():
             ON editorial_posts(project_id)
         ''')
 
+        # ============== Google Drive Integration ==============
+
+        # Add google_drive_folder_id to projects
+        cursor.execute('''
+            ALTER TABLE projects
+            ADD COLUMN IF NOT EXISTS google_drive_folder_id TEXT
+        ''')
+
+        # Add google_drive_folder_id to contacts
+        cursor.execute('''
+            ALTER TABLE contacts
+            ADD COLUMN IF NOT EXISTS google_drive_folder_id TEXT
+        ''')
+
+        # Documents table - stores indexed documents from Google Drive
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS documentos (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                google_drive_id TEXT UNIQUE,
+                google_drive_url TEXT,
+                mime_type TEXT,
+                tamanho_bytes BIGINT,
+                pasta_origem_id TEXT,
+                tags JSONB DEFAULT '[]',
+                descricao TEXT,
+                indexado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                indexado_por INTEGER REFERENCES users(id)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_documentos_google_drive_id
+            ON documentos(google_drive_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_documentos_pasta
+            ON documentos(pasta_origem_id)
+        ''')
+
+        # Document links - many-to-many relationships between documents and entities
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS documento_links (
+                id SERIAL PRIMARY KEY,
+                documento_id INTEGER REFERENCES documentos(id) ON DELETE CASCADE,
+                entidade_tipo TEXT NOT NULL,
+                entidade_id INTEGER NOT NULL,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(documento_id, entidade_tipo, entidade_id)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_documento_links_documento
+            ON documento_links(documento_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_documento_links_entidade
+            ON documento_links(entidade_tipo, entidade_id)
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True
