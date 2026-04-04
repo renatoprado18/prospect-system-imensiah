@@ -1559,6 +1559,9 @@ async function openPostModal(postId) {
                </div>`
             : '';
 
+        // If suggesting a new date for a draft, pre-select 'scheduled' status
+        const effectiveStatus = (!post.data_publicacao && post.status === 'draft') ? 'scheduled' : post.status;
+
         document.getElementById('post-modal-title').textContent = post.article_title;
         document.getElementById('post-modal-body').innerHTML = `
             ${aiInfo}
@@ -1566,7 +1569,7 @@ async function openPostModal(postId) {
                 <label>Status</label>
                 <select class="form-control" id="edit-status">
                     ${Object.entries({{ status_options | tojson }}).map(([k, v]) =>
-                        `<option value="${k}" ${post.status === k ? 'selected' : ''}>${v.label}</option>`
+                        `<option value="${k}" ${effectiveStatus === k ? 'selected' : ''}>${v.label}</option>`
                     ).join('')}
                 </select>
             </div>
@@ -1647,10 +1650,18 @@ function closePostModal() {
 }
 
 async function savePost(postId) {
+    const dateValue = document.getElementById('edit-date').value;
+    let status = document.getElementById('edit-status').value;
+
+    // Auto-set status to 'scheduled' if date is set and current status is 'draft'
+    if (dateValue && status === 'draft') {
+        status = 'scheduled';
+    }
+
     const data = {
-        status: document.getElementById('edit-status').value,
+        status: status,
         canal: document.getElementById('edit-canal').value,
-        data_publicacao: document.getElementById('edit-date').value || null,
+        data_publicacao: dateValue || null,
         conteudo_adaptado: document.getElementById('edit-conteudo').value || null
     };
 
