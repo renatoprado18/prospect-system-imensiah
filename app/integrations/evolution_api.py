@@ -258,14 +258,17 @@ class EvolutionAPIClient:
         phone: str,
         instance_name: str = None
     ) -> Dict:
-        """Obtém foto de perfil do contato"""
+        """Obtém foto de perfil do contato via Evolution API v2"""
         name = instance_name or self.instance_name
         phone_clean = ''.join(filter(str.isdigit, phone))
 
         if not phone_clean.startswith('55') and len(phone_clean) <= 11:
             phone_clean = '55' + phone_clean
 
-        return await self._request("GET", f"/chat/fetchProfilePictureUrl/{name}?number={phone_clean}")
+        # Evolution API v2 usa POST com body JSON
+        return await self._request("POST", f"/chat/fetchProfilePictureUrl/{name}", {
+            "number": phone_clean
+        })
 
     async def get_contacts(self, instance_name: str = None) -> Dict:
         """Lista contatos do WhatsApp"""
