@@ -1332,6 +1332,24 @@ def init_db():
             ON CONFLICT (setting_key) DO NOTHING
         ''', (json.dumps(default_intents),))
 
+        # Background Jobs - Track long-running background tasks
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS background_jobs (
+                id SERIAL PRIMARY KEY,
+                job_type TEXT NOT NULL,
+                status TEXT DEFAULT 'running',
+                total_items INTEGER DEFAULT 0,
+                processed_items INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                failed_count INTEGER DEFAULT 0,
+                skipped_count INTEGER DEFAULT 0,
+                result JSONB,
+                error TEXT,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP
+            )
+        ''')
+
         # Timeline Summaries - Cache de resumos IA para grupos de mensagens
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS timeline_summaries (

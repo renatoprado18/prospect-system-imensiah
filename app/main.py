@@ -13509,7 +13509,8 @@ from app.services.editorial_calendar import (
     get_editorial_posts, get_editorial_post, create_editorial_post,
     update_editorial_post, delete_editorial_post, schedule_post,
     mark_as_published, import_articles_from_site, get_calendar_view,
-    get_stats as get_editorial_stats, EDITORIAL_STATUS, EDITORIAL_CANAIS, EDITORIAL_TIPOS
+    get_stats as get_editorial_stats, get_pending_tasks as get_editorial_pending_tasks,
+    EDITORIAL_STATUS, EDITORIAL_CANAIS, EDITORIAL_TIPOS
 )
 
 
@@ -13537,6 +13538,12 @@ async def api_editorial_list(
 async def api_editorial_stats():
     """Estatisticas do calendario editorial"""
     return get_editorial_stats()
+
+
+@app.get("/api/editorial/pending-tasks")
+async def api_editorial_pending_tasks():
+    """Tarefas pendentes do editorial - o que precisa ser feito"""
+    return get_editorial_pending_tasks()
 
 
 @app.get("/api/editorial/calendar/{year}/{month}")

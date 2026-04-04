@@ -283,6 +283,148 @@
         font-size: 1.25rem;
     }
 
+    /* Pending Tasks Widget */
+    .tasks-card {
+        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+        border: 2px solid #f59e0b;
+    }
+
+    .tasks-card h3 {
+        color: #92400e;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .tasks-card h3 .badge {
+        background: #f59e0b;
+        color: white;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.75rem;
+    }
+
+    .task-section {
+        margin-bottom: 16px;
+    }
+
+    .task-section:last-child {
+        margin-bottom: 0;
+    }
+
+    .task-section-title {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #92400e;
+        margin-bottom: 8px;
+        font-weight: 600;
+    }
+
+    .task-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        background: white;
+        border-radius: 8px;
+        margin-bottom: 6px;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: all 0.2s;
+        border-left: 3px solid transparent;
+    }
+
+    .task-item:hover {
+        transform: translateX(4px);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .task-item.hoje {
+        border-left-color: #ef4444;
+    }
+
+    .task-item.amanha {
+        border-left-color: #f59e0b;
+    }
+
+    .task-item.sugestao {
+        border-left-color: #10b981;
+    }
+
+    .task-item .icon {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.9rem;
+        flex-shrink: 0;
+    }
+
+    .task-item .icon.linkedin {
+        background: rgba(0, 119, 181, 0.1);
+        color: #0077b5;
+    }
+
+    .task-item .icon.repost {
+        background: rgba(16, 185, 129, 0.1);
+        color: #10b981;
+    }
+
+    .task-item .info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .task-item .title {
+        font-weight: 500;
+        color: var(--dark);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .task-item .meta {
+        font-size: 0.7rem;
+        color: var(--gray-500);
+    }
+
+    .task-item .action-btn {
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 0.7rem;
+        font-weight: 500;
+        border: none;
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+
+    .task-item .action-btn.publicar {
+        background: #0077b5;
+        color: white;
+    }
+
+    .task-item .action-btn.agendar {
+        background: #10b981;
+        color: white;
+    }
+
+    .no-tasks {
+        text-align: center;
+        padding: 16px;
+        color: #92400e;
+        font-size: 0.85rem;
+    }
+
+    .no-tasks i {
+        font-size: 2rem;
+        display: block;
+        margin-bottom: 8px;
+        opacity: 0.5;
+    }
+
     /* Modal - using custom class names to avoid Bootstrap conflicts */
     .ed-modal {
         position: fixed;
@@ -884,6 +1026,21 @@
     </div>
 
     <div class="editorial-sidebar">
+        <!-- Pending Tasks Widget -->
+        <div class="sidebar-card tasks-card" id="pending-tasks-card">
+            <h3>
+                <i class="bi bi-list-check"></i>
+                Tarefas Pendentes
+                <span class="badge" id="tasks-count">0</span>
+            </h3>
+            <div id="pending-tasks-content">
+                <div class="no-tasks">
+                    <i class="bi bi-hourglass-split"></i>
+                    Carregando...
+                </div>
+            </div>
+        </div>
+
         <!-- Quick Actions -->
         <div class="sidebar-card">
             <h3>Acoes Rapidas</h3>
@@ -1198,6 +1355,172 @@
 {% block extra_js %}
 <script>
 const ARTICLES_URL = 'https://almeida-prado.com';
+
+// =============== PENDING TASKS ===============
+async function loadPendingTasks() {
+    const container = document.getElementById('pending-tasks-content');
+    const badge = document.getElementById('tasks-count');
+
+    try {
+        const response = await fetch('/api/editorial/pending-tasks');
+        const data = await response.json();
+
+        const total = data.resumo.publicar_hoje + data.resumo.publicar_amanha;
+        badge.textContent = total;
+
+        if (total === 0 && data.sugestoes_repost.length === 0) {
+            container.innerHTML = `
+                <div class="no-tasks">
+                    <i class="bi bi-check-circle"></i>
+                    Tudo em dia!
+                </div>
+            `;
+            return;
+        }
+
+        let html = '';
+
+        // Tarefas de HOJE
+        if (data.hoje.length > 0) {
+            html += `<div class="task-section">
+                <div class="task-section-title">🔴 Publicar HOJE</div>`;
+            data.hoje.forEach(task => {
+                const horario = task.horario ? new Date(task.horario).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'}) : '';
+                html += `
+                    <div class="task-item hoje" onclick="openPostModal(${task.id})">
+                        <div class="icon linkedin"><i class="bi bi-linkedin"></i></div>
+                        <div class="info">
+                            <div class="title">${escapeHtml(task.titulo.substring(0, 35))}${task.titulo.length > 35 ? '...' : ''}</div>
+                            <div class="meta">${task.tipo === 'hot_take' ? 'Hot Take' : 'Post'} • ${horario}</div>
+                        </div>
+                        <button class="action-btn publicar" onclick="event.stopPropagation(); copyAndOpen(${task.id})">
+                            <i class="bi bi-box-arrow-up-right"></i> Publicar
+                        </button>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+
+        // Tarefas de AMANHÃ
+        if (data.amanha.length > 0) {
+            html += `<div class="task-section">
+                <div class="task-section-title">🟡 Amanhã</div>`;
+            data.amanha.forEach(task => {
+                const horario = task.horario ? new Date(task.horario).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'}) : '';
+                html += `
+                    <div class="task-item amanha" onclick="openPostModal(${task.id})">
+                        <div class="icon linkedin"><i class="bi bi-linkedin"></i></div>
+                        <div class="info">
+                            <div class="title">${escapeHtml(task.titulo.substring(0, 40))}${task.titulo.length > 40 ? '...' : ''}</div>
+                            <div class="meta">${task.tipo === 'hot_take' ? 'Hot Take' : 'Post'} • ${horario}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+
+        // Sugestões de Repost
+        if (data.sugestoes_repost.length > 0) {
+            html += `<div class="task-section">
+                <div class="task-section-title">💡 Sugestões de Repost</div>`;
+            data.sugestoes_repost.slice(0, 3).forEach(sug => {
+                html += `
+                    <div class="task-item sugestao" onclick="openPostModal(${sug.id})">
+                        <div class="icon repost"><i class="bi bi-arrow-repeat"></i></div>
+                        <div class="info">
+                            <div class="title">${escapeHtml(sug.titulo.substring(0, 35))}${sug.titulo.length > 35 ? '...' : ''}</div>
+                            <div class="meta">Score ${sug.score}/10 • ${sug.categoria || 'Artigo'}</div>
+                        </div>
+                        <button class="action-btn agendar" onclick="event.stopPropagation(); quickSchedulePost(${sug.id})">
+                            Agendar
+                        </button>
+                    </div>
+                `;
+            });
+            html += '</div>';
+        }
+
+        container.innerHTML = html;
+    } catch (error) {
+        console.error('Error loading pending tasks:', error);
+        container.innerHTML = `
+            <div class="no-tasks">
+                <i class="bi bi-exclamation-triangle"></i>
+                Erro ao carregar
+            </div>
+        `;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function copyAndOpen(postId) {
+    try {
+        const response = await fetch(`/api/editorial/${postId}`);
+        const post = await response.json();
+
+        const content = post.conteudo_adaptado || post.article_description || '';
+        const hashtags = post.hashtags || '';
+        const fullContent = content + (hashtags ? '\n\n' + hashtags : '');
+
+        await navigator.clipboard.writeText(fullContent);
+
+        // Open LinkedIn share
+        window.open('https://www.linkedin.com/feed/', '_blank');
+
+        // Ask if published
+        setTimeout(() => {
+            if (confirm('Você publicou este post no LinkedIn?\n\nClique OK para marcar como publicado.')) {
+                markAsPublished(postId);
+            }
+        }, 2000);
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Erro ao preparar publicação');
+    }
+}
+
+async function markAsPublished(postId) {
+    try {
+        await fetch(`/api/editorial/${postId}/publish`, { method: 'POST' });
+        loadPendingTasks();
+        location.reload();
+    } catch (error) {
+        console.error('Error marking as published:', error);
+    }
+}
+
+async function quickSchedulePost(postId) {
+    // Get next available slot
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+
+    const dateStr = tomorrow.toISOString().split('T')[0] + ' 09:00';
+
+    try {
+        await fetch(`/api/editorial/${postId}/schedule`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data_publicacao: dateStr })
+        });
+        alert('Post agendado!');
+        loadPendingTasks();
+        location.reload();
+    } catch (error) {
+        console.error('Error scheduling:', error);
+        alert('Erro ao agendar');
+    }
+}
+
+// Load pending tasks on page load
+document.addEventListener('DOMContentLoaded', loadPendingTasks);
 
 // Load articles from static file on page load
 fetch('/static/articles.json')

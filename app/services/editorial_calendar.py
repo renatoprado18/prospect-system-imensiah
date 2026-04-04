@@ -801,3 +801,136 @@ def get_analysis_stats() -> Dict:
         stats['top_relevancia'] = [dict(r) for r in cursor.fetchall()]
 
         return stats
+
+
+def get_pending_tasks() -> Dict:
+    """
+    Get pending editorial tasks for today and upcoming.
+    Returns a structured view of what needs to be done.
+    """
+    from app.services.hot_takes import get_hot_takes
+
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow = today + timedelta(days=1)
+    next_week = today + timedelta(days=7)
+
+    tasks = {
+        'hoje': [],
+        'amanha': [],
+        'proximos_dias': [],
+        'sugestoes_repost': [],
+        'resumo': {
+            'publicar_hoje': 0,
+            'publicar_amanha': 0,
+            'total_pendente': 0,
+            'artigos_para_repost': 0
+        }
+    }
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # 1. Posts agendados para HOJE (precisam ser publicados no LinkedIn)
+        cursor.execute("""
+            SELECT ep.*, ht.linkedin_post, ht.news_title, ht.news_link
+            FROM editorial_posts ep
+            LEFT JOIN hot_takes ht ON ep.hot_take_id = ht.id
+            WHERE ep.status = 'scheduled'
+              AND DATE(ep.data_publicacao) = DATE(%s)
+            ORDER BY ep.data_publicacao ASC
+        """, (today,))
+
+        for row in cursor.fetchall():
+            post = dict(row)
+            tasks['hoje'].append({
+                'id': post['id'],
+                'tipo': 'hot_take' if post.get('hot_take_id') else 'post',
+                'titulo': post.get('article_title') or post.get('news_title') or 'Sem título',
+                'horario': post.get('data_publicacao'),
+                'canal': post.get('canal', 'linkedin'),
+                'conteudo': post.get('conteudo_adaptado') or post.get('linkedin_post') or '',
+                'hashtags': post.get('hashtags') or '',
+                'link_original': post.get('article_url') or post.get('news_link') or '',
+                'acao': 'Publicar no LinkedIn'
+            })
+
+        tasks['resumo']['publicar_hoje'] = len(tasks['hoje'])
+
+        # 2. Posts agendados para AMANHÃ
+        cursor.execute("""
+            SELECT ep.*, ht.linkedin_post, ht.news_title
+            FROM editorial_posts ep
+            LEFT JOIN hot_takes ht ON ep.hot_take_id = ht.id
+            WHERE ep.status = 'scheduled'
+              AND DATE(ep.data_publicacao) = DATE(%s)
+            ORDER BY ep.data_publicacao ASC
+        """, (tomorrow,))
+
+        for row in cursor.fetchall():
+            post = dict(row)
+            tasks['amanha'].append({
+                'id': post['id'],
+                'tipo': 'hot_take' if post.get('hot_take_id') else 'post',
+                'titulo': post.get('article_title') or post.get('news_title') or 'Sem título',
+                'horario': post.get('data_publicacao'),
+                'canal': post.get('canal', 'linkedin'),
+                'acao': 'Preparar para publicação'
+            })
+
+        tasks['resumo']['publicar_amanha'] = len(tasks['amanha'])
+
+        # 3. Próximos 7 dias (exceto hoje e amanhã)
+        cursor.execute("""
+            SELECT ep.*, ht.news_title
+            FROM editorial_posts ep
+            LEFT JOIN hot_takes ht ON ep.hot_take_id = ht.id
+            WHERE ep.status = 'scheduled'
+              AND DATE(ep.data_publicacao) > DATE(%s)
+              AND DATE(ep.data_publicacao) <= DATE(%s)
+            ORDER BY ep.data_publicacao ASC
+        """, (tomorrow, next_week))
+
+        for row in cursor.fetchall():
+            post = dict(row)
+            tasks['proximos_dias'].append({
+                'id': post['id'],
+                'tipo': 'hot_take' if post.get('hot_take_id') else 'post',
+                'titulo': post.get('article_title') or post.get('news_title') or 'Sem título',
+                'data': post.get('data_publicacao'),
+                'canal': post.get('canal', 'linkedin')
+            })
+
+        # 4. Sugestões de artigos para repost (baseado em score IA)
+        cursor.execute("""
+            SELECT id, article_title, article_url, ai_categoria,
+                   ai_score_relevancia, ai_gancho_linkedin, ai_evergreen,
+                   criado_em
+            FROM editorial_posts
+            WHERE status = 'draft'
+              AND ai_score_relevancia >= 7
+              AND ai_gancho_linkedin IS NOT NULL
+            ORDER BY ai_score_relevancia DESC, ai_evergreen DESC
+            LIMIT 5
+        """)
+
+        for row in cursor.fetchall():
+            post = dict(row)
+            tasks['sugestoes_repost'].append({
+                'id': post['id'],
+                'titulo': post['article_title'],
+                'url': post.get('article_url'),
+                'categoria': post.get('ai_categoria'),
+                'score': post.get('ai_score_relevancia'),
+                'gancho': post.get('ai_gancho_linkedin'),
+                'evergreen': post.get('ai_evergreen', False),
+                'acao': 'Agendar repost'
+            })
+
+        tasks['resumo']['artigos_para_repost'] = len(tasks['sugestoes_repost'])
+        tasks['resumo']['total_pendente'] = (
+            tasks['resumo']['publicar_hoje'] +
+            tasks['resumo']['publicar_amanha'] +
+            len(tasks['proximos_dias'])
+        )
+
+    return tasks
