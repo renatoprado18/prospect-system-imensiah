@@ -13780,6 +13780,67 @@ async def api_editorial_ai_top_suggestions():
     return {"suggestions": suggestions}
 
 
+@app.get("/api/editorial/dashboard-tasks")
+async def api_editorial_dashboard_tasks():
+    """Retorna tarefas do LinkedIn para o dashboard - hoje e próximos"""
+    from app.database import get_db
+    from datetime import datetime, timedelta
+
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow = today + timedelta(days=1)
+    next_week = today + timedelta(days=7)
+
+    result = {
+        'hoje': [],
+        'proximos': []
+    }
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Posts para HOJE
+        cursor.execute("""
+            SELECT ep.id, ep.article_title, ep.tipo, ep.status,
+                   ep.data_publicacao, ep.conteudo_adaptado, ep.ai_gancho_linkedin
+            FROM editorial_posts ep
+            WHERE ep.status IN ('scheduled', 'published')
+              AND DATE(ep.data_publicacao) = DATE(%s)
+            ORDER BY ep.data_publicacao ASC
+        """, (today,))
+
+        for row in cursor.fetchall():
+            post = dict(row)
+            result['hoje'].append({
+                'id': post['id'],
+                'titulo': post['article_title'] or 'Sem título',
+                'tipo': post['tipo'] or 'artigo',
+                'status': post['status'],
+                'horario': post['data_publicacao'].isoformat() if post['data_publicacao'] else None
+            })
+
+        # Próximos posts (exceto hoje)
+        cursor.execute("""
+            SELECT ep.id, ep.article_title, ep.tipo, ep.data_publicacao
+            FROM editorial_posts ep
+            WHERE ep.status = 'scheduled'
+              AND DATE(ep.data_publicacao) > DATE(%s)
+              AND DATE(ep.data_publicacao) <= DATE(%s)
+            ORDER BY ep.data_publicacao ASC
+            LIMIT 5
+        """, (today, next_week))
+
+        for row in cursor.fetchall():
+            post = dict(row)
+            result['proximos'].append({
+                'id': post['id'],
+                'titulo': post['article_title'] or 'Sem título',
+                'tipo': post['tipo'] or 'artigo',
+                'data_publicacao': post['data_publicacao'].isoformat() if post['data_publicacao'] else None
+            })
+
+    return result
+
+
 @app.post("/api/editorial/ai/analyze")
 async def api_editorial_ai_analyze(request: Request):
     """
