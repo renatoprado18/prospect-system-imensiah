@@ -64,10 +64,14 @@ class AvatarFetcherService:
                         telefones = []
 
                 if telefones:
-                    # Pegar o primeiro telefone
-                    phone = telefones[0] if isinstance(telefones[0], str) else telefones[0].get('numero', '')
-                    contact['phone'] = phone
-                    contacts.append(contact)
+                    # Pegar o primeiro telefone (campo pode ser 'number' ou 'numero')
+                    if isinstance(telefones[0], str):
+                        phone = telefones[0]
+                    else:
+                        phone = telefones[0].get('number') or telefones[0].get('numero', '')
+                    if phone:
+                        contact['phone'] = phone
+                        contacts.append(contact)
 
             return contacts
 

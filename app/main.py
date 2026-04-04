@@ -11028,7 +11028,7 @@ async def fetch_single_avatar(request: Request, contact_id: int):
     if not telefones:
         return {"success": False, "error": "Contato sem telefone"}
 
-    phone = telefones[0] if isinstance(telefones[0], str) else telefones[0].get('numero', '')
+    phone = telefones[0] if isinstance(telefones[0], str) else (telefones[0].get('number') or telefones[0].get('numero', ''))
 
     if not phone:
         return {"success": False, "error": "Telefone invalido"}
