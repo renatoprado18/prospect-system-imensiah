@@ -400,6 +400,154 @@
             padding: 24px;
         }
 
+        /* LinkedIn Tasks Widget */
+        .linkedin-tasks-card {
+            border: 2px solid #0077b5;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .linkedin-tasks-card .card-header {
+            background: linear-gradient(135deg, #0077b5, #00a0dc);
+            color: white;
+            padding: 12px 16px;
+        }
+
+        .linkedin-tasks-card .card-header h2 {
+            color: white;
+            margin: 0;
+            font-size: 0.95rem;
+        }
+
+        .linkedin-task-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--gray-100);
+            transition: all 0.2s;
+        }
+
+        .linkedin-task-item:last-child {
+            border-bottom: none;
+        }
+
+        .linkedin-task-item:hover {
+            background: rgba(0, 119, 181, 0.05);
+        }
+
+        .linkedin-task-item.done {
+            opacity: 0.5;
+            background: var(--gray-50);
+        }
+
+        .linkedin-task-item.done .task-title {
+            text-decoration: line-through;
+        }
+
+        .linkedin-task-item .task-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+
+        .linkedin-task-item .task-icon.hot-take {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+        }
+
+        .linkedin-task-item .task-icon.article {
+            background: rgba(0, 119, 181, 0.15);
+            color: #0077b5;
+        }
+
+        .linkedin-task-item .task-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .linkedin-task-item .task-title {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--dark);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .linkedin-task-item .task-meta {
+            font-size: 0.7rem;
+            color: var(--gray-500);
+        }
+
+        .linkedin-task-item .task-actions {
+            display: flex;
+            gap: 6px;
+        }
+
+        .linkedin-task-item .task-actions button {
+            padding: 4px 10px;
+            font-size: 0.75rem;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .linkedin-task-item .task-actions .btn-copy {
+            background: #0077b5;
+            color: white;
+        }
+
+        .linkedin-task-item .task-actions .btn-copy:hover {
+            background: #005f8f;
+        }
+
+        .linkedin-task-item .task-actions .btn-done {
+            background: var(--gray-100);
+            color: var(--gray-600);
+        }
+
+        .linkedin-task-item .task-actions .btn-done:hover {
+            background: #22c55e;
+            color: white;
+        }
+
+        .linkedin-upcoming {
+            padding: 8px 16px;
+            background: var(--gray-50);
+            border-top: 1px solid var(--gray-100);
+        }
+
+        .linkedin-upcoming-title {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: var(--gray-500);
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+
+        .linkedin-upcoming-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.75rem;
+            color: var(--gray-600);
+            padding: 4px 0;
+        }
+
+        .linkedin-upcoming-item .date {
+            background: var(--gray-200);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 500;
+        }
+
         @media (max-width: 1200px) {
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
             .content-grid { grid-template-columns: 1fr; }
@@ -1627,6 +1775,22 @@
         <div class="content-grid">
             <!-- Left Column -->
             <div>
+                <!-- LinkedIn Tasks - O que publicar hoje -->
+                <div class="card linkedin-tasks-card mb-4">
+                    <div class="card-header">
+                        <h2><i class="bi bi-linkedin me-2"></i>LinkedIn Hoje</h2>
+                        <a href="/editorial" class="btn btn-sm" style="background: rgba(255,255,255,0.2); color: white; border: none;">
+                            Ver Editorial
+                        </a>
+                    </div>
+                    <div class="card-body p-0" id="linkedinTasksBody">
+                        <div class="loading">
+                            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                            <span class="ms-2 text-muted">Carregando...</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Today's Agenda -->
                 <div class="card mb-4">
                     <div class="card-header">
@@ -1771,6 +1935,155 @@
             } catch (e) {
                 console.error('Error loading data:', e);
                 dataCache.loaded = true; // Prevent retry loop
+            }
+        }
+
+        // ============== LinkedIn Tasks ==============
+        async function loadLinkedInTasks() {
+            const container = document.getElementById('linkedinTasksBody');
+            if (!container) return;
+
+            try {
+                // Fetch today's and upcoming posts
+                const response = await fetch('/api/editorial/dashboard-tasks');
+                const data = await response.json();
+
+                if (!data.hoje || data.hoje.length === 0) {
+                    // No tasks for today
+                    let html = `
+                        <div style="padding: 20px; text-align: center; color: var(--gray-500);">
+                            <i class="bi bi-check-circle" style="font-size: 2rem; color: #22c55e;"></i>
+                            <p style="margin: 8px 0 0; font-size: 0.85rem;">Nada para publicar hoje</p>
+                        </div>
+                    `;
+
+                    // Show upcoming if available
+                    if (data.proximos && data.proximos.length > 0) {
+                        html += `<div class="linkedin-upcoming">
+                            <div class="linkedin-upcoming-title">Próximos</div>`;
+                        data.proximos.slice(0, 3).forEach(p => {
+                            const date = new Date(p.data_publicacao);
+                            const dateStr = date.toLocaleDateString('pt-BR', {weekday: 'short', day: '2-digit'});
+                            html += `
+                                <div class="linkedin-upcoming-item">
+                                    <span class="date">${dateStr}</span>
+                                    <span>${p.tipo === 'hot_take' ? '🔥' : '📄'}</span>
+                                    <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                        ${p.titulo.substring(0, 35)}${p.titulo.length > 35 ? '...' : ''}
+                                    </span>
+                                </div>
+                            `;
+                        });
+                        html += '</div>';
+                    }
+
+                    container.innerHTML = html;
+                    return;
+                }
+
+                // Has tasks for today
+                let html = '';
+                data.hoje.forEach(task => {
+                    const timeStr = task.horario ? new Date(task.horario).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'}) : '';
+                    const isDone = task.status === 'published';
+                    html += `
+                        <div class="linkedin-task-item ${isDone ? 'done' : ''}" data-id="${task.id}">
+                            <div class="task-icon ${task.tipo === 'hot_take' ? 'hot-take' : 'article'}">
+                                <i class="bi bi-${task.tipo === 'hot_take' ? 'fire' : 'file-text'}"></i>
+                            </div>
+                            <div class="task-info">
+                                <div class="task-title">${task.titulo}</div>
+                                <div class="task-meta">${task.tipo === 'hot_take' ? 'Hot Take' : 'Artigo'} • ${timeStr}</div>
+                            </div>
+                            <div class="task-actions">
+                                ${!isDone ? `
+                                    <button class="btn-copy" onclick="copyLinkedInPost(${task.id})" title="Copiar e abrir LinkedIn">
+                                        <i class="bi bi-clipboard"></i> Copiar
+                                    </button>
+                                    <button class="btn-done" onclick="markLinkedInDone(${task.id})" title="Marcar como publicado">
+                                        <i class="bi bi-check"></i>
+                                    </button>
+                                ` : `<span style="color: #22c55e; font-size: 0.75rem;"><i class="bi bi-check-circle"></i> Publicado</span>`}
+                            </div>
+                        </div>
+                    `;
+                });
+
+                // Show upcoming
+                if (data.proximos && data.proximos.length > 0) {
+                    html += `<div class="linkedin-upcoming">
+                        <div class="linkedin-upcoming-title">Próximos</div>`;
+                    data.proximos.slice(0, 3).forEach(p => {
+                        const date = new Date(p.data_publicacao);
+                        const dateStr = date.toLocaleDateString('pt-BR', {weekday: 'short', day: '2-digit'});
+                        html += `
+                            <div class="linkedin-upcoming-item">
+                                <span class="date">${dateStr}</span>
+                                <span>${p.tipo === 'hot_take' ? '🔥' : '📄'}</span>
+                                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                    ${p.titulo.substring(0, 35)}${p.titulo.length > 35 ? '...' : ''}
+                                </span>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                }
+
+                container.innerHTML = html;
+            } catch (error) {
+                console.error('Error loading LinkedIn tasks:', error);
+                container.innerHTML = `
+                    <div style="padding: 16px; text-align: center; color: var(--gray-500);">
+                        <i class="bi bi-linkedin" style="font-size: 1.5rem;"></i>
+                        <p style="margin: 8px 0 0; font-size: 0.8rem;">
+                            <a href="/editorial" style="color: #0077b5;">Ver calendario editorial</a>
+                        </p>
+                    </div>
+                `;
+            }
+        }
+
+        async function copyLinkedInPost(postId) {
+            try {
+                const response = await fetch(`/api/editorial/${postId}`);
+                const post = await response.json();
+
+                const content = post.conteudo_adaptado || post.ai_gancho_linkedin || post.article_description || '';
+                await navigator.clipboard.writeText(content);
+
+                // Show toast
+                const toast = document.createElement('div');
+                toast.className = 'toast-notification success show';
+                toast.innerHTML = '<i class="bi bi-check-circle me-2"></i>Texto copiado! Abrindo LinkedIn...';
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 3000);
+
+                // Open LinkedIn
+                window.open('https://www.linkedin.com/feed/', '_blank');
+            } catch (error) {
+                console.error('Error copying post:', error);
+            }
+        }
+
+        async function markLinkedInDone(postId) {
+            try {
+                await fetch(`/api/editorial/${postId}/publish`, { method: 'POST' });
+
+                // Update UI
+                const item = document.querySelector(`.linkedin-task-item[data-id="${postId}"]`);
+                if (item) {
+                    item.classList.add('done');
+                    item.querySelector('.task-actions').innerHTML = '<span style="color: #22c55e; font-size: 0.75rem;"><i class="bi bi-check-circle"></i> Publicado</span>';
+                }
+
+                // Show toast
+                const toast = document.createElement('div');
+                toast.className = 'toast-notification success show';
+                toast.innerHTML = '<i class="bi bi-check-circle me-2"></i>Marcado como publicado!';
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 2000);
+            } catch (error) {
+                console.error('Error marking as done:', error);
             }
         }
 

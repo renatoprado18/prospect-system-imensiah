@@ -2556,9 +2556,10 @@
             const container = document.getElementById('documents-container');
             try {
                 const response = await fetch(`/api/documentos/contato/${contactId}`);
-                const docs = await response.json();
+                const data = await response.json();
+                const docs = data.documentos || [];
 
-                if (!docs || docs.length === 0) {
+                if (docs.length === 0) {
                     container.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-folder-x fs-1 d-block mb-2"></i>Nenhum documento vinculado</div>';
                     return;
                 }

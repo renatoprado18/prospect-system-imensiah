@@ -718,9 +718,10 @@
 
         try {
             const response = await fetch(`/api/documentos/projeto/${projectId}`);
-            const docs = await response.json();
+            const data = await response.json();
+            const docs = data.documentos || [];
 
-            if (!docs || docs.length === 0) {
+            if (docs.length === 0) {
                 container.innerHTML = '<p class="text-muted small mb-0">Nenhum documento</p>';
                 return;
             }
