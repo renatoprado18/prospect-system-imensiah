@@ -758,14 +758,14 @@
 
         /* Documents List */
         .documents-list {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 4px !important;
         }
 
         .doc-item {
-            display: flex;
-            align-items: center;
+            display: flex !important;
+            align-items: center !important;
             gap: 10px;
             padding: 8px 12px;
             background: var(--gray-50);
@@ -773,6 +773,7 @@
             transition: all 0.15s;
             cursor: pointer;
             border: 1px solid transparent;
+            width: 100%;
         }
 
         .doc-item:hover {
