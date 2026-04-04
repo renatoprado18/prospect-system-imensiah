@@ -7,6 +7,7 @@ e Google People API para re-sincronizar fotos de contatos Google.
 import asyncio
 import logging
 import httpx
+import json
 from typing import Dict, List, Optional
 from datetime import datetime
 from database import get_db
@@ -352,6 +353,89 @@ class AvatarFetcherService:
             stats['potencial_linkedin'] = cursor.fetchone()['c']
 
             return stats
+
+    async def fetch_all_whatsapp_photos_with_job(self, job_id: int, delay_between: float = 1.0):
+        """
+        Busca fotos de TODOS os contatos com telefone.
+        Atualiza o status do job na tabela background_jobs.
+        """
+        # Buscar todos os contatos que precisam de foto (sem limite)
+        contacts = self.get_contacts_needing_photos(limit=10000)
+        total = len(contacts)
+
+        logger.info(f"[Job {job_id}] Starting avatar fetch for {total} contacts")
+
+        # Atualizar job com total
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE background_jobs
+                SET total_items = %s
+                WHERE id = %s
+            """, (total, job_id))
+            conn.commit()
+
+        stats = {'success': 0, 'failed': 0, 'skipped': 0}
+
+        for i, contact in enumerate(contacts):
+            phone = contact.get('phone', '')
+
+            if not phone:
+                stats['skipped'] += 1
+            else:
+                try:
+                    photo_url = await self.fetch_whatsapp_photo(phone)
+
+                    if photo_url:
+                        success = self.update_contact_photo(contact['id'], photo_url)
+                        if success:
+                            stats['success'] += 1
+                            logger.info(f"[Job {job_id}] {i+1}/{total} - Updated photo for {contact['nome']}")
+                        else:
+                            stats['failed'] += 1
+                    else:
+                        stats['failed'] += 1
+                except Exception as e:
+                    stats['failed'] += 1
+                    logger.warning(f"[Job {job_id}] Error for {contact['nome']}: {e}")
+
+            # Atualizar progresso a cada 10 contatos
+            if (i + 1) % 10 == 0 or i == total - 1:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE background_jobs
+                        SET processed_items = %s,
+                            success_count = %s,
+                            failed_count = %s,
+                            skipped_count = %s
+                        WHERE id = %s
+                    """, (i + 1, stats['success'], stats['failed'], stats['skipped'], job_id))
+                    conn.commit()
+
+            # Delay para evitar rate limit
+            if delay_between > 0 and i < total - 1:
+                await asyncio.sleep(delay_between)
+
+        # Marcar job como completo
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE background_jobs
+                SET status = 'completed',
+                    processed_items = %s,
+                    success_count = %s,
+                    failed_count = %s,
+                    skipped_count = %s,
+                    result = %s,
+                    completed_at = NOW()
+                WHERE id = %s
+            """, (total, stats['success'], stats['failed'], stats['skipped'],
+                  json.dumps(stats), job_id))
+            conn.commit()
+
+        logger.info(f"[Job {job_id}] Completed: {stats}")
+        return stats
 
 
 # Singleton
