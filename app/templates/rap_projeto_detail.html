@@ -466,6 +466,106 @@
     .search-result-item:hover {
         background: var(--gray-100);
     }
+
+    /* Documents Tree View */
+    .documents-tree {
+        font-size: 0.8rem;
+    }
+
+    .folder-node {
+        margin-bottom: 2px;
+    }
+
+    .folder-header {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 6px;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.15s;
+        user-select: none;
+    }
+
+    .folder-header:hover {
+        background: var(--gray-100);
+    }
+
+    .folder-toggle {
+        width: 14px;
+        height: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--gray-500);
+        transition: transform 0.2s;
+        font-size: 0.7rem;
+    }
+
+    .folder-toggle.expanded {
+        transform: rotate(90deg);
+    }
+
+    .folder-icon {
+        color: #f59e0b;
+        font-size: 0.9rem;
+    }
+
+    .folder-name {
+        font-weight: 500;
+        color: var(--dark);
+    }
+
+    .folder-count {
+        font-size: 0.65rem;
+        color: var(--gray-500);
+        margin-left: auto;
+    }
+
+    .folder-contents {
+        margin-left: 18px;
+        border-left: 1px solid var(--gray-200);
+        padding-left: 6px;
+        display: none;
+    }
+
+    .folder-contents.expanded {
+        display: block;
+    }
+
+    .doc-tree-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 6px;
+        border-radius: 4px;
+        transition: all 0.15s;
+        cursor: pointer;
+    }
+
+    .doc-tree-item:hover {
+        background: var(--gray-100);
+    }
+
+    .doc-tree-icon {
+        font-size: 0.9rem;
+        flex-shrink: 0;
+    }
+
+    .doc-tree-name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--dark);
+    }
+
+    .doc-tree-size {
+        font-size: 0.7rem;
+        color: var(--gray-500);
+        flex-shrink: 0;
+    }
 </style>
 
 <script>
@@ -726,30 +826,98 @@
                 return;
             }
 
-            container.innerHTML = docs.slice(0, 8).map(doc => {
-                const icon = getDocIcon(doc.mime_type);
-                // Extract filename and path if contains /
-                const parts = doc.nome.split('/');
-                const fileName = parts.pop();
-                const folderPath = parts.length > 0 ? parts.join('/') + '/' : '';
-                return `
-                    <div class="d-flex align-items-center gap-2 py-1 doc-item" onclick="window.open('${doc.google_drive_url || '#'}', '_blank')" style="cursor: pointer; border-radius: 4px; padding: 4px 6px; margin: 1px 0;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background='transparent'">
-                        <i class="bi ${icon.icon} ${icon.cls}" style="flex-shrink: 0;"></i>
-                        <div class="flex-grow-1" style="min-width: 0;">
-                            <div class="small text-truncate fw-medium" title="${doc.nome}">${fileName}</div>
-                            ${folderPath ? `<div class="text-muted" style="font-size: 0.7rem;" title="${folderPath}"><i class="bi bi-folder-fill text-warning"></i> ${folderPath}</div>` : ''}
-                        </div>
-                    </div>
-                `;
-            }).join('');
-
-            if (docs.length > 8) {
-                container.innerHTML += `<div class="text-center mt-2"><small class="text-muted">+${docs.length - 8} mais documentos</small></div>`;
-            }
+            // Build folder tree from flat list
+            const tree = buildProjectFolderTree(docs);
+            container.innerHTML = '<div class="documents-tree">' + renderProjectFolderTree(tree) + '</div>';
         } catch (error) {
             console.error('Error loading documents:', error);
             container.innerHTML = '<p class="text-muted small mb-0">Erro ao carregar</p>';
         }
+    }
+
+    function buildProjectFolderTree(docs) {
+        const tree = { folders: {}, files: [] };
+
+        docs.forEach(doc => {
+            const parts = doc.nome.split('/');
+            const fileName = parts.pop();
+
+            if (parts.length === 0) {
+                tree.files.push({ ...doc, displayName: fileName });
+            } else {
+                let current = tree;
+                parts.forEach(folderName => {
+                    if (!current.folders[folderName]) {
+                        current.folders[folderName] = { folders: {}, files: [] };
+                    }
+                    current = current.folders[folderName];
+                });
+                current.files.push({ ...doc, displayName: fileName });
+            }
+        });
+
+        return tree;
+    }
+
+    function countProjectTreeItems(node) {
+        let count = node.files.length;
+        Object.values(node.folders).forEach(folder => {
+            count += countProjectTreeItems(folder);
+        });
+        return count;
+    }
+
+    function renderProjectFolderTree(tree) {
+        let html = '';
+
+        const folderNames = Object.keys(tree.folders).sort();
+        folderNames.forEach(folderName => {
+            const folder = tree.folders[folderName];
+            const itemCount = countProjectTreeItems(folder);
+            const folderId = 'pfolder-' + Math.random().toString(36).substr(2, 9);
+
+            html += `
+                <div class="folder-node">
+                    <div class="folder-header" onclick="toggleProjectFolder('${folderId}')">
+                        <div class="folder-toggle" id="${folderId}-toggle"><i class="bi bi-chevron-right"></i></div>
+                        <i class="bi bi-folder-fill folder-icon"></i>
+                        <span class="folder-name">${folderName}</span>
+                        <span class="folder-count">${itemCount}</span>
+                    </div>
+                    <div class="folder-contents" id="${folderId}-contents">
+                        ${renderProjectFolderTree(folder)}
+                    </div>
+                </div>
+            `;
+        });
+
+        const sortedFiles = tree.files.sort((a, b) => a.displayName.localeCompare(b.displayName));
+        sortedFiles.forEach(doc => {
+            const icon = getDocIcon(doc.mime_type);
+            html += `
+                <div class="doc-tree-item" onclick="window.open('${doc.google_drive_url || '#'}', '_blank')">
+                    <i class="bi ${icon.icon} ${icon.cls} doc-tree-icon"></i>
+                    <span class="doc-tree-name" title="${doc.displayName}">${doc.displayName}</span>
+                    <span class="doc-tree-size">${formatProjectFileSize(doc.tamanho_bytes)}</span>
+                </div>
+            `;
+        });
+
+        return html;
+    }
+
+    function toggleProjectFolder(folderId) {
+        const toggle = document.getElementById(folderId + '-toggle');
+        const contents = document.getElementById(folderId + '-contents');
+        toggle.classList.toggle('expanded');
+        contents.classList.toggle('expanded');
+    }
+
+    function formatProjectFileSize(bytes) {
+        if (!bytes) return '';
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     }
 
     function getDocIcon(mimeType) {
