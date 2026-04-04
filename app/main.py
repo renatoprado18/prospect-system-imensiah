@@ -11048,6 +11048,59 @@ async def fetch_single_avatar(request: Request, contact_id: int):
     return {"success": False, "error": "Foto nao encontrada no WhatsApp"}
 
 
+@app.get("/api/avatars/debug/{contact_id}")
+async def debug_avatar_fetch(request: Request, contact_id: int):
+    """Debug: mostra resposta crua da Evolution API."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from integrations.evolution_api import get_evolution_client
+    from database import get_db
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, nome, telefones FROM contacts WHERE id = %s", (contact_id,))
+        row = cursor.fetchone()
+        if not row:
+            return {"error": "Contato nao encontrado"}
+        contact = dict(row)
+
+    telefones = contact.get('telefones', [])
+    if isinstance(telefones, str):
+        import json
+        try:
+            telefones = json.loads(telefones)
+        except:
+            return {"error": "Erro parsing telefones", "raw": contact.get('telefones')}
+
+    if not telefones:
+        return {"error": "Sem telefones", "contact": contact}
+
+    if isinstance(telefones[0], str):
+        phone = telefones[0]
+    else:
+        phone = telefones[0].get('number') or telefones[0].get('numero', '')
+
+    # Limpar telefone (mesmo que Evolution API faz)
+    phone_clean = ''.join(filter(str.isdigit, phone))
+    if not phone_clean.startswith('55') and len(phone_clean) <= 11:
+        phone_clean = '55' + phone_clean
+
+    # Chamar Evolution API diretamente
+    evolution = get_evolution_client()
+    result = await evolution.get_profile_picture(phone)
+
+    return {
+        "contact_name": contact['nome'],
+        "phone_original": phone,
+        "phone_clean": phone_clean,
+        "evolution_configured": evolution.is_configured,
+        "evolution_instance": evolution.instance_name,
+        "api_response": result
+    }
+
+
 @app.post("/api/avatars/fetch-google")
 async def fetch_google_avatars(
     request: Request,
