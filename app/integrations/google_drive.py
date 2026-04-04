@@ -20,9 +20,9 @@ async def get_valid_token(db_conn) -> Optional[str]:
 
     cursor = db_conn.cursor()
     cursor.execute("""
-        SELECT access_token, refresh_token, token_expires_at
+        SELECT access_token, refresh_token, token_expiry
         FROM google_accounts
-        WHERE account_type = 'professional'
+        WHERE tipo = 'professional'
         LIMIT 1
     """)
     row = cursor.fetchone()
@@ -32,7 +32,7 @@ async def get_valid_token(db_conn) -> Optional[str]:
 
     access_token = row['access_token']
     refresh_token = row['refresh_token']
-    expires_at = row['token_expires_at']
+    expires_at = row['token_expiry']
 
     # Check if token is expired
     if expires_at and datetime.now() >= expires_at:
@@ -44,8 +44,8 @@ async def get_valid_token(db_conn) -> Optional[str]:
             cursor.execute("""
                 UPDATE google_accounts
                 SET access_token = %s,
-                    token_expires_at = NOW() + INTERVAL '1 hour'
-                WHERE account_type = 'professional'
+                    token_expiry = NOW() + INTERVAL '1 hour'
+                WHERE tipo = 'professional'
             """, (access_token,))
             db_conn.commit()
         except Exception as e:
