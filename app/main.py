@@ -11280,24 +11280,33 @@ async def fetch_all_avatars_auto(request: Request):
             if time.time() - start_time > max_time:
                 break
 
-            phone = contact.get('phone', '')
-            if not phone:
-                results['skipped'] += 1
-                # Marcar como verificado mesmo sem telefone válido
-                fetcher.mark_avatar_checked(contact['id'])
-                total_processed += 1
-                continue
+            phone = contact.get('phone')
+            google_id = contact.get('google_contact_id')
+            photo_url = None
 
-            try:
-                photo_url = await fetcher.fetch_whatsapp_photo(phone)
-                if photo_url:
-                    if fetcher.update_contact_photo(contact['id'], photo_url):
-                        results['success'] += 1
-                    else:
-                        results['failed'] += 1
+            # 1. Tentar WhatsApp primeiro (se tem telefone)
+            if phone:
+                try:
+                    photo_url = await fetcher.fetch_whatsapp_photo(phone)
+                except:
+                    pass
+
+            # 2. Se não achou no WhatsApp, tentar Google (se tem google_contact_id)
+            if not photo_url and google_id:
+                try:
+                    photo_url = await fetcher.fetch_google_photo(google_id)
+                except:
+                    pass
+
+            # 3. Atualizar resultado
+            if photo_url:
+                if fetcher.update_contact_photo(contact['id'], photo_url):
+                    results['success'] += 1
                 else:
                     results['failed'] += 1
-            except:
+            elif not phone and not google_id:
+                results['skipped'] += 1
+            else:
                 results['failed'] += 1
 
             # Marcar contato como verificado (evita reprocessar)
@@ -11312,7 +11321,7 @@ async def fetch_all_avatars_auto(request: Request):
         "message": f"Processado {total_processed} contatos em {round(time.time() - start_time)}s. Chame novamente para continuar.",
         "total_processed": total_processed,
         "results": results,
-        "remaining": stats.get('potencial_whatsapp', 0),
+        "remaining": stats.get('pendentes_total', 0),
         "stats": stats
     }
 

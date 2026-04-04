@@ -34,21 +34,21 @@ class AvatarFetcherService:
         with get_db() as conn:
             cursor = conn.cursor()
 
-            # Contatos com telefone mas sem foto real (só Google/iniciais)
+            # Contatos sem foto real (só Google/iniciais)
             # Exclui contatos já verificados (avatar_checked_at preenchido)
+            # Inclui google_contact_id para fallback
             cursor.execute("""
-                SELECT id, nome, telefones, foto_url
+                SELECT id, nome, telefones, foto_url, google_contact_id
                 FROM contacts
-                WHERE telefones IS NOT NULL
-                AND telefones::text != '[]'
-                AND telefones::text != ''
-                AND (
+                WHERE (
                     foto_url IS NULL
                     OR foto_url = ''
                     OR foto_url LIKE '%%googleusercontent%%'
                 )
                 AND avatar_checked_at IS NULL
                 ORDER BY
+                    -- Prioriza quem tem telefone (WhatsApp)
+                    CASE WHEN telefones IS NOT NULL AND telefones::text != '[]' THEN 0 ELSE 1 END,
                     circulo ASC,  -- Prioriza circulos mais proximos
                     atualizado_em DESC
                 LIMIT %s
@@ -66,6 +66,7 @@ class AvatarFetcherService:
                     except:
                         telefones = []
 
+                contact['phone'] = None
                 if telefones:
                     # Pegar o primeiro telefone (campo pode ser 'number' ou 'numero')
                     if isinstance(telefones[0], str):
@@ -74,7 +75,10 @@ class AvatarFetcherService:
                         phone = telefones[0].get('number') or telefones[0].get('numero', '')
                     if phone:
                         contact['phone'] = phone
-                        contacts.append(contact)
+
+                # Incluir contato se tem telefone OU google_contact_id
+                if contact['phone'] or contact.get('google_contact_id'):
+                    contacts.append(contact)
 
             return contacts
 
@@ -360,13 +364,26 @@ class AvatarFetcherService:
             """)
             stats['ja_verificados_sem_foto'] = cursor.fetchone()['c']
 
-            # Contatos com google_contact_id que podem ter foto real
+            # Contatos com google_contact_id que podem ter foto real (não verificados ainda)
             cursor.execute("""
                 SELECT COUNT(*) as c FROM contacts
                 WHERE google_contact_id IS NOT NULL
                 AND (foto_url IS NULL OR foto_url LIKE '%%googleusercontent%%')
+                AND avatar_checked_at IS NULL
             """)
             stats['potencial_google'] = cursor.fetchone()['c']
+
+            # Total de contatos pendentes (WhatsApp OU Google, não verificados)
+            cursor.execute("""
+                SELECT COUNT(*) as c FROM contacts
+                WHERE (foto_url IS NULL OR foto_url LIKE '%%googleusercontent%%')
+                AND avatar_checked_at IS NULL
+                AND (
+                    (telefones IS NOT NULL AND telefones::text != '[]')
+                    OR google_contact_id IS NOT NULL
+                )
+            """)
+            stats['pendentes_total'] = cursor.fetchone()['c']
 
             # Contatos com LinkedIn que podem ter foto buscada (Proxycurl)
             cursor.execute("""
