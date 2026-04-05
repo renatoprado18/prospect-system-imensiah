@@ -478,6 +478,24 @@ def get_ultima_manutencao_item(veiculo_id: int, item_id: int) -> Optional[Dict]:
         return dict(row) if row else None
 
 
+def get_todas_ultimas_manutencoes(veiculo_id: int) -> Dict[int, Dict]:
+    """
+    Busca a ultima manutencao de TODOS os itens do veiculo em uma unica query.
+    Retorna dict com item_id -> manutencao
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # Usa DISTINCT ON para pegar apenas a ultima manutencao de cada item
+        cursor.execute("""
+            SELECT DISTINCT ON (item_id) *
+            FROM veiculo_manutencoes
+            WHERE veiculo_id = %s AND item_id IS NOT NULL
+            ORDER BY item_id, km_manutencao DESC
+        """, (veiculo_id,))
+        rows = cursor.fetchall()
+        return {row['item_id']: dict(row) for row in rows}
+
+
 def get_historico_manutencoes(veiculo_id: int, limit: int = 50) -> List[Dict]:
     """Lista historico de manutencoes do veiculo"""
     with get_db() as conn:
@@ -621,6 +639,8 @@ def get_dashboard_veiculo(veiculo_id: int) -> Dict:
     - Resumo por status (ok, atencao, vencido)
     - Lista de itens por categoria com status
     - Proximas manutencoes
+
+    OTIMIZADO: Usa apenas 3 queries em vez de N+1
     """
     veiculo = get_veiculo(veiculo_id)
     if not veiculo:
@@ -629,10 +649,13 @@ def get_dashboard_veiculo(veiculo_id: int) -> Dict:
     km_atual = veiculo.get('km_atual', 0)
     itens = get_itens_manutencao(veiculo_id)
 
-    # Calcula status de cada item
+    # OTIMIZACAO: Busca todas as ultimas manutencoes em uma unica query
+    ultimas_manutencoes = get_todas_ultimas_manutencoes(veiculo_id)
+
+    # Calcula status de cada item (sem queries adicionais)
     itens_status = []
     for item in itens:
-        ultima = get_ultima_manutencao_item(veiculo_id, item['id'])
+        ultima = ultimas_manutencoes.get(item['id'])
         status = calcular_status_item(item, ultima, km_atual)
         itens_status.append(status)
 
@@ -672,10 +695,11 @@ def gerar_numero_os() -> str:
     return f"OS-{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
 
-def criar_ordem_servico(veiculo_id: int, km_atual: int, itens_ids: List[int] = None, observacoes: str = None) -> Dict:
+def criar_ordem_servico(veiculo_id: int, km_atual: int, itens_ids: List[int] = None, itens_extras: List[str] = None, observacoes: str = None) -> Dict:
     """
     Cria uma ordem de servico com os itens que precisam de manutencao.
     Se itens_ids nao for passado, inclui automaticamente itens vencidos/atencao.
+    itens_extras: lista de strings com descricoes de itens adicionais
     """
     dashboard = get_dashboard_veiculo(veiculo_id)
     if not dashboard:
@@ -686,9 +710,6 @@ def criar_ordem_servico(veiculo_id: int, km_atual: int, itens_ids: List[int] = N
         itens_os = dashboard['itens_vencidos'] + dashboard['itens_atencao']
     else:
         itens_os = [i for i in dashboard['proximas_manutencoes'] if i['item_id'] in itens_ids]
-
-    if not itens_os:
-        return {'error': 'Nenhum item para incluir na OS'}
 
     # Formata itens para JSONB
     itens_json = []
@@ -706,6 +727,27 @@ def criar_ordem_servico(veiculo_id: int, km_atual: int, itens_ids: List[int] = N
             'valor': None,
             'observacao': None
         })
+
+    # Adiciona itens extras (servicos adicionais sem vinculo com item de manutencao)
+    if itens_extras:
+        for extra in itens_extras:
+            if extra and extra.strip():
+                itens_json.append({
+                    'item_id': None,
+                    'item': extra.strip(),
+                    'categoria': 'Extras',
+                    'tipo_acao': 'verificar',
+                    'status': 'extra',
+                    'km_restante': None,
+                    'dias_restantes': None,
+                    'notas_fabricante': None,
+                    'realizado': False,
+                    'valor': None,
+                    'observacao': None
+                })
+
+    if not itens_json:
+        return {'error': 'Nenhum item para incluir na OS'}
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -841,6 +883,124 @@ def finalizar_ordem_servico(os_id: int, dados: Dict) -> Dict:
         return get_ordem_servico(os_id)
 
 
+def deletar_ordem_servico(os_id: int) -> Dict:
+    """Deleta uma ordem de servico (apenas se estiver pendente)"""
+    os = get_ordem_servico(os_id)
+    if not os:
+        return {'error': 'Ordem de servico nao encontrada'}
+
+    if os['status'] != 'pendente':
+        return {'error': 'Apenas ordens de servico pendentes podem ser excluidas'}
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM veiculo_ordens_servico WHERE id = %s", (os_id,))
+        conn.commit()
+
+    return {'success': True, 'message': f'Ordem {os["numero"]} excluida com sucesso'}
+
+
+def atualizar_ordem_servico(os_id: int, itens_ids: List[int] = None, itens_extras: List[str] = None, remover_ids: List[int] = None, remover_extras: List[str] = None) -> Dict:
+    """
+    Atualiza os itens de uma ordem de servico pendente.
+
+    Parametros:
+    - os_id: ID da OS
+    - itens_ids: Lista de IDs de itens de manutencao a ADICIONAR
+    - itens_extras: Lista de strings de itens extras a ADICIONAR
+    - remover_ids: Lista de IDs de itens de manutencao a REMOVER
+    - remover_extras: Lista de strings de itens extras a REMOVER
+    """
+    os_data = get_ordem_servico(os_id)
+    if not os_data:
+        return {'error': 'Ordem de servico nao encontrada'}
+
+    if os_data['status'] != 'pendente':
+        return {'error': 'Apenas ordens de servico pendentes podem ser editadas'}
+
+    veiculo_id = os_data['veiculo_id']
+    dashboard = get_dashboard_veiculo(veiculo_id)
+
+    # Pega itens atuais da OS
+    itens_atuais = os_data.get('itens', [])
+    if isinstance(itens_atuais, str):
+        itens_atuais = json.loads(itens_atuais)
+
+    # Remove itens se solicitado
+    if remover_ids:
+        itens_atuais = [i for i in itens_atuais if i.get('item_id') not in remover_ids]
+
+    if remover_extras:
+        remover_extras_lower = [e.lower().strip() for e in remover_extras]
+        itens_atuais = [i for i in itens_atuais if not (i.get('status') == 'extra' and i.get('item', '').lower().strip() in remover_extras_lower)]
+
+    # Adiciona novos itens de manutencao
+    if itens_ids:
+        # IDs ja presentes na OS
+        ids_existentes = {i.get('item_id') for i in itens_atuais if i.get('item_id')}
+
+        # Busca dados dos itens do dashboard
+        todos_itens = dashboard.get('itens_vencidos', []) + dashboard.get('itens_atencao', [])
+        # Adiciona tambem itens OK para poder incluir itens de proximas revisoes
+        for cat_itens in dashboard.get('itens_por_categoria', {}).values():
+            todos_itens.extend(cat_itens)
+
+        # Remove duplicatas
+        itens_por_id = {i['item_id']: i for i in todos_itens}
+
+        for item_id in itens_ids:
+            if item_id not in ids_existentes and item_id in itens_por_id:
+                item = itens_por_id[item_id]
+                itens_atuais.append({
+                    'item_id': item['item_id'],
+                    'item': item['item'],
+                    'categoria': item['categoria'],
+                    'tipo_acao': item['tipo_acao'],
+                    'status': item['status'],
+                    'km_restante': item.get('km_restante'),
+                    'dias_restantes': item.get('dias_restantes'),
+                    'notas_fabricante': item.get('notas_fabricante'),
+                    'realizado': False,
+                    'valor': None,
+                    'observacao': None
+                })
+
+    # Adiciona novos itens extras
+    if itens_extras:
+        extras_existentes = {i.get('item', '').lower().strip() for i in itens_atuais if i.get('status') == 'extra'}
+
+        for extra in itens_extras:
+            if extra and extra.strip() and extra.lower().strip() not in extras_existentes:
+                itens_atuais.append({
+                    'item_id': None,
+                    'item': extra.strip(),
+                    'categoria': 'Extras',
+                    'tipo_acao': 'verificar',
+                    'status': 'extra',
+                    'km_restante': None,
+                    'dias_restantes': None,
+                    'notas_fabricante': None,
+                    'realizado': False,
+                    'valor': None,
+                    'observacao': None
+                })
+
+    if not itens_atuais:
+        return {'error': 'A OS deve ter pelo menos um item'}
+
+    # Atualiza no banco
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE veiculo_ordens_servico
+            SET itens = %s, atualizado_em = NOW()
+            WHERE id = %s
+        """, (json.dumps(itens_atuais), os_id))
+        conn.commit()
+
+    return get_ordem_servico(os_id)
+
+
 # ==================== SEED DO PRADO ====================
 
 def atualizar_notas_fabricante_prado(veiculo_id: int) -> int:
@@ -895,6 +1055,90 @@ def atualizar_notas_fabricante_prado(veiculo_id: int) -> int:
         conn.commit()
 
     return count
+
+
+def registrar_revisao_completa(veiculo_id: int, km: int, data_revisao: str, fornecedor: str = None, itens_ids: List[int] = None) -> Dict:
+    """
+    Registra uma revisao completa para o veiculo.
+    Se itens_ids nao for passado, registra todos os itens que deveriam ser feitos ate essa km.
+
+    Parametros:
+    - veiculo_id: ID do veiculo
+    - km: Km em que a revisao foi feita
+    - data_revisao: Data no formato YYYY-MM-DD
+    - fornecedor: Nome da oficina (opcional)
+    - itens_ids: Lista de IDs dos itens a registrar (opcional, se nao passar registra todos aplicaveis)
+
+    Retorna:
+    - Dict com quantidade de itens registrados e detalhes
+    """
+    veiculo = get_veiculo(veiculo_id)
+    if not veiculo:
+        return {'error': 'Veiculo nao encontrado'}
+
+    itens = get_itens_manutencao(veiculo_id)
+    ultimas = get_todas_ultimas_manutencoes(veiculo_id)
+
+    registrados = []
+    ignorados = []
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        for item in itens:
+            # Se passou lista de IDs, usa apenas esses
+            if itens_ids and item['id'] not in itens_ids:
+                continue
+
+            # Verifica se ja tem registro nessa km ou superior
+            ultima = ultimas.get(item['id'])
+            if ultima and ultima['km_manutencao'] >= km:
+                ignorados.append({
+                    'item': item['item'],
+                    'motivo': f"Ja tem registro em {ultima['km_manutencao']:,}km"
+                })
+                continue
+
+            # Se nao passou lista, verifica se o item deveria ser feito ate essa km
+            if not itens_ids:
+                intervalo = item.get('intervalo_km', 0)
+                if intervalo == 0:
+                    continue
+                # Verifica se esse item deveria ter sido feito ate essa km
+                ultima_km = ultima['km_manutencao'] if ultima else 0
+                proxima_km = ultima_km + intervalo
+                # Se a proxima revisao era antes ou igual ao km sendo registrado, registra
+                if proxima_km > km:
+                    ignorados.append({
+                        'item': item['item'],
+                        'motivo': f"Proxima so em {proxima_km:,}km (ultima: {ultima_km:,}km)"
+                    })
+                    continue
+
+            # Registra a manutencao
+            cursor.execute("""
+                INSERT INTO veiculo_manutencoes (
+                    veiculo_id, item_id, data_manutencao, km_manutencao,
+                    tipo_acao, descricao, fornecedor
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
+                veiculo_id, item['id'], data_revisao, km,
+                item.get('tipo_acao'), item['item'], fornecedor
+            ))
+            registrados.append(item['item'])
+
+        conn.commit()
+
+    return {
+        'success': True,
+        'km': km,
+        'data': data_revisao,
+        'fornecedor': fornecedor,
+        'registrados': registrados,
+        'total_registrados': len(registrados),
+        'ignorados': ignorados,
+        'total_ignorados': len(ignorados)
+    }
 
 
 def criar_prado_jrw5025() -> Dict:

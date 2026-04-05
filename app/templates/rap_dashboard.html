@@ -3,7 +3,16 @@
 {% block title %}INTEL - Dashboard{% endblock %}
 
 {% block page_title %}Dashboard{% endblock %}
-{% block page_subtitle %}<p class="page-subtitle">Visao geral do seu relacionamento</p>{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle">Bem-vindo de volta, Renato</p>{% endblock %}
+
+{% block header_actions %}
+<button class="btn btn-outline-primary btn-sm" id="pushNotificationBtn" title="Ativar notificacoes push">
+    <i class="bi bi-bell"></i> Ativar Notificacoes
+</button>
+<button class="btn btn-primary" onclick="window.location.href='/contatos/novo'">
+    <i class="bi bi-plus me-2"></i>Novo Contato
+</button>
+{% endblock %}
 
 {% block extra_css %}
 .main-content {
@@ -1459,31 +1468,6 @@
 {% endblock %}
 
 {% block content %}
-<div class="page-header">
-            <div>
-                <h1 class="page-title">Dashboard</h1>
-                <p class="page-subtitle">Bem-vindo de volta, Renato</p>
-            </div>
-            <div class="header-actions">
-                <div class="search-box" style="position: relative;">
-                    <i class="bi bi-search"></i>
-                    <input type="text" placeholder="Buscar contatos... (⌘K)" id="globalSearch" autocomplete="off">
-                    <div class="search-results" id="searchResults">
-                        <div class="search-hint">
-                            <span>Digite para buscar</span>
-                            <span><kbd>↑↓</kbd> navegar <kbd>Enter</kbd> selecionar <kbd>Esc</kbd> fechar</span>
-                        </div>
-                    </div>
-                </div>
-                <button class="btn btn-outline-primary btn-sm" id="pushNotificationBtn" title="Ativar notificacoes push">
-                    <i class="bi bi-bell"></i> Ativar Notificacoes
-                </button>
-                <button class="btn btn-primary">
-                    <i class="bi bi-plus me-2"></i>Novo Contato
-                </button>
-            </div>
-        </div>
-
         <!-- Morning Briefing -->
         <div class="morning-briefing" id="morningBriefing">
             <div class="morning-briefing-header">
@@ -1921,7 +1905,6 @@
 
                 // Total contacts
                 document.getElementById('statContacts').textContent = (data.stats?.total_contatos || 0).toLocaleString();
-                document.getElementById('contactsCount').textContent = (data.stats?.total_contatos || 0).toLocaleString();
 
                 // Circulos badges
                 const circulosContainer = document.getElementById('circulosBadges');
@@ -1990,7 +1973,6 @@
                     const resp = await fetch('/api/contacts/stats');
                     const stats = await resp.json();
                     document.getElementById('statContacts').textContent = stats.total.toLocaleString();
-                    document.getElementById('contactsCount').textContent = stats.total.toLocaleString();
                 } catch (e) {}
             }
         }
@@ -2718,7 +2700,6 @@
 
                 // Stats
                 document.getElementById('statContacts').textContent = (data.stats?.total_contatos || 0).toLocaleString();
-                document.getElementById('contactsCount').textContent = (data.stats?.total_contatos || 0).toLocaleString();
                 document.getElementById('statAtencao').textContent = data.stats?.precisam_atencao || 0;
                 // Briefings pendentes - buscar da API especifica
                 loadBriefingsPendentes();

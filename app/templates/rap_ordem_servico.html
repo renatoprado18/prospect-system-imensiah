@@ -5,6 +5,17 @@
 
 {% block extra_css %}
 <style>
+    /* Define missing CSS variables */
+    :root {
+        --card-bg: #ffffff;
+        --bg-secondary: #f8fafc;
+        --text-primary: #1e293b;
+        --text-secondary: #64748b;
+        --border-color: #e2e8f0;
+        --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+        --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
     .os-container {
         max-width: 900px;
         margin: 0 auto;
@@ -218,6 +229,16 @@
         color: #fbbf24;
     }
 
+    .item-status-badge.extra {
+        background: rgba(99, 102, 241, 0.15);
+        color: #6366f1;
+    }
+
+    .item-status-badge.ok {
+        background: rgba(34, 197, 94, 0.15);
+        color: #22c55e;
+    }
+
     .item-acao {
         text-transform: capitalize;
         color: var(--text-secondary);
@@ -319,12 +340,13 @@
     }
 
     .modal-content {
-        background: var(--card-bg);
+        background: #ffffff;
         border-radius: 16px;
         width: 90%;
         max-width: 500px;
         max-height: 90vh;
         overflow-y: auto;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     }
 
     .modal-header {
@@ -378,9 +400,15 @@
         <button class="btn btn-primary" onclick="window.print()">
             <i class="bi bi-printer"></i> Imprimir
         </button>
+        <button class="btn btn-outline" onclick="exportarPDF()">
+            <i class="bi bi-file-earmark-pdf"></i> Exportar PDF
+        </button>
         {% if os.status == 'pendente' %}
         <button class="btn btn-success" onclick="openFinalizarModal()">
             <i class="bi bi-check-circle"></i> Finalizar OS
+        </button>
+        <button class="btn btn-outline" style="color: #ef4444; border-color: #ef4444;" onclick="deletarOS()">
+            <i class="bi bi-trash"></i> Excluir
         </button>
         {% endif %}
         <a href="/veiculos/{{ veiculo.id }}" class="btn btn-outline">
@@ -469,6 +497,10 @@
                             <span class="item-status-badge {{ item.status }}">
                                 {% if item.status == 'vencido' %}
                                 <i class="bi bi-x-circle-fill"></i> Vencido
+                                {% elif item.status == 'extra' %}
+                                <i class="bi bi-plus-circle-fill"></i> Extra
+                                {% elif item.status == 'ok' %}
+                                <i class="bi bi-check-circle-fill"></i> OK
                                 {% else %}
                                 <i class="bi bi-exclamation-circle-fill"></i> Atencao
                                 {% endif %}
@@ -561,7 +593,14 @@
             </div>
             <div class="form-group">
                 <label>Oficina</label>
-                <input type="text" id="oficina" placeholder="Nome da oficina">
+                <select id="oficina" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 8px; background: #f8fafc; color: #1e293b;">
+                    <option value="">Selecione ou digite...</option>
+                    {% for oficina in oficinas %}
+                    <option value="{{ oficina.nome }}">{{ oficina.nome }} - {{ oficina.contato_nome }}</option>
+                    {% endfor %}
+                    <option value="_outro">Outro (digitar)</option>
+                </select>
+                <input type="text" id="oficinaOutro" placeholder="Nome da oficina" style="display: none; margin-top: 0.5rem; width: 100%; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; color: #1e293b;">
             </div>
             <div class="form-group">
                 <label>Valor Total (R$)</label>
@@ -593,11 +632,27 @@ function closeFinalizarModal() {
     document.getElementById('finalizarModal').classList.remove('show');
 }
 
+// Handle oficina selection
+document.getElementById('oficina').addEventListener('change', function() {
+    const outroInput = document.getElementById('oficinaOutro');
+    if (this.value === '_outro') {
+        outroInput.style.display = 'block';
+        outroInput.focus();
+    } else {
+        outroInput.style.display = 'none';
+    }
+});
+
 async function finalizarOS() {
+    let oficina = document.getElementById('oficina').value;
+    if (oficina === '_outro') {
+        oficina = document.getElementById('oficinaOutro').value;
+    }
+
     const data = {
         data_execucao: document.getElementById('dataExecucao').value,
         km_execucao: parseInt(document.getElementById('kmExecucao').value),
-        oficina: document.getElementById('oficina').value,
+        oficina: oficina,
         valor_final: parseFloat(document.getElementById('valorFinal').value) || null
     };
 
@@ -655,6 +710,50 @@ document.getElementById('finalizarModal').addEventListener('click', (e) => {
         closeFinalizarModal();
     }
 });
+
+// Exportar PDF
+function exportarPDF() {
+    // Usar print-to-PDF do navegador com prompt de download
+    const osNumero = '{{ os.numero }}'.replace(/[^a-zA-Z0-9]/g, '_');
+    const placa = '{{ veiculo.placa }}';
+
+    // Adicionar estilo temporario para nome do arquivo no titulo
+    const oldTitle = document.title;
+    document.title = `OS_${osNumero}_${placa}`;
+
+    window.print();
+
+    // Restaurar titulo apos impressao
+    setTimeout(() => {
+        document.title = oldTitle;
+    }, 1000);
+}
+
+// Deletar OS
+async function deletarOS() {
+    if (!confirm('Deseja realmente excluir esta Ordem de Servico?')) {
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/ordens/${osId}`, {
+            method: 'DELETE'
+        });
+
+        if (resp.ok) {
+            showToast('Ordem de Servico excluida!', 'success');
+            setTimeout(() => {
+                window.location.href = `/veiculos/${veiculoId}`;
+            }, 1000);
+        } else {
+            const err = await resp.json();
+            showToast(err.detail || 'Erro ao excluir', 'error');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('Erro ao excluir', 'error');
+    }
+}
 </script>
 
 <style>

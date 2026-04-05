@@ -14487,19 +14487,23 @@ async def veiculos_page(request: Request):
 @app.get("/veiculos/{veiculo_id}", response_class=HTMLResponse)
 async def veiculo_detalhe_page(request: Request, veiculo_id: int):
     """Pagina de detalhe do veiculo com dashboard de manutencao"""
+    from services.oficinas import listar_oficinas
+
     dashboard = get_dashboard_veiculo(veiculo_id)
     if not dashboard:
         raise HTTPException(status_code=404, detail="Veiculo nao encontrado")
 
     historico = get_historico_manutencoes(veiculo_id, limit=30)
     ordens = listar_ordens_servico(veiculo_id=veiculo_id)
+    oficinas = listar_oficinas()
 
     return templates.TemplateResponse("rap_veiculo_detalhe.html", {
         "request": request,
         "veiculo": dashboard['veiculo'],
         "dashboard": dashboard,
         "historico": historico,
-        "ordens_servico": ordens
+        "ordens_servico": ordens,
+        "oficinas": oficinas
     })
 
 
@@ -14578,6 +14582,38 @@ async def api_registrar_manutencao(veiculo_id: int, request: Request):
     return manutencao
 
 
+@app.post("/api/veiculos/{veiculo_id}/revisao-completa")
+async def api_registrar_revisao_completa(veiculo_id: int, request: Request):
+    """
+    Registra uma revisao completa em lote.
+    Parametros JSON:
+    - km: km em que a revisao foi feita (obrigatorio)
+    - data: data da revisao no formato YYYY-MM-DD (obrigatorio)
+    - fornecedor: nome da oficina (opcional)
+    - itens_ids: lista de IDs dos itens a registrar (opcional)
+    """
+    from services.veiculos import registrar_revisao_completa
+    data = await request.json()
+
+    km = data.get('km')
+    data_revisao = data.get('data')
+    if not km or not data_revisao:
+        raise HTTPException(status_code=400, detail="km e data sao obrigatorios")
+
+    result = registrar_revisao_completa(
+        veiculo_id=veiculo_id,
+        km=km,
+        data_revisao=data_revisao,
+        fornecedor=data.get('fornecedor'),
+        itens_ids=data.get('itens_ids')
+    )
+
+    if result.get('error'):
+        raise HTTPException(status_code=400, detail=result['error'])
+
+    return result
+
+
 # ============== ORDENS DE SERVICO ==============
 
 @app.get("/api/veiculos/{veiculo_id}/ordens")
@@ -14596,9 +14632,10 @@ async def api_criar_ordem(veiculo_id: int, request: Request):
 
     km_atual = data.get('km_atual', veiculo.get('km_atual', 0))
     itens_ids = data.get('itens_ids')
+    itens_extras = data.get('itens_extras')  # Lista de strings com itens adicionais
     observacoes = data.get('observacoes')
 
-    os = criar_ordem_servico(veiculo_id, km_atual, itens_ids, observacoes)
+    os = criar_ordem_servico(veiculo_id, km_atual, itens_ids, itens_extras, observacoes)
     if os.get('error'):
         raise HTTPException(status_code=400, detail=os['error'])
 
@@ -14624,19 +14661,33 @@ async def api_finalizar_ordem(os_id: int, request: Request):
     return resultado
 
 
+@app.delete("/api/ordens/{os_id}")
+async def api_deletar_ordem(os_id: int):
+    """Deleta uma ordem de servico pendente"""
+    from services.veiculos import deletar_ordem_servico
+    resultado = deletar_ordem_servico(os_id)
+    if resultado.get('error'):
+        raise HTTPException(status_code=400, detail=resultado['error'])
+    return resultado
+
+
 @app.get("/veiculos/{veiculo_id}/os/{os_id}", response_class=HTMLResponse)
 async def ordem_servico_page(request: Request, veiculo_id: int, os_id: int):
     """Pagina da ordem de servico para impressao/visualizacao"""
+    from services.oficinas import listar_oficinas
+
     os = get_ordem_servico(os_id)
     if not os or os['veiculo_id'] != veiculo_id:
         raise HTTPException(status_code=404, detail="Ordem de servico nao encontrada")
 
     veiculo = get_veiculo(veiculo_id)
+    oficinas = listar_oficinas()
 
     return templates.TemplateResponse("rap_ordem_servico.html", {
         "request": request,
         "veiculo": veiculo,
-        "os": os
+        "os": os,
+        "oficinas": oficinas
     })
 
 
@@ -14652,6 +14703,56 @@ async def api_atualizar_notas_fabricante(veiculo_id: int):
     """Atualiza os itens de manutencao com as notas/especificacoes do fabricante"""
     count = atualizar_notas_fabricante_prado(veiculo_id)
     return {"status": "success", "itens_atualizados": count}
+
+
+# ==================== OFICINAS ====================
+
+@app.get("/api/oficinas")
+async def api_listar_oficinas():
+    """Lista todas as oficinas ativas"""
+    from services.oficinas import listar_oficinas
+    return listar_oficinas()
+
+
+@app.get("/api/oficinas/{oficina_id}")
+async def api_get_oficina(oficina_id: int):
+    """Busca oficina por ID"""
+    from services.oficinas import get_oficina
+    oficina = get_oficina(oficina_id)
+    if not oficina:
+        raise HTTPException(status_code=404, detail="Oficina nao encontrada")
+    return oficina
+
+
+@app.post("/api/oficinas")
+async def api_criar_oficina(request: Request):
+    """Cria uma nova oficina"""
+    from services.oficinas import criar_oficina
+    data = await request.json()
+    return criar_oficina(data)
+
+
+@app.put("/api/oficinas/{oficina_id}")
+async def api_atualizar_oficina(oficina_id: int, request: Request):
+    """Atualiza uma oficina"""
+    from services.oficinas import atualizar_oficina
+    data = await request.json()
+    return atualizar_oficina(oficina_id, data)
+
+
+@app.delete("/api/oficinas/{oficina_id}")
+async def api_deletar_oficina(oficina_id: int):
+    """Desativa uma oficina"""
+    from services.oficinas import deletar_oficina
+    return deletar_oficina(oficina_id)
+
+
+@app.post("/api/oficinas/seed")
+async def api_seed_oficinas():
+    """Registra as oficinas pre-definidas (Sollo 4WD, Bela Vista, Fall Car)"""
+    from services.oficinas import seed_oficinas
+    oficinas = seed_oficinas()
+    return {"status": "success", "oficinas": oficinas, "count": len(oficinas)}
 
 
 # Vercel handler

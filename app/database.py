@@ -1,15 +1,19 @@
 """
 PostgreSQL Database Module for Vercel Postgres
-Simplified: direct connections without pooling for serverless reliability
+With connection pooling for local development performance
 """
 import os
 import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2 import pool
 from contextlib import contextmanager
 
 # Vercel Postgres connection string
 DATABASE_URL = os.getenv("POSTGRES_URL", os.getenv("DATABASE_URL", ""))
+
+# Connection pool for local development (reuse connections)
+_connection_pool = None
 
 
 def _get_conn_string():
@@ -20,9 +24,45 @@ def _get_conn_string():
     return DATABASE_URL.replace("postgres://", "postgresql://")
 
 
+def _get_pool():
+    """Get or create connection pool"""
+    global _connection_pool
+    if _connection_pool is None:
+        _connection_pool = pool.ThreadedConnectionPool(
+            minconn=2,
+            maxconn=10,
+            dsn=_get_conn_string()
+        )
+    return _connection_pool
+
+
 def _create_connection():
-    """Create a new database connection"""
+    """Get connection from pool (or create new for serverless)"""
+    # Use pooling for local development
+    if os.getenv('BASE_URL', '').startswith('http://localhost'):
+        try:
+            conn = _get_pool().getconn()
+            conn.cursor_factory = RealDictCursor
+            return conn
+        except:
+            pass
+    # Fallback: direct connection (serverless/Vercel)
     return psycopg2.connect(_get_conn_string(), cursor_factory=RealDictCursor)
+
+
+def _return_to_pool(conn):
+    """Return connection to pool if using pooling"""
+    if os.getenv('BASE_URL', '').startswith('http://localhost') and _connection_pool:
+        try:
+            _connection_pool.putconn(conn)
+            return
+        except:
+            pass
+    # Fallback: close connection
+    try:
+        conn.close()
+    except:
+        pass
 
 
 class DBConnection:
@@ -52,10 +92,7 @@ class DBConnection:
 
     def close(self):
         if self._conn:
-            try:
-                self._conn.close()
-            except:
-                pass
+            _return_to_pool(self._conn)
             self._conn = None
 
     def __enter__(self):
@@ -1710,6 +1747,36 @@ def init_db():
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_veiculo_os_status
             ON veiculo_ordens_servico(status)
+        ''')
+
+        # Oficinas (Workshops) table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS oficinas (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                apelido TEXT,
+                endereco TEXT,
+                cidade TEXT,
+                estado TEXT,
+                cep TEXT,
+                telefone TEXT,
+                whatsapp TEXT,
+                email TEXT,
+                website TEXT,
+                contato_nome TEXT,
+                contato_id INTEGER,
+                especialidades JSONB DEFAULT '[]',
+                servicos JSONB DEFAULT '[]',
+                notas TEXT,
+                google_maps_url TEXT,
+                ativo BOOLEAN DEFAULT TRUE,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_oficinas_nome
+            ON oficinas(nome)
         ''')
 
         conn.commit()
