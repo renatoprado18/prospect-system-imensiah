@@ -739,9 +739,33 @@
             <!-- Itens Extras -->
             <div class="os-categoria-group" style="border-top: 2px solid #cbd5e1; padding-top: 1rem; margin-top: 1rem;">
                 <h4>ITENS EXTRAS (opcionais)</h4>
+                <!-- Servicos Padrao -->
+                <div style="margin-bottom: 1rem;">
+                    <p style="font-size: 0.8rem; color: #64748b; margin-bottom: 0.5rem;">Servicos comuns:</p>
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Alinhamento e Balanceamento')">
+                            <i class="bi bi-bullseye"></i> Alinhamento e Balanceamento
+                        </button>
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Higienizacao do Ar Condicionado')">
+                            <i class="bi bi-snow"></i> Higienizacao A/C
+                        </button>
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Limpeza de Bicos Injetores')">
+                            <i class="bi bi-droplet"></i> Limpeza Bicos
+                        </button>
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Troca de Palhetas do Limpador')">
+                            <i class="bi bi-water"></i> Palhetas
+                        </button>
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Revisao Eletrica')">
+                            <i class="bi bi-lightning"></i> Revisao Eletrica
+                        </button>
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Lavagem do Motor')">
+                            <i class="bi bi-droplet-half"></i> Lavagem Motor
+                        </button>
+                    </div>
+                </div>
                 <div id="itensExtrasContainer"></div>
                 <button type="button" class="btn-add-extra" onclick="adicionarItemExtra()">
-                    <i class="bi bi-plus-circle"></i> Adicionar item extra
+                    <i class="bi bi-plus-circle"></i> Adicionar item extra personalizado
                 </button>
             </div>
         </div>
@@ -921,6 +945,31 @@
     gap: 0.5rem;
 }
 .btn-confirmar:hover { background-color: #4338ca; }
+/* Botoes de servicos extras padrao */
+.btn-extra-padrao {
+    background-color: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+    color: #475569;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    transition: all 0.2s ease;
+}
+.btn-extra-padrao:hover {
+    background-color: #e0e7ff;
+    border-color: #6366f1;
+    color: #6366f1;
+}
+.btn-extra-padrao.adicionado {
+    background-color: #dcfce7;
+    border-color: #22c55e;
+    color: #16a34a;
+    cursor: default;
+}
 /* Itens Extras */
 .btn-add-extra {
     padding: 0.5rem 1rem;
@@ -1306,6 +1355,57 @@ document.getElementById('osModalOverlay').addEventListener('click', (e) => {
 
 // Itens Extras
 let extraItemCounter = 0;
+
+function adicionarExtraPadrao(texto) {
+    // Verifica se ja foi adicionado
+    const inputs = document.querySelectorAll('.extra-item-input');
+    for (const input of inputs) {
+        if (input.value.trim().toLowerCase() === texto.toLowerCase()) {
+            showToast('Este servico ja foi adicionado', 'warning');
+            return;
+        }
+    }
+
+    // Marca o botao como adicionado
+    const botoes = document.querySelectorAll('.btn-extra-padrao');
+    botoes.forEach(btn => {
+        if (btn.textContent.toLowerCase().includes(texto.split(' ')[0].toLowerCase())) {
+            btn.classList.add('adicionado');
+        }
+    });
+
+    // Adiciona o item
+    extraItemCounter++;
+    const container = document.getElementById('itensExtrasContainer');
+    const div = document.createElement('div');
+    div.className = 'item-extra-row';
+    div.id = `extraItem${extraItemCounter}`;
+    div.dataset.padrao = texto;
+    div.innerHTML = `
+        <input type="text" class="extra-item-input" value="${texto}" readonly style="background-color: #dcfce7; border-color: #22c55e; color: #16a34a;">
+        <button type="button" onclick="removerItemExtraPadrao(${extraItemCounter}, '${texto}')">
+            <i class="bi bi-x-lg"></i>
+        </button>
+    `;
+    container.appendChild(div);
+    atualizarResumoOS();
+    showToast(`"${texto}" adicionado`, 'success');
+}
+
+function removerItemExtraPadrao(id, texto) {
+    const elem = document.getElementById(`extraItem${id}`);
+    if (elem) elem.remove();
+
+    // Remove classe adicionado do botao
+    const botoes = document.querySelectorAll('.btn-extra-padrao');
+    botoes.forEach(btn => {
+        if (btn.textContent.toLowerCase().includes(texto.split(' ')[0].toLowerCase())) {
+            btn.classList.remove('adicionado');
+        }
+    });
+
+    atualizarResumoOS();
+}
 
 function adicionarItemExtra() {
     extraItemCounter++;

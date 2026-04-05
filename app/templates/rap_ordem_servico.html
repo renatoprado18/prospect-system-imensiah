@@ -16,67 +16,7 @@
         --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
     }
 
-    /* ========== MODAL STYLES WITH IDS - SOLID BACKGROUNDS ========== */
-    #editarModal,
-    #finalizarModal {
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: 0 !important;
-        background-color: rgba(0, 0, 0, 0.95) !important;
-        display: none !important;
-        align-items: center !important;
-        justify-content: center !important;
-        z-index: 999999 !important;
-    }
-
-    #editarModal.show,
-    #finalizarModal.show {
-        display: flex !important;
-    }
-
-    #editarModal > .modal-content,
-    #finalizarModal > .modal-content {
-        background-color: #ffffff !important;
-        border-radius: 16px !important;
-        border: 3px solid #64748b !important;
-        box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5) !important;
-    }
-
-    #editarModal .modal-header {
-        background-color: #6366f1 !important;
-        color: #ffffff !important;
-        padding: 1.5rem !important;
-        border-bottom: none !important;
-    }
-
-    #finalizarModal .modal-header {
-        background-color: #1e293b !important;
-        color: #ffffff !important;
-        padding: 1.5rem !important;
-        border-bottom: none !important;
-    }
-
-    #editarModal .modal-header h3,
-    #finalizarModal .modal-header h3 {
-        color: #ffffff !important;
-        margin: 0 !important;
-    }
-
-    #editarModal .modal-body,
-    #finalizarModal .modal-body {
-        background-color: #ffffff !important;
-        color: #1e293b !important;
-        padding: 1.5rem !important;
-    }
-
-    #editarModal .modal-footer,
-    #finalizarModal .modal-footer {
-        background-color: #f1f5f9 !important;
-        border-top: 1px solid #e2e8f0 !important;
-        padding: 1rem 1.5rem !important;
-    }
+    /* Modal styles now use inline styles in wrapper structure */
 
     .os-container {
         max-width: 900px;
@@ -85,69 +25,177 @@
 
     /* Print Styles */
     @media print {
-        .no-print {
+        /* Esconder tudo que nao e conteudo */
+        .no-print,
+        .sidebar,
+        .sidebar-toggle,
+        .sidebar-overlay,
+        .topbar,
+        .navbar,
+        nav.sidebar-nav,
+        header:not(.os-header),
+        .mobile-menu-toggle,
+        .search-container,
+        .search-box,
+        .page-header,
+        [class*="sidebar"],
+        [class*="search"] {
             display: none !important;
+            visibility: hidden !important;
         }
 
-        .os-container {
-            max-width: 100%;
-            padding: 0;
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
         }
 
         body {
             background: white !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+
+        .main-content {
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+        }
+
+        .os-container {
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
         }
 
         .os-card {
             box-shadow: none !important;
-            border: 1px solid #ddd !important;
+            border: 1px solid #ccc !important;
+            border-radius: 0 !important;
         }
 
-        .sidebar {
-            display: none !important;
-        }
-
-        .main-content {
-            margin-left: 0 !important;
-            padding: 0 !important;
-        }
-
-        /* Tabela com layout fixo para PDF */
+        /* ============ TABELA OTIMIZADA ============ */
         .os-table {
-            table-layout: fixed !important;
             width: 100% !important;
+            table-layout: fixed !important;
+            border-collapse: collapse !important;
         }
 
+        /* Coluna 1: Checkbox - minima */
         .os-table th:first-child,
         .os-table td:first-child {
-            width: 25px !important;
+            width: 20px !important;
+            padding: 0.3rem !important;
         }
 
+        /* Coluna 2: Item + Notas - MAXIMA (75%) */
         .os-table th:nth-child(2),
         .os-table td:nth-child(2) {
-            width: 55% !important;
+            width: 75% !important;
+            padding-right: 0.5rem !important;
         }
 
+        /* Coluna 3: Acao - compacta */
         .os-table th:nth-child(3),
         .os-table td:nth-child(3) {
-            width: 12% !important;
+            width: 8% !important;
+            font-size: 0.65rem !important;
+            padding: 0.3rem 0.2rem !important;
+            text-align: center !important;
         }
 
+        /* Coluna 4: Status - compacta */
         .os-table th:nth-child(4),
         .os-table td:nth-child(4) {
-            width: 12% !important;
+            width: 7% !important;
+            font-size: 0.6rem !important;
+            padding: 0.3rem 0.2rem !important;
+            text-align: center !important;
         }
 
+        /* Coluna 5: KM Restante - compacta */
         .os-table th:nth-child(5),
         .os-table td:nth-child(5) {
-            width: 16% !important;
+            width: auto !important;
+            font-size: 0.6rem !important;
+            padding: 0.3rem 0.2rem !important;
+            text-align: right !important;
+            white-space: nowrap !important;
         }
 
+        /* Headers da tabela */
+        .os-table th {
+            font-size: 0.6rem !important;
+            padding: 0.4rem 0.2rem !important;
+            text-transform: uppercase !important;
+        }
+
+        /* Notas do fabricante - usa toda largura disponivel */
         .item-notas {
             max-width: none !important;
             width: 100% !important;
+            font-size: 0.7rem !important;
+            padding: 0.4rem 0.5rem !important;
+            margin-top: 0.25rem !important;
+            line-height: 1.3 !important;
+            background: #f5f5f5 !important;
+            border-left: 2px solid #6366f1 !important;
+        }
+
+        .item-nome {
+            font-size: 0.8rem !important;
+            font-weight: 600 !important;
+        }
+
+        .item-categoria {
+            font-size: 0.6rem !important;
+            color: #666 !important;
+        }
+
+        /* Status badge mais compacto */
+        .item-status-badge {
+            font-size: 0.55rem !important;
+            padding: 0.15rem 0.3rem !important;
+            white-space: nowrap !important;
+        }
+
+        .item-status-badge i {
+            font-size: 0.5rem !important;
+        }
+
+        /* Sections */
+        .os-section {
+            padding: 1rem !important;
+        }
+
+        .os-section-title {
+            font-size: 0.9rem !important;
+            margin-bottom: 0.5rem !important;
+        }
+
+        /* Header e info do veiculo mais compactos */
+        .os-header {
+            padding: 1rem 1.5rem !important;
+        }
+
+        .os-title {
+            font-size: 1.2rem !important;
+        }
+
+        .veiculo-info-section {
+            padding: 0.75rem 1.5rem !important;
+        }
+
+        .veiculo-info-label {
+            font-size: 0.6rem !important;
+        }
+
+        .veiculo-info-value {
+            font-size: 0.85rem !important;
+        }
+
+        /* Checkbox */
+        .item-checkbox {
+            border-color: #999 !important;
         }
     }
 
@@ -385,27 +433,7 @@
         color: var(--primary);
     }
 
-    @media print {
-        .item-notas {
-            max-width: none;
-            width: 100%;
-            font-size: 0.75rem;
-        }
-
-        .os-table td:first-child {
-            width: 30px;
-        }
-
-        .os-table td:nth-child(2) {
-            width: 60%;
-        }
-
-        .os-table td:nth-child(3),
-        .os-table td:nth-child(4),
-        .os-table td:nth-child(5) {
-            width: auto;
-        }
-    }
+    /* Estilos de impressao para item-notas estao no bloco @media print principal acima */
 
     /* Checkbox for completed items */
     .item-checkbox {
@@ -416,11 +444,7 @@
         display: inline-block;
     }
 
-    @media print {
-        .item-checkbox {
-            border-color: #999;
-        }
-    }
+    /* Checkbox print style merged into main @media print block */
 
     /* Observacoes */
     .os-observacoes {
@@ -733,12 +757,13 @@
 </div>
 
 <!-- Modal Editar -->
-<div class="modal-backdrop" id="editarModal" style="background-color: rgba(0,0,0,0.95) !important;">
-    <div class="modal-content" style="max-width: 700px; background-color: #ffffff !important; border: 2px solid #6366f1;">
-        <div class="modal-header" style="background-color: #6366f1 !important; color: #ffffff !important;">
-            <h3 style="color: #ffffff !important;"><i class="bi bi-pencil"></i> Editar Ordem de Servico</h3>
+<div id="editarModalWrapper" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 999999;">
+    <div id="editarModalBackdrop" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #000000; opacity: 0.95;" onclick="closeEditarModal()"></div>
+    <div id="editarModalContainer" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 700px; max-height: 90vh; background: #ffffff; border-radius: 16px; border: 3px solid #6366f1; box-shadow: 0 25px 50px rgba(0,0,0,0.5); overflow: hidden; display: flex; flex-direction: column;">
+        <div style="background: #6366f1; color: #ffffff; padding: 1.5rem;">
+            <h3 style="margin: 0; color: #ffffff;"><i class="bi bi-pencil"></i> Editar Ordem de Servico</h3>
         </div>
-        <div class="modal-body" style="max-height: 60vh; overflow-y: auto; background-color: #ffffff !important; color: #1e293b !important;">
+        <div style="padding: 1.5rem; overflow-y: auto; flex: 1; background: #ffffff; color: #1e293b;">
             <!-- Itens Atuais -->
             <div style="margin-bottom: 1.5rem;">
                 <h4 style="font-size: 1rem; margin-bottom: 0.75rem; color: #1e293b;">
@@ -829,9 +854,9 @@
                 </div>
             </div>
         </div>
-        <div class="modal-footer" style="background-color: #f1f5f9 !important; border-top: 1px solid #e2e8f0;">
-            <button class="btn btn-outline" onclick="closeEditarModal()" style="background-color: #ffffff; color: #64748b; border-color: #cbd5e1;">Cancelar</button>
-            <button class="btn btn-primary" onclick="salvarEdicao()" style="background-color: #6366f1 !important; color: #ffffff !important; border: none;">
+        <div style="background: #f1f5f9; border-top: 1px solid #e2e8f0; padding: 1rem 1.5rem; display: flex; gap: 0.75rem; justify-content: flex-end;">
+            <button class="btn btn-outline" onclick="closeEditarModal()" style="background: #ffffff; color: #64748b; border: 1px solid #cbd5e1;">Cancelar</button>
+            <button class="btn btn-primary" onclick="salvarEdicao()" style="background: #6366f1; color: #ffffff; border: none;">
                 <i class="bi bi-check"></i> Salvar Alteracoes
             </button>
         </div>
@@ -839,8 +864,9 @@
 </div>
 
 <!-- Modal Finalizar -->
-<div class="modal-backdrop" id="finalizarModal" style="background-color: rgba(0,0,0,0.95) !important;">
-    <div class="modal-content" style="background-color: #ffffff !important; border: 2px solid #22c55e;">
+<div id="finalizarModalWrapper" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 999999;">
+    <div id="finalizarModalBackdrop" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #000000; opacity: 0.95;" onclick="closeFinalizarModal()"></div>
+    <div id="finalizarModalContainer" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 500px; max-height: 90vh; background: #ffffff; border-radius: 16px; border: 3px solid #22c55e; box-shadow: 0 25px 50px rgba(0,0,0,0.5); overflow: hidden;">
         <div class="modal-header" style="background-color: #1e293b !important;">
             <h3 style="color: #ffffff !important;">Finalizar Ordem de Servico</h3>
         </div>
@@ -885,13 +911,13 @@ const osId = {{ os.id }};
 const veiculoId = {{ veiculo.id }};
 
 function openFinalizarModal() {
-    document.getElementById('finalizarModal').classList.add('show');
+    document.getElementById('finalizarModalWrapper').style.display = 'block';
     // Set today's date
     document.getElementById('dataExecucao').value = new Date().toISOString().split('T')[0];
 }
 
 function closeFinalizarModal() {
-    document.getElementById('finalizarModal').classList.remove('show');
+    document.getElementById('finalizarModalWrapper').style.display = 'none';
 }
 
 // Handle oficina selection
@@ -966,12 +992,7 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
-// Close modal on backdrop click
-document.getElementById('finalizarModal').addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal-backdrop')) {
-        closeFinalizarModal();
-    }
-});
+// Click handler for finalizarModal is on the backdrop element itself via onclick
 
 // Exportar PDF
 function exportarPDF() {
@@ -1013,12 +1034,12 @@ function openEditarModal() {
         el.classList.remove('marcado-remover');
     });
 
-    document.getElementById('editarModal').classList.add('show');
+    document.getElementById('editarModalWrapper').style.display = 'block';
     verificarItensVazios();
 }
 
 function closeEditarModal() {
-    document.getElementById('editarModal').classList.remove('show');
+    document.getElementById('editarModalWrapper').style.display = 'none';
 }
 
 function removerItem(btn) {
@@ -1085,6 +1106,50 @@ function restaurarItem(btn) {
     verificarItensVazios();
 }
 
+function adicionarExtraPadrao(texto) {
+    // Verifica se ja existe
+    const existente = document.querySelector(`.item-editar[data-extra="${texto}"]`);
+    if (existente && !existente.classList.contains('marcado-remover')) {
+        showToast('Este servico ja esta na OS', 'warning');
+        return;
+    }
+
+    // Marca o botao como adicionado
+    const botoes = document.querySelectorAll('.btn-extra-padrao');
+    botoes.forEach(btn => {
+        if (btn.textContent.includes(texto.split(' ')[0])) {
+            btn.classList.add('adicionado');
+        }
+    });
+
+    // Adiciona visualmente
+    const container = document.getElementById('itensAtuais');
+    const novoItem = document.createElement('div');
+    novoItem.className = 'item-editar item-novo';
+    novoItem.dataset.itemId = '';
+    novoItem.dataset.extra = texto;
+    novoItem.innerHTML = `
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background-color: #dcfce7; border-radius: 8px; border: 1px solid #22c55e;">
+            <div>
+                <span style="font-weight: 600; color: #1e293b;">${texto}</span>
+                <span style="font-size: 0.75rem; color: #22c55e; margin-left: 0.5rem;">Servico Extra</span>
+            </div>
+            <button type="button" class="btn-remover" onclick="removerNovoItem(this, '${texto}')" style="background: none; border: none; color: #ef4444; cursor: pointer; padding: 0.25rem 0.5rem;">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+    `;
+    container.appendChild(novoItem);
+
+    // Adiciona a lista
+    if (!itensParaAdicionar.extras.includes(texto)) {
+        itensParaAdicionar.extras.push(texto);
+    }
+
+    verificarItensVazios();
+    showToast(`"${texto}" adicionado`, 'success');
+}
+
 function adicionarExtra() {
     const input = document.getElementById('novoExtra');
     const texto = input.value.trim();
@@ -1108,9 +1173,9 @@ function adicionarExtra() {
     novoItem.dataset.itemId = '';
     novoItem.dataset.extra = texto;
     novoItem.innerHTML = `
-        <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: rgba(99, 102, 241, 0.1); border-radius: 8px; border: 1px solid #6366f1;">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background-color: #e0e7ff; border-radius: 8px; border: 1px solid #6366f1;">
             <div>
-                <span style="font-weight: 600;">${texto}</span>
+                <span style="font-weight: 600; color: #1e293b;">${texto}</span>
                 <span style="font-size: 0.75rem; color: #6366f1; margin-left: 0.5rem;">Extra (novo)</span>
             </div>
             <button type="button" class="btn-remover" onclick="removerNovoItem(this)" style="background: none; border: none; color: #ef4444; cursor: pointer; padding: 0.25rem 0.5rem;">
@@ -1129,12 +1194,20 @@ function adicionarExtra() {
     verificarItensVazios();
 }
 
-function removerNovoItem(btn) {
+function removerNovoItem(btn, textoServico) {
     const itemEl = btn.closest('.item-editar');
     const extra = itemEl.dataset.extra;
 
     if (extra) {
         itensParaAdicionar.extras = itensParaAdicionar.extras.filter(e => e !== extra);
+
+        // Remove classe "adicionado" do botao padrao correspondente
+        const botoes = document.querySelectorAll('.btn-extra-padrao');
+        botoes.forEach(b => {
+            if (extra.includes(b.textContent.trim().split('\n')[0]) || (textoServico && b.textContent.includes(textoServico.split(' ')[0]))) {
+                b.classList.remove('adicionado');
+            }
+        });
     }
 
     itemEl.remove();
@@ -1200,12 +1273,7 @@ async function salvarEdicao() {
     }
 }
 
-// Close editar modal on backdrop click
-document.getElementById('editarModal').addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal-backdrop')) {
-        closeEditarModal();
-    }
-});
+// Click handler for editarModal is on the backdrop element itself via onclick
 
 // ==================== DELETAR OS ====================
 
