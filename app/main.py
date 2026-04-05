@@ -7303,21 +7303,31 @@ async def merge_duplicate_contacts(data: dict):
     """
     Merge dois contatos duplicados.
 
-    Body: {"keep_id": 123, "merge_id": 456}
+    Body: {
+        "keep_id": 123,
+        "merge_id": 456,
+        "field_choices": {                    # Opcional
+            "nome": 123,                      # Usar valor do contato 123
+            "empresa": 456,                   # Usar valor do contato 456
+            "emails": "combine",              # Combinar todos
+            "telefones": "combine"
+        }
+    }
 
     O contato merge_id sera excluido apos transferir:
-    - Dados mais completos
+    - Dados conforme field_choices (ou automatico se nao especificado)
     - Mensagens
     - Conversas
     - Tasks
     """
     keep_id = data.get("keep_id")
     merge_id = data.get("merge_id")
+    field_choices = data.get("field_choices")
 
     if not keep_id or not merge_id:
         raise HTTPException(status_code=400, detail="keep_id e merge_id sao obrigatorios")
 
-    result = merge_contatos(keep_id, merge_id)
+    result = merge_contatos(keep_id, merge_id, field_choices)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
@@ -14578,8 +14588,9 @@ async def api_criar_ordem(veiculo_id: int, request: Request):
     itens_ids = data.get('itens_ids')
     itens_extras = data.get('itens_extras')  # Lista de strings com itens adicionais
     observacoes = data.get('observacoes')
+    oficina = data.get('oficina')  # Nome da oficina
 
-    os = criar_ordem_servico(veiculo_id, km_atual, itens_ids, itens_extras, observacoes)
+    os = criar_ordem_servico(veiculo_id, km_atual, itens_ids, itens_extras, observacoes, oficina)
     if os.get('error'):
         raise HTTPException(status_code=400, detail=os['error'])
 

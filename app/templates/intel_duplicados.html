@@ -219,11 +219,55 @@
     background: white;
     border-radius: 20px;
     padding: 32px;
-    max-width: 500px;
-    width: 90%;
+    max-width: 800px;
+    width: 95%;
+    max-height: 90vh;
+    overflow-y: auto;
     z-index: 1001;
     display: none;
 }
+
+/* Field Comparison */
+.field-comparison { margin-bottom: 16px; }
+.field-label { font-size: 0.75rem; font-weight: 600; color: var(--gray-500); text-transform: uppercase; margin-bottom: 8px; }
+.field-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field-option {
+    padding: 12px;
+    border: 2px solid var(--gray-200);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--gray-50);
+}
+.field-option:hover { border-color: var(--primary); background: white; }
+.field-option.selected { border-color: var(--primary); background: rgba(99, 102, 241, 0.1); }
+.field-option.empty { opacity: 0.5; font-style: italic; color: var(--gray-400); }
+.field-option .value { font-weight: 500; color: var(--dark); word-break: break-word; }
+.field-option .source { font-size: 0.7rem; color: var(--gray-400); margin-top: 4px; }
+.field-option input[type="radio"] { display: none; }
+
+/* Combine Option */
+.combine-option {
+    grid-column: 1 / -1;
+    background: rgba(16, 185, 129, 0.1);
+    border-color: var(--success);
+}
+.combine-option.selected { background: rgba(16, 185, 129, 0.2); }
+.combine-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.combine-item { padding: 4px 10px; background: white; border-radius: 12px; font-size: 0.8rem; }
+
+/* Section Headers */
+.merge-section { margin-bottom: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--gray-200); }
+.merge-section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.section-header { font-size: 0.9rem; font-weight: 600; color: var(--dark); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+.section-header i { color: var(--primary); }
+
+/* Preview */
+.preview-section { background: var(--gray-100); border-radius: 12px; padding: 16px; margin-top: 24px; }
+.preview-title { font-size: 0.85rem; font-weight: 600; color: var(--dark); margin-bottom: 12px; }
+.preview-field { display: flex; gap: 8px; margin-bottom: 6px; font-size: 0.85rem; }
+.preview-field .label { color: var(--gray-500); min-width: 80px; }
+.preview-field .value { color: var(--dark); font-weight: 500; }
 
 .modal-title {
     font-size: 1.25rem;
@@ -365,16 +409,22 @@
 {% endblock %}
 
 {% block modals %}
-<!-- Confirmation Modal -->
+<!-- Merge Modal with Field Selection -->
 <div class="modal-backdrop-custom" id="modalBackdrop" onclick="closeModal()"></div>
 <div class="modal-custom" id="mergeModal">
-    <h3 class="modal-title">Confirmar Merge</h3>
-    <div class="modal-body" id="modalBody">
-        <p>Voce esta prestes a mesclar dois contatos. O contato selecionado sera mantido e o outro sera excluido.</p>
-        <p class="text-muted mt-3"><strong>Mantendo:</strong> <span id="keepName">-</span></p>
-        <p class="text-muted"><strong>Excluindo:</strong> <span id="mergeName">-</span></p>
+    <h3 class="modal-title"><i class="bi bi-arrow-repeat me-2"></i>Mesclar Contatos</h3>
+    <p class="text-muted mb-4">Escolha quais valores manter para cada campo. Para listas (emails, telefones), voce pode combinar todos.</p>
+
+    <div id="mergeFieldsContainer">
+        <!-- Fields will be rendered here -->
     </div>
-    <div class="modal-actions">
+
+    <div class="preview-section" id="previewSection">
+        <div class="preview-title"><i class="bi bi-eye me-2"></i>Preview do Resultado</div>
+        <div id="previewContent"></div>
+    </div>
+
+    <div class="modal-actions mt-4">
         <button class="btn-skip" onclick="closeModal()">Cancelar</button>
         <button class="btn-merge" onclick="executeMerge()">
             <i class="bi bi-check-lg"></i>
@@ -559,7 +609,10 @@
         mergeBtn.disabled = false;
     }
 
-    function openMergeModal(index) {
+    let fieldChoices = {};
+    let fullContactData = { keep: null, merge: null };
+
+    async function openMergeModal(index) {
         const dup = duplicatesData[index];
         if (!dup.selected) {
             showToast('Selecione qual contato manter clicando nele', 'error');
@@ -569,29 +622,190 @@
         const keepContact = dup.selected === 1 ? dup.contact1 : dup.contact2;
         const mergeContact = dup.selected === 1 ? dup.contact2 : dup.contact1;
 
-        document.getElementById('keepName').textContent = keepContact.nome || 'Sem nome';
-        document.getElementById('mergeName').textContent = mergeContact.nome || 'Sem nome';
-
         pendingMerge = {
             index: index,
             keepId: keepContact.id,
             mergeId: mergeContact.id
         };
 
+        // Load full contact data
+        try {
+            const [keepRes, mergeRes] = await Promise.all([
+                fetch(`/api/contacts/${keepContact.id}`),
+                fetch(`/api/contacts/${mergeContact.id}`)
+            ]);
+            const keepData = await keepRes.json();
+            const mergeData = await mergeRes.json();
+            fullContactData.keep = keepData.contact || keepData;
+            fullContactData.merge = mergeData.contact || mergeData;
+        } catch (e) {
+            fullContactData.keep = keepContact;
+            fullContactData.merge = mergeContact;
+        }
+
+        // Reset field choices - default to keep contact
+        fieldChoices = {};
+        renderMergeFields();
+        updatePreview();
+
         document.getElementById('modalBackdrop').style.display = 'block';
         document.getElementById('mergeModal').style.display = 'block';
+    }
+
+    function renderMergeFields() {
+        const container = document.getElementById('mergeFieldsContainer');
+        const keep = fullContactData.keep;
+        const merge = fullContactData.merge;
+
+        const textFields = [
+            { key: 'nome', label: 'Nome', icon: 'person' },
+            { key: 'empresa', label: 'Empresa', icon: 'building' },
+            { key: 'cargo', label: 'Cargo', icon: 'briefcase' },
+            { key: 'linkedin', label: 'LinkedIn', icon: 'linkedin' },
+            { key: 'aniversario', label: 'Aniversario', icon: 'calendar-heart' },
+            { key: 'circulo', label: 'Circulo', icon: 'bullseye' },
+        ];
+
+        const listFields = [
+            { key: 'emails', label: 'Emails', icon: 'envelope', getValue: (d) => parseJsonField(d).map(e => e.email).filter(Boolean) },
+            { key: 'telefones', label: 'Telefones', icon: 'telephone', getValue: (d) => parseJsonField(d).map(p => p.number).filter(Boolean) },
+            { key: 'enderecos', label: 'Enderecos', icon: 'geo-alt', getValue: (d) => parseJsonField(d).map(a => `${a.logradouro || ''}, ${a.cidade || ''}`).filter(v => v !== ', ') },
+            { key: 'relacionamentos', label: 'Relacionamentos', icon: 'diagram-3', getValue: (d) => parseJsonField(d).map(r => `${r.nome} (${r.tipo})`).filter(Boolean) },
+        ];
+
+        let html = '<div class="merge-section"><div class="section-header"><i class="bi bi-person-vcard"></i> Informacoes Basicas</div>';
+
+        // Render text fields
+        textFields.forEach(field => {
+            const keepVal = keep[field.key] || '';
+            const mergeVal = merge[field.key] || '';
+
+            if (!keepVal && !mergeVal) return; // Skip if both empty
+
+            const isDifferent = keepVal !== mergeVal;
+            const defaultChoice = keepVal ? 'keep' : 'merge';
+            if (!fieldChoices[field.key]) fieldChoices[field.key] = defaultChoice;
+
+            html += `<div class="field-comparison">
+                <div class="field-label"><i class="bi bi-${field.icon} me-1"></i>${field.label}</div>
+                <div class="field-options">
+                    <label class="field-option ${fieldChoices[field.key] === 'keep' ? 'selected' : ''} ${!keepVal ? 'empty' : ''}" onclick="selectField('${field.key}', 'keep')">
+                        <input type="radio" name="${field.key}" value="keep" ${fieldChoices[field.key] === 'keep' ? 'checked' : ''}>
+                        <div class="value">${keepVal || '(vazio)'}</div>
+                        <div class="source">Contato a manter</div>
+                    </label>
+                    <label class="field-option ${fieldChoices[field.key] === 'merge' ? 'selected' : ''} ${!mergeVal ? 'empty' : ''}" onclick="selectField('${field.key}', 'merge')">
+                        <input type="radio" name="${field.key}" value="merge" ${fieldChoices[field.key] === 'merge' ? 'checked' : ''}>
+                        <div class="value">${mergeVal || '(vazio)'}</div>
+                        <div class="source">Contato a excluir</div>
+                    </label>
+                </div>
+            </div>`;
+        });
+
+        html += '</div><div class="merge-section"><div class="section-header"><i class="bi bi-list-ul"></i> Listas (emails, telefones, etc)</div>';
+
+        // Render list fields
+        listFields.forEach(field => {
+            const keepList = field.getValue(keep[field.key]);
+            const mergeList = field.getValue(merge[field.key]);
+
+            if (keepList.length === 0 && mergeList.length === 0) return;
+
+            if (!fieldChoices[field.key]) fieldChoices[field.key] = 'combine';
+            const allItems = [...new Set([...keepList, ...mergeList])];
+
+            html += `<div class="field-comparison">
+                <div class="field-label"><i class="bi bi-${field.icon} me-1"></i>${field.label}</div>
+                <div class="field-options">
+                    <label class="field-option ${fieldChoices[field.key] === 'keep' ? 'selected' : ''}" onclick="selectField('${field.key}', 'keep')">
+                        <input type="radio" name="${field.key}" value="keep">
+                        <div class="value">${keepList.length > 0 ? keepList.join(', ') : '(nenhum)'}</div>
+                        <div class="source">Apenas do contato a manter (${keepList.length})</div>
+                    </label>
+                    <label class="field-option ${fieldChoices[field.key] === 'merge' ? 'selected' : ''}" onclick="selectField('${field.key}', 'merge')">
+                        <input type="radio" name="${field.key}" value="merge">
+                        <div class="value">${mergeList.length > 0 ? mergeList.join(', ') : '(nenhum)'}</div>
+                        <div class="source">Apenas do contato a excluir (${mergeList.length})</div>
+                    </label>
+                    <label class="field-option combine-option ${fieldChoices[field.key] === 'combine' ? 'selected' : ''}" onclick="selectField('${field.key}', 'combine')">
+                        <input type="radio" name="${field.key}" value="combine">
+                        <div class="value"><i class="bi bi-union me-1"></i> Combinar todos</div>
+                        <div class="combine-list">${allItems.map(i => `<span class="combine-item">${i}</span>`).join('')}</div>
+                        <div class="source">Total: ${allItems.length} itens</div>
+                    </label>
+                </div>
+            </div>`;
+        });
+
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    function selectField(fieldKey, choice) {
+        fieldChoices[fieldKey] = choice;
+        renderMergeFields();
+        updatePreview();
+    }
+
+    function updatePreview() {
+        const keep = fullContactData.keep;
+        const merge = fullContactData.merge;
+        const preview = document.getElementById('previewContent');
+
+        const getValue = (field) => {
+            const choice = fieldChoices[field];
+            if (choice === 'keep') return keep[field];
+            if (choice === 'merge') return merge[field];
+            return keep[field]; // default
+        };
+
+        const getListValue = (field, extractor) => {
+            const choice = fieldChoices[field];
+            const keepList = extractor(parseJsonField(keep[field]));
+            const mergeList = extractor(parseJsonField(merge[field]));
+            if (choice === 'keep') return keepList;
+            if (choice === 'merge') return mergeList;
+            return [...new Set([...keepList, ...mergeList])]; // combine
+        };
+
+        const emails = getListValue('emails', list => list.map(e => e.email).filter(Boolean));
+        const phones = getListValue('telefones', list => list.map(p => p.number).filter(Boolean));
+
+        preview.innerHTML = `
+            <div class="preview-field"><span class="label">Nome:</span> <span class="value">${getValue('nome') || '-'}</span></div>
+            <div class="preview-field"><span class="label">Empresa:</span> <span class="value">${getValue('empresa') || '-'}</span></div>
+            <div class="preview-field"><span class="label">Cargo:</span> <span class="value">${getValue('cargo') || '-'}</span></div>
+            <div class="preview-field"><span class="label">Emails:</span> <span class="value">${emails.join(', ') || '-'}</span></div>
+            <div class="preview-field"><span class="label">Telefones:</span> <span class="value">${phones.join(', ') || '-'}</span></div>
+        `;
     }
 
     function closeModal() {
         document.getElementById('modalBackdrop').style.display = 'none';
         document.getElementById('mergeModal').style.display = 'none';
         pendingMerge = null;
+        fieldChoices = {};
     }
 
     async function executeMerge() {
         if (!pendingMerge) return;
 
         const { index, keepId, mergeId } = pendingMerge;
+
+        // Build field_choices for API
+        const apiFieldChoices = {};
+        Object.keys(fieldChoices).forEach(field => {
+            const choice = fieldChoices[field];
+            if (choice === 'combine') {
+                apiFieldChoices[field] = 'combine';
+            } else if (choice === 'keep') {
+                apiFieldChoices[field] = keepId;
+            } else if (choice === 'merge') {
+                apiFieldChoices[field] = mergeId;
+            }
+        });
+
         closeModal();
 
         try {
@@ -600,7 +814,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     keep_id: keepId,
-                    merge_id: mergeId
+                    merge_id: mergeId,
+                    field_choices: apiFieldChoices
                 })
             });
 
@@ -619,7 +834,7 @@
             const totalEl = document.getElementById('statTotal');
             totalEl.textContent = parseInt(totalEl.textContent) - 1;
 
-            showToast(`Contatos mesclados com sucesso! ${result.merged_fields?.length || 0} campos combinados.`, 'success');
+            showToast(`Contatos mesclados! ${result.merged_fields?.length || 0} campos atualizados.`, 'success');
 
             if (duplicatesData.length === 0) {
                 document.getElementById('emptyState').style.display = 'block';

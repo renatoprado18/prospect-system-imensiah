@@ -883,7 +883,7 @@ async def sync_contacts_incremental(
                 existing = cursor.fetchone()
 
                 if existing:
-                    # Update existing
+                    # Update existing (including addresses and relations)
                     cursor.execute('''
                         UPDATE contacts SET
                             nome = %s,
@@ -894,6 +894,8 @@ async def sync_contacts_incremental(
                             foto_url = COALESCE(%s, foto_url),
                             linkedin = COALESCE(%s, linkedin),
                             aniversario = COALESCE(%s, aniversario),
+                            enderecos = COALESCE(%s, enderecos),
+                            relacionamentos = COALESCE(%s, relacionamentos),
                             contexto = %s,
                             atualizado_em = CURRENT_TIMESTAMP
                         WHERE google_contact_id = %s
@@ -906,17 +908,20 @@ async def sync_contacts_incremental(
                         contact["foto_url"],
                         contact["linkedin"],
                         contact["aniversario"],
+                        json.dumps(contact.get("enderecos", [])),
+                        json.dumps(contact.get("relacionamentos", [])),
                         contact["contexto"],
                         contact["google_contact_id"]
                     ))
                     stats["updated"] += 1
                 else:
-                    # Insert new
+                    # Insert new (including addresses and relations)
                     cursor.execute('''
                         INSERT INTO contacts (
                             nome, empresa, cargo, emails, telefones, foto_url,
-                            linkedin, aniversario, google_contact_id, contexto, origem
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            linkedin, aniversario, enderecos, relacionamentos,
+                            google_contact_id, contexto, origem
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ''', (
                         contact["nome"],
                         contact["empresa"],
@@ -926,6 +931,8 @@ async def sync_contacts_incremental(
                         contact["foto_url"],
                         contact["linkedin"],
                         contact["aniversario"],
+                        json.dumps(contact.get("enderecos", [])),
+                        json.dumps(contact.get("relacionamentos", [])),
                         contact["google_contact_id"],
                         contact["contexto"],
                         contact["origem"]
