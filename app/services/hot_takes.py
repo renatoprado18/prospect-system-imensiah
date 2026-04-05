@@ -55,9 +55,16 @@ TOPICS_OF_INTEREST = [
     "liderança", "gestão", "estratégia"
 ]
 
+# Flag para evitar inicialização repetida
+_table_initialized = False
+
 
 def ensure_table_exists():
-    """Garante que a tabela hot_takes existe"""
+    """Garante que a tabela hot_takes existe (executa apenas uma vez)"""
+    global _table_initialized
+    if _table_initialized:
+        return
+    _table_initialized = True
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -444,16 +451,22 @@ def get_hot_takes(status: str = None, limit: int = 20) -> list[dict]:
     with get_db() as conn:
         cursor = conn.cursor()
 
+        # OTIMIZAÇÃO: Selecionar apenas colunas necessárias
+        columns = """id, news_title, news_link, hook, body, cta,
+                     linkedin_post, article_slug, hashtags, status,
+                     created_at, scheduled_for, published_at,
+                     editorial_post_id, linkedin_url"""
+
         if status:
-            cursor.execute('''
-                SELECT * FROM hot_takes
+            cursor.execute(f'''
+                SELECT {columns} FROM hot_takes
                 WHERE status = %s
                 ORDER BY created_at DESC
                 LIMIT %s
             ''', (status, limit))
         else:
-            cursor.execute('''
-                SELECT * FROM hot_takes
+            cursor.execute(f'''
+                SELECT {columns} FROM hot_takes
                 ORDER BY created_at DESC
                 LIMIT %s
             ''', (limit,))

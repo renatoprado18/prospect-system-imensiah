@@ -9,7 +9,10 @@ from psycopg2.extras import RealDictCursor
 from psycopg2 import pool
 from contextlib import contextmanager
 
-# Vercel Postgres connection string
+# Local PostgreSQL for development (much faster)
+LOCAL_DB_URL = "postgresql://rap@localhost:5432/intel"
+
+# Vercel Postgres connection string (production)
 DATABASE_URL = os.getenv("POSTGRES_URL", os.getenv("DATABASE_URL", ""))
 
 # Connection pool for local development (reuse connections)
@@ -17,7 +20,17 @@ _connection_pool = None
 
 
 def _get_conn_string():
-    """Get formatted connection string"""
+    """Get formatted connection string - prefers local DB for development"""
+    # Check if local PostgreSQL is available
+    if os.getenv("USE_LOCAL_DB") == "1" or not os.getenv("VERCEL"):
+        try:
+            # Test local connection
+            test_conn = psycopg2.connect(LOCAL_DB_URL)
+            test_conn.close()
+            return LOCAL_DB_URL
+        except:
+            pass  # Fall back to remote
+
     if not DATABASE_URL:
         raise Exception("POSTGRES_URL environment variable not set")
     # Vercel uses postgres:// but psycopg2 needs postgresql://
@@ -1536,6 +1549,22 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_editorial_posts_artigos
             ON editorial_posts(article_url, ai_score_relevancia DESC NULLS LAST, criado_em DESC)
             WHERE article_url IS NOT NULL
+        ''')
+
+        # ============== Hot Takes Performance Indexes ==============
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_hot_takes_status
+            ON hot_takes(status)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_hot_takes_created_at
+            ON hot_takes(created_at DESC)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_hot_takes_status_created
+            ON hot_takes(status, created_at DESC)
         ''')
 
         # ============== Google Drive Integration ==============
