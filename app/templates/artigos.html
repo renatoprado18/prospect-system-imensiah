@@ -1,0 +1,1045 @@
+{% extends "rap_base.html" %}
+{% block title %}Artigos - INTEL{% endblock %}
+{% block page_title %}Artigos{% endblock %}
+
+{% block extra_css %}
+<style>
+    .artigos-container {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 24px;
+    }
+
+    .artigos-main {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .artigos-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    /* Stats Cards */
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+    }
+
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .stat-card .icon {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        margin-bottom: 12px;
+    }
+
+    .stat-card .value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: var(--dark);
+    }
+
+    .stat-card .label {
+        font-size: 0.875rem;
+        color: var(--gray-500);
+    }
+
+    /* Filters */
+    .filters-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .filters-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .filter-group label {
+        font-size: 0.75rem;
+        color: var(--gray-500);
+        font-weight: 500;
+    }
+
+    .filter-group select, .filter-group input {
+        padding: 8px 12px;
+        border: 1px solid var(--gray-200);
+        border-radius: 8px;
+        font-size: 0.875rem;
+        min-width: 140px;
+    }
+
+    .filter-btn {
+        padding: 8px 16px;
+        background: var(--primary);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 0.875rem;
+        margin-top: 18px;
+    }
+
+    .filter-clear {
+        padding: 8px 16px;
+        background: var(--gray-100);
+        color: var(--gray-600);
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 0.875rem;
+        margin-top: 18px;
+    }
+
+    /* Articles List */
+    .articles-card {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .articles-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .articles-header h2 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 0;
+    }
+
+    .articles-count {
+        font-size: 0.875rem;
+        color: var(--gray-500);
+    }
+
+    .articles-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .article-item {
+        border: 1px solid var(--gray-200);
+        border-radius: 12px;
+        padding: 20px;
+        transition: all 0.2s;
+    }
+
+    .article-item:hover {
+        border-color: var(--primary);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }
+
+    .article-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+
+    .badge-category {
+        background: #dbeafe;
+        color: #1e40af;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.7rem;
+        font-weight: 500;
+    }
+
+    .badge-score {
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.7rem;
+        font-weight: 600;
+    }
+
+    .badge-score.high { background: #d1fae5; color: #065f46; }
+    .badge-score.medium { background: #fef3c7; color: #92400e; }
+    .badge-score.low { background: #fee2e2; color: #991b1b; }
+
+    .badge-evergreen {
+        background: #d1fae5;
+        color: #065f46;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.7rem;
+    }
+
+    .article-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin-bottom: 8px;
+        line-height: 1.4;
+    }
+
+    .article-title a {
+        color: inherit;
+        text-decoration: none;
+    }
+
+    .article-title a:hover {
+        color: var(--primary);
+    }
+
+    .article-description {
+        font-size: 0.875rem;
+        color: var(--gray-600);
+        line-height: 1.6;
+        margin-bottom: 12px;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .article-gancho {
+        background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 12px;
+        font-size: 0.85rem;
+        color: #0369a1;
+        line-height: 1.5;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .article-gancho .gancho-text {
+        flex: 1;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .article-gancho .btn-copy {
+        padding: 4px 8px;
+        background: white;
+        border: 1px solid #0ea5e9;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.75rem;
+        color: #0369a1;
+        white-space: nowrap;
+    }
+
+    .article-gancho .btn-copy:hover {
+        background: #0ea5e9;
+        color: white;
+    }
+
+    .article-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-top: 12px;
+        border-top: 1px solid var(--gray-100);
+    }
+
+    .article-meta {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-size: 0.75rem;
+        color: var(--gray-500);
+    }
+
+    .article-status {
+        font-size: 0.75rem;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-weight: 500;
+    }
+
+    .article-status.draft { background: #f3f4f6; color: #6b7280; }
+    .article-status.scheduled { background: #dbeafe; color: #1e40af; }
+    .article-status.published { background: #d1fae5; color: #065f46; }
+
+    .article-actions {
+        display: flex;
+        gap: 8px;
+    }
+
+    .article-actions button {
+        padding: 6px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--gray-200);
+        background: white;
+        cursor: pointer;
+        font-size: 0.75rem;
+    }
+
+    .article-actions button:hover {
+        background: var(--gray-50);
+    }
+
+    .article-actions .btn-schedule {
+        background: #dbeafe;
+        border-color: #3b82f6;
+        color: #1e40af;
+    }
+
+    .article-actions .btn-view {
+        background: #f3e8ff;
+        border-color: #8b5cf6;
+        color: #5b21b6;
+    }
+
+    /* Sidebar */
+    .sidebar-card {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .sidebar-card h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 16px;
+        color: var(--dark);
+    }
+
+    /* Search */
+    .search-input {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid var(--gray-200);
+        border-radius: 8px;
+        font-size: 0.875rem;
+    }
+
+    /* Categories */
+    .category-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px solid var(--gray-100);
+        cursor: pointer;
+    }
+
+    .category-item:last-child {
+        border-bottom: none;
+    }
+
+    .category-item:hover {
+        color: var(--primary);
+    }
+
+    .category-name {
+        font-size: 0.875rem;
+    }
+
+    .category-count {
+        background: var(--gray-100);
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.75rem;
+        color: var(--gray-600);
+    }
+
+    /* Quick Actions */
+    .quick-action {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px;
+        border: 1px solid var(--gray-200);
+        border-radius: 10px;
+        margin-bottom: 10px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .quick-action:hover {
+        border-color: var(--primary);
+        background: var(--gray-50);
+    }
+
+    .quick-action .icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .quick-action .text {
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
+    /* Modal */
+    .modal-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .modal-backdrop.active {
+        display: flex;
+    }
+
+    .modal-content {
+        background: white;
+        border-radius: 16px;
+        padding: 24px;
+        max-width: 700px;
+        width: 90%;
+        max-height: 85vh;
+        overflow-y: auto;
+    }
+
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .modal-header h3 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin: 0;
+    }
+
+    .modal-close {
+        background: none;
+        border: none;
+        font-size: 1.5rem;
+        cursor: pointer;
+        color: var(--gray-400);
+    }
+
+    /* AI Analysis Section */
+    .ai-analysis {
+        background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    .ai-analysis h4 {
+        font-size: 0.9rem;
+        color: #0369a1;
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .ai-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .ai-item {
+        background: white;
+        padding: 10px 12px;
+        border-radius: 8px;
+    }
+
+    .ai-item .label {
+        font-size: 0.7rem;
+        color: var(--gray-500);
+        margin-bottom: 4px;
+    }
+
+    .ai-item .value {
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: var(--dark);
+    }
+
+    .ai-keywords {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .ai-keywords span {
+        background: #e0f2fe;
+        color: #0369a1;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--gray-500);
+    }
+
+    .empty-state i {
+        font-size: 4rem;
+        margin-bottom: 20px;
+        opacity: 0.3;
+    }
+
+    /* Pagination */
+    .pagination {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 20px;
+    }
+
+    .pagination button {
+        padding: 8px 16px;
+        border: 1px solid var(--gray-200);
+        background: white;
+        border-radius: 8px;
+        cursor: pointer;
+    }
+
+    .pagination button:hover {
+        background: var(--gray-50);
+    }
+
+    .pagination button.active {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="artigos-container">
+    <div class="artigos-main">
+        <!-- Stats -->
+        <div class="stats-row">
+            <div class="stat-card">
+                <div class="icon" style="background: #dbeafe; color: #1e40af;">
+                    <i class="bi bi-file-text"></i>
+                </div>
+                <div class="value">{{ stats.total or 0 }}</div>
+                <div class="label">Total de Artigos</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon" style="background: #d1fae5; color: #065f46;">
+                    <i class="bi bi-robot"></i>
+                </div>
+                <div class="value">{{ stats.analyzed or 0 }}</div>
+                <div class="label">Analisados</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon" style="background: #fef3c7; color: #92400e;">
+                    <i class="bi bi-star"></i>
+                </div>
+                <div class="value">{{ stats.high_score or 0 }}</div>
+                <div class="label">Score 8+</div>
+            </div>
+            <div class="stat-card">
+                <div class="icon" style="background: #d1fae5; color: #065f46;">
+                    <i class="bi bi-infinity"></i>
+                </div>
+                <div class="value">{{ stats.evergreen or 0 }}</div>
+                <div class="label">Evergreen</div>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="filters-card">
+            <div class="filters-row">
+                <div class="filter-group">
+                    <label>Categoria</label>
+                    <select id="filterCategoria">
+                        <option value="">Todas</option>
+                        {% for cat in categorias %}
+                        <option value="{{ cat }}">{{ cat }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Score Minimo</label>
+                    <select id="filterScore">
+                        <option value="">Todos</option>
+                        <option value="7">7+</option>
+                        <option value="8">8+</option>
+                        <option value="9">9+</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Evergreen</label>
+                    <select id="filterEvergreen">
+                        <option value="">Todos</option>
+                        <option value="true">Sim</option>
+                        <option value="false">Nao</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Status</label>
+                    <select id="filterStatus">
+                        <option value="">Todos</option>
+                        <option value="never">Nunca publicado</option>
+                        <option value="scheduled">Agendado</option>
+                        <option value="published">Publicado</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Ordenar</label>
+                    <select id="filterOrder">
+                        <option value="score_desc">Maior Score</option>
+                        <option value="date_desc">Mais Recente</option>
+                        <option value="title_asc">Titulo A-Z</option>
+                    </select>
+                </div>
+                <button class="filter-btn" onclick="applyFilters()">
+                    <i class="bi bi-funnel"></i> Filtrar
+                </button>
+                <button class="filter-clear" onclick="clearFilters()">
+                    Limpar
+                </button>
+            </div>
+        </div>
+
+        <!-- Articles List -->
+        <div class="articles-card">
+            <div class="articles-header">
+                <h2><i class="bi bi-file-text me-2"></i>Biblioteca de Artigos</h2>
+                <span class="articles-count" id="articlesCount">{{ artigos|length }} artigos</span>
+            </div>
+
+            <div class="articles-list" id="articlesList">
+                {% if artigos %}
+                    {% for artigo in artigos %}
+                    <div class="article-item" data-id="{{ artigo.id }}">
+                        <div class="article-badges">
+                            {% if artigo.ai_categoria %}
+                            <span class="badge-category">{{ artigo.ai_categoria }}</span>
+                            {% endif %}
+                            {% if artigo.ai_score_relevancia %}
+                            <span class="badge-score {% if artigo.ai_score_relevancia >= 8 %}high{% elif artigo.ai_score_relevancia >= 6 %}medium{% else %}low{% endif %}">
+                                Score: {{ artigo.ai_score_relevancia }}
+                            </span>
+                            {% endif %}
+                            {% if artigo.ai_evergreen %}
+                            <span class="badge-evergreen"><i class="bi bi-infinity"></i> Evergreen</span>
+                            {% endif %}
+                        </div>
+                        <div class="article-title">
+                            <a href="{{ artigo.article_url }}" target="_blank">{{ artigo.article_title }}</a>
+                        </div>
+                        <div class="article-description">{{ artigo.article_description or '' }}</div>
+                        {% if artigo.ai_gancho_linkedin %}
+                        <div class="article-gancho">
+                            <span class="gancho-text">{{ artigo.ai_gancho_linkedin }}</span>
+                            <button class="btn-copy" onclick="copyGancho({{ artigo.id }}, event)">
+                                <i class="bi bi-clipboard"></i> Copiar
+                            </button>
+                        </div>
+                        {% endif %}
+                        <div class="article-footer">
+                            <div class="article-meta">
+                                <span class="article-status {{ artigo.status }}">{{ artigo.status }}</span>
+                                {% if artigo.data_publicacao %}
+                                <span><i class="bi bi-calendar"></i> {{ artigo.data_publicacao[:10] }}</span>
+                                {% endif %}
+                            </div>
+                            <div class="article-actions">
+                                <button onclick="openArticleModal({{ artigo.id }})" class="btn-view">
+                                    <i class="bi bi-eye"></i> Ver
+                                </button>
+                                {% if artigo.status == 'draft' %}
+                                <button onclick="openScheduleModal({{ artigo.id }})" class="btn-schedule">
+                                    <i class="bi bi-calendar-plus"></i> Agendar
+                                </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="empty-state">
+                        <i class="bi bi-file-text"></i>
+                        <h4>Nenhum artigo encontrado</h4>
+                        <p>Importe artigos do site ou ajuste os filtros.</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="artigos-sidebar">
+        <!-- Search -->
+        <div class="sidebar-card">
+            <h3><i class="bi bi-search me-2"></i>Buscar</h3>
+            <input type="text" id="searchInput" class="search-input" placeholder="Buscar por titulo..." onkeyup="handleSearch(event)">
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="sidebar-card">
+            <h3><i class="bi bi-lightning me-2"></i>Acoes Rapidas</h3>
+            <a href="/editorial" class="quick-action" style="text-decoration: none; color: inherit;">
+                <div class="icon" style="background: #dbeafe; color: #1e40af;">
+                    <i class="bi bi-upload"></i>
+                </div>
+                <span class="text">Importar Artigos</span>
+            </a>
+            <div class="quick-action" onclick="analyzeAll()">
+                <div class="icon" style="background: #d1fae5; color: #065f46;">
+                    <i class="bi bi-robot"></i>
+                </div>
+                <span class="text">Analisar Pendentes</span>
+            </div>
+        </div>
+
+        <!-- Top Categories -->
+        <div class="sidebar-card">
+            <h3><i class="bi bi-tags me-2"></i>Categorias</h3>
+            {% for cat, count in top_categorias.items() %}
+            <div class="category-item" onclick="filterByCategory('{{ cat }}')">
+                <span class="category-name">{{ cat }}</span>
+                <span class="category-count">{{ count }}</span>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Needs Analysis -->
+        <div class="sidebar-card" style="background: linear-gradient(135deg, #fef3c7, #fde68a); border: 1px solid #f59e0b;">
+            <h3><i class="bi bi-exclamation-triangle me-2"></i>Sem Analise IA</h3>
+            <p style="font-size: 0.85rem; color: #92400e; margin-bottom: 12px;">
+                {{ stats.not_analyzed or 0 }} artigos ainda nao foram analisados
+            </p>
+            <button class="btn btn-warning w-100" onclick="analyzeAll()">
+                <i class="bi bi-robot"></i> Analisar Agora
+            </button>
+        </div>
+
+        <!-- Link to Editorial -->
+        <div class="sidebar-card" style="background: linear-gradient(135deg, #dbeafe, #bfdbfe);">
+            <h3><i class="bi bi-calendar3 me-2"></i>Calendario Editorial</h3>
+            <p style="font-size: 0.85rem; color: var(--gray-600);">
+                Veja seus posts agendados
+            </p>
+            <a href="/editorial" class="btn btn-primary w-100">
+                <i class="bi bi-arrow-right"></i> Ir para Calendario
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Article Detail Modal -->
+<div class="modal-backdrop" id="articleModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="modalTitle">Detalhes do Artigo</h3>
+            <button class="modal-close" onclick="closeArticleModal()">&times;</button>
+        </div>
+        <div id="modalBody">
+            <!-- Populated by JavaScript -->
+        </div>
+    </div>
+</div>
+
+<!-- Schedule Modal -->
+<div class="modal-backdrop" id="scheduleModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3><i class="bi bi-calendar-plus me-2"></i>Agendar Artigo</h3>
+            <button class="modal-close" onclick="closeScheduleModal()">&times;</button>
+        </div>
+        <div class="mb-3">
+            <label class="form-label">Data de Publicacao:</label>
+            <input type="datetime-local" id="scheduleDate" class="form-control">
+            <small class="text-muted">LinkedIn tem melhor engajamento Ter/Qui 9h</small>
+        </div>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-secondary flex-grow-1" onclick="closeScheduleModal()">
+                Cancelar
+            </button>
+            <button class="btn btn-primary flex-grow-1" onclick="confirmSchedule()">
+                <i class="bi bi-calendar-check"></i> Confirmar
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let artigosData = {{ artigos | tojson | safe }};
+let currentArticleId = null;
+
+// Copy gancho to clipboard
+function copyGancho(id, event) {
+    event.stopPropagation();
+    const artigo = artigosData.find(a => a.id === id);
+    if (artigo && artigo.ai_gancho_linkedin) {
+        navigator.clipboard.writeText(artigo.ai_gancho_linkedin).then(() => {
+            const btn = event.target.closest('button');
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="bi bi-check"></i> Copiado!';
+            setTimeout(() => btn.innerHTML = originalHtml, 2000);
+        });
+    }
+}
+
+// Article Modal
+function openArticleModal(id) {
+    currentArticleId = id;
+    const artigo = artigosData.find(a => a.id === id);
+    if (!artigo) return;
+
+    document.getElementById('modalTitle').textContent = artigo.article_title;
+
+    const keywords = artigo.ai_keywords || [];
+    const keywordsHtml = keywords.map(k => `<span>${k}</span>`).join('');
+
+    document.getElementById('modalBody').innerHTML = `
+        <div class="mb-3">
+            <a href="${artigo.article_url}" target="_blank" class="text-primary">
+                <i class="bi bi-link-45deg"></i> Abrir artigo original
+            </a>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label fw-bold">Descricao</label>
+            <p>${artigo.article_description || 'Sem descricao'}</p>
+        </div>
+
+        ${artigo.ai_score_relevancia ? `
+        <div class="ai-analysis">
+            <h4><i class="bi bi-robot"></i> Analise IA</h4>
+            <div class="ai-grid">
+                <div class="ai-item">
+                    <div class="label">Categoria</div>
+                    <div class="value">${artigo.ai_categoria || '-'}</div>
+                </div>
+                <div class="ai-item">
+                    <div class="label">Score de Relevancia</div>
+                    <div class="value">${artigo.ai_score_relevancia}/10</div>
+                </div>
+                <div class="ai-item">
+                    <div class="label">Evergreen</div>
+                    <div class="value">${artigo.ai_evergreen ? 'Sim' : 'Nao'}</div>
+                </div>
+                <div class="ai-item">
+                    <div class="label">Complexidade</div>
+                    <div class="value">${artigo.ai_complexidade || '-'}</div>
+                </div>
+            </div>
+            ${keywords.length > 0 ? `
+            <div class="ai-item mt-3">
+                <div class="label">Keywords</div>
+                <div class="ai-keywords">${keywordsHtml}</div>
+            </div>
+            ` : ''}
+        </div>
+        ` : '<div class="alert alert-warning"><i class="bi bi-exclamation-triangle"></i> Artigo ainda nao analisado</div>'}
+
+        ${artigo.ai_gancho_linkedin ? `
+        <div class="mb-3">
+            <label class="form-label fw-bold">Gancho LinkedIn</label>
+            <div class="article-gancho">
+                <span class="gancho-text">${artigo.ai_gancho_linkedin}</span>
+                <button class="btn-copy" onclick="copyGancho(${artigo.id}, event)">
+                    <i class="bi bi-clipboard"></i> Copiar
+                </button>
+            </div>
+        </div>
+        ` : ''}
+
+        <div class="d-flex gap-2 mt-4">
+            ${artigo.status === 'draft' ? `
+            <button class="btn btn-primary flex-grow-1" onclick="closeArticleModal(); openScheduleModal(${artigo.id})">
+                <i class="bi bi-calendar-plus"></i> Agendar
+            </button>
+            ` : ''}
+            <button class="btn btn-outline-secondary flex-grow-1" onclick="closeArticleModal()">
+                Fechar
+            </button>
+        </div>
+    `;
+
+    document.getElementById('articleModal').classList.add('active');
+}
+
+function closeArticleModal() {
+    document.getElementById('articleModal').classList.remove('active');
+    currentArticleId = null;
+}
+
+// Schedule Modal
+let scheduleArticleId = null;
+
+function openScheduleModal(id) {
+    scheduleArticleId = id;
+
+    // Suggest next Tuesday or Thursday at 9:00
+    const now = new Date();
+    let suggested = new Date(now);
+    const dayOfWeek = now.getDay();
+
+    // Find next Tuesday (2) or Thursday (4)
+    if (dayOfWeek < 2) {
+        suggested.setDate(now.getDate() + (2 - dayOfWeek));
+    } else if (dayOfWeek < 4) {
+        suggested.setDate(now.getDate() + (4 - dayOfWeek));
+    } else {
+        suggested.setDate(now.getDate() + (9 - dayOfWeek)); // Next Tuesday
+    }
+    suggested.setHours(9, 0, 0, 0);
+
+    const dateStr = suggested.toISOString().slice(0, 16);
+    document.getElementById('scheduleDate').value = dateStr;
+
+    document.getElementById('scheduleModal').classList.add('active');
+}
+
+function closeScheduleModal() {
+    document.getElementById('scheduleModal').classList.remove('active');
+    scheduleArticleId = null;
+}
+
+async function confirmSchedule() {
+    const dateValue = document.getElementById('scheduleDate').value;
+    if (!dateValue) {
+        alert('Selecione uma data');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/artigos/${scheduleArticleId}/schedule`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data_publicacao: dateValue })
+        });
+
+        if (response.ok) {
+            alert('Artigo agendado com sucesso!');
+            location.reload();
+        } else {
+            const err = await response.json();
+            alert('Erro: ' + (err.detail || 'Falha ao agendar'));
+        }
+    } catch (error) {
+        console.error('Erro:', error);
+        alert('Erro ao agendar artigo');
+    }
+}
+
+// Filters
+function applyFilters() {
+    const params = new URLSearchParams();
+
+    const categoria = document.getElementById('filterCategoria').value;
+    const score = document.getElementById('filterScore').value;
+    const evergreen = document.getElementById('filterEvergreen').value;
+    const status = document.getElementById('filterStatus').value;
+    const order = document.getElementById('filterOrder').value;
+    const search = document.getElementById('searchInput').value;
+
+    if (categoria) params.set('categoria', categoria);
+    if (score) params.set('min_score', score);
+    if (evergreen) params.set('evergreen', evergreen);
+    if (status) params.set('status', status);
+    if (order) params.set('order', order);
+    if (search) params.set('q', search);
+
+    window.location.href = '/artigos?' + params.toString();
+}
+
+function clearFilters() {
+    window.location.href = '/artigos';
+}
+
+function filterByCategory(cat) {
+    document.getElementById('filterCategoria').value = cat;
+    applyFilters();
+}
+
+function handleSearch(event) {
+    if (event.key === 'Enter') {
+        applyFilters();
+    }
+}
+
+// Analyze all
+async function analyzeAll() {
+    if (!confirm('Analisar todos os artigos pendentes? Isso pode levar alguns minutos.')) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/editorial/analyze-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limit: 50 })
+        });
+
+        const result = await response.json();
+        alert(`Analise concluida! ${result.analyzed || 0} artigos analisados.`);
+        location.reload();
+    } catch (error) {
+        console.error('Erro:', error);
+        alert('Erro ao analisar artigos');
+    }
+}
+
+// Close modals on backdrop click
+document.querySelectorAll('.modal-backdrop').forEach(modal => {
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.classList.remove('active');
+        }
+    });
+});
+
+// Set filter values from URL
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get('categoria')) document.getElementById('filterCategoria').value = urlParams.get('categoria');
+if (urlParams.get('min_score')) document.getElementById('filterScore').value = urlParams.get('min_score');
+if (urlParams.get('evergreen')) document.getElementById('filterEvergreen').value = urlParams.get('evergreen');
+if (urlParams.get('status')) document.getElementById('filterStatus').value = urlParams.get('status');
+if (urlParams.get('order')) document.getElementById('filterOrder').value = urlParams.get('order');
+if (urlParams.get('q')) document.getElementById('searchInput').value = urlParams.get('q');
+</script>
+{% endblock %}

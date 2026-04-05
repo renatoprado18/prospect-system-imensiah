@@ -96,6 +96,14 @@ from services.duplicados import (
     merge_contatos,
     get_duplicate_statistics
 )
+from services.veiculos import (
+    get_veiculo, get_veiculo_por_placa, listar_veiculos, criar_veiculo,
+    atualizar_km, get_itens_manutencao, criar_item_manutencao,
+    importar_plano_manutencao_prado, get_historico_manutencoes,
+    registrar_manutencao, get_dashboard_veiculo, criar_ordem_servico,
+    get_ordem_servico, listar_ordens_servico, finalizar_ordem_servico,
+    criar_prado_jrw5025
+)
 from services.briefing_context import (
     get_contexto_enriquecido,
     analisar_tom_conversas,
@@ -14187,6 +14195,200 @@ async def hot_takes_page(request: Request):
         return HTMLResponse(f"<pre>Error: {e}\n\n{error_detail}</pre>", status_code=500)
 
 
+# ============== ARTIGOS PAGE ==============
+
+@app.get("/artigos", response_class=HTMLResponse)
+async def artigos_page(request: Request,
+                       categoria: str = None,
+                       min_score: float = None,
+                       evergreen: str = None,
+                       status: str = None,
+                       order: str = "score_desc",
+                       q: str = None):
+    """Pagina de biblioteca de artigos"""
+    from collections import Counter
+
+    # Get all articles (posts with article_url)
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Build query with filters
+        query = """
+            SELECT * FROM editorial_posts
+            WHERE article_url IS NOT NULL
+        """
+        params = []
+
+        if categoria:
+            query += " AND ai_categoria = %s"
+            params.append(categoria)
+
+        if min_score:
+            query += " AND ai_score_relevancia >= %s"
+            params.append(min_score)
+
+        if evergreen == 'true':
+            query += " AND ai_evergreen = true"
+        elif evergreen == 'false':
+            query += " AND ai_evergreen = false"
+
+        if status == 'never':
+            query += " AND status = 'draft' AND data_publicado IS NULL"
+        elif status == 'scheduled':
+            query += " AND status = 'scheduled'"
+        elif status == 'published':
+            query += " AND status = 'published'"
+
+        if q:
+            query += " AND (article_title ILIKE %s OR article_description ILIKE %s)"
+            params.extend([f'%{q}%', f'%{q}%'])
+
+        # Order
+        if order == 'score_desc':
+            query += " ORDER BY COALESCE(ai_score_relevancia, 0) DESC, criado_em DESC"
+        elif order == 'date_desc':
+            query += " ORDER BY criado_em DESC"
+        elif order == 'title_asc':
+            query += " ORDER BY article_title ASC"
+
+        query += " LIMIT 100"
+
+        cursor.execute(query, params)
+        artigos = [dict(row) for row in cursor.fetchall()]
+
+        # Get stats
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE ai_score_relevancia IS NOT NULL) as analyzed,
+                COUNT(*) FILTER (WHERE ai_score_relevancia IS NULL) as not_analyzed,
+                COUNT(*) FILTER (WHERE ai_score_relevancia >= 8) as high_score,
+                COUNT(*) FILTER (WHERE ai_evergreen = true) as evergreen
+            FROM editorial_posts
+            WHERE article_url IS NOT NULL
+        """)
+        stats = dict(cursor.fetchone())
+
+        # Get all categories for filter dropdown
+        cursor.execute("""
+            SELECT DISTINCT ai_categoria FROM editorial_posts
+            WHERE ai_categoria IS NOT NULL
+            ORDER BY ai_categoria
+        """)
+        categorias = [row['ai_categoria'] for row in cursor.fetchall()]
+
+        # Get top categories with counts
+        cursor.execute("""
+            SELECT ai_categoria, COUNT(*) as cnt FROM editorial_posts
+            WHERE ai_categoria IS NOT NULL AND article_url IS NOT NULL
+            GROUP BY ai_categoria
+            ORDER BY cnt DESC
+            LIMIT 8
+        """)
+        top_categorias = {row['ai_categoria']: row['cnt'] for row in cursor.fetchall()}
+
+    return templates.TemplateResponse("artigos.html", {
+        "request": request,
+        "artigos": artigos,
+        "stats": stats,
+        "categorias": categorias,
+        "top_categorias": top_categorias
+    })
+
+
+@app.get("/api/artigos")
+async def api_artigos_list(
+    categoria: str = None,
+    min_score: float = None,
+    evergreen: bool = None,
+    status: str = None,
+    order: str = "score_desc",
+    q: str = None,
+    limit: int = 50
+):
+    """Lista artigos com filtros"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        query = "SELECT * FROM editorial_posts WHERE article_url IS NOT NULL"
+        params = []
+
+        if categoria:
+            query += " AND ai_categoria = %s"
+            params.append(categoria)
+
+        if min_score:
+            query += " AND ai_score_relevancia >= %s"
+            params.append(min_score)
+
+        if evergreen is not None:
+            query += " AND ai_evergreen = %s"
+            params.append(evergreen)
+
+        if status == 'never':
+            query += " AND status = 'draft' AND data_publicado IS NULL"
+        elif status:
+            query += " AND status = %s"
+            params.append(status)
+
+        if q:
+            query += " AND (article_title ILIKE %s OR article_description ILIKE %s)"
+            params.extend([f'%{q}%', f'%{q}%'])
+
+        if order == 'score_desc':
+            query += " ORDER BY COALESCE(ai_score_relevancia, 0) DESC"
+        elif order == 'date_desc':
+            query += " ORDER BY criado_em DESC"
+        elif order == 'title_asc':
+            query += " ORDER BY article_title ASC"
+
+        query += f" LIMIT {limit}"
+
+        cursor.execute(query, params)
+        artigos = [dict(row) for row in cursor.fetchall()]
+
+    return {"artigos": artigos, "count": len(artigos)}
+
+
+@app.get("/api/artigos/stats")
+async def api_artigos_stats():
+    """Estatisticas dos artigos"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE ai_score_relevancia IS NOT NULL) as analyzed,
+                COUNT(*) FILTER (WHERE ai_score_relevancia IS NULL) as not_analyzed,
+                COUNT(*) FILTER (WHERE ai_score_relevancia >= 8) as high_score,
+                COUNT(*) FILTER (WHERE ai_evergreen = true) as evergreen
+            FROM editorial_posts
+            WHERE article_url IS NOT NULL
+        """)
+        stats = dict(cursor.fetchone())
+    return stats
+
+
+@app.post("/api/artigos/{artigo_id}/schedule")
+async def api_artigo_schedule(artigo_id: int, request: Request):
+    """Agenda um artigo para publicacao"""
+    data = await request.json()
+    data_publicacao = data.get('data_publicacao')
+
+    if not data_publicacao:
+        raise HTTPException(status_code=400, detail="data_publicacao e obrigatoria")
+
+    post = update_editorial_post(artigo_id, {
+        'status': 'scheduled',
+        'data_publicacao': data_publicacao
+    })
+
+    if not post:
+        raise HTTPException(status_code=404, detail="Artigo nao encontrado")
+
+    return {"status": "success", "post": post}
+
+
 # ============== EDITORIAL CALENDAR PAGE ==============
 
 @app.get("/editorial", response_class=HTMLResponse)
@@ -14245,6 +14447,197 @@ async def editorial_page(request: Request):
         "today_posts": today_posts,
         "pending_hot_takes": pending_hot_takes
     })
+
+
+# ============== VEICULOS - SISTEMA DE MANUTENCAO ==============
+
+@app.get("/veiculos", response_class=HTMLResponse)
+async def veiculos_page(request: Request):
+    """Pagina principal de veiculos com dashboard"""
+    veiculos = listar_veiculos()
+
+    # Para cada veiculo, busca resumo do dashboard
+    veiculos_data = []
+    for v in veiculos:
+        dashboard = get_dashboard_veiculo(v['id'])
+        if dashboard:
+            veiculos_data.append({
+                **v,
+                'resumo': dashboard['resumo'],
+                'total_itens': dashboard['total_itens'],
+                'itens_vencidos': len(dashboard['itens_vencidos']),
+                'itens_atencao': len(dashboard['itens_atencao'])
+            })
+        else:
+            veiculos_data.append(v)
+
+    return templates.TemplateResponse("rap_veiculos.html", {
+        "request": request,
+        "veiculos": veiculos_data
+    })
+
+
+@app.get("/veiculos/{veiculo_id}", response_class=HTMLResponse)
+async def veiculo_detalhe_page(request: Request, veiculo_id: int):
+    """Pagina de detalhe do veiculo com dashboard de manutencao"""
+    dashboard = get_dashboard_veiculo(veiculo_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="Veiculo nao encontrado")
+
+    historico = get_historico_manutencoes(veiculo_id, limit=30)
+    ordens = listar_ordens_servico(veiculo_id=veiculo_id)
+
+    return templates.TemplateResponse("rap_veiculo_detalhe.html", {
+        "request": request,
+        "veiculo": dashboard['veiculo'],
+        "dashboard": dashboard,
+        "historico": historico,
+        "ordens_servico": ordens
+    })
+
+
+@app.get("/api/veiculos")
+async def api_listar_veiculos():
+    """Lista todos os veiculos"""
+    return listar_veiculos()
+
+
+@app.get("/api/veiculos/{veiculo_id}")
+async def api_get_veiculo(veiculo_id: int):
+    """Busca veiculo por ID"""
+    veiculo = get_veiculo(veiculo_id)
+    if not veiculo:
+        raise HTTPException(status_code=404, detail="Veiculo nao encontrado")
+    return veiculo
+
+
+@app.get("/api/veiculos/{veiculo_id}/dashboard")
+async def api_dashboard_veiculo(veiculo_id: int):
+    """Dashboard completo do veiculo com status de manutencao"""
+    dashboard = get_dashboard_veiculo(veiculo_id)
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="Veiculo nao encontrado")
+    return dashboard
+
+
+@app.post("/api/veiculos")
+async def api_criar_veiculo(request: Request):
+    """Cria um novo veiculo"""
+    data = await request.json()
+    veiculo = criar_veiculo(data)
+    return veiculo
+
+
+@app.put("/api/veiculos/{veiculo_id}/km")
+async def api_atualizar_km(veiculo_id: int, request: Request):
+    """Atualiza quilometragem do veiculo"""
+    data = await request.json()
+    km = data.get('km')
+    if not km:
+        raise HTTPException(status_code=400, detail="km e obrigatorio")
+
+    veiculo = atualizar_km(veiculo_id, km)
+    if not veiculo:
+        raise HTTPException(status_code=404, detail="Veiculo nao encontrado")
+    return veiculo
+
+
+@app.get("/api/veiculos/{veiculo_id}/itens")
+async def api_itens_manutencao(veiculo_id: int):
+    """Lista itens do plano de manutencao"""
+    return get_itens_manutencao(veiculo_id)
+
+
+@app.post("/api/veiculos/{veiculo_id}/itens")
+async def api_criar_item(veiculo_id: int, request: Request):
+    """Cria item no plano de manutencao"""
+    data = await request.json()
+    item = criar_item_manutencao(veiculo_id, data)
+    return item
+
+
+@app.get("/api/veiculos/{veiculo_id}/historico")
+async def api_historico_manutencoes(veiculo_id: int, limit: int = 50):
+    """Lista historico de manutencoes do veiculo"""
+    return get_historico_manutencoes(veiculo_id, limit)
+
+
+@app.post("/api/veiculos/{veiculo_id}/manutencao")
+async def api_registrar_manutencao(veiculo_id: int, request: Request):
+    """Registra uma manutencao realizada"""
+    data = await request.json()
+    data['veiculo_id'] = veiculo_id
+    manutencao = registrar_manutencao(veiculo_id, data)
+    return manutencao
+
+
+# ============== ORDENS DE SERVICO ==============
+
+@app.get("/api/veiculos/{veiculo_id}/ordens")
+async def api_listar_ordens(veiculo_id: int, status: str = None):
+    """Lista ordens de servico do veiculo"""
+    return listar_ordens_servico(veiculo_id=veiculo_id, status=status)
+
+
+@app.post("/api/veiculos/{veiculo_id}/ordens")
+async def api_criar_ordem(veiculo_id: int, request: Request):
+    """Cria uma ordem de servico"""
+    data = await request.json()
+    veiculo = get_veiculo(veiculo_id)
+    if not veiculo:
+        raise HTTPException(status_code=404, detail="Veiculo nao encontrado")
+
+    km_atual = data.get('km_atual', veiculo.get('km_atual', 0))
+    itens_ids = data.get('itens_ids')
+    observacoes = data.get('observacoes')
+
+    os = criar_ordem_servico(veiculo_id, km_atual, itens_ids, observacoes)
+    if os.get('error'):
+        raise HTTPException(status_code=400, detail=os['error'])
+
+    return os
+
+
+@app.get("/api/ordens/{os_id}")
+async def api_get_ordem(os_id: int):
+    """Busca ordem de servico por ID"""
+    os = get_ordem_servico(os_id)
+    if not os:
+        raise HTTPException(status_code=404, detail="Ordem de servico nao encontrada")
+    return os
+
+
+@app.put("/api/ordens/{os_id}/finalizar")
+async def api_finalizar_ordem(os_id: int, request: Request):
+    """Finaliza uma ordem de servico e registra as manutencoes"""
+    data = await request.json()
+    resultado = finalizar_ordem_servico(os_id, data)
+    if resultado.get('error'):
+        raise HTTPException(status_code=400, detail=resultado['error'])
+    return resultado
+
+
+@app.get("/veiculos/{veiculo_id}/os/{os_id}", response_class=HTMLResponse)
+async def ordem_servico_page(request: Request, veiculo_id: int, os_id: int):
+    """Pagina da ordem de servico para impressao/visualizacao"""
+    os = get_ordem_servico(os_id)
+    if not os or os['veiculo_id'] != veiculo_id:
+        raise HTTPException(status_code=404, detail="Ordem de servico nao encontrada")
+
+    veiculo = get_veiculo(veiculo_id)
+
+    return templates.TemplateResponse("rap_ordem_servico.html", {
+        "request": request,
+        "veiculo": veiculo,
+        "os": os
+    })
+
+
+@app.post("/api/veiculos/seed-prado")
+async def api_seed_prado():
+    """Cria o veiculo Prado JRW5025 com dados completos"""
+    veiculo = criar_prado_jrw5025()
+    return {"status": "success", "veiculo": veiculo}
 
 
 # Vercel handler

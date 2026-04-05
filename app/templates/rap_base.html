@@ -687,8 +687,12 @@
             <!-- Conteudo -->
             <div class="nav-section">Conteudo</div>
             <a href="/editorial" class="nav-item {% if '/editorial' in request.path %}active{% endif %}">
-                <i class="bi bi-newspaper"></i>
+                <i class="bi bi-calendar3"></i>
                 <span>Editorial</span>
+            </a>
+            <a href="/artigos" class="nav-item {% if '/artigos' in request.path %}active{% endif %}">
+                <i class="bi bi-file-text"></i>
+                <span>Artigos</span>
             </a>
             <a href="/hot-takes" class="nav-item {% if '/hot-takes' in request.path %}active{% endif %}">
                 <i class="bi bi-fire"></i>
@@ -705,6 +709,13 @@
             <a href="/emails" class="nav-item {% if '/emails' in request.path %}active{% endif %}">
                 <i class="bi bi-envelope"></i>
                 <span>Emails</span>
+            </a>
+
+            <!-- Veiculos -->
+            <div class="nav-section">Veiculos</div>
+            <a href="/veiculos" class="nav-item {% if '/veiculos' in request.path %}active{% endif %}">
+                <i class="bi bi-car-front"></i>
+                <span>Meus Veiculos</span>
             </a>
 
             <!-- Ferramentas -->

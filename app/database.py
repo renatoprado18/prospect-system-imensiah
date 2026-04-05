@@ -1537,6 +1537,169 @@ def init_db():
             ON documento_links(entidade_tipo, entidade_id)
         ''')
 
+        # =========================================================================
+        # VEICULOS - Sistema de Controle de Manutenção de Veículos
+        # =========================================================================
+
+        # Veiculos - dados do veículo
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS veiculos (
+                id SERIAL PRIMARY KEY,
+                placa TEXT UNIQUE NOT NULL,
+                apelido TEXT,
+                marca TEXT NOT NULL,
+                modelo TEXT NOT NULL,
+                versao TEXT,
+                ano_fabricacao INTEGER,
+                ano_modelo INTEGER,
+                cor TEXT,
+                combustivel TEXT,
+                renavam TEXT,
+                chassi TEXT,
+                motor TEXT,
+                potencia TEXT,
+                km_atual INTEGER DEFAULT 0,
+                km_atualizado_em TIMESTAMP,
+                foto_url TEXT,
+                foto_url_2 TEXT,
+                foto_url_3 TEXT,
+                proprietario TEXT,
+                data_aquisicao DATE,
+                valor_aquisicao DECIMAL(15,2),
+                observacoes TEXT,
+                ativo BOOLEAN DEFAULT TRUE,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_veiculos_placa
+            ON veiculos(placa)
+        ''')
+
+        # Itens do plano de manutenção - o que deve ser feito em cada intervalo
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS veiculo_itens_manutencao (
+                id SERIAL PRIMARY KEY,
+                veiculo_id INTEGER REFERENCES veiculos(id) ON DELETE CASCADE,
+                categoria TEXT NOT NULL,
+                item TEXT NOT NULL,
+                descricao TEXT,
+                intervalo_km INTEGER,
+                intervalo_meses INTEGER,
+                tipo_acao TEXT DEFAULT 'substituir',
+                notas TEXT,
+                ativo BOOLEAN DEFAULT TRUE,
+                ordem INTEGER DEFAULT 0,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_veiculo_itens_veiculo
+            ON veiculo_itens_manutencao(veiculo_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_veiculo_itens_categoria
+            ON veiculo_itens_manutencao(categoria)
+        ''')
+
+        # Histórico de manutenções realizadas
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS veiculo_manutencoes (
+                id SERIAL PRIMARY KEY,
+                veiculo_id INTEGER REFERENCES veiculos(id) ON DELETE CASCADE,
+                item_id INTEGER REFERENCES veiculo_itens_manutencao(id) ON DELETE SET NULL,
+                data_manutencao DATE NOT NULL,
+                km_manutencao INTEGER NOT NULL,
+                tipo_acao TEXT,
+                descricao TEXT,
+                fornecedor TEXT,
+                valor DECIMAL(10,2),
+                nota_fiscal_url TEXT,
+                relatorio_url TEXT,
+                observacoes TEXT,
+                ordem_servico_id INTEGER,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_veiculo_manutencoes_veiculo
+            ON veiculo_manutencoes(veiculo_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_veiculo_manutencoes_data
+            ON veiculo_manutencoes(data_manutencao DESC)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_veiculo_manutencoes_item
+            ON veiculo_manutencoes(item_id)
+        ''')
+
+        # Documentos do veículo (CRLV, seguro, etc)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS veiculo_documentos (
+                id SERIAL PRIMARY KEY,
+                veiculo_id INTEGER REFERENCES veiculos(id) ON DELETE CASCADE,
+                tipo TEXT NOT NULL,
+                descricao TEXT,
+                arquivo_url TEXT,
+                data_emissao DATE,
+                data_validade DATE,
+                numero TEXT,
+                observacoes TEXT,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_veiculo_documentos_veiculo
+            ON veiculo_documentos(veiculo_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_veiculo_documentos_tipo
+            ON veiculo_documentos(tipo)
+        ''')
+
+        # Ordens de Serviço - geradas para levar para oficina
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS veiculo_ordens_servico (
+                id SERIAL PRIMARY KEY,
+                veiculo_id INTEGER REFERENCES veiculos(id) ON DELETE CASCADE,
+                numero TEXT UNIQUE,
+                data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                km_criacao INTEGER NOT NULL,
+                status TEXT DEFAULT 'pendente',
+                oficina TEXT,
+                data_agendamento DATE,
+                itens JSONB DEFAULT '[]',
+                valor_estimado DECIMAL(10,2),
+                valor_final DECIMAL(10,2),
+                nota_fiscal_url TEXT,
+                relatorio_url TEXT,
+                observacoes TEXT,
+                data_execucao DATE,
+                km_execucao INTEGER,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_veiculo_os_veiculo
+            ON veiculo_ordens_servico(veiculo_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_veiculo_os_status
+            ON veiculo_ordens_servico(status)
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True

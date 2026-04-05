@@ -823,42 +823,6 @@
         color: var(--primary);
     }
 
-    /* Suggestions Card */
-    .suggestions-card {
-        background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-        border: 1px solid #86efac;
-    }
-
-    .suggestions-card h3 {
-        color: #166534;
-    }
-
-    .suggestion-item {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 12px;
-        background: white;
-        border-radius: 8px;
-        margin-bottom: 8px;
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-
-    .suggestion-item:hover {
-        transform: translateX(4px);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-
-    .suggestion-item .score {
-        background: #22c55e;
-        color: white;
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-size: 0.75rem;
-        font-weight: 600;
-    }
-
     @media (max-width: 1024px) {
         .stats-row {
             grid-template-columns: repeat(2, 1fr);
@@ -1016,17 +980,17 @@
             {% endif %}
         </div>
 
-        <!-- Sugestões de Artigos para Repost -->
-        <div class="action-card suggestions-card">
+        <!-- Link para Artigos -->
+        <div class="action-card" style="background: linear-gradient(135deg, #dbeafe, #bfdbfe); border: 1px solid #3b82f6;">
             <div class="action-header">
-                <h3><i class="bi bi-lightbulb me-2"></i>Sugestões de Repost</h3>
+                <h3><i class="bi bi-file-text me-2"></i>Biblioteca de Artigos</h3>
             </div>
-            <div id="ai-suggestions-content">
-                <div class="action-empty">
-                    <i class="bi bi-hourglass-split"></i>
-                    <span>Carregando sugestões...</span>
-                </div>
-            </div>
+            <p style="font-size: 0.875rem; color: var(--gray-600); margin-bottom: 12px;">
+                Veja todos os artigos, filtre por categoria e score, e escolha o que publicar.
+            </p>
+            <a href="/artigos" class="btn btn-primary">
+                <i class="bi bi-arrow-right"></i> Ir para Artigos
+            </a>
         </div>
     </div>
 
@@ -1318,66 +1282,6 @@
 <script>
 const ARTICLES_URL = 'https://almeida-prado.com';
 
-// =============== AI SUGGESTIONS ===============
-async function loadAISuggestions() {
-    const container = document.getElementById('ai-suggestions-content');
-    if (!container) return;
-
-    try {
-        // Buscar artigos com melhor score da análise IA
-        const response = await fetch('/api/editorial/ai-top-suggestions');
-
-        if (!response.ok) {
-            throw new Error('API error');
-        }
-
-        const data = await response.json();
-
-        if (!data.suggestions || data.suggestions.length === 0) {
-            container.innerHTML = `
-                <div class="action-empty">
-                    <i class="bi bi-lightbulb"></i>
-                    <span>Execute a análise IA para ver sugestões</span>
-                </div>
-            `;
-            return;
-        }
-
-        let html = '<div class="action-list">';
-        data.suggestions.slice(0, 5).forEach(sug => {
-            html += `
-                <div class="suggestion-item" onclick="openPostModal(${sug.id})">
-                    <span class="score">${sug.score}/10</span>
-                    <div class="action-info">
-                        <div class="action-title">${escapeHtml(sug.titulo.substring(0, 45))}${sug.titulo.length > 45 ? '...' : ''}</div>
-                        <div class="action-meta">${sug.categoria || 'Artigo'} ${sug.evergreen ? '• 🌲 Evergreen' : ''}</div>
-                    </div>
-                    <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); quickSchedulePost(${sug.id})">
-                        Agendar
-                    </button>
-                </div>
-            `;
-        });
-        html += '</div>';
-
-        container.innerHTML = html;
-    } catch (error) {
-        console.error('Error loading AI suggestions:', error);
-        container.innerHTML = `
-            <div class="action-empty">
-                <i class="bi bi-cpu"></i>
-                <span>Execute "Analisar com IA" primeiro</span>
-            </div>
-        `;
-    }
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 async function copyAndOpen(postId) {
     try {
         const response = await fetch(`/api/editorial/${postId}`);
@@ -1434,9 +1338,6 @@ async function quickSchedulePost(postId) {
         alert('Erro ao agendar');
     }
 }
-
-// Load AI suggestions on page load
-document.addEventListener('DOMContentLoaded', loadAISuggestions);
 
 // Load articles from static file on page load
 fetch('/static/articles.json')
