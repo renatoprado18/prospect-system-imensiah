@@ -102,7 +102,7 @@ from services.veiculos import (
     importar_plano_manutencao_prado, get_historico_manutencoes,
     registrar_manutencao, get_dashboard_veiculo, criar_ordem_servico,
     get_ordem_servico, listar_ordens_servico, finalizar_ordem_servico,
-    criar_prado_jrw5025
+    criar_prado_jrw5025, atualizar_notas_fabricante_prado
 )
 from services.briefing_context import (
     get_contexto_enriquecido,
@@ -14254,7 +14254,14 @@ async def artigos_page(request: Request,
         query += " LIMIT 100"
 
         cursor.execute(query, params)
-        artigos = [dict(row) for row in cursor.fetchall()]
+        artigos = []
+        for row in cursor.fetchall():
+            artigo = dict(row)
+            # Convert ALL datetime fields to ISO strings for JSON serialization
+            for key, value in artigo.items():
+                if value is not None and hasattr(value, 'isoformat'):
+                    artigo[key] = value.isoformat()
+            artigos.append(artigo)
 
         # Get stats
         cursor.execute("""
@@ -14638,6 +14645,13 @@ async def api_seed_prado():
     """Cria o veiculo Prado JRW5025 com dados completos"""
     veiculo = criar_prado_jrw5025()
     return {"status": "success", "veiculo": veiculo}
+
+
+@app.post("/api/veiculos/{veiculo_id}/atualizar-notas-fabricante")
+async def api_atualizar_notas_fabricante(veiculo_id: int):
+    """Atualiza os itens de manutencao com as notas/especificacoes do fabricante"""
+    count = atualizar_notas_fabricante_prado(veiculo_id)
+    return {"status": "success", "itens_atualizados": count}
 
 
 # Vercel handler

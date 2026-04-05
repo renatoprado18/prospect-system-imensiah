@@ -1,0 +1,670 @@
+{% extends "rap_base.html" %}
+
+{% block title %}OS {{ os.numero }} - {{ veiculo.apelido }}{% endblock %}
+{% block page_title %}Ordem de Servico{% endblock %}
+
+{% block extra_css %}
+<style>
+    .os-container {
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    /* Print Styles */
+    @media print {
+        .no-print {
+            display: none !important;
+        }
+
+        .os-container {
+            max-width: 100%;
+            padding: 0;
+        }
+
+        body {
+            background: white !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
+        .os-card {
+            box-shadow: none !important;
+            border: 1px solid #ddd !important;
+        }
+
+        .sidebar {
+            display: none !important;
+        }
+
+        .main-content {
+            margin-left: 0 !important;
+            padding: 0 !important;
+        }
+    }
+
+    .os-card {
+        background: var(--card-bg);
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: var(--shadow-md);
+        border: 1px solid var(--border-color);
+    }
+
+    /* Header da OS */
+    .os-header {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        color: white;
+        padding: 2rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+    }
+
+    .os-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+    }
+
+    .os-subtitle {
+        opacity: 0.8;
+        font-size: 0.9rem;
+    }
+
+    .os-numero-box {
+        background: rgba(255,255,255,0.15);
+        padding: 1rem 1.5rem;
+        border-radius: 10px;
+        text-align: center;
+    }
+
+    .os-numero {
+        font-size: 1.25rem;
+        font-weight: 700;
+    }
+
+    .os-data {
+        font-size: 0.8rem;
+        opacity: 0.8;
+        margin-top: 0.25rem;
+    }
+
+    /* Veiculo Info */
+    .veiculo-info-section {
+        padding: 1.5rem 2rem;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .veiculo-info-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1.5rem;
+    }
+
+    .veiculo-info-item {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .veiculo-info-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+    }
+
+    .veiculo-info-value {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    /* Status Badge */
+    .os-status {
+        padding: 0.375rem 1rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+    }
+
+    .os-status.pendente {
+        background: rgba(251, 191, 36, 0.15);
+        color: #fbbf24;
+    }
+
+    .os-status.concluida {
+        background: rgba(34, 197, 94, 0.15);
+        color: #22c55e;
+    }
+
+    /* Itens Section */
+    .os-section {
+        padding: 1.5rem 2rem;
+    }
+
+    .os-section-title {
+        font-size: 1.125rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .os-section-title i {
+        color: var(--primary);
+    }
+
+    /* Items Table */
+    .os-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .os-table th {
+        text-align: left;
+        padding: 0.75rem 1rem;
+        background: var(--bg-secondary);
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        font-weight: 600;
+        border-bottom: 2px solid var(--border-color);
+    }
+
+    .os-table td {
+        padding: 1rem;
+        border-bottom: 1px solid var(--border-color);
+        vertical-align: top;
+    }
+
+    .os-table tbody tr:hover {
+        background: var(--bg-secondary);
+    }
+
+    .item-nome {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .item-categoria {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+    }
+
+    .item-status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .item-status-badge.vencido {
+        background: rgba(239, 68, 68, 0.15);
+        color: #ef4444;
+    }
+
+    .item-status-badge.atencao {
+        background: rgba(251, 191, 36, 0.15);
+        color: #fbbf24;
+    }
+
+    .item-acao {
+        text-transform: capitalize;
+        color: var(--text-secondary);
+        font-size: 0.875rem;
+    }
+
+    .item-notas {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        background: var(--bg-secondary);
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        margin-top: 0.5rem;
+        border-left: 3px solid var(--primary);
+    }
+
+    .item-notas strong {
+        color: var(--primary);
+    }
+
+    /* Checkbox for completed items */
+    .item-checkbox {
+        width: 20px;
+        height: 20px;
+        border: 2px solid var(--border-color);
+        border-radius: 4px;
+        display: inline-block;
+    }
+
+    @media print {
+        .item-checkbox {
+            border-color: #999;
+        }
+    }
+
+    /* Observacoes */
+    .os-observacoes {
+        background: var(--bg-secondary);
+        padding: 1.5rem 2rem;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .observacoes-box {
+        min-height: 80px;
+        border: 1px dashed var(--border-color);
+        border-radius: 8px;
+        padding: 1rem;
+        color: var(--text-secondary);
+        font-style: italic;
+    }
+
+    /* Assinaturas */
+    .os-assinaturas {
+        padding: 2rem;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 3rem;
+    }
+
+    .assinatura-box {
+        text-align: center;
+    }
+
+    .assinatura-linha {
+        border-bottom: 1px solid var(--border-color);
+        margin-bottom: 0.5rem;
+        height: 60px;
+    }
+
+    .assinatura-label {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    /* Actions Bar */
+    .os-actions {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+    }
+
+    /* Finalizar Modal */
+    .modal-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        display: none;
+    }
+
+    .modal-backdrop.show {
+        display: flex;
+    }
+
+    .modal-content {
+        background: var(--card-bg);
+        border-radius: 16px;
+        width: 90%;
+        max-width: 500px;
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+
+    .modal-header {
+        padding: 1.5rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .modal-header h3 {
+        margin: 0;
+        color: var(--text-primary);
+    }
+
+    .modal-body {
+        padding: 1.5rem;
+    }
+
+    .modal-footer {
+        padding: 1rem 1.5rem;
+        border-top: 1px solid var(--border-color);
+        display: flex;
+        gap: 0.75rem;
+        justify-content: flex-end;
+    }
+
+    .form-group {
+        margin-bottom: 1rem;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-weight: 500;
+        color: var(--text-primary);
+    }
+
+    .form-group input {
+        width: 100%;
+        padding: 0.75rem;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="os-container">
+    <!-- Actions -->
+    <div class="os-actions no-print">
+        <button class="btn btn-primary" onclick="window.print()">
+            <i class="bi bi-printer"></i> Imprimir
+        </button>
+        {% if os.status == 'pendente' %}
+        <button class="btn btn-success" onclick="openFinalizarModal()">
+            <i class="bi bi-check-circle"></i> Finalizar OS
+        </button>
+        {% endif %}
+        <a href="/veiculos/{{ veiculo.id }}" class="btn btn-outline">
+            <i class="bi bi-arrow-left"></i> Voltar
+        </a>
+    </div>
+
+    <!-- OS Card -->
+    <div class="os-card">
+        <!-- Header -->
+        <div class="os-header">
+            <div>
+                <h1 class="os-title">Ordem de Servico</h1>
+                <p class="os-subtitle">Controle de Manutencao Preventiva</p>
+            </div>
+            <div class="os-numero-box">
+                <div class="os-numero">{{ os.numero }}</div>
+                <div class="os-data">{{ os.data_criacao.strftime('%d/%m/%Y') }}</div>
+                <div style="margin-top: 0.5rem;">
+                    <span class="os-status {{ os.status }}">
+                        {% if os.status == 'pendente' %}
+                        <i class="bi bi-hourglass-split"></i> Pendente
+                        {% else %}
+                        <i class="bi bi-check-circle"></i> Concluida
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Veiculo Info -->
+        <div class="veiculo-info-section">
+            <div class="veiculo-info-grid">
+                <div class="veiculo-info-item">
+                    <span class="veiculo-info-label">Veiculo</span>
+                    <span class="veiculo-info-value">{{ veiculo.marca }} {{ veiculo.modelo }}</span>
+                </div>
+                <div class="veiculo-info-item">
+                    <span class="veiculo-info-label">Placa</span>
+                    <span class="veiculo-info-value">{{ veiculo.placa }}</span>
+                </div>
+                <div class="veiculo-info-item">
+                    <span class="veiculo-info-label">Ano</span>
+                    <span class="veiculo-info-value">{{ veiculo.ano_fabricacao }}/{{ veiculo.ano_modelo }}</span>
+                </div>
+                <div class="veiculo-info-item">
+                    <span class="veiculo-info-label">KM Atual</span>
+                    <span class="veiculo-info-value">{{ "{:,}".format(os.km_criacao).replace(",", ".") }} km</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Itens da OS -->
+        <div class="os-section">
+            <h2 class="os-section-title">
+                <i class="bi bi-list-check"></i>
+                Servicos a Realizar
+            </h2>
+
+            <table class="os-table">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;"></th>
+                        <th>Item</th>
+                        <th>Acao</th>
+                        <th>Status</th>
+                        <th>KM Restante</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set itens = os.itens if os.itens is iterable and os.itens is not string else [] %}
+                    {% for item in itens %}
+                    <tr>
+                        <td><span class="item-checkbox"></span></td>
+                        <td>
+                            <div class="item-nome">{{ item.item }}</div>
+                            <div class="item-categoria">{{ item.categoria }}</div>
+                            {% if item.notas_fabricante %}
+                            <div class="item-notas">
+                                <strong>Fabricante:</strong> {{ item.notas_fabricante }}
+                            </div>
+                            {% endif %}
+                        </td>
+                        <td class="item-acao">{{ item.tipo_acao }}</td>
+                        <td>
+                            <span class="item-status-badge {{ item.status }}">
+                                {% if item.status == 'vencido' %}
+                                <i class="bi bi-x-circle-fill"></i> Vencido
+                                {% else %}
+                                <i class="bi bi-exclamation-circle-fill"></i> Atencao
+                                {% endif %}
+                            </span>
+                        </td>
+                        <td>
+                            {% if item.km_restante is not none %}
+                                {% if item.km_restante < 0 %}
+                                <span style="color: #ef4444;">{{ "{:,}".format(item.km_restante|abs).replace(",", ".") }} km atrasado</span>
+                                {% else %}
+                                {{ "{:,}".format(item.km_restante).replace(",", ".") }} km
+                                {% endif %}
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Observacoes -->
+        <div class="os-observacoes">
+            <h3 class="os-section-title">
+                <i class="bi bi-chat-text"></i>
+                Observacoes
+            </h3>
+            <div class="observacoes-box">
+                {{ os.observacoes or 'Espaco para anotacoes da oficina...' }}
+            </div>
+        </div>
+
+        <!-- Assinaturas -->
+        <div class="os-assinaturas">
+            <div class="assinatura-box">
+                <div class="assinatura-linha"></div>
+                <div class="assinatura-label">Responsavel Tecnico</div>
+            </div>
+            <div class="assinatura-box">
+                <div class="assinatura-linha"></div>
+                <div class="assinatura-label">Cliente</div>
+            </div>
+        </div>
+
+        <!-- Info de Conclusao (se concluida) -->
+        {% if os.status == 'concluida' %}
+        <div class="os-section" style="background: rgba(34, 197, 94, 0.05); border-top: 2px solid #22c55e;">
+            <h3 class="os-section-title" style="color: #22c55e;">
+                <i class="bi bi-check-circle-fill"></i>
+                Servico Concluido
+            </h3>
+            <div class="veiculo-info-grid">
+                <div class="veiculo-info-item">
+                    <span class="veiculo-info-label">Data Execucao</span>
+                    <span class="veiculo-info-value">{{ os.data_execucao.strftime('%d/%m/%Y') if os.data_execucao else '-' }}</span>
+                </div>
+                <div class="veiculo-info-item">
+                    <span class="veiculo-info-label">KM Execucao</span>
+                    <span class="veiculo-info-value">{{ "{:,}".format(os.km_execucao).replace(",", ".") if os.km_execucao else '-' }} km</span>
+                </div>
+                <div class="veiculo-info-item">
+                    <span class="veiculo-info-label">Oficina</span>
+                    <span class="veiculo-info-value">{{ os.oficina or '-' }}</span>
+                </div>
+                <div class="veiculo-info-item">
+                    <span class="veiculo-info-label">Valor Total</span>
+                    <span class="veiculo-info-value">{% if os.valor_final %}R$ {{ "%.2f"|format(os.valor_final) }}{% else %}-{% endif %}</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Modal Finalizar -->
+<div class="modal-backdrop" id="finalizarModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Finalizar Ordem de Servico</h3>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Data de Execucao</label>
+                <input type="date" id="dataExecucao" value="{{ now().strftime('%Y-%m-%d') if now is defined else '' }}">
+            </div>
+            <div class="form-group">
+                <label>KM na Execucao</label>
+                <input type="number" id="kmExecucao" value="{{ os.km_criacao }}" placeholder="Quilometragem atual">
+            </div>
+            <div class="form-group">
+                <label>Oficina</label>
+                <input type="text" id="oficina" placeholder="Nome da oficina">
+            </div>
+            <div class="form-group">
+                <label>Valor Total (R$)</label>
+                <input type="number" id="valorFinal" step="0.01" placeholder="0.00">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeFinalizarModal()">Cancelar</button>
+            <button class="btn btn-success" onclick="finalizarOS()">
+                <i class="bi bi-check-circle"></i> Confirmar
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const osId = {{ os.id }};
+const veiculoId = {{ veiculo.id }};
+
+function openFinalizarModal() {
+    document.getElementById('finalizarModal').classList.add('show');
+    // Set today's date
+    document.getElementById('dataExecucao').value = new Date().toISOString().split('T')[0];
+}
+
+function closeFinalizarModal() {
+    document.getElementById('finalizarModal').classList.remove('show');
+}
+
+async function finalizarOS() {
+    const data = {
+        data_execucao: document.getElementById('dataExecucao').value,
+        km_execucao: parseInt(document.getElementById('kmExecucao').value),
+        oficina: document.getElementById('oficina').value,
+        valor_final: parseFloat(document.getElementById('valorFinal').value) || null
+    };
+
+    if (!data.data_execucao || !data.km_execucao) {
+        showToast('Preencha data e KM', 'warning');
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/ordens/${osId}/finalizar`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+
+        if (resp.ok) {
+            showToast('OS finalizada com sucesso!', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            const err = await resp.json();
+            showToast(err.detail || 'Erro ao finalizar', 'error');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('Erro ao finalizar', 'error');
+    }
+}
+
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        padding: 1rem 1.5rem;
+        background: ${type === 'success' ? '#22c55e' : type === 'error' ? '#ef4444' : type === 'warning' ? '#fbbf24' : '#3b82f6'};
+        color: white;
+        border-radius: 8px;
+        z-index: 99999;
+        animation: slideIn 0.3s ease;
+        font-weight: 500;
+    `;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// Close modal on backdrop click
+document.getElementById('finalizarModal').addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-backdrop')) {
+        closeFinalizarModal();
+    }
+});
+</script>
+
+<style>
+@keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideOut {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(100%); opacity: 0; }
+}
+</style>
+{% endblock %}

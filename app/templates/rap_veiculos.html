@@ -1,0 +1,425 @@
+{% extends "rap_base.html" %}
+
+{% block title %}Veiculos - INTEL{% endblock %}
+{% block page_title %}Meus Veiculos{% endblock %}
+
+{% block extra_css %}
+<style>
+    .veiculos-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+        gap: 1.5rem;
+        margin-top: 1.5rem;
+    }
+
+    .veiculo-card {
+        background: var(--card-bg);
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: var(--shadow-sm);
+        transition: all 0.3s ease;
+        border: 1px solid var(--border-color);
+    }
+
+    .veiculo-card:hover {
+        box-shadow: var(--shadow-lg);
+        transform: translateY(-2px);
+    }
+
+    .veiculo-foto {
+        width: 100%;
+        height: 200px;
+        object-fit: cover;
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+    }
+
+    .veiculo-foto-placeholder {
+        width: 100%;
+        height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        color: white;
+        font-size: 4rem;
+    }
+
+    .veiculo-info {
+        padding: 1.25rem;
+    }
+
+    .veiculo-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 1rem;
+    }
+
+    .veiculo-nome {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin: 0;
+    }
+
+    .veiculo-marca {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        margin-top: 0.25rem;
+    }
+
+    .veiculo-placa {
+        background: var(--bg-secondary);
+        padding: 0.375rem 0.75rem;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 0.875rem;
+        color: var(--text-primary);
+        border: 2px solid var(--border-color);
+    }
+
+    .veiculo-km {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem;
+        background: var(--bg-secondary);
+        border-radius: 10px;
+        margin-bottom: 1rem;
+    }
+
+    .veiculo-km i {
+        font-size: 1.25rem;
+        color: var(--primary);
+    }
+
+    .veiculo-km-valor {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .veiculo-km-label {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+    }
+
+    /* Status Cards */
+    .status-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+    }
+
+    .status-card {
+        padding: 0.75rem;
+        border-radius: 10px;
+        text-align: center;
+    }
+
+    .status-card.ok {
+        background: rgba(34, 197, 94, 0.1);
+        border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+
+    .status-card.atencao {
+        background: rgba(251, 191, 36, 0.1);
+        border: 1px solid rgba(251, 191, 36, 0.3);
+    }
+
+    .status-card.vencido {
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .status-numero {
+        font-size: 1.75rem;
+        font-weight: 800;
+    }
+
+    .status-card.ok .status-numero { color: #22c55e; }
+    .status-card.atencao .status-numero { color: #fbbf24; }
+    .status-card.vencido .status-numero { color: #ef4444; }
+
+    .status-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        font-weight: 600;
+        color: var(--text-secondary);
+        margin-top: 0.25rem;
+    }
+
+    .veiculo-actions {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border-color);
+    }
+
+    .veiculo-actions .btn {
+        flex: 1;
+        padding: 0.625rem;
+        font-size: 0.875rem;
+    }
+
+    /* Alert Banner */
+    .alert-banner {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem 1.25rem;
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        border-radius: 12px;
+        margin-bottom: 0.75rem;
+    }
+
+    .alert-banner.warning {
+        background: rgba(251, 191, 36, 0.1);
+        border-color: rgba(251, 191, 36, 0.3);
+    }
+
+    .alert-banner i {
+        font-size: 1.5rem;
+        color: #ef4444;
+    }
+
+    .alert-banner.warning i {
+        color: #fbbf24;
+    }
+
+    .alert-content {
+        flex: 1;
+    }
+
+    .alert-title {
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 0.125rem;
+    }
+
+    .alert-subtitle {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    /* Empty State */
+    .empty-state {
+        text-align: center;
+        padding: 4rem 2rem;
+        color: var(--text-secondary);
+    }
+
+    .empty-state i {
+        font-size: 4rem;
+        margin-bottom: 1rem;
+        opacity: 0.5;
+    }
+
+    .empty-state h3 {
+        color: var(--text-primary);
+        margin-bottom: 0.5rem;
+    }
+
+    /* Header Actions */
+    .page-header-actions {
+        display: flex;
+        gap: 0.75rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+    <div>
+        <h2 style="margin: 0; color: var(--text-primary);">Controle de Manutencao</h2>
+        <p style="margin: 0.25rem 0 0; color: var(--text-secondary);">Acompanhe a manutencao dos seus veiculos</p>
+    </div>
+    <div class="page-header-actions">
+        <button class="btn btn-outline" onclick="seedPrado()">
+            <i class="bi bi-plus-circle"></i> Importar Prado
+        </button>
+    </div>
+</div>
+
+{% if veiculos %}
+<div class="veiculos-grid">
+    {% for v in veiculos %}
+    <div class="veiculo-card">
+        <!-- Foto -->
+        {% if v.foto_url %}
+        <img src="{{ v.foto_url }}" alt="{{ v.apelido or v.modelo }}" class="veiculo-foto">
+        {% else %}
+        <div class="veiculo-foto-placeholder">
+            <i class="bi bi-car-front"></i>
+        </div>
+        {% endif %}
+
+        <div class="veiculo-info">
+            <!-- Header -->
+            <div class="veiculo-header">
+                <div>
+                    <h3 class="veiculo-nome">{{ v.apelido or v.modelo }}</h3>
+                    <p class="veiculo-marca">{{ v.marca }} {{ v.modelo }} {{ v.ano_modelo or '' }}</p>
+                </div>
+                <span class="veiculo-placa">{{ v.placa }}</span>
+            </div>
+
+            <!-- KM -->
+            <div class="veiculo-km">
+                <i class="bi bi-speedometer2"></i>
+                <div>
+                    <div class="veiculo-km-valor">{{ "{:,}".format(v.km_atual or 0).replace(",", ".") }} km</div>
+                    <div class="veiculo-km-label">Quilometragem atual</div>
+                </div>
+            </div>
+
+            <!-- Alertas -->
+            {% if v.itens_vencidos and v.itens_vencidos > 0 %}
+            <div class="alert-banner">
+                <i class="bi bi-exclamation-triangle-fill"></i>
+                <div class="alert-content">
+                    <div class="alert-title">{{ v.itens_vencidos }} {{ 'item' if v.itens_vencidos == 1 else 'itens' }} vencidos</div>
+                    <div class="alert-subtitle">Manutencao necessaria</div>
+                </div>
+            </div>
+            {% elif v.itens_atencao and v.itens_atencao > 0 %}
+            <div class="alert-banner warning">
+                <i class="bi bi-exclamation-circle-fill"></i>
+                <div class="alert-content">
+                    <div class="alert-title">{{ v.itens_atencao }} {{ 'item' if v.itens_atencao == 1 else 'itens' }} em atencao</div>
+                    <div class="alert-subtitle">Agende a manutencao em breve</div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Status Grid -->
+            {% if v.resumo %}
+            <div class="status-grid">
+                <div class="status-card ok">
+                    <div class="status-numero">{{ v.resumo.ok or 0 }}</div>
+                    <div class="status-label">Em dia</div>
+                </div>
+                <div class="status-card atencao">
+                    <div class="status-numero">{{ v.resumo.atencao or 0 }}</div>
+                    <div class="status-label">Atencao</div>
+                </div>
+                <div class="status-card vencido">
+                    <div class="status-numero">{{ v.resumo.vencido or 0 }}</div>
+                    <div class="status-label">Vencido</div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Actions -->
+            <div class="veiculo-actions">
+                <a href="/veiculos/{{ v.id }}" class="btn btn-primary">
+                    <i class="bi bi-speedometer"></i> Dashboard
+                </a>
+                <button class="btn btn-outline" onclick="gerarOS({{ v.id }})">
+                    <i class="bi bi-file-earmark-text"></i> Gerar OS
+                </button>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <i class="bi bi-car-front"></i>
+    <h3>Nenhum veiculo cadastrado</h3>
+    <p>Clique em "Importar Prado" para adicionar o Land Cruiser Prado</p>
+    <button class="btn btn-primary" onclick="seedPrado()" style="margin-top: 1rem;">
+        <i class="bi bi-plus-circle"></i> Importar Prado JRW5025
+    </button>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+async function seedPrado() {
+    if (!confirm('Criar o veiculo Land Cruiser Prado JRW5025 com plano de manutencao completo?')) {
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/veiculos/seed-prado', { method: 'POST' });
+        const data = await resp.json();
+
+        if (data.status === 'success') {
+            showToast('Veiculo criado com sucesso!', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast('Erro ao criar veiculo', 'error');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('Erro ao criar veiculo', 'error');
+    }
+}
+
+async function gerarOS(veiculoId) {
+    if (!confirm('Gerar Ordem de Servico com todos os itens vencidos e em atencao?')) {
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/veiculos/${veiculoId}/ordens`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+
+        const data = await resp.json();
+
+        if (data.id) {
+            showToast('Ordem de Servico criada!', 'success');
+            window.location.href = `/veiculos/${veiculoId}/os/${data.id}`;
+        } else {
+            showToast(data.detail || 'Nenhum item para incluir na OS', 'warning');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('Erro ao gerar OS', 'error');
+    }
+}
+
+function showToast(message, type = 'info') {
+    // Simple toast implementation
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        padding: 1rem 1.5rem;
+        background: ${type === 'success' ? '#22c55e' : type === 'error' ? '#ef4444' : type === 'warning' ? '#fbbf24' : '#3b82f6'};
+        color: white;
+        border-radius: 8px;
+        z-index: 9999;
+        animation: slideIn 0.3s ease;
+    `;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+</script>
+
+<style>
+@keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideOut {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(100%); opacity: 0; }
+}
+</style>
+{% endblock %}

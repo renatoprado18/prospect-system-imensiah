@@ -1578,6 +1578,12 @@ def init_db():
             ON veiculos(placa)
         ''')
 
+        # Adicionar coluna para pasta do Google Drive
+        cursor.execute('''
+            ALTER TABLE veiculos
+            ADD COLUMN IF NOT EXISTS google_drive_folder_id TEXT
+        ''')
+
         # Itens do plano de manutenção - o que deve ser feito em cada intervalo
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS veiculo_itens_manutencao (
@@ -1604,6 +1610,12 @@ def init_db():
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_veiculo_itens_categoria
             ON veiculo_itens_manutencao(categoria)
+        ''')
+
+        # Adicionar coluna de notas do fabricante
+        cursor.execute('''
+            ALTER TABLE veiculo_itens_manutencao
+            ADD COLUMN IF NOT EXISTS notas_fabricante TEXT
         ''')
 
         # Histórico de manutenções realizadas

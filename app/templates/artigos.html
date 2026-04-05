@@ -679,7 +679,7 @@
                             <div class="article-meta">
                                 <span class="article-status {{ artigo.status }}">{{ artigo.status }}</span>
                                 {% if artigo.data_publicacao %}
-                                <span><i class="bi bi-calendar"></i> {{ artigo.data_publicacao[:10] }}</span>
+                                <span><i class="bi bi-calendar"></i> {{ artigo.data_publicacao[:10] if artigo.data_publicacao else '' }}</span>
                                 {% endif %}
                             </div>
                             <div class="article-actions">

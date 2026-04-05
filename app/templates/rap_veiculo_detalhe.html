@@ -1,0 +1,1048 @@
+{% extends "rap_base.html" %}
+
+{% block title %}{{ veiculo.apelido or veiculo.modelo }} - INTEL{% endblock %}
+{% block page_title %}{{ veiculo.apelido or veiculo.modelo }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Header do Veiculo */
+    .veiculo-header-card {
+        background: var(--card-bg);
+        border-radius: 16px;
+        padding: 1.5rem;
+        display: flex;
+        gap: 1.5rem;
+        margin-bottom: 1.5rem;
+        border: 1px solid var(--border-color);
+    }
+
+    .veiculo-foto-container {
+        width: 200px;
+        height: 150px;
+        border-radius: 12px;
+        overflow: hidden;
+        flex-shrink: 0;
+    }
+
+    .veiculo-foto-container img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .veiculo-foto-placeholder {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        color: white;
+        font-size: 3rem;
+    }
+
+    .veiculo-details {
+        flex: 1;
+    }
+
+    .veiculo-title {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin-bottom: 0.25rem;
+    }
+
+    .veiculo-subtitle {
+        color: var(--text-secondary);
+        margin-bottom: 1rem;
+    }
+
+    .veiculo-specs {
+        display: flex;
+        gap: 2rem;
+        flex-wrap: wrap;
+    }
+
+    .veiculo-spec {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .spec-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        font-weight: 600;
+    }
+
+    .spec-value {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    /* KM Card */
+    .km-card {
+        background: linear-gradient(135deg, var(--primary) 0%, #4f46e5 100%);
+        color: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        text-align: center;
+        min-width: 180px;
+    }
+
+    .km-valor {
+        font-size: 2rem;
+        font-weight: 800;
+    }
+
+    .km-label {
+        font-size: 0.8rem;
+        opacity: 0.8;
+    }
+
+    .km-update {
+        margin-top: 0.75rem;
+    }
+
+    .km-update input {
+        width: 100%;
+        padding: 0.5rem;
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 6px;
+        background: rgba(255,255,255,0.15);
+        color: white;
+        text-align: center;
+        font-weight: 600;
+    }
+
+    .km-update input::placeholder {
+        color: rgba(255,255,255,0.6);
+    }
+
+    /* Status Summary */
+    .status-summary {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .status-summary-card {
+        background: var(--card-bg);
+        border-radius: 12px;
+        padding: 1.25rem;
+        text-align: center;
+        border: 1px solid var(--border-color);
+    }
+
+    .status-summary-card.ok { border-left: 4px solid #22c55e; }
+    .status-summary-card.atencao { border-left: 4px solid #fbbf24; }
+    .status-summary-card.vencido { border-left: 4px solid #ef4444; }
+    .status-summary-card.total { border-left: 4px solid var(--primary); }
+
+    .status-summary-numero {
+        font-size: 2.5rem;
+        font-weight: 800;
+    }
+
+    .status-summary-card.ok .status-summary-numero { color: #22c55e; }
+    .status-summary-card.atencao .status-summary-numero { color: #fbbf24; }
+    .status-summary-card.vencido .status-summary-numero { color: #ef4444; }
+    .status-summary-card.total .status-summary-numero { color: var(--primary); }
+
+    .status-summary-label {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        font-weight: 600;
+    }
+
+    /* Tabs */
+    .tabs {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        border-bottom: 2px solid var(--border-color);
+        padding-bottom: 0;
+    }
+
+    .tab-btn {
+        padding: 0.75rem 1.5rem;
+        border: none;
+        background: none;
+        cursor: pointer;
+        font-weight: 600;
+        color: var(--text-secondary);
+        border-bottom: 3px solid transparent;
+        margin-bottom: -2px;
+        transition: all 0.2s;
+    }
+
+    .tab-btn:hover {
+        color: var(--text-primary);
+    }
+
+    .tab-btn.active {
+        color: var(--primary);
+        border-bottom-color: var(--primary);
+    }
+
+    .tab-content {
+        display: none;
+    }
+
+    .tab-content.active {
+        display: block;
+    }
+
+    /* Categorias */
+    .categoria-section {
+        margin-bottom: 1.5rem;
+    }
+
+    .categoria-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem 0;
+        border-bottom: 1px solid var(--border-color);
+        margin-bottom: 1rem;
+    }
+
+    .categoria-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--primary);
+        color: white;
+    }
+
+    .categoria-nome {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        flex: 1;
+    }
+
+    .categoria-badge {
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .categoria-badge.ok { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+    .categoria-badge.atencao { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+    .categoria-badge.vencido { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+
+    /* Item Cards */
+    .itens-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1rem;
+    }
+
+    .item-card {
+        background: var(--card-bg);
+        border-radius: 12px;
+        padding: 1rem;
+        border: 1px solid var(--border-color);
+        transition: all 0.2s;
+    }
+
+    .item-card:hover {
+        box-shadow: var(--shadow-sm);
+    }
+
+    .item-card.ok { border-left: 4px solid #22c55e; }
+    .item-card.atencao { border-left: 4px solid #fbbf24; }
+    .item-card.vencido { border-left: 4px solid #ef4444; }
+
+    .item-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 0.75rem;
+    }
+
+    .item-nome {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .item-status {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+    }
+
+    .item-status.ok { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+    .item-status.atencao { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+    .item-status.vencido { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+
+    .item-info {
+        display: flex;
+        gap: 1.5rem;
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+    }
+
+    .item-info-item {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .item-info-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        opacity: 0.7;
+    }
+
+    .item-info-value {
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .item-info-value.negative {
+        color: #ef4444;
+    }
+
+    .item-tipo {
+        display: inline-block;
+        padding: 0.125rem 0.5rem;
+        background: var(--bg-secondary);
+        border-radius: 4px;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        margin-top: 0.5rem;
+    }
+
+    /* Historico */
+    .historico-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .historico-table th,
+    .historico-table td {
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .historico-table th {
+        font-weight: 600;
+        color: var(--text-secondary);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+    }
+
+    .historico-table tbody tr:hover {
+        background: var(--bg-secondary);
+    }
+
+    /* OS List */
+    .os-list {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .os-card {
+        background: var(--card-bg);
+        border-radius: 12px;
+        padding: 1.25rem;
+        border: 1px solid var(--border-color);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .os-info h4 {
+        margin: 0 0 0.25rem;
+        color: var(--text-primary);
+    }
+
+    .os-info p {
+        margin: 0;
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+    }
+
+    .os-badge {
+        padding: 0.375rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .os-badge.pendente { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+    .os-badge.concluida { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+
+    /* Actions Bar */
+    .actions-bar {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+    }
+
+    /* Category Icons */
+    .cat-motor { background: #ef4444; }
+    .cat-eletrica { background: #3b82f6; }
+    .cat-combustivel { background: #f97316; }
+    .cat-freios { background: #8b5cf6; }
+    .cat-direcao { background: #06b6d4; }
+    .cat-transmissao { background: #22c55e; }
+    .cat-suspensao { background: #ec4899; }
+    .cat-outros { background: #6b7280; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Header do Veiculo -->
+<div class="veiculo-header-card">
+    <div class="veiculo-foto-container">
+        {% if veiculo.foto_url %}
+        <img src="{{ veiculo.foto_url }}" alt="{{ veiculo.apelido }}">
+        {% else %}
+        <div class="veiculo-foto-placeholder">
+            <i class="bi bi-car-front"></i>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="veiculo-details">
+        <h1 class="veiculo-title">{{ veiculo.apelido or veiculo.modelo }}</h1>
+        <p class="veiculo-subtitle">{{ veiculo.marca }} {{ veiculo.modelo }} {% if veiculo.versao %}{{ veiculo.versao }}{% endif %}</p>
+
+        <div class="veiculo-specs">
+            <div class="veiculo-spec">
+                <span class="spec-label">Ano</span>
+                <span class="spec-value">{{ veiculo.ano_fabricacao }}/{{ veiculo.ano_modelo }}</span>
+            </div>
+            <div class="veiculo-spec">
+                <span class="spec-label">Placa</span>
+                <span class="spec-value">{{ veiculo.placa }}</span>
+            </div>
+            <div class="veiculo-spec">
+                <span class="spec-label">Combustivel</span>
+                <span class="spec-value">{{ veiculo.combustivel or '-' }}</span>
+            </div>
+            <div class="veiculo-spec">
+                <span class="spec-label">Motor</span>
+                <span class="spec-value">{{ veiculo.potencia or '-' }}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="km-card">
+        <div class="km-valor">{{ "{:,}".format(veiculo.km_atual or 0).replace(",", ".") }}</div>
+        <div class="km-label">Quilometros</div>
+        <div class="km-update">
+            <input type="number" id="novoKm" placeholder="Atualizar KM" onkeypress="if(event.key==='Enter')atualizarKm()">
+        </div>
+    </div>
+</div>
+
+<!-- Status Summary -->
+<div class="status-summary">
+    <div class="status-summary-card total">
+        <div class="status-summary-numero">{{ dashboard.total_itens }}</div>
+        <div class="status-summary-label">Total Itens</div>
+    </div>
+    <div class="status-summary-card ok">
+        <div class="status-summary-numero">{{ dashboard.resumo.ok }}</div>
+        <div class="status-summary-label">Em Dia</div>
+    </div>
+    <div class="status-summary-card atencao">
+        <div class="status-summary-numero">{{ dashboard.resumo.atencao }}</div>
+        <div class="status-summary-label">Atencao</div>
+    </div>
+    <div class="status-summary-card vencido">
+        <div class="status-summary-numero">{{ dashboard.resumo.vencido }}</div>
+        <div class="status-summary-label">Vencidos</div>
+    </div>
+</div>
+
+<!-- Actions -->
+<div class="actions-bar">
+    <button class="btn btn-primary" onclick="gerarOS()">
+        <i class="bi bi-file-earmark-text"></i> Gerar Ordem de Servico
+    </button>
+    <button class="btn btn-outline" onclick="registrarManutencao()">
+        <i class="bi bi-plus-circle"></i> Registrar Manutencao
+    </button>
+    <a href="/veiculos" class="btn btn-outline">
+        <i class="bi bi-arrow-left"></i> Voltar
+    </a>
+</div>
+
+<!-- Tabs -->
+<div class="tabs">
+    <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+    <button class="tab-btn" data-tab="historico">Historico</button>
+    <button class="tab-btn" data-tab="ordens">Ordens de Servico</button>
+</div>
+
+<!-- Tab: Dashboard -->
+<div id="tab-dashboard" class="tab-content active">
+    {% for categoria, itens in dashboard.itens_por_categoria.items() %}
+    <div class="categoria-section">
+        <div class="categoria-header">
+            <div class="categoria-icon cat-{{ categoria.lower() }}">
+                {% if categoria == 'Motor' %}<i class="bi bi-gear"></i>
+                {% elif categoria == 'Eletrica' %}<i class="bi bi-lightning"></i>
+                {% elif categoria == 'Combustivel' %}<i class="bi bi-fuel-pump"></i>
+                {% elif categoria == 'Freios' %}<i class="bi bi-disc"></i>
+                {% elif categoria == 'Direcao' %}<i class="bi bi-steering-wheel"></i>
+                {% elif categoria == 'Transmissao' %}<i class="bi bi-gear-wide-connected"></i>
+                {% elif categoria == 'Suspensao' %}<i class="bi bi-chevron-double-up"></i>
+                {% else %}<i class="bi bi-wrench"></i>
+                {% endif %}
+            </div>
+            <span class="categoria-nome">{{ categoria }}</span>
+            {% set vencidos = itens|selectattr('status', 'equalto', 'vencido')|list|length %}
+            {% set atencao = itens|selectattr('status', 'equalto', 'atencao')|list|length %}
+            {% if vencidos > 0 %}
+            <span class="categoria-badge vencido">{{ vencidos }} vencido{{ 's' if vencidos > 1 else '' }}</span>
+            {% elif atencao > 0 %}
+            <span class="categoria-badge atencao">{{ atencao }} atencao</span>
+            {% else %}
+            <span class="categoria-badge ok">Tudo OK</span>
+            {% endif %}
+        </div>
+
+        <div class="itens-grid">
+            {% for item in itens %}
+            <div class="item-card {{ item.status }}">
+                <div class="item-header">
+                    <span class="item-nome">{{ item.item }}</span>
+                    <span class="item-status {{ item.status }}">
+                        {% if item.status == 'ok' %}<i class="bi bi-check-circle-fill"></i> OK
+                        {% elif item.status == 'atencao' %}<i class="bi bi-exclamation-circle-fill"></i> Atencao
+                        {% else %}<i class="bi bi-x-circle-fill"></i> Vencido
+                        {% endif %}
+                    </span>
+                </div>
+
+                <div class="item-info">
+                    {% if item.proxima_km %}
+                    <div class="item-info-item">
+                        <span class="item-info-label">Proxima</span>
+                        <span class="item-info-value">{{ "{:,}".format(item.proxima_km).replace(",", ".") }} km</span>
+                    </div>
+                    {% endif %}
+
+                    {% if item.km_restante is not none %}
+                    <div class="item-info-item">
+                        <span class="item-info-label">Restante</span>
+                        <span class="item-info-value {% if item.km_restante < 0 %}negative{% endif %}">
+                            {% if item.km_restante >= 0 %}
+                            {{ "{:,}".format(item.km_restante).replace(",", ".") }} km
+                            {% else %}
+                            {{ "{:,}".format(item.km_restante|abs).replace(",", ".") }} km atrasado
+                            {% endif %}
+                        </span>
+                    </div>
+                    {% endif %}
+
+                    {% if item.dias_restantes is not none %}
+                    <div class="item-info-item">
+                        <span class="item-info-label">Tempo</span>
+                        <span class="item-info-value {% if item.dias_restantes < 0 %}negative{% endif %}">
+                            {% if item.dias_restantes >= 0 %}
+                            {{ item.dias_restantes }} dias
+                            {% else %}
+                            {{ item.dias_restantes|abs }} dias atrasado
+                            {% endif %}
+                        </span>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <span class="item-tipo">{{ item.tipo_acao }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Tab: Historico -->
+<div id="tab-historico" class="tab-content">
+    {% if historico %}
+    <div style="background: var(--card-bg); border-radius: 12px; border: 1px solid var(--border-color); overflow: hidden;">
+        <table class="historico-table">
+            <thead>
+                <tr>
+                    <th>Data</th>
+                    <th>KM</th>
+                    <th>Item</th>
+                    <th>Categoria</th>
+                    <th>Fornecedor</th>
+                    <th>Valor</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for h in historico %}
+                <tr>
+                    <td>{{ h.data_manutencao.strftime('%d/%m/%Y') if h.data_manutencao else '-' }}</td>
+                    <td>{{ "{:,}".format(h.km_manutencao).replace(",", ".") }} km</td>
+                    <td>{{ h.item_nome or h.descricao or '-' }}</td>
+                    <td>{{ h.categoria or '-' }}</td>
+                    <td>{{ h.fornecedor or '-' }}</td>
+                    <td>{% if h.valor %}R$ {{ "%.2f"|format(h.valor) }}{% else %}-{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div style="text-align: center; padding: 3rem; color: var(--text-secondary);">
+        <i class="bi bi-clock-history" style="font-size: 3rem; opacity: 0.5;"></i>
+        <h3 style="color: var(--text-primary);">Nenhum historico registrado</h3>
+        <p>As manutencoes realizadas aparecerão aqui</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Tab: Ordens de Servico -->
+<div id="tab-ordens" class="tab-content">
+    {% if ordens_servico %}
+    <div class="os-list">
+        {% for os in ordens_servico %}
+        <div class="os-card">
+            <div class="os-info">
+                <h4>{{ os.numero }}</h4>
+                <p>
+                    Criada em {{ os.data_criacao.strftime('%d/%m/%Y') }} |
+                    {{ os.km_criacao|int }} km |
+                    {{ os.itens|length if os.itens is iterable else 0 }} itens
+                </p>
+            </div>
+            <div style="display: flex; gap: 0.75rem; align-items: center;">
+                <span class="os-badge {{ os.status }}">{{ os.status|capitalize }}</span>
+                <a href="/veiculos/{{ veiculo.id }}/os/{{ os.id }}" class="btn btn-outline btn-sm">
+                    <i class="bi bi-eye"></i> Ver
+                </a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div style="text-align: center; padding: 3rem; color: var(--text-secondary);">
+        <i class="bi bi-file-earmark-text" style="font-size: 3rem; opacity: 0.5;"></i>
+        <h3 style="color: var(--text-primary);">Nenhuma ordem de servico</h3>
+        <p>Clique em "Gerar Ordem de Servico" para criar uma nova</p>
+    </div>
+    {% endif %}
+</div>
+<!-- Modal Selecionar Itens para OS -->
+<div class="modal-backdrop" id="osModal">
+    <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-header">
+            <h3>Gerar Ordem de Servico</h3>
+        </div>
+        <div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
+            <p style="color: var(--text-secondary); margin-bottom: 1rem;">
+                Selecione os itens que deseja incluir na OS. Itens proximos de vencer tambem podem ser incluidos para antecipar a manutencao.
+            </p>
+
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                <button class="btn btn-outline btn-sm" onclick="toggleAllItens(true)">Selecionar Todos</button>
+                <button class="btn btn-outline btn-sm" onclick="toggleAllItens(false)">Limpar Selecao</button>
+            </div>
+
+            {% for categoria, itens in dashboard.itens_por_categoria.items() %}
+            <div style="margin-bottom: 1rem;">
+                <h4 style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 0.5rem; text-transform: uppercase;">{{ categoria }}</h4>
+                {% for item in itens %}
+                <label class="os-item-row {% if item.status == 'vencido' %}vencido{% elif item.status == 'atencao' %}atencao{% endif %}">
+                    <input type="checkbox" class="item-check" value="{{ item.item_id }}"
+                           {% if item.status in ['vencido', 'atencao'] %}checked{% endif %}
+                           onchange="atualizarResumoOS()">
+                    <span class="os-item-nome">{{ item.item }}</span>
+                    <span class="os-item-status {{ item.status }}">
+                        {% if item.status == 'vencido' %}Vencido
+                        {% elif item.status == 'atencao' %}Atencao
+                        {% else %}OK{% endif %}
+                    </span>
+                    <span class="os-item-km">
+                        {% if item.km_restante is not none %}
+                            {% if item.km_restante < 0 %}{{ "{:,}".format(item.km_restante|abs).replace(",", ".") }}km atrasado
+                            {% else %}em {{ "{:,}".format(item.km_restante).replace(",", ".") }}km
+                            {% endif %}
+                        {% endif %}
+                    </span>
+                </label>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+        <div class="modal-footer" style="justify-content: space-between;">
+            <span style="color: var(--text-secondary);">
+                <strong id="osResumoCount">{{ dashboard.resumo.vencido + dashboard.resumo.atencao }}</strong> itens selecionados
+            </span>
+            <div style="display: flex; gap: 0.75rem;">
+                <button class="btn btn-outline" onclick="closeOsModal()">Cancelar</button>
+                <button class="btn btn-primary" id="btnConfirmarOS" onclick="confirmarGerarOS()">
+                    <i class="bi bi-check-circle"></i> Gerar OS
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.os-item-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.625rem 0.75rem;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-bottom: 0.375rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+}
+.os-item-row:hover { background: var(--card-bg); }
+.os-item-row.vencido { border-left: 3px solid #ef4444; }
+.os-item-row.atencao { border-left: 3px solid #fbbf24; }
+.os-item-row input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+.os-item-nome { flex: 1; font-weight: 500; color: var(--text-primary); }
+.os-item-status {
+    font-size: 0.7rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+    font-weight: 600;
+}
+.os-item-status.vencido { background: rgba(239,68,68,0.15); color: #ef4444; }
+.os-item-status.atencao { background: rgba(251,191,36,0.15); color: #fbbf24; }
+.os-item-status.ok { background: rgba(34,197,94,0.15); color: #22c55e; }
+.os-item-km { font-size: 0.8rem; color: var(--text-secondary); min-width: 100px; text-align: right; }
+</style>
+
+<!-- Modal Registrar Manutencao -->
+<div class="modal-backdrop" id="registrarModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Registrar Manutencao</h3>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>Item de Manutencao *</label>
+                <select id="itemManutencao" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary); color: var(--text-primary);">
+                    <option value="">Selecione o item...</option>
+                    {% for categoria, itens in dashboard.itens_por_categoria.items() %}
+                    <optgroup label="{{ categoria }}">
+                        {% for item in itens %}
+                        <option value="{{ item.item_id }}">{{ item.item }}</option>
+                        {% endfor %}
+                    </optgroup>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <div class="form-group">
+                    <label>Data *</label>
+                    <input type="date" id="dataManutencao">
+                </div>
+                <div class="form-group">
+                    <label>Quilometragem *</label>
+                    <input type="number" id="kmManutencao" value="{{ veiculo.km_atual }}" placeholder="KM atual">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Fornecedor/Oficina</label>
+                <input type="text" id="fornecedorManutencao" placeholder="Nome da oficina">
+            </div>
+            <div class="form-group">
+                <label>Valor (R$)</label>
+                <input type="number" id="valorManutencao" step="0.01" placeholder="0.00">
+            </div>
+            <div class="form-group">
+                <label>Descricao/Observacoes</label>
+                <input type="text" id="descricaoManutencao" placeholder="Ex: Bateria Moura M90TD">
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeRegistrarModal()">Cancelar</button>
+            <button class="btn btn-primary" onclick="salvarManutencao()">
+                <i class="bi bi-check-circle"></i> Salvar
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+.modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+.modal-backdrop.show { display: flex; }
+.modal-content {
+    background: var(--card-bg);
+    border-radius: 16px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+.modal-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+.modal-header h3 { margin: 0; color: var(--text-primary); }
+.modal-body { padding: 1.5rem; }
+.modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+.form-group { margin-bottom: 1rem; }
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+.form-group input, .form-group select {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const veiculoId = {{ veiculo.id }};
+
+// Tabs
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+        btn.classList.add('active');
+        document.getElementById('tab-' + tab).classList.add('active');
+    });
+});
+
+async function atualizarKm() {
+    const input = document.getElementById('novoKm');
+    const km = parseInt(input.value);
+
+    if (!km || km < {{ veiculo.km_atual or 0 }}) {
+        showToast('KM deve ser maior que o atual', 'warning');
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/veiculos/${veiculoId}/km`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ km })
+        });
+
+        if (resp.ok) {
+            showToast('Quilometragem atualizada!', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            showToast('Erro ao atualizar', 'error');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('Erro ao atualizar', 'error');
+    }
+}
+
+function gerarOS() {
+    // Abre modal de seleção de itens
+    document.getElementById('osModal').classList.add('show');
+}
+
+function closeOsModal() {
+    document.getElementById('osModal').classList.remove('show');
+}
+
+function toggleAllItens(checked) {
+    document.querySelectorAll('.item-check').forEach(cb => cb.checked = checked);
+    atualizarResumoOS();
+}
+
+function atualizarResumoOS() {
+    const checked = document.querySelectorAll('.item-check:checked').length;
+    document.getElementById('osResumoCount').textContent = checked;
+}
+
+async function confirmarGerarOS() {
+    const itensSelecionados = [];
+    document.querySelectorAll('.item-check:checked').forEach(cb => {
+        itensSelecionados.push(parseInt(cb.value));
+    });
+
+    if (itensSelecionados.length === 0) {
+        showToast('Selecione pelo menos um item', 'warning');
+        return;
+    }
+
+    // Disable button and show loading
+    const btn = document.getElementById('btnConfirmarOS');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Gerando...';
+
+    try {
+        const resp = await fetch(`/api/veiculos/${veiculoId}/ordens`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ itens_ids: itensSelecionados })
+        });
+
+        const data = await resp.json();
+
+        if (data.id) {
+            showToast('Ordem de Servico criada!', 'success');
+            window.location.href = `/veiculos/${veiculoId}/os/${data.id}`;
+        } else {
+            showToast(data.detail || 'Erro ao gerar OS', 'error');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> Gerar OS';
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('Erro ao gerar OS', 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle"></i> Gerar OS';
+    }
+}
+
+function registrarManutencao() {
+    document.getElementById('registrarModal').classList.add('show');
+}
+
+function closeRegistrarModal() {
+    document.getElementById('registrarModal').classList.remove('show');
+}
+
+async function salvarManutencao() {
+    const itemId = document.getElementById('itemManutencao').value;
+    const data = document.getElementById('dataManutencao').value;
+    const km = document.getElementById('kmManutencao').value;
+    const fornecedor = document.getElementById('fornecedorManutencao').value;
+    const valor = document.getElementById('valorManutencao').value;
+    const descricao = document.getElementById('descricaoManutencao').value;
+
+    if (!itemId || !data || !km) {
+        showToast('Preencha item, data e km', 'warning');
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/veiculos/${veiculoId}/manutencao`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                item_id: parseInt(itemId),
+                data_manutencao: data,
+                km_manutencao: parseInt(km),
+                fornecedor: fornecedor,
+                valor: valor ? parseFloat(valor) : null,
+                descricao: descricao,
+                tipo_acao: 'substituir'
+            })
+        });
+
+        if (resp.ok) {
+            showToast('Manutencao registrada!', 'success');
+            closeRegistrarModal();
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            const err = await resp.json();
+            showToast(err.detail || 'Erro ao registrar', 'error');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('Erro ao registrar', 'error');
+    }
+}
+
+function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        padding: 1rem 1.5rem;
+        background: ${type === 'success' ? '#22c55e' : type === 'error' ? '#ef4444' : type === 'warning' ? '#fbbf24' : '#3b82f6'};
+        color: white;
+        border-radius: 8px;
+        z-index: 9999;
+        animation: slideIn 0.3s ease;
+        font-weight: 500;
+    `;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// Close modal on backdrop click
+document.getElementById('registrarModal').addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-backdrop')) {
+        closeRegistrarModal();
+    }
+});
+
+document.getElementById('osModal').addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-backdrop')) {
+        closeOsModal();
+    }
+});
+
+// Set today's date as default
+document.getElementById('dataManutencao').value = new Date().toISOString().split('T')[0];
+</script>
+
+<style>
+@keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideOut {
+    from { transform: translateX(0); opacity: 1; }
+    to { transform: translateX(100%); opacity: 0; }
+}
+</style>
+{% endblock %}

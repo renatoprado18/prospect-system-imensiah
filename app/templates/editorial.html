@@ -881,6 +881,34 @@
     </div>
 </div>
 
+<!-- Publicar Hoje - Prioridade máxima -->
+{% if today_posts %}
+<div class="posts-card" style="border-top: 4px solid #3b82f6;">
+    <div class="posts-header">
+        <h2><i class="bi bi-lightning-charge me-2" style="color: #3b82f6;"></i>Publicar Hoje</h2>
+    </div>
+    <div class="posts-list">
+        {% for post in today_posts %}
+        <div class="post-item" style="cursor: pointer;">
+            <div class="post-canal {% if post.tipo == 'hot_take' %}both{% else %}linkedin{% endif %}">
+                {% if post.tipo == 'hot_take' %}<i class="bi bi-fire"></i>{% else %}<i class="bi bi-linkedin"></i>{% endif %}
+            </div>
+            <div class="post-info">
+                <div class="post-title">{{ post.article_title[:50] }}{% if post.article_title|length > 50 %}...{% endif %}</div>
+                <div class="post-meta">
+                    <span><i class="bi bi-clock"></i> {{ post.data_publicacao.strftime('%H:%M') if post.data_publicacao else '' }}</span>
+                    <span><i class="bi bi-tag"></i> {{ post.ai_categoria or 'LinkedIn' }}</span>
+                </div>
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="copyAndOpen({{ post.id }})" style="background: #3b82f6;">
+                <i class="bi bi-box-arrow-up-right"></i> Publicar
+            </button>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
 <!-- This Week Calendar - Full Width -->
 <div class="posts-card">
     <div class="posts-header">
@@ -910,6 +938,37 @@
         </div>
         {% endfor %}
     </div>
+</div>
+
+<!-- Próximos Posts - Logo após Esta Semana -->
+<div class="posts-card">
+    <div class="posts-header">
+        <h2><i class="bi bi-calendar-check me-2"></i>Próximos Posts</h2>
+    </div>
+    {% if stats.upcoming %}
+    <div class="posts-list">
+        {% for post in stats.upcoming %}
+        <div class="post-item" onclick="openPostModal({{ post.id }})" style="cursor: pointer;">
+            <div class="post-canal {% if post.tipo == 'hot_take' %}both{% else %}linkedin{% endif %}">
+                {% if post.tipo == 'hot_take' %}<i class="bi bi-fire"></i>{% else %}<i class="bi bi-linkedin"></i>{% endif %}
+            </div>
+            <div class="post-info">
+                <div class="post-title">{{ post.article_title[:50] }}{% if post.article_title|length > 50 %}...{% endif %}</div>
+                <div class="post-meta">
+                    <span><i class="bi bi-calendar"></i> {{ post.data_publicacao.strftime('%d/%m %H:%M') if post.data_publicacao else '' }}</span>
+                    <span><i class="bi bi-tag"></i> {{ post.ai_categoria or 'Sem categoria' }}</span>
+                </div>
+            </div>
+            <span class="post-status scheduled">Agendado</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding: 30px;">
+        <i class="bi bi-calendar-x"></i>
+        <p>Nenhum post agendado</p>
+    </div>
+    {% endif %}
 </div>
 
 <!-- Two Column Layout: Actions -->
@@ -950,36 +1009,6 @@
             {% endif %}
         </div>
 
-        <!-- Para Hoje -->
-        <div class="action-card today-card">
-            <div class="action-header">
-                <h3><i class="bi bi-lightning-charge me-2"></i>Publicar Hoje</h3>
-            </div>
-            {% if today_posts %}
-            <div class="action-list">
-                {% for post in today_posts %}
-                <div class="action-item">
-                    <div class="action-icon">
-                        {% if post.tipo == 'hot_take' %}<i class="bi bi-fire text-warning"></i>{% else %}<i class="bi bi-file-text text-primary"></i>{% endif %}
-                    </div>
-                    <div class="action-info">
-                        <div class="action-title">{{ post.article_title[:40] }}{% if post.article_title|length > 40 %}...{% endif %}</div>
-                        <div class="action-meta">{{ post.data_publicacao.strftime('%H:%M') if post.data_publicacao else '' }}</div>
-                    </div>
-                    <button class="btn btn-sm btn-primary" onclick="copyAndOpen({{ post.id }})">
-                        <i class="bi bi-box-arrow-up-right"></i> Publicar
-                    </button>
-                </div>
-                {% endfor %}
-            </div>
-            {% else %}
-            <div class="action-empty">
-                <i class="bi bi-check-circle text-success"></i>
-                <span>Nenhum post para hoje</span>
-            </div>
-            {% endif %}
-        </div>
-
         <!-- Link para Artigos -->
         <div class="action-card" style="background: linear-gradient(135deg, #dbeafe, #bfdbfe); border: 1px solid #3b82f6;">
             <div class="action-header">
@@ -1016,32 +1045,6 @@
                     <i class="bi bi-calendar3"></i>
                     Ver Calendario
                 </a>
-            </div>
-        </div>
-
-        <!-- Próximos Posts -->
-        <div class="sidebar-card">
-            <h3><i class="bi bi-calendar-check me-2"></i>Proximos Posts</h3>
-            <div class="upcoming-list">
-                {% if stats.upcoming %}
-                    {% for post in stats.upcoming %}
-                    <div class="upcoming-item" onclick="openPostModal({{ post.id }})" style="cursor: pointer;">
-                        <div class="upcoming-date">
-                            <div class="day">{{ post.data_publicacao.strftime('%d') }}</div>
-                            <div class="month">{{ post.data_publicacao.strftime('%b') }}</div>
-                        </div>
-                        <div class="upcoming-info">
-                            <div class="upcoming-title">{{ post.article_title[:35] }}{% if post.article_title|length > 35 %}...{% endif %}</div>
-                            <div class="upcoming-canal">
-                                <i class="bi bi-{% if post.canal == 'linkedin' %}linkedin{% elif post.canal == 'instagram' %}instagram{% else %}share{% endif %}"></i>
-                                {{ canais[post.canal].label if post.canal in canais else post.canal }}
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                {% else %}
-                    <p style="color: var(--gray-500); font-size: 0.875rem;">Nenhum post agendado</p>
-                {% endif %}
             </div>
         </div>
 
