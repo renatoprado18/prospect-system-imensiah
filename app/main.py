@@ -5176,7 +5176,7 @@ async def contact_intelligence_chat(contact_id: int, request: Request):
         if not contact:
             raise HTTPException(status_code=404, detail="Contato nao encontrado")
 
-        from app.services.contact_intelligence import chat_about_contact
+        from services.contact_intelligence import chat_about_contact
         result = await chat_about_contact(contact_id, question, conn)
 
         return result
@@ -5219,7 +5219,7 @@ async def contact_suggest_response(contact_id: int, request: Request):
         if not contact:
             raise HTTPException(status_code=404, detail="Contato nao encontrado")
 
-        from app.services.contact_intelligence import suggest_response
+        from services.contact_intelligence import suggest_response
         result = await suggest_response(contact_id, conn, context_type)
 
         return result
@@ -6873,76 +6873,25 @@ async def test_endpoint():
 async def get_dashboard_unified(request: Request):
     """
     Retorna TODOS os dados do Dashboard em uma unica chamada.
-    Evita multiplos cold starts do Vercel.
+    SUPER OTIMIZADO: Uma unica query com CTEs.
     """
-    from services.dashboard import (
-        get_dashboard_stats as _get_stats,
-        get_alertas as _get_alertas,
-        get_contatos_recentes as _get_recentes,
-        get_circulos_resumo as _get_circulos
-    )
+    import time
+    from services.dashboard import get_full_dashboard
     from database import get_db
 
-    result = {}
-
-    # Stats e circulos
+    t0 = time.time()
     try:
-        result["stats"] = _get_stats()
+        result = get_full_dashboard()
     except Exception as e:
-        result["stats"] = {}
+        print(f"[DASHBOARD ERROR] {e}")
+        result = {
+            "stats": {},
+            "circulos_resumo": {},
+            "alertas": [],
+            "contatos_recentes": []
+        }
 
-    try:
-        result["alertas"] = _get_alertas(limit=10)
-    except Exception as e:
-        result["alertas"] = []
-
-    try:
-        result["contatos_recentes"] = _get_recentes(limit=5)
-    except Exception as e:
-        result["contatos_recentes"] = []
-
-    try:
-        result["circulos_resumo"] = _get_circulos()
-    except Exception as e:
-        result["circulos_resumo"] = {}
-
-    # Aniversarios proximos (para lembretes) - query otimizada
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, nome, empresa, cargo, foto_url, circulo, health_score, aniversario
-                FROM contacts
-                WHERE aniversario IS NOT NULL
-                  AND COALESCE(circulo, 5) <= 4
-                ORDER BY
-                    EXTRACT(MONTH FROM aniversario),
-                    EXTRACT(DAY FROM aniversario)
-                LIMIT 10
-            """)
-            from datetime import datetime
-            hoje = datetime.now().date()
-            aniversarios = []
-            for row in cursor.fetchall():
-                contact = dict(row)
-                aniv = contact.get("aniversario")
-                if aniv:
-                    try:
-                        aniv_este_ano = aniv.replace(year=hoje.year)
-                        if aniv_este_ano < hoje:
-                            aniv_este_ano = aniv.replace(year=hoje.year + 1)
-                        dias_ate = (aniv_este_ano - hoje).days
-                        if 0 <= dias_ate <= 7:
-                            contact["dias_ate"] = dias_ate
-                            contact["aniversario"] = aniv.strftime("%d/%m")
-                            aniversarios.append(contact)
-                    except:
-                        pass
-            result["aniversarios"] = aniversarios[:5]
-    except:
-        result["aniversarios"] = []
-
-    # Inbox count (sem autenticacao para ser rapido)
+    # Inbox count - query simples separada
     try:
         with get_db() as conn:
             cursor = conn.cursor()
@@ -6952,12 +6901,11 @@ async def get_dashboard_unified(request: Request):
     except:
         result["inbox_unread"] = 0
 
-    # Tarefas - simplificado (sem Google Tasks para ser rapido)
     result["tasks"] = []
-
-    # Agenda - simplificado (sem Google Calendar para ser rapido)
     result["calendar_today"] = []
+    result["aniversarios"] = []  # Ja incluso em alertas
 
+    print(f"[DASHBOARD TIMING] total={round(time.time() - t0, 2)}s")
     return result
 
 
@@ -13700,7 +13648,7 @@ async def rap_projeto_detail_redirect(project_id: int):
 
 # ============== EDITORIAL CALENDAR API ==============
 
-from app.services.editorial_calendar import (
+from services.editorial_calendar import (
     get_editorial_posts, get_editorial_post, create_editorial_post,
     update_editorial_post, delete_editorial_post, schedule_post,
     mark_as_published, import_articles_from_site, get_calendar_view,
@@ -13764,14 +13712,14 @@ async def api_editorial_meta():
 @app.get("/api/editorial/ai/stats")
 async def api_editorial_ai_stats():
     """Estatísticas da análise IA dos artigos"""
-    from app.services.editorial_calendar import get_analysis_stats
+    from services.editorial_calendar import get_analysis_stats
     return get_analysis_stats()
 
 
 @app.get("/api/editorial/ai-top-suggestions")
 async def api_editorial_ai_top_suggestions():
     """Retorna os artigos com melhor score de IA para sugestão de repost"""
-    from app.database import get_db
+    from database import get_db
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -13805,7 +13753,7 @@ async def api_editorial_ai_top_suggestions():
 @app.get("/api/editorial/dashboard-tasks")
 async def api_editorial_dashboard_tasks():
     """Retorna tarefas do LinkedIn para o dashboard - hoje e próximos"""
-    from app.database import get_db
+    from database import get_db
     from datetime import datetime, timedelta
 
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -13875,7 +13823,7 @@ async def api_editorial_ai_analyze(request: Request):
         "force": false          // opcional - reanalisar já analisados
     }
     """
-    from app.services.editorial_calendar import analyze_all_articles, analyze_article_with_ai
+    from services.editorial_calendar import analyze_all_articles, analyze_article_with_ai
 
     data = await request.json()
     post_ids = data.get('post_ids', [])
@@ -14031,7 +13979,7 @@ async def api_editorial_bulk_schedule(request: Request):
         "create_events": true
     }
     """
-    from app.services.editorial_calendar import bulk_schedule_posts
+    from services.editorial_calendar import bulk_schedule_posts
 
     data = await request.json()
     post_ids = data.get('post_ids', [])
@@ -14093,21 +14041,21 @@ async def api_hot_takes_version():
 @app.get("/api/hot-takes")
 async def api_hot_takes_list(status: str = None, limit: int = 20):
     """Lista hot takes salvos"""
-    from app.services.hot_takes import get_hot_takes
+    from services.hot_takes import get_hot_takes
     return {"hot_takes": get_hot_takes(status=status, limit=limit)}
 
 
 @app.get("/api/hot-takes/stats")
 async def api_hot_takes_stats():
     """Estatisticas de hot takes"""
-    from app.services.hot_takes import get_weekly_digest_stats
+    from services.hot_takes import get_weekly_digest_stats
     return get_weekly_digest_stats()
 
 
 @app.post("/api/hot-takes/digest")
 async def api_generate_digest(request: Request):
     """Gera digest semanal de hot takes"""
-    from app.services.hot_takes import generate_weekly_digest
+    from services.hot_takes import generate_weekly_digest
     data = await request.json()
     limit = data.get("limit", 5)
     result = await generate_weekly_digest(limit=limit)
@@ -14117,7 +14065,7 @@ async def api_generate_digest(request: Request):
 @app.post("/api/hot-takes/from-url")
 async def api_hot_take_from_url(request: Request):
     """Gera hot take a partir de URL manual"""
-    from app.services.hot_takes import generate_hot_take_from_url
+    from services.hot_takes import generate_hot_take_from_url
     data = await request.json()
     url = data.get("url")
     if not url:
@@ -14129,7 +14077,7 @@ async def api_hot_take_from_url(request: Request):
 @app.get("/api/hot-takes/{hot_take_id}")
 async def api_hot_take_get(hot_take_id: int):
     """Retorna um hot take especifico"""
-    from app.services.hot_takes import get_hot_takes
+    from services.hot_takes import get_hot_takes
     hot_takes = get_hot_takes()
     for ht in hot_takes:
         if ht.get("id") == hot_take_id:
@@ -14140,7 +14088,7 @@ async def api_hot_take_get(hot_take_id: int):
 @app.post("/api/hot-takes/{hot_take_id}/schedule")
 async def api_hot_take_schedule(hot_take_id: int, request: Request):
     """Agenda hot take para publicacao e cria entrada no calendario editorial"""
-    from app.services.hot_takes import schedule_hot_take
+    from services.hot_takes import schedule_hot_take
     data = await request.json()
     scheduled_for = data.get("scheduled_for")
     create_editorial = data.get("create_editorial", True)
@@ -14152,7 +14100,7 @@ async def api_hot_take_schedule(hot_take_id: int, request: Request):
 @app.post("/api/hot-takes/{hot_take_id}/publish")
 async def api_hot_take_publish(hot_take_id: int, request: Request):
     """Marca hot take como publicado"""
-    from app.services.hot_takes import mark_hot_take_published
+    from services.hot_takes import mark_hot_take_published
     data = await request.json()
     linkedin_url = data.get("linkedin_url")
 
@@ -14163,7 +14111,7 @@ async def api_hot_take_publish(hot_take_id: int, request: Request):
 @app.post("/api/hot-takes/{hot_take_id}/metrics")
 async def api_hot_take_metrics(hot_take_id: int, request: Request):
     """Atualiza metricas de engajamento do hot take"""
-    from app.services.hot_takes import update_hot_take_metrics
+    from services.hot_takes import update_hot_take_metrics
     data = await request.json()
     metrics = {
         "likes": data.get("likes", 0),
@@ -14181,7 +14129,7 @@ async def hot_takes_page(request: Request):
     """Pagina de Hot Takes"""
     import traceback
     try:
-        from app.services.hot_takes import get_hot_takes, get_weekly_digest_stats
+        from services.hot_takes import get_hot_takes, get_weekly_digest_stats
         hot_takes = get_hot_takes(limit=50)
         stats = get_weekly_digest_stats()
 
@@ -14205,16 +14153,43 @@ async def artigos_page(request: Request,
                        status: str = None,
                        order: str = "score_desc",
                        q: str = None):
-    """Pagina de biblioteca de artigos"""
-    from collections import Counter
+    """Pagina de biblioteca de artigos - OTIMIZADO"""
 
-    # Get all articles (posts with article_url)
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Build query with filters
+        # Query 1: Stats (usa índices)
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE ai_score_relevancia IS NOT NULL) as analyzed,
+                COUNT(*) FILTER (WHERE ai_score_relevancia IS NULL) as not_analyzed,
+                COUNT(*) FILTER (WHERE ai_score_relevancia >= 8) as high_score,
+                COUNT(*) FILTER (WHERE ai_evergreen = true) as evergreen
+            FROM editorial_posts
+            WHERE article_url IS NOT NULL
+        """)
+        stats = dict(cursor.fetchone())
+
+        # Query 2: Top categorias (usa índice ai_categoria)
+        cursor.execute("""
+            SELECT ai_categoria, COUNT(*) as cnt
+            FROM editorial_posts
+            WHERE ai_categoria IS NOT NULL AND article_url IS NOT NULL
+            GROUP BY ai_categoria
+            ORDER BY cnt DESC
+            LIMIT 8
+        """)
+        top_categorias = {row['ai_categoria']: row['cnt'] for row in cursor.fetchall()}
+        categorias = list(top_categorias.keys())
+
+        # OTIMIZAÇÃO: Selecionar apenas colunas necessárias (não SELECT *)
         query = """
-            SELECT * FROM editorial_posts
+            SELECT id, article_title, article_url, article_description,
+                   status, ai_categoria, ai_subcategoria, ai_score_relevancia,
+                   ai_evergreen, ai_gancho_linkedin, ai_keywords,
+                   data_publicacao, data_publicado, criado_em
+            FROM editorial_posts
             WHERE article_url IS NOT NULL
         """
         params = []
@@ -14243,7 +14218,7 @@ async def artigos_page(request: Request,
             query += " AND (article_title ILIKE %s OR article_description ILIKE %s)"
             params.extend([f'%{q}%', f'%{q}%'])
 
-        # Order
+        # Order - usando índice ai_score
         if order == 'score_desc':
             query += " ORDER BY COALESCE(ai_score_relevancia, 0) DESC, criado_em DESC"
         elif order == 'date_desc':
@@ -14251,48 +14226,17 @@ async def artigos_page(request: Request,
         elif order == 'title_asc':
             query += " ORDER BY article_title ASC"
 
-        query += " LIMIT 100"
+        query += " LIMIT 50"  # Reduzido de 100 para 50
 
         cursor.execute(query, params)
         artigos = []
         for row in cursor.fetchall():
             artigo = dict(row)
-            # Convert ALL datetime fields to ISO strings for JSON serialization
-            for key, value in artigo.items():
-                if value is not None and hasattr(value, 'isoformat'):
-                    artigo[key] = value.isoformat()
+            # Convert datetime fields to ISO strings
+            for key in ['data_publicacao', 'data_publicado', 'criado_em']:
+                if artigo.get(key) and hasattr(artigo[key], 'isoformat'):
+                    artigo[key] = artigo[key].isoformat()
             artigos.append(artigo)
-
-        # Get stats
-        cursor.execute("""
-            SELECT
-                COUNT(*) as total,
-                COUNT(*) FILTER (WHERE ai_score_relevancia IS NOT NULL) as analyzed,
-                COUNT(*) FILTER (WHERE ai_score_relevancia IS NULL) as not_analyzed,
-                COUNT(*) FILTER (WHERE ai_score_relevancia >= 8) as high_score,
-                COUNT(*) FILTER (WHERE ai_evergreen = true) as evergreen
-            FROM editorial_posts
-            WHERE article_url IS NOT NULL
-        """)
-        stats = dict(cursor.fetchone())
-
-        # Get all categories for filter dropdown
-        cursor.execute("""
-            SELECT DISTINCT ai_categoria FROM editorial_posts
-            WHERE ai_categoria IS NOT NULL
-            ORDER BY ai_categoria
-        """)
-        categorias = [row['ai_categoria'] for row in cursor.fetchall()]
-
-        # Get top categories with counts
-        cursor.execute("""
-            SELECT ai_categoria, COUNT(*) as cnt FROM editorial_posts
-            WHERE ai_categoria IS NOT NULL AND article_url IS NOT NULL
-            GROUP BY ai_categoria
-            ORDER BY cnt DESC
-            LIMIT 8
-        """)
-        top_categorias = {row['ai_categoria']: row['cnt'] for row in cursor.fetchall()}
 
     return templates.TemplateResponse("artigos.html", {
         "request": request,
@@ -14402,7 +14346,7 @@ async def api_artigo_schedule(artigo_id: int, request: Request):
 async def editorial_page(request: Request):
     """Pagina do calendario editorial - Hub unificado"""
     from datetime import timedelta
-    from app.services.hot_takes import get_hot_takes
+    from services.hot_takes import get_hot_takes
 
     stats = get_editorial_stats()
     posts = get_editorial_posts(limit=50)
@@ -14671,10 +14615,35 @@ async def api_deletar_ordem(os_id: int):
     return resultado
 
 
+@app.put("/api/ordens/{os_id}")
+async def api_atualizar_ordem(os_id: int, request: Request):
+    """
+    Atualiza itens de uma ordem de servico pendente.
+    Parametros JSON:
+    - itens_ids: lista de IDs de itens a adicionar
+    - itens_extras: lista de strings de itens extras a adicionar
+    - remover_ids: lista de IDs de itens a remover
+    - remover_extras: lista de strings de itens extras a remover
+    """
+    from services.veiculos import atualizar_ordem_servico
+    data = await request.json()
+    resultado = atualizar_ordem_servico(
+        os_id=os_id,
+        itens_ids=data.get('itens_ids'),
+        itens_extras=data.get('itens_extras'),
+        remover_ids=data.get('remover_ids'),
+        remover_extras=data.get('remover_extras')
+    )
+    if resultado.get('error'):
+        raise HTTPException(status_code=400, detail=resultado['error'])
+    return resultado
+
+
 @app.get("/veiculos/{veiculo_id}/os/{os_id}", response_class=HTMLResponse)
 async def ordem_servico_page(request: Request, veiculo_id: int, os_id: int):
     """Pagina da ordem de servico para impressao/visualizacao"""
     from services.oficinas import listar_oficinas
+    from services.veiculos import get_dashboard_veiculo
 
     os = get_ordem_servico(os_id)
     if not os or os['veiculo_id'] != veiculo_id:
@@ -14682,12 +14651,14 @@ async def ordem_servico_page(request: Request, veiculo_id: int, os_id: int):
 
     veiculo = get_veiculo(veiculo_id)
     oficinas = listar_oficinas()
+    dashboard = get_dashboard_veiculo(veiculo_id)
 
     return templates.TemplateResponse("rap_ordem_servico.html", {
         "request": request,
         "veiculo": veiculo,
         "os": os,
-        "oficinas": oficinas
+        "oficinas": oficinas,
+        "dashboard": dashboard
     })
 
 

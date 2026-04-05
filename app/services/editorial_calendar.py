@@ -8,7 +8,7 @@ import httpx
 import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
-from app.database import get_db
+from database import get_db
 import json
 
 logger = logging.getLogger(__name__)
@@ -46,18 +46,19 @@ def get_editorial_posts(
     to_date: Optional[datetime] = None,
     limit: int = 100
 ) -> List[Dict]:
-    """Get editorial posts with filters"""
+    """Get editorial posts with filters - OTIMIZADO"""
     with get_db() as conn:
         cursor = conn.cursor()
 
+        # OTIMIZAÇÃO: Selecionar apenas colunas necessárias
         query = """
-            SELECT ep.*,
-                   p.nome as project_nome,
-                   t.titulo as task_titulo,
-                   t.status as task_status
+            SELECT ep.id, ep.article_title, ep.article_url, ep.article_description,
+                   ep.canal, ep.tipo, ep.status, ep.data_publicacao, ep.data_publicado,
+                   ep.ai_categoria, ep.ai_score_relevancia, ep.ai_gancho_linkedin,
+                   ep.hot_take_id, ep.linkedin_post_url,
+                   p.nome as project_nome
             FROM editorial_posts ep
             LEFT JOIN projects p ON ep.project_id = p.id
-            LEFT JOIN tasks t ON ep.task_id = t.id
             WHERE 1=1
         """
         params = []
@@ -517,10 +518,11 @@ def bulk_schedule_posts(
 
 
 def get_stats() -> Dict:
-    """Get editorial calendar statistics"""
+    """Get editorial calendar statistics - OTIMIZADO"""
     with get_db() as conn:
         cursor = conn.cursor()
 
+        # Query 1: Stats (usa índices status e canal)
         cursor.execute("""
             SELECT
                 COUNT(*) FILTER (WHERE status = 'draft') as drafts,
@@ -532,12 +534,13 @@ def get_stats() -> Dict:
                 COUNT(*) as total
             FROM editorial_posts
         """)
-
         stats = dict(cursor.fetchone())
 
-        # Get next scheduled posts
+        # Query 2: Upcoming (SELECT específico, usa índice scheduled)
         cursor.execute("""
-            SELECT * FROM editorial_posts
+            SELECT id, article_title, canal, tipo, status,
+                   data_publicacao, ai_categoria, hot_take_id
+            FROM editorial_posts
             WHERE status = 'scheduled' AND data_publicacao >= NOW()
             ORDER BY data_publicacao ASC
             LIMIT 5
@@ -820,7 +823,7 @@ def get_pending_tasks() -> Dict:
     Get pending editorial tasks for today and upcoming.
     Returns a structured view of what needs to be done.
     """
-    from app.services.hot_takes import get_hot_takes
+    from services.hot_takes import get_hot_takes
 
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     tomorrow = today + timedelta(days=1)

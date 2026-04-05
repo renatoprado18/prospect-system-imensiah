@@ -38,21 +38,21 @@ def _get_pool():
 
 def _create_connection():
     """Get connection from pool (or create new for serverless)"""
-    # Use pooling for local development
-    if os.getenv('BASE_URL', '').startswith('http://localhost'):
+    # Use pooling for local development (if not on Vercel)
+    if not os.getenv('VERCEL'):
         try:
             conn = _get_pool().getconn()
             conn.cursor_factory = RealDictCursor
             return conn
-        except:
-            pass
+        except Exception as e:
+            print(f"[DB] Pool failed, falling back to direct: {e}")
     # Fallback: direct connection (serverless/Vercel)
     return psycopg2.connect(_get_conn_string(), cursor_factory=RealDictCursor)
 
 
 def _return_to_pool(conn):
     """Return connection to pool if using pooling"""
-    if os.getenv('BASE_URL', '').startswith('http://localhost') and _connection_pool:
+    if not os.getenv('VERCEL') and _connection_pool:
         try:
             _connection_pool.putconn(conn)
             return
@@ -1508,6 +1508,34 @@ def init_db():
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_editorial_posts_project
             ON editorial_posts(project_id)
+        ''')
+
+        # Performance indexes for Artigos page
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_posts_article_url
+            ON editorial_posts(article_url) WHERE article_url IS NOT NULL
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_posts_ai_categoria
+            ON editorial_posts(ai_categoria) WHERE ai_categoria IS NOT NULL
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_posts_ai_score
+            ON editorial_posts(ai_score_relevancia DESC NULLS LAST)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_posts_ai_evergreen
+            ON editorial_posts(ai_evergreen) WHERE ai_evergreen = TRUE
+        ''')
+
+        # Composite index for Artigos filtering
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_posts_artigos
+            ON editorial_posts(article_url, ai_score_relevancia DESC NULLS LAST, criado_em DESC)
+            WHERE article_url IS NOT NULL
         ''')
 
         # ============== Google Drive Integration ==============

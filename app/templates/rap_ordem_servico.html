@@ -16,6 +16,68 @@
         --shadow-md: 0 4px 6px rgba(0,0,0,0.1);
     }
 
+    /* ========== MODAL STYLES WITH IDS - SOLID BACKGROUNDS ========== */
+    #editarModal,
+    #finalizarModal {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        background-color: rgba(0, 0, 0, 0.95) !important;
+        display: none !important;
+        align-items: center !important;
+        justify-content: center !important;
+        z-index: 999999 !important;
+    }
+
+    #editarModal.show,
+    #finalizarModal.show {
+        display: flex !important;
+    }
+
+    #editarModal > .modal-content,
+    #finalizarModal > .modal-content {
+        background-color: #ffffff !important;
+        border-radius: 16px !important;
+        border: 3px solid #64748b !important;
+        box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5) !important;
+    }
+
+    #editarModal .modal-header {
+        background-color: #6366f1 !important;
+        color: #ffffff !important;
+        padding: 1.5rem !important;
+        border-bottom: none !important;
+    }
+
+    #finalizarModal .modal-header {
+        background-color: #1e293b !important;
+        color: #ffffff !important;
+        padding: 1.5rem !important;
+        border-bottom: none !important;
+    }
+
+    #editarModal .modal-header h3,
+    #finalizarModal .modal-header h3 {
+        color: #ffffff !important;
+        margin: 0 !important;
+    }
+
+    #editarModal .modal-body,
+    #finalizarModal .modal-body {
+        background-color: #ffffff !important;
+        color: #1e293b !important;
+        padding: 1.5rem !important;
+    }
+
+    #editarModal .modal-footer,
+    #finalizarModal .modal-footer {
+        background-color: #f1f5f9 !important;
+        border-top: 1px solid #e2e8f0 !important;
+        padding: 1rem 1.5rem !important;
+    }
+
     .os-container {
         max-width: 900px;
         margin: 0 auto;
@@ -51,6 +113,69 @@
             margin-left: 0 !important;
             padding: 0 !important;
         }
+
+        /* Tabela com layout fixo para PDF */
+        .os-table {
+            table-layout: fixed !important;
+            width: 100% !important;
+        }
+
+        .os-table th:first-child,
+        .os-table td:first-child {
+            width: 25px !important;
+        }
+
+        .os-table th:nth-child(2),
+        .os-table td:nth-child(2) {
+            width: 55% !important;
+        }
+
+        .os-table th:nth-child(3),
+        .os-table td:nth-child(3) {
+            width: 12% !important;
+        }
+
+        .os-table th:nth-child(4),
+        .os-table td:nth-child(4) {
+            width: 12% !important;
+        }
+
+        .os-table th:nth-child(5),
+        .os-table td:nth-child(5) {
+            width: 16% !important;
+        }
+
+        .item-notas {
+            max-width: none !important;
+            width: 100% !important;
+        }
+    }
+
+    /* Botoes de servicos extras padrao */
+    .btn-extra-padrao {
+        background-color: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.8rem;
+        color: #475569;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+        transition: all 0.2s ease;
+    }
+
+    .btn-extra-padrao:hover {
+        background-color: #e0e7ff;
+        border-color: #6366f1;
+        color: #6366f1;
+    }
+
+    .btn-extra-padrao.adicionado {
+        background-color: #dcfce7;
+        border-color: #22c55e;
+        color: #22c55e;
     }
 
     .os-card {
@@ -253,10 +378,33 @@
         border-radius: 6px;
         margin-top: 0.5rem;
         border-left: 3px solid var(--primary);
+        max-width: 100%;
     }
 
     .item-notas strong {
         color: var(--primary);
+    }
+
+    @media print {
+        .item-notas {
+            max-width: none;
+            width: 100%;
+            font-size: 0.75rem;
+        }
+
+        .os-table td:first-child {
+            width: 30px;
+        }
+
+        .os-table td:nth-child(2) {
+            width: 60%;
+        }
+
+        .os-table td:nth-child(3),
+        .os-table td:nth-child(4),
+        .os-table td:nth-child(5) {
+            width: auto;
+        }
     }
 
     /* Checkbox for completed items */
@@ -327,48 +475,53 @@
         left: 0;
         right: 0;
         bottom: 0;
-        background: rgba(0,0,0,0.5);
-        display: flex;
+        background-color: rgba(0, 0, 0, 0.95) !important;
+        display: none;
         align-items: center;
         justify-content: center;
-        z-index: 9999;
-        display: none;
+        z-index: 99999;
     }
 
     .modal-backdrop.show {
-        display: flex;
+        display: flex !important;
     }
 
     .modal-content {
-        background: #ffffff;
+        background-color: #ffffff !important;
         border-radius: 16px;
         width: 90%;
         max-width: 500px;
         max-height: 90vh;
         overflow-y: auto;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        border: 2px solid #64748b;
     }
 
     .modal-header {
         padding: 1.5rem;
-        border-bottom: 1px solid var(--border-color);
+        border-bottom: 1px solid #e2e8f0;
+        background-color: #1e293b !important;
+        color: #ffffff !important;
     }
 
     .modal-header h3 {
         margin: 0;
-        color: var(--text-primary);
+        color: #ffffff !important;
     }
 
     .modal-body {
         padding: 1.5rem;
+        background-color: #ffffff !important;
+        color: #1e293b !important;
     }
 
     .modal-footer {
         padding: 1rem 1.5rem;
-        border-top: 1px solid var(--border-color);
+        border-top: 1px solid #e2e8f0;
         display: flex;
         gap: 0.75rem;
         justify-content: flex-end;
+        background-color: #f8fafc !important;
     }
 
     .form-group {
@@ -404,6 +557,9 @@
             <i class="bi bi-file-earmark-pdf"></i> Exportar PDF
         </button>
         {% if os.status == 'pendente' %}
+        <button class="btn btn-outline" style="color: #6366f1; border-color: #6366f1;" onclick="openEditarModal()">
+            <i class="bi bi-pencil"></i> Editar
+        </button>
         <button class="btn btn-success" onclick="openFinalizarModal()">
             <i class="bi bi-check-circle"></i> Finalizar OS
         </button>
@@ -576,40 +732,146 @@
     </div>
 </div>
 
-<!-- Modal Finalizar -->
-<div class="modal-backdrop" id="finalizarModal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3>Finalizar Ordem de Servico</h3>
+<!-- Modal Editar -->
+<div class="modal-backdrop" id="editarModal" style="background-color: rgba(0,0,0,0.95) !important;">
+    <div class="modal-content" style="max-width: 700px; background-color: #ffffff !important; border: 2px solid #6366f1;">
+        <div class="modal-header" style="background-color: #6366f1 !important; color: #ffffff !important;">
+            <h3 style="color: #ffffff !important;"><i class="bi bi-pencil"></i> Editar Ordem de Servico</h3>
         </div>
-        <div class="modal-body">
+        <div class="modal-body" style="max-height: 60vh; overflow-y: auto; background-color: #ffffff !important; color: #1e293b !important;">
+            <!-- Itens Atuais -->
+            <div style="margin-bottom: 1.5rem;">
+                <h4 style="font-size: 1rem; margin-bottom: 0.75rem; color: #1e293b;">
+                    <i class="bi bi-list-check"></i> Itens na OS
+                </h4>
+                <div id="itensAtuais" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    {% set itens = os.itens if os.itens is iterable and os.itens is not string else [] %}
+                    {% for item in itens %}
+                    <div class="item-editar" data-item-id="{{ item.item_id }}" data-extra="{{ item.item if item.status == 'extra' else '' }}">
+                        <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background-color: #f1f5f9; border-radius: 8px; border: 1px solid #e2e8f0;">
+                            <div>
+                                <span style="font-weight: 600; color: #1e293b;">{{ item.item }}</span>
+                                <span style="font-size: 0.75rem; color: #64748b; margin-left: 0.5rem;">{{ item.categoria }}</span>
+                            </div>
+                            <button type="button" class="btn-remover" onclick="removerItem(this)" style="background: none; border: none; color: #ef4444; cursor: pointer; padding: 0.25rem 0.5rem;">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div id="itensVazios" style="display: none; text-align: center; padding: 1rem; color: #64748b; font-style: italic;">
+                    Nenhum item na OS
+                </div>
+            </div>
+
+            <!-- Adicionar Itens -->
+            <div style="margin-bottom: 1.5rem;">
+                <h4 style="font-size: 1rem; margin-bottom: 0.75rem; color: #1e293b;">
+                    <i class="bi bi-plus-circle"></i> Adicionar Itens de Manutencao
+                </h4>
+                <div style="max-height: 200px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px; padding: 0.5rem; background-color: #ffffff;">
+                    {% if dashboard %}
+                    {% for categoria, itens_cat in dashboard.itens_por_categoria.items() %}
+                    <div style="margin-bottom: 0.5rem;">
+                        <div style="font-weight: 600; font-size: 0.8rem; color: #64748b; padding: 0.25rem 0.5rem; background-color: #f1f5f9;">{{ categoria }}</div>
+                        {% for item in itens_cat %}
+                        {% set item_na_os = item.item_id in (os.itens | map(attribute='item_id') | list if os.itens is iterable and os.itens is not string else []) %}
+                        <label style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; cursor: pointer; color: #1e293b; {% if item_na_os %}opacity: 0.5;{% endif %}">
+                            <input type="checkbox" name="adicionar_item" value="{{ item.item_id }}" {% if item_na_os %}disabled checked{% endif %}>
+                            <span>{{ item.item }}</span>
+                            <span class="item-status-badge {{ item.status }}" style="font-size: 0.65rem; padding: 0.125rem 0.375rem;">
+                                {% if item.status == 'vencido' %}Vencido{% elif item.status == 'atencao' %}Atencao{% else %}OK{% endif %}
+                            </span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% endfor %}
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Adicionar Extras -->
+            <div>
+                <h4 style="font-size: 1rem; margin-bottom: 0.75rem; color: #1e293b;">
+                    <i class="bi bi-plus-square"></i> Adicionar Servicos Extras
+                </h4>
+                <!-- Servicos Padrao -->
+                <div style="margin-bottom: 0.75rem;">
+                    <label style="font-size: 0.85rem; color: #64748b; margin-bottom: 0.5rem; display: block;">Servicos comuns:</label>
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem;">
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Alinhamento e Balanceamento')">
+                            <i class="bi bi-bullseye"></i> Alinhamento e Balanceamento
+                        </button>
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Higienizacao do Ar Condicionado')">
+                            <i class="bi bi-snow"></i> Higienizacao A/C
+                        </button>
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Limpeza de Bicos Injetores')">
+                            <i class="bi bi-droplet"></i> Limpeza Bicos
+                        </button>
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Troca de Palhetas do Limpador')">
+                            <i class="bi bi-water"></i> Palhetas
+                        </button>
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Revisao Eletrica')">
+                            <i class="bi bi-lightning"></i> Revisao Eletrica
+                        </button>
+                        <button type="button" class="btn-extra-padrao" onclick="adicionarExtraPadrao('Lavagem do Motor')">
+                            <i class="bi bi-droplet-half"></i> Lavagem Motor
+                        </button>
+                    </div>
+                </div>
+                <!-- Digitar Livre -->
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" id="novoExtra" placeholder="Ou digite um servico personalizado..." style="flex: 1; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #f8fafc; color: #1e293b;">
+                    <button type="button" class="btn btn-outline" onclick="adicionarExtra()" style="white-space: nowrap; background-color: #ffffff; color: #6366f1; border-color: #6366f1;">
+                        <i class="bi bi-plus"></i> Adicionar
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer" style="background-color: #f1f5f9 !important; border-top: 1px solid #e2e8f0;">
+            <button class="btn btn-outline" onclick="closeEditarModal()" style="background-color: #ffffff; color: #64748b; border-color: #cbd5e1;">Cancelar</button>
+            <button class="btn btn-primary" onclick="salvarEdicao()" style="background-color: #6366f1 !important; color: #ffffff !important; border: none;">
+                <i class="bi bi-check"></i> Salvar Alteracoes
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Finalizar -->
+<div class="modal-backdrop" id="finalizarModal" style="background-color: rgba(0,0,0,0.95) !important;">
+    <div class="modal-content" style="background-color: #ffffff !important; border: 2px solid #22c55e;">
+        <div class="modal-header" style="background-color: #1e293b !important;">
+            <h3 style="color: #ffffff !important;">Finalizar Ordem de Servico</h3>
+        </div>
+        <div class="modal-body" style="background-color: #ffffff !important; color: #1e293b;">
             <div class="form-group">
-                <label>Data de Execucao</label>
-                <input type="date" id="dataExecucao" value="{{ now().strftime('%Y-%m-%d') if now is defined else '' }}">
+                <label style="color: #1e293b;">Data de Execucao</label>
+                <input type="date" id="dataExecucao" value="{{ now().strftime('%Y-%m-%d') if now is defined else '' }}" style="background-color: #f8fafc; color: #1e293b; border: 1px solid #e2e8f0;">
             </div>
             <div class="form-group">
-                <label>KM na Execucao</label>
-                <input type="number" id="kmExecucao" value="{{ os.km_criacao }}" placeholder="Quilometragem atual">
+                <label style="color: #1e293b;">KM na Execucao</label>
+                <input type="number" id="kmExecucao" value="{{ os.km_criacao }}" placeholder="Quilometragem atual" style="background-color: #f8fafc; color: #1e293b; border: 1px solid #e2e8f0;">
             </div>
             <div class="form-group">
-                <label>Oficina</label>
-                <select id="oficina" style="width: 100%; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 8px; background: #f8fafc; color: #1e293b;">
+                <label style="color: #1e293b;">Oficina</label>
+                <select id="oficina" style="width: 100%; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #f8fafc; color: #1e293b;">
                     <option value="">Selecione ou digite...</option>
                     {% for oficina in oficinas %}
                     <option value="{{ oficina.nome }}">{{ oficina.nome }} - {{ oficina.contato_nome }}</option>
                     {% endfor %}
                     <option value="_outro">Outro (digitar)</option>
                 </select>
-                <input type="text" id="oficinaOutro" placeholder="Nome da oficina" style="display: none; margin-top: 0.5rem; width: 100%; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; color: #1e293b;">
+                <input type="text" id="oficinaOutro" placeholder="Nome da oficina" style="display: none; margin-top: 0.5rem; width: 100%; padding: 0.75rem; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #f8fafc; color: #1e293b;">
             </div>
             <div class="form-group">
-                <label>Valor Total (R$)</label>
-                <input type="number" id="valorFinal" step="0.01" placeholder="0.00">
+                <label style="color: #1e293b;">Valor Total (R$)</label>
+                <input type="number" id="valorFinal" step="0.01" placeholder="0.00" style="background-color: #f8fafc; color: #1e293b; border: 1px solid #e2e8f0;">
             </div>
         </div>
-        <div class="modal-footer">
-            <button class="btn btn-outline" onclick="closeFinalizarModal()">Cancelar</button>
-            <button class="btn btn-success" onclick="finalizarOS()">
+        <div class="modal-footer" style="background-color: #f1f5f9 !important; border-top: 1px solid #e2e8f0;">
+            <button class="btn btn-outline" onclick="closeFinalizarModal()" style="background-color: #ffffff; color: #64748b; border-color: #cbd5e1;">Cancelar</button>
+            <button class="btn btn-success" onclick="finalizarOS()" style="background-color: #22c55e !important; color: #ffffff !important; border: none;">
                 <i class="bi bi-check-circle"></i> Confirmar
             </button>
         </div>
@@ -728,6 +990,224 @@ function exportarPDF() {
         document.title = oldTitle;
     }, 1000);
 }
+
+// ==================== EDITAR OS ====================
+
+// Armazena itens a remover e adicionar
+let itensParaRemover = { ids: [], extras: [] };
+let itensParaAdicionar = { ids: [], extras: [] };
+
+function openEditarModal() {
+    // Reset state
+    itensParaRemover = { ids: [], extras: [] };
+    itensParaAdicionar = { ids: [], extras: [] };
+
+    // Reset checkboxes
+    document.querySelectorAll('input[name="adicionar_item"]').forEach(cb => {
+        if (!cb.disabled) cb.checked = false;
+    });
+
+    // Reset removidos
+    document.querySelectorAll('.item-editar').forEach(el => {
+        el.style.display = 'flex';
+        el.classList.remove('marcado-remover');
+    });
+
+    document.getElementById('editarModal').classList.add('show');
+    verificarItensVazios();
+}
+
+function closeEditarModal() {
+    document.getElementById('editarModal').classList.remove('show');
+}
+
+function removerItem(btn) {
+    const itemEl = btn.closest('.item-editar');
+    const itemId = itemEl.dataset.itemId;
+    const extra = itemEl.dataset.extra;
+
+    // Marca visualmente como removido
+    itemEl.style.opacity = '0.4';
+    itemEl.style.textDecoration = 'line-through';
+    itemEl.classList.add('marcado-remover');
+    btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
+    btn.onclick = function() { restaurarItem(this); };
+
+    // Adiciona a lista de remocao
+    if (extra) {
+        if (!itensParaRemover.extras.includes(extra)) {
+            itensParaRemover.extras.push(extra);
+        }
+    } else if (itemId && itemId !== 'None') {
+        const id = parseInt(itemId);
+        if (!itensParaRemover.ids.includes(id)) {
+            itensParaRemover.ids.push(id);
+        }
+        // Habilita checkbox correspondente
+        const cb = document.querySelector(`input[name="adicionar_item"][value="${id}"]`);
+        if (cb) {
+            cb.disabled = false;
+            cb.checked = false;
+            cb.closest('label').style.opacity = '1';
+        }
+    }
+
+    verificarItensVazios();
+}
+
+function restaurarItem(btn) {
+    const itemEl = btn.closest('.item-editar');
+    const itemId = itemEl.dataset.itemId;
+    const extra = itemEl.dataset.extra;
+
+    // Remove marcacao visual
+    itemEl.style.opacity = '1';
+    itemEl.style.textDecoration = 'none';
+    itemEl.classList.remove('marcado-remover');
+    btn.innerHTML = '<i class="bi bi-x-lg"></i>';
+    btn.onclick = function() { removerItem(this); };
+
+    // Remove da lista de remocao
+    if (extra) {
+        itensParaRemover.extras = itensParaRemover.extras.filter(e => e !== extra);
+    } else if (itemId && itemId !== 'None') {
+        const id = parseInt(itemId);
+        itensParaRemover.ids = itensParaRemover.ids.filter(i => i !== id);
+        // Desabilita checkbox correspondente novamente
+        const cb = document.querySelector(`input[name="adicionar_item"][value="${id}"]`);
+        if (cb) {
+            cb.disabled = true;
+            cb.checked = true;
+            cb.closest('label').style.opacity = '0.5';
+        }
+    }
+
+    verificarItensVazios();
+}
+
+function adicionarExtra() {
+    const input = document.getElementById('novoExtra');
+    const texto = input.value.trim();
+
+    if (!texto) {
+        showToast('Digite uma descricao para o item', 'warning');
+        return;
+    }
+
+    // Verifica se ja existe
+    const existente = document.querySelector(`.item-editar[data-extra="${texto}"]`);
+    if (existente && !existente.classList.contains('marcado-remover')) {
+        showToast('Este item ja existe na OS', 'warning');
+        return;
+    }
+
+    // Adiciona visualmente
+    const container = document.getElementById('itensAtuais');
+    const novoItem = document.createElement('div');
+    novoItem.className = 'item-editar item-novo';
+    novoItem.dataset.itemId = '';
+    novoItem.dataset.extra = texto;
+    novoItem.innerHTML = `
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 0.75rem; background: rgba(99, 102, 241, 0.1); border-radius: 8px; border: 1px solid #6366f1;">
+            <div>
+                <span style="font-weight: 600;">${texto}</span>
+                <span style="font-size: 0.75rem; color: #6366f1; margin-left: 0.5rem;">Extra (novo)</span>
+            </div>
+            <button type="button" class="btn-remover" onclick="removerNovoItem(this)" style="background: none; border: none; color: #ef4444; cursor: pointer; padding: 0.25rem 0.5rem;">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+    `;
+    container.appendChild(novoItem);
+
+    // Adiciona a lista
+    if (!itensParaAdicionar.extras.includes(texto)) {
+        itensParaAdicionar.extras.push(texto);
+    }
+
+    input.value = '';
+    verificarItensVazios();
+}
+
+function removerNovoItem(btn) {
+    const itemEl = btn.closest('.item-editar');
+    const extra = itemEl.dataset.extra;
+
+    if (extra) {
+        itensParaAdicionar.extras = itensParaAdicionar.extras.filter(e => e !== extra);
+    }
+
+    itemEl.remove();
+    verificarItensVazios();
+}
+
+function verificarItensVazios() {
+    const container = document.getElementById('itensAtuais');
+    const vazio = document.getElementById('itensVazios');
+    const itensVisiveis = container.querySelectorAll('.item-editar:not(.marcado-remover)');
+
+    if (itensVisiveis.length === 0) {
+        vazio.style.display = 'block';
+    } else {
+        vazio.style.display = 'none';
+    }
+}
+
+async function salvarEdicao() {
+    // Coleta itens marcados para adicionar
+    const checkboxes = document.querySelectorAll('input[name="adicionar_item"]:checked:not(:disabled)');
+    checkboxes.forEach(cb => {
+        const id = parseInt(cb.value);
+        if (!itensParaAdicionar.ids.includes(id)) {
+            itensParaAdicionar.ids.push(id);
+        }
+    });
+
+    // Verifica se ha alteracoes
+    const temAlteracoes =
+        itensParaRemover.ids.length > 0 ||
+        itensParaRemover.extras.length > 0 ||
+        itensParaAdicionar.ids.length > 0 ||
+        itensParaAdicionar.extras.length > 0;
+
+    if (!temAlteracoes) {
+        showToast('Nenhuma alteracao para salvar', 'warning');
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/ordens/${osId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                itens_ids: itensParaAdicionar.ids.length > 0 ? itensParaAdicionar.ids : null,
+                itens_extras: itensParaAdicionar.extras.length > 0 ? itensParaAdicionar.extras : null,
+                remover_ids: itensParaRemover.ids.length > 0 ? itensParaRemover.ids : null,
+                remover_extras: itensParaRemover.extras.length > 0 ? itensParaRemover.extras : null
+            })
+        });
+
+        if (resp.ok) {
+            showToast('OS atualizada com sucesso!', 'success');
+            setTimeout(() => location.reload(), 1000);
+        } else {
+            const err = await resp.json();
+            showToast(err.detail || 'Erro ao atualizar', 'error');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('Erro ao atualizar', 'error');
+    }
+}
+
+// Close editar modal on backdrop click
+document.getElementById('editarModal').addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-backdrop')) {
+        closeEditarModal();
+    }
+});
+
+// ==================== DELETAR OS ====================
 
 // Deletar OS
 async function deletarOS() {

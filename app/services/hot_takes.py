@@ -18,7 +18,7 @@ from typing import Optional
 import os
 import re
 
-from app.database import get_db
+from database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -643,7 +643,7 @@ def schedule_hot_take(hot_take_id: int, scheduled_for: str, create_editorial: bo
         dict com status e editorial_post_id se criado
     """
     from datetime import datetime
-    from app.services.editorial_calendar import create_editorial_post
+    from services.editorial_calendar import create_editorial_post
 
     ensure_table_exists()
 
