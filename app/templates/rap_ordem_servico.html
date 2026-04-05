@@ -83,43 +83,42 @@
         /* Coluna 1: Checkbox - minima */
         .os-table th:first-child,
         .os-table td:first-child {
-            width: 20px !important;
-            padding: 0.3rem !important;
+            width: 16px !important;
+            padding: 0.15rem !important;
         }
 
-        /* Coluna 2: Item + Notas - MAXIMA (75%) */
+        /* Coluna 2: Item + Notas - 75% */
         .os-table th:nth-child(2),
         .os-table td:nth-child(2) {
             width: 75% !important;
-            padding-right: 0.5rem !important;
+            padding-right: 0.2rem !important;
         }
 
-        /* Coluna 3: Acao - compacta */
+        /* Coluna 3: Acao - 7% */
         .os-table th:nth-child(3),
         .os-table td:nth-child(3) {
-            width: 8% !important;
-            font-size: 0.65rem !important;
-            padding: 0.3rem 0.2rem !important;
-            text-align: center !important;
+            width: 7% !important;
+            font-size: 0.55rem !important;
+            padding: 0.15rem !important;
+            text-align: left !important;
         }
 
-        /* Coluna 4: Status - compacta */
+        /* Coluna 4: Status - 8% */
         .os-table th:nth-child(4),
         .os-table td:nth-child(4) {
-            width: 7% !important;
-            font-size: 0.6rem !important;
-            padding: 0.3rem 0.2rem !important;
+            width: 8% !important;
+            font-size: 0.5rem !important;
+            padding: 0.15rem !important;
             text-align: center !important;
         }
 
-        /* Coluna 5: KM Restante - compacta */
+        /* Coluna 5: KM Restante - 10% */
         .os-table th:nth-child(5),
         .os-table td:nth-child(5) {
-            width: auto !important;
-            font-size: 0.6rem !important;
-            padding: 0.3rem 0.2rem !important;
+            width: 10% !important;
+            font-size: 0.5rem !important;
+            padding: 0.15rem !important;
             text-align: right !important;
-            white-space: nowrap !important;
         }
 
         /* Headers da tabela */
@@ -153,13 +152,13 @@
 
         /* Status badge mais compacto */
         .item-status-badge {
-            font-size: 0.55rem !important;
-            padding: 0.15rem 0.3rem !important;
-            white-space: nowrap !important;
+            font-size: 0.5rem !important;
+            padding: 0.1rem 0.2rem !important;
+            display: inline-block !important;
         }
 
         .item-status-badge i {
-            font-size: 0.5rem !important;
+            display: none !important;
         }
 
         /* Sections */
@@ -639,6 +638,14 @@
                     <span class="veiculo-info-value">{{ "{:,}".format(os.km_criacao).replace(",", ".") }} km</span>
                 </div>
             </div>
+            {% if os.oficina %}
+            <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+                <div class="veiculo-info-item">
+                    <span class="veiculo-info-label"><i class="bi bi-building"></i> Oficina</span>
+                    <span class="veiculo-info-value" style="color: #6366f1;">{{ os.oficina }}</span>
+                </div>
+            </div>
+            {% endif %}
         </div>
 
         <!-- Itens da OS -->
@@ -816,6 +823,19 @@
                 </div>
             </div>
 
+            <!-- Oficina -->
+            <div style="margin-bottom: 1.5rem; padding: 1rem; background: #eef2ff; border-radius: 8px; border: 1px solid #c7d2fe;">
+                <h4 style="font-size: 1rem; margin-bottom: 0.75rem; color: #4f46e5;">
+                    <i class="bi bi-building"></i> Oficina
+                </h4>
+                <select id="editarOficina" style="width: 100%; padding: 0.75rem; border: 1px solid #c7d2fe; border-radius: 8px; background: #ffffff; color: #1e293b;">
+                    <option value="">Selecione a oficina...</option>
+                    {% for oficina in oficinas %}
+                    <option value="{{ oficina.nome }}" {% if os.oficina == oficina.nome %}selected{% endif %}>{{ oficina.nome }}{% if oficina.contato_nome %} - {{ oficina.contato_nome }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
             <!-- Adicionar Extras -->
             <div>
                 <h4 style="font-size: 1rem; margin-bottom: 0.75rem; color: #1e293b;">
@@ -909,6 +929,7 @@
 <script>
 const osId = {{ os.id }};
 const veiculoId = {{ veiculo.id }};
+const osOficinaAtual = {{ os.oficina | tojson if os.oficina else 'null' }};
 
 function openFinalizarModal() {
     document.getElementById('finalizarModalWrapper').style.display = 'block';
@@ -1236,12 +1257,16 @@ async function salvarEdicao() {
         }
     });
 
+    // Coleta oficina selecionada
+    const oficina = document.getElementById('editarOficina')?.value || null;
+
     // Verifica se ha alteracoes
     const temAlteracoes =
         itensParaRemover.ids.length > 0 ||
         itensParaRemover.extras.length > 0 ||
         itensParaAdicionar.ids.length > 0 ||
-        itensParaAdicionar.extras.length > 0;
+        itensParaAdicionar.extras.length > 0 ||
+        oficina !== (osOficinaAtual || '');
 
     if (!temAlteracoes) {
         showToast('Nenhuma alteracao para salvar', 'warning');
@@ -1256,7 +1281,8 @@ async function salvarEdicao() {
                 itens_ids: itensParaAdicionar.ids.length > 0 ? itensParaAdicionar.ids : null,
                 itens_extras: itensParaAdicionar.extras.length > 0 ? itensParaAdicionar.extras : null,
                 remover_ids: itensParaRemover.ids.length > 0 ? itensParaRemover.ids : null,
-                remover_extras: itensParaRemover.extras.length > 0 ? itensParaRemover.extras : null
+                remover_extras: itensParaRemover.extras.length > 0 ? itensParaRemover.extras : null,
+                oficina: oficina
             })
         });
 

@@ -736,6 +736,17 @@
                 {% endif %}
             </div>
 
+            <!-- Oficina -->
+            <div class="os-categoria-group" style="border-top: 2px solid #6366f1; padding-top: 1rem; margin-top: 1rem; background: #eef2ff; padding: 1rem; border-radius: 8px;">
+                <h4 style="color: #4f46e5;"><i class="bi bi-building"></i> OFICINA (opcional)</h4>
+                <select id="oficinaOS" style="width: 100%; padding: 0.75rem; border: 1px solid #c7d2fe; border-radius: 8px; background: #ffffff; color: #1e293b; font-size: 0.9rem;">
+                    <option value="">Selecione a oficina...</option>
+                    {% for oficina in oficinas %}
+                    <option value="{{ oficina.nome }}">{{ oficina.nome }}{% if oficina.contato_nome %} - {{ oficina.contato_nome }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
             <!-- Itens Extras -->
             <div class="os-categoria-group" style="border-top: 2px solid #cbd5e1; padding-top: 1rem; margin-top: 1rem;">
                 <h4>ITENS EXTRAS (opcionais)</h4>
@@ -1215,6 +1226,9 @@ async function confirmarGerarOS() {
         }
     });
 
+    // Coletar oficina selecionada
+    const oficina = document.getElementById('oficinaOS')?.value || null;
+
     if (itensSelecionados.length === 0 && itensExtras.length === 0) {
         showToast('Selecione pelo menos um item ou adicione um item extra', 'warning');
         return;
@@ -1231,7 +1245,8 @@ async function confirmarGerarOS() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 itens_ids: itensSelecionados,
-                itens_extras: itensExtras
+                itens_extras: itensExtras,
+                oficina: oficina
             })
         });
 

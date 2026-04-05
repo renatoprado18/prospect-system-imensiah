@@ -695,11 +695,12 @@ def gerar_numero_os() -> str:
     return f"OS-{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
 
-def criar_ordem_servico(veiculo_id: int, km_atual: int, itens_ids: List[int] = None, itens_extras: List[str] = None, observacoes: str = None) -> Dict:
+def criar_ordem_servico(veiculo_id: int, km_atual: int, itens_ids: List[int] = None, itens_extras: List[str] = None, observacoes: str = None, oficina: str = None) -> Dict:
     """
     Cria uma ordem de servico com os itens que precisam de manutencao.
     Se itens_ids nao for passado, inclui automaticamente itens vencidos/atencao.
     itens_extras: lista de strings com descricoes de itens adicionais
+    oficina: nome da oficina onde sera realizado o servico
     """
     dashboard = get_dashboard_veiculo(veiculo_id)
     if not dashboard:
@@ -753,15 +754,16 @@ def criar_ordem_servico(veiculo_id: int, km_atual: int, itens_ids: List[int] = N
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO veiculo_ordens_servico (
-                veiculo_id, numero, km_criacao, itens, observacoes
-            ) VALUES (%s, %s, %s, %s, %s)
+                veiculo_id, numero, km_criacao, itens, observacoes, oficina
+            ) VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING *
         """, (
             veiculo_id,
             gerar_numero_os(),
             km_atual,
             json.dumps(itens_json),
-            observacoes
+            observacoes,
+            oficina
         ))
         os = dict(cursor.fetchone())
         conn.commit()
@@ -900,7 +902,7 @@ def deletar_ordem_servico(os_id: int) -> Dict:
     return {'success': True, 'message': f'Ordem {os["numero"]} excluida com sucesso'}
 
 
-def atualizar_ordem_servico(os_id: int, itens_ids: List[int] = None, itens_extras: List[str] = None, remover_ids: List[int] = None, remover_extras: List[str] = None) -> Dict:
+def atualizar_ordem_servico(os_id: int, itens_ids: List[int] = None, itens_extras: List[str] = None, remover_ids: List[int] = None, remover_extras: List[str] = None, oficina: str = None) -> Dict:
     """
     Atualiza os itens de uma ordem de servico pendente.
 
@@ -910,6 +912,7 @@ def atualizar_ordem_servico(os_id: int, itens_ids: List[int] = None, itens_extra
     - itens_extras: Lista de strings de itens extras a ADICIONAR
     - remover_ids: Lista de IDs de itens de manutencao a REMOVER
     - remover_extras: Lista de strings de itens extras a REMOVER
+    - oficina: Nome da oficina
     """
     os_data = get_ordem_servico(os_id)
     if not os_data:
@@ -991,11 +994,18 @@ def atualizar_ordem_servico(os_id: int, itens_ids: List[int] = None, itens_extra
     # Atualiza no banco
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE veiculo_ordens_servico
-            SET itens = %s, atualizado_em = NOW()
-            WHERE id = %s
-        """, (json.dumps(itens_atuais), os_id))
+        if oficina is not None:
+            cursor.execute("""
+                UPDATE veiculo_ordens_servico
+                SET itens = %s, oficina = %s, atualizado_em = NOW()
+                WHERE id = %s
+            """, (json.dumps(itens_atuais), oficina if oficina else None, os_id))
+        else:
+            cursor.execute("""
+                UPDATE veiculo_ordens_servico
+                SET itens = %s, atualizado_em = NOW()
+                WHERE id = %s
+            """, (json.dumps(itens_atuais), os_id))
         conn.commit()
 
     return get_ordem_servico(os_id)

@@ -14635,6 +14635,7 @@ async def api_atualizar_ordem(os_id: int, request: Request):
     - itens_extras: lista de strings de itens extras a adicionar
     - remover_ids: lista de IDs de itens a remover
     - remover_extras: lista de strings de itens extras a remover
+    - oficina: nome da oficina
     """
     from services.veiculos import atualizar_ordem_servico
     data = await request.json()
@@ -14643,7 +14644,8 @@ async def api_atualizar_ordem(os_id: int, request: Request):
         itens_ids=data.get('itens_ids'),
         itens_extras=data.get('itens_extras'),
         remover_ids=data.get('remover_ids'),
-        remover_extras=data.get('remover_extras')
+        remover_extras=data.get('remover_extras'),
+        oficina=data.get('oficina')
     )
     if resultado.get('error'):
         raise HTTPException(status_code=400, detail=resultado['error'])
