@@ -1770,6 +1770,33 @@
             </div>
         </div>
 
+        <!-- Modal LinkedIn Publicar -->
+        <div class="modal fade" id="linkedinPublishModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header" style="background: linear-gradient(135deg, #0077b5, #00a0dc); color: white;">
+                        <h5 class="modal-title"><i class="bi bi-linkedin me-2"></i>Marcar como Publicado</h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <input type="hidden" id="linkedin-post-id">
+                        <div class="mb-3">
+                            <label class="form-label">Link do Post no LinkedIn</label>
+                            <input type="text" class="form-control" id="linkedin-post-url"
+                                placeholder="https://linkedin.com/feed/update/urn:li:activity:...">
+                            <small class="text-muted">Cole o link do post publicado no LinkedIn</small>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                        <button type="button" class="btn btn-primary" style="background: #0077b5; border-color: #0077b5;" onclick="confirmLinkedInPublish()">
+                            <i class="bi bi-check-circle me-1"></i>Confirmar Publicação
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Stats - Compact clickable cards -->
         <div class="stats-grid">
             <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/contatos'">
@@ -2116,9 +2143,33 @@
             }
         }
 
-        async function markLinkedInDone(postId) {
+        function markLinkedInDone(postId) {
+            // Abrir modal para colar o link
+            document.getElementById('linkedin-post-id').value = postId;
+            document.getElementById('linkedin-post-url').value = '';
+            const modal = new bootstrap.Modal(document.getElementById('linkedinPublishModal'));
+            modal.show();
+            // Focus no campo de URL
+            setTimeout(() => document.getElementById('linkedin-post-url').focus(), 300);
+        }
+
+        async function confirmLinkedInPublish() {
+            const postId = document.getElementById('linkedin-post-id').value;
+            const linkedinUrl = document.getElementById('linkedin-post-url').value.trim();
+
             try {
-                await fetch(`/api/editorial/${postId}/publish`, { method: 'POST' });
+                // Atualizar post com URL e status
+                await fetch(`/api/editorial/${postId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        linkedin_post_url: linkedinUrl,
+                        status: 'published'
+                    })
+                });
+
+                // Fechar modal
+                bootstrap.Modal.getInstance(document.getElementById('linkedinPublishModal')).hide();
 
                 // Update UI
                 const item = document.querySelector(`.linkedin-task-item[data-id="${postId}"]`);
