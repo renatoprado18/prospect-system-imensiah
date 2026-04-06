@@ -35,3 +35,4 @@ Thumbs.db
 # Vercel
 .vercel
 .env*.local
+.last_sync
