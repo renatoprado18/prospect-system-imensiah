@@ -167,8 +167,15 @@ def get_timeline_manutencao(veiculo_id: int) -> Dict:
             categorias[cat] = []
         categorias[cat].append(item)
 
+    # Determina o primeiro km registrado globalmente (ponto de partida dos dados)
+    primeiro_km_global = None
+    if historico:
+        primeiro_km_global = min(h['km_execucao'] for h in historico)
+
     # Constroi matriz de status
     matriz = {}
+    itens_precisam_revisao = []  # Itens que precisam ser feitos agora
+
     for item in itens:
         item_id = item['id']
         intervalo_item = item.get('intervalo_km', 0)
@@ -177,7 +184,12 @@ def get_timeline_manutencao(veiculo_id: int) -> Dict:
         # KMs onde foi executado
         kms_executados = {h['km_execucao'] for h in hist_item}
 
+        # Primeiro km registrado para este item especifico
+        primeiro_km_item = min(kms_executados) if kms_executados else None
+
         linha = {}
+        ultimo_km_feito = None
+
         for km_col in intervalos:
             # Verifica se este item deveria ser feito neste km
             if intervalo_item and intervalo_item > 0:
@@ -199,6 +211,7 @@ def get_timeline_manutencao(veiculo_id: int) -> Dict:
                     if abs(km_exec - km_col) <= tolerancia:
                         feito = True
                         km_execucao = km_exec
+                        ultimo_km_feito = km_exec
                         # Busca data
                         for h in hist_item:
                             if h['km_execucao'] == km_exec:
@@ -216,6 +229,9 @@ def get_timeline_manutencao(veiculo_id: int) -> Dict:
                 elif km_col > km_atual:
                     # Futuro
                     linha[km_col] = {'status': 'future', 'class': 'future'}
+                elif primeiro_km_item and km_col < primeiro_km_item - tolerancia:
+                    # Antes do primeiro registro - sem dados historicos
+                    linha[km_col] = {'status': 'no_data', 'class': 'no-data'}
                 elif km_col <= km_atual - intervalo_item:
                     # Perdido (deveria ter feito e passou muito)
                     linha[km_col] = {'status': 'missed', 'class': 'missed'}
@@ -227,19 +243,52 @@ def get_timeline_manutencao(veiculo_id: int) -> Dict:
 
         matriz[item_id] = linha
 
-    # Calcula estatisticas
+        # Verifica se este item precisa de revisao agora
+        if intervalo_item and intervalo_item > 0:
+            if ultimo_km_feito:
+                km_desde_ultima = km_atual - ultimo_km_feito
+                if km_desde_ultima >= intervalo_item:
+                    itens_precisam_revisao.append({
+                        'item': item,
+                        'ultimo_km': ultimo_km_feito,
+                        'km_desde_ultima': km_desde_ultima,
+                        'atrasado_por': km_desde_ultima - intervalo_item
+                    })
+            elif primeiro_km_item is None:
+                # Nunca foi feito e deveria
+                itens_precisam_revisao.append({
+                    'item': item,
+                    'ultimo_km': None,
+                    'km_desde_ultima': None,
+                    'atrasado_por': None,
+                    'nunca_feito': True
+                })
+
+    # Calcula estatisticas (apenas a partir do primeiro registro)
     total_pontos = 0
     total_feitos = 0
     total_perdidos = 0
+    total_sem_dados = 0
 
     for item_id, linha in matriz.items():
         for km_col, cell in linha.items():
-            if cell['status'] in ['done', 'missed', 'pending'] and km_col <= km_atual:
-                total_pontos += 1
+            if km_col <= km_atual:
                 if cell['status'] == 'done':
+                    total_pontos += 1
                     total_feitos += 1
                 elif cell['status'] == 'missed':
+                    total_pontos += 1
                     total_perdidos += 1
+                elif cell['status'] == 'pending':
+                    total_pontos += 1
+                elif cell['status'] == 'no_data':
+                    total_sem_dados += 1
+
+    # Ordena itens que precisam revisao por urgencia
+    itens_precisam_revisao.sort(
+        key=lambda x: (x.get('nunca_feito', False), -(x.get('atrasado_por') or 0)),
+        reverse=True
+    )
 
     return {
         'veiculo': veiculo,
@@ -249,11 +298,14 @@ def get_timeline_manutencao(veiculo_id: int) -> Dict:
         'intervalo_base': intervalo_base,
         'matriz': matriz,
         'km_atual': km_atual,
+        'primeiro_km_registrado': primeiro_km_global,
         'historico': historico,
+        'precisam_revisao': itens_precisam_revisao,
         'stats': {
             'total_pontos': total_pontos,
             'total_feitos': total_feitos,
             'total_perdidos': total_perdidos,
+            'total_sem_dados': total_sem_dados,
             'percentual': round((total_feitos / total_pontos * 100) if total_pontos > 0 else 100, 1)
         }
     }

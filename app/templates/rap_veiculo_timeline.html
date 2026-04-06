@@ -130,6 +130,7 @@
     .legend-box.missed { background: #ef4444; }
     .legend-box.pending { background: #f59e0b; }
     .legend-box.future { background: #e2e8f0; border: 2px dashed #cbd5e1; }
+    .legend-box.no-data { background: #94a3b8; }
     .legend-box.na { background: #f8fafc; border: 1px solid #e2e8f0; }
 
     /* Tabela matriz */
@@ -261,6 +262,11 @@
         border: 1px dashed #cbd5e1;
     }
 
+    .cell-content.no-data {
+        background: #94a3b8;
+        color: white;
+    }
+
     .cell-content.na {
         background: transparent;
         color: #e2e8f0;
@@ -296,6 +302,105 @@
         display: flex;
         gap: 0.75rem;
         margin-bottom: 1.5rem;
+    }
+
+    /* Alerta de Revisao */
+    .revision-alert {
+        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+        border: 2px solid #f59e0b;
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .revision-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .revision-header i {
+        font-size: 1.5rem;
+        color: #d97706;
+    }
+
+    .revision-header strong {
+        font-size: 1.1rem;
+        color: #92400e;
+    }
+
+    .revision-km {
+        background: #f59e0b;
+        color: white;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-left: auto;
+    }
+
+    .revision-desc {
+        color: #78350f;
+        margin: 0 0 1rem 0;
+        font-size: 0.9rem;
+    }
+
+    .revision-items {
+        background: rgba(255,255,255,0.6);
+        border-radius: 8px;
+        padding: 1rem;
+    }
+
+    .revision-items strong {
+        color: #92400e;
+        font-size: 0.85rem;
+    }
+
+    .revision-items ul {
+        margin: 0.75rem 0 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 0.5rem;
+    }
+
+    .revision-items li {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.4rem 0.6rem;
+        background: white;
+        border-radius: 6px;
+        font-size: 0.8rem;
+    }
+
+    .revision-items li.more-items {
+        background: transparent;
+        color: #92400e;
+        font-style: italic;
+    }
+
+    .revision-items .item-name {
+        color: #1e293b;
+        font-weight: 500;
+    }
+
+    .revision-items .item-status {
+        font-size: 0.7rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+    }
+
+    .revision-items .item-status.nunca {
+        background: #dbeafe;
+        color: #1d4ed8;
+    }
+
+    .revision-items .item-status.atrasado {
+        background: #fee2e2;
+        color: #dc2626;
     }
 
     /* Responsive */
@@ -405,10 +510,49 @@
         <span>Futuro</span>
     </div>
     <div class="legend-item">
+        <div class="legend-box no-data"></div>
+        <span>Sem dados</span>
+    </div>
+    <div class="legend-item">
         <div class="legend-box na"></div>
         <span>Nao aplicavel</span>
     </div>
 </div>
+
+<!-- Alerta de Revisao Completa -->
+{% if timeline.precisam_revisao %}
+<div class="revision-alert">
+    <div class="revision-header">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <strong>Revisao Completa Recomendada</strong>
+        <span class="revision-km">{{ "{:,}".format(timeline.km_atual).replace(",", ".") }} km</span>
+    </div>
+    <p class="revision-desc">
+        Para sua seguranca, recomendamos uma revisao completa.
+        {% if timeline.primeiro_km_registrado %}
+        Os dados de manutencao comecam a partir de {{ "{:,}".format(timeline.primeiro_km_registrado).replace(",", ".") }} km.
+        {% endif %}
+    </p>
+    <div class="revision-items">
+        <strong>{{ timeline.precisam_revisao|length }} itens precisam de atencao:</strong>
+        <ul>
+            {% for r in timeline.precisam_revisao[:10] %}
+            <li>
+                <span class="item-name">{{ r.item.item }}</span>
+                {% if r.nunca_feito %}
+                <span class="item-status nunca">Nunca registrado</span>
+                {% elif r.atrasado_por %}
+                <span class="item-status atrasado">{{ "{:,}".format(r.atrasado_por).replace(",", ".") }} km atrasado</span>
+                {% endif %}
+            </li>
+            {% endfor %}
+            {% if timeline.precisam_revisao|length > 10 %}
+            <li class="more-items">... e mais {{ timeline.precisam_revisao|length - 10 }} itens</li>
+            {% endif %}
+        </ul>
+    </div>
+</div>
+{% endif %}
 
 <!-- Matriz -->
 <div class="timeline-container">
@@ -460,6 +604,8 @@
                             <i class="bi bi-exclamation"></i>
                             {% elif cell.status == 'future' %}
                             <i class="bi bi-clock"></i>
+                            {% elif cell.status == 'no_data' %}
+                            <i class="bi bi-question"></i>
                             {% else %}
                             -
                             {% endif %}
@@ -524,6 +670,8 @@ document.querySelectorAll('.cell-content').forEach(cell => {
             text = `Pendente - previsto para ${km} km`;
         } else if (status === 'future') {
             text = `Programado para ${km} km`;
+        } else if (status === 'no_data') {
+            text = `Sem dados historicos para ${km} km`;
         } else {
             return; // Nao mostra tooltip para N/A
         }
