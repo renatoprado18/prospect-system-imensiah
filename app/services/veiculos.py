@@ -39,6 +39,72 @@ def listar_veiculos(apenas_ativos: bool = True) -> List[Dict]:
         return [dict(row) for row in cursor.fetchall()]
 
 
+def get_alertas_manutencao() -> Dict:
+    """
+    Retorna alertas de manutencao de todos os veiculos ativos.
+    Usado para widget no dashboard principal.
+    """
+    veiculos = listar_veiculos(apenas_ativos=True)
+
+    alertas = {
+        'vencidos': [],
+        'atencao': [],
+        'total_vencidos': 0,
+        'total_atencao': 0,
+        'veiculos': []
+    }
+
+    for veiculo in veiculos:
+        dashboard = get_dashboard_veiculo(veiculo['id'])
+        if not dashboard:
+            continue
+
+        veiculo_info = {
+            'id': veiculo['id'],
+            'apelido': veiculo.get('apelido') or f"{veiculo['marca']} {veiculo['modelo']}",
+            'placa': veiculo['placa'],
+            'km_atual': veiculo.get('km_atual', 0),
+            'vencidos': len(dashboard.get('itens_vencidos', [])),
+            'atencao': len(dashboard.get('itens_atencao', []))
+        }
+
+        # Adiciona itens vencidos
+        for item in dashboard.get('itens_vencidos', []):
+            alertas['vencidos'].append({
+                'veiculo_id': veiculo['id'],
+                'veiculo': veiculo_info['apelido'],
+                'placa': veiculo['placa'],
+                'item': item['item'],
+                'categoria': item['categoria'],
+                'km_restante': item.get('km_restante'),
+                'status': 'vencido'
+            })
+
+        # Adiciona itens em atencao
+        for item in dashboard.get('itens_atencao', []):
+            alertas['atencao'].append({
+                'veiculo_id': veiculo['id'],
+                'veiculo': veiculo_info['apelido'],
+                'placa': veiculo['placa'],
+                'item': item['item'],
+                'categoria': item['categoria'],
+                'km_restante': item.get('km_restante'),
+                'status': 'atencao'
+            })
+
+        if veiculo_info['vencidos'] > 0 or veiculo_info['atencao'] > 0:
+            alertas['veiculos'].append(veiculo_info)
+
+    alertas['total_vencidos'] = len(alertas['vencidos'])
+    alertas['total_atencao'] = len(alertas['atencao'])
+
+    # Ordena por urgencia (vencidos primeiro, depois por km_restante)
+    alertas['vencidos'].sort(key=lambda x: x.get('km_restante') or 0)
+    alertas['atencao'].sort(key=lambda x: x.get('km_restante') or 0)
+
+    return alertas
+
+
 def criar_veiculo(dados: Dict) -> Dict:
     """Cria um novo veiculo"""
     with get_db() as conn:

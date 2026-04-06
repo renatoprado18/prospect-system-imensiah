@@ -102,7 +102,7 @@ from services.veiculos import (
     importar_plano_manutencao_prado, get_historico_manutencoes,
     registrar_manutencao, get_dashboard_veiculo, criar_ordem_servico,
     get_ordem_servico, listar_ordens_servico, finalizar_ordem_servico,
-    criar_prado_jrw5025, atualizar_notas_fabricante_prado
+    criar_prado_jrw5025, atualizar_notas_fabricante_prado, get_alertas_manutencao
 )
 from services.briefing_context import (
     get_contexto_enriquecido,
@@ -14465,6 +14465,12 @@ async def veiculo_detalhe_page(request: Request, veiculo_id: int):
 async def api_listar_veiculos():
     """Lista todos os veiculos"""
     return listar_veiculos()
+
+
+@app.get("/api/veiculos/alertas")
+async def api_alertas_manutencao():
+    """Retorna alertas de manutencao de todos os veiculos para o dashboard"""
+    return get_alertas_manutencao()
 
 
 @app.get("/api/veiculos/{veiculo_id}")

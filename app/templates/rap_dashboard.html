@@ -568,6 +568,137 @@
             .stats-grid { grid-template-columns: 1fr; }
         }
 
+        /* Maintenance Alerts Widget */
+        .maintenance-alerts-card {
+            border: 2px solid #ef4444;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .maintenance-alerts-card.no-alerts {
+            border-color: #22c55e;
+        }
+
+        .maintenance-alerts-card .card-header {
+            background: linear-gradient(135deg, #ef4444, #f97316);
+            color: white;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .maintenance-alerts-card.no-alerts .card-header {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+        }
+
+        .maintenance-alerts-card .card-header h2 {
+            color: white;
+            margin: 0;
+            font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .maintenance-alerts-card .alerts-count {
+            background: rgba(255,255,255,0.25);
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .maintenance-alert-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--gray-100);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .maintenance-alert-item:last-child {
+            border-bottom: none;
+        }
+
+        .maintenance-alert-item:hover {
+            background: rgba(239, 68, 68, 0.05);
+        }
+
+        .maintenance-alert-item .alert-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+
+        .maintenance-alert-item .alert-icon.vencido {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+        }
+
+        .maintenance-alert-item .alert-icon.atencao {
+            background: rgba(251, 191, 36, 0.15);
+            color: #f59e0b;
+        }
+
+        .maintenance-alert-item .alert-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .maintenance-alert-item .alert-title {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--dark);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .maintenance-alert-item .alert-meta {
+            font-size: 0.7rem;
+            color: var(--gray-500);
+            display: flex;
+            gap: 8px;
+        }
+
+        .maintenance-alert-item .alert-km {
+            font-size: 0.75rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .maintenance-alert-item .alert-km.vencido {
+            color: #ef4444;
+        }
+
+        .maintenance-alert-item .alert-km.atencao {
+            color: #f59e0b;
+        }
+
+        .maintenance-all-ok {
+            padding: 24px 16px;
+            text-align: center;
+            color: #22c55e;
+        }
+
+        .maintenance-all-ok i {
+            font-size: 2rem;
+            margin-bottom: 8px;
+        }
+
+        .maintenance-all-ok p {
+            margin: 0;
+            font-size: 0.9rem;
+        }
+
         /* Morning Briefing - Compact */
         .morning-briefing {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -1680,6 +1811,24 @@
                     </div>
                 </div>
 
+                <!-- 4. Alertas de Manutencao -->
+                <div class="card maintenance-alerts-card mb-4" id="maintenanceAlertsCard">
+                    <div class="card-header">
+                        <h2><i class="bi bi-car-front"></i> Manutencao Veicular</h2>
+                        <span class="alerts-count" id="maintenanceAlertsCount">...</span>
+                    </div>
+                    <div class="card-body p-0" id="maintenanceAlertsBody">
+                        <div class="text-center py-3">
+                            <div class="spinner-border spinner-border-sm text-danger"></div>
+                            <span class="ms-2 text-muted">Verificando alertas...</span>
+                        </div>
+                    </div>
+                    <div style="padding: 8px 16px; background: var(--gray-50); border-top: 1px solid var(--gray-100);">
+                        <a href="/veiculos" class="btn btn-sm btn-outline-secondary w-100">
+                            <i class="bi bi-gear me-1"></i> Gerenciar Veiculos
+                        </a>
+                    </div>
+                </div>
 
             </div>
         </div>
@@ -3619,6 +3768,72 @@
             }
         }
 
+        // ============== Maintenance Alerts Widget ==============
+        async function loadMaintenanceAlerts() {
+            const card = document.getElementById('maintenanceAlertsCard');
+            const container = document.getElementById('maintenanceAlertsBody');
+            const countBadge = document.getElementById('maintenanceAlertsCount');
+            if (!container) return;
+
+            try {
+                const response = await fetch('/api/veiculos/alertas');
+                if (!response.ok) {
+                    container.innerHTML = '<div class="text-center py-3 text-muted">Erro ao carregar alertas</div>';
+                    return;
+                }
+
+                const data = await response.json();
+                const totalAlertas = data.total_vencidos + data.total_atencao;
+
+                // Update count badge
+                countBadge.textContent = totalAlertas > 0 ? `${totalAlertas} alerta${totalAlertas > 1 ? 's' : ''}` : 'OK';
+
+                // Update card style
+                if (totalAlertas === 0) {
+                    card.classList.add('no-alerts');
+                    container.innerHTML = `
+                        <div class="maintenance-all-ok">
+                            <i class="bi bi-check-circle-fill"></i>
+                            <p>Todos os veiculos em dia!</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                // Combine and limit alerts
+                const allAlerts = [
+                    ...data.vencidos.slice(0, 3),
+                    ...data.atencao.slice(0, 2)
+                ].slice(0, 5);
+
+                container.innerHTML = allAlerts.map(alert => `
+                    <div class="maintenance-alert-item" onclick="window.location.href='/veiculos/${alert.veiculo_id}'">
+                        <div class="alert-icon ${alert.status}">
+                            <i class="bi bi-${alert.status === 'vencido' ? 'exclamation-triangle-fill' : 'clock-history'}"></i>
+                        </div>
+                        <div class="alert-info">
+                            <div class="alert-title">${alert.item}</div>
+                            <div class="alert-meta">
+                                <span>${alert.veiculo}</span>
+                                <span>${alert.placa}</span>
+                            </div>
+                        </div>
+                        <div class="alert-km ${alert.status}">
+                            ${alert.km_restante !== null ?
+                                (alert.km_restante < 0 ?
+                                    Math.abs(alert.km_restante).toLocaleString('pt-BR') + ' km atrasado' :
+                                    'em ' + alert.km_restante.toLocaleString('pt-BR') + ' km')
+                                : '-'}
+                        </div>
+                    </div>
+                `).join('');
+
+            } catch (e) {
+                console.error('Error loading maintenance alerts:', e);
+                container.innerHTML = '<div class="text-center py-3 text-muted">Erro ao carregar alertas</div>';
+            }
+        }
+
         // Load all dashboard data on page load
         // Pre-load all shared data in parallel, then render UI
         loadAllData().then(() => {
@@ -3633,6 +3848,7 @@
         setTimeout(() => {
             loadAISuggestions();
             loadProjectsWidget();
+            loadMaintenanceAlerts();
             loadTasks();
         }, 300);
     </script>
