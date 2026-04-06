@@ -1251,6 +1251,15 @@
             background: var(--success);
             color: white;
         }
+        .contact-today-actions .btn-contacted {
+            background: var(--gray-200);
+            color: var(--gray-600);
+            border: none;
+        }
+        .contact-today-actions .btn-contacted:hover {
+            background: #3b82f6;
+            color: white;
+        }
 
         .contact-today-empty {
             text-align: center;
@@ -3724,8 +3733,15 @@
                         </button>
                     ` : '';
 
+                    // Botao "Ja contatei" - sempre disponivel
+                    const contactedBtn = c.id ? `
+                        <button class="btn btn-contacted" onclick="event.preventDefault(); event.stopPropagation(); markAsContacted(${c.id}, ${roda ? roda.id : 'null'}, this)" title="Já contatei">
+                            <i class="bi bi-person-check"></i>
+                        </button>
+                    ` : '';
+
                     const doneBtn = roda ? `
-                        <button class="btn btn-done" onclick="event.preventDefault(); event.stopPropagation(); markRodaDone(${roda.id}, this)" title="Marcar como feito">
+                        <button class="btn btn-done" onclick="event.preventDefault(); event.stopPropagation(); markRodaDone(${roda.id}, this)" title="Marcar roda como feita">
                             <i class="bi bi-check-lg"></i>
                         </button>
                     ` : '';
@@ -3745,6 +3761,7 @@
                             </div>
                             <div class="contact-today-actions">
                                 ${whatsappBtn}
+                                ${contactedBtn}
                                 ${doneBtn}
                             </div>
                             <span class="contact-today-badge ${visualType}">
@@ -3804,6 +3821,38 @@
                 }
             } catch (e) {
                 console.error('Error marking roda done:', e);
+                btn.innerHTML = '<i class="bi bi-x-lg"></i>';
+                btn.disabled = false;
+            }
+        }
+
+        // Marcar contato como "ja contatei" (manual)
+        async function markAsContacted(contactId, rodaId, btn) {
+            try {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+
+                // Marcar contato como contactado hoje
+                const response = await fetch(`/api/v1/contacts/${contactId}/mark-contacted`, { method: 'POST' });
+
+                // Se tem roda, marcar como cumprida tambem
+                if (rodaId && response.ok) {
+                    await fetch(`/api/v1/rodas/${rodaId}/complete`, { method: 'POST' });
+                }
+
+                if (response.ok) {
+                    btn.innerHTML = '<i class="bi bi-check-circle-fill"></i>';
+                    btn.classList.add('btn-success');
+                    btn.classList.remove('btn-contacted');
+
+                    // Recarregar lista apos 1s
+                    setTimeout(() => loadContactToday(), 1000);
+                } else {
+                    btn.innerHTML = '<i class="bi bi-x-lg"></i>';
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                console.error('Error marking as contacted:', e);
                 btn.innerHTML = '<i class="bi bi-x-lg"></i>';
                 btn.disabled = false;
             }

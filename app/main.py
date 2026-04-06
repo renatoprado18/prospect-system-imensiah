@@ -6968,8 +6968,43 @@ def get_message_template(reason: str, contact_name: str, roda_content: str = Non
     return message
 
 
+def check_contacted_today(contact_ids: list) -> set:
+    """
+    Verifica quais contatos ja receberam mensagem hoje (automatico ou manual).
+    Retorna set de contact_ids que foram contactados.
+    """
+    if not contact_ids:
+        return set()
+
+    from database import get_db
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # Query otimizada: busca mensagens enviadas OU marcacao manual
+        cursor.execute("""
+            SELECT DISTINCT contact_id FROM (
+                -- Mensagens enviadas hoje
+                SELECT contact_id
+                FROM messages
+                WHERE contact_id = ANY(%s)
+                  AND direcao = 'outgoing'
+                  AND DATE(enviado_em) = CURRENT_DATE
+
+                UNION
+
+                -- Marcacoes manuais "Ja contatei"
+                SELECT contact_id
+                FROM contact_today_manual
+                WHERE contact_id = ANY(%s)
+                  AND data = CURRENT_DATE
+            ) AS contacted
+        """, (contact_ids, contact_ids))
+
+        return {row["contact_id"] for row in cursor.fetchall()}
+
+
 @app.get("/api/v1/contact-suggestions")
-async def get_contact_suggestions_v1(limit: int = 6):
+async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
     """
     Retorna contatos com sugestoes de acao baseadas em rodas de relacionamento.
 
@@ -6980,6 +7015,10 @@ async def get_contact_suggestions_v1(limit: int = 6):
     4. Health baixo (< 30%)
     5. Proximo passo vencido
     6. Topicos de interesse
+
+    Args:
+        limit: Numero maximo de sugestoes
+        hide_contacted: Se True, esconde contatos que ja receberam mensagem hoje
 
     Returns:
         Lista de contatos com roda mais relevante e sugestao de acao
@@ -7027,6 +7066,22 @@ async def get_contact_suggestions_v1(limit: int = 6):
     except Exception as e:
         print(f"[SUGGESTIONS] Error fetching low health contacts: {e}")
 
+    # 4. Verificar quais contatos ja foram contactados hoje
+    contacted_today = set()
+    if hide_contacted:
+        try:
+            # Coletar todos os IDs candidatos
+            all_candidate_ids = []
+            all_candidate_ids.extend([a["contact"]["id"] for a in aniversarios_hoje])
+            all_candidate_ids.extend([r["contact"]["id"] for r in rodas_dashboard])
+            all_candidate_ids.extend([c["id"] for c in contatos_health_baixo])
+
+            contacted_today = check_contacted_today(all_candidate_ids)
+            if contacted_today:
+                print(f"[SUGGESTIONS] {len(contacted_today)} contatos ja contactados hoje, pulando...")
+        except Exception as e:
+            print(f"[SUGGESTIONS] Error checking contacted today: {e}")
+
     # Montar lista unificada com prioridade
     contact_ids_used = set()
 
@@ -7035,6 +7090,8 @@ async def get_contact_suggestions_v1(limit: int = 6):
         if len(suggestions) >= limit:
             break
         contact_id = item["contact"]["id"]
+        if contact_id in contacted_today:
+            continue  # Ja contactou hoje, pular
         if contact_id not in contact_ids_used:
             suggestions.append(item)
             contact_ids_used.add(contact_id)
@@ -7045,6 +7102,8 @@ async def get_contact_suggestions_v1(limit: int = 6):
             break
 
         contact_id = item["contact"]["id"]
+        if contact_id in contacted_today:
+            continue  # Ja contactou hoje, pular
         if contact_id in contact_ids_used:
             continue
 
@@ -7085,6 +7144,8 @@ async def get_contact_suggestions_v1(limit: int = 6):
             break
 
         contact_id = contato["id"]
+        if contact_id in contacted_today:
+            continue  # Ja contactou hoje, pular
         if contact_id in contact_ids_used:
             continue
 
@@ -7113,6 +7174,7 @@ async def get_contact_suggestions_v1(limit: int = 6):
     return {
         "suggestions": suggestions[:limit],
         "total_rodas_pendentes": len(rodas_dashboard),
+        "contacted_today_count": len(contacted_today),
         "generated_at": datetime.now().isoformat()
     }
 
@@ -7139,6 +7201,53 @@ async def expire_roda(roda_id: int):
         raise HTTPException(status_code=404, detail="Roda não encontrada")
 
     return {"status": "ok", "message": "Roda marcada como expirada"}
+
+
+@app.post("/api/v1/contacts/{contact_id}/mark-contacted")
+async def mark_contact_as_contacted(contact_id: int):
+    """
+    Marca um contato como 'ja contatei hoje' manualmente.
+    Usado quando a mensagem nao foi sincronizada ou contato foi por outro meio.
+    """
+    from database import get_db
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Verificar se contato existe
+        cursor.execute("SELECT id, nome FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato não encontrado")
+
+        # Inserir ou ignorar se ja existe
+        cursor.execute("""
+            INSERT INTO contact_today_manual (contact_id, data)
+            VALUES (%s, CURRENT_DATE)
+            ON CONFLICT (contact_id, data) DO NOTHING
+        """, (contact_id,))
+        conn.commit()
+
+    return {
+        "status": "ok",
+        "message": f"Contato {contact['nome']} marcado como contatado hoje"
+    }
+
+
+@app.delete("/api/v1/contacts/{contact_id}/mark-contacted")
+async def unmark_contact_as_contacted(contact_id: int):
+    """Remove a marcacao manual de 'ja contatei hoje'."""
+    from database import get_db
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM contact_today_manual
+            WHERE contact_id = %s AND data = CURRENT_DATE
+        """, (contact_id,))
+        conn.commit()
+
+    return {"status": "ok", "message": "Marcacao removida"}
 
 
 @app.get("/api/v1/contacts/{contact_id}/rodas")

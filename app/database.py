@@ -1470,6 +1470,22 @@ def init_db():
             ON contact_rodas(tipo)
         ''')
 
+        # Manual contact tracking - "Já contatei" button
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS contact_today_manual (
+                id SERIAL PRIMARY KEY,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                data DATE NOT NULL DEFAULT CURRENT_DATE,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(contact_id, data)
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_contact_today_manual_date
+            ON contact_today_manual(data)
+        ''')
+
         # Editorial Calendar - posts para redes sociais
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS editorial_posts (
