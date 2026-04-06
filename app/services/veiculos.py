@@ -139,6 +139,17 @@ def get_timeline_manutencao(veiculo_id: int) -> Dict:
         """, (veiculo_id,))
         historico = [dict(row) for row in cursor.fetchall()]
 
+        # Busca OS em aberto (pendente ou em_andamento)
+        cursor.execute("""
+            SELECT id, numero, status, km_criacao, oficina, data_criacao, itens
+            FROM veiculo_ordens_servico
+            WHERE veiculo_id = %s AND status IN ('pendente', 'em_andamento')
+            ORDER BY data_criacao DESC
+            LIMIT 1
+        """, (veiculo_id,))
+        os_row = cursor.fetchone()
+        os_aberta = dict(os_row) if os_row else None
+
     if not itens:
         return {'veiculo': veiculo, 'itens': [], 'intervalos': [], 'matriz': {}}
 
@@ -290,6 +301,91 @@ def get_timeline_manutencao(veiculo_id: int) -> Dict:
         reverse=True
     )
 
+    # Processa OS aberta
+    os_info = None
+    itens_na_os = set()
+    if os_aberta:
+        os_itens_raw = os_aberta.get('itens')
+        if os_itens_raw:
+            os_itens_list = json.loads(os_itens_raw) if isinstance(os_itens_raw, str) else os_itens_raw
+            itens_na_os = {item.get('item_id') for item in os_itens_list if item.get('item_id')}
+
+            # Classifica itens da OS
+            itens_os_pendentes = []  # Itens que estao atrasados/pendentes
+            itens_os_preventivos = []  # Itens futuros (preventivos)
+            itens_os_extras = []  # Itens que nao estao no plano
+
+            for os_item in os_itens_list:
+                item_id = os_item.get('item_id')
+                item_nome = os_item.get('item') or os_item.get('descricao', 'Item')
+
+                if item_id and item_id in matriz:
+                    linha = matriz[item_id]
+
+                    # Verifica se ha algum ponto pendente ou atrasado ate o km atual
+                    has_pending = False
+                    has_missed = False
+                    for km_check in intervalos:
+                        if km_check > km_atual:
+                            break
+                        cell_status = linha.get(km_check, {}).get('status', 'na')
+                        if cell_status == 'pending':
+                            has_pending = True
+                        elif cell_status == 'missed':
+                            has_missed = True
+
+                    if has_missed:
+                        itens_os_pendentes.append({
+                            'item_id': item_id,
+                            'item': item_nome,
+                            'status': 'missed',
+                            'motivo': 'Atrasado'
+                        })
+                    elif has_pending:
+                        itens_os_pendentes.append({
+                            'item_id': item_id,
+                            'item': item_nome,
+                            'status': 'pending',
+                            'motivo': 'Pendente'
+                        })
+                    else:
+                        # Verifica se e preventivo (proximo ponto e futuro)
+                        proximo_ponto = next((km for km in intervalos if km > km_atual and linha.get(km, {}).get('status') == 'future'), None)
+                        if proximo_ponto:
+                            itens_os_preventivos.append({
+                                'item_id': item_id,
+                                'item': item_nome,
+                                'status': 'future',
+                                'motivo': 'Preventivo'
+                            })
+                        else:
+                            itens_os_extras.append({
+                                'item_id': item_id,
+                                'item': item_nome,
+                                'status': 'ok',
+                                'motivo': 'Em dia'
+                            })
+                else:
+                    itens_os_extras.append({
+                        'item_id': item_id,
+                        'item': item_nome,
+                        'status': 'extra',
+                        'motivo': 'Fora do plano'
+                    })
+
+            os_info = {
+                'id': os_aberta.get('id'),
+                'numero': os_aberta.get('numero'),
+                'status': os_aberta.get('status'),
+                'km_criacao': os_aberta.get('km_criacao'),
+                'oficina': os_aberta.get('oficina'),
+                'data_criacao': os_aberta.get('data_criacao'),
+                'total_itens': len(os_itens_list),
+                'itens_pendentes': itens_os_pendentes,
+                'itens_preventivos': itens_os_preventivos,
+                'itens_extras': itens_os_extras
+            }
+
     return {
         'veiculo': veiculo,
         'itens': itens,
@@ -301,6 +397,8 @@ def get_timeline_manutencao(veiculo_id: int) -> Dict:
         'primeiro_km_registrado': primeiro_km_global,
         'historico': historico,
         'precisam_revisao': itens_precisam_revisao,
+        'os_aberta': os_info,
+        'itens_na_os': itens_na_os,
         'stats': {
             'total_pontos': total_pontos,
             'total_feitos': total_feitos,

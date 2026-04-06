@@ -304,6 +304,135 @@
         margin-bottom: 1.5rem;
     }
 
+    /* Card da OS Aberta */
+    .os-card {
+        background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+        border: 2px solid #3b82f6;
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .os-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .os-header i {
+        font-size: 1.5rem;
+        color: #1d4ed8;
+    }
+
+    .os-header strong {
+        font-size: 1.1rem;
+        color: #1e40af;
+    }
+
+    .os-numero {
+        background: #3b82f6;
+        color: white;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    .os-status {
+        margin-left: auto;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .os-status.pendente {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .os-status.em_andamento {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .os-info {
+        color: #1e40af;
+        margin: 0 0 1rem 0;
+        font-size: 0.9rem;
+    }
+
+    .os-items-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1rem;
+    }
+
+    .os-items-section {
+        background: rgba(255,255,255,0.7);
+        border-radius: 8px;
+        padding: 0.75rem 1rem;
+    }
+
+    .os-items-section h4 {
+        margin: 0 0 0.5rem 0;
+        font-size: 0.85rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .os-items-section h4 .count {
+        background: #475569;
+        color: white;
+        padding: 0.1rem 0.5rem;
+        border-radius: 10px;
+        font-size: 0.75rem;
+    }
+
+    .os-items-section.pendentes h4 { color: #dc2626; }
+    .os-items-section.pendentes h4 .count { background: #dc2626; }
+    .os-items-section.preventivos h4 { color: #059669; }
+    .os-items-section.preventivos h4 .count { background: #059669; }
+    .os-items-section.extras h4 { color: #6366f1; }
+    .os-items-section.extras h4 .count { background: #6366f1; }
+
+    .os-items-section ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+    }
+
+    .os-items-section li {
+        font-size: 0.8rem;
+        padding: 0.25rem 0;
+        color: #334155;
+        border-bottom: 1px solid rgba(0,0,0,0.05);
+    }
+
+    .os-items-section li:last-child {
+        border-bottom: none;
+    }
+
+    /* Destaque de item na OS */
+    .matrix-table tbody tr.in-os td.item-name {
+        background: #dbeafe;
+        border-left: 3px solid #3b82f6;
+    }
+
+    .matrix-table tbody tr.in-os td.item-name::after {
+        content: 'OS';
+        background: #3b82f6;
+        color: white;
+        font-size: 0.6rem;
+        padding: 0.1rem 0.3rem;
+        border-radius: 3px;
+        margin-left: 0.5rem;
+        vertical-align: middle;
+    }
+
     /* Alerta de Revisao */
     .revision-alert {
         background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
@@ -483,6 +612,65 @@
     </div>
 </div>
 
+<!-- OS Aberta -->
+{% if timeline.os_aberta %}
+<div class="os-card">
+    <div class="os-header">
+        <i class="bi bi-file-earmark-text-fill"></i>
+        <strong>Ordem de Servico em Aberto</strong>
+        <span class="os-numero">{{ timeline.os_aberta.numero }}</span>
+        <span class="os-status {{ timeline.os_aberta.status }}">{{ timeline.os_aberta.status }}</span>
+    </div>
+    <p class="os-info">
+        <i class="bi bi-building"></i> {{ timeline.os_aberta.oficina or 'Oficina nao definida' }} |
+        <i class="bi bi-speedometer2"></i> {{ "{:,}".format(timeline.os_aberta.km_criacao).replace(",", ".") }} km |
+        <i class="bi bi-calendar"></i> {{ timeline.os_aberta.data_criacao.strftime('%d/%m/%Y') if timeline.os_aberta.data_criacao else '-' }} |
+        <strong>{{ timeline.os_aberta.total_itens }} itens</strong>
+    </p>
+    <div class="os-items-grid">
+        <div class="os-items-section pendentes">
+            <h4>
+                <i class="bi bi-exclamation-circle"></i> Atrasados/Pendentes
+                <span class="count">{{ timeline.os_aberta.itens_pendentes|length }}</span>
+            </h4>
+            <ul>
+                {% for item in timeline.os_aberta.itens_pendentes %}
+                <li>{{ item.item }}</li>
+                {% else %}
+                <li style="color: #94a3b8; font-style: italic;">Nenhum</li>
+                {% endfor %}
+            </ul>
+        </div>
+        <div class="os-items-section preventivos">
+            <h4>
+                <i class="bi bi-shield-check"></i> Preventivos
+                <span class="count">{{ timeline.os_aberta.itens_preventivos|length }}</span>
+            </h4>
+            <ul>
+                {% for item in timeline.os_aberta.itens_preventivos %}
+                <li>{{ item.item }}</li>
+                {% else %}
+                <li style="color: #94a3b8; font-style: italic;">Nenhum</li>
+                {% endfor %}
+            </ul>
+        </div>
+        <div class="os-items-section extras">
+            <h4>
+                <i class="bi bi-plus-circle"></i> Extras/Fora do Plano
+                <span class="count">{{ timeline.os_aberta.itens_extras|length }}</span>
+            </h4>
+            <ul>
+                {% for item in timeline.os_aberta.itens_extras %}
+                <li>{{ item.item }}</li>
+                {% else %}
+                <li style="color: #94a3b8; font-style: italic;">Nenhum</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <!-- Filtros e Legenda -->
 <div class="filters-bar no-print">
     <span style="color: #64748b; font-size: 0.85rem;">Filtrar:</span>
@@ -578,7 +766,7 @@
                 </tr>
                 <!-- Itens da categoria -->
                 {% for item in itens %}
-                <tr data-categoria="{{ categoria }}" data-item-id="{{ item.id }}">
+                <tr data-categoria="{{ categoria }}" data-item-id="{{ item.id }}" class="{% if item.id in timeline.itens_na_os %}in-os{% endif %}">
                     <td class="item-name" title="{{ item.item }}">
                         {{ item.item }}
                         {% if item.intervalo_km %}
