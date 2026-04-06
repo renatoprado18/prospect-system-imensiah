@@ -1431,6 +1431,45 @@ def init_db():
             ON timeline_summaries(contact_id, cache_hash)
         ''')
 
+        # Rodas de Relacionamento - contexto extraido de mensagens
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS contact_rodas (
+                id SERIAL PRIMARY KEY,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+
+                -- Tipo: promessa, favor_recebido, topico, proximo_passo
+                tipo TEXT NOT NULL,
+                conteudo TEXT NOT NULL,
+                tags TEXT[] DEFAULT '{}',
+
+                -- Status: pendente, cumprido, expirado
+                status TEXT DEFAULT 'pendente',
+                prazo DATE,
+
+                -- IA metadata
+                ai_confidence FLOAT DEFAULT 0.5,
+
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_rodas_contact
+            ON contact_rodas(contact_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_rodas_status
+            ON contact_rodas(status) WHERE status = 'pendente'
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_rodas_tipo
+            ON contact_rodas(tipo)
+        ''')
+
         # Editorial Calendar - posts para redes sociais
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS editorial_posts (

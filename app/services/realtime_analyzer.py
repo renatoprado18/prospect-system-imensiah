@@ -22,6 +22,7 @@ import httpx
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from database import get_db
+from services.rodas_service import get_rodas_service
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
@@ -196,19 +197,17 @@ class RealtimeAnalyzer:
         """
         result = {
             'intents': [],
+            'rodas': [],
             'requires_action': False,
             'urgency': 'low',
             'suggested_actions': [],
             'context': {},
             'message_id': message_id,
-            'contact_id': contact_id
+            'contact_id': contact_id,
+            'direction': message_direction
         }
 
-        # Ignorar mensagens de saida (enviadas por Renato)
-        if message_direction == 'outgoing':
-            return result
-
-        # Mensagens muito curtas geralmente nao precisam de acao
+        # Mensagens muito curtas geralmente nao precisam de analise
         if len(message_text.strip()) < 10:
             return result
 
@@ -223,13 +222,43 @@ class RealtimeAnalyzer:
             'recent_messages': recent_messages
         }
 
-        # Detectar intencao com AI
-        intents = await self.detect_intent_with_ai(
+        # Detectar intencao e rodas com AI
+        ai_result = await self.detect_intent_with_ai(
             message_text,
             contact,
             calendar_events,
             recent_messages
         )
+
+        # Compatibilidade: se retornou lista (formato antigo), converter
+        if isinstance(ai_result, list):
+            ai_result = {'intents': ai_result, 'rodas': [], 'summary': ''}
+
+        intents = ai_result.get('intents', [])
+        rodas = ai_result.get('rodas', [])
+
+        # Filtrar rodas por direcao da mensagem
+        # - promessa: so de mensagens OUTGOING (Renato prometeu)
+        # - favor_recebido: so de mensagens INCOMING (contato ajudou)
+        # - topico, proximo_passo: qualquer direcao
+        filtered_rodas = []
+        for roda in rodas:
+            tipo = roda.get('tipo', '')
+            if tipo == 'promessa' and message_direction != 'outgoing':
+                continue  # Promessa so vale se Renato enviou
+            if tipo == 'favor_recebido' and message_direction != 'incoming':
+                continue  # Favor so vale se recebido
+            filtered_rodas.append(roda)
+
+        result['rodas'] = filtered_rodas
+
+        # Persistir rodas no banco
+        if filtered_rodas and contact_id:
+            self._persist_rodas(contact_id, message_id, filtered_rodas)
+
+        # Para mensagens de saida, nao processar intencoes (nao gera action proposals)
+        if message_direction == 'outgoing':
+            return result
 
         if not intents:
             return result
@@ -314,6 +343,7 @@ EVENTOS NO CALENDARIO COM ESTE CONTATO:
 HISTORICO RECENTE DA CONVERSA:
 {history_text if history_text else "Nenhuma mensagem anterior"}
 
+## PARTE 1: INTENCOES
 Identifique se a mensagem contem alguma destas intencoes:
 - reschedule_meeting: Pedido para remarcar reuniao/encontro
 - cancel_meeting: Cancelamento de reuniao/encontro
@@ -330,6 +360,18 @@ Identifique se a mensagem contem alguma destas intencoes:
 - important_info: Informacao importante que Renato precisa saber
 - none: Mensagem trivial, agradecimento, etc.
 
+## PARTE 2: RODAS DE RELACIONAMENTO
+Identifique tambem "rodas" - fios de contexto do relacionamento:
+- promessa: Renato PROMETE algo ("vou te enviar", "te mando amanha", "te apresento ao Joao")
+- favor_recebido: O contato FEZ UM FAVOR para Renato ("obrigado pela indicacao", "valeu por apresentar", "agradeco a ajuda")
+- topico: Assunto DISCUTIDO que pode ser retomado ("sobre o projeto X", "aquela ideia de Y", "o que conversamos sobre Z")
+- proximo_passo: Compromisso futuro combinado ("semana que vem", "depois do feriado conversamos", "quando voce voltar")
+
+IMPORTANTE sobre rodas:
+- So extraia 'promessa' se Renato esta prometendo algo (nas mensagens enviadas por ele)
+- So extraia 'favor_recebido' se o contato ajudou Renato (nas mensagens recebidas)
+- Extraia 'topico' e 'proximo_passo' de qualquer mensagem
+
 Responda APENAS com JSON valido no formato:
 {{
     "intents": [
@@ -345,10 +387,19 @@ Responda APENAS com JSON valido no formato:
             }}
         }}
     ],
+    "rodas": [
+        {{
+            "tipo": "promessa" ou "favor_recebido" ou "topico" ou "proximo_passo",
+            "conteudo": "descricao curta do que foi prometido/discutido/combinado",
+            "prazo": "data ou prazo mencionado, se houver (null se nao houver)",
+            "tags": ["palavras-chave", "relevantes"],
+            "confidence": 0.0 a 1.0
+        }}
+    ],
     "summary": "resumo de uma linha do que a mensagem comunica"
 }}
 
-Se nao detectar nenhuma intencao relevante, retorne intents como array vazio."""
+Se nao detectar intencoes ou rodas, retorne arrays vazios."""
 
         response = await self.call_claude(prompt, max_tokens=500)
 
@@ -365,10 +416,15 @@ Se nao detectar nenhuma intencao relevante, retorne intents como array vazio."""
             response = response.strip()
 
             data = json.loads(response)
-            return data.get('intents', [])
+            # Retorna dict com intents e rodas
+            return {
+                'intents': data.get('intents', []),
+                'rodas': data.get('rodas', []),
+                'summary': data.get('summary', '')
+            }
         except json.JSONDecodeError as e:
             print(f"Failed to parse Claude response: {e}")
-            return self._detect_intent_keywords(message_text)
+            return {'intents': self._detect_intent_keywords(message_text), 'rodas': [], 'summary': ''}
 
     def _detect_intent_keywords(self, message_text: str) -> List[Dict]:
         """Deteccao basica de intencao por palavras-chave (fallback)"""
@@ -484,6 +540,48 @@ Se nao detectar nenhuma intencao relevante, retorne intents como array vazio."""
             })
 
         return intents
+
+    def _persist_rodas(self, contact_id: int, message_id: int, rodas: List[Dict]) -> None:
+        """
+        Persiste rodas extraidas no banco de dados.
+
+        Args:
+            contact_id: ID do contato
+            message_id: ID da mensagem de origem
+            rodas: Lista de rodas extraidas pela IA
+        """
+        try:
+            service = get_rodas_service()
+            for roda in rodas:
+                tipo = roda.get('tipo', '')
+                conteudo = roda.get('conteudo', '')
+                confidence = roda.get('confidence', 0.5)
+                prazo = roda.get('prazo')
+                tags = roda.get('tags', [])
+
+                # Validar tipo
+                if tipo not in ['promessa', 'favor_recebido', 'topico', 'proximo_passo']:
+                    continue
+
+                # Conteudo minimo
+                if not conteudo or len(conteudo) < 5:
+                    continue
+
+                # Confianca minima
+                if confidence < 0.6:
+                    continue
+
+                service.create_roda(
+                    contact_id=contact_id,
+                    tipo=tipo,
+                    conteudo=conteudo,
+                    message_id=message_id,
+                    tags=tags,
+                    prazo=prazo,
+                    confidence=confidence
+                )
+        except Exception as e:
+            print(f"Error persisting rodas: {e}")
 
     def generate_action_proposals(
         self,
