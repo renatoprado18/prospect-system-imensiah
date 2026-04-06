@@ -1168,6 +1168,90 @@
             background: linear-gradient(135deg, #f97316, #ea580c);
         }
 
+        /* Roda types - Avatar colors */
+        .contact-today-avatar.promessa {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+        }
+        .contact-today-avatar.favor_recebido {
+            background: linear-gradient(135deg, #a855f7, #9333ea);
+            color: white;
+        }
+        .contact-today-avatar.proximo_passo {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+        }
+        .contact-today-avatar.topico {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+        }
+        .contact-today-avatar.low_health {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+        }
+
+        /* Roda types - Badge colors */
+        .contact-today-badge.promessa {
+            background: rgba(239, 68, 68, 0.15);
+            color: #dc2626;
+        }
+        .contact-today-badge.favor_recebido {
+            background: rgba(168, 85, 247, 0.15);
+            color: #9333ea;
+        }
+        .contact-today-badge.proximo_passo {
+            background: rgba(59, 130, 246, 0.15);
+            color: #2563eb;
+        }
+        .contact-today-badge.topico {
+            background: rgba(16, 185, 129, 0.15);
+            color: #059669;
+        }
+        .contact-today-badge.low_health {
+            background: rgba(245, 158, 11, 0.15);
+            color: #d97706;
+        }
+
+        /* Roda content display */
+        .contact-today-roda {
+            font-size: 0.7rem;
+            color: var(--gray-600);
+            margin-top: 2px;
+            padding: 4px 8px;
+            background: var(--gray-50);
+            border-radius: 4px;
+            border-left: 3px solid var(--primary);
+        }
+
+        /* Action buttons */
+        .contact-today-actions {
+            display: flex;
+            gap: 4px;
+            margin-left: auto;
+        }
+        .contact-today-actions .btn {
+            padding: 2px 6px;
+            font-size: 0.65rem;
+            border-radius: 4px;
+        }
+        .contact-today-actions .btn-whatsapp {
+            background: #25D366;
+            color: white;
+            border: none;
+        }
+        .contact-today-actions .btn-whatsapp:hover {
+            background: #128C7E;
+        }
+        .contact-today-actions .btn-done {
+            background: var(--gray-200);
+            color: var(--gray-600);
+            border: none;
+        }
+        .contact-today-actions .btn-done:hover {
+            background: var(--success);
+            color: white;
+        }
+
         .contact-today-empty {
             text-align: center;
             padding: 32px 16px;
@@ -3566,97 +3650,16 @@
             const countBadge = document.getElementById('contactTodayCount');
 
             try {
-                // Usar dados do cache
-                await loadAllData();
+                // Usar nova API de sugestoes com rodas
+                const response = await fetch('/api/v1/contact-suggestions?limit=6');
+                if (!response.ok) throw new Error('Failed to fetch suggestions');
 
-                const dashData = dataCache.dashboard || {};
-                const atRiskData = dataCache.atRisk || { contacts: [] };
-                const calendarData = dataCache.calendar || [];
+                const data = await response.json();
+                const suggestions = data.suggestions || [];
 
-                const priorityContacts = [];
+                countBadge.textContent = suggestions.length;
 
-                // 1. Aniversariantes de hoje (prioridade maxima)
-                const aniversarios = dashData.aniversarios || [];
-                const aniversariosHoje = aniversarios.filter(a => a.dias_ate_aniversario === 0);
-                aniversariosHoje.forEach(a => {
-                    priorityContacts.push({
-                        id: a.id,
-                        nome: a.nome,
-                        reason: 'Aniversario hoje!',
-                        reasonIcon: 'bi-cake2',
-                        type: 'birthday',
-                        priority: 1
-                    });
-                });
-
-                // 2. Follow-ups de reunioes de ontem/hoje
-                if (Array.isArray(calendarData)) {
-                    calendarData.forEach(event => {
-                        if (event.contact_id && event.contact_name) {
-                            // Verificar se nao esta duplicado
-                            if (!priorityContacts.find(p => p.id === event.contact_id)) {
-                                priorityContacts.push({
-                                    id: event.contact_id,
-                                    nome: event.contact_name,
-                                    reason: 'Reuniao hoje - fazer follow-up',
-                                    reasonIcon: 'bi-camera-video',
-                                    type: 'followup',
-                                    priority: 2
-                                });
-                            }
-                        }
-                    });
-                }
-
-                // 3. Contatos priorizados por importância (novo sistema de scoring)
-                const atRiskContacts = atRiskData.contacts || [];
-                atRiskContacts.forEach(c => {
-                    if (!priorityContacts.find(p => p.id === c.id)) {
-                        const health = c.health_score || 50;
-                        const circulo = c.circulo || 5;
-                        const category = c.category || 'attention';
-                        const priorityScore = c.priority_score || 0;
-
-                        // Mapear categoria para tipo visual
-                        let type, priority;
-                        if (category === 'urgent') {
-                            type = 'urgent';
-                            priority = 3;
-                        } else if (category === 'important') {
-                            type = 'important';
-                            priority = 4;
-                        } else {
-                            type = 'attention';
-                            priority = 5;
-                        }
-
-                        priorityContacts.push({
-                            id: c.id,
-                            nome: c.nome,
-                            circulo: circulo,
-                            reason: c.motivo_risco || 'precisa atenção',
-                            reasonIcon: category === 'urgent' ? 'bi-exclamation-triangle' :
-                                       category === 'important' ? 'bi-star' : 'bi-heart-pulse',
-                            type: type,
-                            priority: priority,
-                            health: health,
-                            priorityScore: priorityScore
-                        });
-                    }
-                });
-
-                // Ordenar por prioridade (menor = mais importante) e depois por priorityScore
-                priorityContacts.sort((a, b) => {
-                    if (a.priority !== b.priority) return a.priority - b.priority;
-                    return (b.priorityScore || 0) - (a.priorityScore || 0);
-                });
-
-                // Limitar a 6 contatos
-                const displayContacts = priorityContacts.slice(0, 6);
-
-                countBadge.textContent = displayContacts.length;
-
-                if (displayContacts.length === 0) {
+                if (suggestions.length === 0) {
                     container.innerHTML = `
                         <div class="contact-today-empty">
                             <i class="bi bi-check-circle"></i>
@@ -3666,34 +3669,86 @@
                     return;
                 }
 
-                container.innerHTML = displayContacts.map(c => {
+                container.innerHTML = suggestions.map(s => {
+                    const c = s.contact;
+                    const roda = s.roda;
                     const initials = (c.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
                     const circuloBadge = c.circulo ? `<span class="circulo-mini c${c.circulo}">C${c.circulo}</span>` : '';
 
+                    // Determinar tipo visual baseado no reason
+                    let visualType = 'attention';
+                    let reasonIcon = 'bi-arrow-right-circle';
+
+                    if (s.reason === 'birthday') {
+                        visualType = 'birthday';
+                        reasonIcon = 'bi-cake2';
+                    } else if (s.reason === 'roda_promessa') {
+                        visualType = 'promessa';
+                        reasonIcon = 'bi-hand-index';
+                    } else if (s.reason === 'roda_favor_recebido') {
+                        visualType = 'favor_recebido';
+                        reasonIcon = 'bi-gift';
+                    } else if (s.reason === 'roda_proximo_passo') {
+                        visualType = 'proximo_passo';
+                        reasonIcon = 'bi-calendar-check';
+                    } else if (s.reason === 'roda_topico') {
+                        visualType = 'topico';
+                        reasonIcon = 'bi-chat-dots';
+                    } else if (s.reason === 'low_health') {
+                        visualType = 'low_health';
+                        reasonIcon = 'bi-heart-pulse';
+                    }
+
                     // Labels por tipo
-                    const typeLabel = {
-                        'birthday': 'Aniversário',
-                        'followup': 'Follow-up',
-                        'urgent': 'URGENTE',
-                        'important': 'Importante',
-                        'attention': 'Atenção',
-                        'critical': 'Crítico'
+                    const typeLabels = {
+                        'birthday': 'Aniversario',
+                        'promessa': 'Promessa',
+                        'favor_recebido': 'Retribuir',
+                        'proximo_passo': 'Agendado',
+                        'topico': 'Retomar',
+                        'low_health': 'Atencao',
+                        'attention': 'Atencao'
                     };
+
+                    // Mostrar conteudo da roda se existir
+                    const rodaContent = roda ? `
+                        <div class="contact-today-roda">
+                            ${roda.conteudo}
+                        </div>
+                    ` : '';
+
+                    // Botoes de acao
+                    const whatsappBtn = c.id ? `
+                        <button class="btn btn-whatsapp" onclick="event.preventDefault(); event.stopPropagation(); openWhatsApp(${c.id})" title="Enviar WhatsApp">
+                            <i class="bi bi-whatsapp"></i>
+                        </button>
+                    ` : '';
+
+                    const doneBtn = roda ? `
+                        <button class="btn btn-done" onclick="event.preventDefault(); event.stopPropagation(); markRodaDone(${roda.id}, this)" title="Marcar como feito">
+                            <i class="bi bi-check-lg"></i>
+                        </button>
+                    ` : '';
 
                     return `
                         <a href="/contatos/${c.id}" class="contact-today-item">
-                            <div class="contact-today-avatar ${c.type}">${initials}</div>
+                            <div class="contact-today-avatar ${visualType}">${initials}</div>
                             <div class="contact-today-info">
                                 <div class="contact-today-name">
                                     ${circuloBadge} ${c.nome}
                                 </div>
                                 <div class="contact-today-reason">
-                                    <i class="bi ${c.reasonIcon}"></i>
-                                    ${c.health ? `Health ${c.health}% - ` : ''}${c.reason}
+                                    <i class="bi ${reasonIcon}"></i>
+                                    ${s.reason_label}
                                 </div>
+                                ${rodaContent}
                             </div>
-                            <span class="contact-today-badge ${c.type}">
-                                ${typeLabel[c.type] || 'Atenção'}
+                            <div class="contact-today-actions">
+                                ${whatsappBtn}
+                                ${doneBtn}
+                            </div>
+                            <span class="contact-today-badge ${visualType}">
+                                ${typeLabels[visualType] || 'Atencao'}
                             </span>
                         </a>
                     `;
@@ -3707,6 +3762,50 @@
                         <p class="mb-0">Nao foi possivel carregar as prioridades</p>
                     </div>
                 `;
+            }
+        }
+
+        // Abrir WhatsApp para contato
+        async function openWhatsApp(contactId) {
+            try {
+                const response = await fetch(`/api/contacts/${contactId}`);
+                if (!response.ok) return;
+                const contact = await response.json();
+
+                const phone = contact.telefone || contact.whatsapp;
+                if (phone) {
+                    const cleanPhone = phone.replace(/\D/g, '');
+                    window.open(`https://wa.me/${cleanPhone}`, '_blank');
+                } else {
+                    alert('Contato sem telefone cadastrado');
+                }
+            } catch (e) {
+                console.error('Error opening WhatsApp:', e);
+            }
+        }
+
+        // Marcar roda como feita
+        async function markRodaDone(rodaId, btn) {
+            try {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+
+                const response = await fetch(`/api/v1/rodas/${rodaId}/complete`, { method: 'POST' });
+                if (response.ok) {
+                    btn.innerHTML = '<i class="bi bi-check-circle-fill"></i>';
+                    btn.classList.add('btn-success');
+                    btn.classList.remove('btn-done');
+
+                    // Recarregar lista apos 1s
+                    setTimeout(() => loadContactToday(), 1000);
+                } else {
+                    btn.innerHTML = '<i class="bi bi-x-lg"></i>';
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                console.error('Error marking roda done:', e);
+                btn.innerHTML = '<i class="bi bi-x-lg"></i>';
+                btn.disabled = false;
             }
         }
 
