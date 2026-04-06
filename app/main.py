@@ -114,6 +114,7 @@ from services.briefing_context import (
 )
 from services.linkedin_enrichment import get_linkedin_enrichment_service
 from services.search import get_search_service
+from services.rodas_service import get_rodas_service, RODA_TYPES
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
@@ -6908,6 +6909,198 @@ async def get_dashboard_unified(request: Request):
 
     print(f"[DASHBOARD TIMING] total={round(time.time() - t0, 2)}s")
     return result
+
+
+# ============== RODAS DE RELACIONAMENTO ==============
+# Sistema de sugestoes inteligentes baseadas em contexto extraido de mensagens
+
+@app.get("/api/v1/contact-suggestions")
+async def get_contact_suggestions_v1(limit: int = 6):
+    """
+    Retorna contatos com sugestoes de acao baseadas em rodas de relacionamento.
+
+    Priorizacao:
+    1. Aniversario hoje
+    2. Promessa pendente > 3 dias
+    3. Favor recebido nao retribuido
+    4. Health baixo (< 30%)
+    5. Proximo passo vencido
+    6. Topicos de interesse
+
+    Returns:
+        Lista de contatos com roda mais relevante e sugestao de acao
+    """
+    from database import get_db
+
+    suggestions = []
+
+    # 1. Buscar aniversarios de hoje
+    aniversarios_hoje = []
+    try:
+        aniversarios = get_aniversarios_proximos(dias=1)
+        for a in aniversarios:
+            if a.get("dias_ate_aniversario") == 0:
+                aniversarios_hoje.append({
+                    "contact": {
+                        "id": a["id"],
+                        "nome": a["nome"],
+                        "empresa": a.get("empresa"),
+                        "cargo": a.get("cargo"),
+                        "circulo": a.get("circulo"),
+                        "foto_url": a.get("foto_url"),
+                    },
+                    "reason": "birthday",
+                    "reason_label": "Aniversário hoje!",
+                    "roda": None,
+                    "priority": 0
+                })
+    except Exception as e:
+        print(f"[SUGGESTIONS] Error fetching birthdays: {e}")
+
+    # 2. Buscar rodas pendentes
+    rodas_service = get_rodas_service()
+    rodas_dashboard = []
+    try:
+        rodas_dashboard = rodas_service.get_rodas_para_dashboard(limit=limit * 2)
+    except Exception as e:
+        print(f"[SUGGESTIONS] Error fetching rodas: {e}")
+
+    # 3. Buscar contatos com health baixo que NAO tem roda
+    contatos_health_baixo = []
+    try:
+        contatos_health_baixo = get_contatos_precisando_atencao(limit=limit)
+    except Exception as e:
+        print(f"[SUGGESTIONS] Error fetching low health contacts: {e}")
+
+    # Montar lista unificada com prioridade
+    contact_ids_used = set()
+
+    # Adicionar aniversarios (prioridade 0)
+    for item in aniversarios_hoje:
+        if len(suggestions) >= limit:
+            break
+        contact_id = item["contact"]["id"]
+        if contact_id not in contact_ids_used:
+            suggestions.append(item)
+            contact_ids_used.add(contact_id)
+
+    # Adicionar rodas com prioridade calculada
+    for item in rodas_dashboard:
+        if len(suggestions) >= limit:
+            break
+
+        contact_id = item["contact"]["id"]
+        if contact_id in contact_ids_used:
+            continue
+
+        roda = item["roda"]
+        tipo = roda["tipo"]
+        dias_pendente = roda.get("dias_pendente", 0)
+
+        # Calcular prioridade
+        if tipo == "promessa" and dias_pendente > 3:
+            priority = 1
+            reason_label = f"Promessa pendente ({dias_pendente} dias)"
+        elif tipo == "promessa":
+            priority = 2
+            reason_label = f"Promessa pendente"
+        elif tipo == "favor_recebido":
+            priority = 3
+            reason_label = "Favor recebido - retribuir"
+        elif tipo == "proximo_passo":
+            priority = 4
+            reason_label = "Próximo passo combinado"
+        else:  # topico
+            priority = 5
+            reason_label = "Tópico para retomar"
+
+        suggestions.append({
+            "contact": item["contact"],
+            "reason": f"roda_{tipo}",
+            "reason_label": reason_label,
+            "roda": roda,
+            "priority": priority
+        })
+        contact_ids_used.add(contact_id)
+
+    # Adicionar contatos com health baixo (sem roda)
+    for contato in contatos_health_baixo:
+        if len(suggestions) >= limit:
+            break
+
+        contact_id = contato["id"]
+        if contact_id in contact_ids_used:
+            continue
+
+        health = contato.get("health_score", 50)
+        if health < 30:
+            suggestions.append({
+                "contact": {
+                    "id": contato["id"],
+                    "nome": contato["nome"],
+                    "empresa": contato.get("empresa"),
+                    "cargo": contato.get("cargo"),
+                    "circulo": contato.get("circulo"),
+                    "foto_url": contato.get("foto_url"),
+                },
+                "reason": "low_health",
+                "reason_label": f"Relacionamento esfriando ({health}%)",
+                "roda": None,
+                "priority": 6
+            })
+            contact_ids_used.add(contact_id)
+
+    # Ordenar por prioridade
+    suggestions.sort(key=lambda x: x["priority"])
+
+    return {
+        "suggestions": suggestions[:limit],
+        "total_rodas_pendentes": len(rodas_dashboard),
+        "generated_at": datetime.now().isoformat()
+    }
+
+
+@app.post("/api/v1/rodas/{roda_id}/complete")
+async def complete_roda(roda_id: int):
+    """Marca uma roda como cumprida."""
+    rodas_service = get_rodas_service()
+    success = rodas_service.marcar_cumprida(roda_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Roda não encontrada")
+
+    return {"status": "ok", "message": "Roda marcada como cumprida"}
+
+
+@app.post("/api/v1/rodas/{roda_id}/expire")
+async def expire_roda(roda_id: int):
+    """Marca uma roda como expirada (não é mais relevante)."""
+    rodas_service = get_rodas_service()
+    success = rodas_service.marcar_expirada(roda_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Roda não encontrada")
+
+    return {"status": "ok", "message": "Roda marcada como expirada"}
+
+
+@app.get("/api/v1/contacts/{contact_id}/rodas")
+async def get_contact_rodas(contact_id: int, include_all: bool = False):
+    """
+    Retorna rodas de um contato específico.
+
+    Args:
+        contact_id: ID do contato
+        include_all: Se True, inclui rodas cumpridas e expiradas
+    """
+    rodas_service = get_rodas_service()
+    rodas = rodas_service.get_historico_contato(contact_id, include_all=include_all)
+
+    return {
+        "contact_id": contact_id,
+        "rodas": rodas,
+        "total": len(rodas)
+    }
 
 
 # ============== CIRCULOS ENDPOINTS ==============
