@@ -52,32 +52,54 @@ async def extract_rodas_from_message(message_text: str, contact_name: str, direc
         print("ERRO: ANTHROPIC_API_KEY nao configurada")
         return []
 
-    prompt = f"""Analise esta mensagem e extraia "rodas de relacionamento" - fios de contexto.
+    prompt = f"""Voce e um assistente de CRM que extrai APENAS compromissos profissionais relevantes de mensagens.
 
 MENSAGEM: "{message_text}"
-DIRECAO: {"Enviada por Renato" if direction == "outgoing" else f"Recebida de {contact_name}"}
+REMETENTE: {contact_name}
+DIRECAO: {"Enviada por Renato" if direction == "outgoing" else "Recebida"}
 
-TIPOS DE RODAS:
-- promessa: Renato PROMETE algo ("vou te enviar", "te mando amanha", "te apresento")
-- favor_recebido: O contato FEZ UM FAVOR ("obrigado pela indicacao", "valeu por apresentar")
-- topico: Assunto DISCUTIDO que pode ser retomado ("sobre o projeto X", "aquela ideia")
-- proximo_passo: Compromisso futuro ("semana que vem", "depois conversamos")
+EXTRAIA UMA RODA APENAS SE TODOS OS CRITERIOS FOREM ATENDIDOS:
+1. E um contexto PROFISSIONAL ou de NETWORKING (nao familiar, nao romantico, nao rotina pessoal)
+2. Requer ACAO FUTURA especifica de Renato (enviar algo, apresentar alguem, dar retorno)
+3. E algo que Renato pode ESQUECER se nao for registrado
 
-REGRAS:
-- 'promessa' so se a mensagem for ENVIADA por Renato
-- 'favor_recebido' so se a mensagem for RECEBIDA
-- Retorne array vazio se nao houver rodas relevantes
-- Minimo de confianca: 0.6
+TIPOS DE RODAS VALIDAS:
+- promessa: Renato prometeu ENTREGAR algo concreto a um CONTATO PROFISSIONAL
+  Exemplos validos: "vou te enviar a proposta", "te apresento ao diretor da empresa X", "mando o contrato amanha"
+  NAO VALIDO: promessas para familia, "te ligo depois", coisas vagas
 
-Responda APENAS com JSON:
+- favor_recebido: Um CONTATO PROFISSIONAL fez um favor que merece retribuicao formal
+  Exemplos validos: "ele me indicou para aquele cliente", "ela me apresentou ao investidor"
+  NAO VALIDO: favores de familia, ajudas do dia-a-dia, coisas entre amigos intimos
+
+- topico: Um PROJETO ou NEGOCIO discutido que pode gerar oportunidade
+  Exemplos validos: "conversei sobre parceria com a empresa X", "discutimos o projeto de consultoria"
+  NAO VALIDO: assuntos pessoais, hobbies, conversas sociais
+
+- proximo_passo: Um COMPROMISSO PROFISSIONAL agendado ou prometido
+  Exemplos validos: "reuniao marcada para segunda", "vou enviar proposta ate sexta"
+  NAO VALIDO: "a gente se fala", encontros sociais, planos vagos
+
+SEMPRE RETORNE rodas: [] SE:
+- A mensagem for entre familiares ou casal
+- For conversa social/pessoal sem contexto de negocios
+- Nao houver acao especifica para Renato fazer
+- For cumprimento, agradecimento generico, rotina
+
+Responda APENAS com JSON (sem explicacoes):
+{{
+    "rodas": []
+}}
+
+OU se encontrar algo REALMENTE relevante:
 {{
     "rodas": [
         {{
             "tipo": "promessa|favor_recebido|topico|proximo_passo",
-            "conteudo": "descricao curta",
-            "prazo": "data/prazo se mencionado ou null",
-            "tags": ["palavras", "chave"],
-            "confidence": 0.0 a 1.0
+            "conteudo": "descricao curta e especifica da acao",
+            "prazo": "data se mencionada ou null",
+            "tags": ["negocio", "relevante"],
+            "confidence": 0.7 a 1.0
         }}
     ]
 }}"""

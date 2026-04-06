@@ -360,17 +360,28 @@ Identifique se a mensagem contem alguma destas intencoes:
 - important_info: Informacao importante que Renato precisa saber
 - none: Mensagem trivial, agradecimento, etc.
 
-## PARTE 2: RODAS DE RELACIONAMENTO
-Identifique tambem "rodas" - fios de contexto do relacionamento:
-- promessa: Renato PROMETE algo ("vou te enviar", "te mando amanha", "te apresento ao Joao")
-- favor_recebido: O contato FEZ UM FAVOR para Renato ("obrigado pela indicacao", "valeu por apresentar", "agradeco a ajuda")
-- topico: Assunto DISCUTIDO que pode ser retomado ("sobre o projeto X", "aquela ideia de Y", "o que conversamos sobre Z")
-- proximo_passo: Compromisso futuro combinado ("semana que vem", "depois do feriado conversamos", "quando voce voltar")
+## PARTE 2: RODAS DE RELACIONAMENTO (MUITO SELETIVO)
+Extraia rodas APENAS se TODOS os criterios forem atendidos:
+1. Contexto PROFISSIONAL ou NETWORKING (nao familiar, nao romantico)
+2. Requer ACAO FUTURA especifica de Renato
+3. Algo que Renato pode ESQUECER se nao registrado
 
-IMPORTANTE sobre rodas:
-- So extraia 'promessa' se Renato esta prometendo algo (nas mensagens enviadas por ele)
-- So extraia 'favor_recebido' se o contato ajudou Renato (nas mensagens recebidas)
-- Extraia 'topico' e 'proximo_passo' de qualquer mensagem
+TIPOS VALIDOS:
+- promessa: Renato prometeu ENTREGAR algo a CONTATO PROFISSIONAL ("envio a proposta", "te apresento ao diretor")
+- favor_recebido: CONTATO PROFISSIONAL fez favor que merece retribuicao ("me indicou cliente", "me apresentou ao investidor")
+- topico: PROJETO ou NEGOCIO discutido que pode gerar oportunidade
+- proximo_passo: COMPROMISSO PROFISSIONAL agendado ("reuniao segunda", "proposta ate sexta")
+
+RETORNE rodas: [] se:
+- Mensagem entre familiares ou casal
+- Conversa social sem contexto de negocios
+- Sem acao especifica para Renato
+- Cumprimento, rotina, promessa vaga
+
+REGRAS:
+- 'promessa' so de mensagens ENVIADAS por Renato
+- 'favor_recebido' so de mensagens RECEBIDAS
+- Na duvida, NAO extraia
 
 Responda APENAS com JSON valido no formato:
 {{
