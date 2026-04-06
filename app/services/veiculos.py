@@ -105,6 +105,160 @@ def get_alertas_manutencao() -> Dict:
     return alertas
 
 
+def get_timeline_manutencao(veiculo_id: int) -> Dict:
+    """
+    Retorna timeline de manutencao do veiculo no formato matriz.
+    Compara o plano do fabricante com o historico real de manutencoes.
+    """
+    veiculo = get_veiculo(veiculo_id)
+    if not veiculo:
+        return None
+
+    km_atual = veiculo.get('km_atual', 0)
+
+    # Busca itens de manutencao do veiculo
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Itens de manutencao (plano do fabricante)
+        cursor.execute("""
+            SELECT * FROM veiculo_itens_manutencao
+            WHERE veiculo_id = %s
+            ORDER BY categoria, item
+        """, (veiculo_id,))
+        itens = [dict(row) for row in cursor.fetchall()]
+
+        # Historico de manutencoes
+        cursor.execute("""
+            SELECT id, veiculo_id, item_id, data_manutencao as data_execucao,
+                   km_manutencao as km_execucao, tipo_acao, descricao,
+                   fornecedor, valor, observacoes, ordem_servico_id
+            FROM veiculo_manutencoes
+            WHERE veiculo_id = %s
+            ORDER BY km_manutencao
+        """, (veiculo_id,))
+        historico = [dict(row) for row in cursor.fetchall()]
+
+    if not itens:
+        return {'veiculo': veiculo, 'itens': [], 'intervalos': [], 'matriz': {}}
+
+    # Determina intervalo base (menor intervalo_km entre os itens)
+    intervalos_km = [i['intervalo_km'] for i in itens if i.get('intervalo_km')]
+    intervalo_base = min(intervalos_km) if intervalos_km else 5000
+
+    # Gera colunas de intervalos (de 0 ate km_atual + 20000, arredondado)
+    km_max = ((km_atual // intervalo_base) + 3) * intervalo_base
+    intervalos = list(range(intervalo_base, km_max + 1, intervalo_base))
+
+    # Cria indice de historico por item_id e km
+    historico_por_item = {}
+    for h in historico:
+        item_id = h.get('item_id')
+        if item_id:
+            if item_id not in historico_por_item:
+                historico_por_item[item_id] = []
+            historico_por_item[item_id].append(h)
+
+    # Agrupa itens por categoria
+    categorias = {}
+    for item in itens:
+        cat = item.get('categoria', 'Outros')
+        if cat not in categorias:
+            categorias[cat] = []
+        categorias[cat].append(item)
+
+    # Constroi matriz de status
+    matriz = {}
+    for item in itens:
+        item_id = item['id']
+        intervalo_item = item.get('intervalo_km', 0)
+        hist_item = historico_por_item.get(item_id, [])
+
+        # KMs onde foi executado
+        kms_executados = {h['km_execucao'] for h in hist_item}
+
+        linha = {}
+        for km_col in intervalos:
+            # Verifica se este item deveria ser feito neste km
+            if intervalo_item and intervalo_item > 0:
+                deveria_fazer = (km_col % intervalo_item == 0)
+            else:
+                deveria_fazer = False
+
+            if not deveria_fazer:
+                # Item nao aplicavel neste intervalo
+                linha[km_col] = {'status': 'na', 'class': 'na'}
+            else:
+                # Verifica se foi feito (com tolerancia de 20%)
+                tolerancia = intervalo_item * 0.2
+                feito = False
+                km_execucao = None
+                data_execucao = None
+
+                for km_exec in kms_executados:
+                    if abs(km_exec - km_col) <= tolerancia:
+                        feito = True
+                        km_execucao = km_exec
+                        # Busca data
+                        for h in hist_item:
+                            if h['km_execucao'] == km_exec:
+                                data_execucao = h.get('data_execucao')
+                                break
+                        break
+
+                if feito:
+                    linha[km_col] = {
+                        'status': 'done',
+                        'class': 'done',
+                        'km_execucao': km_execucao,
+                        'data': str(data_execucao) if data_execucao else None
+                    }
+                elif km_col > km_atual:
+                    # Futuro
+                    linha[km_col] = {'status': 'future', 'class': 'future'}
+                elif km_col <= km_atual - intervalo_item:
+                    # Perdido (deveria ter feito e passou muito)
+                    linha[km_col] = {'status': 'missed', 'class': 'missed'}
+                elif km_col <= km_atual:
+                    # Pendente/Atrasado
+                    linha[km_col] = {'status': 'pending', 'class': 'pending'}
+                else:
+                    linha[km_col] = {'status': 'na', 'class': 'na'}
+
+        matriz[item_id] = linha
+
+    # Calcula estatisticas
+    total_pontos = 0
+    total_feitos = 0
+    total_perdidos = 0
+
+    for item_id, linha in matriz.items():
+        for km_col, cell in linha.items():
+            if cell['status'] in ['done', 'missed', 'pending'] and km_col <= km_atual:
+                total_pontos += 1
+                if cell['status'] == 'done':
+                    total_feitos += 1
+                elif cell['status'] == 'missed':
+                    total_perdidos += 1
+
+    return {
+        'veiculo': veiculo,
+        'itens': itens,
+        'categorias': categorias,
+        'intervalos': intervalos,
+        'intervalo_base': intervalo_base,
+        'matriz': matriz,
+        'km_atual': km_atual,
+        'historico': historico,
+        'stats': {
+            'total_pontos': total_pontos,
+            'total_feitos': total_feitos,
+            'total_perdidos': total_perdidos,
+            'percentual': round((total_feitos / total_pontos * 100) if total_pontos > 0 else 100, 1)
+        }
+    }
+
+
 def criar_veiculo(dados: Dict) -> Dict:
     """Cria um novo veiculo"""
     with get_db() as conn:

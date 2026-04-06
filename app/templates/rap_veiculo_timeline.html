@@ -1,0 +1,552 @@
+{% extends "rap_base.html" %}
+
+{% block title %}Timeline - {{ veiculo.apelido or veiculo.modelo }}{% endblock %}
+{% block page_title %}Timeline de Manutencao{% endblock %}
+
+{% block extra_css %}
+<style>
+    .timeline-container {
+        max-width: 100%;
+        overflow-x: auto;
+    }
+
+    /* Header do veiculo */
+    .veiculo-header {
+        background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+        color: white;
+        padding: 1.5rem 2rem;
+        border-radius: 12px;
+        margin-bottom: 1.5rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .veiculo-header h1 {
+        font-size: 1.5rem;
+        margin: 0;
+    }
+
+    .veiculo-header .placa {
+        background: rgba(255,255,255,0.15);
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        font-family: monospace;
+        font-size: 1.1rem;
+    }
+
+    .veiculo-header .km-atual {
+        font-size: 0.9rem;
+        opacity: 0.9;
+        margin-top: 0.25rem;
+    }
+
+    /* Stats cards */
+    .stats-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+        background: white;
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        text-align: center;
+    }
+
+    .stat-card .value {
+        font-size: 1.75rem;
+        font-weight: 700;
+    }
+
+    .stat-card .label {
+        font-size: 0.75rem;
+        color: #64748b;
+        text-transform: uppercase;
+    }
+
+    .stat-card.done .value { color: #22c55e; }
+    .stat-card.missed .value { color: #ef4444; }
+    .stat-card.pending .value { color: #f59e0b; }
+    .stat-card.percent .value { color: #6366f1; }
+
+    /* Filtros */
+    .filters-bar {
+        display: flex;
+        gap: 1rem;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+        align-items: center;
+    }
+
+    .filter-btn {
+        padding: 0.5rem 1rem;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        background: white;
+        color: #64748b;
+        cursor: pointer;
+        font-size: 0.85rem;
+        transition: all 0.2s;
+    }
+
+    .filter-btn:hover {
+        border-color: #6366f1;
+        color: #6366f1;
+    }
+
+    .filter-btn.active {
+        background: #6366f1;
+        border-color: #6366f1;
+        color: white;
+    }
+
+    /* Legenda */
+    .legend {
+        display: flex;
+        gap: 1.5rem;
+        margin-bottom: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+        color: #64748b;
+    }
+
+    .legend-box {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+    }
+
+    .legend-box.done { background: #22c55e; }
+    .legend-box.missed { background: #ef4444; }
+    .legend-box.pending { background: #f59e0b; }
+    .legend-box.future { background: #e2e8f0; border: 2px dashed #cbd5e1; }
+    .legend-box.na { background: #f8fafc; border: 1px solid #e2e8f0; }
+
+    /* Tabela matriz */
+    .matrix-wrapper {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        overflow: hidden;
+    }
+
+    .matrix-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.8rem;
+    }
+
+    .matrix-table th,
+    .matrix-table td {
+        border: 1px solid #e2e8f0;
+        text-align: center;
+        vertical-align: middle;
+    }
+
+    /* Header row (km intervals) */
+    .matrix-table thead th {
+        background: #f8fafc;
+        padding: 0.5rem 0.25rem;
+        font-weight: 600;
+        color: #475569;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        min-width: 55px;
+    }
+
+    .matrix-table thead th.corner {
+        position: sticky;
+        left: 0;
+        z-index: 20;
+        background: #f1f5f9;
+        min-width: 180px;
+        text-align: left;
+        padding-left: 1rem;
+    }
+
+    .matrix-table thead th.km-atual {
+        background: #dbeafe;
+        color: #1d4ed8;
+        border-bottom: 3px solid #3b82f6;
+    }
+
+    /* Categoria header */
+    .matrix-table .categoria-row td {
+        background: #f1f5f9;
+        font-weight: 700;
+        text-align: left;
+        padding: 0.75rem 1rem;
+        color: #1e293b;
+        position: sticky;
+        left: 0;
+    }
+
+    /* Item row */
+    .matrix-table tbody td.item-name {
+        text-align: left;
+        padding: 0.5rem 1rem;
+        font-weight: 500;
+        color: #334155;
+        background: white;
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        min-width: 180px;
+        max-width: 200px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .matrix-table tbody td.item-name:hover {
+        white-space: normal;
+        overflow: visible;
+        background: #fefce8;
+        z-index: 15;
+    }
+
+    /* Celulas de status */
+    .matrix-table td.cell {
+        padding: 0.25rem;
+        min-width: 55px;
+        height: 36px;
+    }
+
+    .cell-content {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto;
+        font-size: 0.75rem;
+        cursor: pointer;
+        transition: transform 0.15s;
+    }
+
+    .cell-content:hover {
+        transform: scale(1.15);
+    }
+
+    .cell-content.done {
+        background: #22c55e;
+        color: white;
+    }
+
+    .cell-content.missed {
+        background: #ef4444;
+        color: white;
+    }
+
+    .cell-content.pending {
+        background: #f59e0b;
+        color: white;
+    }
+
+    .cell-content.future {
+        background: #f1f5f9;
+        color: #94a3b8;
+        border: 1px dashed #cbd5e1;
+    }
+
+    .cell-content.na {
+        background: transparent;
+        color: #e2e8f0;
+    }
+
+    /* Coluna do km atual */
+    .matrix-table td.km-atual-col {
+        background: rgba(59, 130, 246, 0.05);
+        border-left: 2px solid #3b82f6;
+        border-right: 2px solid #3b82f6;
+    }
+
+    /* Tooltip */
+    .cell-tooltip {
+        position: absolute;
+        background: #1e293b;
+        color: white;
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        z-index: 1000;
+        white-space: nowrap;
+        pointer-events: none;
+        display: none;
+    }
+
+    .cell-tooltip.show {
+        display: block;
+    }
+
+    /* Actions */
+    .page-actions {
+        display: flex;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .stats-row {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .veiculo-header {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+    }
+
+    @media print {
+        .page-actions, .filters-bar, .no-print {
+            display: none !important;
+        }
+
+        .matrix-wrapper {
+            box-shadow: none;
+        }
+
+        .matrix-table {
+            font-size: 0.65rem;
+        }
+
+        .cell-content {
+            width: 18px;
+            height: 18px;
+            font-size: 0.6rem;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Header do veiculo -->
+<div class="veiculo-header">
+    <div>
+        <h1>{{ veiculo.apelido or (veiculo.marca ~ ' ' ~ veiculo.modelo) }}</h1>
+        <div class="km-atual">
+            <i class="bi bi-speedometer2"></i>
+            {{ "{:,}".format(timeline.km_atual).replace(",", ".") }} km atuais
+        </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 1rem;">
+        <span class="placa">{{ veiculo.placa }}</span>
+    </div>
+</div>
+
+<!-- Actions -->
+<div class="page-actions no-print">
+    <a href="/veiculos/{{ veiculo.id }}" class="btn btn-outline">
+        <i class="bi bi-arrow-left"></i> Voltar
+    </a>
+    <button class="btn btn-outline" onclick="window.print()">
+        <i class="bi bi-printer"></i> Imprimir
+    </button>
+</div>
+
+<!-- Stats -->
+<div class="stats-row">
+    <div class="stat-card done">
+        <div class="value">{{ timeline.stats.total_feitos }}</div>
+        <div class="label">Realizados</div>
+    </div>
+    <div class="stat-card missed">
+        <div class="value">{{ timeline.stats.total_perdidos }}</div>
+        <div class="label">Nao Realizados</div>
+    </div>
+    <div class="stat-card pending">
+        <div class="value">{{ timeline.stats.total_pontos - timeline.stats.total_feitos - timeline.stats.total_perdidos }}</div>
+        <div class="label">Pendentes</div>
+    </div>
+    <div class="stat-card percent">
+        <div class="value">{{ timeline.stats.percentual }}%</div>
+        <div class="label">Conformidade</div>
+    </div>
+</div>
+
+<!-- Filtros e Legenda -->
+<div class="filters-bar no-print">
+    <span style="color: #64748b; font-size: 0.85rem;">Filtrar:</span>
+    <button class="filter-btn active" data-filter="all">Todos</button>
+    {% for categoria in timeline.categorias.keys() %}
+    <button class="filter-btn" data-filter="{{ categoria }}">{{ categoria }}</button>
+    {% endfor %}
+</div>
+
+<div class="legend">
+    <div class="legend-item">
+        <div class="legend-box done"></div>
+        <span>Realizado</span>
+    </div>
+    <div class="legend-item">
+        <div class="legend-box missed"></div>
+        <span>Nao realizado</span>
+    </div>
+    <div class="legend-item">
+        <div class="legend-box pending"></div>
+        <span>Pendente/Atrasado</span>
+    </div>
+    <div class="legend-item">
+        <div class="legend-box future"></div>
+        <span>Futuro</span>
+    </div>
+    <div class="legend-item">
+        <div class="legend-box na"></div>
+        <span>Nao aplicavel</span>
+    </div>
+</div>
+
+<!-- Matriz -->
+<div class="timeline-container">
+    <div class="matrix-wrapper">
+        <table class="matrix-table" id="matrixTable">
+            <thead>
+                <tr>
+                    <th class="corner">Item de Manutencao</th>
+                    {% for km in timeline.intervalos %}
+                    <th class="{% if km <= timeline.km_atual and km > timeline.km_atual - timeline.intervalo_base %}km-atual{% endif %}">
+                        {{ "{:,}".format(km).replace(",", ".") }}
+                    </th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for categoria, itens in timeline.categorias.items() %}
+                <!-- Categoria header -->
+                <tr class="categoria-row" data-categoria="{{ categoria }}">
+                    <td colspan="{{ timeline.intervalos|length + 1 }}">
+                        <i class="bi bi-folder"></i> {{ categoria }}
+                    </td>
+                </tr>
+                <!-- Itens da categoria -->
+                {% for item in itens %}
+                <tr data-categoria="{{ categoria }}" data-item-id="{{ item.id }}">
+                    <td class="item-name" title="{{ item.item }}">
+                        {{ item.item }}
+                        {% if item.intervalo_km %}
+                        <small style="color: #94a3b8; display: block; font-weight: 400;">
+                            a cada {{ "{:,}".format(item.intervalo_km).replace(",", ".") }} km
+                        </small>
+                        {% endif %}
+                    </td>
+                    {% for km in timeline.intervalos %}
+                    {% set cell = timeline.matriz.get(item.id, {}).get(km, {'status': 'na', 'class': 'na'}) %}
+                    <td class="cell {% if km <= timeline.km_atual and km > timeline.km_atual - timeline.intervalo_base %}km-atual-col{% endif %}">
+                        <div class="cell-content {{ cell.class }}"
+                             data-item-id="{{ item.id }}"
+                             data-km="{{ km }}"
+                             data-status="{{ cell.status }}"
+                             {% if cell.km_execucao %}data-km-exec="{{ cell.km_execucao }}"{% endif %}
+                             {% if cell.data %}data-data="{{ cell.data }}"{% endif %}>
+                            {% if cell.status == 'done' %}
+                            <i class="bi bi-check"></i>
+                            {% elif cell.status == 'missed' %}
+                            <i class="bi bi-x"></i>
+                            {% elif cell.status == 'pending' %}
+                            <i class="bi bi-exclamation"></i>
+                            {% elif cell.status == 'future' %}
+                            <i class="bi bi-clock"></i>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </div>
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Tooltip -->
+<div class="cell-tooltip" id="cellTooltip"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Filtro por categoria
+document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const filter = btn.dataset.filter;
+
+        // Update active state
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        // Filter rows
+        document.querySelectorAll('#matrixTable tbody tr').forEach(row => {
+            if (filter === 'all') {
+                row.style.display = '';
+            } else {
+                const categoria = row.dataset.categoria;
+                row.style.display = (categoria === filter) ? '' : 'none';
+            }
+        });
+    });
+});
+
+// Tooltip
+const tooltip = document.getElementById('cellTooltip');
+
+document.querySelectorAll('.cell-content').forEach(cell => {
+    cell.addEventListener('mouseenter', (e) => {
+        const status = cell.dataset.status;
+        const km = parseInt(cell.dataset.km).toLocaleString('pt-BR');
+        const kmExec = cell.dataset.kmExec;
+        const data = cell.dataset.data;
+
+        let text = '';
+        if (status === 'done') {
+            text = `Realizado em ${kmExec ? parseInt(kmExec).toLocaleString('pt-BR') + ' km' : km + ' km'}`;
+            if (data) {
+                const d = new Date(data);
+                text += ` (${d.toLocaleDateString('pt-BR')})`;
+            }
+        } else if (status === 'missed') {
+            text = `Deveria ter sido feito em ${km} km`;
+        } else if (status === 'pending') {
+            text = `Pendente - previsto para ${km} km`;
+        } else if (status === 'future') {
+            text = `Programado para ${km} km`;
+        } else {
+            return; // Nao mostra tooltip para N/A
+        }
+
+        tooltip.textContent = text;
+        tooltip.classList.add('show');
+
+        const rect = cell.getBoundingClientRect();
+        tooltip.style.left = (rect.left + rect.width / 2 - tooltip.offsetWidth / 2) + 'px';
+        tooltip.style.top = (rect.top - tooltip.offsetHeight - 8 + window.scrollY) + 'px';
+    });
+
+    cell.addEventListener('mouseleave', () => {
+        tooltip.classList.remove('show');
+    });
+});
+
+// Scroll para km atual
+document.addEventListener('DOMContentLoaded', () => {
+    const kmAtualCol = document.querySelector('th.km-atual');
+    if (kmAtualCol) {
+        kmAtualCol.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+});
+</script>
+{% endblock %}

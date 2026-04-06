@@ -102,7 +102,8 @@ from services.veiculos import (
     importar_plano_manutencao_prado, get_historico_manutencoes,
     registrar_manutencao, get_dashboard_veiculo, criar_ordem_servico,
     get_ordem_servico, listar_ordens_servico, finalizar_ordem_servico,
-    criar_prado_jrw5025, atualizar_notas_fabricante_prado, get_alertas_manutencao
+    criar_prado_jrw5025, atualizar_notas_fabricante_prado, get_alertas_manutencao,
+    get_timeline_manutencao
 )
 from services.briefing_context import (
     get_contexto_enriquecido,
@@ -14458,6 +14459,20 @@ async def veiculo_detalhe_page(request: Request, veiculo_id: int):
         "historico": historico,
         "ordens_servico": ordens,
         "oficinas": oficinas
+    })
+
+
+@app.get("/veiculos/{veiculo_id}/timeline", response_class=HTMLResponse)
+async def veiculo_timeline_page(request: Request, veiculo_id: int):
+    """Pagina de timeline de manutencao - visao matriz do plano vs executado"""
+    timeline = get_timeline_manutencao(veiculo_id)
+    if not timeline:
+        raise HTTPException(status_code=404, detail="Veiculo nao encontrado")
+
+    return templates.TemplateResponse("rap_veiculo_timeline.html", {
+        "request": request,
+        "veiculo": timeline['veiculo'],
+        "timeline": timeline
     })
 
 
