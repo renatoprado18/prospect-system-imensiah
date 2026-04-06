@@ -720,6 +720,55 @@
             font-weight: 500;
         }
 
+        /* Rodas de Relacionamento */
+        .roda-item {
+            background: white;
+            border: 1px solid var(--gray-200);
+            border-left: 4px solid var(--primary);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 12px;
+        }
+        .roda-item.cumprido {
+            opacity: 0.7;
+            background: var(--gray-50);
+        }
+        .roda-item.expirado {
+            opacity: 0.5;
+            background: var(--gray-50);
+        }
+        .roda-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .roda-tipo {
+            font-weight: 600;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .roda-content {
+            font-size: 0.9rem;
+            color: var(--dark);
+            margin-bottom: 8px;
+        }
+        .roda-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .roda-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .roda-actions .btn {
+            font-size: 0.75rem;
+            padding: 4px 10px;
+        }
+
         /* Search Modal Styles */
         .search-result-item {
             display: flex;
@@ -2291,6 +2340,10 @@
                         <i class="bi bi-diagram-3"></i>
                         <span>Relacionamentos</span>
                     </button>
+                    <button class="contact-tab" onclick="switchTab('rodas')">
+                        <i class="bi bi-arrow-repeat"></i>
+                        <span>Rodas</span>
+                    </button>
                     <button class="contact-tab" onclick="switchTab('documentos')">
                         <i class="bi bi-folder2-open"></i>
                         <span>Documentos</span>
@@ -2533,6 +2586,26 @@
                     </div>
                 </div>
 
+                <!-- Tab: Rodas de Relacionamento -->
+                <div class="tab-content" id="tab-rodas">
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title"><i class="bi bi-arrow-repeat"></i> Rodas de Relacionamento</h2>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-outline-secondary" onclick="loadContactRodas(true)">
+                                    <i class="bi bi-eye"></i> Ver Todas
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body" id="rodas-container">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                                <p class="mt-2 mb-0">Carregando rodas...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Tab: Documentos -->
                 <div class="tab-content" id="tab-documentos">
                     <div class="card">
@@ -2602,6 +2675,8 @@
                 loadUnifiedTimeline();
             } else if (tabName === 'relacionamentos') {
                 loadInferredRelationshipsDetail();
+            } else if (tabName === 'rodas') {
+                loadContactRodas();
             } else if (tabName === 'documentos') {
                 loadContactDocuments();
             }
@@ -3360,6 +3435,122 @@
                 }
             } catch (e) {
                 console.error('Erro ao carregar relacionamentos inferidos:', e);
+            }
+        }
+
+        // ============== Rodas de Relacionamento ==============
+        let rodasShowAll = false;
+
+        async function loadContactRodas(showAll = false) {
+            rodasShowAll = showAll;
+            const container = document.getElementById('rodas-container');
+            if (!container) return;
+
+            try {
+                const response = await fetch(`/api/v1/contacts/${contactId}/rodas?include_all=${showAll}`);
+                if (!response.ok) throw new Error('Failed to fetch rodas');
+
+                const data = await response.json();
+                const rodas = data.rodas || [];
+
+                if (rodas.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center text-muted py-4">
+                            <i class="bi bi-arrow-repeat" style="font-size: 2rem;"></i>
+                            <p class="mt-2 mb-0">Nenhuma roda de relacionamento registrada.</p>
+                            <small>Rodas sao extraidas automaticamente de mensagens.</small>
+                        </div>
+                    `;
+                    return;
+                }
+
+                const tipoConfig = {
+                    'promessa': { icon: 'bi-hand-index', color: '#dc2626', label: 'Promessa' },
+                    'favor_recebido': { icon: 'bi-gift', color: '#9333ea', label: 'Favor Recebido' },
+                    'proximo_passo': { icon: 'bi-calendar-check', color: '#2563eb', label: 'Proximo Passo' },
+                    'topico': { icon: 'bi-chat-dots', color: '#059669', label: 'Topico' }
+                };
+
+                const statusConfig = {
+                    'pendente': { badge: 'warning', label: 'Pendente' },
+                    'cumprido': { badge: 'success', label: 'Cumprido' },
+                    'expirado': { badge: 'secondary', label: 'Expirado' }
+                };
+
+                container.innerHTML = rodas.map(roda => {
+                    const tipo = tipoConfig[roda.tipo] || { icon: 'bi-circle', color: '#6b7280', label: roda.tipo };
+                    const status = statusConfig[roda.status] || { badge: 'secondary', label: roda.status };
+                    const criado = roda.criado_em ? new Date(roda.criado_em).toLocaleDateString('pt-BR') : '';
+                    const isPendente = roda.status === 'pendente';
+
+                    return `
+                        <div class="roda-item ${roda.status}" style="border-left-color: ${tipo.color};">
+                            <div class="roda-header">
+                                <span class="roda-tipo" style="color: ${tipo.color};">
+                                    <i class="bi ${tipo.icon}"></i> ${tipo.label}
+                                </span>
+                                <span class="badge bg-${status.badge}">${status.label}</span>
+                            </div>
+                            <div class="roda-content">${roda.conteudo}</div>
+                            <div class="roda-footer">
+                                <small class="text-muted">${criado}</small>
+                                ${isPendente ? `
+                                    <div class="roda-actions">
+                                        <button class="btn btn-sm btn-outline-success" onclick="completeRoda(${roda.id}, this)">
+                                            <i class="bi bi-check-lg"></i> Feito
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-secondary" onclick="expireRoda(${roda.id}, this)">
+                                            <i class="bi bi-x-lg"></i> Expirar
+                                        </button>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (e) {
+                console.error('Erro ao carregar rodas:', e);
+                container.innerHTML = `
+                    <div class="text-center text-danger py-4">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <p class="mt-2 mb-0">Erro ao carregar rodas</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function completeRoda(rodaId, btn) {
+            try {
+                btn.disabled = true;
+                const response = await fetch(`/api/v1/rodas/${rodaId}/complete`, { method: 'POST' });
+                if (response.ok) {
+                    showNotification('Roda marcada como cumprida!', 'success');
+                    loadContactRodas(rodasShowAll);
+                } else {
+                    showNotification('Erro ao marcar roda', 'error');
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                console.error(e);
+                btn.disabled = false;
+            }
+        }
+
+        async function expireRoda(rodaId, btn) {
+            try {
+                btn.disabled = true;
+                const response = await fetch(`/api/v1/rodas/${rodaId}/expire`, { method: 'POST' });
+                if (response.ok) {
+                    showNotification('Roda marcada como expirada', 'info');
+                    loadContactRodas(rodasShowAll);
+                } else {
+                    showNotification('Erro ao expirar roda', 'error');
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                console.error(e);
+                btn.disabled = false;
             }
         }
 

@@ -6914,6 +6914,60 @@ async def get_dashboard_unified(request: Request):
 # ============== RODAS DE RELACIONAMENTO ==============
 # Sistema de sugestoes inteligentes baseadas em contexto extraido de mensagens
 
+# Templates de mensagem por tipo de roda
+RODA_MESSAGE_TEMPLATES = {
+    "birthday": [
+        "Feliz aniversário, {nome}! 🎂 Desejo um dia incrível!",
+        "Parabéns, {nome}! 🎉 Que este novo ano seja repleto de conquistas!",
+    ],
+    "promessa": [
+        "Oi {nome}! Lembrei que ficamos de {conteudo}. Vou providenciar!",
+        "{nome}, voltando sobre {conteudo}. Me desculpe a demora!",
+    ],
+    "favor_recebido": [
+        "Oi {nome}! Queria agradecer novamente por {conteudo}. Muito obrigado!",
+        "{nome}, lembrei de você! Aquele {conteudo} fez toda diferença.",
+    ],
+    "proximo_passo": [
+        "Oi {nome}! Sobre {conteudo} - vamos confirmar?",
+        "{nome}, só passando para lembrar: {conteudo}",
+    ],
+    "topico": [
+        "Oi {nome}! Lembrei da nossa conversa sobre {conteudo}. Novidades?",
+        "{nome}, estava pensando em {conteudo}. Podemos retomar?",
+    ],
+    "low_health": [
+        "Oi {nome}! Faz tempo que não conversamos. Como você está?",
+        "{nome}, sumimos! Vamos marcar um café?",
+    ],
+}
+
+
+def get_message_template(reason: str, contact_name: str, roda_content: str = None) -> str:
+    """Retorna um template de mensagem baseado no tipo."""
+    import random
+
+    # Extrair tipo base do reason (ex: roda_promessa -> promessa)
+    tipo = reason.replace("roda_", "") if reason.startswith("roda_") else reason
+
+    templates = RODA_MESSAGE_TEMPLATES.get(tipo, RODA_MESSAGE_TEMPLATES.get("low_health"))
+    if not templates:
+        return None
+
+    template = random.choice(templates)
+
+    # Substituir placeholders
+    primeiro_nome = contact_name.split()[0] if contact_name else "amigo"
+    message = template.replace("{nome}", primeiro_nome)
+
+    if roda_content and "{conteudo}" in message:
+        # Truncar conteudo se muito longo
+        conteudo_curto = roda_content[:50] + "..." if len(roda_content) > 50 else roda_content
+        message = message.replace("{conteudo}", conteudo_curto.lower())
+
+    return message
+
+
 @app.get("/api/v1/contact-suggestions")
 async def get_contact_suggestions_v1(limit: int = 6):
     """
@@ -6952,7 +7006,8 @@ async def get_contact_suggestions_v1(limit: int = 6):
                     "reason": "birthday",
                     "reason_label": "Aniversário hoje!",
                     "roda": None,
-                    "priority": 0
+                    "priority": 0,
+                    "message_template": get_message_template("birthday", a["nome"])
                 })
     except Exception as e:
         print(f"[SUGGESTIONS] Error fetching birthdays: {e}")
@@ -7019,7 +7074,8 @@ async def get_contact_suggestions_v1(limit: int = 6):
             "reason": f"roda_{tipo}",
             "reason_label": reason_label,
             "roda": roda,
-            "priority": priority
+            "priority": priority,
+            "message_template": get_message_template(tipo, item["contact"]["nome"], roda.get("conteudo"))
         })
         contact_ids_used.add(contact_id)
 
@@ -7046,7 +7102,8 @@ async def get_contact_suggestions_v1(limit: int = 6):
                 "reason": "low_health",
                 "reason_label": f"Relacionamento esfriando ({health}%)",
                 "roda": None,
-                "priority": 6
+                "priority": 6,
+                "message_template": get_message_template("low_health", contato["nome"])
             })
             contact_ids_used.add(contact_id)
 
@@ -7100,6 +7157,76 @@ async def get_contact_rodas(contact_id: int, include_all: bool = False):
         "contact_id": contact_id,
         "rodas": rodas,
         "total": len(rodas)
+    }
+
+
+@app.post("/api/v1/rodas/expire-old")
+async def expire_old_rodas(dias_promessa: int = 30, dias_outros: int = 90):
+    """
+    Expira automaticamente rodas antigas (para ser chamado por cron).
+
+    Args:
+        dias_promessa: Dias para expirar promessas (default 30)
+        dias_outros: Dias para expirar outros tipos (default 90)
+
+    Returns:
+        Numero de rodas expiradas
+    """
+    rodas_service = get_rodas_service()
+    count = rodas_service.expirar_rodas_antigas(dias_promessa, dias_outros)
+
+    return {
+        "status": "ok",
+        "expired_count": count,
+        "config": {
+            "dias_promessa": dias_promessa,
+            "dias_outros": dias_outros
+        }
+    }
+
+
+@app.get("/api/v1/rodas/stats")
+async def get_rodas_stats():
+    """Retorna estatisticas das rodas."""
+    from database import get_db
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Total por status
+        cursor.execute("""
+            SELECT status, COUNT(*) as count
+            FROM contact_rodas
+            GROUP BY status
+        """)
+        by_status = {row["status"]: row["count"] for row in cursor.fetchall()}
+
+        # Total por tipo (apenas pendentes)
+        cursor.execute("""
+            SELECT tipo, COUNT(*) as count
+            FROM contact_rodas
+            WHERE status = 'pendente'
+            GROUP BY tipo
+        """)
+        by_tipo = {row["tipo"]: row["count"] for row in cursor.fetchall()}
+
+        # Rodas antigas (promessas > 7 dias, outros > 30 dias)
+        cursor.execute("""
+            SELECT COUNT(*) as count
+            FROM contact_rodas
+            WHERE status = 'pendente'
+            AND (
+                (tipo = 'promessa' AND criado_em < NOW() - INTERVAL '7 days')
+                OR (tipo != 'promessa' AND criado_em < NOW() - INTERVAL '30 days')
+            )
+        """)
+        antigas = cursor.fetchone()["count"]
+
+    return {
+        "by_status": by_status,
+        "by_tipo": by_tipo,
+        "pendentes_antigas": antigas,
+        "total_pendentes": sum(by_tipo.values()) if by_tipo else 0
     }
 
 
