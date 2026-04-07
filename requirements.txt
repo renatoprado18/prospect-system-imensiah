@@ -21,3 +21,6 @@ python-dotenv
 
 # Web Push Notifications
 pywebpush==1.14.0
+
+# AI - Anthropic Claude API
+anthropic>=0.89.0

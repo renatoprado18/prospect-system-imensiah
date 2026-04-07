@@ -659,7 +659,7 @@ def get_news_with_insights(news_id: int) -> Optional[Dict]:
 
 
 async def generate_smart_summary(news_id: int) -> Optional[str]:
-    """Gera resumo inteligente usando Haiku (custo ~$0.0001)"""
+    """Gera resumo inteligente usando Claude Sonnet"""
     import os
     import anthropic
 
@@ -701,7 +701,7 @@ Responda de forma direta, sem rótulos. Formato:
 💡 [Impacto em 1 frase]"""
 
         response = client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
