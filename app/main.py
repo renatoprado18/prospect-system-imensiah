@@ -6167,6 +6167,7 @@ async def cron_daily_sync(request: Request):
     5. Sync Gmail
     6. Sync WhatsApp
     7. AI suggestions generation
+    8. Campaign steps processing
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
@@ -6288,6 +6289,20 @@ async def cron_daily_sync(request: Request):
         results["steps"]["daily_ai"] = {"status": "success", "suggestions": ai_results.get("suggestions", {})}
     except Exception as e:
         results["steps"]["daily_ai"] = {"status": "error", "error": str(e)}
+
+    # 8. Campaign Steps Processing
+    try:
+        from services.campaign_executor import CampaignExecutor
+        executor = CampaignExecutor()
+        campaign_results = executor.process_pending_steps(limit=200)
+        results["steps"]["campaigns"] = {
+            "status": "success",
+            "processed": campaign_results.get("processed", 0),
+            "tasks_created": campaign_results.get("tasks_created", 0),
+            "errors": campaign_results.get("errors", 0)
+        }
+    except Exception as e:
+        results["steps"]["campaigns"] = {"status": "error", "error": str(e)}
 
     results["completed_at"] = datetime.now().isoformat()
 
@@ -7194,7 +7209,7 @@ def check_contacted_today(contact_ids: list) -> set:
 
 
 @app.get("/api/v1/contact-suggestions")
-async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
+def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
     """
     Retorna contatos com sugestoes de acao baseadas em rodas de relacionamento.
 
@@ -7213,22 +7228,20 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
     Returns:
         Lista de contatos com roda mais relevante e sugestao de acao
     """
-    import time as _time
-    _t0 = _time.time()
-
     from database import get_db
     from services.content_matcher import get_content_matcher
+    from services.business_matcher import get_business_match
 
     content_matcher = get_content_matcher()
     suggestions = []
-    print(f"[SUGGESTIONS TIMING] init: {(_time.time()-_t0)*1000:.0f}ms")
 
-    # 1. Buscar aniversarios de hoje (query otimizada)
-    _t1 = _time.time()
-    aniversarios_hoje = []
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
+    # Usar uma unica conexao para todas as queries
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # 1. Buscar aniversarios de hoje (query otimizada)
+        aniversarios_hoje = []
+        try:
             cursor.execute("""
                 SELECT id, nome, empresa, cargo, circulo, foto_url
                 FROM contacts
@@ -7254,26 +7267,20 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
                     "priority": 0,
                     "message_template": get_message_template("birthday", a["nome"])
                 })
-    except Exception as e:
-        print(f"[SUGGESTIONS] Error fetching birthdays: {e}")
-    print(f"[SUGGESTIONS TIMING] aniversarios: {(_time.time()-_t1)*1000:.0f}ms")
+        except Exception as e:
+            print(f"[SUGGESTIONS] Error fetching birthdays: {e}")
 
-    # 2. Buscar rodas pendentes
-    _t2 = _time.time()
-    rodas_service = get_rodas_service()
-    rodas_dashboard = []
-    try:
-        rodas_dashboard = rodas_service.get_rodas_para_dashboard(limit=limit * 2)
-    except Exception as e:
-        print(f"[SUGGESTIONS] Error fetching rodas: {e}")
-    print(f"[SUGGESTIONS TIMING] rodas: {(_time.time()-_t2)*1000:.0f}ms")
+        # 2. Buscar rodas pendentes (usa propria conexao interna)
+        rodas_service = get_rodas_service()
+        rodas_dashboard = []
+        try:
+            rodas_dashboard = rodas_service.get_rodas_para_dashboard(limit=limit * 2)
+        except Exception as e:
+            print(f"[SUGGESTIONS] Error fetching rodas: {e}")
 
-    # 3. Buscar contatos com health baixo (query otimizada)
-    _t3 = _time.time()
-    contatos_health_baixo = []
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
+        # 3. Buscar contatos com health baixo (query otimizada)
+        contatos_health_baixo = []
+        try:
             cursor.execute("""
                 SELECT id, nome, empresa, cargo, circulo, foto_url, health_score, tags
                 FROM contacts
@@ -7285,30 +7292,36 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
                 LIMIT %s
             """, (limit * 2,))
             contatos_health_baixo = [dict(row) for row in cursor.fetchall()]
-    except Exception as e:
-        print(f"[SUGGESTIONS] Error fetching low health contacts: {e}")
-    print(f"[SUGGESTIONS TIMING] low_health: {(_time.time()-_t3)*1000:.0f}ms")
-
-    # 4. Verificar quais contatos ja foram contactados hoje
-    _t4 = _time.time()
-    contacted_today = set()
-    if hide_contacted:
-        try:
-            # Coletar todos os IDs candidatos
-            all_candidate_ids = []
-            all_candidate_ids.extend([a["contact"]["id"] for a in aniversarios_hoje])
-            all_candidate_ids.extend([r["contact"]["id"] for r in rodas_dashboard])
-            all_candidate_ids.extend([c["id"] for c in contatos_health_baixo])
-
-            contacted_today = check_contacted_today(all_candidate_ids)
-            if contacted_today:
-                print(f"[SUGGESTIONS] {len(contacted_today)} contatos ja contactados hoje, pulando...")
         except Exception as e:
-            print(f"[SUGGESTIONS] Error checking contacted today: {e}")
-    print(f"[SUGGESTIONS TIMING] contacted_check: {(_time.time()-_t4)*1000:.0f}ms")
+            print(f"[SUGGESTIONS] Error fetching low health contacts: {e}")
+
+        # 4. Verificar quais contatos ja foram contactados hoje
+        contacted_today = set()
+        if hide_contacted:
+            try:
+                all_candidate_ids = []
+                all_candidate_ids.extend([a["contact"]["id"] for a in aniversarios_hoje])
+                all_candidate_ids.extend([r["contact"]["id"] for r in rodas_dashboard])
+                all_candidate_ids.extend([c["id"] for c in contatos_health_baixo])
+
+                if all_candidate_ids:
+                    cursor.execute("""
+                        SELECT DISTINCT contact_id FROM (
+                            SELECT contact_id FROM messages
+                            WHERE contact_id = ANY(%s) AND direcao = 'outgoing'
+                              AND enviado_em >= CURRENT_DATE AND enviado_em < CURRENT_DATE + INTERVAL '1 day'
+                            UNION ALL
+                            SELECT contact_id FROM contact_today_manual
+                            WHERE contact_id = ANY(%s) AND data = CURRENT_DATE
+                        ) AS contacted
+                    """, (all_candidate_ids, all_candidate_ids))
+                    contacted_today = {row["contact_id"] for row in cursor.fetchall()}
+                    if contacted_today:
+                        print(f"[SUGGESTIONS] {len(contacted_today)} contatos ja contactados hoje, pulando...")
+            except Exception as e:
+                print(f"[SUGGESTIONS] Error checking contacted today: {e}")
 
     # Montar lista unificada com prioridade
-    _t5 = _time.time()
     contact_ids_used = set()
 
     # Adicionar aniversarios (prioridade 0)
@@ -7321,6 +7334,7 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
         if contact_id not in contact_ids_used:
             # Aniversario nao precisa de content_suggestion
             item["content_suggestion"] = None
+            item["business_match"] = None  # Aniversario nao precisa de business match
             suggestions.append(item)
             contact_ids_used.add(contact_id)
 
@@ -7368,6 +7382,19 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
         except Exception as e:
             print(f"[SUGGESTIONS] Error getting content for contact {contact_id}: {e}")
 
+        # Buscar business match para este contato
+        business_match = None
+        try:
+            business_match = get_business_match(
+                contact_tags=item["contact"].get("tags"),
+                contact_cargo=item["contact"].get("cargo"),
+                contact_empresa=item["contact"].get("empresa"),
+                roda_tags=roda.get("tags") if roda else None,
+                roda_conteudo=roda.get("conteudo") if roda else None
+            )
+        except Exception as e:
+            print(f"[SUGGESTIONS] Error getting business match for contact {contact_id}: {e}")
+
         suggestions.append({
             "contact": item["contact"],
             "reason": f"roda_{tipo}",
@@ -7375,7 +7402,8 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
             "roda": roda,
             "priority": priority,
             "message_template": get_message_template(tipo, item["contact"]["nome"], roda.get("conteudo")),
-            "content_suggestion": content_suggestion
+            "content_suggestion": content_suggestion,
+            "business_match": business_match
         })
         contact_ids_used.add(contact_id)
 
@@ -7404,6 +7432,17 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
             except Exception as e:
                 print(f"[SUGGESTIONS] Error getting content for low-health contact {contact_id}: {e}")
 
+            # Buscar business match para contato com health baixo
+            business_match = None
+            try:
+                business_match = get_business_match(
+                    contact_tags=contato.get("tags"),
+                    contact_cargo=contato.get("cargo"),
+                    contact_empresa=contato.get("empresa")
+                )
+            except Exception as e:
+                print(f"[SUGGESTIONS] Error getting business match for low-health contact {contact_id}: {e}")
+
             suggestions.append({
                 "contact": {
                     "id": contato["id"],
@@ -7418,14 +7457,13 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
                 "roda": None,
                 "priority": 6,
                 "message_template": get_message_template("low_health", contato["nome"]),
-                "content_suggestion": content_suggestion
+                "content_suggestion": content_suggestion,
+                "business_match": business_match
             })
             contact_ids_used.add(contact_id)
 
     # Ordenar por prioridade
     suggestions.sort(key=lambda x: x["priority"])
-    print(f"[SUGGESTIONS TIMING] processing: {(_time.time()-_t5)*1000:.0f}ms")
-    print(f"[SUGGESTIONS TIMING] TOTAL: {(_time.time()-_t0)*1000:.0f}ms")
 
     return {
         "suggestions": suggestions[:limit],
@@ -14900,9 +14938,9 @@ async def api_news_contacts(news_id: int):
 
 @app.get("/api/news/{news_id}/details")
 async def api_news_details(news_id: int):
-    """Retorna detalhes da notícia com insights conectando aos artigos"""
+    """Retorna detalhes da notícia com insights conectando aos artigos (usa IA)"""
     from services.news_hub import get_news_with_insights
-    result = get_news_with_insights(news_id)
+    result = await get_news_with_insights(news_id)
     if not result:
         raise HTTPException(status_code=404, detail="Notícia não encontrada")
     return result
@@ -14916,6 +14954,16 @@ async def api_news_summary(news_id: int):
     if not summary:
         raise HTTPException(status_code=500, detail="Não foi possível gerar resumo")
     return {"summary": summary}
+
+
+@app.post("/api/news/{news_id}/connect-article/{article_id}")
+async def api_news_connect_article(news_id: int, article_id: int):
+    """Gera conexão inteligente entre notícia e artigo do blog"""
+    from services.news_hub import generate_article_connection
+    result = await generate_article_connection(news_id, article_id)
+    if not result:
+        raise HTTPException(status_code=500, detail="Não foi possível gerar conexão")
+    return result
 
 
 @app.post("/api/hot-takes/from-news")
@@ -15581,6 +15629,266 @@ async def api_seed_oficinas():
     from services.oficinas import seed_oficinas
     oficinas = seed_oficinas()
     return {"status": "success", "oficinas": oficinas, "count": len(oficinas)}
+
+
+# ==================== CAMPANHAS DE RELACIONAMENTO ====================
+
+from services.campaign_service import CampaignService
+
+# Singleton do serviço de campanhas (sync)
+_campaign_service = CampaignService()
+
+
+class CampaignCreate(BaseModel):
+    business_line_id: int
+    nome: str
+    objetivo: str
+    filtros: dict
+    steps: List[dict]
+    descricao: Optional[str] = None
+    motivo_contato: Optional[str] = None
+
+
+class CampaignUpdate(BaseModel):
+    nome: Optional[str] = None
+    descricao: Optional[str] = None
+    objetivo: Optional[str] = None
+    motivo_contato: Optional[str] = None
+    filtros: Optional[dict] = None
+
+
+class EnrollmentConvert(BaseModel):
+    notes: str
+
+
+@app.get("/api/v1/business-lines")
+def api_list_business_lines():
+    """Lista todas as linhas de negócio."""
+    return _campaign_service.get_business_lines()
+
+
+@app.get("/api/v1/campaigns")
+def api_list_campaigns(
+    business_line_id: Optional[int] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+):
+    """Lista campanhas com filtros opcionais."""
+    return _campaign_service.list_campaigns(
+        business_line_id=business_line_id,
+        status=status,
+        limit=limit,
+        offset=offset
+    )
+
+
+@app.post("/api/v1/campaigns")
+def api_create_campaign(data: CampaignCreate):
+    """Cria uma nova campanha."""
+    campaign_id = _campaign_service.create_campaign(
+        business_line_id=data.business_line_id,
+        nome=data.nome,
+        objetivo=data.objetivo,
+        filtros=data.filtros,
+        steps=data.steps,
+        descricao=data.descricao,
+        motivo_contato=data.motivo_contato
+    )
+    return {"id": campaign_id, "status": "created"}
+
+
+@app.get("/api/v1/campaigns/dashboard")
+def api_campaign_dashboard():
+    """Dashboard geral de campanhas."""
+    return _campaign_service.get_dashboard_stats()
+
+
+@app.get("/api/v1/campaigns/pending-actions")
+def api_pending_actions(limit: int = 50):
+    """Retorna ações de campanha pendentes para hoje."""
+    return _campaign_service.get_pending_actions(limit=limit)
+
+
+@app.post("/api/v1/campaigns/preview")
+async def api_preview_audience(request: Request):
+    """Preview da audiência com os filtros especificados."""
+    data = await request.json()
+    filtros = data.get("filtros", {})
+    return _campaign_service.preview_campaign_audience(filtros)
+
+
+@app.get("/api/v1/campaigns/{campaign_id}")
+def api_get_campaign(campaign_id: int):
+    """Detalhes de uma campanha com steps e métricas."""
+    campaign = _campaign_service.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campanha não encontrada")
+    return campaign
+
+
+@app.put("/api/v1/campaigns/{campaign_id}")
+def api_update_campaign(campaign_id: int, data: CampaignUpdate):
+    """Atualiza uma campanha (apenas se status = draft)."""
+    update_data = {k: v for k, v in data.dict().items() if v is not None}
+    success = _campaign_service.update_campaign(campaign_id, **update_data)
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Não foi possível atualizar. Campanha deve estar em status 'draft'."
+        )
+    return {"status": "updated"}
+
+
+@app.delete("/api/v1/campaigns/{campaign_id}")
+def api_delete_campaign(campaign_id: int):
+    """Deleta uma campanha (apenas se status = draft)."""
+    success = _campaign_service.delete_campaign(campaign_id)
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Não foi possível deletar. Campanha deve estar em status 'draft'."
+        )
+    return {"status": "deleted"}
+
+
+@app.post("/api/v1/campaigns/{campaign_id}/activate")
+def api_activate_campaign(campaign_id: int):
+    """Ativa uma campanha e enrolla contatos baseado nos filtros."""
+    result = _campaign_service.activate_campaign(campaign_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    return result
+
+
+@app.post("/api/v1/campaigns/{campaign_id}/pause")
+def api_pause_campaign(campaign_id: int):
+    """Pausa uma campanha ativa."""
+    success = _campaign_service.pause_campaign(campaign_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Não foi possível pausar a campanha")
+    return {"status": "paused"}
+
+
+@app.post("/api/v1/campaigns/{campaign_id}/resume")
+def api_resume_campaign(campaign_id: int):
+    """Retoma uma campanha pausada."""
+    success = _campaign_service.resume_campaign(campaign_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Não foi possível retomar a campanha")
+    return {"status": "resumed"}
+
+
+@app.post("/api/v1/campaigns/{campaign_id}/complete")
+def api_complete_campaign(campaign_id: int):
+    """Finaliza uma campanha e retorna métricas."""
+    result = _campaign_service.complete_campaign(campaign_id)
+    return {"status": "completed", "metrics": result}
+
+
+@app.get("/api/v1/campaigns/{campaign_id}/enrollments")
+def api_list_enrollments(
+    campaign_id: int,
+    status: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0
+):
+    """Lista contatos enrolled em uma campanha."""
+    return _campaign_service.get_enrollments(
+        campaign_id=campaign_id,
+        status=status,
+        limit=limit,
+        offset=offset
+    )
+
+
+@app.post("/api/v1/campaigns/{campaign_id}/enroll")
+async def api_enroll_contact(campaign_id: int, request: Request):
+    """Enrolla um contato específico em uma campanha."""
+    data = await request.json()
+    contact_id = data.get("contact_id")
+    if not contact_id:
+        raise HTTPException(status_code=400, detail="contact_id é obrigatório")
+
+    success = _campaign_service.enroll_contact(campaign_id, contact_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Não foi possível enrollar o contato")
+    return {"status": "enrolled"}
+
+
+@app.delete("/api/v1/campaigns/{campaign_id}/enrollments/{contact_id}")
+def api_remove_enrollment(campaign_id: int, contact_id: int, motivo: Optional[str] = None):
+    """Remove um contato de uma campanha."""
+    success = _campaign_service.remove_from_campaign(campaign_id, contact_id, motivo)
+    if not success:
+        raise HTTPException(status_code=400, detail="Não foi possível remover o contato")
+    return {"status": "removed"}
+
+
+@app.get("/api/v1/campaigns/{campaign_id}/funnel")
+def api_campaign_funnel(campaign_id: int):
+    """Retorna métricas de funil por step."""
+    return _campaign_service.get_campaign_funnel(campaign_id)
+
+
+@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/pause")
+def api_pause_enrollment(enrollment_id: int):
+    """Pausa um enrollment específico."""
+    success = _campaign_service.pause_enrollment(enrollment_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Não foi possível pausar o enrollment")
+    return {"status": "paused"}
+
+
+@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/resume")
+def api_resume_enrollment(enrollment_id: int):
+    """Retoma um enrollment pausado."""
+    success = _campaign_service.resume_enrollment(enrollment_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Não foi possível retomar o enrollment")
+    return {"status": "resumed"}
+
+
+@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/convert")
+def api_mark_converted(enrollment_id: int, data: EnrollmentConvert):
+    """Marca um enrollment como convertido."""
+    success = _campaign_service.mark_converted(enrollment_id, data.notes)
+    if not success:
+        raise HTTPException(status_code=400, detail="Não foi possível marcar como convertido")
+    return {"status": "converted"}
+
+
+@app.get("/api/v1/contacts/{contact_id}/campaigns")
+def api_contact_campaigns(contact_id: int):
+    """Lista todas as campanhas de um contato."""
+    return _campaign_service.get_contact_campaigns(contact_id)
+
+
+# ==================== CAMPAIGN EXECUTOR ====================
+
+from services.campaign_executor import CampaignExecutor
+
+# Singleton do executor
+_campaign_executor = CampaignExecutor()
+
+
+@app.post("/api/v1/campaigns/process-pending")
+def api_process_pending_steps():
+    """
+    Processa steps pendentes de todas as campanhas ativas.
+    Chamado por cron job ou manualmente.
+    """
+    result = _campaign_executor.process_pending_steps()
+    return result
+
+
+@app.post("/api/v1/campaigns/enrollments/{enrollment_id}/execute")
+def api_execute_enrollment_step(enrollment_id: int):
+    """Executa o próximo step de um enrollment específico."""
+    result = _campaign_executor.execute_single_enrollment(enrollment_id)
+    if not result.get("success", True):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    return result
 
 
 # Vercel handler
