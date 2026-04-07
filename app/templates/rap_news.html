@@ -1,0 +1,712 @@
+{% extends "rap_base.html" %}
+{% block title %}News Hub - INTEL{% endblock %}
+{% block page_title %}News Hub{% endblock %}
+{% block page_subtitle %}Notícias curadas para você{% endblock %}
+
+{% block header_actions %}
+<button class="btn btn-outline-primary btn-sm" onclick="refreshNews()">
+    <i class="bi bi-arrow-clockwise me-1"></i>Atualizar
+</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .news-container {
+        display: grid;
+        grid-template-columns: 1fr 300px;
+        gap: 24px;
+    }
+
+    .news-main {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .news-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    /* Section headers */
+    .section-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+    }
+
+    .section-header h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 0;
+    }
+
+    .section-header .badge {
+        font-size: 0.7rem;
+        padding: 3px 8px;
+        border-radius: 20px;
+    }
+
+    .section-header .trending { background: #fee2e2; color: #dc2626; }
+    .section-header .for-you { background: #dbeafe; color: #2563eb; }
+    .section-header .discovery { background: #fef3c7; color: #d97706; }
+
+    /* News cards */
+    .news-section {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .news-item {
+        padding: 16px 0;
+        border-bottom: 1px solid var(--gray-100);
+        display: flex;
+        gap: 16px;
+        transition: background 0.2s;
+    }
+
+    .news-item:last-child {
+        border-bottom: none;
+        padding-bottom: 0;
+    }
+
+    .news-item:first-child {
+        padding-top: 0;
+    }
+
+    .news-item:hover {
+        background: var(--gray-50);
+        margin: 0 -12px;
+        padding-left: 12px;
+        padding-right: 12px;
+        border-radius: 8px;
+    }
+
+    .news-content {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .news-source {
+        font-size: 0.7rem;
+        color: var(--gray-500);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+    }
+
+    .news-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin-bottom: 6px;
+        line-height: 1.4;
+        cursor: pointer;
+    }
+
+    .news-title:hover {
+        color: var(--primary);
+    }
+
+    .news-description {
+        font-size: 0.8rem;
+        color: var(--gray-600);
+        line-height: 1.5;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .news-topics {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+    }
+
+    .news-topic {
+        font-size: 0.65rem;
+        padding: 2px 8px;
+        background: var(--gray-100);
+        color: var(--gray-600);
+        border-radius: 12px;
+    }
+
+    .news-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: flex-end;
+    }
+
+    .news-time {
+        font-size: 0.7rem;
+        color: var(--gray-400);
+        white-space: nowrap;
+    }
+
+    .action-buttons {
+        display: flex;
+        gap: 4px;
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+
+    .news-item:hover .action-buttons {
+        opacity: 1;
+    }
+
+    .action-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        border: 1px solid var(--gray-200);
+        background: white;
+        color: var(--gray-500);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+
+    .action-btn:hover {
+        background: var(--gray-100);
+        color: var(--dark);
+    }
+
+    .action-btn.share:hover { background: #dbeafe; color: #2563eb; border-color: #93c5fd; }
+    .action-btn.hot-take:hover { background: #fee2e2; color: #dc2626; border-color: #fca5a5; }
+    .action-btn.contact:hover { background: #d1fae5; color: #059669; border-color: #6ee7b7; }
+    .action-btn.ignore:hover { background: var(--gray-100); color: var(--gray-500); }
+
+    .action-btn.done {
+        background: #d1fae5;
+        color: #059669;
+        border-color: #6ee7b7;
+    }
+
+    /* Sidebar */
+    .sidebar-card {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .sidebar-title {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin-bottom: 12px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    /* Interest bars */
+    .interest-item {
+        margin-bottom: 10px;
+    }
+
+    .interest-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+    }
+
+    .interest-name {
+        font-size: 0.75rem;
+        color: var(--gray-600);
+        text-transform: capitalize;
+    }
+
+    .interest-score {
+        font-size: 0.7rem;
+        color: var(--gray-500);
+    }
+
+    .interest-bar {
+        height: 6px;
+        background: var(--gray-100);
+        border-radius: 3px;
+        overflow: hidden;
+    }
+
+    .interest-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--primary), var(--secondary));
+        border-radius: 3px;
+        transition: width 0.5s ease;
+    }
+
+    /* Empty state */
+    .empty-state {
+        text-align: center;
+        padding: 40px 20px;
+        color: var(--gray-500);
+    }
+
+    .empty-state i {
+        font-size: 3rem;
+        margin-bottom: 16px;
+        opacity: 0.5;
+    }
+
+    /* Responsive */
+    @media (max-width: 1024px) {
+        .news-container {
+            grid-template-columns: 1fr;
+        }
+
+        .news-sidebar {
+            order: -1;
+            flex-direction: row;
+            overflow-x: auto;
+        }
+
+        .sidebar-card {
+            min-width: 200px;
+        }
+    }
+
+    @media (max-width: 768px) {
+        .action-buttons {
+            opacity: 1;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="news-container">
+    <div class="news-main">
+        <!-- Trending -->
+        <div class="news-section" id="trending-section">
+            <div class="section-header">
+                <i class="bi bi-fire" style="color: #dc2626;"></i>
+                <h3>Trending</h3>
+                <span class="badge trending">O que todos falam</span>
+            </div>
+            <div id="trending-list">
+                <div class="empty-state">
+                    <i class="bi bi-hourglass-split"></i>
+                    <p>Carregando...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Para Você -->
+        <div class="news-section" id="foryou-section">
+            <div class="section-header">
+                <i class="bi bi-star" style="color: #2563eb;"></i>
+                <h3>Para Você</h3>
+                <span class="badge for-you">Baseado nos seus interesses</span>
+            </div>
+            <div id="foryou-list">
+                <div class="empty-state">
+                    <i class="bi bi-hourglass-split"></i>
+                    <p>Carregando...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Descoberta -->
+        <div class="news-section" id="discovery-section">
+            <div class="section-header">
+                <i class="bi bi-lightbulb" style="color: #d97706;"></i>
+                <h3>Descoberta</h3>
+                <span class="badge discovery">Fora da sua bolha</span>
+            </div>
+            <div id="discovery-list">
+                <div class="empty-state">
+                    <i class="bi bi-hourglass-split"></i>
+                    <p>Carregando...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="news-sidebar">
+        <!-- Seus Interesses -->
+        <div class="sidebar-card">
+            <div class="sidebar-title">
+                <i class="bi bi-graph-up"></i>
+                Seus Interesses
+            </div>
+            <div id="interests-list">
+                <p style="font-size: 0.75rem; color: var(--gray-400);">
+                    Interaja com as notícias para personalizar
+                </p>
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="sidebar-card">
+            <div class="sidebar-title">
+                <i class="bi bi-lightning"></i>
+                Ações Rápidas
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <button class="btn btn-sm btn-outline-primary w-100" onclick="window.location.href='/hot-takes'">
+                    <i class="bi bi-fire me-1"></i>Hot Takes
+                </button>
+                <button class="btn btn-sm btn-outline-secondary w-100" onclick="window.location.href='/editorial'">
+                    <i class="bi bi-calendar me-1"></i>Editorial
+                </button>
+                <button class="btn btn-sm btn-outline-secondary w-100" onclick="window.location.href='/artigos'">
+                    <i class="bi bi-file-text me-1"></i>Artigos
+                </button>
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="sidebar-card">
+            <div class="sidebar-title">
+                <i class="bi bi-bar-chart"></i>
+                Hoje
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; text-align: center;">
+                <div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary);" id="stat-read">0</div>
+                    <div style="font-size: 0.7rem; color: var(--gray-500);">Lidas</div>
+                </div>
+                <div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: var(--success);" id="stat-actions">0</div>
+                    <div style="font-size: 0.7rem; color: var(--gray-500);">Ações</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Compartilhar com Contato -->
+<div class="modal fade" id="shareContactModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-send me-2"></i>Compartilhar com Contato</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="share-news-id">
+                <div class="mb-3">
+                    <label class="form-label">Notícia</label>
+                    <p id="share-news-title" style="font-weight: 500;"></p>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Contatos Sugeridos</label>
+                    <div id="suggested-contacts">
+                        <p class="text-muted">Carregando...</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let newsData = { trending: [], for_you: [], discovery: [] };
+    let readCount = 0;
+    let actionCount = 0;
+
+    async function loadNews() {
+        try {
+            const response = await fetch('/api/news/feed');
+            newsData = await response.json();
+
+            renderSection('trending-list', newsData.trending, 'trending');
+            renderSection('foryou-list', newsData.for_you, 'foryou');
+            renderSection('discovery-list', newsData.discovery, 'discovery');
+            renderInterests(newsData.interests || []);
+
+        } catch (error) {
+            console.error('Error loading news:', error);
+        }
+    }
+
+    function renderSection(containerId, items, type) {
+        const container = document.getElementById(containerId);
+
+        if (!items || items.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <i class="bi bi-newspaper"></i>
+                    <p>Nenhuma notícia no momento</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = items.map(item => renderNewsItem(item)).join('');
+    }
+
+    function renderNewsItem(item) {
+        const topics = item.topics || [];
+        const topicsHtml = topics.slice(0, 3).map(t =>
+            `<span class="news-topic">${t}</span>`
+        ).join('');
+
+        const timeAgo = formatTimeAgo(item.collected_at || item.published_at);
+        const isDone = item.user_action && item.user_action !== 'ignored';
+
+        return `
+            <div class="news-item" data-id="${item.id}" onmouseenter="trackRead(${item.id})">
+                <div class="news-content">
+                    <div class="news-source">${item.source || 'Fonte'}</div>
+                    <div class="news-title" onclick="openNews(${item.id}, '${escapeHtml(item.link)}')">${item.title}</div>
+                    <div class="news-description">${item.description || ''}</div>
+                    ${topicsHtml ? `<div class="news-topics">${topicsHtml}</div>` : ''}
+                </div>
+                <div class="news-actions">
+                    <div class="news-time">${timeAgo}</div>
+                    <div class="action-buttons">
+                        <button class="action-btn contact" onclick="shareWithContact(${item.id})" title="Enviar para contato">
+                            <i class="bi bi-person-plus"></i>
+                        </button>
+                        <button class="action-btn hot-take" onclick="createHotTake(${item.id})" title="Criar Hot Take">
+                            <i class="bi bi-fire"></i>
+                        </button>
+                        <button class="action-btn ignore ${isDone ? 'done' : ''}" onclick="ignoreNews(${item.id})" title="Ignorar">
+                            <i class="bi bi-x"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderInterests(interests) {
+        const container = document.getElementById('interests-list');
+
+        if (!interests || interests.length === 0) {
+            container.innerHTML = `
+                <p style="font-size: 0.75rem; color: var(--gray-400);">
+                    Interaja com as notícias para personalizar seu feed
+                </p>
+            `;
+            return;
+        }
+
+        container.innerHTML = interests.map(i => `
+            <div class="interest-item">
+                <div class="interest-header">
+                    <span class="interest-name">${i.topic}</span>
+                    <span class="interest-score">${i.score}%</span>
+                </div>
+                <div class="interest-bar">
+                    <div class="interest-fill" style="width: ${i.score}%"></div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function formatTimeAgo(dateStr) {
+        if (!dateStr) return '';
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diff = Math.floor((now - date) / 1000 / 60); // minutos
+
+        if (diff < 60) return `${diff}min`;
+        if (diff < 1440) return `${Math.floor(diff / 60)}h`;
+        return `${Math.floor(diff / 1440)}d`;
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/'/g, "\\'").replace(/"/g, '\\"');
+    }
+
+    let readTimer = null;
+    let currentReadId = null;
+
+    function trackRead(newsId) {
+        if (currentReadId === newsId) return;
+
+        // Salvar leitura anterior
+        if (currentReadId && readTimer) {
+            clearTimeout(readTimer);
+            saveInteraction(currentReadId, 'read', Math.floor((Date.now() - readTimer) / 1000));
+        }
+
+        currentReadId = newsId;
+        readTimer = Date.now();
+    }
+
+    function openNews(newsId, link) {
+        // Registrar leitura
+        saveInteraction(newsId, 'read', 5);
+        readCount++;
+        document.getElementById('stat-read').textContent = readCount;
+
+        if (link) {
+            window.open(link, '_blank');
+        }
+    }
+
+    async function saveInteraction(newsId, action, timeSpent = 0) {
+        try {
+            await fetch('/api/news/interaction', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    news_id: newsId,
+                    action: action,
+                    time_spent: timeSpent
+                })
+            });
+        } catch (error) {
+            console.error('Error saving interaction:', error);
+        }
+    }
+
+    async function shareWithContact(newsId) {
+        const news = findNewsById(newsId);
+        if (!news) return;
+
+        document.getElementById('share-news-id').value = newsId;
+        document.getElementById('share-news-title').textContent = news.title;
+
+        // Buscar contatos sugeridos
+        try {
+            const response = await fetch(`/api/news/${newsId}/contacts`);
+            const contacts = await response.json();
+
+            const container = document.getElementById('suggested-contacts');
+            if (contacts.length === 0) {
+                container.innerHTML = '<p class="text-muted">Nenhum contato sugerido</p>';
+            } else {
+                container.innerHTML = contacts.map(c => `
+                    <div style="display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 8px; cursor: pointer; margin-bottom: 4px;"
+                         class="contact-item" onclick="selectContact(${newsId}, ${c.id}, '${escapeHtml(c.nome)}')">
+                        <div style="width: 36px; height: 36px; background: var(--gray-100); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                            <i class="bi bi-person"></i>
+                        </div>
+                        <div style="flex: 1;">
+                            <div style="font-weight: 500; font-size: 0.9rem;">${c.nome}</div>
+                            <div style="font-size: 0.75rem; color: var(--gray-500);">${c.empresa || ''} ${c.cargo ? '• ' + c.cargo : ''}</div>
+                        </div>
+                        <span style="font-size: 0.7rem; padding: 2px 8px; background: var(--primary); color: white; border-radius: 12px;">
+                            C${c.circulo || '?'}
+                        </span>
+                    </div>
+                `).join('');
+            }
+        } catch (error) {
+            console.error('Error loading contacts:', error);
+        }
+
+        const modal = new bootstrap.Modal(document.getElementById('shareContactModal'));
+        modal.show();
+
+        saveInteraction(newsId, 'contact');
+        actionCount++;
+        document.getElementById('stat-actions').textContent = actionCount;
+    }
+
+    function selectContact(newsId, contactId, contactName) {
+        // Aqui você pode abrir WhatsApp, email, etc
+        const news = findNewsById(newsId);
+        const message = `Olá! Vi esta notícia e lembrei de você:\n\n${news.title}\n\n${news.link}`;
+
+        // Copiar mensagem
+        navigator.clipboard.writeText(message);
+
+        // Feedback
+        const toast = document.createElement('div');
+        toast.className = 'toast-notification success show';
+        toast.innerHTML = `<i class="bi bi-check-circle me-2"></i>Mensagem copiada para ${contactName}`;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+
+        bootstrap.Modal.getInstance(document.getElementById('shareContactModal')).hide();
+    }
+
+    async function createHotTake(newsId) {
+        const news = findNewsById(newsId);
+        if (!news) return;
+
+        // Redirecionar para hot-takes com dados
+        saveInteraction(newsId, 'hot_take');
+        actionCount++;
+        document.getElementById('stat-actions').textContent = actionCount;
+
+        // Criar hot take via API
+        try {
+            const response = await fetch('/api/hot-takes/from-news', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    news_title: news.title,
+                    news_link: news.link,
+                    news_description: news.description
+                })
+            });
+
+            const result = await response.json();
+            if (result.id) {
+                window.location.href = `/hot-takes?edit=${result.id}`;
+            } else {
+                window.location.href = '/hot-takes';
+            }
+        } catch (error) {
+            console.error('Error creating hot take:', error);
+            window.location.href = '/hot-takes';
+        }
+    }
+
+    function ignoreNews(newsId) {
+        saveInteraction(newsId, 'ignored', 0);
+
+        // Remover visualmente
+        const item = document.querySelector(`.news-item[data-id="${newsId}"]`);
+        if (item) {
+            item.style.opacity = '0.3';
+            setTimeout(() => item.remove(), 300);
+        }
+    }
+
+    function findNewsById(newsId) {
+        return [...newsData.trending, ...newsData.for_you, ...newsData.discovery]
+            .find(n => n.id === newsId);
+    }
+
+    async function refreshNews() {
+        // Coletar novas notícias
+        try {
+            await fetch('/api/news/collect', { method: 'POST' });
+            await loadNews();
+
+            const toast = document.createElement('div');
+            toast.className = 'toast-notification success show';
+            toast.innerHTML = '<i class="bi bi-check-circle me-2"></i>Notícias atualizadas!';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        } catch (error) {
+            console.error('Error refreshing news:', error);
+        }
+    }
+
+    // Estilos para contact hover
+    document.addEventListener('DOMContentLoaded', () => {
+        loadNews();
+
+        // Adicionar estilos de hover para contatos
+        const style = document.createElement('style');
+        style.textContent = '.contact-item:hover { background: var(--gray-50); }';
+        document.head.appendChild(style);
+    });
+</script>
+{% endblock %}

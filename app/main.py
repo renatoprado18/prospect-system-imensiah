@@ -14583,6 +14583,86 @@ async def hot_takes_page(request: Request):
         return HTMLResponse(f"<pre>Error: {e}\n\n{error_detail}</pre>", status_code=500)
 
 
+# ============== NEWS HUB ==============
+
+@app.get("/news", response_class=HTMLResponse)
+async def news_hub_page(request: Request):
+    """News Hub - Central de Notícias Inteligente"""
+    return templates.TemplateResponse("rap_news.html", {"request": request})
+
+
+@app.get("/api/news/feed")
+async def api_news_feed(request: Request):
+    """Retorna feed de notícias personalizado"""
+    from services.news_hub import get_news_feed, detect_trending
+
+    # Detectar trending primeiro
+    detect_trending(hours=48)
+
+    # TODO: Pegar user_id da sessão
+    user_id = 1
+
+    feed = get_news_feed(user_id, limit=15)
+    return feed
+
+
+@app.post("/api/news/collect")
+async def api_news_collect():
+    """Coleta novas notícias das fontes RSS"""
+    from services.news_hub import collect_news
+    result = await collect_news()
+    return result
+
+
+@app.post("/api/news/interaction")
+async def api_news_interaction(request: Request):
+    """Registra interação do usuário com uma notícia"""
+    from services.news_hub import record_interaction
+
+    data = await request.json()
+    news_id = data.get("news_id")
+    action = data.get("action")
+    time_spent = data.get("time_spent", 0)
+
+    if not news_id or not action:
+        raise HTTPException(status_code=400, detail="news_id and action required")
+
+    # TODO: Pegar user_id da sessão
+    user_id = 1
+
+    record_interaction(user_id, news_id, action, time_spent)
+    return {"status": "ok"}
+
+
+@app.get("/api/news/{news_id}/contacts")
+async def api_news_contacts(news_id: int):
+    """Retorna contatos sugeridos para uma notícia"""
+    from services.news_hub import match_contacts_for_news
+    contacts = match_contacts_for_news(news_id)
+    return contacts
+
+
+@app.post("/api/hot-takes/from-news")
+async def api_hot_take_from_news(request: Request):
+    """Cria hot take a partir de uma notícia"""
+    from services.hot_takes import save_hot_take
+
+    data = await request.json()
+
+    hot_take = {
+        "news_title": data.get("news_title", ""),
+        "news_link": data.get("news_link", ""),
+        "hook": "",
+        "body": data.get("news_description", ""),
+        "cta": "",
+        "linkedin_post": "",
+        "status": "draft"
+    }
+
+    result = save_hot_take(hot_take)
+    return result
+
+
 # ============== ARTIGOS PAGE ==============
 
 @app.get("/artigos", response_class=HTMLResponse)
@@ -14802,11 +14882,17 @@ async def editorial_page(request: Request):
     # Find Monday of this week
     days_since_monday = today.weekday()
     monday = today - timedelta(days=days_since_monday)
+    friday = monday + timedelta(days=4)
+
+    # Busca posts agendados/publicados da semana diretamente
+    week_posts = get_editorial_posts(from_date=monday, to_date=friday + timedelta(days=1))
+    # Filtra apenas scheduled e published
+    week_posts = [p for p in week_posts if p.get('status') in ['scheduled', 'published']]
 
     week_days = []
     for i in range(5):  # Mon to Fri
         day = monday + timedelta(days=i)
-        day_posts = [p for p in posts if p.get('data_publicacao') and
+        day_posts = [p for p in week_posts if p.get('data_publicacao') and
                      p['data_publicacao'].date() == day.date()]
         week_days.append({
             'date': day,
