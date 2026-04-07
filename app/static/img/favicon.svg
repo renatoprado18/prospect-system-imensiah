@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="50%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <!-- Ultra-minimal: abstract "i" as neural spark -->
+  <!-- The dot is a node exploding with connections -->
+  <circle cx="16" cy="7" r="3.5" fill="url(#grad)"/>
+  <!-- Radiating insight lines from the mind -->
+  <g stroke="url(#grad)" stroke-width="1.2" stroke-linecap="round" opacity="0.7">
+    <line x1="16" y1="7" x2="24" y2="4"/>
+    <line x1="16" y1="7" x2="8" y2="4"/>
+    <line x1="16" y1="7" x2="25" y2="10"/>
+    <line x1="16" y1="7" x2="7" y2="10"/>
+  </g>
+  <!-- Stem: elegant vertical with subtle taper -->
+  <rect x="13.5" y="13" width="5" height="15" rx="2.5" fill="url(#grad)"/>
+</svg>
