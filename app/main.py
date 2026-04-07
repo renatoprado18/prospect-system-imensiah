@@ -624,6 +624,15 @@ async def projeto_detail_page(request: Request, project_id: int):
     })
 
 
+@app.get("/campanhas", response_class=HTMLResponse)
+async def campanhas_page(request: Request):
+    """INTEL Campanhas - Gestao de campanhas de relacionamento"""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_campanhas.html", {"request": request})
+
+
 # ============== RAP Redirects (retrocompatibilidade) ==============
 # Todas as rotas /rap/* redirecionam para rotas na raiz
 
