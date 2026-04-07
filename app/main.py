@@ -14879,9 +14879,9 @@ async def editorial_page(request: Request):
 
     # Calculate this week's dates (Mon-Fri)
     today = datetime.now()
-    # Find Monday of this week
+    # Find Monday of this week (at midnight to include morning posts)
     days_since_monday = today.weekday()
-    monday = today - timedelta(days=days_since_monday)
+    monday = (today - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
     friday = monday + timedelta(days=4)
 
     # Busca posts agendados/publicados da semana diretamente
