@@ -1320,10 +1320,20 @@ async function copyAndOpen(postId) {
 
 async function markAsPublished(postId) {
     try {
-        await fetch(`/api/editorial/${postId}/publish`, { method: 'POST' });
+        const response = await fetch(`/api/editorial/${postId}/publish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        if (!response.ok) {
+            const err = await response.json();
+            alert('Erro ao marcar como publicado: ' + (err.detail || 'Erro desconhecido'));
+            return;
+        }
         location.reload();
     } catch (error) {
         console.error('Error marking as published:', error);
+        alert('Erro ao marcar como publicado');
     }
 }
 
