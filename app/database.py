@@ -1910,8 +1910,14 @@ def init_db():
                 relevance_score FLOAT,
                 topics JSONB DEFAULT '[]',
                 keywords JSONB DEFAULT '[]',
-                processed BOOLEAN DEFAULT FALSE
+                processed BOOLEAN DEFAULT FALSE,
+                ai_summary TEXT
             )
+        ''')
+
+        # Adicionar coluna ai_summary se não existir (migração)
+        cursor.execute('''
+            ALTER TABLE news_items ADD COLUMN IF NOT EXISTS ai_summary TEXT
         ''')
 
         # Interações do usuário com notícias (para aprendizado)

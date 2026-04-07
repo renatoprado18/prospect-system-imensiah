@@ -4428,6 +4428,187 @@ async def enrich_linkedin_batch(
     return result
 
 
+# ============== APOLLO.IO ENRICHMENT ==============
+
+@app.get("/api/apollo/stats")
+async def apollo_stats(request: Request):
+    """Retorna estatísticas de enriquecimento Apollo.io"""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.apollo_service import get_apollo_service
+    service = get_apollo_service()
+    stats = await service.get_enrichment_stats()
+    return stats
+
+
+@app.post("/api/contacts/{contact_id}/apollo/enrich")
+async def apollo_enrich_contact(contact_id: int, request: Request):
+    """
+    Enriquece um contato usando Apollo.io API.
+    Requer APOLLO_API_KEY configurada no .env
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.apollo_service import get_apollo_service
+    service = get_apollo_service()
+
+    if not service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Apollo.io API não configurada. Configure APOLLO_API_KEY no .env"
+        )
+
+    result = await service.enrich_contact(contact_id)
+
+    if not result.get("success"):
+        if "não encontrado" in result.get("error", "").lower():
+            raise HTTPException(status_code=404, detail=result["error"])
+        raise HTTPException(status_code=400, detail=result.get("error", "Erro desconhecido"))
+
+    return result
+
+
+@app.post("/api/apollo/enrich/batch")
+async def apollo_enrich_batch(
+    request: Request,
+    limit: int = 50,
+    circulo_max: int = 2
+):
+    """
+    Enriquece múltiplos contatos via Apollo.io em batch.
+
+    Args:
+        limit: Número máximo de contatos (default 50)
+        circulo_max: Processar contatos até este círculo (default 2)
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.apollo_service import get_apollo_service
+    service = get_apollo_service()
+
+    if not service.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Apollo.io API não configurada. Configure APOLLO_API_KEY no .env"
+        )
+
+    # Buscar contatos pendentes de enriquecimento
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, linkedin
+            FROM contacts
+            WHERE linkedin IS NOT NULL
+              AND linkedin != ''
+              AND linkedin_enriched_at IS NULL
+              AND (circulo_profissional <= %s OR circulo_pessoal <= %s)
+            ORDER BY
+                LEAST(COALESCE(circulo_profissional, 99), COALESCE(circulo_pessoal, 99)),
+                nome
+            LIMIT %s
+        """, (circulo_max, circulo_max, limit))
+        contacts = cursor.fetchall()
+
+    results = {
+        "total": len(contacts),
+        "success": 0,
+        "failed": 0,
+        "not_found": 0,
+        "credits_used": 0,
+        "errors": []
+    }
+
+    for contact in contacts:
+        result = await service.enrich_contact(contact["id"])
+        if result.get("success"):
+            if result.get("matched"):
+                results["success"] += 1
+                results["credits_used"] += result.get("credits_used", 1)
+            else:
+                results["not_found"] += 1
+        else:
+            results["failed"] += 1
+            results["errors"].append({
+                "contact_id": contact["id"],
+                "nome": contact["nome"],
+                "error": result.get("error")
+            })
+
+    return results
+
+
+@app.get("/api/apollo/sample")
+async def apollo_get_sample(request: Request, limit: int = 50):
+    """
+    Retorna amostra de contatos para teste de enriquecimento.
+    20 do Círculo 1, 15 do Círculo 2, resto aleatório.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Círculo 1 (20)
+        cursor.execute("""
+            SELECT id, nome, linkedin, empresa, cargo,
+                   circulo_profissional, circulo_pessoal, linkedin_enriched_at
+            FROM contacts
+            WHERE linkedin IS NOT NULL AND linkedin != ''
+              AND (circulo_profissional = 1 OR circulo_pessoal = 1)
+              AND linkedin_enriched_at IS NULL
+            ORDER BY RANDOM()
+            LIMIT 20
+        """)
+        c1 = [dict(r) for r in cursor.fetchall()]
+
+        # Círculo 2 (15)
+        cursor.execute("""
+            SELECT id, nome, linkedin, empresa, cargo,
+                   circulo_profissional, circulo_pessoal, linkedin_enriched_at
+            FROM contacts
+            WHERE linkedin IS NOT NULL AND linkedin != ''
+              AND (circulo_profissional = 2 OR circulo_pessoal = 2)
+              AND linkedin_enriched_at IS NULL
+            ORDER BY RANDOM()
+            LIMIT 15
+        """)
+        c2 = [dict(r) for r in cursor.fetchall()]
+
+        # Aleatórios (resto)
+        remaining = limit - len(c1) - len(c2)
+        cursor.execute("""
+            SELECT id, nome, linkedin, empresa, cargo,
+                   circulo_profissional, circulo_pessoal, linkedin_enriched_at
+            FROM contacts
+            WHERE linkedin IS NOT NULL AND linkedin != ''
+              AND linkedin_enriched_at IS NULL
+              AND id NOT IN %s
+            ORDER BY RANDOM()
+            LIMIT %s
+        """, (tuple([c["id"] for c in c1 + c2]) or (0,), remaining))
+        others = [dict(r) for r in cursor.fetchall()]
+
+    sample = c1 + c2 + others
+
+    return {
+        "sample": sample,
+        "total": len(sample),
+        "breakdown": {
+            "circulo_1": len(c1),
+            "circulo_2": len(c2),
+            "outros": len(others)
+        }
+    }
+
+
 # Contact search routes - MUST come before /api/contacts/{contact_id}
 @app.get("/api/contacts/search")
 async def search_contacts_api(
@@ -6988,17 +7169,18 @@ def check_contacted_today(contact_ids: list) -> set:
 
     with get_db() as conn:
         cursor = conn.cursor()
-        # Query otimizada: busca mensagens enviadas OU marcacao manual
+        # Query otimizada: usa timestamp range para aproveitar indices
         cursor.execute("""
             SELECT DISTINCT contact_id FROM (
-                -- Mensagens enviadas hoje
+                -- Mensagens enviadas hoje (usando range para indice)
                 SELECT contact_id
                 FROM messages
                 WHERE contact_id = ANY(%s)
                   AND direcao = 'outgoing'
-                  AND DATE(enviado_em) = CURRENT_DATE
+                  AND enviado_em >= CURRENT_DATE
+                  AND enviado_em < CURRENT_DATE + INTERVAL '1 day'
 
-                UNION
+                UNION ALL
 
                 -- Marcacoes manuais "Ja contatei"
                 SELECT contact_id
@@ -7037,12 +7219,21 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
     content_matcher = get_content_matcher()
     suggestions = []
 
-    # 1. Buscar aniversarios de hoje
+    # 1. Buscar aniversarios de hoje (query otimizada)
     aniversarios_hoje = []
     try:
-        aniversarios = get_aniversarios_proximos(dias=1)
-        for a in aniversarios:
-            if a.get("dias_ate_aniversario") == 0:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, nome, empresa, cargo, circulo, foto_url
+                FROM contacts
+                WHERE aniversario IS NOT NULL
+                  AND EXTRACT(MONTH FROM aniversario) = EXTRACT(MONTH FROM CURRENT_DATE)
+                  AND EXTRACT(DAY FROM aniversario) = EXTRACT(DAY FROM CURRENT_DATE)
+                LIMIT 10
+            """)
+            for row in cursor.fetchall():
+                a = dict(row)
                 aniversarios_hoje.append({
                     "contact": {
                         "id": a["id"],
@@ -7069,10 +7260,22 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
     except Exception as e:
         print(f"[SUGGESTIONS] Error fetching rodas: {e}")
 
-    # 3. Buscar contatos com health baixo que NAO tem roda
+    # 3. Buscar contatos com health baixo (query otimizada)
     contatos_health_baixo = []
     try:
-        contatos_health_baixo = get_contatos_precisando_atencao(limit=limit)
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, nome, empresa, cargo, circulo, foto_url, health_score, tags
+                FROM contacts
+                WHERE health_score IS NOT NULL
+                  AND health_score < 30
+                  AND circulo IS NOT NULL
+                  AND circulo <= 3
+                ORDER BY health_score ASC, circulo ASC
+                LIMIT %s
+            """, (limit * 2,))
+            contatos_health_baixo = [dict(row) for row in cursor.fetchall()]
     except Exception as e:
         print(f"[SUGGESTIONS] Error fetching low health contacts: {e}")
 
@@ -14678,6 +14881,26 @@ async def api_news_contacts(news_id: int):
     from services.news_hub import match_contacts_for_news
     contacts = match_contacts_for_news(news_id)
     return contacts
+
+
+@app.get("/api/news/{news_id}/details")
+async def api_news_details(news_id: int):
+    """Retorna detalhes da notícia com insights conectando aos artigos"""
+    from services.news_hub import get_news_with_insights
+    result = get_news_with_insights(news_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Notícia não encontrada")
+    return result
+
+
+@app.post("/api/news/{news_id}/summary")
+async def api_news_summary(news_id: int):
+    """Gera resumo inteligente da notícia usando Haiku"""
+    from services.news_hub import generate_smart_summary
+    summary = await generate_smart_summary(news_id)
+    if not summary:
+        raise HTTPException(status_code=500, detail="Não foi possível gerar resumo")
+    return {"summary": summary}
 
 
 @app.post("/api/hot-takes/from-news")

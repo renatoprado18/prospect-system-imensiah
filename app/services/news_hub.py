@@ -95,22 +95,38 @@ async def fetch_rss_feed(url: str, source_name: str) -> List[Dict]:
         root = ET.fromstring(response.text)
         items = []
 
+        # Namespaces comuns em RSS
+        namespaces = {
+            'content': 'http://purl.org/rss/1.0/modules/content/',
+            'dc': 'http://purl.org/dc/elements/1.1/'
+        }
+
         for item in root.findall('.//item'):
             title = item.find('title')
             link = item.find('link')
             pub_date = item.find('pubDate')
             description = item.find('description')
 
+            # Tentar pegar conteúdo completo de content:encoded
+            content_encoded = item.find('content:encoded', namespaces)
+            if content_encoded is None:
+                content_encoded = item.find('{http://purl.org/rss/1.0/modules/content/}encoded')
+
             if title is not None and title.text:
-                # Limpar HTML da descrição
-                desc_text = strip_html(description.text) if description is not None and description.text else ""
+                # Priorizar content:encoded para descrição mais completa
+                if content_encoded is not None and content_encoded.text:
+                    full_text = strip_html(content_encoded.text)
+                elif description is not None and description.text:
+                    full_text = strip_html(description.text)
+                else:
+                    full_text = ""
 
                 items.append({
                     "source": source_name,
                     "title": title.text.strip(),
                     "link": link.text.strip() if link is not None and link.text else "",
                     "published_at": pub_date.text if pub_date is not None else None,
-                    "description": desc_text[:300]  # Limite de caracteres
+                    "description": full_text[:1000]  # Aumentado para 1000 chars
                 })
 
         return items[:30]  # Limite por fonte
@@ -584,3 +600,130 @@ def match_contacts_for_news(news_id: int) -> List[Dict]:
 
         contacts.sort(key=lambda x: (-x.get("match_score", 0), x.get("circulo", 5)))
         return contacts[:5]
+
+
+def get_news_with_insights(news_id: int) -> Optional[Dict]:
+    """Retorna notícia com insights conectando aos artigos do usuário"""
+    news = get_news_item(news_id)
+    if not news:
+        return None
+
+    topics = news.get("topics", [])
+    if isinstance(topics, str):
+        try:
+            topics = json.loads(topics)
+        except:
+            topics = []
+
+    # Buscar artigos relacionados
+    related = get_related_articles(topics, limit=5)
+
+    # Gerar insights baseados em keyword matching
+    insights = []
+    for article in related[:3]:
+        keywords = article.get('ai_keywords') or []
+        if isinstance(keywords, str):
+            try:
+                keywords = json.loads(keywords)
+            except:
+                keywords = []
+
+        # Encontrar keywords em comum
+        common_themes = []
+        for topic in topics:
+            topic_lower = topic.lower()
+            for kw in keywords:
+                if topic_lower in kw.lower() or kw.lower() in topic_lower:
+                    common_themes.append(kw)
+                    break
+
+        if common_themes:
+            insight = {
+                "article_title": article.get("article_title", ""),
+                "article_url": article.get("article_url", ""),
+                "connection": f"Conecta com o tema: {', '.join(common_themes[:2])}",
+                "hook": article.get("ai_gancho_linkedin", "")
+            }
+            insights.append(insight)
+
+    # Se não achou conexão por keywords, usar categoria
+    if not insights and related:
+        for article in related[:2]:
+            categoria = article.get("ai_categoria", "")
+            insights.append({
+                "article_title": article.get("article_title", ""),
+                "article_url": article.get("article_url", ""),
+                "connection": f"Relacionado a: {categoria}" if categoria else "Tema próximo",
+                "hook": article.get("ai_gancho_linkedin", "")
+            })
+
+    news["insights"] = insights
+    news["related_articles"] = related
+
+    return news
+
+
+async def generate_smart_summary(news_id: int) -> Optional[str]:
+    """Gera resumo inteligente usando Haiku (custo ~$0.0001)"""
+    import os
+    import anthropic
+
+    news = get_news_item(news_id)
+    if not news:
+        return None
+
+    # Verificar se já tem resumo salvo
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT ai_summary FROM news_items WHERE id = %s",
+            (news_id,)
+        )
+        row = cursor.fetchone()
+        if row and row.get('ai_summary'):
+            return row['ai_summary']
+
+    title = news.get('title', '')
+    description = news.get('description', '')
+
+    if not title:
+        return None
+
+    try:
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+        prompt = f"""Analise esta notícia e forneça:
+1. RESUMO (2-3 frases explicando o essencial da notícia)
+2. IMPACTO (1 frase sobre o impacto para executivos/empresários)
+
+Notícia:
+Título: {title}
+Descrição: {description}
+
+Responda de forma direta, sem rótulos. Formato:
+[Resumo em 2-3 frases]
+
+💡 [Impacto em 1 frase]"""
+
+        response = client.messages.create(
+            model="claude-3-5-haiku-20241022",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        summary = response.content[0].text.strip()
+
+        # Salvar no banco
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE news_items SET ai_summary = %s WHERE id = %s",
+                (summary, news_id)
+            )
+            conn.commit()
+
+        return summary
+
+    except Exception as e:
+        logger.error(f"Erro ao gerar resumo: {e}")
+        return None

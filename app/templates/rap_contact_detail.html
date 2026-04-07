@@ -2297,6 +2297,8 @@
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="#" onclick="generateBriefing()"><i class="bi bi-file-text me-2"></i>Gerar Briefing</a></li>
                                 <li><a class="dropdown-item" href="#" onclick="quickDraftEmail()"><i class="bi bi-envelope-paper me-2"></i>Rascunho Email</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="#" onclick="enrichWithApollo()"><i class="bi bi-cloud-download me-2"></i>Enriquecer (Apollo.io)</a></li>
                             </ul>
                         </div>
                     </div>
@@ -4377,6 +4379,67 @@
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalContent;
+            }
+        }
+
+        async function enrichWithApollo() {
+            if (!currentContact.linkedin) {
+                alert('Este contato não possui URL do LinkedIn. Adicione primeiro o LinkedIn para enriquecer.');
+                return;
+            }
+
+            if (!confirm('Enriquecer dados deste contato usando Apollo.io?\n\nIsso consumirá 1 crédito da sua conta Apollo.')) {
+                return;
+            }
+
+            // Show loading
+            const intelPanel = document.getElementById('intelPanel');
+            const intelTitle = document.getElementById('intelStatusTitle');
+            const intelDetail = document.getElementById('intelStatusDetail');
+
+            if (intelPanel) {
+                intelTitle.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Enriquecendo via Apollo.io...';
+                intelDetail.textContent = 'Buscando dados do LinkedIn...';
+            }
+
+            try {
+                const response = await fetch(`/api/contacts/${contactId}/apollo/enrich`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    if (response.status === 503) {
+                        alert('Apollo.io API não configurada.\n\nConfigure APOLLO_API_KEY no arquivo .env');
+                    } else {
+                        alert('Erro: ' + (data.error || data.detail || 'Erro desconhecido'));
+                    }
+                    return;
+                }
+
+                if (data.success && data.matched) {
+                    const quality = data.data?.data_quality || {};
+                    let msg = `✅ Contato enriquecido com sucesso!\n\n`;
+                    msg += `📊 Qualidade dos dados: ${quality.score || 0}%\n`;
+                    msg += `📝 Campos atualizados: ${data.fields_updated || 0}\n`;
+                    msg += `💳 Créditos usados: ${data.credits_used || 1}`;
+
+                    alert(msg);
+                    await loadContact();
+                } else if (data.success && !data.matched) {
+                    alert('⚠️ Perfil não encontrado no Apollo.io.\n\nVerifique se a URL do LinkedIn está correta.');
+                } else {
+                    alert('Erro: ' + (data.error || 'Falha no enriquecimento'));
+                }
+            } catch (error) {
+                console.error('Apollo enrich error:', error);
+                alert('Erro ao enriquecer: ' + error.message);
+            } finally {
+                if (intelPanel) {
+                    intelTitle.innerHTML = '<span>INTEL pronto</span>';
+                    intelDetail.textContent = '';
+                }
             }
         }
 

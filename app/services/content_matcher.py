@@ -13,7 +13,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from app.database import get_db
+from database import get_db
 
 
 # Mapping de tags/setores para categorias de artigos
@@ -68,7 +68,48 @@ class ContentMatcher:
     def __init__(self):
         self._articles_cache: Optional[List[Dict]] = None
         self._articles_loaded_at: Optional[datetime] = None
+        self._editorial_cache: Optional[List[Dict]] = None
+        self._editorial_loaded_at: Optional[datetime] = None
+        self._merged_cache: Optional[List[Dict]] = None
+        self._merged_loaded_at: Optional[datetime] = None
         self._cache_ttl = timedelta(minutes=30)
+
+    def _get_all_articles(self) -> List[Dict]:
+        """Retorna lista combinada de artigos (JSON + DB) com cache."""
+        now = datetime.now()
+
+        # Return cache if valid
+        if (self._merged_cache is not None and
+            self._merged_loaded_at is not None and
+            now - self._merged_loaded_at < self._cache_ttl):
+            return self._merged_cache
+
+        # Load and merge
+        json_articles = self._load_articles()
+        db_articles = self._get_editorial_posts()
+
+        articles_by_url = {}
+
+        # First add JSON articles
+        for art in json_articles:
+            url = art.get("url")
+            if url:
+                articles_by_url[url] = art
+
+        # Then overlay with DB data (has AI analysis)
+        for art in db_articles:
+            url = art.get("article_url")
+            if url:
+                existing = articles_by_url.get(url, {})
+                merged = {**existing, **art}
+                merged["url"] = url
+                merged["title"] = art.get("article_title") or existing.get("title")
+                merged["description"] = art.get("article_description") or existing.get("description")
+                articles_by_url[url] = merged
+
+        self._merged_cache = list(articles_by_url.values())
+        self._merged_loaded_at = now
+        return self._merged_cache
 
     def _load_articles(self) -> List[Dict]:
         """Carrega artigos do JSON com cache."""
@@ -92,27 +133,42 @@ class ContentMatcher:
             return []
 
     def _get_editorial_posts(self) -> List[Dict]:
-        """Busca artigos analisados por AI do banco."""
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT
-                    article_slug,
-                    article_title,
-                    article_url,
-                    article_description,
-                    ai_categoria,
-                    ai_publico_alvo,
-                    ai_keywords,
-                    ai_score_relevancia,
-                    ai_evergreen,
-                    criado_em
-                FROM editorial_posts
-                WHERE article_url IS NOT NULL
-                  AND ai_score_relevancia >= 6
-                ORDER BY ai_score_relevancia DESC NULLS LAST, criado_em DESC
-            """)
-            return [dict(row) for row in cursor.fetchall()]
+        """Busca artigos analisados por AI do banco (com cache)."""
+        now = datetime.now()
+
+        # Return cache if valid
+        if (self._editorial_cache is not None and
+            self._editorial_loaded_at is not None and
+            now - self._editorial_loaded_at < self._cache_ttl):
+            return self._editorial_cache
+
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT
+                        article_slug,
+                        article_title,
+                        article_url,
+                        article_description,
+                        ai_categoria,
+                        ai_publico_alvo,
+                        ai_keywords,
+                        ai_score_relevancia,
+                        ai_evergreen,
+                        criado_em
+                    FROM editorial_posts
+                    WHERE article_url IS NOT NULL
+                      AND ai_score_relevancia >= 6
+                    ORDER BY ai_score_relevancia DESC NULLS LAST, criado_em DESC
+                    LIMIT 50
+                """)
+                self._editorial_cache = [dict(row) for row in cursor.fetchall()]
+                self._editorial_loaded_at = now
+                return self._editorial_cache
+        except Exception as e:
+            print(f"Error loading editorial posts: {e}")
+            return []
 
     def _normalize_tag(self, tag: str) -> str:
         """Normaliza uma tag para matching."""
@@ -252,32 +308,8 @@ class ContentMatcher:
 
         contact_tags = contact_tags or []
 
-        # Load articles from both sources
-        json_articles = self._load_articles()
-        db_articles = self._get_editorial_posts()
-
-        # Merge articles (DB has priority for enriched data)
-        articles_by_url = {}
-
-        # First add JSON articles
-        for art in json_articles:
-            url = art.get("url")
-            if url:
-                articles_by_url[url] = art
-
-        # Then overlay with DB data (has AI analysis)
-        for art in db_articles:
-            url = art.get("article_url")
-            if url:
-                existing = articles_by_url.get(url, {})
-                # Merge: keep JSON base, add AI fields
-                merged = {**existing, **art}
-                merged["url"] = url
-                merged["title"] = art.get("article_title") or existing.get("title")
-                merged["description"] = art.get("article_description") or existing.get("description")
-                articles_by_url[url] = merged
-
-        all_articles = list(articles_by_url.values())
+        # Get cached articles list
+        all_articles = self._get_all_articles()
 
         if not all_articles:
             return None
