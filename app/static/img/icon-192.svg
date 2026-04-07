@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="50%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="192" height="192" rx="32" fill="url(#grad)"/>
+  <!-- Neural "i" icon - centered and scaled -->
+  <g transform="translate(96, 96) scale(3.5)">
+    <circle cx="0" cy="-15" r="5" fill="white"/>
+    <g stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.8">
+      <line x1="0" y1="-15" x2="10" y2="-19"/>
+      <line x1="0" y1="-15" x2="-10" y2="-19"/>
+      <line x1="0" y1="-15" x2="12" y2="-11"/>
+      <line x1="0" y1="-15" x2="-12" y2="-11"/>
+    </g>
+    <rect x="-4" y="-6" width="8" height="22" rx="4" fill="white"/>
+  </g>
+</svg>
