@@ -911,19 +911,22 @@
         }
 
         .proposals-list {
-            display: flex;
-            flex-direction: column;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
             gap: 10px;
         }
 
         .proposal-card {
             display: flex;
             align-items: flex-start;
-            gap: 12px;
-            padding: 12px;
+            gap: 10px;
+            padding: 10px;
+            padding-right: 50px;
             background: var(--gray-100);
             border-radius: 8px;
             transition: all 0.2s;
+            font-size: 0.85rem;
+            position: relative;
         }
 
         .proposal-card:hover {
@@ -936,15 +939,15 @@
         }
 
         .proposal-icon {
-            width: 36px;
-            height: 36px;
+            width: 32px;
+            height: 32px;
             border-radius: 50%;
             background: var(--warning);
             color: white;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 0.9rem;
             flex-shrink: 0;
         }
 
@@ -958,34 +961,51 @@
         }
 
         .proposal-content h6 {
-            margin: 0 0 4px 0;
-            font-size: 0.85rem;
+            margin: 0 0 2px 0;
+            font-size: 0.8rem;
             font-weight: 600;
             color: var(--dark);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .proposal-content p {
-            margin: 0 0 8px 0;
-            font-size: 0.75rem;
+            margin: 0 0 6px 0;
+            font-size: 0.7rem;
             color: var(--gray-500);
-            line-height: 1.4;
+            line-height: 1.3;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
         }
 
         .proposal-actions {
             display: flex;
-            gap: 6px;
+            gap: 4px;
             flex-wrap: wrap;
         }
 
         .proposal-actions button {
-            font-size: 0.7rem;
-            padding: 4px 10px;
+            font-size: 0.65rem;
+            padding: 3px 8px;
         }
 
         .proposal-time {
-            font-size: 0.65rem;
+            font-size: 0.6rem;
             color: var(--gray-400);
             white-space: nowrap;
+            position: absolute;
+            top: 8px;
+            right: 10px;
+        }
+
+        /* Responsivo: 1 coluna em telas menores */
+        @media (max-width: 1400px) {
+            .proposals-list {
+                grid-template-columns: 1fr;
+            }
         }
 
         /* Quem Contatar Hoje - Compact */
