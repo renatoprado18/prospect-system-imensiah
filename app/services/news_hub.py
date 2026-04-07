@@ -377,45 +377,42 @@ def detect_trending(hours: int = 24) -> None:
 
 def get_news_feed(user_id: int, limit: int = 15) -> Dict[str, List[Dict]]:
     """Retorna feed de notícias organizado por seções"""
-    user_interests = get_user_interests(user_id)
+    import time
+    t0 = time.time()
 
+    user_interests = get_user_interests(user_id)
+    logger.info(f"[PERF] get_user_interests: {time.time()-t0:.2f}s")
+
+    t1 = time.time()
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Trending (3-4 itens)
+        # Trending (3-4 itens) - query simplificada
         cursor.execute('''
-            SELECT n.*,
-                   COALESCE(
-                       (SELECT action FROM news_interactions
-                        WHERE news_id = n.id AND user_id = %s
-                        ORDER BY created_at DESC LIMIT 1),
-                       NULL
-                   ) as user_action
-            FROM news_items n
-            WHERE n.is_trending = TRUE
-              AND n.collected_at > NOW() - INTERVAL '48 hours'
-            ORDER BY n.trending_score DESC, n.collected_at DESC
+            SELECT *
+            FROM news_items
+            WHERE is_trending = TRUE
+              AND collected_at > NOW() - INTERVAL '48 hours'
+            ORDER BY trending_score DESC, collected_at DESC
             LIMIT 4
-        ''', (user_id,))
+        ''')
         trending = [dict(row) for row in cursor.fetchall()]
+        logger.info(f"[PERF] trending query: {time.time()-t1:.2f}s")
+        t2 = time.time()
 
-        # Para você (baseado em interesses)
+        # Para você - query simplificada sem subquery
         cursor.execute('''
-            SELECT n.*,
-                   COALESCE(
-                       (SELECT action FROM news_interactions
-                        WHERE news_id = n.id AND user_id = %s
-                        ORDER BY created_at DESC LIMIT 1),
-                       NULL
-                   ) as user_action
-            FROM news_items n
-            WHERE n.collected_at > NOW() - INTERVAL '72 hours'
-              AND n.id NOT IN (SELECT id FROM news_items WHERE is_trending = TRUE)
-            ORDER BY n.collected_at DESC
-            LIMIT 50
-        ''', (user_id,))
+            SELECT *
+            FROM news_items
+            WHERE collected_at > NOW() - INTERVAL '72 hours'
+              AND is_trending = FALSE
+            ORDER BY collected_at DESC
+            LIMIT 30
+        ''')
 
         all_news = [dict(row) for row in cursor.fetchall()]
+        logger.info(f"[PERF] for_you query: {time.time()-t2:.2f}s")
+        t3 = time.time()
 
         # Calcular relevância e ordenar
         for item in all_news:
@@ -435,8 +432,8 @@ def get_news_feed(user_id: int, limit: int = 15) -> Dict[str, List[Dict]]:
         for topic, score in sorted(user_interests.get("topics", {}).items(), key=lambda x: -x[1])[:5]:
             interest_stats.append({"topic": topic, "score": round(score * 100)})
 
-        # Coletar todos os tópicos das notícias
-        all_topics = []
+        # Digest rápido (sem chamar função pesada)
+        topic_counts = defaultdict(int)
         for item in trending + for_you:
             topics = item.get('topics') or []
             if isinstance(topics, str):
@@ -444,20 +441,18 @@ def get_news_feed(user_id: int, limit: int = 15) -> Dict[str, List[Dict]]:
                     topics = json.loads(topics)
                 except:
                     topics = []
-            all_topics.extend(topics)
+            for t in topics:
+                topic_counts[t] += 1
 
-        # Artigos relacionados da base
-        related_articles = get_related_articles(list(set(all_topics)), limit=3)
-
-        # Digest do dia
-        digest = generate_daily_digest(trending + for_you)
+        top_topics = ', '.join([t for t, c in sorted(topic_counts.items(), key=lambda x: -x[1])[:3]])
+        digest = f"Hoje: {len(trending + for_you)} notícias" + (f" sobre {top_topics}" if top_topics else "")
 
         return {
             "trending": trending,
             "for_you": for_you,
             "discovery": discovery,
             "interests": interest_stats,
-            "related_articles": related_articles,
+            "related_articles": [],  # Carregado sob demanda no modal
             "digest": digest,
             "total": len(trending) + len(for_you) + len(discovery)
         }
