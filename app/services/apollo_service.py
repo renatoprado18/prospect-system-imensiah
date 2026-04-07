@@ -322,11 +322,11 @@ class ApolloService:
             cursor.execute("""
                 INSERT INTO contact_enrichment_log
                 (contact_id, source, data, success, credits_used)
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s::jsonb, %s, %s)
             """, (
                 contact_id,
                 "apollo.io",
-                enriched,
+                json.dumps(enriched),
                 True,
                 result.get("credits_used", 1)
             ))

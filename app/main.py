@@ -7213,13 +7213,18 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
     Returns:
         Lista de contatos com roda mais relevante e sugestao de acao
     """
+    import time as _time
+    _t0 = _time.time()
+
     from database import get_db
     from services.content_matcher import get_content_matcher
 
     content_matcher = get_content_matcher()
     suggestions = []
+    print(f"[SUGGESTIONS TIMING] init: {(_time.time()-_t0)*1000:.0f}ms")
 
     # 1. Buscar aniversarios de hoje (query otimizada)
+    _t1 = _time.time()
     aniversarios_hoje = []
     try:
         with get_db() as conn:
@@ -7251,16 +7256,20 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
                 })
     except Exception as e:
         print(f"[SUGGESTIONS] Error fetching birthdays: {e}")
+    print(f"[SUGGESTIONS TIMING] aniversarios: {(_time.time()-_t1)*1000:.0f}ms")
 
     # 2. Buscar rodas pendentes
+    _t2 = _time.time()
     rodas_service = get_rodas_service()
     rodas_dashboard = []
     try:
         rodas_dashboard = rodas_service.get_rodas_para_dashboard(limit=limit * 2)
     except Exception as e:
         print(f"[SUGGESTIONS] Error fetching rodas: {e}")
+    print(f"[SUGGESTIONS TIMING] rodas: {(_time.time()-_t2)*1000:.0f}ms")
 
     # 3. Buscar contatos com health baixo (query otimizada)
+    _t3 = _time.time()
     contatos_health_baixo = []
     try:
         with get_db() as conn:
@@ -7278,8 +7287,10 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
             contatos_health_baixo = [dict(row) for row in cursor.fetchall()]
     except Exception as e:
         print(f"[SUGGESTIONS] Error fetching low health contacts: {e}")
+    print(f"[SUGGESTIONS TIMING] low_health: {(_time.time()-_t3)*1000:.0f}ms")
 
     # 4. Verificar quais contatos ja foram contactados hoje
+    _t4 = _time.time()
     contacted_today = set()
     if hide_contacted:
         try:
@@ -7294,8 +7305,10 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
                 print(f"[SUGGESTIONS] {len(contacted_today)} contatos ja contactados hoje, pulando...")
         except Exception as e:
             print(f"[SUGGESTIONS] Error checking contacted today: {e}")
+    print(f"[SUGGESTIONS TIMING] contacted_check: {(_time.time()-_t4)*1000:.0f}ms")
 
     # Montar lista unificada com prioridade
+    _t5 = _time.time()
     contact_ids_used = set()
 
     # Adicionar aniversarios (prioridade 0)
@@ -7411,6 +7424,8 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
 
     # Ordenar por prioridade
     suggestions.sort(key=lambda x: x["priority"])
+    print(f"[SUGGESTIONS TIMING] processing: {(_time.time()-_t5)*1000:.0f}ms")
+    print(f"[SUGGESTIONS TIMING] TOTAL: {(_time.time()-_t0)*1000:.0f}ms")
 
     return {
         "suggestions": suggestions[:limit],
