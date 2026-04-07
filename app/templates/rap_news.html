@@ -123,6 +123,13 @@
         overflow: hidden;
     }
 
+    .news-description img,
+    .news-description figure,
+    .news-description iframe,
+    .news-description video {
+        display: none !important;
+    }
+
     .news-topics {
         display: flex;
         gap: 6px;
@@ -335,6 +342,30 @@
     </div>
 
     <div class="news-sidebar">
+        <!-- Resumo do Dia -->
+        <div class="sidebar-card" style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white;">
+            <div class="sidebar-title" style="color: white;">
+                <i class="bi bi-lightning-charge"></i>
+                Resumo Rápido
+            </div>
+            <p id="daily-digest" style="font-size: 0.8rem; line-height: 1.5; margin: 0; opacity: 0.95;">
+                Carregando...
+            </p>
+        </div>
+
+        <!-- Artigos Relacionados -->
+        <div class="sidebar-card">
+            <div class="sidebar-title">
+                <i class="bi bi-link-45deg"></i>
+                Seus Artigos Relacionados
+            </div>
+            <div id="related-articles">
+                <p style="font-size: 0.75rem; color: var(--gray-400);">
+                    Carregando...
+                </p>
+            </div>
+        </div>
+
         <!-- Seus Interesses -->
         <div class="sidebar-card">
             <div class="sidebar-title">
@@ -345,25 +376,6 @@
                 <p style="font-size: 0.75rem; color: var(--gray-400);">
                     Interaja com as notícias para personalizar
                 </p>
-            </div>
-        </div>
-
-        <!-- Quick Actions -->
-        <div class="sidebar-card">
-            <div class="sidebar-title">
-                <i class="bi bi-lightning"></i>
-                Ações Rápidas
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 8px;">
-                <button class="btn btn-sm btn-outline-primary w-100" onclick="window.location.href='/hot-takes'">
-                    <i class="bi bi-fire me-1"></i>Hot Takes
-                </button>
-                <button class="btn btn-sm btn-outline-secondary w-100" onclick="window.location.href='/editorial'">
-                    <i class="bi bi-calendar me-1"></i>Editorial
-                </button>
-                <button class="btn btn-sm btn-outline-secondary w-100" onclick="window.location.href='/artigos'">
-                    <i class="bi bi-file-text me-1"></i>Artigos
-                </button>
             </div>
         </div>
 
@@ -399,11 +411,19 @@
                 <input type="hidden" id="share-news-id">
                 <div class="mb-3">
                     <label class="form-label">Notícia</label>
-                    <p id="share-news-title" style="font-weight: 500;"></p>
+                    <p id="share-news-title" style="font-weight: 500; font-size: 0.9rem;"></p>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label">Contatos Sugeridos</label>
-                    <div id="suggested-contacts">
+                    <label class="form-label">Buscar Contato</label>
+                    <input type="text" class="form-control" id="contact-search"
+                           placeholder="Digite o nome..."
+                           oninput="searchContacts(this.value)">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" style="font-size: 0.8rem; color: var(--gray-500);">
+                        <span id="contacts-label">Sugeridos</span>
+                    </label>
+                    <div id="suggested-contacts" style="max-height: 250px; overflow-y: auto;">
                         <p class="text-muted">Carregando...</p>
                     </div>
                 </div>
@@ -431,6 +451,8 @@
             renderSection('foryou-list', newsData.for_you, 'foryou');
             renderSection('discovery-list', newsData.discovery, 'discovery');
             renderInterests(newsData.interests || []);
+            renderDigest(newsData.digest || '');
+            renderRelatedArticles(newsData.related_articles || []);
 
         } catch (error) {
             console.error('Error loading news:', error);
@@ -486,6 +508,57 @@
                 </div>
             </div>
         `;
+    }
+
+    function renderDigest(digest) {
+        document.getElementById('daily-digest').textContent = digest || 'Sem notícias ainda.';
+    }
+
+    function renderRelatedArticles(articles) {
+        const container = document.getElementById('related-articles');
+
+        if (!articles || articles.length === 0) {
+            container.innerHTML = `
+                <p style="font-size: 0.75rem; color: var(--gray-400);">
+                    Nenhum artigo relacionado encontrado
+                </p>
+            `;
+            return;
+        }
+
+        container.innerHTML = articles.map(a => `
+            <div style="padding: 8px 0; border-bottom: 1px solid var(--gray-100);">
+                <div style="font-size: 0.8rem; font-weight: 500; color: var(--dark); margin-bottom: 4px; line-height: 1.3;">
+                    ${a.article_title ? a.article_title.substring(0, 60) + (a.article_title.length > 60 ? '...' : '') : 'Sem título'}
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 0.65rem; padding: 2px 6px; background: var(--gray-100); border-radius: 8px; color: var(--gray-600);">
+                        ${a.ai_categoria || 'Geral'}
+                    </span>
+                    <div style="display: flex; gap: 4px;">
+                        ${a.ai_gancho_linkedin ? `
+                            <button class="btn btn-sm" style="padding: 2px 6px; font-size: 0.65rem;"
+                                    onclick="copyArticleHook('${escapeHtml(a.ai_gancho_linkedin)}')" title="Copiar gancho">
+                                <i class="bi bi-clipboard"></i>
+                            </button>
+                        ` : ''}
+                        <a href="${a.article_url || '#'}" target="_blank" class="btn btn-sm btn-outline-primary"
+                           style="padding: 2px 6px; font-size: 0.65rem;">
+                            <i class="bi bi-box-arrow-up-right"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function copyArticleHook(text) {
+        navigator.clipboard.writeText(text);
+        const toast = document.createElement('div');
+        toast.className = 'toast-notification success show';
+        toast.innerHTML = '<i class="bi bi-check-circle me-2"></i>Gancho copiado!';
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 2000);
     }
 
     function renderInterests(interests) {
@@ -578,42 +651,88 @@
 
         document.getElementById('share-news-id').value = newsId;
         document.getElementById('share-news-title').textContent = news.title;
+        document.getElementById('contact-search').value = '';
+        document.getElementById('contacts-label').textContent = 'Sugeridos';
 
-        // Buscar contatos sugeridos
-        try {
-            const response = await fetch(`/api/news/${newsId}/contacts`);
-            const contacts = await response.json();
-
-            const container = document.getElementById('suggested-contacts');
-            if (contacts.length === 0) {
-                container.innerHTML = '<p class="text-muted">Nenhum contato sugerido</p>';
-            } else {
-                container.innerHTML = contacts.map(c => `
-                    <div style="display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 8px; cursor: pointer; margin-bottom: 4px;"
-                         class="contact-item" onclick="selectContact(${newsId}, ${c.id}, '${escapeHtml(c.nome)}')">
-                        <div style="width: 36px; height: 36px; background: var(--gray-100); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
-                            <i class="bi bi-person"></i>
-                        </div>
-                        <div style="flex: 1;">
-                            <div style="font-weight: 500; font-size: 0.9rem;">${c.nome}</div>
-                            <div style="font-size: 0.75rem; color: var(--gray-500);">${c.empresa || ''} ${c.cargo ? '• ' + c.cargo : ''}</div>
-                        </div>
-                        <span style="font-size: 0.7rem; padding: 2px 8px; background: var(--primary); color: white; border-radius: 12px;">
-                            C${c.circulo || '?'}
-                        </span>
-                    </div>
-                `).join('');
-            }
-        } catch (error) {
-            console.error('Error loading contacts:', error);
-        }
+        // Carregar contatos sugeridos
+        await loadSuggestedContacts(newsId);
 
         const modal = new bootstrap.Modal(document.getElementById('shareContactModal'));
         modal.show();
 
+        // Focus no campo de busca
+        setTimeout(() => document.getElementById('contact-search').focus(), 300);
+
         saveInteraction(newsId, 'contact');
         actionCount++;
         document.getElementById('stat-actions').textContent = actionCount;
+    }
+
+    let searchTimeout = null;
+
+    async function searchContacts(query) {
+        clearTimeout(searchTimeout);
+
+        if (!query || query.length < 2) {
+            // Mostrar sugeridos novamente
+            document.getElementById('contacts-label').textContent = 'Sugeridos';
+            const newsId = document.getElementById('share-news-id').value;
+            loadSuggestedContacts(newsId);
+            return;
+        }
+
+        searchTimeout = setTimeout(async () => {
+            try {
+                const response = await fetch(`/api/contacts?q=${encodeURIComponent(query)}&limit=10`);
+                const data = await response.json();
+                const contacts = data.contacts || [];
+
+                document.getElementById('contacts-label').textContent = `Resultados para "${query}"`;
+                renderContactsList(contacts);
+            } catch (error) {
+                console.error('Error searching contacts:', error);
+            }
+        }, 300);
+    }
+
+    async function loadSuggestedContacts(newsId) {
+        try {
+            const response = await fetch(`/api/news/${newsId}/contacts`);
+            const contacts = await response.json();
+            renderContactsList(contacts);
+        } catch (error) {
+            console.error('Error loading contacts:', error);
+        }
+    }
+
+    function renderContactsList(contacts) {
+        const container = document.getElementById('suggested-contacts');
+        const newsId = document.getElementById('share-news-id').value;
+
+        if (!contacts || contacts.length === 0) {
+            container.innerHTML = '<p class="text-muted">Nenhum contato encontrado</p>';
+            return;
+        }
+
+        container.innerHTML = contacts.map(c => `
+            <div style="display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; border: 1px solid var(--gray-100);"
+                 class="contact-item" onclick="selectContact(${newsId}, ${c.id}, '${escapeHtml(c.nome || '')}')">
+                <div style="width: 36px; height: 36px; background: var(--gray-100); border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+                    <i class="bi bi-person"></i>
+                </div>
+                <div style="flex: 1; min-width: 0;">
+                    <div style="font-weight: 500; font-size: 0.9rem;">${c.nome || 'Sem nome'}</div>
+                    <div style="font-size: 0.75rem; color: var(--gray-500); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        ${c.empresa || ''} ${c.cargo ? '• ' + c.cargo : ''}
+                    </div>
+                </div>
+                ${c.circulo ? `
+                    <span style="font-size: 0.7rem; padding: 2px 8px; background: var(--primary); color: white; border-radius: 12px;">
+                        C${c.circulo}
+                    </span>
+                ` : ''}
+            </div>
+        `).join('');
     }
 
     function selectContact(newsId, contactId, contactName) {

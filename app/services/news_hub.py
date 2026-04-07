@@ -71,6 +71,20 @@ TOPIC_KEYWORDS = {
 }
 
 
+def strip_html(text: str) -> str:
+    """Remove HTML tags e extrai apenas texto"""
+    if not text:
+        return ""
+    import re
+    # Remove tags HTML
+    clean = re.sub(r'<[^>]+>', ' ', text)
+    # Remove múltiplos espaços
+    clean = re.sub(r'\s+', ' ', clean)
+    # Remove entidades HTML comuns
+    clean = clean.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+    return clean.strip()
+
+
 async def fetch_rss_feed(url: str, source_name: str) -> List[Dict]:
     """Busca e parseia um feed RSS"""
     try:
@@ -88,12 +102,15 @@ async def fetch_rss_feed(url: str, source_name: str) -> List[Dict]:
             description = item.find('description')
 
             if title is not None and title.text:
+                # Limpar HTML da descrição
+                desc_text = strip_html(description.text) if description is not None and description.text else ""
+
                 items.append({
                     "source": source_name,
                     "title": title.text.strip(),
                     "link": link.text.strip() if link is not None and link.text else "",
                     "published_at": pub_date.text if pub_date is not None else None,
-                    "description": description.text[:500] if description is not None and description.text else ""
+                    "description": desc_text[:300]  # Limite de caracteres
                 })
 
         return items[:30]  # Limite por fonte
@@ -290,14 +307,14 @@ def record_interaction(user_id: int, news_id: int, action: str, time_spent: int 
 
 
 def detect_trending(hours: int = 24) -> None:
-    """Detecta notícias trending baseado em volume e recência"""
+    """Detecta notícias trending - usa as mais recentes se não há duplicatas"""
     with get_db() as conn:
         cursor = conn.cursor()
 
         # Resetar trending anterior
         cursor.execute('UPDATE news_items SET is_trending = FALSE, trending_score = 0')
 
-        # Contar títulos similares (mesmo assunto em várias fontes)
+        # Primeiro: tentar encontrar notícias cobertas por múltiplas fontes
         cursor.execute('''
             WITH recent_news AS (
                 SELECT id, title, source, collected_at,
@@ -321,6 +338,23 @@ def detect_trending(hours: int = 24) -> None:
             WHERE rn.clean_title = tc.clean_title
               AND n.id = rn.id
         ''', (hours,))
+
+        # Se não encontrou nenhuma, pegar as 4 mais recentes como trending
+        cursor.execute('SELECT COUNT(*) as cnt FROM news_items WHERE is_trending = TRUE')
+        row = cursor.fetchone()
+        trending_count = row['cnt'] if row else 0
+
+        if trending_count == 0:
+            cursor.execute('''
+                UPDATE news_items
+                SET is_trending = TRUE, trending_score = 10
+                WHERE id IN (
+                    SELECT id FROM news_items
+                    WHERE collected_at > NOW() - INTERVAL '%s hours'
+                    ORDER BY collected_at DESC
+                    LIMIT 4
+                )
+            ''', (hours,))
 
         conn.commit()
 
@@ -385,11 +419,30 @@ def get_news_feed(user_id: int, limit: int = 15) -> Dict[str, List[Dict]]:
         for topic, score in sorted(user_interests.get("topics", {}).items(), key=lambda x: -x[1])[:5]:
             interest_stats.append({"topic": topic, "score": round(score * 100)})
 
+        # Coletar todos os tópicos das notícias
+        all_topics = []
+        for item in trending + for_you:
+            topics = item.get('topics') or []
+            if isinstance(topics, str):
+                try:
+                    topics = json.loads(topics)
+                except:
+                    topics = []
+            all_topics.extend(topics)
+
+        # Artigos relacionados da base
+        related_articles = get_related_articles(list(set(all_topics)), limit=3)
+
+        # Digest do dia
+        digest = generate_daily_digest(trending + for_you)
+
         return {
             "trending": trending,
             "for_you": for_you,
             "discovery": discovery,
             "interests": interest_stats,
+            "related_articles": related_articles,
+            "digest": digest,
             "total": len(trending) + len(for_you) + len(discovery)
         }
 
@@ -401,6 +454,88 @@ def get_news_item(news_id: int) -> Optional[Dict]:
         cursor.execute('SELECT * FROM news_items WHERE id = %s', (news_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
+
+
+def get_related_articles(topics: List[str], limit: int = 3) -> List[Dict]:
+    """Encontra artigos da base relacionados aos tópicos das notícias"""
+    if not topics:
+        return []
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Buscar artigos que tenham categorias ou keywords relacionadas
+        cursor.execute('''
+            SELECT id, article_title, article_url, ai_categoria, ai_score_relevancia,
+                   ai_gancho_linkedin, ai_keywords
+            FROM editorial_posts
+            WHERE article_url IS NOT NULL
+              AND ai_score_relevancia IS NOT NULL
+            ORDER BY ai_score_relevancia DESC
+            LIMIT 50
+        ''')
+
+        articles = []
+        for row in cursor.fetchall():
+            article = dict(row)
+            keywords = article.get('ai_keywords') or []
+            if isinstance(keywords, str):
+                try:
+                    keywords = json.loads(keywords)
+                except:
+                    keywords = []
+
+            categoria = (article.get('ai_categoria') or '').lower()
+
+            # Score de match
+            match_score = 0
+            for topic in topics:
+                topic_lower = topic.lower()
+                if topic_lower in categoria:
+                    match_score += 3
+                for kw in keywords:
+                    if topic_lower in kw.lower() or kw.lower() in topic_lower:
+                        match_score += 1
+
+            if match_score > 0:
+                article['match_score'] = match_score
+                articles.append(article)
+
+        articles.sort(key=lambda x: -x.get('match_score', 0))
+        return articles[:limit]
+
+
+def generate_daily_digest(news_items: List[Dict]) -> str:
+    """Gera um resumo rápido das notícias do dia"""
+    if not news_items:
+        return "Sem notícias relevantes hoje."
+
+    # Agrupar por tópico
+    topic_counts = defaultdict(int)
+    titles = []
+
+    for item in news_items[:10]:
+        topics = item.get('topics') or []
+        if isinstance(topics, str):
+            try:
+                topics = json.loads(topics)
+            except:
+                topics = []
+        for t in topics:
+            topic_counts[t] += 1
+        titles.append(item.get('title', '')[:50])
+
+    # Top tópicos
+    top_topics = sorted(topic_counts.items(), key=lambda x: -x[1])[:3]
+    topic_str = ', '.join([t[0] for t in top_topics]) if top_topics else 'diversos assuntos'
+
+    # Resumo
+    digest = f"Hoje: {len(news_items)} notícias sobre {topic_str}. "
+
+    if titles:
+        digest += f"Destaque: {titles[0]}..."
+
+    return digest
 
 
 def match_contacts_for_news(news_id: int) -> List[Dict]:

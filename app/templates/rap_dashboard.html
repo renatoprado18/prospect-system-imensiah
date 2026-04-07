@@ -1273,6 +1273,62 @@
             margin-bottom: 12px;
         }
 
+        /* Content Suggestion */
+        .contact-today-content {
+            font-size: 0.7rem;
+            margin-top: 4px;
+            padding: 6px 8px;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(139, 92, 246, 0.08));
+            border-radius: 6px;
+            border-left: 2px solid var(--primary);
+        }
+        .contact-today-content-label {
+            color: var(--primary);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-bottom: 2px;
+        }
+        .contact-today-content-title {
+            color: var(--dark);
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .contact-today-content-reason {
+            color: var(--gray-500);
+            font-size: 0.65rem;
+        }
+        .contact-today-content-actions {
+            display: flex;
+            gap: 4px;
+            margin-top: 4px;
+        }
+        .contact-today-content-actions .btn {
+            padding: 2px 6px;
+            font-size: 0.6rem;
+            border-radius: 4px;
+        }
+        .contact-today-content-actions .btn-copy {
+            background: var(--gray-200);
+            color: var(--gray-600);
+            border: none;
+        }
+        .contact-today-content-actions .btn-copy:hover {
+            background: var(--primary);
+            color: white;
+        }
+        .contact-today-content-actions .btn-share {
+            background: #25D366;
+            color: white;
+            border: none;
+        }
+        .contact-today-content-actions .btn-share:hover {
+            background: #128C7E;
+        }
+
         /* Birthday Banner */
         .birthday-banner {
             position: fixed;
@@ -3777,6 +3833,28 @@
                         </div>
                     ` : '';
 
+                    // Mostrar sugestao de conteudo se existir
+                    const content = s.content_suggestion;
+                    const contentSection = content ? `
+                        <div class="contact-today-content">
+                            <div class="contact-today-content-label">
+                                <i class="bi bi-lightbulb"></i> Compartilhar
+                            </div>
+                            <div class="contact-today-content-title" title="${content.title}">
+                                ${content.title}
+                            </div>
+                            <div class="contact-today-content-reason">${content.reason}</div>
+                            <div class="contact-today-content-actions">
+                                <button class="btn btn-copy" onclick="event.preventDefault(); event.stopPropagation(); copyContentLink('${content.url}')" title="Copiar link">
+                                    <i class="bi bi-clipboard"></i> Link
+                                </button>
+                                <button class="btn btn-share" onclick="event.preventDefault(); event.stopPropagation(); shareContentWhatsApp(${c.id}, '${content.url}', '${content.title.replace(/'/g, "\\'")}')" title="Compartilhar no WhatsApp">
+                                    <i class="bi bi-whatsapp"></i> Enviar
+                                </button>
+                            </div>
+                        </div>
+                    ` : '';
+
                     // Botoes de acao
                     const whatsappBtn = c.id ? `
                         <button class="btn btn-whatsapp" onclick="event.preventDefault(); event.stopPropagation(); openWhatsApp(${c.id})" title="Enviar WhatsApp">
@@ -3809,6 +3887,7 @@
                                     ${s.reason_label}
                                 </div>
                                 ${rodaContent}
+                                ${contentSection}
                             </div>
                             <div class="contact-today-actions">
                                 ${whatsappBtn}
@@ -3849,6 +3928,58 @@
                 }
             } catch (e) {
                 console.error('Error opening WhatsApp:', e);
+            }
+        }
+
+        // Copiar link de conteudo para clipboard
+        async function copyContentLink(url) {
+            try {
+                await navigator.clipboard.writeText(url);
+                // Show quick feedback
+                const toast = document.createElement('div');
+                toast.className = 'position-fixed bottom-0 end-0 p-3';
+                toast.innerHTML = `
+                    <div class="toast show" role="alert">
+                        <div class="toast-body">
+                            <i class="bi bi-check-circle text-success"></i> Link copiado!
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 2000);
+            } catch (e) {
+                console.error('Error copying link:', e);
+                // Fallback for older browsers
+                const input = document.createElement('input');
+                input.value = url;
+                document.body.appendChild(input);
+                input.select();
+                document.execCommand('copy');
+                document.body.removeChild(input);
+            }
+        }
+
+        // Compartilhar conteudo via WhatsApp
+        async function shareContentWhatsApp(contactId, url, title) {
+            try {
+                const response = await fetch(`/api/contacts/${contactId}`);
+                if (!response.ok) {
+                    alert('Erro ao buscar contato');
+                    return;
+                }
+                const contact = await response.json();
+
+                const phone = contact.telefone || contact.whatsapp;
+                if (!phone) {
+                    alert('Contato sem telefone cadastrado');
+                    return;
+                }
+
+                const cleanPhone = phone.replace(/\D/g, '');
+                const message = encodeURIComponent(`Oi! Achei este artigo interessante e lembrei de voce:\n\n*${title}*\n${url}`);
+                window.open(`https://wa.me/${cleanPhone}?text=${message}`, '_blank');
+            } catch (e) {
+                console.error('Error sharing content:', e);
             }
         }
 

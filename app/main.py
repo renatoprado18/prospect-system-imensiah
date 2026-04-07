@@ -7024,7 +7024,9 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
         Lista de contatos com roda mais relevante e sugestao de acao
     """
     from database import get_db
+    from services.content_matcher import get_content_matcher
 
+    content_matcher = get_content_matcher()
     suggestions = []
 
     # 1. Buscar aniversarios de hoje
@@ -7093,6 +7095,8 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
         if contact_id in contacted_today:
             continue  # Ja contactou hoje, pular
         if contact_id not in contact_ids_used:
+            # Aniversario nao precisa de content_suggestion
+            item["content_suggestion"] = None
             suggestions.append(item)
             contact_ids_used.add(contact_id)
 
@@ -7128,13 +7132,26 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
             priority = 5
             reason_label = "Tópico para retomar"
 
+        # Buscar sugestao de conteudo para este contato/roda
+        content_suggestion = None
+        try:
+            content_suggestion = content_matcher.get_content_for_contact(
+                contact_id=contact_id,
+                roda=roda,
+                contact_tags=item["contact"].get("tags"),
+                contact_setor=item["contact"].get("setor") or item["contact"].get("empresa_setor")
+            )
+        except Exception as e:
+            print(f"[SUGGESTIONS] Error getting content for contact {contact_id}: {e}")
+
         suggestions.append({
             "contact": item["contact"],
             "reason": f"roda_{tipo}",
             "reason_label": reason_label,
             "roda": roda,
             "priority": priority,
-            "message_template": get_message_template(tipo, item["contact"]["nome"], roda.get("conteudo"))
+            "message_template": get_message_template(tipo, item["contact"]["nome"], roda.get("conteudo")),
+            "content_suggestion": content_suggestion
         })
         contact_ids_used.add(contact_id)
 
@@ -7151,6 +7168,18 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
 
         health = contato.get("health_score", 50)
         if health < 30:
+            # Buscar sugestao de conteudo para contato sem roda
+            content_suggestion = None
+            try:
+                content_suggestion = content_matcher.get_content_for_contact(
+                    contact_id=contact_id,
+                    roda=None,
+                    contact_tags=contato.get("tags"),
+                    contact_setor=contato.get("setor") or contato.get("empresa_setor")
+                )
+            except Exception as e:
+                print(f"[SUGGESTIONS] Error getting content for low-health contact {contact_id}: {e}")
+
             suggestions.append({
                 "contact": {
                     "id": contato["id"],
@@ -7164,7 +7193,8 @@ async def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True
                 "reason_label": f"Relacionamento esfriando ({health}%)",
                 "roda": None,
                 "priority": 6,
-                "message_template": get_message_template("low_health", contato["nome"])
+                "message_template": get_message_template("low_health", contato["nome"]),
+                "content_suggestion": content_suggestion
             })
             contact_ids_used.add(contact_id)
 
