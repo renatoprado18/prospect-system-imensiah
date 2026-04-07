@@ -7288,6 +7288,7 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
                   AND health_score < 30
                   AND circulo IS NOT NULL
                   AND circulo <= 3
+                  AND NOT (tags && ARRAY['familia']::text[])
                 ORDER BY health_score ASC, circulo ASC
                 LIMIT %s
             """, (limit * 2,))

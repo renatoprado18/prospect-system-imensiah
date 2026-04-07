@@ -177,13 +177,18 @@ class ContentMatcher:
     def _get_categories_for_tags(self, tags: List[str]) -> set:
         """Converte lista de tags em categorias de artigo."""
         categories = set()
+        # Tags genéricas que não devem fazer match direto
+        GENERIC_TAGS = {'ia', 'ti', 'rh', 'bi', 'ai'}
+
         for tag in tags:
             normalized = self._normalize_tag(tag)
             if normalized in TAG_TO_CATEGORY:
                 categories.update(TAG_TO_CATEGORY[normalized])
-            # Also add the tag itself as potential category match
-            categories.add(tag)
-            categories.add(normalized)
+            # Só adiciona tag direta se >= 4 chars ou mapeada
+            # Evita matches genéricos como "ia" -> qualquer artigo de IA
+            if len(normalized) >= 4 and normalized not in GENERIC_TAGS:
+                categories.add(tag)
+                categories.add(normalized)
         return categories
 
     def _calculate_article_score(
@@ -222,15 +227,21 @@ class ContentMatcher:
         for kw in article_keywords:
             article_items.add(self._normalize_tag(kw))
 
-        # Count matches
+        # Count matches (exige strings >= 4 chars para substring match)
         matches = 0
         for cat in target_categories:
             normalized_cat = self._normalize_tag(cat)
             for item in article_items:
-                if normalized_cat in item or item in normalized_cat:
+                # Match exato ou substring apenas se ambos >= 4 chars
+                if normalized_cat == item:
                     matches += 1
                     matched_tags.append(cat)
                     break
+                elif len(normalized_cat) >= 4 and len(item) >= 4:
+                    if normalized_cat in item or item in normalized_cat:
+                        matches += 1
+                        matched_tags.append(cat)
+                        break
 
         if target_categories:
             tag_score = min(matches / len(target_categories), 1.0)
@@ -241,8 +252,15 @@ class ContentMatcher:
         # --- Sector Match (30%) ---
         if contact_setor:
             sector_categories = TAG_TO_CATEGORY.get(self._normalize_tag(contact_setor), [])
-            if any(self._normalize_tag(sc) in article_items for sc in sector_categories):
-                score += 0.3
+            for sc in sector_categories:
+                sc_norm = self._normalize_tag(sc)
+                for item in article_items:
+                    if sc_norm == item or (len(sc_norm) >= 4 and len(item) >= 4 and (sc_norm in item or item in sc_norm)):
+                        score += 0.3
+                        break
+                else:
+                    continue
+                break
 
         # --- Recency (20%) ---
         pub_date = article.get("publishedAt") or article.get("criado_em")
@@ -314,28 +332,48 @@ class ContentMatcher:
         if not all_articles:
             return None
 
-        # Score each article
+        # Valid slugs that actually exist on almeida-prado.com (from sitemap)
+        VALID_BLOG_SLUGS = {
+            "adaptacao-continua-segredo-resiliencia",
+            "adaptar-se-ao-inimaginavel-complexidade-exponencial",
+            "ambidestria-organizacional-conselho",
+            "cenarizacao-estrategica-antecipando-futuro",
+            "como-neogovernanca-responde-desafios-era-caos",
+            "confianca-pilar-estrategico-era-complexidade",
+            "conselhos-encruzilhada-terceira-onda-ia",
+            "curiosidade-motor-inovacao-conselho",
+            "diversidade-alavanca-inovacao",
+            "estamos-mesmo-no-comando-da-inovacao",
+            "por-que-falar-em-neogovernanca",
+            "quando-crescer-ja-nao-basta",
+            "resiliencia-cibernetica-desafio-conselhos",
+            "santo-grau-exemplo-neogovernanca",
+            "teoria-complexidade-governanca",
+        }
+
+        # Score each article - ONLY include if has actual tag matches and valid URL
         scored = []
         for article in all_articles:
+            url = article.get("url") or article.get("article_url") or ""
+            if not url or len(url) < 50:
+                continue
+
+            # For almeida-prado.com/blog, only allow URLs with valid slugs
+            if "almeida-prado.com/blog" in url:
+                slug = url.split("/blog/")[-1] if "/blog/" in url else ""
+                if slug not in VALID_BLOG_SLUGS:
+                    continue
+
             score, matched = self._calculate_article_score(
                 article, roda_tags, contact_tags, contact_setor
             )
-            if score > 0.15:  # Minimum threshold
+            # Require actual tag matches AND higher score threshold
+            # Score > 0.25 OR (score > 0.20 with 2+ tag matches)
+            if matched and (score > 0.25 or (score > 0.20 and len(matched) >= 2)):
                 scored.append((score, matched, article))
 
         if not scored:
-            # Fallback: return most recent evergreen article
-            for article in all_articles[:5]:
-                if article.get("ai_evergreen", True):
-                    return {
-                        "type": "article",
-                        "id": article.get("slug") or article.get("article_slug"),
-                        "title": article.get("title") or article.get("article_title"),
-                        "url": article.get("url") or article.get("article_url"),
-                        "reason": "Artigo recomendado",
-                        "score": 0.3,
-                        "preview": (article.get("description") or article.get("article_description") or "")[:100]
-                    }
+            # No good matches - don't suggest irrelevant content
             return None
 
         # Sort by score descending
@@ -344,19 +382,19 @@ class ContentMatcher:
         # Return top result
         top_score, top_matched, top_article = scored[0]
 
-        # Build reason string
-        if top_matched:
-            reason = f"Combina com: {', '.join(top_matched)}"
-        elif roda_tags:
-            reason = f"Relacionado a: {', '.join(roda_tags[:2])}"
-        else:
-            reason = "Artigo relevante para o perfil"
+        # Build reason string (we know top_matched exists due to filter above)
+        reason = f"Relacionado a: {', '.join(top_matched)}"
+
+        # Get and fix URL (ensure www prefix for almeida-prado.com)
+        url = top_article.get("url") or top_article.get("article_url") or ""
+        if "almeida-prado.com" in url and "www.almeida-prado.com" not in url:
+            url = url.replace("almeida-prado.com", "www.almeida-prado.com")
 
         return {
             "type": "article",
             "id": top_article.get("slug") or top_article.get("article_slug"),
             "title": top_article.get("title") or top_article.get("article_title"),
-            "url": top_article.get("url") or top_article.get("article_url"),
+            "url": url,
             "reason": reason,
             "score": round(top_score, 2),
             "preview": (top_article.get("description") or top_article.get("article_description") or "")[:100]
