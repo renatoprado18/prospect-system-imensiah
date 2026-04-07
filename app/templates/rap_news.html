@@ -716,7 +716,7 @@
             document.getElementById('detail-title').textContent = news.title || '';
             document.getElementById('detail-description').textContent = news.description || 'Sem descrição disponível.';
             document.getElementById('detail-link').href = news.link || '#';
-            document.getElementById('insights-list').innerHTML = '<p class="text-muted" style="font-size: 0.85rem;">Analisando conexões...</p>';
+            document.getElementById('insights-list').innerHTML = '<p class="text-muted" style="font-size: 0.85rem;"><span class="spinner-border spinner-border-sm me-2"></span>Buscando conexões inteligentes com IA...</p>';
         }
 
         // Abrir modal
@@ -750,39 +750,96 @@
         currentInsights = insights || [];
 
         if (!insights || insights.length === 0) {
-            container.innerHTML = '<p class="text-muted" style="font-size: 0.85rem;">Nenhuma conexão encontrada com seus artigos.</p>';
+            container.innerHTML = '<p class="text-muted" style="font-size: 0.85rem;">Nenhuma conexão relevante encontrada com seus artigos.</p>';
             return;
         }
 
         container.innerHTML = insights.map((insight, idx) => {
             const title = (insight.article_title || 'Artigo').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const connection = (insight.connection || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             const hookPreview = insight.hook ? insight.hook.substring(0, 150).replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
             const hookEllipsis = insight.hook && insight.hook.length > 150 ? '...' : '';
 
             return `
-                <div style="background: var(--gray-50); border-radius: 8px; padding: 12px; margin-bottom: 10px;">
-                    <div style="font-size: 0.85rem; font-weight: 500; color: var(--dark); margin-bottom: 4px;">
+                <div class="insight-card" style="background: var(--gray-50); border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+                    <div style="font-size: 0.85rem; font-weight: 500; color: var(--dark); margin-bottom: 8px;">
                         ${title}
                     </div>
-                    <div style="font-size: 0.75rem; color: var(--primary); margin-bottom: 8px;">
-                        <i class="bi bi-link-45deg me-1"></i>${insight.connection || ''}
-                    </div>
-                    ${insight.hook ? `
-                        <div style="font-size: 0.8rem; color: var(--gray-600); font-style: italic; background: white; padding: 8px; border-radius: 4px; border-left: 3px solid var(--primary);">
-                            "${hookPreview}${hookEllipsis}"
-                            <button class="btn btn-link btn-sm p-0 ms-2" style="font-size: 0.75rem;" onclick="copyInsightHook(${idx})">
-                                <i class="bi bi-clipboard"></i>
+                    <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-radius: 6px; padding: 10px; margin-bottom: 8px; border-left: 3px solid #22c55e;">
+                        <div style="font-size: 0.7rem; color: #16a34a; font-weight: 600; margin-bottom: 6px;">
+                            <i class="bi bi-stars me-1"></i>CONEXÃO INTELIGENTE
+                        </div>
+                        <div style="font-size: 0.8rem; line-height: 1.5; color: var(--dark);">${connection}</div>
+                        <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                            <button class="btn btn-outline-danger btn-sm" style="font-size: 0.7rem; padding: 2px 8px;" onclick="createHotTakeFromConnection(${idx})">
+                                <i class="bi bi-fire me-1"></i>Criar Hot Take
+                            </button>
+                            <button class="btn btn-link btn-sm p-0" style="font-size: 0.7rem;" onclick="copyConnection(${idx})">
+                                <i class="bi bi-clipboard me-1"></i>Copiar
                             </button>
                         </div>
-                    ` : ''}
-                    ${insight.article_url ? `
-                        <a href="${insight.article_url}" target="_blank" class="btn btn-link btn-sm p-0 mt-2" style="font-size: 0.75rem;">
-                            Ver artigo <i class="bi bi-box-arrow-up-right"></i>
-                        </a>
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        ${insight.hook ? `
+                            <button class="btn btn-link btn-sm p-0" style="font-size: 0.7rem;" onclick="copyInsightHook(${idx})">
+                                <i class="bi bi-clipboard me-1"></i>Copiar gancho
+                            </button>
+                        ` : ''}
+                        ${insight.article_url ? `
+                            <a href="${insight.article_url}" target="_blank" class="btn btn-link btn-sm p-0" style="font-size: 0.7rem;">
+                                Ver artigo <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                        ` : ''}
+                    </div>
+                    ${insight.hook ? `
+                        <div style="font-size: 0.8rem; color: var(--gray-600); font-style: italic; background: white; padding: 8px; border-radius: 4px; border-left: 3px solid var(--primary); margin-top: 8px;">
+                            "${hookPreview}${hookEllipsis}"
+                        </div>
                     ` : ''}
                 </div>
             `;
         }).join('');
+    }
+
+    function copyConnection(idx) {
+        const insight = currentInsights[idx];
+        if (insight && insight.connection) {
+            navigator.clipboard.writeText(insight.connection);
+            showToast('Conexão copiada!');
+        }
+    }
+
+    async function createHotTakeFromConnection(idx) {
+        const insight = currentInsights[idx];
+        const news = findNewsById(currentDetailNewsId);
+
+        if (!insight || !news) return;
+
+        // Fechar modal
+        bootstrap.Modal.getInstance(document.getElementById('newsDetailModal')).hide();
+
+        // Criar hot take via API com dados da conexão
+        try {
+            const response = await fetch('/api/hot-takes/from-news', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    news_title: news.title,
+                    news_link: news.link,
+                    news_description: `${insight.connection}\n\n---\nArtigo relacionado: ${insight.article_title}${insight.article_url ? '\n' + insight.article_url : ''}`
+                })
+            });
+
+            const result = await response.json();
+            if (result.id) {
+                window.location.href = `/hot-takes?edit=${result.id}`;
+            } else {
+                window.location.href = '/hot-takes';
+            }
+        } catch (error) {
+            console.error('Error creating hot take:', error);
+            window.location.href = '/hot-takes';
+        }
     }
 
     function copyInsightHook(insightIdx) {

@@ -597,8 +597,60 @@ def match_contacts_for_news(news_id: int) -> List[Dict]:
         return contacts[:5]
 
 
-def get_news_with_insights(news_id: int) -> Optional[Dict]:
-    """Retorna notícia com insights conectando aos artigos do usuário"""
+async def evaluate_article_relevance(news_title: str, news_desc: str, article_title: str, article_hook: str) -> Optional[str]:
+    """Avalia se há conexão relevante entre notícia e artigo. Retorna conexão ou None."""
+    import os
+    import anthropic
+
+    try:
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+        prompt = f"""Avalie se existe uma conexão INTERESSANTE e RELEVANTE entre esta notícia e este artigo de blog.
+
+NOTÍCIA:
+{news_title}
+{news_desc[:400]}
+
+ARTIGO DO BLOG:
+{article_title}
+{article_hook[:200] if article_hook else ''}
+
+Conexões interessantes podem ser: temas complementares, perspectivas diferentes sobre um fenômeno, lições de um setor aplicáveis a outro, tendências que se cruzam.
+
+REGRAS DE RESPOSTA:
+- Se NÃO houver conexão relevante: responda apenas "NAO"
+- Se HOUVER conexão: escreva DIRETAMENTE 2-3 frases explicando a conexão (sem prefixos como "SIM" ou "Conexão:")
+
+Resposta:"""
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        result = response.content[0].text.strip()
+
+        # Verificar se não há conexão
+        if result.upper().startswith("NAO") or result.upper().startswith("NÃO") or result.upper() == "NAO" or result.upper() == "NÃO":
+            return None
+
+        # Limpar prefixos comuns que a IA pode adicionar
+        for prefix in ["SIM", "SIM.", "SIM:", "SIM\n", "CONEXÃO:", "Conexão:"]:
+            if result.upper().startswith(prefix.upper()):
+                result = result[len(prefix):].strip()
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Erro ao avaliar relevância: {e}")
+        return None
+
+
+async def get_news_with_insights(news_id: int) -> Optional[Dict]:
+    """Retorna notícia com insights conectando aos artigos do usuário (usa IA para validar)"""
+    import asyncio
+
     news = get_news_item(news_id)
     if not news:
         return None
@@ -610,49 +662,43 @@ def get_news_with_insights(news_id: int) -> Optional[Dict]:
         except:
             topics = []
 
-    # Buscar artigos relacionados
+    # Buscar artigos candidatos
     related = get_related_articles(topics, limit=5)
 
-    # Gerar insights baseados em keyword matching
-    insights = []
-    for article in related[:3]:
-        keywords = article.get('ai_keywords') or []
-        if isinstance(keywords, str):
-            try:
-                keywords = json.loads(keywords)
-            except:
-                keywords = []
+    if not related:
+        news["insights"] = []
+        news["related_articles"] = []
+        return news
 
-        # Encontrar keywords em comum
-        common_themes = []
-        for topic in topics:
-            topic_lower = topic.lower()
-            for kw in keywords:
-                if topic_lower in kw.lower() or kw.lower() in topic_lower:
-                    common_themes.append(kw)
-                    break
+    news_title = news.get('title', '')
+    news_desc = news.get('description', '')
 
-        if common_themes:
-            insight = {
+    # Avaliar cada artigo em paralelo
+    async def evaluate_article(article):
+        connection = await evaluate_article_relevance(
+            news_title,
+            news_desc,
+            article.get('article_title', ''),
+            article.get('ai_gancho_linkedin', '')
+        )
+        if connection:
+            return {
+                "article_id": article.get("id"),
                 "article_title": article.get("article_title", ""),
                 "article_url": article.get("article_url", ""),
-                "connection": f"Conecta com o tema: {', '.join(common_themes[:2])}",
+                "connection": connection,
                 "hook": article.get("ai_gancho_linkedin", "")
             }
-            insights.append(insight)
+        return None
 
-    # Se não achou conexão por keywords, usar categoria
-    if not insights and related:
-        for article in related[:2]:
-            categoria = article.get("ai_categoria", "")
-            insights.append({
-                "article_title": article.get("article_title", ""),
-                "article_url": article.get("article_url", ""),
-                "connection": f"Relacionado a: {categoria}" if categoria else "Tema próximo",
-                "hook": article.get("ai_gancho_linkedin", "")
-            })
+    # Executar avaliações em paralelo
+    tasks = [evaluate_article(article) for article in related[:4]]
+    results = await asyncio.gather(*tasks)
 
-    news["insights"] = insights
+    # Filtrar resultados válidos
+    insights = [r for r in results if r is not None]
+
+    news["insights"] = insights[:3]  # Máximo 3 conexões
     news["related_articles"] = related
 
     return news
@@ -721,4 +767,74 @@ Responda de forma direta, sem rótulos. Formato:
 
     except Exception as e:
         logger.error(f"Erro ao gerar resumo: {e}")
+        return None
+
+
+async def generate_article_connection(news_id: int, article_id: int) -> Optional[Dict]:
+    """Gera conexão inteligente entre notícia e artigo do blog"""
+    import os
+    import anthropic
+
+    news = get_news_item(news_id)
+    if not news:
+        return None
+
+    # Buscar artigo
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, article_title, article_url, ai_categoria, ai_gancho_linkedin, ai_keywords
+            FROM editorial_posts
+            WHERE id = %s
+        ''', (article_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        article = dict(row)
+
+    news_title = news.get('title', '')
+    news_desc = news.get('description', '')[:500]
+    article_title = article.get('article_title', '')
+    article_hook = article.get('ai_gancho_linkedin', '')
+
+    try:
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+        prompt = f"""Você é um consultor de conteúdo. Analise a notícia e o artigo do blog abaixo e crie uma conexão estratégica.
+
+NOTÍCIA:
+Título: {news_title}
+Resumo: {news_desc}
+
+ARTIGO DO MEU BLOG:
+Título: {article_title}
+Gancho: {article_hook}
+
+Gere:
+1. CONEXÃO (2-3 frases explicando como a notícia se conecta com o artigo - seja específico)
+2. AÇÃO (1 frase sugerindo como usar essa conexão para engajamento - ex: compartilhar no LinkedIn, enviar para contato, criar post)
+
+Responda em português, de forma direta e prática. Formato:
+[Conexão]
+
+💡 Ação: [sugestão]"""
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        connection_text = response.content[0].text.strip()
+
+        return {
+            "news_id": news_id,
+            "article_id": article_id,
+            "article_title": article_title,
+            "article_url": article.get('article_url', ''),
+            "connection": connection_text
+        }
+
+    except Exception as e:
+        logger.error(f"Erro ao gerar conexão: {e}")
         return None
