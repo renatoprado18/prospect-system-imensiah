@@ -60,8 +60,11 @@ INTERACTION_WEIGHTS = {
 
 # Tópicos para classificação
 TOPIC_KEYWORDS = {
-    "governanca": ["governança", "conselho", "board", "compliance", "auditoria", "conselheiro"],
-    "esg": ["esg", "sustentabilidade", "clima", "ambiental", "social", "carbono", "net zero"],
+    "governanca": ["governança", "conselho", "board", "compliance", "auditoria", "conselheiro",
+                   "acionista", "investidor", "stakeholder", "assembleia", "diretoria", "administração"],
+    "esg": ["esg", "sustentabilidade", "clima", "ambiental", "social", "carbono", "net zero",
+            "água", "energia", "recursos naturais", "emissões", "impacto ambiental", "verde",
+            "renovável", "reciclagem", "diversidade", "inclusão", "transparência"],
     "ma": ["fusão", "aquisição", "m&a", "merger", "takeover", "ipo", "oferta"],
     "tecnologia": ["ia", "inteligência artificial", "ai", "tech", "digital", "software", "startup"],
     "economia": ["economia", "pib", "inflação", "juros", "selic", "dólar", "mercado"],
@@ -467,53 +470,35 @@ def get_news_item(news_id: int) -> Optional[Dict]:
         return dict(row) if row else None
 
 
-def get_related_articles(topics: List[str], limit: int = 3) -> List[Dict]:
-    """Encontra artigos da base relacionados aos tópicos das notícias"""
-    if not topics:
-        return []
+def get_related_articles(topics: List[str], limit: int = 6) -> List[Dict]:
+    """Busca artigos candidatos diversos para avaliação pela IA.
 
+    Retorna artigos de diferentes categorias para a IA decidir relevância.
+    """
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Buscar artigos que tenham categorias ou keywords relacionadas
+        # Buscar os melhores artigos de cada categoria para ter diversidade
         cursor.execute('''
+            WITH ranked AS (
+                SELECT id, article_title, article_url, ai_categoria, ai_score_relevancia,
+                       ai_gancho_linkedin, ai_keywords,
+                       ROW_NUMBER() OVER (PARTITION BY ai_categoria ORDER BY ai_score_relevancia DESC) as rn
+                FROM editorial_posts
+                WHERE article_url IS NOT NULL
+                  AND ai_score_relevancia IS NOT NULL
+                  AND ai_categoria IS NOT NULL
+            )
             SELECT id, article_title, article_url, ai_categoria, ai_score_relevancia,
                    ai_gancho_linkedin, ai_keywords
-            FROM editorial_posts
-            WHERE article_url IS NOT NULL
-              AND ai_score_relevancia IS NOT NULL
+            FROM ranked
+            WHERE rn = 1
             ORDER BY ai_score_relevancia DESC
-            LIMIT 50
-        ''')
+            LIMIT %s
+        ''', (limit,))
 
-        articles = []
-        for row in cursor.fetchall():
-            article = dict(row)
-            keywords = article.get('ai_keywords') or []
-            if isinstance(keywords, str):
-                try:
-                    keywords = json.loads(keywords)
-                except:
-                    keywords = []
-
-            categoria = (article.get('ai_categoria') or '').lower()
-
-            # Score de match
-            match_score = 0
-            for topic in topics:
-                topic_lower = topic.lower()
-                if topic_lower in categoria:
-                    match_score += 3
-                for kw in keywords:
-                    if topic_lower in kw.lower() or kw.lower() in topic_lower:
-                        match_score += 1
-
-            if match_score > 0:
-                article['match_score'] = match_score
-                articles.append(article)
-
-        articles.sort(key=lambda x: -x.get('match_score', 0))
-        return articles[:limit]
+        articles = [dict(row) for row in cursor.fetchall()]
+        return articles
 
 
 def generate_daily_digest(news_items: List[Dict]) -> str:
