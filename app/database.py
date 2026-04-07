@@ -1891,6 +1891,71 @@ def init_db():
             ON oficinas(nome)
         ''')
 
+        # ============== News Hub ==============
+
+        # Notícias coletadas de RSS/APIs
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS news_items (
+                id SERIAL PRIMARY KEY,
+                source TEXT NOT NULL,
+                source_url TEXT,
+                title TEXT NOT NULL,
+                description TEXT,
+                link TEXT UNIQUE,
+                published_at TIMESTAMP,
+                collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                category TEXT,
+                is_trending BOOLEAN DEFAULT FALSE,
+                trending_score FLOAT DEFAULT 0,
+                relevance_score FLOAT,
+                topics JSONB DEFAULT '[]',
+                keywords JSONB DEFAULT '[]',
+                processed BOOLEAN DEFAULT FALSE
+            )
+        ''')
+
+        # Interações do usuário com notícias (para aprendizado)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS news_interactions (
+                id SERIAL PRIMARY KEY,
+                news_id INTEGER REFERENCES news_items(id) ON DELETE CASCADE,
+                user_id INTEGER REFERENCES users(id),
+                action TEXT NOT NULL,
+                time_spent INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                metadata JSONB DEFAULT '{}'
+            )
+        ''')
+
+        # Perfil de interesses do usuário (evolui com interações)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_interests (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) UNIQUE,
+                topics JSONB DEFAULT '{}',
+                sources JSONB DEFAULT '{}',
+                keywords_positive JSONB DEFAULT '[]',
+                keywords_negative JSONB DEFAULT '[]',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_news_items_collected
+            ON news_items(collected_at DESC)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_news_items_trending
+            ON news_items(is_trending, trending_score DESC)
+            WHERE is_trending = TRUE
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_news_interactions_news
+            ON news_interactions(news_id, action)
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True
