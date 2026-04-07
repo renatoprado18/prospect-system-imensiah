@@ -14919,6 +14919,37 @@ async def editorial_page(request: Request):
     # Filtra apenas scheduled e published
     week_posts = [p for p in week_posts if p.get('status') in ['scheduled', 'published']]
 
+    # Calcula estado de cada post para visual do calendário
+    # Estados: scheduled, today_scheduled, overdue, published, needs_metrics, complete
+    alerts = {'overdue': 0, 'today': 0, 'needs_metrics': 0}
+    for p in week_posts:
+        pub_date = p.get('data_publicacao')
+        status = p.get('status')
+        has_metrics = p.get('linkedin_impressoes') and p.get('linkedin_impressoes') > 0
+        data_publicado = p.get('data_publicado')
+
+        if status == 'scheduled':
+            if pub_date and pub_date.date() < today.date():
+                p['calendar_state'] = 'overdue'
+                alerts['overdue'] += 1
+            elif pub_date and pub_date.date() == today.date():
+                p['calendar_state'] = 'today_scheduled'
+                alerts['today'] += 1
+            else:
+                p['calendar_state'] = 'scheduled'
+        elif status == 'published':
+            if has_metrics:
+                p['calendar_state'] = 'complete'
+            elif data_publicado:
+                hours_since = (datetime.now() - data_publicado).total_seconds() / 3600
+                if hours_since >= 48:
+                    p['calendar_state'] = 'needs_metrics'
+                    alerts['needs_metrics'] += 1
+                else:
+                    p['calendar_state'] = 'published'
+            else:
+                p['calendar_state'] = 'published'
+
     week_days = []
     for i in range(5):  # Mon to Fri
         day = monday + timedelta(days=i)
@@ -14952,7 +14983,8 @@ async def editorial_page(request: Request):
         "today": today,
         "week_days": week_days,
         "today_posts": today_posts,
-        "pending_hot_takes": pending_hot_takes
+        "pending_hot_takes": pending_hot_takes,
+        "calendar_alerts": alerts
     })
 
 

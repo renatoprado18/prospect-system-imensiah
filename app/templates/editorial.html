@@ -715,6 +715,90 @@
         padding: 20px;
     }
 
+    /* Calendar Post States */
+    .day-post.state-scheduled {
+        background: #eff6ff;
+        border-left: 3px solid #3b82f6;
+    }
+    .day-post.state-scheduled i { color: #3b82f6; }
+
+    .day-post.state-today_scheduled {
+        background: #fef3c7;
+        border-left: 3px solid #f59e0b;
+        animation: pulse-attention 2s infinite;
+    }
+    .day-post.state-today_scheduled i { color: #d97706; }
+
+    .day-post.state-overdue {
+        background: #fee2e2;
+        border-left: 3px solid #ef4444;
+    }
+    .day-post.state-overdue i { color: #dc2626; }
+
+    .day-post.state-published {
+        background: #f3e8ff;
+        border-left: 3px solid #8b5cf6;
+    }
+    .day-post.state-published i { color: #7c3aed; }
+
+    .day-post.state-needs_metrics {
+        background: #f3e8ff;
+        border-left: 3px solid #f97316;
+        position: relative;
+    }
+    .day-post.state-needs_metrics i { color: #7c3aed; }
+    .day-post.state-needs_metrics::after {
+        content: '📊';
+        position: absolute;
+        top: -6px;
+        right: -6px;
+        font-size: 12px;
+        background: #fff7ed;
+        border-radius: 50%;
+        padding: 2px;
+        border: 1px solid #f97316;
+    }
+
+    .day-post.state-complete {
+        background: #dcfce7;
+        border-left: 3px solid #22c55e;
+    }
+    .day-post.state-complete i { color: #16a34a; }
+
+    @keyframes pulse-attention {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+        50% { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0); }
+    }
+
+    /* Calendar Alerts Banner */
+    .calendar-alerts {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+    }
+    .calendar-alert {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 500;
+    }
+    .calendar-alert.alert-overdue {
+        background: #fee2e2;
+        color: #dc2626;
+    }
+    .calendar-alert.alert-today {
+        background: #fef3c7;
+        color: #d97706;
+    }
+    .calendar-alert.alert-metrics {
+        background: #fff7ed;
+        color: #ea580c;
+    }
+
     /* Action Cards */
     .action-cards {
         display: grid;
@@ -914,6 +998,28 @@
     <div class="posts-header">
         <h2><i class="bi bi-calendar-week me-2"></i>Esta Semana</h2>
     </div>
+    {% if calendar_alerts and (calendar_alerts.overdue > 0 or calendar_alerts.today > 0 or calendar_alerts.needs_metrics > 0) %}
+    <div class="calendar-alerts">
+        {% if calendar_alerts.overdue > 0 %}
+        <div class="calendar-alert alert-overdue">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            {{ calendar_alerts.overdue }} post{{ 's' if calendar_alerts.overdue > 1 else '' }} atrasado{{ 's' if calendar_alerts.overdue > 1 else '' }}
+        </div>
+        {% endif %}
+        {% if calendar_alerts.today > 0 %}
+        <div class="calendar-alert alert-today">
+            <i class="bi bi-clock-fill"></i>
+            {{ calendar_alerts.today }} post{{ 's' if calendar_alerts.today > 1 else '' }} para hoje
+        </div>
+        {% endif %}
+        {% if calendar_alerts.needs_metrics > 0 %}
+        <div class="calendar-alert alert-metrics">
+            <i class="bi bi-bar-chart-fill"></i>
+            {{ calendar_alerts.needs_metrics }} aguardando métricas
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
     <div class="week-calendar">
         {% for day in week_days %}
         <div class="week-day {{ 'today' if day.is_today else '' }} {{ 'past' if day.is_past else '' }}">
@@ -923,13 +1029,21 @@
             </div>
             <div class="day-posts">
                 {% for post in day.posts %}
-                <div class="day-post {{ post.tipo }}" onclick="openPostModal({{ post.id }})" title="{{ post.article_title }}">
-                    {% if post.tipo == 'hot_take' %}
+                <div class="day-post {{ post.tipo }} state-{{ post.calendar_state or 'scheduled' }}" onclick="openPostModal({{ post.id }})" title="{{ post.article_title }}">
+                    {% if post.calendar_state == 'overdue' %}
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    {% elif post.calendar_state == 'today_scheduled' %}
+                    <i class="bi bi-clock-fill"></i>
+                    {% elif post.calendar_state == 'complete' %}
+                    <i class="bi bi-check-circle-fill"></i>
+                    {% elif post.calendar_state == 'published' or post.calendar_state == 'needs_metrics' %}
+                    <i class="bi bi-check-lg"></i>
+                    {% elif post.tipo == 'hot_take' %}
                     <i class="bi bi-fire"></i>
                     {% else %}
-                    <i class="bi bi-file-text"></i>
+                    <i class="bi bi-calendar-check"></i>
                     {% endif %}
-                    <span>{{ post.article_title[:20] }}{% if post.article_title|length > 20 %}...{% endif %}</span>
+                    <span>{{ post.article_title[:18] }}{% if post.article_title|length > 18 %}...{% endif %}</span>
                 </div>
                 {% else %}
                 <div class="day-empty">-</div>
