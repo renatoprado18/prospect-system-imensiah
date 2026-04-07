@@ -3052,30 +3052,38 @@ async def get_dashboard_stats(user_role: str = "operador"):
 
     stats = {}
 
-    # Filtro base para Andressa
-    aprovado_filter = "AND aprovado_por_renato = TRUE" if user_role != "admin" else ""
+    # Filtro seguro: admin vê tudo, outros só aprovados
+    # Usa parâmetro booleano ao invés de concatenação de string
+    requires_approval = user_role != "admin"
 
-    # Total por tier (só aprovados)
-    cursor.execute(f'''
+    # Total por tier (só aprovados para não-admin)
+    cursor.execute('''
         SELECT tier, COUNT(*) as count FROM prospects
-        WHERE 1=1 {aprovado_filter}
+        WHERE (%s = FALSE OR aprovado_por_renato = TRUE)
         GROUP BY tier
-    ''')
+    ''', (requires_approval,))
     stats['por_tier'] = {row['tier']: row['count'] for row in cursor.fetchall()}
 
-    # Total por status (só aprovados)
-    cursor.execute(f'''
+    # Total por status (só aprovados para não-admin)
+    cursor.execute('''
         SELECT status, COUNT(*) as count FROM prospects
-        WHERE status NOT IN ('pendente_aprovacao', 'rejeitado') {aprovado_filter}
+        WHERE status NOT IN ('pendente_aprovacao', 'rejeitado')
+          AND (%s = FALSE OR aprovado_por_renato = TRUE)
         GROUP BY status
-    ''')
+    ''', (requires_approval,))
     stats['por_status'] = {row['status']: row['count'] for row in cursor.fetchall()}
 
     # Conversões
-    cursor.execute(f'SELECT COUNT(*) as count FROM prospects WHERE converted = TRUE {aprovado_filter}')
+    cursor.execute('''
+        SELECT COUNT(*) as count FROM prospects
+        WHERE converted = TRUE AND (%s = FALSE OR aprovado_por_renato = TRUE)
+    ''', (requires_approval,))
     stats['total_convertidos'] = cursor.fetchone()['count']
 
-    cursor.execute(f'SELECT COALESCE(SUM(deal_value), 0) as total FROM prospects WHERE converted = TRUE {aprovado_filter}')
+    cursor.execute('''
+        SELECT COALESCE(SUM(deal_value), 0) as total FROM prospects
+        WHERE converted = TRUE AND (%s = FALSE OR aprovado_por_renato = TRUE)
+    ''', (requires_approval,))
     stats['receita_total'] = float(cursor.fetchone()['total'])
 
     # Reuniões
@@ -3088,14 +3096,14 @@ async def get_dashboard_stats(user_role: str = "operador"):
     ''', (datetime.now().isoformat(),))
     stats['reunioes_agendadas'] = cursor.fetchone()['count']
 
-    # Top prospects para contato (só aprovados para Andressa)
-    cursor.execute(f'''
+    # Top prospects para contato (só aprovados para não-admin)
+    cursor.execute('''
         SELECT * FROM prospects
         WHERE status IN ('novo', 'contatado') AND tier IN ('A', 'B')
-        {aprovado_filter}
+          AND (%s = FALSE OR aprovado_por_renato = TRUE)
         ORDER BY prioridade_renato DESC, score DESC
         LIMIT 10
-    ''')
+    ''', (requires_approval,))
     stats['top_prospects'] = [row_to_dict(row) for row in cursor.fetchall()]
 
     conn.close()
