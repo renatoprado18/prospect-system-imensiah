@@ -10,18 +10,21 @@ from database import get_db
 
 
 RODA_TYPES = [
-    'promessa',         # "vou te enviar", "te mando", "te apresento"
-    'favor_recebido',   # "obrigado por", "valeu pela indicacao"
+    'promessa',         # Renato prometeu entregar algo ao contato
+    'favor_recebido',   # Contato ajudou Renato (Renato e o BENEFICIARIO) - sugere retribuir
+    'favor_feito',     # Renato ajudou o contato (Renato e o DOADOR) - marcador de boa vontade, NAO sugere acao
     'topico',           # Assunto discutido que pode ser retomado
     'proximo_passo',    # "semana que vem", "depois conversamos"
 ]
 
 # Prioridade por tipo (menor = mais urgente)
+# favor_feito nao entra na priorizacao do dashboard - e apenas marcador historico
 RODA_PRIORITY = {
     'promessa': 1,
     'favor_recebido': 2,
     'proximo_passo': 3,
     'topico': 4,
+    'favor_feito': 99,
 }
 
 
@@ -43,7 +46,7 @@ class RodasService:
 
         Args:
             contact_id: ID do contato
-            tipo: promessa, favor_recebido, topico, proximo_passo
+            tipo: promessa, favor_recebido, favor_feito, topico, proximo_passo
             conteudo: Descricao curta do contexto
             message_id: ID da mensagem de origem (opcional)
             tags: Lista de tags/palavras-chave
@@ -110,6 +113,8 @@ class RodasService:
                         WHEN 'favor_recebido' THEN 2
                         WHEN 'proximo_passo' THEN 3
                         WHEN 'topico' THEN 4
+                        WHEN 'favor_feito' THEN 99
+                        ELSE 100
                     END,
                     criado_em ASC
             ''', (contact_id,))
@@ -134,6 +139,8 @@ class RodasService:
                         WHEN 'favor_recebido' THEN 2
                         WHEN 'proximo_passo' THEN 3
                         WHEN 'topico' THEN 4
+                        WHEN 'favor_feito' THEN 99
+                        ELSE 100
                     END,
                     criado_em ASC
                 LIMIT 1
@@ -230,12 +237,14 @@ class RodasService:
                                     WHEN 'favor_recebido' THEN 2
                                     WHEN 'proximo_passo' THEN 3
                                     WHEN 'topico' THEN 4
+                                    ELSE 99
                                 END,
                                 r.criado_em ASC
                         ) as rn
                     FROM contact_rodas r
                     JOIN contacts c ON c.id = r.contact_id
                     WHERE r.status = 'pendente'
+                      AND r.tipo != 'favor_feito'  -- favor_feito e historico, nao gera acao
                 )
                 SELECT *
                 FROM ranked_rodas

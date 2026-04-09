@@ -1438,7 +1438,7 @@ def init_db():
                 contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
                 message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
 
-                -- Tipo: promessa, favor_recebido, topico, proximo_passo
+                -- Tipo: promessa, favor_recebido, favor_feito, topico, proximo_passo
                 tipo TEXT NOT NULL,
                 conteudo TEXT NOT NULL,
                 tags TEXT[] DEFAULT '{}',

@@ -17,6 +17,7 @@ Detecta intencoes em mensagens WhatsApp/Email e sugere acoes:
 - follow_up_needed: Precisa de follow-up
 """
 import os
+import re
 import json
 import httpx
 from typing import Dict, List, Optional
@@ -237,17 +238,54 @@ class RealtimeAnalyzer:
         intents = ai_result.get('intents', [])
         rodas = ai_result.get('rodas', [])
 
-        # Filtrar rodas por direcao da mensagem
-        # - promessa: so de mensagens OUTGOING (Renato prometeu)
-        # - favor_recebido: so de mensagens INCOMING (contato ajudou)
+        # Filtrar rodas validando direcao + beneficiario semantico
+        # - promessa: Renato prometeu algo (outgoing)
+        # - favor_recebido: contato ajudou Renato (Renato e BENEFICIARIO)
+        # - favor_feito: Renato ajudou o contato (Renato e DOADOR, sem acao requerida)
         # - topico, proximo_passo: qualquer direcao
+        #
+        # IMPORTANTE: nao basta filtrar por direcao. Mensagens incoming de
+        # agradecimento ("obrigada pela indicacao") referenciam favor que RENATO
+        # fez, nao recebeu. O campo `beneficiario` do JSON da IA resolve isso.
+        thank_you_pattern = re.compile(
+            r'\b(obrigad[ao]|valeu|grat[ao]|thanks?|obg|gracias)\b',
+            re.IGNORECASE
+        )
+        is_thank_you_msg = bool(thank_you_pattern.search(message_text or ''))
+
         filtered_rodas = []
         for roda in rodas:
             tipo = roda.get('tipo', '')
+            beneficiario = (roda.get('beneficiario') or '').lower()
+
             if tipo == 'promessa' and message_direction != 'outgoing':
                 continue  # Promessa so vale se Renato enviou
-            if tipo == 'favor_recebido' and message_direction != 'incoming':
-                continue  # Favor so vale se recebido
+
+            if tipo == 'favor_recebido':
+                # Beneficiario tem que ser Renato; se ausente, exigir incoming + nao-agradecimento
+                if beneficiario and beneficiario != 'renato':
+                    print(f"[RODAS] Pulando favor_recebido: beneficiario={beneficiario}")
+                    continue
+                if message_direction != 'incoming':
+                    continue
+                if is_thank_you_msg and beneficiario != 'renato':
+                    # Heuristica defensiva: agradecimento incoming sem beneficiario explicito
+                    # quase sempre significa que RENATO foi o doador
+                    print(f"[RODAS] Pulando favor_recebido: mensagem de agradecimento sem beneficiario explicito")
+                    # Reescreve como favor_feito (Renato doou)
+                    roda['tipo'] = 'favor_feito'
+                    roda['beneficiario'] = 'contato'
+                    filtered_rodas.append(roda)
+                    continue
+
+            if tipo == 'favor_feito':
+                # Renato ajudou o contato; aceita qualquer direcao
+                # (Renato pode ter mencionado outgoing, ou contato pode ter agradecido incoming)
+                if beneficiario and beneficiario == 'renato':
+                    # Inconsistencia: tipo diz favor_feito mas beneficiario diz Renato
+                    print(f"[RODAS] Pulando favor_feito inconsistente: beneficiario=renato")
+                    continue
+
             filtered_rodas.append(roda)
 
         result['rodas'] = filtered_rodas
@@ -363,25 +401,51 @@ Identifique se a mensagem contem alguma destas intencoes:
 ## PARTE 2: RODAS DE RELACIONAMENTO (MUITO SELETIVO)
 Extraia rodas APENAS se TODOS os criterios forem atendidos:
 1. Contexto PROFISSIONAL ou NETWORKING (nao familiar, nao romantico)
-2. Requer ACAO FUTURA especifica de Renato
-3. Algo que Renato pode ESQUECER se nao registrado
+2. Acao concreta que pode ser esquecida se nao registrada
+3. Identificacao CLARA de quem fez/promete o que para quem
 
 TIPOS VALIDOS:
-- promessa: Renato prometeu ENTREGAR algo a CONTATO PROFISSIONAL ("envio a proposta", "te apresento ao diretor")
-- favor_recebido: CONTATO PROFISSIONAL fez favor que merece retribuicao ("me indicou cliente", "me apresentou ao investidor")
+- promessa: RENATO prometeu ENTREGAR algo ao CONTATO ("envio a proposta", "te apresento ao diretor")
+- favor_recebido: CONTATO ajudou RENATO. RENATO e o BENEFICIARIO. Ex: contato escreve "te indiquei pro fulano", ou Renato escreve "obrigado por me indicar"
+- favor_feito: RENATO ajudou o CONTATO. RENATO e o DOADOR. Ex: Renato escreve "te indiquei a Wanelise", ou contato escreve "obrigada pela indicacao"
 - topico: PROJETO ou NEGOCIO discutido que pode gerar oportunidade
 - proximo_passo: COMPROMISSO PROFISSIONAL agendado ("reuniao segunda", "proposta ate sexta")
+
+## REGRA CRITICA: BENEFICIARIO DO FAVOR
+Antes de classificar como favor_recebido OU favor_feito, identifique:
+- Quem PERFORMOU a acao (subject)?
+- Quem RECEBEU o beneficio (object)?
+
+Mensagem INCOMING (do contato) com "obrigado/obrigada/valeu pela indicacao/apresentacao/ajuda"
+  → contato esta AGRADECENDO Renato
+  → significa que RENATO foi o doador
+  → tipo = "favor_feito", beneficiario = "contato"
+  → NAO classifique como favor_recebido
+
+Mensagem OUTGOING (do Renato) com "obrigado por me indicar/apresentar"
+  → Renato esta agradecendo o contato
+  → contato foi o doador
+  → tipo = "favor_recebido", beneficiario = "renato"
+
+Mensagem INCOMING com "te indiquei", "vou te apresentar a fulano", "vou te ajudar"
+  → contato fez/vai fazer algo POR Renato
+  → tipo = "favor_recebido", beneficiario = "renato"
+
+Mensagem OUTGOING com "te indiquei a fulano", "vou te apresentar ao fulano"
+  → Renato fez/vai fazer algo POR contato
+  → tipo = "favor_feito" (se ja realizado) OU "promessa" (se futuro)
 
 RETORNE rodas: [] se:
 - Mensagem entre familiares ou casal
 - Conversa social sem contexto de negocios
-- Sem acao especifica para Renato
-- Cumprimento, rotina, promessa vaga
+- Cumprimento generico, rotina
+- Nao da pra identificar quem ajudou quem
+- Na duvida sobre beneficiario
 
-REGRAS:
-- 'promessa' so de mensagens ENVIADAS por Renato
-- 'favor_recebido' so de mensagens RECEBIDAS
-- Na duvida, NAO extraia
+CONTEUDO da roda DEVE preservar o sujeito explicitamente.
+  RUIM: "indicacao de advogada Wanelise"
+  BOM: "Renato indicou a advogada Wanelise para o contato"
+  BOM: "Contato indicou Renato como palestrante para o evento X"
 
 Responda APENAS com JSON valido no formato:
 {{
@@ -400,8 +464,9 @@ Responda APENAS com JSON valido no formato:
     ],
     "rodas": [
         {{
-            "tipo": "promessa" ou "favor_recebido" ou "topico" ou "proximo_passo",
-            "conteudo": "descricao curta do que foi prometido/discutido/combinado",
+            "tipo": "promessa" ou "favor_recebido" ou "favor_feito" ou "topico" ou "proximo_passo",
+            "conteudo": "descricao com sujeito explicito (quem fez o que para quem)",
+            "beneficiario": "renato" ou "contato" ou null (so para favor_recebido/favor_feito)",
             "prazo": "data ou prazo mencionado, se houver (null se nao houver)",
             "tags": ["palavras-chave", "relevantes"],
             "confidence": 0.0 a 1.0
@@ -571,7 +636,7 @@ Se nao detectar intencoes ou rodas, retorne arrays vazios."""
                 tags = roda.get('tags', [])
 
                 # Validar tipo
-                if tipo not in ['promessa', 'favor_recebido', 'topico', 'proximo_passo']:
+                if tipo not in ['promessa', 'favor_recebido', 'favor_feito', 'topico', 'proximo_passo']:
                     continue
 
                 # Conteudo minimo

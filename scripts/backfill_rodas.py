@@ -56,35 +56,59 @@ async def extract_rodas_from_message(message_text: str, contact_name: str, direc
 
 MENSAGEM: "{message_text}"
 REMETENTE: {contact_name}
-DIRECAO: {"Enviada por Renato" if direction == "outgoing" else "Recebida"}
+DIRECAO: {"Enviada por Renato" if direction == "outgoing" else "Recebida (do contato para Renato)"}
 
 EXTRAIA UMA RODA APENAS SE TODOS OS CRITERIOS FOREM ATENDIDOS:
 1. E um contexto PROFISSIONAL ou de NETWORKING (nao familiar, nao romantico, nao rotina pessoal)
-2. Requer ACAO FUTURA especifica de Renato (enviar algo, apresentar alguem, dar retorno)
-3. E algo que Renato pode ESQUECER se nao for registrado
+2. Acao concreta que pode ser esquecida se nao for registrada
+3. Identificacao CLARA de quem fez/promete o que para quem
 
 TIPOS DE RODAS VALIDAS:
-- promessa: Renato prometeu ENTREGAR algo concreto a um CONTATO PROFISSIONAL
-  Exemplos validos: "vou te enviar a proposta", "te apresento ao diretor da empresa X", "mando o contrato amanha"
-  NAO VALIDO: promessas para familia, "te ligo depois", coisas vagas
+- promessa: RENATO prometeu ENTREGAR algo concreto ao CONTATO
+  Validos: "vou te enviar a proposta", "te apresento ao diretor"
+  NAO VALIDO: promessas vagas
 
-- favor_recebido: Um CONTATO PROFISSIONAL fez um favor que merece retribuicao formal
-  Exemplos validos: "ele me indicou para aquele cliente", "ela me apresentou ao investidor"
-  NAO VALIDO: favores de familia, ajudas do dia-a-dia, coisas entre amigos intimos
+- favor_recebido: CONTATO ajudou RENATO. RENATO e o BENEFICIARIO.
+  Validos:
+    - Contato escreve (incoming): "te indiquei pro fulano", "vou te apresentar ao investidor"
+    - Renato escreve (outgoing): "obrigado por me indicar", "valeu pela apresentacao"
+  NAO VALIDO: contato AGRADECENDO Renato
 
-- topico: Um PROJETO ou NEGOCIO discutido que pode gerar oportunidade
-  Exemplos validos: "conversei sobre parceria com a empresa X", "discutimos o projeto de consultoria"
-  NAO VALIDO: assuntos pessoais, hobbies, conversas sociais
+- favor_feito: RENATO ajudou o CONTATO. RENATO e o DOADOR. NAO requer retribuicao.
+  Validos:
+    - Renato escreve (outgoing): "te indiquei a Wanelise", "vou te apresentar ao Joao"
+    - Contato escreve (incoming): "obrigada pela indicacao", "valeu pela apresentacao"
+  Este tipo e apenas marcador historico de boa vontade.
 
-- proximo_passo: Um COMPROMISSO PROFISSIONAL agendado ou prometido
-  Exemplos validos: "reuniao marcada para segunda", "vou enviar proposta ate sexta"
-  NAO VALIDO: "a gente se fala", encontros sociais, planos vagos
+- topico: PROJETO ou NEGOCIO discutido que pode gerar oportunidade
+
+- proximo_passo: COMPROMISSO PROFISSIONAL agendado
+
+## REGRA CRITICA - BENEFICIARIO
+
+Antes de classificar como favor_recebido OU favor_feito, identifique:
+- Quem PERFORMOU a acao (subject)?
+- Quem RECEBEU o beneficio (object)?
+
+Mensagem INCOMING (do contato) com "obrigad[ao]/valeu pela indicacao/apresentacao/ajuda"
+  → contato AGRADECENDO Renato → RENATO foi o doador
+  → tipo = "favor_feito", beneficiario = "contato"
+  → JAMAIS classifique como favor_recebido
+
+Mensagem OUTGOING (do Renato) com "obrigado por me indicar"
+  → Renato agradecendo contato → contato foi o doador
+  → tipo = "favor_recebido", beneficiario = "renato"
+
+## CONTEUDO da roda DEVE preservar o sujeito
+  RUIM: "indicacao de advogada Wanelise"
+  BOM: "Renato indicou a advogada Wanelise para o contato"
+  BOM: "Contato indicou Renato como palestrante"
 
 SEMPRE RETORNE rodas: [] SE:
-- A mensagem for entre familiares ou casal
-- For conversa social/pessoal sem contexto de negocios
-- Nao houver acao especifica para Renato fazer
-- For cumprimento, agradecimento generico, rotina
+- Mensagem entre familiares ou casal
+- Conversa social/pessoal sem contexto de negocios
+- Nao da pra identificar quem ajudou quem
+- Na duvida sobre o beneficiario
 
 Responda APENAS com JSON (sem explicacoes):
 {{
@@ -95,10 +119,11 @@ OU se encontrar algo REALMENTE relevante:
 {{
     "rodas": [
         {{
-            "tipo": "promessa|favor_recebido|topico|proximo_passo",
-            "conteudo": "descricao curta e especifica da acao",
-            "prazo": "data se mencionada ou null",
-            "tags": ["negocio", "relevante"],
+            "tipo": "promessa|favor_recebido|favor_feito|topico|proximo_passo",
+            "conteudo": "descricao com sujeito explicito",
+            "beneficiario": "renato|contato|null",
+            "prazo": "data ou null",
+            "tags": ["negocio"],
             "confidence": 0.7 a 1.0
         }}
     ]
@@ -135,14 +160,38 @@ OU se encontrar algo REALMENTE relevante:
                 result = json.loads(text)
                 rodas = result.get('rodas', [])
 
-                # Filtrar por direcao
+                # Heuristica defensiva: detectar mensagem de agradecimento
+                import re
+                thank_you_pattern = re.compile(
+                    r'\b(obrigad[ao]|valeu|grat[ao]|thanks?|obg|gracias)\b',
+                    re.IGNORECASE
+                )
+                is_thank_you_msg = bool(thank_you_pattern.search(message_text or ''))
+
                 filtered = []
                 for roda in rodas:
                     tipo = roda.get('tipo', '')
+                    beneficiario = (roda.get('beneficiario') or '').lower()
+
                     if tipo == 'promessa' and direction != 'outgoing':
                         continue
-                    if tipo == 'favor_recebido' and direction != 'incoming':
-                        continue
+
+                    if tipo == 'favor_recebido':
+                        if beneficiario and beneficiario != 'renato':
+                            continue
+                        # Renato beneficiario: aceita incoming OU outgoing (Renato agradecendo)
+                        # Se incoming + agradecimento sem beneficiario explicito = quase sempre Renato doou
+                        if is_thank_you_msg and direction == 'incoming' and beneficiario != 'renato':
+                            roda['tipo'] = 'favor_feito'
+                            roda['beneficiario'] = 'contato'
+                            if roda.get('confidence', 0) >= 0.6:
+                                filtered.append(roda)
+                            continue
+
+                    if tipo == 'favor_feito':
+                        if beneficiario and beneficiario == 'renato':
+                            continue
+
                     if roda.get('confidence', 0) >= 0.6:
                         filtered.append(roda)
 
