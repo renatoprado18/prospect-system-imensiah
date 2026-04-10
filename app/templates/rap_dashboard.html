@@ -2466,8 +2466,24 @@
                     return;
                 }
 
+                // Filtrar aniversarios (ja aparecem em "Quem Contatar Hoje")
+                const filteredEvents = events.filter(e => {
+                    const titulo = (e.title || e.summary || '').toLowerCase();
+                    return !(titulo.includes('aniversario') || titulo.includes('aniversário') || titulo.includes('birthday'));
+                });
+
+                if (filteredEvents.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <i class="bi bi-calendar-check"></i>
+                            <p>Nenhum compromisso para hoje</p>
+                        </div>
+                    `;
+                    return;
+                }
+
                 let html = '';
-                events.slice(0, 5).forEach(event => {
+                filteredEvents.slice(0, 5).forEach(event => {
                     const time = event.time || event.start_time || '';
                     html += `
                         <div class="agenda-item">
@@ -3733,7 +3749,7 @@
                 const alertas = dashData.alertas || {};
                 const atRiskContacts = atRiskData.contacts || [];
 
-                // Contagem de eventos hoje (filtrar marcadores pessoais)
+                // Contagem de eventos hoje (filtrar marcadores pessoais e aniversarios)
                 let eventosHoje = Array.isArray(calData) ? calData : [];
                 const reunioes = eventosHoje.filter(e => {
                     const titulo = (e.summary || e.title || '').toLowerCase();
@@ -3742,6 +3758,7 @@
                     if (titulo.includes('acordar') || titulo.includes('despertar')) return false;
                     if (titulo.includes('almoco') || titulo.includes('jantar')) return false;
                     if (titulo.includes('lembrete:')) return false;
+                    if (titulo.includes('aniversario') || titulo.includes('aniversário') || titulo.includes('birthday')) return false;
                     return true;
                 });
                 const reunioesHoje = reunioes.length;
