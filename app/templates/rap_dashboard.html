@@ -3750,16 +3750,21 @@
                 const atRiskContacts = atRiskData.contacts || [];
 
                 // Contagem de eventos hoje (filtrar marcadores pessoais e aniversarios)
-                let eventosHoje = Array.isArray(calData) ? calData : [];
-                const reunioes = eventosHoje.filter(e => {
+                const allCalEvents = Array.isArray(calData) ? calData : [];
+                const isPersonalMarker = (titulo) => {
+                    if (titulo.startsWith('[foco]')) return true;
+                    if (titulo.includes('cama') || titulo.includes('dormir')) return true;
+                    if (titulo.includes('acordar') || titulo.includes('despertar')) return true;
+                    if (titulo.includes('almoco') || titulo.includes('jantar')) return true;
+                    if (titulo.includes('lembrete:')) return true;
+                    return false;
+                };
+                const isBirthday = (titulo) => {
+                    return titulo.includes('aniversario') || titulo.includes('aniversário') || titulo.includes('birthday');
+                };
+                const reunioes = allCalEvents.filter(e => {
                     const titulo = (e.summary || e.title || '').toLowerCase();
-                    if (titulo.startsWith('[foco]')) return false;
-                    if (titulo.includes('cama') || titulo.includes('dormir')) return false;
-                    if (titulo.includes('acordar') || titulo.includes('despertar')) return false;
-                    if (titulo.includes('almoco') || titulo.includes('jantar')) return false;
-                    if (titulo.includes('lembrete:')) return false;
-                    if (titulo.includes('aniversario') || titulo.includes('aniversário') || titulo.includes('birthday')) return false;
-                    return true;
+                    return !isPersonalMarker(titulo) && !isBirthday(titulo);
                 });
                 const reunioesHoje = reunioes.length;
 
@@ -3768,9 +3773,6 @@
 
                 if (reunioesHoje > 0) {
                     summaryParts.push(`${reunioesHoje} reuni${reunioesHoje > 1 ? 'oes' : 'ao'}`);
-                } else if (eventosHoje.length > 0) {
-                    // Tem eventos mas nao sao reunioes - mencionar agenda
-                    summaryParts.push(`${eventosHoje.length} evento${eventosHoje.length > 1 ? 's' : ''} na agenda`);
                 }
 
                 const aniversariosHoje = aniversarios.filter(a => a.dias_ate_aniversario === 0);
@@ -3784,13 +3786,16 @@
                     summaryParts.push(`${precisamAtencao} contato${precisamAtencao > 1 ? 's' : ''} precisando atencao`);
                 }
 
+                // Filtrar contatos at-risk apenas dos circulos 1-3 (prioritarios)
+                const priorityAtRisk = atRiskContacts.filter(c => c.circulo && c.circulo <= 3);
+
                 let summaryText = '';
                 if (summaryParts.length === 0) {
                     summaryText = 'Dia tranquilo! Todos os seus contatos estao em dia. Que tal aproveitar para fortalecer relacionamentos?';
                 } else {
-                    summaryText = `Hoje voce tem: ${summaryParts.join(', ')}. `;
-                    if (atRiskContacts.length > 0) {
-                        summaryText += `Priorize ${atRiskContacts[0].nome.split(' ')[0]} que esta com health baixo.`;
+                    summaryText = `Hoje voce tem: ${summaryParts.join(', ')}.`;
+                    if (priorityAtRisk.length > 0) {
+                        summaryText += ` Priorize ${priorityAtRisk[0].nome.split(' ')[0]} que esta com health baixo.`;
                     }
                 }
                 summaryEl.textContent = summaryText;
@@ -3799,8 +3804,6 @@
                 let statsHtml = '';
                 if (reunioesHoje > 0) {
                     statsHtml += `<div class="briefing-stat" onclick="window.location.href='/calendario'" data-tooltip="Ver agenda de hoje"><i class="bi bi-calendar-event"></i> ${reunioesHoje} reuni${reunioesHoje > 1 ? 'oes' : 'ao'}</div>`;
-                } else if (eventosHoje.length > 0) {
-                    statsHtml += `<div class="briefing-stat" onclick="window.location.href='/calendario'" data-tooltip="Ver agenda de hoje"><i class="bi bi-calendar-event"></i> ${eventosHoje.length} evento${eventosHoje.length > 1 ? 's' : ''}</div>`;
                 }
                 if (aniversariosHoje.length > 0) {
                     statsHtml += `<div class="briefing-stat" onclick="window.location.href='/circulos'" data-tooltip="Ver aniversariantes"><i class="bi bi-cake2"></i> ${aniversariosHoje.length} aniversario${aniversariosHoje.length > 1 ? 's' : ''}</div>`;
@@ -3809,11 +3812,11 @@
                     statsHtml += `<div class="briefing-stat" onclick="window.location.href='/contatos?filter=needs_attention'" data-tooltip="Ver contatos que precisam de atencao"><i class="bi bi-exclamation-circle"></i> ${precisamAtencao} precisam atencao</div>`;
                 }
 
-                // Health medio
+                // Health medio (circulos 1-3 = contatos prioritarios)
                 const circulosResumo = dashData.circulos_resumo || {};
                 let totalHealth = 0;
                 let countHealth = 0;
-                for (let i = 1; i <= 4; i++) {
+                for (let i = 1; i <= 3; i++) {
                     if (circulosResumo[i]?.health_medio) {
                         totalHealth += circulosResumo[i].health_medio * (circulosResumo[i].total || 1);
                         countHealth += circulosResumo[i].total || 0;
@@ -3829,8 +3832,8 @@
                 statsEl.innerHTML = statsHtml || '<div class="briefing-stat"><i class="bi bi-check-circle"></i> Tudo em dia!</div>';
 
                 // Foco sugerido
-                if (atRiskContacts.length > 0) {
-                    const focusC = atRiskContacts[0];
+                if (priorityAtRisk.length > 0) {
+                    const focusC = priorityAtRisk[0];
                     document.getElementById('focusContactName').textContent = focusC.nome;
                     document.getElementById('focusContactReason').textContent = `(Health ${focusC.health_score || Math.round((1 - focusC.risco_churn) * 100)}%)`;
                     window.focusContactId = focusC.id;
