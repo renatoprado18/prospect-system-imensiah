@@ -534,8 +534,8 @@ Se nao detectar intencoes ou rodas, retorne arrays vazios."""
                 'details': {'action_needed': 'Registrar confirmacao'}
             })
 
-        # Urgente
-        if any(word in text_lower for word in ['urgente', 'urgencia', 'imediato', 'agora', 'socorro', 'emergencia']):
+        # Urgente (nao incluir 'agora' - muito generico, ex: 'consegui parar so agora')
+        if any(word in text_lower for word in ['urgente', 'urgencia', 'imediato', 'socorro', 'emergencia', 'preciso ja', 'sos']):
             intents.append({
                 'type': 'urgent_request',
                 'confidence': 0.80,
@@ -588,8 +588,16 @@ Se nao detectar intencoes ou rodas, retorne arrays vazios."""
                 'details': {'action_needed': 'Explorar oportunidade'}
             })
 
-        # Reclamacao
-        if any(word in text_lower for word in ['insatisfeito', 'reclamar', 'problema', 'nao funcionou', 'decepcionado', 'ruim', 'pessimo', 'horrivel']):
+        # Reclamacao (evitar 'problema' puro - ex: 'nao tem problema' = resposta positiva)
+        # Tambem excluir 'ruim' puro pois pode ser 'nao esta ruim'
+        complaint_phrases = ['insatisfeito', 'reclamar', 'estou com problema', 'tive problema', 'tenho um problema serio',
+                             'nao funcionou', 'nao funciona', 'decepcionado', 'pessimo', 'horrivel', 'inaceitavel',
+                             'muito ruim', 'esta ruim', 'foi ruim', 'que absurdo', 'nao aguento mais']
+        # Excluir se a mensagem comeca com negacao de problema
+        negacoes_problema = ['nao tem problema', 'sem problema', 'tudo bem', 'sem problemas']
+        has_complaint_phrase = any(phrase in text_lower for phrase in complaint_phrases)
+        has_negation = any(neg in text_lower for neg in negacoes_problema)
+        if has_complaint_phrase and not has_negation:
             intents.append({
                 'type': 'complaint',
                 'confidence': 0.80,
