@@ -2893,7 +2893,8 @@
         // Load action proposals (INTEL Proativo)
         async function loadActionProposals() {
             try {
-                const response = await fetch('/api/action-proposals?limit=5');
+                // Busca mais propostas pois vamos agrupar por contato
+                const response = await fetch('/api/action-proposals?limit=50');
                 if (!response.ok) return;
 
                 const data = await response.json();
@@ -2908,26 +2909,54 @@
                     return;
                 }
 
+                // Agrupar por contato - mostrar apenas a mais recente por contato,
+                // mas guardar a contagem total
+                const grouped = {};
+                proposals.forEach(p => {
+                    const key = p.contact_id || `no-contact-${p.id}`;
+                    if (!grouped[key]) {
+                        grouped[key] = { main: p, count: 0, extras: [] };
+                    }
+                    grouped[key].count += 1;
+                    if (grouped[key].main.id !== p.id) {
+                        grouped[key].extras.push(p);
+                    }
+                });
+
+                // Pegar top 5 grupos ordenados por urgencia da proposta principal
+                const groups = Object.values(grouped).sort((a, b) => {
+                    const urgencyOrder = { high: 1, medium: 2, low: 3 };
+                    const ua = urgencyOrder[a.main.urgency] || 3;
+                    const ub = urgencyOrder[b.main.urgency] || 3;
+                    if (ua !== ub) return ua - ub;
+                    return new Date(b.main.criado_em) - new Date(a.main.criado_em);
+                }).slice(0, 5);
+
                 // Show widget
                 widget.style.display = 'block';
-                countEl.textContent = proposals.length;
+                countEl.textContent = groups.length;
 
                 // Check for urgent
-                const hasUrgent = proposals.some(p => p.urgency === 'high');
+                const hasUrgent = groups.some(g => g.main.urgency === 'high');
                 widget.classList.toggle('has-urgent', hasUrgent);
 
-                // Render proposals
-                listEl.innerHTML = proposals.map(p => renderProposalCard(p)).join('');
+                // Render grouped proposals
+                listEl.innerHTML = groups.map(g => renderProposalCard(g.main, g.count)).join('');
 
             } catch (error) {
                 console.log('Action proposals API not available:', error);
             }
         }
 
-        function renderProposalCard(proposal) {
+        function renderProposalCard(proposal, groupCount = 1) {
             const isUrgent = proposal.urgency === 'high';
             const icon = getProposalIcon(proposal.action_type);
             const timeAgo = formatTimeAgo(proposal.criado_em);
+
+            // Badge com qtd de propostas extras do mesmo contato
+            const extraBadge = groupCount > 1
+                ? `<span class="badge bg-secondary ms-2" title="${groupCount} mensagens pendentes deste contato">+${groupCount - 1}</span>`
+                : '';
 
             // Render options as buttons
             const options = proposal.options || [];
@@ -2944,7 +2973,7 @@
                         <i class="bi ${icon}"></i>
                     </div>
                     <div class="proposal-content">
-                        <h6>${proposal.title}</h6>
+                        <h6>${proposal.title}${extraBadge}</h6>
                         <p>${proposal.description || ''}</p>
                         <div class="proposal-actions">
                             ${optionsHtml}

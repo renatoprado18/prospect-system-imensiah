@@ -45,6 +45,44 @@ class ActionProposalsService:
             else:
                 expires_at = datetime.now() + timedelta(hours=72)
 
+            contact_id = proposal_data.get('contact_id')
+            action_type = proposal_data['action_type']
+
+            # DEDUP: se ja existe proposta pendente do mesmo tipo para esse contato nas ultimas 24h,
+            # atualizar (com trigger mais recente) em vez de criar nova
+            if contact_id:
+                cursor.execute("""
+                    SELECT id FROM action_proposals
+                    WHERE contact_id = %s AND action_type = %s AND status = 'pending'
+                      AND criado_em > NOW() - INTERVAL '24 hours'
+                    ORDER BY criado_em DESC LIMIT 1
+                """, (contact_id, action_type))
+                existing = cursor.fetchone()
+
+                if existing:
+                    existing_id = existing['id']
+                    cursor.execute("""
+                        UPDATE action_proposals
+                        SET message_id = %s,
+                            trigger_text = %s,
+                            title = %s,
+                            description = %s,
+                            urgency = %s,
+                            expires_at = %s,
+                            criado_em = NOW()
+                        WHERE id = %s
+                    """, (
+                        proposal_data.get('message_id'),
+                        proposal_data.get('trigger_text'),
+                        proposal_data['title'],
+                        proposal_data.get('description'),
+                        urgency,
+                        expires_at,
+                        existing_id,
+                    ))
+                    conn.commit()
+                    return self.get_proposal(existing_id)
+
             cursor.execute("""
                 INSERT INTO action_proposals (
                     contact_id, message_id, conversation_id,
@@ -55,10 +93,10 @@ class ActionProposalsService:
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
             """, (
-                proposal_data.get('contact_id'),
+                contact_id,
                 proposal_data.get('message_id'),
                 proposal_data.get('conversation_id'),
-                proposal_data['action_type'],
+                action_type,
                 json.dumps(proposal_data.get('action_params', {})),
                 proposal_data.get('trigger_text'),
                 proposal_data.get('ai_reasoning'),
@@ -305,9 +343,44 @@ class ActionProposalsService:
                 UPDATE action_proposals
                 SET status = 'expired'
                 WHERE status = 'pending'
-                AND expires_at IS NOT NULL
-                AND expires_at < NOW()
+                AND (
+                    (expires_at IS NOT NULL AND expires_at < NOW())
+                    OR criado_em < NOW() - INTERVAL '7 days'
+                )
             """)
+            count = cursor.rowcount
+            conn.commit()
+            return count
+
+    def dismiss_stale_on_reply(self, contact_id: int, reply_time: datetime = None) -> int:
+        """
+        Dismissa propostas pendentes de resposta/follow-up para um contato quando
+        o usuario ja respondeu. Chamada quando uma mensagem outbound (de Renato) e salva.
+
+        Args:
+            contact_id: ID do contato
+            reply_time: Timestamp da mensagem de resposta (default: now)
+
+        Returns:
+            Numero de propostas dismissadas
+        """
+        if reply_time is None:
+            reply_time = datetime.now()
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            # Dismissa apenas tipos relacionados a aguardar resposta
+            # Exclui tipos que requerem acao especifica (reschedule, cancel, etc)
+            cursor.execute("""
+                UPDATE action_proposals
+                SET status = 'resolved',
+                    responded_at = NOW(),
+                    ai_reasoning = COALESCE(ai_reasoning, '') || ' | Auto-resolvido: usuario respondeu'
+                WHERE contact_id = %s
+                  AND status = 'pending'
+                  AND action_type IN ('pending_response', 'follow_up_alert', 'urgent_alert')
+                  AND criado_em < %s
+            """, (contact_id, reply_time))
             count = cursor.rowcount
             conn.commit()
             return count

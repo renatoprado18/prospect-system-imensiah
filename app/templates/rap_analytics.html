@@ -4,22 +4,113 @@
 
 {% block extra_css %}
 <style>
-    .stat-card-large {
+    .context-card {
         background: white;
         border-radius: 16px;
-        padding: 24px;
-        text-align: center;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        padding: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        height: 100%;
     }
-    .stat-card-large h3 {
-        font-size: 2.5rem;
+    .context-card.pessoal {
+        border-top: 4px solid #FF6B6B;
+    }
+    .context-card.profissional {
+        border-top: 4px solid #6366F1;
+    }
+    .context-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+    .context-title {
+        font-size: 1.1rem;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .context-title .badge {
+        font-size: 0.7rem;
+        padding: 4px 8px;
+    }
+    .health-score {
+        font-size: 2rem;
+        font-weight: 700;
+    }
+    .health-score.good { color: #10b981; }
+    .health-score.medium { color: #f59e0b; }
+    .health-score.bad { color: #ef4444; }
+    .context-stats {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 8px;
+        margin-top: 16px;
+    }
+    .circulo-stat {
+        text-align: center;
+        padding: 10px 4px;
+        background: var(--gray-50);
+        border-radius: 8px;
+    }
+    .circulo-stat .badge {
+        font-size: 0.65rem;
+        margin-bottom: 4px;
+    }
+    .circulo-stat .count {
+        font-size: 1.1rem;
         font-weight: 700;
         color: var(--dark);
-        margin: 0;
     }
-    .stat-card-large small {
+    .circulo-stat .health {
+        font-size: 0.7rem;
         color: var(--gray-500);
-        font-size: 0.9rem;
+    }
+    .summary-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 16px;
+        padding: 24px;
+        color: white;
+    }
+    .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 20px;
+    }
+    .summary-item {
+        text-align: center;
+    }
+    .summary-item .value {
+        font-size: 1.8rem;
+        font-weight: 700;
+    }
+    .summary-item .label {
+        font-size: 0.8rem;
+        opacity: 0.9;
+    }
+    .chart-container {
+        background: white;
+        border-radius: 16px;
+        padding: 20px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .evolution-placeholder {
+        background: var(--gray-50);
+        border-radius: 12px;
+        padding: 40px;
+        text-align: center;
+        color: var(--gray-500);
+    }
+    .weight-info {
+        font-size: 0.7rem;
+        color: var(--gray-400);
+        margin-top: 8px;
+    }
+    .chart-wrapper {
+        position: relative;
+        height: 160px;
+        width: 100%;
+        margin: 12px 0;
     }
     .period-buttons .btn.active {
         background: var(--primary);
@@ -31,72 +122,95 @@
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <div></div>
+    <div class="text-muted" style="font-size: 0.85rem;">
+        <i class="bi bi-info-circle"></i>
+        Ponderacao: C1 (100%) > C2 (80%) > C3 (60%) > C4 (40%) > C5 (20%)
+    </div>
     <div class="btn-group period-buttons">
-        <button class="btn btn-outline-secondary btn-sm" onclick="loadAnalytics(7)">7 dias</button>
-        <button class="btn btn-outline-secondary btn-sm active" onclick="loadAnalytics(30)">30 dias</button>
-        <button class="btn btn-outline-secondary btn-sm" onclick="loadAnalytics(90)">90 dias</button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="loadAnalytics(7, this)">7 dias</button>
+        <button class="btn btn-outline-secondary btn-sm active" onclick="loadAnalytics(30, this)">30 dias</button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="loadAnalytics(90, this)">90 dias</button>
     </div>
 </div>
 
-<!-- Cards de Resumo -->
-<div class="row g-3 mb-4">
-    <div class="col-md-3">
-        <div class="stat-card-large">
-            <h3 id="stat-contacts">-</h3>
-            <small>Contatos Ativos</small>
+<!-- Resumo Geral -->
+<div class="summary-card mb-4">
+    <div class="summary-grid">
+        <div class="summary-item">
+            <div class="value" id="stat-total">-</div>
+            <div class="label">Total Contatos</div>
         </div>
-    </div>
-    <div class="col-md-3">
-        <div class="stat-card-large">
-            <h3 id="stat-messages">-</h3>
-            <small>Mensagens</small>
+        <div class="summary-item">
+            <div class="value" id="stat-ativos">-</div>
+            <div class="label">Ativos (C1-C4)</div>
         </div>
-    </div>
-    <div class="col-md-3">
-        <div class="stat-card-large">
-            <h3 id="stat-health">-</h3>
-            <small>Health Medio</small>
+        <div class="summary-item">
+            <div class="value" id="stat-health">-</div>
+            <div class="label">Health Geral</div>
         </div>
-    </div>
-    <div class="col-md-3">
-        <div class="stat-card-large">
-            <h3 id="stat-new">-</h3>
-            <small>Novos Contatos</small>
+        <div class="summary-item">
+            <div class="value" id="stat-atencao">-</div>
+            <div class="label">Precisam Atencao</div>
         </div>
     </div>
 </div>
 
-<!-- Graficos -->
-<div class="row g-4">
+<!-- Pessoal vs Profissional -->
+<div class="row g-4 mb-4">
     <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">Contatos por Circulo</h5>
+        <div class="context-card pessoal">
+            <div class="context-header">
+                <div class="context-title">
+                    <i class="bi bi-heart-fill" style="color: #FF6B6B;"></i>
+                    Pessoal
+                    <span class="badge bg-secondary" id="pessoal-total">-</span>
+                </div>
+                <div class="health-score" id="pessoal-health">-</div>
             </div>
-            <div class="card-body">
-                <canvas id="chart-circulos" height="250"></canvas>
+            <div class="chart-wrapper">
+                <canvas id="chart-pessoal"></canvas>
             </div>
+            <div class="context-stats" id="pessoal-stats">
+                <!-- Preenchido via JS -->
+            </div>
+            <div class="weight-info">P1 Nucleo > P2 Proximo > P3 Relacionamento > P4 Ocasional > P5 Distante</div>
         </div>
     </div>
     <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h5 class="card-title mb-0">Health por Circulo</h5>
+        <div class="context-card profissional">
+            <div class="context-header">
+                <div class="context-title">
+                    <i class="bi bi-briefcase-fill" style="color: #6366F1;"></i>
+                    Profissional
+                    <span class="badge bg-secondary" id="profissional-total">-</span>
+                </div>
+                <div class="health-score" id="profissional-health">-</div>
             </div>
-            <div class="card-body" id="health-bars">
-                <div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></div>
+            <div class="chart-wrapper">
+                <canvas id="chart-profissional"></canvas>
             </div>
+            <div class="context-stats" id="profissional-stats">
+                <!-- Preenchido via JS -->
+            </div>
+            <div class="weight-info">R1 Core > R2 Estrategico > R3 Networking > R4 Ocasional > R5 Arquivo</div>
         </div>
     </div>
 </div>
 
-<!-- Tabela de Top Contatos -->
-<div class="card mt-4">
-    <div class="card-header">
-        <h5 class="card-title mb-0">Top Contatos por Interacoes</h5>
+<!-- Evolucao do Health -->
+<div class="chart-container mb-4">
+    <h5 class="mb-3"><i class="bi bi-graph-up"></i> Evolucao do Health</h5>
+    <div class="evolution-placeholder" id="evolution-chart">
+        <i class="bi bi-clock-history" style="font-size: 2rem;"></i>
+        <p class="mb-0 mt-2">Historico de health sera disponibilizado em breve</p>
+        <small>O sistema precisa coletar dados ao longo do tempo</small>
     </div>
-    <div class="card-body" id="top-contacts">
+</div>
+
+<!-- Top Contatos -->
+<div class="chart-container">
+    <h5 class="mb-3"><i class="bi bi-people"></i> Contatos que Precisam Atencao</h5>
+    <div id="attention-contacts">
         <div class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></div>
     </div>
 </div>
@@ -112,167 +226,202 @@
 {% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-let chartCirculos = null;
+let chartPessoal = null;
+let chartProfissional = null;
 
-async function loadAnalytics(days = 30) {
-    // Update button states
+const circuloColors = {
+    1: '#FF6B6B',
+    2: '#4ECDC4',
+    3: '#45B7D1',
+    4: '#96CEB4',
+    5: '#DDA0DD'
+};
+
+const pessoalLabels = ['P1 Nucleo', 'P2 Proximo', 'P3 Relac.', 'P4 Ocasional', 'P5 Distante'];
+const profissionalLabels = ['R1 Core', 'R2 Estrat.', 'R3 Network', 'R4 Ocasional', 'R5 Arquivo'];
+
+async function loadAnalytics(days = 30, clickedBtn = null) {
     document.querySelectorAll('.period-buttons .btn').forEach(b => b.classList.remove('active'));
-    event?.target?.classList.add('active');
+    if (clickedBtn) {
+        clickedBtn.classList.add('active');
+    } else {
+        // Default to 30 days button on initial load
+        document.querySelector('.period-buttons .btn:nth-child(2)')?.classList.add('active');
+    }
 
     try {
-        // Load from multiple endpoints for comprehensive analytics
-        const [dashResponse, circulosResponse] = await Promise.all([
-            fetch('/api/v1/dashboard').catch(() => ({ ok: false })),
-            fetch('/api/circulos').catch(() => ({ ok: false }))
-        ]);
+        const response = await fetch('/api/circulos');
+        if (!response.ok) throw new Error('Failed to load');
+        const data = await response.json();
 
-        let dashData = {};
-        let circulosData = { circulos: [] };
+        // Processar dados
+        const pessoal = data.pessoal || {};
+        const profissional = data.profissional || {};
 
-        if (dashResponse.ok) {
-            dashData = await dashResponse.json();
-        }
-        if (circulosResponse.ok) {
-            circulosData = await circulosResponse.json();
-        }
+        // Resumo geral
+        const totalPessoal = pessoal.total || 0;
+        const totalProfissional = profissional.total || 0;
+        const totalGeral = totalPessoal + totalProfissional;
 
-        // Calculate stats from circulos
-        const porCirculo = {};
-        let totalContatos = 0;
-        circulosData.circulos?.forEach(c => {
-            porCirculo[c.circulo] = c.total || 0;
-            totalContatos += c.total || 0;
-        });
+        document.getElementById('stat-total').textContent = totalGeral.toLocaleString();
 
-        // Count active contacts (C1-C4)
-        let totalAtivos = 0;
-        for (let i = 1; i <= 4; i++) totalAtivos += porCirculo[i] || 0;
+        // Calcular ativos e health
+        let ativosPessoal = 0, ativosProfissional = 0;
+        let healthSumP = 0, healthCountP = 0;
+        let healthSumR = 0, healthCountR = 0;
+        let atencaoCount = 0;
 
-        // Update stats
-        document.getElementById('stat-contacts').textContent = totalAtivos.toLocaleString();
-        document.getElementById('stat-messages').textContent = (dashData.unread_messages || 0).toLocaleString();
-        document.getElementById('stat-health').textContent = (dashData.avg_health || 65) + '%';
-        document.getElementById('stat-new').textContent = (dashData.new_contacts || 0).toLocaleString();
+        const pessoalData = [0, 0, 0, 0, 0];
+        const profissionalData = [0, 0, 0, 0, 0];
+        const pessoalHealth = [0, 0, 0, 0, 0];
+        const profissionalHealth = [0, 0, 0, 0, 0];
 
-        // Render chart
-        const ctx = document.getElementById('chart-circulos').getContext('2d');
-        if (chartCirculos) chartCirculos.destroy();
-
-        chartCirculos = new Chart(ctx, {
-            type: 'doughnut',
-            data: {
-                labels: ['C1 Intimo', 'C2 Proximo', 'C3 Ativo', 'C4 Conhecidos', 'C5 Arquivo'],
-                datasets: [{
-                    data: [porCirculo[1]||0, porCirculo[2]||0, porCirculo[3]||0, porCirculo[4]||0, porCirculo[5]||0],
-                    backgroundColor: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#DDA0DD']
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'bottom'
+        // Pessoal
+        if (pessoal.por_circulo) {
+            for (const [c, info] of Object.entries(pessoal.por_circulo)) {
+                const idx = parseInt(c) - 1;
+                if (idx >= 0 && idx < 5) {
+                    pessoalData[idx] = info.total || 0;
+                    pessoalHealth[idx] = Math.round(info.health_medio || 0);
+                    if (parseInt(c) <= 4) {
+                        ativosPessoal += info.total || 0;
+                        healthSumP += (info.health_medio || 0) * (info.total || 0);
+                        healthCountP += info.total || 0;
+                        if ((info.health_medio || 0) < 50) atencaoCount += info.total || 0;
                     }
                 }
             }
-        });
-
-        // Health bars - calculate from circulos data
-        let healthHtml = '';
-        const circuloColors = { 1: '#FF6B6B', 2: '#4ECDC4', 3: '#45B7D1', 4: '#96CEB4' };
-
-        circulosData.circulos?.filter(c => c.circulo <= 4).forEach(c => {
-            const avgHealth = c.avg_health || 50;
-            const colorClass = avgHealth >= 70 ? 'bg-success' : avgHealth >= 40 ? 'bg-warning' : 'bg-danger';
-            healthHtml += `
-                <div class="d-flex align-items-center mb-3">
-                    <span class="me-2" style="width: 100px; font-weight: 500;">
-                        <span class="badge" style="background: ${circuloColors[c.circulo]}">C${c.circulo}</span>
-                        ${c.nome || ''}
-                    </span>
-                    <div class="progress flex-grow-1 me-2" style="height: 24px;">
-                        <div class="progress-bar ${colorClass}" style="width: ${avgHealth}%"></div>
-                    </div>
-                    <span class="fw-bold" style="width: 50px;">${avgHealth}%</span>
-                </div>
-            `;
-        });
-
-        if (!healthHtml) {
-            healthHtml = `
-                <div class="text-muted text-center py-3">
-                    Dados de health nao disponiveis
-                </div>
-            `;
         }
-        document.getElementById('health-bars').innerHTML = healthHtml;
 
-        // Load top contacts
-        await loadTopContacts(days);
+        // Profissional
+        if (profissional.por_circulo) {
+            for (const [c, info] of Object.entries(profissional.por_circulo)) {
+                const idx = parseInt(c) - 1;
+                if (idx >= 0 && idx < 5) {
+                    profissionalData[idx] = info.total || 0;
+                    profissionalHealth[idx] = Math.round(info.health_medio || 0);
+                    if (parseInt(c) <= 4) {
+                        ativosProfissional += info.total || 0;
+                        healthSumR += (info.health_medio || 0) * (info.total || 0);
+                        healthCountR += info.total || 0;
+                        if ((info.health_medio || 0) < 50) atencaoCount += info.total || 0;
+                    }
+                }
+            }
+        }
+
+        const totalAtivos = ativosPessoal + ativosProfissional;
+        const healthGeralP = healthCountP > 0 ? healthSumP / healthCountP : 0;
+        const healthGeralR = healthCountR > 0 ? healthSumR / healthCountR : 0;
+        const healthGeral = (healthCountP + healthCountR) > 0
+            ? (healthSumP + healthSumR) / (healthCountP + healthCountR) : 0;
+
+        document.getElementById('stat-ativos').textContent = totalAtivos.toLocaleString();
+        document.getElementById('stat-health').textContent = Math.round(healthGeral) + '%';
+        document.getElementById('stat-atencao').textContent = atencaoCount.toLocaleString();
+
+        // Pessoal card
+        document.getElementById('pessoal-total').textContent = totalPessoal.toLocaleString();
+        const healthP = document.getElementById('pessoal-health');
+        healthP.textContent = Math.round(healthGeralP) + '%';
+        healthP.className = 'health-score ' + (healthGeralP >= 70 ? 'good' : healthGeralP >= 40 ? 'medium' : 'bad');
+
+        // Profissional card
+        document.getElementById('profissional-total').textContent = totalProfissional.toLocaleString();
+        const healthR = document.getElementById('profissional-health');
+        healthR.textContent = Math.round(healthGeralR) + '%';
+        healthR.className = 'health-score ' + (healthGeralR >= 70 ? 'good' : healthGeralR >= 40 ? 'medium' : 'bad');
+
+        // Render stats grids
+        renderStats('pessoal-stats', pessoalData, pessoalHealth, 'P');
+        renderStats('profissional-stats', profissionalData, profissionalHealth, 'R');
+
+        // Render charts
+        renderChart('chart-pessoal', pessoalData, pessoalLabels, chartPessoal, c => chartPessoal = c);
+        renderChart('chart-profissional', profissionalData, profissionalLabels, chartProfissional, c => chartProfissional = c);
+
+        // Load attention contacts
+        await loadAttentionContacts();
 
     } catch (error) {
         console.error('Error loading analytics:', error);
     }
 }
 
-async function loadTopContacts(days) {
-    const container = document.getElementById('top-contacts');
+function renderStats(containerId, data, health, prefix) {
+    const container = document.getElementById(containerId);
+    let html = '';
+    for (let i = 0; i < 5; i++) {
+        const healthClass = health[i] >= 70 ? 'color: #10b981' : health[i] >= 40 ? 'color: #f59e0b' : 'color: #ef4444';
+        html += `
+            <div class="circulo-stat">
+                <span class="badge" style="background: ${circuloColors[i+1]}">${prefix}${i+1}</span>
+                <div class="count">${data[i]}</div>
+                <div class="health" style="${healthClass}">${health[i]}%</div>
+            </div>
+        `;
+    }
+    container.innerHTML = html;
+}
 
+function renderChart(canvasId, data, labels, existingChart, setChart) {
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    if (existingChart) existingChart.destroy();
+
+    const chart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: data,
+                backgroundColor: Object.values(circuloColors)
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            }
+        }
+    });
+    setChart(chart);
+}
+
+async function loadAttentionContacts() {
+    const container = document.getElementById('attention-contacts');
     try {
-        const response = await fetch(`/api/contacts?sort=interactions&limit=10`);
+        const response = await fetch('/api/contacts?sort=health&order=asc&limit=10&circulo_max=4');
         const data = await response.json();
 
         if (!data.contacts || data.contacts.length === 0) {
-            container.innerHTML = '<div class="text-muted text-center py-3">Nenhum contato encontrado</div>';
+            container.innerHTML = '<div class="text-muted text-center py-3">Nenhum contato precisa de atencao urgente</div>';
             return;
         }
 
-        let html = `
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>Contato</th>
-                        <th>Empresa</th>
-                        <th>Circulo</th>
-                        <th>Health</th>
-                    </tr>
-                </thead>
-                <tbody>
-        `;
-
-        const circuloColors = { 1: '#FF6B6B', 2: '#4ECDC4', 3: '#45B7D1', 4: '#96CEB4', 5: '#DDA0DD' };
-
+        let html = '<div class="table-responsive"><table class="table table-sm"><thead><tr><th>Contato</th><th>Circulo</th><th>Health</th><th>Ultima Interacao</th></tr></thead><tbody>';
         data.contacts.forEach(c => {
-            const health = c.relationship_health || 50;
-            const healthClass = health >= 70 ? 'text-success' : health >= 40 ? 'text-warning' : 'text-danger';
-
+            const healthClass = (c.health_score || 0) >= 70 ? 'text-success' : (c.health_score || 0) >= 40 ? 'text-warning' : 'text-danger';
+            const prefix = c.contexto === 'personal' ? 'P' : 'R';
             html += `
-                <tr style="cursor: pointer;" onclick="window.location.href='/contatos/${c.id}'">
-                    <td>
-                        <div class="d-flex align-items-center">
-                            <div class="rounded-circle bg-secondary d-flex align-items-center justify-content-center text-white me-2" style="width: 32px; height: 32px; font-size: 0.8rem;">
-                                ${(c.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
-                            </div>
-                            ${c.nome}
-                        </div>
-                    </td>
-                    <td class="text-muted">${c.empresa || '-'}</td>
-                    <td><span class="badge" style="background: ${circuloColors[c.circulo] || '#6b7280'}">C${c.circulo || 5}</span></td>
-                    <td class="${healthClass} fw-bold">${health}%</td>
+                <tr>
+                    <td><a href="/contatos/${c.id}">${c.nome}</a></td>
+                    <td><span class="badge" style="background: ${circuloColors[c.circulo]}">${prefix}${c.circulo}</span></td>
+                    <td class="${healthClass} fw-bold">${c.health_score || 0}%</td>
+                    <td class="text-muted">${c.ultima_interacao ? new Date(c.ultima_interacao).toLocaleDateString('pt-BR') : '-'}</td>
                 </tr>
             `;
         });
-
-        html += '</tbody></table>';
+        html += '</tbody></table></div>';
         container.innerHTML = html;
-
-    } catch (error) {
-        container.innerHTML = '<div class="text-danger text-center py-3">Erro ao carregar contatos</div>';
+    } catch (e) {
+        container.innerHTML = '<div class="text-danger">Erro ao carregar contatos</div>';
     }
 }
 
-// Load on page ready
-loadAnalytics(30);
+// Load on page load
+document.addEventListener('DOMContentLoaded', () => loadAnalytics(30));
 </script>
 {% endblock %}

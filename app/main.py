@@ -15901,5 +15901,54 @@ def api_execute_enrollment_step(enrollment_id: int):
     return result
 
 
+# ==================== LINKEDIN ENRICHMENT ====================
+
+@app.get("/api/v1/campaigns/{campaign_id}/linkedin-stats")
+def api_campaign_linkedin_stats(campaign_id: int):
+    """Get LinkedIn enrichment statistics for a campaign."""
+    from services.linkedin_scraper import get_enrichment_stats
+    return get_enrichment_stats(campaign_id)
+
+
+@app.post("/api/v1/campaigns/{campaign_id}/enrich-linkedin")
+def api_enrich_campaign_linkedin(campaign_id: int, limit: int = 50):
+    """
+    Enrich campaign contacts with LinkedIn posts data.
+    Uses RapidAPI - requires RAPIDAPI_KEY in environment.
+    Free tier: 50 requests/month.
+    """
+    from services.linkedin_scraper import enrich_campaign_contacts
+    return enrich_campaign_contacts(campaign_id, limit)
+
+
+@app.post("/api/v1/contacts/{contact_id}/enrich-linkedin")
+def api_enrich_contact_linkedin(contact_id: int):
+    """Enrich a single contact with LinkedIn data."""
+    import os
+    from services.linkedin_scraper import LinkedInScraper
+
+    if not os.getenv("RAPIDAPI_KEY"):
+        raise HTTPException(status_code=400, detail="RAPIDAPI_KEY not configured")
+
+    # Get contact's LinkedIn URL
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT linkedin FROM contacts WHERE id = %s", (contact_id,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if not row or not row[0]:
+        raise HTTPException(status_code=404, detail="Contact not found or no LinkedIn URL")
+
+    scraper = LinkedInScraper()
+    result = scraper.enrich_contact(contact_id, row[0])
+
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+
+    return result
+
+
 # Vercel handler
 app_handler = app

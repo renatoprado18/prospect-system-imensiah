@@ -239,6 +239,14 @@ class WhatsAppSyncService:
                     """, (conversation_id, contact_id, direction, content, timestamp, metadata))
                     saved += 1
 
+                    # Se e mensagem outbound (Renato respondeu), dismissar propostas pendentes
+                    if direction == "outgoing" and contact_id:
+                        try:
+                            from services.action_proposals import ActionProposalsService
+                            ActionProposalsService().dismiss_stale_on_reply(contact_id, timestamp)
+                        except Exception as e:
+                            logger.warning(f"Erro ao dismissar propostas apos resposta: {e}")
+
                 # Atualizar totais da conversa
                 if saved > 0:
                     cursor.execute("""
@@ -429,6 +437,14 @@ class WhatsAppSyncService:
 
                                 conn.commit()
                                 logger.info(f"Mensagem WhatsApp salva para contato {contact_id}")
+
+                                # Se e mensagem outbound (Renato respondeu), dismissar propostas pendentes
+                                if direction == "outgoing" and contact_id:
+                                    try:
+                                        from services.action_proposals import ActionProposalsService
+                                        ActionProposalsService().dismiss_stale_on_reply(contact_id, timestamp)
+                                    except Exception as e:
+                                        logger.warning(f"Erro ao dismissar propostas apos resposta: {e}")
 
             except Exception as e:
                 logger.warning(f"Erro ao salvar mensagem WhatsApp: {e}")
