@@ -153,7 +153,14 @@ Retorne APENAS JSON valido (sem markdown):
 
 IMPORTANTE:
 - Se nenhuma tarefa pode ser concluida, retorne suggestions como lista vazia.
-- Seja conservador: so sugira completar se ha evidencia clara nas mensagens.
+- Seja MUITO conservador ao sugerir completar tarefas:
+  - "Entrei em contato com X para agendar" = tarefa INICIADA, NAO concluida. Agendar so esta concluido quando data/horario estao confirmados.
+  - "Vou providenciar" = tarefa INICIADA, nao concluida.
+  - "Enviado", "Feito", "Pronto", "Segue em anexo" = tarefa CONCLUIDA.
+  - Diferencie entre ACAO INICIADA (confidence < 0.5, nao sugerir completar) e ACAO CONCLUIDA (confidence > 0.8).
+- Preste atencao na DIRECAO das mensagens: "outgoing" = Renato enviou, "incoming" = contato respondeu.
+  - Se Renato disse "vou fazer X" = ele iniciou, nao significa que X esta feito.
+  - Se contato disse "esta feito" ou "segue em anexo" = evidencia real de conclusao.
 - Quando alguem mencionar datas (ex: "primeira semana de maio", "proxima terca"), converta para data YYYY-MM-DD.
 - Use EXATAMENTE as datas mencionadas nas mensagens, nao aproxime (ex: "primeira semana de maio" = 2026-05-05, NAO "proxima semana").
 - Inclua data_vencimento nas novas tarefas quando a mensagem mencionar prazo ou data."""
