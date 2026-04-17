@@ -9,6 +9,7 @@ Detecta mudancas de emprego e gera alertas.
 """
 import os
 import re
+import json
 import httpx
 import logging
 from typing import Optional, Dict, List, Tuple
@@ -187,69 +188,78 @@ class LinkedInEnrichmentService:
 
     def _parse_linkdapi_response(self, data: Dict) -> Dict:
         """Parseia resposta da LinkdAPI para formato padrao.
-        LinkdAPI wraps data in {"success":true, "data": {...}}.
-        Field names are similar to RapidAPI but may differ slightly.
+        LinkdAPI field mapping (camelCase):
+          firstName/lastName, headline, summary, geo.full,
+          connectionsCount, followerCount, profilePicture,
+          fullPositions[].{companyName,title,start,end,description},
+          educations[].{schoolName,degree,fieldOfStudy,start,end},
+          skills[].{name}, isOpenToWork, urn, username
         """
         profile = data.get("data", {})
 
-        # LinkdAPI may use 'experiences' or 'experience'
-        experiences = profile.get("experiences") or profile.get("experience") or []
-        current_job = experiences[0] if experiences else {}
-        education = profile.get("education") or profile.get("educations") or []
+        # Positions: fullPositions has all, position has top 5
+        experiences = profile.get("fullPositions") or profile.get("position") or []
+        current_positions = profile.get("currentPositions") or []
+        current_job = current_positions[0] if current_positions else (experiences[0] if experiences else {})
+
+        education = profile.get("educations") or []
         skills = profile.get("skills") or []
+        geo = profile.get("geo") or {}
+
+        full_name = f"{profile.get('firstName', '')} {profile.get('lastName', '')}".strip()
 
         return {
             "success": True,
             "provider": "linkdapi",
             "profile": {
-                "full_name": profile.get("full_name") or profile.get("name"),
+                "full_name": full_name or None,
                 "headline": profile.get("headline"),
-                "location": profile.get("location") or profile.get("city"),
-                "about": profile.get("about") or profile.get("summary"),
-                "connections": profile.get("connections_count") or profile.get("connections"),
-                "followers": profile.get("followers_count") or profile.get("followers"),
-                "profile_picture": profile.get("profile_picture") or profile.get("avatar") or profile.get("profile_pic_url"),
-                "background_image": profile.get("background_image") or profile.get("background_cover_image_url"),
-                "open_to_work": profile.get("open_to_work", False),
+                "location": geo.get("full") or geo.get("city"),
+                "about": profile.get("summary"),
+                "connections": profile.get("connectionsCount"),
+                "followers": profile.get("followerCount"),
+                "profile_picture": profile.get("profilePicture"),
+                "background_image": (profile.get("backgroundImage") or [{}])[0].get("url") if profile.get("backgroundImage") else None,
+                "open_to_work": profile.get("isOpenToWork", False),
 
-                "current_company": current_job.get("company") or current_job.get("company_name"),
+                "current_company": current_job.get("companyName"),
                 "current_title": current_job.get("title"),
-                "current_company_url": current_job.get("company_linkedin_url") or current_job.get("company_url"),
-                "current_start_date": current_job.get("start_date") or current_job.get("starts_at"),
+                "current_company_url": current_job.get("companyURL"),
+                "current_start_date": current_job.get("start"),
 
                 "experiences": [
                     {
-                        "company": exp.get("company") or exp.get("company_name"),
+                        "company": exp.get("companyName"),
                         "title": exp.get("title"),
-                        "location": exp.get("location"),
-                        "start_date": exp.get("start_date") or exp.get("starts_at"),
-                        "end_date": exp.get("end_date") or exp.get("ends_at"),
+                        "location": exp.get("location") or exp.get("locationName"),
+                        "start_date": exp.get("start"),
+                        "end_date": exp.get("end"),
                         "description": exp.get("description"),
-                        "company_url": exp.get("company_linkedin_url") or exp.get("company_url")
+                        "company_url": exp.get("companyURL")
                     }
                     for exp in experiences[:10]
                 ],
 
                 "education": [
                     {
-                        "school": edu.get("school") or edu.get("school_name"),
-                        "degree": edu.get("degree") or edu.get("degree_name"),
-                        "field": edu.get("field_of_study") or edu.get("field"),
-                        "start_date": edu.get("start_date") or edu.get("starts_at"),
-                        "end_date": edu.get("end_date") or edu.get("ends_at")
+                        "school": edu.get("schoolName"),
+                        "degree": edu.get("degree"),
+                        "field": edu.get("fieldOfStudy"),
+                        "start_date": edu.get("start"),
+                        "end_date": edu.get("end")
                     }
                     for edu in education[:5]
                 ],
 
                 "skills": [
-                    (s.get("name") if isinstance(s, dict) else s)
+                    s.get("name") if isinstance(s, dict) else s
                     for s in skills[:20]
                 ] if isinstance(skills, list) else [],
 
-                "recent_posts": profile.get("posts", [])[:5],
-                "last_activity": profile.get("last_activity_date"),
-                "public_identifier": profile.get("public_identifier") or profile.get("username"),
-                "urn": profile.get("urn") or profile.get("profile_id"),
+                "recent_posts": [],
+                "last_activity": None,
+                "public_identifier": profile.get("username"),
+                "urn": profile.get("urn"),
                 "fetched_at": datetime.now().isoformat()
             }
         }
@@ -459,7 +469,7 @@ class LinkedInEnrichmentService:
                     job_change["old_headline"],
                     job_change["new_headline"],
                     job_change["type"],
-                    str(profile)
+                    json.dumps(profile, default=str)
                 ))
 
             # Extract company/title from profile or parse from headline
@@ -506,9 +516,9 @@ class LinkedInEnrichmentService:
                 profile.get("headline"),
                 profile.get("location"),
                 profile.get("about"),
-                str(profile.get("experiences", [])),
-                str(profile.get("education", [])),
-                str(profile.get("skills", [])),
+                json.dumps(profile.get("experiences", []), default=str),
+                json.dumps(profile.get("education", []), default=str),
+                json.dumps(profile.get("skills", []), default=str),
                 profile.get("connections"),
                 profile.get("open_to_work", False),
                 profile.get("last_activity"),
