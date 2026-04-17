@@ -105,11 +105,12 @@ class LinkedInEnrichmentService:
             return {"error": "Invalid LinkedIn URL", "code": "INVALID_URL"}
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                # Use /enrich-lead endpoint (API migrated from /get-linkedin-profile)
                 response = await client.get(
-                    f"{RAPIDAPI_BASE_URL}/get-linkedin-profile",
+                    f"{RAPIDAPI_BASE_URL}/enrich-lead",
                     headers=self.headers,
-                    params={"linkedin_url": linkedin_url}
+                    params={"linkedin_url": linkedin_url, "include_skills": "false"}
                 )
 
                 if response.status_code == 200:
