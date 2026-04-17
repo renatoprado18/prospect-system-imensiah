@@ -14436,6 +14436,30 @@ async def api_delete_milestone(milestone_id: int):
     raise HTTPException(status_code=404, detail="Marco nao encontrado")
 
 
+# ============== SMART PROJECT UPDATE ==============
+
+@app.post("/api/projects/{project_id}/smart-update")
+async def api_smart_update(project_id: int):
+    """Analisa emails/WhatsApp dos membros e sugere atualizacoes de tarefas"""
+    from services.project_smart_update import analyze_project_updates
+    result = await analyze_project_updates(project_id)
+    if result.get('error'):
+        raise HTTPException(status_code=400, detail=result['error'])
+    return result
+
+
+@app.post("/api/projects/{project_id}/smart-update/apply")
+async def api_smart_update_apply(project_id: int, request: Request):
+    """Aplica sugestoes: marca tarefas como concluidas"""
+    from services.project_smart_update import apply_smart_updates
+    data = await request.json()
+    task_ids = data.get('task_ids', [])
+    if not task_ids:
+        raise HTTPException(status_code=400, detail="Nenhuma tarefa selecionada")
+    result = await apply_smart_updates(project_id, task_ids)
+    return result
+
+
 # ============== PAYMENT CYCLE ==============
 
 @app.post("/api/projects/{project_id}/payment-cycle/preview")

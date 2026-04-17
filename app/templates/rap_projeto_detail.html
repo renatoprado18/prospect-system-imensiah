@@ -732,6 +732,9 @@
                         </div>
                     </div>
                     <div class="d-flex gap-2">
+                        <button class="btn btn-outline-primary" onclick="openSmartUpdateModal()" title="Analisar emails e WhatsApp para atualizar tarefas">
+                            <i class="bi bi-stars"></i> Atualizar com IA
+                        </button>
                         <button class="btn btn-outline-secondary" onclick="editProject()">
                             <i class="bi bi-pencil"></i>
                         </button>
@@ -2218,6 +2221,122 @@
         return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
     }
 
+    // ============ Smart Update (Atualizar com IA) ============
+    async function openSmartUpdateModal() {
+        const modal = new bootstrap.Modal(document.getElementById('smartUpdateModal'));
+        modal.show();
+
+        // Mostrar loading
+        document.getElementById('smartUpdateLoading').style.display = 'block';
+        document.getElementById('smartUpdateResults').style.display = 'none';
+        document.getElementById('smartUpdateEmpty').style.display = 'none';
+        document.getElementById('smartUpdateError').style.display = 'none';
+
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/smart-update`, { method: 'POST' });
+            const data = await resp.json();
+
+            document.getElementById('smartUpdateLoading').style.display = 'none';
+
+            if (!resp.ok || data.error) {
+                document.getElementById('smartUpdateError').style.display = 'block';
+                document.getElementById('smartUpdateErrorMsg').textContent = data.detail || data.error || 'Erro';
+                return;
+            }
+
+            const suggestions = data.suggestions || [];
+            const newTasks = data.new_tasks_suggested || [];
+
+            if (suggestions.length === 0 && newTasks.length === 0) {
+                document.getElementById('smartUpdateEmpty').style.display = 'block';
+                document.getElementById('smartUpdateSummary').textContent = data.summary || '';
+                return;
+            }
+
+            // Renderizar resultados
+            document.getElementById('smartUpdateResults').style.display = 'block';
+            document.getElementById('smartUpdateSummaryText').textContent = data.summary || '';
+
+            // Sugestoes de conclusao
+            const sugContainer = document.getElementById('smartUpdateSuggestions');
+            if (suggestions.length > 0) {
+                sugContainer.innerHTML = suggestions.map(s => `
+                    <div class="form-check mb-3 p-3 rounded" style="background: #f0fdf4; border: 1px solid #bbf7d0;">
+                        <input class="form-check-input" type="checkbox" value="${s.task_id}" id="su-${s.task_id}" checked>
+                        <label class="form-check-label" for="su-${s.task_id}">
+                            <div class="fw-semibold">${s.task_titulo}</div>
+                            <div class="text-muted small mt-1">
+                                <i class="bi bi-chat-quote me-1"></i>${s.reasoning}
+                            </div>
+                            ${s.evidence_snippet ? `
+                            <div class="mt-1 small fst-italic" style="color: #166534;">
+                                "${s.evidence_snippet.substring(0, 150)}${s.evidence_snippet.length > 150 ? '...' : ''}"
+                                ${s.evidence_from ? `<span class="fw-semibold">— ${s.evidence_from}</span>` : ''}
+                                ${s.evidence_date ? `, ${s.evidence_date}` : ''}
+                            </div>` : ''}
+                            <div class="mt-1">
+                                <span class="badge ${s.confidence >= 0.8 ? 'bg-success' : s.confidence >= 0.5 ? 'bg-warning text-dark' : 'bg-secondary'}">
+                                    Confianca: ${Math.round(s.confidence * 100)}%
+                                </span>
+                            </div>
+                        </label>
+                    </div>
+                `).join('');
+            } else {
+                sugContainer.innerHTML = '<p class="text-muted small">Nenhuma tarefa identificada para conclusao.</p>';
+            }
+
+            // Novas tarefas sugeridas
+            const newContainer = document.getElementById('smartUpdateNewTasks');
+            if (newTasks.length > 0) {
+                newContainer.innerHTML = '<h6 class="mt-3 mb-2"><i class="bi bi-lightbulb text-warning me-1"></i>Novas tarefas sugeridas:</h6>' +
+                    newTasks.map(t => `
+                    <div class="p-2 mb-2 rounded" style="background: #eff6ff; border: 1px solid #bfdbfe;">
+                        <div class="fw-semibold small">${t.titulo}</div>
+                        <div class="text-muted" style="font-size: 0.75rem;">${t.reasoning}</div>
+                    </div>
+                `).join('');
+            } else {
+                newContainer.innerHTML = '';
+            }
+
+        } catch (e) {
+            console.error(e);
+            document.getElementById('smartUpdateLoading').style.display = 'none';
+            document.getElementById('smartUpdateError').style.display = 'block';
+            document.getElementById('smartUpdateErrorMsg').textContent = 'Erro ao conectar com a API';
+        }
+    }
+
+    async function applySmartUpdates() {
+        const checkboxes = document.querySelectorAll('#smartUpdateSuggestions input[type="checkbox"]:checked');
+        const taskIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+        if (taskIds.length === 0) {
+            showToast('Selecione pelo menos uma tarefa', 'warning');
+            return;
+        }
+
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/smart-update/apply`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ task_ids: taskIds })
+            });
+            const data = await resp.json();
+
+            if (resp.ok) {
+                bootstrap.Modal.getInstance(document.getElementById('smartUpdateModal')).hide();
+                showToast(`${data.completed} tarefa(s) concluida(s)!`, 'success');
+                loadProject();
+            } else {
+                showToast(data.detail || 'Erro ao aplicar', 'danger');
+            }
+        } catch (e) {
+            showToast('Erro ao aplicar atualizacoes', 'danger');
+        }
+    }
+
     // ============ Payment Cycle (Cobranca) ============
     function openCobrancaModal() {
         const config = project.metadata?.payment_cycle;
@@ -2326,6 +2445,55 @@
         }
     }
 </script>
+
+<!-- Modal Smart Update -->
+<div class="modal fade" id="smartUpdateModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-stars text-primary me-2"></i>Atualizar com IA</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Loading -->
+                <div id="smartUpdateLoading" class="text-center py-5">
+                    <div class="spinner-border text-primary mb-3" style="width:3rem;height:3rem;"></div>
+                    <p class="text-muted">Analisando emails e mensagens dos participantes...</p>
+                    <p class="text-muted small">Cruzando com tarefas pendentes</p>
+                </div>
+
+                <!-- Results -->
+                <div id="smartUpdateResults" style="display:none;">
+                    <div class="alert alert-info py-2 mb-3">
+                        <i class="bi bi-info-circle me-1"></i>
+                        <span id="smartUpdateSummaryText"></span>
+                    </div>
+                    <div id="smartUpdateSuggestions"></div>
+                    <div id="smartUpdateNewTasks"></div>
+                </div>
+
+                <!-- Empty -->
+                <div id="smartUpdateEmpty" style="display:none;" class="text-center py-4">
+                    <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                    <p class="mt-2 fw-semibold">Tudo atualizado!</p>
+                    <p class="text-muted small" id="smartUpdateSummary"></p>
+                </div>
+
+                <!-- Error -->
+                <div id="smartUpdateError" style="display:none;" class="text-center py-4">
+                    <i class="bi bi-exclamation-triangle text-danger" style="font-size: 2rem;"></i>
+                    <p class="mt-2 text-muted" id="smartUpdateErrorMsg"></p>
+                </div>
+            </div>
+            <div class="modal-footer" id="smartUpdateFooter">
+                <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+                <button class="btn btn-success" onclick="applySmartUpdates()" id="btnApplySmartUpdate">
+                    <i class="bi bi-check-circle me-1"></i>Aplicar Selecionadas
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Modal Cobranca -->
 <div class="modal fade" id="cobrancaModal" tabindex="-1">
