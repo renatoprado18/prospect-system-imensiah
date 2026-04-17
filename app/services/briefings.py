@@ -653,6 +653,7 @@ def get_contacts_needing_briefing(limit: int = 10) -> List[Dict]:
             FROM contacts
             WHERE COALESCE(circulo, 5) <= 3
               AND COALESCE(health_score, 50) < 50
+              AND ultimo_contato IS NOT NULL
             ORDER BY circulo ASC, health_score ASC
             LIMIT %s
         """, (limit,))

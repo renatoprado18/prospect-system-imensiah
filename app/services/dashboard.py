@@ -36,8 +36,8 @@ def get_dashboard_stats() -> Dict:
             SELECT
                 COUNT(*) as total_contatos,
                 COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 4) as circulos_ativos,
-                COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50) as precisam_atencao,
-                COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50) as briefings_pendentes,
+                COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL) as precisam_atencao,
+                COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL) as briefings_pendentes,
                 COUNT(*) FILTER (
                     WHERE aniversario IS NOT NULL
                     AND COALESCE(circulo, 5) <= 4
@@ -310,7 +310,7 @@ def get_full_dashboard() -> Dict:
                 SELECT
                     COUNT(*) as total_contatos,
                     COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 4) as circulos_ativos,
-                    COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50) as precisam_atencao
+                    COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL) as precisam_atencao
                 FROM contacts
             ),
             -- Circulos resumo
@@ -495,7 +495,7 @@ def get_quick_stats() -> Dict:
             SELECT
                 COUNT(*) as total,
                 COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 4) as ativos,
-                COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50) as precisam_atencao,
+                COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL) as precisam_atencao,
                 AVG(COALESCE(health_score, 50)) FILTER (WHERE COALESCE(circulo, 5) <= 4) as health_medio_ativos
             FROM contacts
         """)
