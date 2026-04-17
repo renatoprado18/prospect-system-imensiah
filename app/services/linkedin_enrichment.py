@@ -1,7 +1,10 @@
 """
-LinkedIn Enrichment Service - RapidAPI Integration
+LinkedIn Enrichment Service
 
-Enriquece contatos com dados do LinkedIn via RapidAPI Fresh LinkedIn API.
+Enriquece contatos com dados do LinkedIn.
+Suporta dois providers:
+  - LinkdAPI (preferido): linkdapi.com — 99.9% SLA, <1s resposta
+  - RapidAPI Fresh LinkedIn (legado): fresh-linkedin-profile-data.p.rapidapi.com
 Detecta mudancas de emprego e gera alertas.
 """
 import os
@@ -14,21 +17,32 @@ from database import get_db
 
 logger = logging.getLogger(__name__)
 
-# RapidAPI Configuration
+# LinkdAPI Configuration (preferred)
+LINKDAPI_KEY = os.getenv("LINKDAPI_KEY")
+LINKDAPI_BASE_URL = "https://linkdapi.com"
+
+# RapidAPI Configuration (fallback)
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 RAPIDAPI_HOST = "fresh-linkedin-profile-data.p.rapidapi.com"
 RAPIDAPI_BASE_URL = f"https://{RAPIDAPI_HOST}"
 
 
 class LinkedInEnrichmentService:
-    """Servico de enriquecimento LinkedIn via RapidAPI"""
+    """Servico de enriquecimento LinkedIn — LinkdAPI (preferido) ou RapidAPI (fallback)"""
 
     def __init__(self):
-        self.api_key = RAPIDAPI_KEY
-        self.headers = {
-            "X-RapidAPI-Key": self.api_key or "",
-            "X-RapidAPI-Host": RAPIDAPI_HOST
-        }
+        self.use_linkdapi = bool(LINKDAPI_KEY)
+        if self.use_linkdapi:
+            self.api_key = LINKDAPI_KEY
+            self.headers = {"X-linkdapi-apikey": self.api_key}
+            logger.info("LinkedIn enrichment: usando LinkdAPI")
+        else:
+            self.api_key = RAPIDAPI_KEY
+            self.headers = {
+                "X-RapidAPI-Key": self.api_key or "",
+                "X-RapidAPI-Host": RAPIDAPI_HOST
+            }
+            logger.info("LinkedIn enrichment: usando RapidAPI (fallback)")
 
     def is_configured(self) -> bool:
         """Verifica se a API esta configurada"""
@@ -89,7 +103,7 @@ class LinkedInEnrichmentService:
 
     async def fetch_profile(self, linkedin_url: str) -> Dict:
         """
-        Busca dados do perfil LinkedIn via RapidAPI
+        Busca dados do perfil LinkedIn via LinkdAPI ou RapidAPI.
 
         Args:
             linkedin_url: URL do perfil LinkedIn
@@ -104,9 +118,47 @@ class LinkedInEnrichmentService:
         if not username:
             return {"error": "Invalid LinkedIn URL", "code": "INVALID_URL"}
 
+        if self.use_linkdapi:
+            return await self._fetch_linkdapi(username)
+        else:
+            return await self._fetch_rapidapi(linkedin_url)
+
+    async def _fetch_linkdapi(self, username: str) -> Dict:
+        """Fetch profile via LinkdAPI"""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    f"{LINKDAPI_BASE_URL}/api/v1/profile/full",
+                    headers=self.headers,
+                    params={"username": username}
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("success") and data.get("data"):
+                        return self._parse_linkdapi_response(data)
+                    return {"error": "Empty response", "code": "EMPTY_RESPONSE"}
+                elif response.status_code == 404:
+                    return {"error": "Profile not found", "code": "NOT_FOUND"}
+                elif response.status_code == 429:
+                    return {"error": "Rate limit exceeded", "code": "RATE_LIMIT"}
+                else:
+                    return {
+                        "error": f"LinkdAPI error: {response.status_code}",
+                        "code": "API_ERROR",
+                        "details": response.text[:200]
+                    }
+
+        except httpx.TimeoutException:
+            return {"error": "Request timeout", "code": "TIMEOUT"}
+        except Exception as e:
+            logger.error(f"LinkdAPI error: {e}")
+            return {"error": str(e), "code": "EXCEPTION"}
+
+    async def _fetch_rapidapi(self, linkedin_url: str) -> Dict:
+        """Fetch profile via RapidAPI Fresh LinkedIn (legacy)"""
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
-                # Use /enrich-lead endpoint (API migrated from /get-linkedin-profile)
                 response = await client.get(
                     f"{RAPIDAPI_BASE_URL}/enrich-lead",
                     headers=self.headers,
@@ -124,7 +176,7 @@ class LinkedInEnrichmentService:
                     return {
                         "error": f"API error: {response.status_code}",
                         "code": "API_ERROR",
-                        "details": response.text
+                        "details": response.text[:200]
                     }
 
         except httpx.TimeoutException:
@@ -133,8 +185,77 @@ class LinkedInEnrichmentService:
             logger.error(f"LinkedIn API error: {e}")
             return {"error": str(e), "code": "EXCEPTION"}
 
+    def _parse_linkdapi_response(self, data: Dict) -> Dict:
+        """Parseia resposta da LinkdAPI para formato padrao.
+        LinkdAPI wraps data in {"success":true, "data": {...}}.
+        Field names are similar to RapidAPI but may differ slightly.
+        """
+        profile = data.get("data", {})
+
+        # LinkdAPI may use 'experiences' or 'experience'
+        experiences = profile.get("experiences") or profile.get("experience") or []
+        current_job = experiences[0] if experiences else {}
+        education = profile.get("education") or profile.get("educations") or []
+        skills = profile.get("skills") or []
+
+        return {
+            "success": True,
+            "provider": "linkdapi",
+            "profile": {
+                "full_name": profile.get("full_name") or profile.get("name"),
+                "headline": profile.get("headline"),
+                "location": profile.get("location") or profile.get("city"),
+                "about": profile.get("about") or profile.get("summary"),
+                "connections": profile.get("connections_count") or profile.get("connections"),
+                "followers": profile.get("followers_count") or profile.get("followers"),
+                "profile_picture": profile.get("profile_picture") or profile.get("avatar") or profile.get("profile_pic_url"),
+                "background_image": profile.get("background_image") or profile.get("background_cover_image_url"),
+                "open_to_work": profile.get("open_to_work", False),
+
+                "current_company": current_job.get("company") or current_job.get("company_name"),
+                "current_title": current_job.get("title"),
+                "current_company_url": current_job.get("company_linkedin_url") or current_job.get("company_url"),
+                "current_start_date": current_job.get("start_date") or current_job.get("starts_at"),
+
+                "experiences": [
+                    {
+                        "company": exp.get("company") or exp.get("company_name"),
+                        "title": exp.get("title"),
+                        "location": exp.get("location"),
+                        "start_date": exp.get("start_date") or exp.get("starts_at"),
+                        "end_date": exp.get("end_date") or exp.get("ends_at"),
+                        "description": exp.get("description"),
+                        "company_url": exp.get("company_linkedin_url") or exp.get("company_url")
+                    }
+                    for exp in experiences[:10]
+                ],
+
+                "education": [
+                    {
+                        "school": edu.get("school") or edu.get("school_name"),
+                        "degree": edu.get("degree") or edu.get("degree_name"),
+                        "field": edu.get("field_of_study") or edu.get("field"),
+                        "start_date": edu.get("start_date") or edu.get("starts_at"),
+                        "end_date": edu.get("end_date") or edu.get("ends_at")
+                    }
+                    for edu in education[:5]
+                ],
+
+                "skills": [
+                    (s.get("name") if isinstance(s, dict) else s)
+                    for s in skills[:20]
+                ] if isinstance(skills, list) else [],
+
+                "recent_posts": profile.get("posts", [])[:5],
+                "last_activity": profile.get("last_activity_date"),
+                "public_identifier": profile.get("public_identifier") or profile.get("username"),
+                "urn": profile.get("urn") or profile.get("profile_id"),
+                "fetched_at": datetime.now().isoformat()
+            }
+        }
+
     def _parse_profile_response(self, data: Dict) -> Dict:
-        """Parseia resposta da API para formato padrao"""
+        """Parseia resposta da RapidAPI para formato padrao"""
         if not data or "data" not in data:
             return {"error": "Empty response", "code": "EMPTY_RESPONSE"}
 
