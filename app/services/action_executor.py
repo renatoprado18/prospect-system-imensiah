@@ -84,13 +84,15 @@ class ActionExecutor:
         result = None
         message = ''
 
+        contact_id = proposal.get('contact_id')
+
         try:
             if action_type == 'reschedule_event':
-                result = await self.reschedule_event(action_params, chosen_option, custom_params)
+                result = await self.reschedule_event(action_params, chosen_option, custom_params, contact_id=contact_id)
                 message = result.get('message', 'Evento remarcado')
 
             elif action_type == 'cancel_event':
-                result = await self.cancel_event(action_params, chosen_option)
+                result = await self.cancel_event(action_params, chosen_option, contact_id=contact_id)
                 message = result.get('message', 'Evento cancelado')
 
             elif action_type == 'confirm_event':
@@ -141,18 +143,42 @@ class ActionExecutor:
                 'message': f'Erro ao executar acao: {str(e)}'
             }
 
+    def _resolve_event_id(self, action_params: Dict, contact_id: int = None) -> Optional[int]:
+        """Resolve event_id from action_params, falling back to next upcoming event for contact."""
+        event_id = action_params.get('event_id')
+        if event_id:
+            return event_id
+
+        google_event_id = action_params.get('google_event_id')
+        if google_event_id:
+            event = self.calendar_service.get_event_by_google_id(google_event_id)
+            if event:
+                return event['id']
+
+        if contact_id:
+            events = self.calendar_service.get_events_for_contact(contact_id, limit=5)
+            now = datetime.now().isoformat()
+            upcoming = [e for e in events if (e.get('start_datetime') or '') >= now]
+            if upcoming:
+                upcoming.sort(key=lambda e: e.get('start_datetime', ''))
+                return upcoming[0]['id']
+            if events:
+                return events[0]['id']
+
+        return None
+
     async def reschedule_event(
         self,
         action_params: Dict,
         chosen_option: Dict = None,
-        custom_params: Dict = None
+        custom_params: Dict = None,
+        contact_id: int = None
     ) -> Dict:
         """Remarca evento no calendario"""
-        event_id = action_params.get('event_id')
-        google_event_id = action_params.get('google_event_id')
+        event_id = self._resolve_event_id(action_params, contact_id)
 
         if not event_id:
-            return {'success': False, 'message': 'Evento nao especificado'}
+            return {'success': False, 'message': 'Evento nao especificado e nenhum evento encontrado para o contato'}
 
         # Determinar nova data
         new_datetime = None
@@ -206,16 +232,16 @@ class ActionExecutor:
         else:
             return {'success': False, 'message': 'Falha ao remarcar evento'}
 
-    async def cancel_event(self, action_params: Dict, chosen_option: Dict = None) -> Dict:
+    async def cancel_event(self, action_params: Dict, chosen_option: Dict = None, contact_id: int = None) -> Dict:
         """Cancela evento no calendario"""
-        event_id = action_params.get('event_id')
+        event_id = self._resolve_event_id(action_params, contact_id)
 
         if not event_id:
-            return {'success': False, 'message': 'Evento nao especificado'}
+            return {'success': False, 'message': 'Evento nao especificado e nenhum evento encontrado para o contato'}
 
         # Se opcao foi reschedule em vez de cancel, remarcar
         if chosen_option and chosen_option.get('action') == 'reschedule':
-            return await self.reschedule_event(action_params, chosen_option)
+            return await self.reschedule_event(action_params, chosen_option, contact_id=contact_id)
 
         # Cancelar evento
         success = self.calendar_service.delete_event(event_id, delete_from_google=True)
