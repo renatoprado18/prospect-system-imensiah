@@ -492,6 +492,9 @@
     <button class="btn btn-outline" onclick="registrarManutencao()">
         <i class="bi bi-plus-circle"></i> Registrar Manutencao
     </button>
+    <button class="btn btn-outline" onclick="abrirUploadNF()" style="color: #8b5cf6; border-color: #8b5cf6;">
+        <i class="bi bi-camera"></i> Manutencao via Foto
+    </button>
     <a href="/veiculos/{{ veiculo.id }}/timeline" class="btn btn-outline" style="color: #6366f1; border-color: #6366f1;">
         <i class="bi bi-calendar3"></i> Timeline
     </a>
@@ -1083,6 +1086,139 @@
     </div>
 </div>
 
+<!-- Modal Upload NF/OS via Foto -->
+<div class="modal-backdrop" id="uploadNfModal">
+    <div class="modal-content" style="max-width: 620px;">
+        <!-- Estado 1: Upload -->
+        <div class="upload-step" id="step-upload">
+            <div class="modal-header">
+                <h3><i class="bi bi-camera" style="color: #8b5cf6;"></i> Manutencao via Foto</h3>
+            </div>
+            <div class="modal-body">
+                <p style="color: var(--text-secondary); margin-bottom: 1rem;">Envie uma foto da Ordem de Servico ou Nota Fiscal. A IA vai extrair os dados automaticamente.</p>
+                <label class="upload-dropzone" id="nfDropzone">
+                    <input type="file" id="nfFileInput" accept="image/*" capture="environment" style="display:none;" onchange="enviarFotoNF(this)">
+                    <i class="bi bi-cloud-arrow-up" style="font-size: 2.5rem; color: #8b5cf6;"></i>
+                    <span style="font-weight: 600; color: var(--text-primary);">Arraste a foto aqui ou clique para selecionar</span>
+                    <span style="font-size: 0.8rem; color: var(--text-secondary);">JPG, PNG ou HEIC - max 15MB</span>
+                </label>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeUploadNfModal()">Cancelar</button>
+            </div>
+        </div>
+
+        <!-- Estado 2: Loading -->
+        <div class="upload-step" id="step-loading" style="display:none;">
+            <div class="modal-header">
+                <h3>Analisando...</h3>
+            </div>
+            <div class="modal-body" style="text-align: center; padding: 3rem;">
+                <div class="spinner-border" style="width: 3rem; height: 3rem; border-color: #8b5cf6; border-right-color: transparent;"></div>
+                <p style="margin-top: 1rem; color: var(--text-secondary);">Enviando para Google Drive e analisando com IA...</p>
+            </div>
+        </div>
+
+        <!-- Estado 3: Revisao -->
+        <div class="upload-step" id="step-review" style="display:none;">
+            <div class="modal-header">
+                <h3><i class="bi bi-check-circle" style="color: #22c55e;"></i> Revisar Dados Extraidos</h3>
+            </div>
+            <div class="modal-body">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label>Oficina</label>
+                        <input type="text" id="nfOficina" placeholder="Nome da oficina">
+                    </div>
+                    <div class="form-group">
+                        <label>Data</label>
+                        <input type="date" id="nfData">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>KM na Execucao</label>
+                    <input type="number" id="nfKm" value="{{ veiculo.km_atual or 0 }}" placeholder="Quilometragem">
+                </div>
+
+                <div class="form-group">
+                    <label>Itens / Servicos</label>
+                    <div id="nfItensContainer"></div>
+                    <button class="btn btn-outline" onclick="adicionarItemNF()" style="margin-top: 0.5rem; font-size: 0.85rem;">
+                        <i class="bi bi-plus"></i> Adicionar item
+                    </button>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: end;">
+                    <div class="form-group">
+                        <label>Valor Total (R$)</label>
+                        <input type="number" id="nfValorTotal" step="0.01" placeholder="0.00" style="font-weight: 700; font-size: 1.1rem;">
+                    </div>
+                    <div class="form-group">
+                        <a id="nfDriveLink" href="#" target="_blank" style="color: #8b5cf6; font-size: 0.85rem; text-decoration: none;">
+                            <i class="bi bi-file-earmark-image"></i> Ver foto no Drive
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeUploadNfModal()">Cancelar</button>
+                <button class="btn btn-primary" onclick="confirmarOSFoto()" style="background: #22c55e; border-color: #22c55e;">
+                    <i class="bi bi-check-circle"></i> Confirmar e Registrar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.upload-dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 2.5rem;
+    border: 2px dashed var(--border-color);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+}
+.upload-dropzone:hover {
+    border-color: #8b5cf6;
+    background: rgba(139, 92, 246, 0.05);
+}
+.spinner-border {
+    display: inline-block;
+    border: 3px solid;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.nf-item-row {
+    display: grid;
+    grid-template-columns: 1fr 120px 32px;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    align-items: center;
+}
+.nf-item-row input {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+.nf-item-row .btn-remove {
+    background: none;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    font-size: 1.1rem;
+    padding: 0;
+}
+</style>
+
 <style>
 .modal-backdrop {
     position: fixed;
@@ -1362,6 +1498,176 @@ function showToast(message, type = 'info') {
 document.getElementById('registrarModal').addEventListener('click', (e) => {
     if (e.target.classList.contains('modal-backdrop')) {
         closeRegistrarModal();
+    }
+});
+
+// ============ Upload NF/OS via Foto ============
+let uploadNfDriveUrl = null;
+
+function abrirUploadNF() {
+    document.getElementById('uploadNfModal').classList.add('show');
+    showUploadStep('upload');
+    // Reset file input
+    document.getElementById('nfFileInput').value = '';
+}
+
+function closeUploadNfModal() {
+    document.getElementById('uploadNfModal').classList.remove('show');
+    uploadNfDriveUrl = null;
+}
+
+function showUploadStep(step) {
+    document.querySelectorAll('#uploadNfModal .upload-step').forEach(el => el.style.display = 'none');
+    document.getElementById('step-' + step).style.display = 'block';
+}
+
+// Drag & drop
+const dropzone = document.getElementById('nfDropzone');
+dropzone.addEventListener('click', () => document.getElementById('nfFileInput').click());
+dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.style.borderColor = '#8b5cf6'; });
+dropzone.addEventListener('dragleave', () => { dropzone.style.borderColor = ''; });
+dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = '';
+    const fileInput = document.getElementById('nfFileInput');
+    fileInput.files = e.dataTransfer.files;
+    enviarFotoNF(fileInput);
+});
+
+async function enviarFotoNF(fileInput) {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    if (file.size > 15 * 1024 * 1024) {
+        showToast('Arquivo muito grande (max 15MB)', 'error');
+        return;
+    }
+
+    showUploadStep('loading');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const resp = await fetch(`/api/veiculos/${veiculoId}/upload-os`, {
+            method: 'POST',
+            body: formData
+        });
+        const data = await resp.json();
+
+        if (!resp.ok || data.error || data.dados_extraidos?.error) {
+            showToast(data.detail || data.error || data.dados_extraidos?.error || 'Erro ao processar foto', 'error');
+            showUploadStep('upload');
+            return;
+        }
+
+        uploadNfDriveUrl = data.drive_url;
+        preencherFormRevisao(data.dados_extraidos, data.drive_url);
+        showUploadStep('review');
+    } catch (err) {
+        console.error(err);
+        showToast('Erro ao processar foto', 'error');
+        showUploadStep('upload');
+    }
+}
+
+function preencherFormRevisao(dados, driveUrl) {
+    document.getElementById('nfOficina').value = dados.oficina?.nome || '';
+    document.getElementById('nfData').value = dados.data || '';
+    document.getElementById('nfDriveLink').href = driveUrl;
+
+    // Popular itens
+    const container = document.getElementById('nfItensContainer');
+    container.innerHTML = '';
+    (dados.itens || []).forEach(item => {
+        adicionarItemNF(item.descricao, item.valor);
+    });
+
+    // Valor total
+    document.getElementById('nfValorTotal').value = dados.valor_total || '';
+}
+
+function adicionarItemNF(descricao = '', valor = '') {
+    const container = document.getElementById('nfItensContainer');
+    const row = document.createElement('div');
+    row.className = 'nf-item-row';
+    row.innerHTML = `
+        <input type="text" class="nf-item-desc" value="${descricao}" placeholder="Descricao do servico">
+        <input type="number" class="nf-item-valor" value="${valor}" step="0.01" placeholder="R$" onchange="calcularTotalNF()">
+        <button class="btn-remove" onclick="this.parentElement.remove(); calcularTotalNF();">&times;</button>
+    `;
+    container.appendChild(row);
+}
+
+function calcularTotalNF() {
+    let total = 0;
+    document.querySelectorAll('.nf-item-valor').forEach(input => {
+        total += parseFloat(input.value) || 0;
+    });
+    document.getElementById('nfValorTotal').value = total.toFixed(2);
+}
+
+async function confirmarOSFoto() {
+    const oficina = document.getElementById('nfOficina').value;
+    const dataExec = document.getElementById('nfData').value;
+    const km = parseInt(document.getElementById('nfKm').value) || 0;
+    const valorTotal = parseFloat(document.getElementById('nfValorTotal').value) || 0;
+
+    if (!dataExec) {
+        showToast('Informe a data da execucao', 'error');
+        return;
+    }
+    if (!km) {
+        showToast('Informe a quilometragem', 'error');
+        return;
+    }
+
+    // Coletar itens
+    const itens = [];
+    document.querySelectorAll('.nf-item-row').forEach(row => {
+        const desc = row.querySelector('.nf-item-desc').value.trim();
+        const val = parseFloat(row.querySelector('.nf-item-valor').value) || 0;
+        if (desc) itens.push({ descricao: desc, valor: val });
+    });
+
+    if (itens.length === 0) {
+        showToast('Adicione pelo menos um item', 'error');
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/veiculos/${veiculoId}/confirmar-os-foto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                oficina: oficina,
+                data_execucao: dataExec,
+                km_execucao: km,
+                valor_total: valorTotal,
+                nota_fiscal_url: uploadNfDriveUrl,
+                itens: itens
+            })
+        });
+
+        const data = await resp.json();
+
+        if (resp.ok) {
+            showToast('Manutencao registrada com sucesso!', 'success');
+            closeUploadNfModal();
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            showToast(data.detail || 'Erro ao registrar', 'error');
+        }
+    } catch (err) {
+        console.error(err);
+        showToast('Erro ao registrar manutencao', 'error');
+    }
+}
+
+// Close upload modal on backdrop click
+document.getElementById('uploadNfModal').addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal-backdrop')) {
+        closeUploadNfModal();
     }
 });
 

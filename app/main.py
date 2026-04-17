@@ -15591,6 +15591,100 @@ async def api_atualizar_notas_fabricante(veiculo_id: int):
     return {"status": "success", "itens_atualizados": count}
 
 
+# ==================== UPLOAD OS VIA FOTO ====================
+
+@app.post("/api/veiculos/{veiculo_id}/upload-os")
+async def api_upload_os_foto(veiculo_id: int, file: UploadFile = File(...)):
+    """Upload de foto de OS/NF com extracao automatica de dados via IA"""
+    import asyncio
+    from services.veiculos import extrair_dados_nf_foto, garantir_pasta_nf_drive
+
+    veiculo = get_veiculo(veiculo_id)
+    if not veiculo:
+        raise HTTPException(status_code=404, detail="Veiculo nao encontrado")
+
+    file_content = await file.read()
+    media_type = file.content_type or "image/jpeg"
+
+    # Obter token do Google Drive
+    with get_db() as conn:
+        access_token = await get_valid_token(conn, 'professional')
+
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Token Google Drive nao disponivel. Reconecte sua conta.")
+
+    # Executar upload e OCR em paralelo
+    async def do_upload():
+        nf_folder_id = await garantir_pasta_nf_drive(veiculo_id, veiculo['placa'], access_token)
+        ext = media_type.split('/')[-1].replace('jpeg', 'jpg')
+        filename = f"NF_{veiculo['placa']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}"
+        result = await upload_file(access_token, file_content, filename, media_type, nf_folder_id)
+        return result
+
+    upload_result, dados_extraidos = await asyncio.gather(
+        do_upload(),
+        extrair_dados_nf_foto(file_content, media_type)
+    )
+
+    drive_file_id = upload_result.get('id', '')
+    drive_url = f"https://drive.google.com/file/d/{drive_file_id}/view" if drive_file_id else None
+
+    return {
+        "drive_url": drive_url,
+        "drive_file_id": drive_file_id,
+        "dados_extraidos": dados_extraidos
+    }
+
+
+@app.post("/api/veiculos/{veiculo_id}/confirmar-os-foto")
+async def api_confirmar_os_foto(veiculo_id: int, request: Request):
+    """Confirma e registra OS a partir dos dados extraidos da foto"""
+    from services.veiculos import criar_ordem_servico, finalizar_ordem_servico
+
+    veiculo = get_veiculo(veiculo_id)
+    if not veiculo:
+        raise HTTPException(status_code=404, detail="Veiculo nao encontrado")
+
+    data = await request.json()
+
+    oficina = data.get('oficina', '')
+    data_execucao = data.get('data_execucao', str(datetime.now().date()))
+    km_execucao = data.get('km_execucao', veiculo.get('km_atual', 0))
+    valor_total = data.get('valor_total')
+    nota_fiscal_url = data.get('nota_fiscal_url')
+    itens = data.get('itens', [])
+
+    # Criar OS com itens como extras (sem vincular a itens de manutencao do plano)
+    itens_extras = [item.get('descricao', 'Servico') for item in itens]
+
+    os_result = criar_ordem_servico(
+        veiculo_id=veiculo_id,
+        km_atual=km_execucao,
+        itens_ids=[],  # Lista vazia para nao pegar itens vencidos automaticamente
+        itens_extras=itens_extras,
+        observacoes=f"Registrado via foto de OS/NF",
+        oficina=oficina
+    )
+
+    if os_result.get('error'):
+        raise HTTPException(status_code=400, detail=os_result['error'])
+
+    # Finalizar imediatamente (OS ja executada)
+    final_result = finalizar_ordem_servico(os_result['id'], {
+        'data_execucao': data_execucao,
+        'km_execucao': km_execucao,
+        'valor_final': valor_total,
+        'nota_fiscal_url': nota_fiscal_url,
+        'oficina': oficina,
+        'itens': {}  # Todos realizados (default True)
+    })
+
+    if isinstance(final_result, dict) and final_result.get('error'):
+        raise HTTPException(status_code=400, detail=final_result['error'])
+
+    return final_result
+
+
 # ==================== OFICINAS ====================
 
 @app.get("/api/oficinas")

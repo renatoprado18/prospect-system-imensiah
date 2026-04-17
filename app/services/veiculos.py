@@ -5,8 +5,14 @@ from datetime import datetime, date, timedelta
 from typing import List, Dict, Optional, Any
 from dateutil.relativedelta import relativedelta
 import json
+import os
+import base64
+import logging
+import httpx
 
 from database import get_db
+
+logger = logging.getLogger(__name__)
 
 
 def get_veiculo(veiculo_id: int) -> Optional[Dict]:
@@ -879,6 +885,189 @@ def get_historico_manutencoes(veiculo_id: int, limit: int = 50) -> List[Dict]:
             LIMIT %s
         """, (veiculo_id, limit))
         return [dict(row) for row in cursor.fetchall()]
+
+
+def _comprimir_imagem(image_bytes: bytes, max_size_mb: float = 5.0) -> tuple:
+    """Comprime imagem para ficar abaixo do limite de tamanho. Retorna (bytes, media_type)."""
+    from io import BytesIO
+    from PIL import Image
+
+    if len(image_bytes) <= max_size_mb * 1024 * 1024:
+        return image_bytes, "image/jpeg"
+
+    img = Image.open(BytesIO(image_bytes))
+
+    # Converter RGBA para RGB se necessario
+    if img.mode in ('RGBA', 'P'):
+        img = img.convert('RGB')
+
+    # Redimensionar se muito grande
+    max_dim = 2048
+    if max(img.size) > max_dim:
+        ratio = max_dim / max(img.size)
+        new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+        img = img.resize(new_size, Image.LANCZOS)
+
+    # Comprimir como JPEG
+    buf = BytesIO()
+    quality = 85
+    while quality >= 30:
+        buf.seek(0)
+        buf.truncate()
+        img.save(buf, format='JPEG', quality=quality, optimize=True)
+        if buf.tell() <= max_size_mb * 1024 * 1024:
+            break
+        quality -= 15
+
+    return buf.getvalue(), "image/jpeg"
+
+
+async def extrair_dados_nf_foto(image_bytes: bytes, media_type: str = "image/jpeg") -> Dict:
+    """
+    Usa Claude Vision para extrair dados estruturados de uma foto de OS/NF.
+    Retorna dict com: oficina, data, itens, valor_total, placa.
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return {"error": "ANTHROPIC_API_KEY nao configurada"}
+
+    # Comprimir se necessario (fotos de celular podem ter 50MB+)
+    image_bytes, media_type = _comprimir_imagem(image_bytes)
+    logger.info(f"Imagem para OCR: {len(image_bytes)/1024:.0f}KB")
+
+    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    prompt = """Analise esta foto de uma Ordem de Servico (OS) ou Nota Fiscal (NF) de manutencao de veiculo.
+
+Extraia os seguintes dados e retorne APENAS um JSON valido (sem markdown, sem texto extra):
+
+{
+  "oficina": {
+    "nome": "nome do estabelecimento",
+    "telefone": "telefone se visivel",
+    "endereco": "endereco se visivel"
+  },
+  "data": "YYYY-MM-DD",
+  "itens": [
+    {"descricao": "descricao do servico/peca", "valor": 1234.56}
+  ],
+  "valor_total": 1234.56,
+  "placa": "ABC1234 ou null se nao visivel",
+  "modelo": "modelo do veiculo ou null"
+}
+
+Regras:
+- Valores monetarios em float (R$ 2.600,00 = 2600.00)
+- Data no formato YYYY-MM-DD
+- Se um campo nao for visivel, use null
+- Cada servico/peca deve ser um item separado na lista
+- Inclua TODOS os itens visiveis no documento"""
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 1000,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": image_base64
+                                }
+                            },
+                            {"type": "text", "text": prompt}
+                        ]
+                    }]
+                }
+            )
+
+        if response.status_code != 200:
+            logger.error(f"Claude Vision API error: {response.status_code} {response.text}")
+            return {"error": f"Erro na API: {response.status_code}"}
+
+        result = response.json()
+        text = result.get("content", [{}])[0].get("text", "")
+
+        # Extrair JSON da resposta
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json.loads(text[start:end])
+
+        return {"error": "Nao foi possivel extrair dados da imagem"}
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Erro ao parsear JSON da Vision API: {e}")
+        return {"error": "Erro ao interpretar dados extraidos"}
+    except Exception as e:
+        logger.error(f"Erro na extracao de dados NF: {e}")
+        return {"error": str(e)}
+
+
+async def garantir_pasta_nf_drive(veiculo_id: int, placa: str, access_token: str) -> Optional[str]:
+    """
+    Garante que existe uma pasta no Google Drive para NFs do veiculo.
+    Cria hierarquia INTEL/Veiculos/{placa}/NFs/ se necessario.
+    Retorna o folder_id da pasta NFs.
+    """
+    from integrations.google_drive import create_folder, list_folders, get_folder_contents
+
+    async def find_or_create(name: str, parent_id: str = None) -> str:
+        """Busca pasta por nome no parent, cria se nao existir."""
+        try:
+            folders = await list_folders(access_token, parent_id)
+            for f in folders:
+                if f.get('name', '').lower() == name.lower():
+                    return f['id']
+        except Exception:
+            pass
+        result = await create_folder(access_token, name, parent_id)
+        return result['id']
+
+    try:
+        # Verificar se veiculo ja tem pasta no Drive
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT google_drive_folder_id FROM veiculos WHERE id = %s", (veiculo_id,))
+            row = cursor.fetchone()
+            veiculo_folder_id = row['google_drive_folder_id'] if row and row.get('google_drive_folder_id') else None
+
+        if veiculo_folder_id:
+            # Ja tem pasta do veiculo, buscar/criar NFs dentro
+            nf_folder_id = await find_or_create("NFs", veiculo_folder_id)
+            return nf_folder_id
+
+        # Criar hierarquia completa: INTEL/Veiculos/{placa}/NFs/
+        intel_id = await find_or_create("INTEL")
+        veiculos_id = await find_or_create("Veiculos", intel_id)
+        placa_id = await find_or_create(placa.upper(), veiculos_id)
+        nf_id = await find_or_create("NFs", placa_id)
+
+        # Salvar folder do veiculo (nivel placa) para proximos uploads
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE veiculos SET google_drive_folder_id = %s WHERE id = %s",
+                (placa_id, veiculo_id)
+            )
+            conn.commit()
+
+        return nf_id
+
+    except Exception as e:
+        logger.error(f"Erro ao criar pasta Drive para veiculo {veiculo_id}: {e}")
+        return None
 
 
 def registrar_manutencao(veiculo_id: int, dados: Dict) -> Dict:
