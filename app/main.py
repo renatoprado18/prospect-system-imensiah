@@ -6291,6 +6291,17 @@ async def cron_daily_sync(request: Request):
     except Exception as e:
         results["steps"]["sync_gmail"] = {"status": "error", "error": str(e)}
 
+    # 5b. Check payment cycle replies
+    try:
+        from services.payment_cycle import check_payment_replies
+        with get_db() as conn:
+            pay_token = await get_valid_token(conn, 'professional')
+        if pay_token:
+            payment_result = await check_payment_replies(pay_token)
+            results["steps"]["payment_cycle"] = {"status": "success", "result": payment_result}
+    except Exception as e:
+        results["steps"]["payment_cycle"] = {"status": "error", "error": str(e)}
+
     # 6. Sync WhatsApp
     try:
         from services.whatsapp_sync import get_whatsapp_sync_service
@@ -14423,6 +14434,40 @@ async def api_delete_milestone(milestone_id: int):
     if delete_milestone(milestone_id):
         return {"status": "success"}
     raise HTTPException(status_code=404, detail="Marco nao encontrado")
+
+
+# ============== PAYMENT CYCLE ==============
+
+@app.post("/api/projects/{project_id}/payment-cycle/preview")
+async def api_payment_cycle_preview(project_id: int, request: Request):
+    """Preview do email de cobranca"""
+    from services.payment_cycle import generate_payment_email
+    data = await request.json()
+    result = generate_payment_email(
+        project_id,
+        month=data.get('month', datetime.now().month),
+        year=data.get('year', datetime.now().year),
+        expenses_override=data.get('expenses')
+    )
+    if result.get('error'):
+        raise HTTPException(status_code=400, detail=result['error'])
+    return result
+
+
+@app.post("/api/projects/{project_id}/payment-cycle/send")
+async def api_payment_cycle_send(project_id: int, request: Request):
+    """Envia email de cobranca e cria milestone"""
+    from services.payment_cycle import send_payment_email
+    data = await request.json()
+    result = await send_payment_email(
+        project_id,
+        month=data.get('month', datetime.now().month),
+        year=data.get('year', datetime.now().year),
+        expenses=data.get('expenses')
+    )
+    if result.get('error'):
+        raise HTTPException(status_code=400, detail=result['error'])
+    return result
 
 
 # ============== PROJECT NOTES ==============

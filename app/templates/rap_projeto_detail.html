@@ -769,9 +769,15 @@
                             <h3 class="section-title">
                                 <i class="bi bi-flag text-warning"></i> Marcos
                             </h3>
-                            <button class="btn btn-sm btn-outline-primary" onclick="openAddMilestoneModal()">
-                                <i class="bi bi-plus"></i> Adicionar
-                            </button>
+                            <div style="display:flex;gap:6px;">
+                                ${project.metadata?.payment_cycle?.enabled ? `
+                                <button class="btn btn-sm btn-outline-success" onclick="openCobrancaModal()">
+                                    <i class="bi bi-envelope-paper"></i> Enviar Cobranca
+                                </button>` : ''}
+                                <button class="btn btn-sm btn-outline-primary" onclick="openAddMilestoneModal()">
+                                    <i class="bi bi-plus"></i> Adicionar
+                                </button>
+                            </div>
                         </div>
                         <div class="section-body">
                             ${renderMilestones()}
@@ -1338,7 +1344,10 @@
                         <i class="bi bi-${isDone ? 'check' : 'flag'}"></i>
                     </div>
                     <div class="flex-grow-1">
-                        <div class="fw-semibold ${isDone ? 'text-decoration-line-through text-muted' : ''}">${m.titulo}</div>
+                        <div class="fw-semibold ${isDone ? 'text-decoration-line-through text-muted' : ''}">
+                            ${m.titulo}
+                            ${m.email_thread_id ? `<a href="https://mail.google.com/mail/u/0/#inbox/${m.email_thread_id}" target="_blank" class="ms-2" title="Ver thread no Gmail" style="color:#6366f1;"><i class="bi bi-envelope-check"></i></a>` : ''}
+                        </div>
                         ${m.descricao ? `<small class="text-muted">${m.descricao}</small>` : ''}
                         ${dateHtml}
                     </div>
@@ -2208,5 +2217,198 @@
         const d = new Date(dateStr);
         return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'});
     }
+
+    // ============ Payment Cycle (Cobranca) ============
+    function openCobrancaModal() {
+        const config = project.metadata?.payment_cycle;
+        if (!config) { showToast('Projeto sem payment_cycle configurado', 'danger'); return; }
+
+        const now = new Date();
+        document.getElementById('cobrancaMes').value = now.getMonth() + 1;
+        document.getElementById('cobrancaAno').value = now.getFullYear();
+
+        // Popular tabela de despesas
+        const container = document.getElementById('cobrancaItens');
+        const expenses = config.expenses || [];
+        container.innerHTML = expenses.map((e, i) => `
+            <tr>
+                <td><input type="text" class="form-control form-control-sm cb-nome" value="${e.nome}" data-index="${i}"></td>
+                <td><input type="number" class="form-control form-control-sm cb-valor" value="${e.valor}" step="0.01" data-index="${i}" onchange="calcularTotalCobranca()"></td>
+                <td><input type="text" class="form-control form-control-sm cb-pix" value="${e.pix || ''}" data-index="${i}"></td>
+                <td class="text-center"><input type="number" class="form-control form-control-sm cb-venc" value="${e.vencimento_dia || ''}" data-index="${i}" style="width:60px;"></td>
+            </tr>
+        `).join('');
+        calcularTotalCobranca();
+
+        // Resetar para estado de edicao
+        document.getElementById('cobrancaEditStep').style.display = 'block';
+        document.getElementById('cobrancaPreviewStep').style.display = 'none';
+        document.getElementById('cobrancaSendingStep').style.display = 'none';
+
+        new bootstrap.Modal(document.getElementById('cobrancaModal')).show();
+    }
+
+    function calcularTotalCobranca() {
+        let total = 0;
+        document.querySelectorAll('.cb-valor').forEach(input => {
+            total += parseFloat(input.value) || 0;
+        });
+        document.getElementById('cobrancaTotal').textContent = `R$ ${total.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
+    }
+
+    function getCobrancaExpenses() {
+        const rows = document.querySelectorAll('#cobrancaItens tr');
+        return Array.from(rows).map(row => ({
+            nome: row.querySelector('.cb-nome').value,
+            valor: parseFloat(row.querySelector('.cb-valor').value) || 0,
+            pix: row.querySelector('.cb-pix').value,
+            vencimento_dia: parseInt(row.querySelector('.cb-venc').value) || 0
+        })).filter(e => e.valor > 0);
+    }
+
+    async function previewCobranca() {
+        const expenses = getCobrancaExpenses();
+        const month = parseInt(document.getElementById('cobrancaMes').value);
+        const year = parseInt(document.getElementById('cobrancaAno').value);
+
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/payment-cycle/preview`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ month, year, expenses })
+            });
+            const data = await resp.json();
+            if (!resp.ok) { showToast(data.detail || 'Erro', 'danger'); return; }
+
+            document.getElementById('cobrancaPreviewHtml').innerHTML = data.body_html;
+            document.getElementById('cobrancaPreviewSubject').textContent = `Para: ${data.to} | Assunto: ${data.subject}`;
+            document.getElementById('cobrancaEditStep').style.display = 'none';
+            document.getElementById('cobrancaPreviewStep').style.display = 'block';
+        } catch (e) {
+            showToast('Erro ao gerar preview', 'danger');
+        }
+    }
+
+    function voltarEdicaoCobranca() {
+        document.getElementById('cobrancaEditStep').style.display = 'block';
+        document.getElementById('cobrancaPreviewStep').style.display = 'none';
+    }
+
+    async function enviarCobranca() {
+        const expenses = getCobrancaExpenses();
+        const month = parseInt(document.getElementById('cobrancaMes').value);
+        const year = parseInt(document.getElementById('cobrancaAno').value);
+
+        document.getElementById('cobrancaPreviewStep').style.display = 'none';
+        document.getElementById('cobrancaSendingStep').style.display = 'block';
+
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/payment-cycle/send`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ month, year, expenses })
+            });
+            const data = await resp.json();
+
+            if (resp.ok && data.success) {
+                bootstrap.Modal.getInstance(document.getElementById('cobrancaModal')).hide();
+                showToast(`Email enviado! Total R$ ${data.total?.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`, 'success');
+                loadProject();
+            } else {
+                document.getElementById('cobrancaSendingStep').style.display = 'none';
+                document.getElementById('cobrancaPreviewStep').style.display = 'block';
+                showToast(data.detail || data.error || 'Erro ao enviar', 'danger');
+            }
+        } catch (e) {
+            document.getElementById('cobrancaSendingStep').style.display = 'none';
+            document.getElementById('cobrancaPreviewStep').style.display = 'block';
+            showToast('Erro ao enviar email', 'danger');
+        }
+    }
 </script>
+
+<!-- Modal Cobranca -->
+<div class="modal fade" id="cobrancaModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <!-- Edicao -->
+            <div id="cobrancaEditStep">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-envelope-paper text-success me-2"></i>Enviar Cobranca</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Mes</label>
+                            <select id="cobrancaMes" class="form-select">
+                                <option value="1">Janeiro</option><option value="2">Fevereiro</option>
+                                <option value="3">Marco</option><option value="4">Abril</option>
+                                <option value="5">Maio</option><option value="6">Junho</option>
+                                <option value="7">Julho</option><option value="8">Agosto</option>
+                                <option value="9">Setembro</option><option value="10">Outubro</option>
+                                <option value="11">Novembro</option><option value="12">Dezembro</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Ano</label>
+                            <input type="number" id="cobrancaAno" class="form-control" value="2026">
+                        </div>
+                    </div>
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Despesa</th>
+                                <th style="width:120px;">Valor (R$)</th>
+                                <th>PIX / Dados</th>
+                                <th style="width:70px;">Dia Venc.</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cobrancaItens"></tbody>
+                        <tfoot>
+                            <tr class="table-success">
+                                <td colspan="3" class="fw-bold">TOTAL</td>
+                                <td id="cobrancaTotal" class="fw-bold text-end" colspan="1">R$ 0,00</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button class="btn btn-primary" onclick="previewCobranca()">
+                        <i class="bi bi-eye me-1"></i>Preview do Email
+                    </button>
+                </div>
+            </div>
+
+            <!-- Preview -->
+            <div id="cobrancaPreviewStep" style="display:none;">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-eye text-primary me-2"></i>Preview do Email</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small mb-3" id="cobrancaPreviewSubject"></p>
+                    <div id="cobrancaPreviewHtml" style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; background: #fafafa;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline-secondary" onclick="voltarEdicaoCobranca()">
+                        <i class="bi bi-arrow-left me-1"></i>Voltar
+                    </button>
+                    <button class="btn btn-success" onclick="enviarCobranca()">
+                        <i class="bi bi-send me-1"></i>Enviar Email
+                    </button>
+                </div>
+            </div>
+
+            <!-- Sending -->
+            <div id="cobrancaSendingStep" style="display:none;">
+                <div class="modal-body text-center py-5">
+                    <div class="spinner-border text-success mb-3" style="width:3rem;height:3rem;"></div>
+                    <p class="text-muted">Enviando email para Orestes...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}

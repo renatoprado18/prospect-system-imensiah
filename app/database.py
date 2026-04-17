@@ -1133,6 +1133,13 @@ def init_db():
             ON project_milestones(project_id)
         ''')
 
+        cursor.execute('''
+            ALTER TABLE project_milestones
+            ADD COLUMN IF NOT EXISTS email_thread_id TEXT,
+            ADD COLUMN IF NOT EXISTS email_message_id TEXT,
+            ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'
+        ''')
+
         # Project messages - emails/whatsapp relacionados
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS project_messages (

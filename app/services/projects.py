@@ -380,7 +380,7 @@ def update_project(project_id: int, data: Dict) -> Optional[Dict]:
         allowed = ['nome', 'descricao', 'tipo', 'status', 'prioridade',
                    'data_inicio', 'data_previsao', 'data_conclusao',
                    'cor', 'icone', 'empresa_relacionada', 'valor_estimado', 'notas', 'tags',
-                   'google_drive_folder_id']
+                   'google_drive_folder_id', 'metadata']
 
         updates = []
         values = []
@@ -477,7 +477,8 @@ def update_milestone(milestone_id: int, data: Dict) -> Optional[Dict]:
 
         updates = []
         values = []
-        for field in ['titulo', 'descricao', 'data_prevista', 'data_conclusao', 'status', 'ordem']:
+        for field in ['titulo', 'descricao', 'data_prevista', 'data_conclusao', 'status', 'ordem',
+                      'email_thread_id', 'email_message_id', 'metadata']:
             if field in data:
                 updates.append(f"{field} = %s")
                 values.append(data[field])
