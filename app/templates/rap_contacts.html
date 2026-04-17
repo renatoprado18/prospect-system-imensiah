@@ -746,10 +746,21 @@
     let currentFilter = 'all';
     let currentSearch = '';
     let currentLetter = '';
+    let specialFilter = '';
     const perPage = 30;
 
     // Init
     document.addEventListener('DOMContentLoaded', () => {
+        // Check URL params for special filters
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('filter') === 'needs_attention') {
+            specialFilter = 'needs_attention';
+            // Update page title
+            document.querySelector('.page-subtitle, .text-muted')?.remove();
+            const header = document.querySelector('h1') || document.querySelector('.page-title');
+            if (header) header.textContent = 'Contatos que Precisam Atencao';
+        }
+
         loadStats();
         loadContacts();
         setupAlphabetFilter();
@@ -843,6 +854,10 @@
 
             if (currentFilter !== 'all') {
                 url += `&contexto=${currentFilter}`;
+            }
+
+            if (specialFilter) {
+                url += `&filter=${specialFilter}`;
             }
 
             const response = await fetch(url);

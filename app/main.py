@@ -3282,6 +3282,7 @@ async def list_contacts(
     q: Optional[str] = None,  # Alias for search
     letter: Optional[str] = None,  # Filter by first letter of name
     contexto: Optional[str] = None,
+    filter: Optional[str] = None,  # Special filters: needs_attention
     limit: int = Query(50, le=500),
     offset: int = 0
 ):
@@ -3294,6 +3295,10 @@ async def list_contacts(
 
     query = "SELECT * FROM contacts WHERE 1=1"
     params = []
+
+    # Special filters
+    if filter == 'needs_attention':
+        query += " AND COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL"
 
     # Filter by first letter of name
     if letter and len(letter) == 1:
@@ -3310,7 +3315,10 @@ async def list_contacts(
         query += " AND contexto = %s"
         params.append(contexto)
 
-    query += " ORDER BY nome ASC LIMIT %s OFFSET %s"
+    if filter == 'needs_attention':
+        query += " ORDER BY circulo ASC, health_score ASC LIMIT %s OFFSET %s"
+    else:
+        query += " ORDER BY nome ASC LIMIT %s OFFSET %s"
     params.extend([limit, offset])
 
     cursor.execute(query, params)
@@ -3319,6 +3327,8 @@ async def list_contacts(
     # Count total
     count_query = "SELECT COUNT(*) as count FROM contacts WHERE 1=1"
     count_params = []
+    if filter == 'needs_attention':
+        count_query += " AND COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL"
     if letter and len(letter) == 1:
         count_query += " AND UPPER(LEFT(nome, 1)) = %s"
         count_params.append(letter.upper())
