@@ -15694,6 +15694,12 @@ async def api_listar_oficinas():
     return listar_oficinas()
 
 
+@app.get("/oficinas", response_class=HTMLResponse)
+async def oficinas_page(request: Request):
+    """Pagina de gerenciamento de oficinas"""
+    return templates.TemplateResponse("rap_oficinas.html", {"request": request})
+
+
 @app.get("/api/oficinas/{oficina_id}")
 async def api_get_oficina(oficina_id: int):
     """Busca oficina por ID"""

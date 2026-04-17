@@ -740,9 +740,13 @@
 
             <!-- Veiculos -->
             <div class="nav-section">Veiculos</div>
-            <a href="/veiculos" class="nav-item {% if '/veiculos' in request.path %}active{% endif %}">
+            <a href="/veiculos" class="nav-item {% if '/veiculos' in request.path and '/oficinas' not in request.path %}active{% endif %}">
                 <i class="bi bi-car-front"></i>
                 <span>Meus Veiculos</span>
+            </a>
+            <a href="/oficinas" class="nav-item {% if '/oficinas' in request.path %}active{% endif %}">
+                <i class="bi bi-wrench"></i>
+                <span>Oficinas</span>
             </a>
 
             <!-- Ferramentas -->

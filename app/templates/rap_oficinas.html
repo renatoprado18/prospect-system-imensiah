@@ -1,0 +1,462 @@
+{% extends "rap_base.html" %}
+
+{% block title %}Oficinas - INTEL{% endblock %}
+
+{% block page_title %}Oficinas{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle">Gerenciamento de oficinas e prestadores de servico</p>{% endblock %}
+
+{% block header_actions %}
+<button class="btn btn-primary" onclick="abrirModalOficina()">
+    <i class="bi bi-plus-circle"></i> Nova Oficina
+</button>
+{% endblock %}
+
+{% block extra_css %}
+.oficinas-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.oficina-card {
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 12px;
+    padding: 20px;
+    transition: box-shadow 0.2s;
+}
+
+.oficina-card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.oficina-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.oficina-nome {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-primary, #1e293b);
+}
+
+.oficina-apelido {
+    font-size: 0.8rem;
+    color: var(--text-secondary, #64748b);
+}
+
+.oficina-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.oficina-actions button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-secondary, #64748b);
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+
+.oficina-actions button:hover {
+    background: var(--bg-secondary, #f1f5f9);
+    color: var(--text-primary, #1e293b);
+}
+
+.oficina-contato {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-secondary, #64748b);
+    margin-bottom: 8px;
+}
+
+.oficina-contato i { width: 16px; text-align: center; }
+
+.oficina-especialidades {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+}
+
+.oficina-especialidades .tag {
+    background: rgba(99, 102, 241, 0.1);
+    color: #6366f1;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.oficina-servicos {
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: var(--text-secondary, #64748b);
+}
+
+.oficina-notas {
+    margin-top: 10px;
+    font-size: 0.8rem;
+    color: var(--text-secondary, #64748b);
+    font-style: italic;
+    border-left: 3px solid var(--border-color, #e2e8f0);
+    padding-left: 10px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-secondary, #64748b);
+}
+
+.empty-state i {
+    font-size: 3rem;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+/* Modal */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(15, 23, 42, 0.92);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    backdrop-filter: blur(8px);
+}
+
+.modal-overlay.show { display: flex; }
+
+.modal-box {
+    background: #ffffff;
+    border-radius: 16px;
+    width: 90%;
+    max-width: 550px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+    border: 2px solid #94a3b8;
+}
+
+.modal-box .modal-header {
+    padding: 20px 24px 12px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.modal-box .modal-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    color: #1e293b;
+}
+
+.modal-box .modal-body {
+    padding: 16px 24px;
+}
+
+.modal-box .modal-footer {
+    padding: 12px 24px 20px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    border-top: 1px solid #e2e8f0;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.form-group {
+    margin-bottom: 12px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #475569;
+    margin-bottom: 4px;
+}
+
+.form-group input, .form-group textarea {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    color: #1e293b;
+    background: #f8fafc;
+}
+
+.form-group textarea { resize: vertical; min-height: 60px; }
+{% endblock %}
+
+{% block content %}
+<div class="oficinas-grid" id="oficinasGrid">
+    <div class="empty-state">
+        <i class="bi bi-wrench"></i>
+        <p>Carregando oficinas...</p>
+    </div>
+</div>
+
+<!-- Modal Nova/Editar Oficina -->
+<div class="modal-overlay" id="oficinaModal">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3 id="modalTitle">Nova Oficina</h3>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="editId">
+            <div class="form-group">
+                <label>Nome *</label>
+                <input type="text" id="ofNome" placeholder="Ex: Sollo 4WD">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Apelido</label>
+                    <input type="text" id="ofApelido" placeholder="Nome curto">
+                </div>
+                <div class="form-group">
+                    <label>Contato (pessoa)</label>
+                    <input type="text" id="ofContato" placeholder="Ex: Sr. Joao">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Telefone</label>
+                    <input type="text" id="ofTelefone" placeholder="+5511...">
+                </div>
+                <div class="form-group">
+                    <label>WhatsApp</label>
+                    <input type="text" id="ofWhatsapp" placeholder="+5511...">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Endereco</label>
+                <input type="text" id="ofEndereco" placeholder="Rua, numero, bairro">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Cidade</label>
+                    <input type="text" id="ofCidade" placeholder="Sao Paulo">
+                </div>
+                <div class="form-group">
+                    <label>Estado</label>
+                    <input type="text" id="ofEstado" placeholder="SP" maxlength="2">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="ofEmail" placeholder="email@oficina.com">
+                </div>
+                <div class="form-group">
+                    <label>Website</label>
+                    <input type="text" id="ofWebsite" placeholder="https://...">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Especialidades (separadas por virgula)</label>
+                <input type="text" id="ofEspecialidades" placeholder="Toyota 4x4, Land Cruiser, Motor Diesel">
+            </div>
+            <div class="form-group">
+                <label>Servicos (separados por virgula)</label>
+                <textarea id="ofServicos" placeholder="Manutencao preventiva, Suspensao, Transmissao 4x4"></textarea>
+            </div>
+            <div class="form-group">
+                <label>Notas</label>
+                <textarea id="ofNotas" placeholder="Observacoes sobre a oficina..."></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="fecharModal()">Cancelar</button>
+            <button class="btn btn-primary" id="btnSalvar" onclick="salvarOficina()">
+                <i class="bi bi-check-circle"></i> Salvar
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let oficinas = [];
+
+    async function carregarOficinas() {
+        try {
+            const resp = await fetch('/api/oficinas');
+            oficinas = resp.ok ? await resp.json() : [];
+            renderOficinas();
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    function renderOficinas() {
+        const grid = document.getElementById('oficinasGrid');
+
+        if (!oficinas.length) {
+            grid.innerHTML = `
+                <div class="empty-state" style="grid-column: 1/-1;">
+                    <i class="bi bi-wrench"></i>
+                    <p>Nenhuma oficina cadastrada</p>
+                    <button class="btn btn-primary" onclick="abrirModalOficina()" style="margin-top: 12px;">
+                        <i class="bi bi-plus-circle"></i> Adicionar primeira oficina
+                    </button>
+                </div>`;
+            return;
+        }
+
+        grid.innerHTML = oficinas.map(o => {
+            const especialidades = (o.especialidades || []).map(e =>
+                `<span class="tag">${e}</span>`
+            ).join('');
+
+            const servicos = (o.servicos || []);
+            const servicosText = servicos.length > 0
+                ? `<div class="oficina-servicos"><strong>${servicos.length} servicos:</strong> ${servicos.slice(0, 5).join(', ')}${servicos.length > 5 ? '...' : ''}</div>`
+                : '';
+
+            return `
+                <div class="oficina-card">
+                    <div class="oficina-header">
+                        <div>
+                            <div class="oficina-nome">${o.nome}</div>
+                            ${o.apelido ? `<div class="oficina-apelido">${o.apelido}</div>` : ''}
+                        </div>
+                        <div class="oficina-actions">
+                            <button onclick="editarOficina(${o.id})" title="Editar"><i class="bi bi-pencil"></i></button>
+                            <button onclick="excluirOficina(${o.id}, '${o.nome}')" title="Excluir"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </div>
+
+                    ${o.contato_nome ? `<div class="oficina-contato"><i class="bi bi-person"></i> ${o.contato_nome}</div>` : ''}
+                    ${o.telefone ? `<div class="oficina-contato"><i class="bi bi-telephone"></i> ${o.telefone}</div>` : ''}
+                    ${o.whatsapp ? `<div class="oficina-contato"><i class="bi bi-whatsapp"></i> <a href="https://wa.me/${o.whatsapp.replace(/[^0-9]/g, '')}" target="_blank">${o.whatsapp}</a></div>` : ''}
+                    ${o.endereco ? `<div class="oficina-contato"><i class="bi bi-geo-alt"></i> ${o.endereco}</div>` : ''}
+                    ${o.email ? `<div class="oficina-contato"><i class="bi bi-envelope"></i> ${o.email}</div>` : ''}
+                    ${o.website ? `<div class="oficina-contato"><i class="bi bi-globe"></i> <a href="${o.website}" target="_blank">${o.website}</a></div>` : ''}
+
+                    ${especialidades ? `<div class="oficina-especialidades">${especialidades}</div>` : ''}
+                    ${servicosText}
+                    ${o.notas ? `<div class="oficina-notas">${o.notas}</div>` : ''}
+                </div>`;
+        }).join('');
+    }
+
+    function abrirModalOficina() {
+        document.getElementById('modalTitle').textContent = 'Nova Oficina';
+        document.getElementById('editId').value = '';
+        limparForm();
+        document.getElementById('oficinaModal').classList.add('show');
+    }
+
+    function fecharModal() {
+        document.getElementById('oficinaModal').classList.remove('show');
+    }
+
+    function limparForm() {
+        ['ofNome','ofApelido','ofContato','ofTelefone','ofWhatsapp','ofEndereco',
+         'ofCidade','ofEstado','ofEmail','ofWebsite','ofEspecialidades','ofServicos','ofNotas']
+            .forEach(id => document.getElementById(id).value = '');
+    }
+
+    function editarOficina(id) {
+        const o = oficinas.find(x => x.id === id);
+        if (!o) return;
+
+        document.getElementById('modalTitle').textContent = 'Editar Oficina';
+        document.getElementById('editId').value = id;
+        document.getElementById('ofNome').value = o.nome || '';
+        document.getElementById('ofApelido').value = o.apelido || '';
+        document.getElementById('ofContato').value = o.contato_nome || '';
+        document.getElementById('ofTelefone').value = o.telefone || '';
+        document.getElementById('ofWhatsapp').value = o.whatsapp || '';
+        document.getElementById('ofEndereco').value = o.endereco || '';
+        document.getElementById('ofCidade').value = o.cidade || '';
+        document.getElementById('ofEstado').value = o.estado || '';
+        document.getElementById('ofEmail').value = o.email || '';
+        document.getElementById('ofWebsite').value = o.website || '';
+        document.getElementById('ofEspecialidades').value = (o.especialidades || []).join(', ');
+        document.getElementById('ofServicos').value = (o.servicos || []).join(', ');
+        document.getElementById('ofNotas').value = o.notas || '';
+
+        document.getElementById('oficinaModal').classList.add('show');
+    }
+
+    async function salvarOficina() {
+        const nome = document.getElementById('ofNome').value.trim();
+        if (!nome) { alert('Nome obrigatorio'); return; }
+
+        const parseList = (val) => val ? val.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+        const dados = {
+            nome: nome,
+            apelido: document.getElementById('ofApelido').value.trim() || null,
+            contato_nome: document.getElementById('ofContato').value.trim() || null,
+            telefone: document.getElementById('ofTelefone').value.trim() || null,
+            whatsapp: document.getElementById('ofWhatsapp').value.trim() || null,
+            endereco: document.getElementById('ofEndereco').value.trim() || null,
+            cidade: document.getElementById('ofCidade').value.trim() || null,
+            estado: document.getElementById('ofEstado').value.trim() || null,
+            email: document.getElementById('ofEmail').value.trim() || null,
+            website: document.getElementById('ofWebsite').value.trim() || null,
+            especialidades: parseList(document.getElementById('ofEspecialidades').value),
+            servicos: parseList(document.getElementById('ofServicos').value),
+            notas: document.getElementById('ofNotas').value.trim() || null
+        };
+
+        const editId = document.getElementById('editId').value;
+        const url = editId ? `/api/oficinas/${editId}` : '/api/oficinas';
+        const method = editId ? 'PUT' : 'POST';
+
+        try {
+            const resp = await fetch(url, {
+                method: method,
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(dados)
+            });
+
+            if (resp.ok) {
+                fecharModal();
+                carregarOficinas();
+            } else {
+                const err = await resp.json();
+                alert(err.detail || 'Erro ao salvar');
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Erro ao salvar oficina');
+        }
+    }
+
+    async function excluirOficina(id, nome) {
+        if (!confirm(`Desativar oficina "${nome}"?`)) return;
+        try {
+            const resp = await fetch(`/api/oficinas/${id}`, { method: 'DELETE' });
+            if (resp.ok) carregarOficinas();
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    // Close modal on backdrop click
+    document.getElementById('oficinaModal').addEventListener('click', (e) => {
+        if (e.target.id === 'oficinaModal') fecharModal();
+    });
+
+    // Init
+    carregarOficinas();
+</script>
+{% endblock %}
