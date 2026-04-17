@@ -14454,9 +14454,10 @@ async def api_smart_update_apply(project_id: int, request: Request):
     from services.project_smart_update import apply_smart_updates
     data = await request.json()
     task_ids = data.get('task_ids', [])
-    if not task_ids:
-        raise HTTPException(status_code=400, detail="Nenhuma tarefa selecionada")
-    result = await apply_smart_updates(project_id, task_ids)
+    new_tasks = data.get('new_tasks', [])
+    if not task_ids and not new_tasks:
+        raise HTTPException(status_code=400, detail="Nenhuma acao selecionada")
+    result = await apply_smart_updates(project_id, task_ids, new_tasks)
     return result
 
 

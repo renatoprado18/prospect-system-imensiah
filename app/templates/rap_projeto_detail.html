@@ -2286,14 +2286,19 @@
                 sugContainer.innerHTML = '<p class="text-muted small">Nenhuma tarefa identificada para conclusao.</p>';
             }
 
-            // Novas tarefas sugeridas
+            // Novas tarefas sugeridas (com checkbox para criar)
             const newContainer = document.getElementById('smartUpdateNewTasks');
             if (newTasks.length > 0) {
                 newContainer.innerHTML = '<h6 class="mt-3 mb-2"><i class="bi bi-lightbulb text-warning me-1"></i>Novas tarefas sugeridas:</h6>' +
-                    newTasks.map(t => `
-                    <div class="p-2 mb-2 rounded" style="background: #eff6ff; border: 1px solid #bfdbfe;">
-                        <div class="fw-semibold small">${t.titulo}</div>
-                        <div class="text-muted" style="font-size: 0.75rem;">${t.reasoning}</div>
+                    newTasks.map((t, i) => `
+                    <div class="form-check mb-2 p-3 rounded" style="background: #eff6ff; border: 1px solid #bfdbfe;">
+                        <input class="form-check-input new-task-check" type="checkbox" id="nt-${i}" checked
+                               data-titulo="${(t.titulo || '').replace(/"/g, '&quot;')}"
+                               data-responsavel="${(t.responsavel || '').replace(/"/g, '&quot;')}">
+                        <label class="form-check-label" for="nt-${i}">
+                            <div class="fw-semibold small">${t.titulo}</div>
+                            <div class="text-muted" style="font-size: 0.75rem;">${t.reasoning}</div>
+                        </label>
                     </div>
                 `).join('');
             } else {
@@ -2309,11 +2314,19 @@
     }
 
     async function applySmartUpdates() {
-        const checkboxes = document.querySelectorAll('#smartUpdateSuggestions input[type="checkbox"]:checked');
-        const taskIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+        // Tarefas a completar
+        const completeChecks = document.querySelectorAll('#smartUpdateSuggestions input[type="checkbox"]:checked');
+        const taskIds = Array.from(completeChecks).map(cb => parseInt(cb.value));
 
-        if (taskIds.length === 0) {
-            showToast('Selecione pelo menos uma tarefa', 'warning');
+        // Novas tarefas a criar
+        const newTaskChecks = document.querySelectorAll('.new-task-check:checked');
+        const newTasks = Array.from(newTaskChecks).map(cb => ({
+            titulo: cb.dataset.titulo,
+            responsavel: cb.dataset.responsavel
+        }));
+
+        if (taskIds.length === 0 && newTasks.length === 0) {
+            showToast('Selecione pelo menos uma acao', 'warning');
             return;
         }
 
@@ -2321,13 +2334,16 @@
             const resp = await fetch(`/api/projects/${projectId}/smart-update/apply`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ task_ids: taskIds })
+                body: JSON.stringify({ task_ids: taskIds, new_tasks: newTasks })
             });
             const data = await resp.json();
 
             if (resp.ok) {
                 bootstrap.Modal.getInstance(document.getElementById('smartUpdateModal')).hide();
-                showToast(`${data.completed} tarefa(s) concluida(s)!`, 'success');
+                const msgs = [];
+                if (data.completed > 0) msgs.push(`${data.completed} concluida(s)`);
+                if (data.created > 0) msgs.push(`${data.created} criada(s)`);
+                showToast(`Tarefas: ${msgs.join(', ')}!`, 'success');
                 loadProject();
             } else {
                 showToast(data.detail || 'Erro ao aplicar', 'danger');

@@ -199,17 +199,19 @@ Seja conservador: so sugira completar se ha evidencia clara nas mensagens."""
         return {"error": str(e)}
 
 
-async def apply_smart_updates(project_id: int, task_ids: List[int]) -> Dict:
+async def apply_smart_updates(project_id: int, task_ids: List[int] = None,
+                               new_tasks: List[Dict] = None) -> Dict:
     """
-    Aplica as sugestoes: marca tarefas como concluidas.
+    Aplica as sugestoes: marca tarefas como concluidas e cria novas.
     """
-    results = {"completed": 0, "errors": []}
+    results = {"completed": 0, "created": 0, "errors": []}
 
     with get_db() as conn:
         cursor = conn.cursor()
-        for task_id in task_ids:
+
+        # Completar tarefas
+        for task_id in (task_ids or []):
             try:
-                # Verificar que a tarefa pertence ao projeto
                 cursor.execute(
                     "SELECT id FROM tasks WHERE id = %s AND project_id = %s AND status != 'completed'",
                     (task_id, project_id)
@@ -219,14 +221,39 @@ async def apply_smart_updates(project_id: int, task_ids: List[int]) -> Dict:
                     continue
 
                 cursor.execute("""
-                    UPDATE tasks
-                    SET status = 'completed', data_conclusao = NOW()
+                    UPDATE tasks SET status = 'completed', data_conclusao = NOW()
                     WHERE id = %s
                 """, (task_id,))
                 results["completed"] += 1
-
             except Exception as e:
                 results["errors"].append(f"Erro tarefa {task_id}: {str(e)}")
+
+        # Criar novas tarefas
+        for task in (new_tasks or []):
+            try:
+                titulo = task.get('titulo', '').strip()
+                if not titulo:
+                    continue
+
+                # Buscar contact_id do responsavel se fornecido
+                contact_id = None
+                responsavel = task.get('responsavel', '')
+                if responsavel:
+                    cursor.execute(
+                        "SELECT id FROM contacts WHERE nome ILIKE %s LIMIT 1",
+                        (f"%{responsavel}%",)
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        contact_id = row['id']
+
+                cursor.execute("""
+                    INSERT INTO tasks (project_id, titulo, status, contact_id, prioridade)
+                    VALUES (%s, %s, 'pending', %s, 5)
+                """, (project_id, titulo, contact_id))
+                results["created"] += 1
+            except Exception as e:
+                results["errors"].append(f"Erro ao criar '{task.get('titulo', '?')}': {str(e)}")
 
         conn.commit()
 
