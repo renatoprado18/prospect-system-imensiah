@@ -14210,7 +14210,7 @@ async def api_project_briefing(request: Request, project_id: int):
         dt = (m.get('enviado_em') or m.get('recebido_em'))
         dt_str = dt.strftime("%d/%m %H:%M") if dt else "?"
         direction = "enviada" if m['direcao'] == 'outgoing' else "recebida"
-        content = (m.get('conteudo') or '')[:150].replace('\n', ' ')
+        content = (m.get('conteudo') or '')[:500].replace('\n', ' ')
         msgs_text += f"- [{m['canal']}] {dt_str} {direction} {m['contact_nome']}: {content}\n"
     msgs_text = msgs_text or "(nenhuma mensagem recente dos membros)"
 
@@ -14259,6 +14259,11 @@ EVENTOS/CALENDARIO:
 {events_text or '(nenhum evento)'}
 
 ## INSTRUCOES
+
+- "enviada" = mensagem de Renato (outgoing). "recebida" = mensagem do contato (incoming).
+- NAO diga que uma mensagem "parece incompleta" a menos que ela termine abruptamente no meio de uma frase.
+- Se Renato respondeu uma mensagem recebida, a conversa esta em andamento, nao pendente.
+- Converta datas relativas mencionadas para datas absolutas (ex: "primeira semana de maio" = 2026-05-05).
 
 Retorne um JSON valido com este formato (SEM markdown, SEM ```):
 
