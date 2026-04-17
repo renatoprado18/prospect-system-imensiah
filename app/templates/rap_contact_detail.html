@@ -2427,12 +2427,24 @@
                         <div class="tile-card" id="linkedinTile">
                             <h5><i class="bi bi-linkedin text-primary"></i> LinkedIn
                                 <span class="actions">
-                                    <a href="${contact.linkedin}" target="_blank" title="Abrir"><i class="bi bi-box-arrow-up-right"></i></a>
+                                    ${contact.linkedin_enriched_at ? `<span class="text-muted" style="font-size:0.65rem;" title="Enriquecido em ${formatDate(contact.linkedin_enriched_at)}"><i class="bi bi-check-circle-fill text-success"></i></span>` : ''}
+                                    <a href="${contact.linkedin}" target="_blank" title="Abrir perfil"><i class="bi bi-box-arrow-up-right"></i></a>
+                                    <a href="#" onclick="enrichLinkedIn(); return false;" title="Atualizar dados"><i class="bi bi-arrow-clockwise"></i></a>
                                 </span>
                             </h5>
                             <div class="tile-content">
-                                ${contact.linkedin_headline ? `<div class="fw-semibold" style="font-size: 0.8rem;">${contact.linkedin_headline}</div>` : ''}
-                                ${contact.linkedin_location ? `<div class="text-muted small"><i class="bi bi-geo-alt me-1"></i>${contact.linkedin_location}</div>` : '<div class="empty">Clique para ver</div>'}
+                                ${contact.linkedin_headline ? `<div class="fw-semibold" style="font-size: 0.8rem; margin-bottom: 4px;">${contact.linkedin_headline}</div>` : ''}
+                                ${contact.linkedin_location ? `<div class="text-muted small mb-1"><i class="bi bi-geo-alt me-1"></i>${contact.linkedin_location}</div>` : ''}
+                                ${contact.linkedin_connections ? `<div class="text-muted small mb-1"><i class="bi bi-people me-1"></i>${contact.linkedin_connections.toLocaleString()} conexoes${contact.linkedin_open_to_work ? ' <span class="badge bg-success" style="font-size:0.6rem;">Open to Work</span>' : ''}</div>` : ''}
+                                ${contact.linkedin_about ? `<div class="small mt-2" style="max-height: 80px; overflow-y: auto; color: #475569; line-height: 1.4;">${contact.linkedin_about.substring(0, 300)}${contact.linkedin_about.length > 300 ? '...' : ''}</div>` : ''}
+                                ${(() => {
+                                    const expHtml = renderLinkedInExperience(contact.linkedin_experience);
+                                    return expHtml ? '<div class="mt-2"><div class="text-muted small fw-semibold mb-1"><i class="bi bi-briefcase me-1"></i>Experiencia</div><ul class="list-unstyled small mb-0">' + expHtml + '</ul></div>' : '';
+                                })()}
+                                ${(() => {
+                                    const skillsHtml = renderLinkedInSkills(contact.linkedin_skills);
+                                    return skillsHtml ? '<div class="mt-2"><div class="text-muted small fw-semibold mb-1"><i class="bi bi-tools me-1"></i>Skills</div>' + skillsHtml + '</div>' : '';
+                                })()}
                             </div>
                         </div>
                         ` : `
