@@ -75,9 +75,9 @@ async def analyze_project_updates(project_id: int) -> Dict:
                 WHERE cv.contact_id = ANY(%s)
                   AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - INTERVAL '30 days'
                   AND m.conteudo IS NOT NULL
-                  AND LENGTH(m.conteudo) > 5
+                  AND LENGTH(m.conteudo) > 10
                 ORDER BY COALESCE(m.enviado_em, m.recebido_em) DESC
-                LIMIT 50
+                LIMIT 30
             """, (member_ids,))
             recent_messages = [dict(r) for r in cursor.fetchall()]
 
@@ -100,9 +100,9 @@ async def analyze_project_updates(project_id: int) -> Dict:
 
     messages_text = "\n".join([
         f"[{m.get('canal','?')}] {m['contact_nome']} ({m['direcao']}) "
-        f"em {(m.get('enviado_em') or m.get('recebido_em') or '?')}: "
-        f"{(m.get('conteudo') or '')[:200]}"
-        for m in recent_messages[:30]
+        f"em {str(m.get('enviado_em') or m.get('recebido_em') or '?')[:10]}: "
+        f"{(m.get('conteudo') or '')[:500]}"
+        for m in recent_messages[:20]
     ])
 
     members_text = ", ".join([f"{m['nome']} ({m.get('papel', 'membro')})" for m in members])
@@ -170,8 +170,8 @@ Seja conservador: so sugira completar se ha evidencia clara nas mensagens."""
             )
 
         if response.status_code != 200:
-            logger.error(f"Claude API error: {response.status_code}")
-            return {"error": f"Erro na API: {response.status_code}"}
+            logger.error(f"Claude API error: {response.status_code} - {response.text[:300]}")
+            return {"error": f"Erro na API: {response.status_code}", "detail": response.text[:200]}
 
         result = response.json()
         text = result.get("content", [{}])[0].get("text", "")
