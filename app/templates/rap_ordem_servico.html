@@ -660,10 +660,15 @@
 
         <!-- Itens da OS -->
         <div class="os-section">
-            <h2 class="os-section-title">
-                <i class="bi bi-list-check"></i>
-                Servicos a Realizar
-            </h2>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+                <h2 class="os-section-title" style="margin-bottom: 0;">
+                    <i class="bi bi-list-check"></i>
+                    Servicos a Realizar
+                </h2>
+                <button class="btn btn-outline no-print" onclick="abrirEditarItens()" style="font-size: 0.8rem; padding: 4px 12px; color: #6366f1; border-color: #6366f1;">
+                    <i class="bi bi-pencil"></i> Editar itens
+                </button>
+            </div>
 
             <table class="os-table">
                 <thead>
@@ -893,6 +898,25 @@
     </div>
 </div>
 
+<!-- Modal Editar Itens -->
+<div id="editarItensWrapper" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 999999;">
+    <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #000000; opacity: 0.95;" onclick="fecharEditarItens()"></div>
+    <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 600px; max-height: 90vh; background: #ffffff; border-radius: 16px; border: 2px solid #6366f1; box-shadow: 0 25px 50px rgba(0,0,0,0.5); overflow: hidden;">
+        <div class="modal-header" style="background-color: #1e293b !important;">
+            <h3 style="color: #ffffff !important;"><i class="bi bi-pencil"></i> Editar Descricao dos Itens</h3>
+        </div>
+        <div class="modal-body" style="background-color: #ffffff !important; color: #1e293b; max-height: 60vh; overflow-y: auto;">
+            <div id="editarItensLista"></div>
+        </div>
+        <div class="modal-footer" style="background-color: #f1f5f9 !important; border-top: 1px solid #e2e8f0;">
+            <button class="btn btn-outline" onclick="fecharEditarItens()" style="background: #fff; color: #64748b; border: 1px solid #cbd5e1;">Cancelar</button>
+            <button class="btn btn-primary" onclick="salvarEdicaoItens()" style="background: #6366f1; color: #fff; border: none;">
+                <i class="bi bi-check"></i> Salvar
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Modal Finalizar -->
 <div id="finalizarModalWrapper" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 999999;">
     <div id="finalizarModalBackdrop" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #000000; opacity: 0.95;" onclick="closeFinalizarModal()"></div>
@@ -940,6 +964,65 @@
 const osId = {{ os.id }};
 const veiculoId = {{ veiculo.id }};
 const osOficinaAtual = {{ os.oficina | tojson if os.oficina else 'null' }};
+const osItens = {{ os.itens | tojson }};
+
+// ============ Editar Itens ============
+function abrirEditarItens() {
+    const container = document.getElementById('editarItensLista');
+    const itens = Array.isArray(osItens) ? osItens : JSON.parse(osItens || '[]');
+
+    container.innerHTML = itens.map((item, i) => `
+        <div class="form-group" style="margin-bottom: 12px;">
+            <label style="color: #64748b; font-size: 0.75rem;">Item ${i + 1} (${item.categoria || 'Extra'})</label>
+            <input type="text" class="editar-item-input" data-index="${i}" data-old="${item.item}"
+                   value="${item.item}" style="width: 100%; padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 0.9rem; color: #1e293b; background: #f8fafc;">
+        </div>
+    `).join('');
+
+    document.getElementById('editarItensWrapper').style.display = 'block';
+}
+
+function fecharEditarItens() {
+    document.getElementById('editarItensWrapper').style.display = 'none';
+}
+
+async function salvarEdicaoItens() {
+    const inputs = document.querySelectorAll('.editar-item-input');
+    const updates = [];
+
+    inputs.forEach(input => {
+        const idx = parseInt(input.dataset.index);
+        const oldItem = input.dataset.old;
+        const newItem = input.value.trim();
+        if (newItem && newItem !== oldItem) {
+            updates.push({ index: idx, item: newItem, old_item: oldItem });
+        }
+    });
+
+    if (updates.length === 0) {
+        fecharEditarItens();
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/ordens/${osId}/editar-itens`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ itens: updates })
+        });
+
+        if (resp.ok) {
+            fecharEditarItens();
+            window.location.reload();
+        } else {
+            const err = await resp.json();
+            alert(err.detail || 'Erro ao salvar');
+        }
+    } catch (e) {
+        console.error(e);
+        alert('Erro ao salvar alteracoes');
+    }
+}
 
 function openFinalizarModal() {
     document.getElementById('finalizarModalWrapper').style.display = 'block';

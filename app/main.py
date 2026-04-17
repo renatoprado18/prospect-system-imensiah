@@ -15706,6 +15706,51 @@ async def api_atualizar_ordem(os_id: int, request: Request):
     return resultado
 
 
+@app.put("/api/ordens/{os_id}/editar-itens")
+async def api_editar_itens_os(os_id: int, request: Request):
+    """Edita descricoes dos itens de uma OS (inclusive concluida)"""
+    import json as json_module
+    os_data = get_ordem_servico(os_id)
+    if not os_data:
+        raise HTTPException(status_code=404, detail="Ordem de servico nao encontrada")
+
+    data = await request.json()
+    novos_itens = data.get('itens', [])  # [{index: 0, item: "nova descricao"}, ...]
+
+    itens = os_data.get('itens', [])
+    if isinstance(itens, str):
+        itens = json_module.loads(itens)
+
+    # Atualizar descricoes
+    for update in novos_itens:
+        idx = update.get('index')
+        if idx is not None and 0 <= idx < len(itens):
+            itens[idx]['item'] = update.get('item', itens[idx]['item'])
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE veiculo_ordens_servico SET itens = %s, atualizado_em = NOW() WHERE id = %s",
+            (json_module.dumps(itens), os_id)
+        )
+
+        # Tambem atualizar descricoes nas manutencoes vinculadas
+        for update in novos_itens:
+            idx = update.get('index')
+            if idx is not None and 0 <= idx < len(itens):
+                old_desc = update.get('old_item')
+                new_desc = update.get('item')
+                if old_desc and new_desc and old_desc != new_desc:
+                    cursor.execute("""
+                        UPDATE veiculo_manutencoes SET descricao = %s
+                        WHERE ordem_servico_id = %s AND descricao = %s
+                    """, (new_desc, os_id, old_desc))
+
+        conn.commit()
+
+    return get_ordem_servico(os_id)
+
+
 @app.get("/veiculos/{veiculo_id}/os/{os_id}", response_class=HTMLResponse)
 async def ordem_servico_page(request: Request, veiculo_id: int, os_id: int):
     """Pagina da ordem de servico para impressao/visualizacao"""
