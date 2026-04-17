@@ -3017,32 +3017,39 @@
         }
 
         async function executeProposal(proposalId, optionId) {
+            // Disable the clicked button to prevent double-clicks
+            const btn = event?.target;
+            if (btn) btn.disabled = true;
+
             try {
+                console.log(`[executeProposal] id=${proposalId} option=${optionId}`);
                 const response = await fetch(`/api/action-proposals/${proposalId}/execute`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({option_id: optionId})
                 });
 
+                console.log(`[executeProposal] HTTP ${response.status}`);
                 const result = await response.json();
+                console.log('[executeProposal] result:', JSON.stringify(result));
 
                 if (result.success) {
-                    // Show success feedback
                     showToast(result.message || 'Acao executada!', 'success');
-
-                    // Reload proposals
                     loadActionProposals();
 
-                    // If action opens a conversation, redirect
                     if (result.result?.action === 'open_conversation' && result.result?.contact_id) {
                         window.location.href = `/contatos/${result.result.contact_id}`;
+                    } else if (result.result?.action === 'task_created') {
+                        showToast(`Tarefa #${result.result.task_id} criada`, 'success');
                     }
                 } else {
                     showToast(result.message || 'Erro ao executar acao', 'error');
                 }
             } catch (error) {
-                console.error('Error executing proposal:', error);
+                console.error('[executeProposal] Error:', error);
                 showToast('Erro ao executar acao', 'error');
+            } finally {
+                if (btn) btn.disabled = false;
             }
         }
 
