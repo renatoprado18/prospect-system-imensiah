@@ -178,7 +178,8 @@ class ActionExecutor:
         event_id = self._resolve_event_id(action_params, contact_id)
 
         if not event_id:
-            return {'success': False, 'message': 'Evento nao especificado e nenhum evento encontrado para o contato'}
+            # No calendar event found — create a task as fallback
+            return await self._create_reschedule_task(action_params, chosen_option, contact_id)
 
         # Determinar nova data
         new_datetime = None
@@ -232,12 +233,41 @@ class ActionExecutor:
         else:
             return {'success': False, 'message': 'Falha ao remarcar evento'}
 
+    async def _create_reschedule_task(self, action_params: Dict, chosen_option: Dict = None, contact_id: int = None) -> Dict:
+        """Fallback: create a task when no calendar event exists to reschedule/cancel."""
+        option_label = chosen_option.get('label', 'Remarcar') if chosen_option else 'Remarcar'
+        suggested = action_params.get('suggested_date') or action_params.get('suggested_time') or ''
+        hint = f" (sugestao: {suggested})" if suggested else ''
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO tasks (titulo, descricao, contact_id, data_vencimento, prioridade, ai_generated, origem)
+                VALUES (%s, %s, %s, %s, 7, TRUE, 'action_proposal')
+                RETURNING id
+            """, (
+                f"{option_label}{hint}",
+                f"Acao solicitada mas sem evento no calendario. Verificar agenda manualmente.",
+                contact_id,
+                datetime.now() + timedelta(days=1),
+            ))
+            task_id = cursor.fetchone()['id']
+            conn.commit()
+
+        return {
+            'success': True,
+            'message': f'Sem evento no calendario. Tarefa criada para acompanhamento.',
+            'action': 'task_created',
+            'task_id': task_id,
+            'contact_id': contact_id,
+        }
+
     async def cancel_event(self, action_params: Dict, chosen_option: Dict = None, contact_id: int = None) -> Dict:
         """Cancela evento no calendario"""
         event_id = self._resolve_event_id(action_params, contact_id)
 
         if not event_id:
-            return {'success': False, 'message': 'Evento nao especificado e nenhum evento encontrado para o contato'}
+            return await self._create_reschedule_task(action_params, chosen_option, contact_id)
 
         # Se opcao foi reschedule em vez de cancel, remarcar
         if chosen_option and chosen_option.get('action') == 'reschedule':
