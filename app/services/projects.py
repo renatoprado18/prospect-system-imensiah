@@ -232,6 +232,101 @@ def get_project(project_id: int) -> Optional[Dict]:
         return project
 
 
+def get_project_briefing_context(project_id: int) -> Optional[Dict]:
+    """
+    Gather all context needed for an AI briefing of a project:
+    tasks, member messages (WhatsApp/email), notes, calendar events.
+    Returns raw data for Claude to synthesize.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Basic project info
+        cursor.execute("SELECT id, nome, descricao, tipo, status, data_previsao, criado_em FROM projects WHERE id = %s", (project_id,))
+        project = cursor.fetchone()
+        if not project:
+            return None
+        project = dict(project)
+
+        # Tasks with status
+        cursor.execute("""
+            SELECT t.titulo, t.status, t.data_vencimento, t.prioridade, t.descricao,
+                   c.nome as responsavel
+            FROM tasks t
+            LEFT JOIN contacts c ON c.id = t.contact_id
+            WHERE t.project_id = %s
+            ORDER BY t.data_vencimento NULLS LAST
+        """, (project_id,))
+        tasks = [dict(r) for r in cursor.fetchall()]
+
+        # Members
+        cursor.execute("""
+            SELECT pm.contact_id, c.nome, pm.papel
+            FROM project_members pm
+            JOIN contacts c ON c.id = pm.contact_id
+            WHERE pm.project_id = %s
+        """, (project_id,))
+        members = [dict(r) for r in cursor.fetchall()]
+        member_ids = [m['contact_id'] for m in members]
+
+        # Recent messages from members (last 30 days, max 20)
+        recent_messages = []
+        if member_ids:
+            cursor.execute("""
+                SELECT m.conteudo, m.direcao, m.enviado_em, m.recebido_em,
+                       cv.canal, cv.contact_id, c.nome as contact_nome
+                FROM messages m
+                JOIN conversations cv ON cv.id = m.conversation_id
+                JOIN contacts c ON c.id = cv.contact_id
+                WHERE cv.contact_id = ANY(%s)
+                  AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - INTERVAL '30 days'
+                ORDER BY COALESCE(m.enviado_em, m.recebido_em) DESC
+                LIMIT 20
+            """, (member_ids,))
+            recent_messages = [dict(r) for r in cursor.fetchall()]
+
+        # Recent notes
+        cursor.execute("""
+            SELECT titulo, conteudo, tipo, autor, criado_em
+            FROM project_notes
+            WHERE project_id = %s
+            ORDER BY criado_em DESC
+            LIMIT 5
+        """, (project_id,))
+        notes = [dict(r) for r in cursor.fetchall()]
+
+        # Upcoming events
+        cursor.execute("""
+            SELECT ce.summary, ce.start_datetime, ce.end_datetime
+            FROM project_events pe
+            JOIN calendar_events ce ON ce.id = pe.calendar_event_id
+            WHERE pe.project_id = %s
+              AND ce.start_datetime >= NOW() - INTERVAL '7 days'
+            ORDER BY ce.start_datetime
+            LIMIT 5
+        """, (project_id,))
+        events = [dict(r) for r in cursor.fetchall()]
+
+        # Milestones
+        cursor.execute("""
+            SELECT titulo, status, data_prevista, data_conclusao
+            FROM project_milestones
+            WHERE project_id = %s
+            ORDER BY data_prevista NULLS LAST
+        """, (project_id,))
+        milestones = [dict(r) for r in cursor.fetchall()]
+
+        return {
+            'project': project,
+            'tasks': tasks,
+            'members': members,
+            'recent_messages': recent_messages,
+            'notes': notes,
+            'events': events,
+            'milestones': milestones,
+        }
+
+
 def create_project(data: Dict) -> Dict:
     """Cria novo projeto."""
     with get_db() as conn:

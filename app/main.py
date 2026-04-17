@@ -14075,6 +14075,158 @@ async def api_get_project(project_id: int):
     return project
 
 
+@app.get("/api/projects/{project_id}/briefing")
+async def api_project_briefing(request: Request, project_id: int):
+    """AI-generated briefing: why this project needs attention, recent activity, next actions."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.projects import get_project_briefing_context
+    import httpx as _httpx
+
+    ctx = get_project_briefing_context(project_id)
+    if not ctx:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+
+    today = datetime.now().strftime("%Y-%m-%d (%A)")
+
+    # Build context for Claude
+    tasks_text = ""
+    overdue = []
+    upcoming = []
+    for t in ctx['tasks']:
+        status_emoji = "pending" if t['status'] == 'pending' else t['status']
+        prazo = str(t['data_vencimento'].date()) if t.get('data_vencimento') else "sem prazo"
+        resp = t.get('responsavel') or 'sem responsavel'
+        line = f"- [{status_emoji}] {t['titulo']} | prazo: {prazo} | resp: {resp}"
+        tasks_text += line + "\n"
+        if t.get('data_vencimento') and t['status'] == 'pending':
+            if t['data_vencimento'].date() < datetime.now().date():
+                overdue.append(t)
+            elif (t['data_vencimento'].date() - datetime.now().date()).days <= 7:
+                upcoming.append(t)
+
+    members_text = "\n".join(
+        f"- {m['nome']} (papel: {m.get('papel') or '-'})"
+        for m in ctx['members']
+    ) or "(nenhum membro)"
+
+    msgs_text = ""
+    for m in ctx['recent_messages'][:15]:
+        dt = (m.get('enviado_em') or m.get('recebido_em'))
+        dt_str = dt.strftime("%d/%m %H:%M") if dt else "?"
+        direction = "enviada" if m['direcao'] == 'outgoing' else "recebida"
+        content = (m.get('conteudo') or '')[:150].replace('\n', ' ')
+        msgs_text += f"- [{m['canal']}] {dt_str} {direction} {m['contact_nome']}: {content}\n"
+    msgs_text = msgs_text or "(nenhuma mensagem recente dos membros)"
+
+    notes_text = ""
+    for n in ctx['notes'][:3]:
+        dt_str = n['criado_em'].strftime("%d/%m") if n.get('criado_em') else "?"
+        notes_text += f"- [{dt_str}] {n.get('titulo') or 'Nota'}: {(n.get('conteudo') or '')[:100]}\n"
+
+    events_text = ""
+    for e in ctx['events']:
+        dt_str = e['start_datetime'].strftime("%d/%m %H:%M") if e.get('start_datetime') else "?"
+        events_text += f"- {dt_str}: {e.get('summary', '?')}\n"
+
+    milestones_text = ""
+    for ms in ctx['milestones']:
+        st = "concluido" if ms.get('data_conclusao') else ms.get('status', 'pendente')
+        dt_str = str(ms['data_prevista']) if ms.get('data_prevista') else "sem data"
+        milestones_text += f"- [{st}] {ms['titulo']} | previsto: {dt_str}\n"
+
+    prompt = f"""Voce e o assistente inteligente do CRM pessoal do Renato. Ele acabou de abrir o projeto abaixo.
+Gere um BRIEFING conciso e acionavel.
+
+HOJE: {today}
+
+PROJETO: {ctx['project']['nome']}
+Tipo: {ctx['project']['tipo']} | Status: {ctx['project']['status']}
+Descricao: {ctx['project'].get('descricao') or '(sem descricao)'}
+Previsao: {ctx['project'].get('data_previsao') or 'sem previsao'}
+
+MEMBROS:
+{members_text}
+
+TAREFAS:
+{tasks_text or '(nenhuma tarefa)'}
+
+MARCOS:
+{milestones_text or '(nenhum marco)'}
+
+MENSAGENS RECENTES (WhatsApp/Email dos membros, ultimos 30 dias):
+{msgs_text}
+
+NOTAS/TIMELINE:
+{notes_text or '(nenhuma nota)'}
+
+EVENTOS/CALENDARIO:
+{events_text or '(nenhum evento)'}
+
+## INSTRUCOES
+
+Retorne um JSON valido com este formato (SEM markdown, SEM ```):
+
+{{
+  "status_geral": "no_caminho" | "atencao" | "critico" | "parado",
+  "resumo": "1-2 frases dizendo a situacao atual do projeto",
+  "alertas": [
+    "frase curta de cada problema que precisa atencao (tarefas vencidas, mensagens sem resposta, etc)"
+  ],
+  "atividade_recente": [
+    "frase curta descrevendo cada atividade relevante recente (msg recebida, tarefa concluida, etc)"
+  ],
+  "proximas_acoes": [
+    "acao concreta que Renato deve tomar AGORA, em ordem de prioridade"
+  ],
+  "destaque_comunicacao": "resumo de 1 frase sobre as comunicacoes recentes com membros (ou null se nenhuma)"
+}}
+
+REGRAS:
+- Maximo 3 alertas, 4 atividades, 3 proximas_acoes
+- Seja DIRETO e ACIONAVEL. Nao seja generico.
+- Se uma tarefa esta vencida, diga qual e de quem.
+- Se ha mensagem recebida sem resposta, diga de quem e sobre o que.
+- proximas_acoes deve ter verbos de acao: "Cobrar Kesley sobre X", "Responder Ana sobre Y"
+- Use portugues brasileiro
+"""
+
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not anthropic_key:
+        return {"error": "ANTHROPIC_API_KEY nao configurada"}
+
+    try:
+        async with _httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": anthropic_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 1000,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            if resp.status_code != 200:
+                return {"error": f"Claude API error: {resp.status_code}"}
+
+            import json as _json
+            text = resp.json()["content"][0]["text"].strip()
+            if text.startswith("```"):
+                text = text.split("```", 2)[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+            return _json.loads(text)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/api/projects")
 async def api_create_project(request: Request):
     """Cria novo projeto."""
