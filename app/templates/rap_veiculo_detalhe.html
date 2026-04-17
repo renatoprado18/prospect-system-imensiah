@@ -1087,8 +1087,8 @@
 </div>
 
 <!-- Modal Upload NF/OS via Foto -->
-<div class="modal-backdrop" id="uploadNfModal">
-    <div class="modal-content" style="max-width: 620px;">
+<div class="modal-backdrop" id="uploadNfModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.92);display:none;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(8px);">
+    <div class="modal-content" style="max-width:620px;background:#ffffff !important;border-radius:16px;width:90%;max-height:90vh;overflow-y:auto;box-shadow:0 25px 50px -12px rgba(0,0,0,0.8);border:3px solid #94a3b8;position:relative;z-index:10000;">
         <!-- Estado 1: Upload -->
         <div class="upload-step" id="step-upload">
             <div class="modal-header">
@@ -1505,14 +1505,13 @@ document.getElementById('registrarModal').addEventListener('click', (e) => {
 let uploadNfDriveUrl = null;
 
 function abrirUploadNF() {
-    document.getElementById('uploadNfModal').classList.add('show');
+    document.getElementById('uploadNfModal').style.display = 'flex';
     showUploadStep('upload');
-    // Reset file input
     document.getElementById('nfFileInput').value = '';
 }
 
 function closeUploadNfModal() {
-    document.getElementById('uploadNfModal').classList.remove('show');
+    document.getElementById('uploadNfModal').style.display = 'none';
     uploadNfDriveUrl = null;
 }
 
@@ -1666,7 +1665,7 @@ async function confirmarOSFoto() {
 
 // Close upload modal on backdrop click
 document.getElementById('uploadNfModal').addEventListener('click', (e) => {
-    if (e.target.classList.contains('modal-backdrop')) {
+    if (e.target.id === 'uploadNfModal') {
         closeUploadNfModal();
     }
 });
