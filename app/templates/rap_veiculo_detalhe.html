@@ -1533,19 +1533,65 @@ dropzone.addEventListener('drop', (e) => {
     enviarFotoNF(fileInput);
 });
 
+function comprimirImagem(file, maxSizeMB = 4) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const img = new Image();
+            img.onload = function() {
+                const canvas = document.createElement('canvas');
+                // Redimensionar se muito grande
+                let w = img.width, h = img.height;
+                const maxDim = 2048;
+                if (Math.max(w, h) > maxDim) {
+                    const ratio = maxDim / Math.max(w, h);
+                    w = Math.round(w * ratio);
+                    h = Math.round(h * ratio);
+                }
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, w, h);
+
+                // Tentar diferentes qualidades ate ficar abaixo do limite
+                let quality = 0.85;
+                function tryCompress() {
+                    canvas.toBlob(function(blob) {
+                        if (blob.size > maxSizeMB * 1024 * 1024 && quality > 0.3) {
+                            quality -= 0.15;
+                            tryCompress();
+                        } else {
+                            resolve(new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
+                        }
+                    }, 'image/jpeg', quality);
+                }
+                tryCompress();
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
 async function enviarFotoNF(fileInput) {
     const file = fileInput.files[0];
     if (!file) return;
 
-    if (file.size > 15 * 1024 * 1024) {
-        showToast('Arquivo muito grande (max 15MB)', 'error');
-        return;
-    }
-
     showUploadStep('loading');
 
+    // Comprimir no browser antes de enviar (Vercel tem limite de ~4.5MB)
+    let fileToSend = file;
+    if (file.size > 4 * 1024 * 1024) {
+        try {
+            fileToSend = await comprimirImagem(file);
+            console.log(`Comprimido: ${(file.size/1024/1024).toFixed(1)}MB -> ${(fileToSend.size/1024/1024).toFixed(1)}MB`);
+        } catch (err) {
+            console.warn('Erro ao comprimir, enviando original:', err);
+        }
+    }
+
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', fileToSend);
 
     try {
         const resp = await fetch(`/api/veiculos/${veiculoId}/upload-os`, {
