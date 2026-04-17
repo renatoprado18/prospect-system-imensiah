@@ -2294,9 +2294,12 @@
                     <div class="form-check mb-2 p-3 rounded" style="background: #eff6ff; border: 1px solid #bfdbfe;">
                         <input class="form-check-input new-task-check" type="checkbox" id="nt-${i}" checked
                                data-titulo="${(t.titulo || '').replace(/"/g, '&quot;')}"
-                               data-responsavel="${(t.responsavel || '').replace(/"/g, '&quot;')}">
+                               data-responsavel="${(t.responsavel || '').replace(/"/g, '&quot;')}"
+                               data-vencimento="${t.data_vencimento || ''}"
+                               data-prioridade="${t.prioridade || 5}">
                         <label class="form-check-label" for="nt-${i}">
                             <div class="fw-semibold small">${t.titulo}</div>
+                            ${t.data_vencimento ? `<div style="font-size: 0.75rem; color: #6366f1;"><i class="bi bi-calendar-event me-1"></i>Prazo: ${new Date(t.data_vencimento + 'T12:00').toLocaleDateString('pt-BR')}</div>` : ''}
                             <div class="text-muted" style="font-size: 0.75rem;">${t.reasoning}</div>
                         </label>
                     </div>
@@ -2322,7 +2325,9 @@
         const newTaskChecks = document.querySelectorAll('.new-task-check:checked');
         const newTasks = Array.from(newTaskChecks).map(cb => ({
             titulo: cb.dataset.titulo,
-            responsavel: cb.dataset.responsavel
+            responsavel: cb.dataset.responsavel,
+            data_vencimento: cb.dataset.vencimento || null,
+            prioridade: parseInt(cb.dataset.prioridade) || 5
         }));
 
         if (taskIds.length === 0 && newTasks.length === 0) {

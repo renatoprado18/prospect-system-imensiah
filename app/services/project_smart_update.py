@@ -143,14 +143,20 @@ Retorne APENAS JSON valido (sem markdown):
     {{
       "titulo": "Nova tarefa sugerida",
       "responsavel": "Nome",
-      "reasoning": "Por que esta tarefa deveria ser criada"
+      "reasoning": "Por que esta tarefa deveria ser criada",
+      "data_vencimento": "YYYY-MM-DD ou null",
+      "prioridade": 5
     }}
   ],
   "summary": "Resumo em 1-2 frases do que foi encontrado"
 }}
 
-Se nenhuma tarefa pode ser concluida, retorne suggestions como lista vazia.
-Seja conservador: so sugira completar se ha evidencia clara nas mensagens."""
+IMPORTANTE:
+- Se nenhuma tarefa pode ser concluida, retorne suggestions como lista vazia.
+- Seja conservador: so sugira completar se ha evidencia clara nas mensagens.
+- Quando alguem mencionar datas (ex: "primeira semana de maio", "proxima terca"), converta para data YYYY-MM-DD.
+- Use EXATAMENTE as datas mencionadas nas mensagens, nao aproxime (ex: "primeira semana de maio" = 2026-05-05, NAO "proxima semana").
+- Inclua data_vencimento nas novas tarefas quando a mensagem mencionar prazo ou data."""
 
     # 3. Chamar Claude
     try:
@@ -247,10 +253,12 @@ async def apply_smart_updates(project_id: int, task_ids: List[int] = None,
                     if row:
                         contact_id = row['id']
 
+                data_vencimento = task.get('data_vencimento')
+                prioridade = task.get('prioridade', 5)
                 cursor.execute("""
-                    INSERT INTO tasks (project_id, titulo, status, contact_id, prioridade)
-                    VALUES (%s, %s, 'pending', %s, 5)
-                """, (project_id, titulo, contact_id))
+                    INSERT INTO tasks (project_id, titulo, status, contact_id, prioridade, data_vencimento)
+                    VALUES (%s, %s, 'pending', %s, %s, %s)
+                """, (project_id, titulo, contact_id, prioridade, data_vencimento))
                 results["created"] += 1
             except Exception as e:
                 results["errors"].append(f"Erro ao criar '{task.get('titulo', '?')}': {str(e)}")
