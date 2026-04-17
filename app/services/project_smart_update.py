@@ -93,7 +93,7 @@ async def analyze_project_updates(project_id: int) -> Dict:
         f"- [ID:{t['id']}] {t['titulo']}"
         f"{' (responsavel: ' + t['responsavel'] + ')' if t.get('responsavel') else ''}"
         f"{' - vence: ' + str(t['data_vencimento']) if t.get('data_vencimento') else ''}"
-        f"{' - ATRASADA' if t.get('data_vencimento') and t['data_vencimento'] < date.today() else ''}"
+        f"{' - ATRASADA' if t.get('data_vencimento') and str(t['data_vencimento'])[:10] < str(date.today()) else ''}"
         f"{' | ' + t['descricao'][:100] if t.get('descricao') else ''}"
         for t in pending_tasks
     ])
