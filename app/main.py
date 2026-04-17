@@ -6517,6 +6517,13 @@ async def cron_cleanup(request: Request):
     agent = get_ai_agent()
     stats["suggestions_deleted"] = agent.cleanup_expired_suggestions()
 
+    # 1b. Expirar action_proposals antigas (>7 dias)
+    try:
+        from services.action_proposals import ActionProposalsService
+        stats["proposals_expired"] = ActionProposalsService().expire_old_proposals()
+    except Exception as e:
+        stats["proposals_expired"] = f"error: {e}"
+
     # 2. Cleanup notificacoes antigas
     with get_db() as conn:
         cursor = conn.cursor()
