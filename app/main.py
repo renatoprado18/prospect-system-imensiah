@@ -309,6 +309,60 @@ async def health_check():
 
     return status
 
+
+# Cache do status da API Claude (evita checar a cada request)
+_claude_api_status = {"status": "unknown", "checked_at": None, "detail": ""}
+
+
+@app.get("/api/ai/status")
+async def ai_api_status():
+    """Verifica se a API Claude esta funcional (com cache de 1h)"""
+    import httpx as hx
+
+    global _claude_api_status
+
+    # Usar cache se checado ha menos de 1h
+    if _claude_api_status["checked_at"]:
+        age = (datetime.now() - _claude_api_status["checked_at"]).total_seconds()
+        if age < 3600:  # 1 hora
+            return _claude_api_status
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        _claude_api_status = {"status": "not_configured", "checked_at": datetime.now(), "detail": "ANTHROPIC_API_KEY nao configurada"}
+        return _claude_api_status
+
+    try:
+        async with hx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "ok"}]
+                }
+            )
+
+        if resp.status_code == 200:
+            _claude_api_status = {"status": "ok", "checked_at": datetime.now(), "detail": "API funcionando"}
+        elif "credit balance" in resp.text.lower():
+            _claude_api_status = {"status": "no_credits", "checked_at": datetime.now(),
+                                   "detail": "Saldo insuficiente. Recarregue em console.anthropic.com"}
+        elif resp.status_code == 401:
+            _claude_api_status = {"status": "invalid_key", "checked_at": datetime.now(), "detail": "API key invalida"}
+        else:
+            _claude_api_status = {"status": "error", "checked_at": datetime.now(), "detail": f"Erro {resp.status_code}"}
+
+    except Exception as e:
+        _claude_api_status = {"status": "error", "checked_at": datetime.now(), "detail": str(e)}
+
+    return _claude_api_status
+
 @app.post("/api/admin/reset-db")
 async def reset_database():
     """Reseta o banco de dados (CUIDADO!)"""
