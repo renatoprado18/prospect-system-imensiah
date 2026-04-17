@@ -6311,6 +6311,17 @@ async def cron_daily_sync(request: Request):
     except Exception as e:
         results["steps"]["sync_whatsapp"] = {"status": "error", "error": str(e)}
 
+    # 6b. Smart Follow-Up (emails enviados sem resposta)
+    try:
+        from services.smart_fup import check_pending_fups
+        with get_db() as conn:
+            fup_token = await get_valid_token(conn, 'professional')
+        if fup_token:
+            fup_result = await check_pending_fups(fup_token)
+            results["steps"]["smart_fup"] = {"status": "success", "result": fup_result}
+    except Exception as e:
+        results["steps"]["smart_fup"] = {"status": "error", "error": str(e)}
+
     # 7. AI Suggestions
     try:
         from services.ai_agent import get_ai_agent
