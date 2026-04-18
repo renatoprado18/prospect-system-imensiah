@@ -192,6 +192,12 @@ def update_editorial_post(post_id: int, data: Dict) -> Optional[Dict]:
         if any(data.get(f) for f in metrics_fields):
             updates.append("linkedin_metricas_em = CURRENT_TIMESTAMP")
 
+        # When linkedin_post_url is provided, also set url_publicado
+        if data.get('linkedin_post_url'):
+            if 'url_publicado' not in data:
+                updates.append("url_publicado = COALESCE(url_publicado, %s)")
+                params.append(data['linkedin_post_url'])
+
         # Set data_publicado when LinkedIn URL is provided and post becomes published
         if data.get('linkedin_post_url') and data.get('status') == 'published':
             updates.append("data_publicado = COALESCE(data_publicado, CURRENT_TIMESTAMP)")

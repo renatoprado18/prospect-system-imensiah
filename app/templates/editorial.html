@@ -1618,7 +1618,7 @@ async function openPostModal(postId) {
                         <label style="font-size: 0.8rem;">Cole o link do post após publicar no LinkedIn</label>
                         <input type="text" class="form-control" id="edit-linkedin-url"
                             placeholder="https://linkedin.com/feed/update/urn:li:activity:..."
-                            value="${post.linkedin_post_url || ''}"
+                            value="${post.linkedin_post_url || post.url_publicado || ''}"
                             style="font-size: 0.85rem;">
                         <small style="color: #92400e;">Ao salvar com o link, o status mudará para "Publicado"</small>
                     </div>
@@ -1637,7 +1637,7 @@ async function openPostModal(postId) {
                         <label style="font-size: 0.8rem;">Link do Post no LinkedIn</label>
                         <input type="text" class="form-control" id="edit-linkedin-url"
                             placeholder="https://linkedin.com/feed/update/urn:li:activity:..."
-                            value="${post.linkedin_post_url || ''}"
+                            value="${post.linkedin_post_url || post.url_publicado || ''}"
                             style="font-size: 0.85rem;">
                     </div>
                     ${canAddMetrics || hasMetrics ? `
