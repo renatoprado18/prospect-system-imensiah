@@ -755,9 +755,11 @@ def mark_hot_take_published(hot_take_id: int, linkedin_url: str = None) -> dict:
             cursor.execute('''
                 UPDATE editorial_posts
                 SET status = 'published',
-                    notas = COALESCE(notas, '') || %s
+                    url_publicado = COALESCE(%s, url_publicado),
+                    data_publicado = COALESCE(data_publicado, %s),
+                    linkedin_post_url = COALESCE(%s, linkedin_post_url)
                 WHERE id = %s
-            ''', (f'\nURL: {linkedin_url}' if linkedin_url else '', result['editorial_post_id']))
+            ''', (linkedin_url, datetime.now(), linkedin_url, result['editorial_post_id']))
 
         conn.commit()
 
