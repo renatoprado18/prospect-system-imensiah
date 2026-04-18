@@ -500,10 +500,19 @@ async def generate_project_analysis(project_id: int, custom_prompt: str = None) 
         """, (project_id,))
         docs = [dict(r) for r in cursor.fetchall()]
 
-        # Notas do projeto
+        # Pareceres anteriores (memoria persistente)
+        cursor.execute("""
+            SELECT titulo, conteudo, criado_em FROM project_notes
+            WHERE project_id = %s AND tipo = 'parecer'
+            ORDER BY criado_em DESC LIMIT 3
+        """, (project_id,))
+        previous_analyses = [dict(r) for r in cursor.fetchall()]
+
+        # Notas regulares do projeto
         cursor.execute("""
             SELECT titulo, conteudo, tipo, criado_em FROM project_notes
-            WHERE project_id = %s ORDER BY criado_em DESC LIMIT 3
+            WHERE project_id = %s AND (tipo != 'parecer' OR tipo IS NULL)
+            ORDER BY criado_em DESC LIMIT 5
         """, (project_id,))
         notes = [dict(r) for r in cursor.fetchall()]
 
@@ -553,6 +562,20 @@ async def generate_project_analysis(project_id: int, custom_prompt: str = None) 
                 doc_tag = f" [DOC: {m['doc_name']}]" if m.get('has_document') else ""
                 context_parts.append(f"[{dt}] {sender}: {m.get('content', '')[:400]}{doc_tag}")
 
+    # Adicionar pareceres anteriores como memoria
+    if previous_analyses:
+        context_parts.append(f"\n{'='*60}")
+        context_parts.append(f"MEMORIA: {len(previous_analyses)} PARECER(ES) ANTERIOR(ES)")
+        context_parts.append(f"{'='*60}")
+        for pa in reversed(previous_analyses):  # Mais antigo primeiro
+            dt = str(pa.get('criado_em', '?'))[:10]
+            context_parts.append(f"\n--- Parecer de {dt}: {pa.get('titulo', '')} ---")
+            # Incluir resumo (primeiros 800 chars) para nao estourar contexto
+            content = (pa.get('conteudo') or '')[:800]
+            context_parts.append(content)
+            if len(pa.get('conteudo', '')) > 800:
+                context_parts.append("(...)")
+
     full_context = "\n".join(context_parts)
 
     # Prompt
@@ -571,10 +594,23 @@ async def generate_project_analysis(project_id: int, custom_prompt: str = None) 
 Seja direto, prático, em português. Use linguagem acessível.
 Baseie-se nos FATOS das mensagens e documentos, não em suposições."""
 
+    memory_instruction = ""
+    if previous_analyses:
+        memory_instruction = f"""
+## MEMORIA (PARECERES ANTERIORES)
+Você tem acesso a {len(previous_analyses)} parecer(es) anterior(es) deste projeto.
+REGRAS sobre a memória:
+- NAO repita análises já feitas. Foque no que MUDOU desde o último parecer.
+- Referencie conclusões anteriores quando relevante (ex: "Conforme identificado anteriormente...")
+- Se uma ação sugerida no parecer anterior foi executada, reconheça.
+- Se um risco alertado se concretizou, destaque.
+- EVOLUA a análise: aprofunde, atualize, identifique tendências.
+"""
+
     prompt = f"""Você é o assistente inteligente do CRM pessoal do Renato. Analise o projeto abaixo e gere um parecer detalhado.
 
 {full_context}
-
+{memory_instruction}
 ## INSTRUÇÃO
 {user_instruction}"""
 
