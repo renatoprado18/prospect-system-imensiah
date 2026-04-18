@@ -15572,10 +15572,10 @@ async def editorial_page(request: Request):
     # Find Monday of this week (at midnight to include morning posts)
     days_since_monday = today.weekday()
     monday = (today - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
-    friday = monday + timedelta(days=4)
+    sunday = monday + timedelta(days=6)
 
-    # Busca posts agendados/publicados da semana diretamente
-    week_posts = get_editorial_posts(from_date=monday, to_date=friday + timedelta(days=1))
+    # Busca posts agendados/publicados da semana (Seg-Dom)
+    week_posts = get_editorial_posts(from_date=monday, to_date=sunday + timedelta(days=1))
     # Filtra apenas scheduled e published
     week_posts = [p for p in week_posts if p.get('status') in ['scheduled', 'published']]
 
