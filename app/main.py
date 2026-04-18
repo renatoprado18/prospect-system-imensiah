@@ -14535,6 +14535,49 @@ async def api_smart_update_apply(project_id: int, request: Request):
     return result
 
 
+# ============== PROJECT WHATSAPP GROUPS ==============
+
+@app.get("/api/projects/{project_id}/whatsapp-groups")
+async def api_list_project_groups(project_id: int):
+    """Lista grupos WhatsApp vinculados ao projeto"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, group_jid, group_name, ativo, last_synced_at
+            FROM project_whatsapp_groups WHERE project_id = %s ORDER BY group_name
+        """, (project_id,))
+        return [dict(r) for r in cursor.fetchall()]
+
+
+@app.post("/api/projects/{project_id}/whatsapp-groups")
+async def api_add_project_group(project_id: int, request: Request):
+    """Vincula um grupo WhatsApp ao projeto"""
+    data = await request.json()
+    group_jid = data.get('group_jid')
+    group_name = data.get('group_name', '')
+    if not group_jid:
+        raise HTTPException(status_code=400, detail="group_jid obrigatorio")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO project_whatsapp_groups (project_id, group_jid, group_name)
+            VALUES (%s, %s, %s) ON CONFLICT (project_id, group_jid) DO UPDATE SET group_name = %s, ativo = TRUE
+            RETURNING id
+        """, (project_id, group_jid, group_name, group_name))
+        conn.commit()
+        return {"status": "success", "id": cursor.fetchone()['id']}
+
+
+@app.delete("/api/projects/{project_id}/whatsapp-groups/{group_id}")
+async def api_remove_project_group(project_id: int, group_id: int):
+    """Remove vinculo de grupo WhatsApp do projeto"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM project_whatsapp_groups WHERE id = %s AND project_id = %s", (group_id, project_id))
+        conn.commit()
+    return {"status": "success"}
+
+
 # ============== PAYMENT CYCLE ==============
 
 @app.post("/api/projects/{project_id}/payment-cycle/preview")
@@ -15568,13 +15611,13 @@ async def editorial_page(request: Request):
                 p['calendar_state'] = 'published'
 
     week_days = []
-    for i in range(5):  # Mon to Fri
+    for i in range(7):  # Mon to Sun
         day = monday + timedelta(days=i)
         day_posts = [p for p in week_posts if p.get('data_publicacao') and
                      p['data_publicacao'].date() == day.date()]
         week_days.append({
             'date': day,
-            'day_name': ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'][i],
+            'day_name': ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'][i],
             'day_num': day.day,
             'is_today': day.date() == today.date(),
             'is_past': day.date() < today.date(),
