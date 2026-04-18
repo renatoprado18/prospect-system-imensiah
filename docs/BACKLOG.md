@@ -1,48 +1,68 @@
-# INTEL - Backlog de Funcionalidades Futuras
+# INTEL - Backlog
 
-## Editorial Calendar
+## Em Andamento / Recente
 
-### Sugerir Artigos para Reconexão com Contatos
-**Prioridade**: Média
-**Complexidade**: Alta
-**Data**: 2026-04-03
+### Smart Project Updates (Implementado 2026-04-17)
+- [x] Atualizar com IA: analisa msgs e sugere completar tarefas
+- [x] Criar novas tarefas sugeridas com data
+- [x] Direção de mensagem explícita
+- [x] Conversas agrupadas por contato
+- [x] Filtro por projeto (ignora outros assuntos)
+- [x] Parecer IA completo com contexto de grupos WhatsApp
+- [x] Compartilhar parecer adaptado via WhatsApp/Email
 
-**Descrição**:
-Funcionalidade que sugere artigos relevantes para enviar a contatos como forma de reconexão, baseado em seu perfil e interesses.
+### Veículos (Implementado 2026-04-17)
+- [x] Upload OS/NF via foto com OCR (Claude Vision + Google Drive)
+- [x] Compressão client-side para Vercel limit
+- [x] Edição de itens em OS concluídas
+- [x] Página de oficinas no sidebar
 
-**Fluxo proposto**:
-1. Analisa perfil do contato (cargo, empresa, setor, interesses, histórico de conversas)
-2. Cruza com artigos categorizados por IA (categoria, público-alvo, keywords)
-3. Sugere top 3 artigos mais relevantes para cada contato
-4. Permite enviar diretamente por email ou WhatsApp
+### Ciclo Financeiro (Implementado 2026-04-17)
+- [x] Email de cobrança com tabela de despesas editável
+- [x] Detecção automática de pagamento via Gmail sync
+- [x] Auto-criar próximo ciclo
 
-**Onde mostrar**:
-- No detalhe do contato: seção "Artigos sugeridos para reconexão"
-- Na lista de contatos: filtro "Sem contato há 30+ dias" com sugestões
-- Dashboard: "Oportunidades de reconexão"
-
-**Dependências**:
-- [x] Categorização de artigos com IA (implementado)
-- [ ] Análise de interesses dos contatos
-- [ ] Histórico de artigos já enviados para cada contato
+### Smart Follow-Up (Implementado 2026-04-17)
+- [x] Detecta emails enviados sem resposta
+- [x] Classificação por IA (relevância + urgência)
+- [x] Cria FUP proposals automáticos
 
 ---
 
-## Outras Funcionalidades na Fila
+## Pendente
 
-### LinkedIn - Agendamento Direto
-- Integrar com LinkedIn API para publicação automática
-- Atualmente: apenas gera conteúdo, publicação é manual
+### Grupos WhatsApp em Projetos
+- [x] Vincular grupos a projetos (tabela + endpoints)
+- [x] Buscar mensagens de grupos na análise IA
+- [ ] UI para vincular/desvincular grupos na página do projeto
+- [ ] Download de documentos dos grupos → Google Drive → indexação
+- [ ] Sync periódico de mensagens de grupos vinculados
 
-### Instagram - Suporte Completo
-- Adaptar artigos para formato Instagram (carrossel, reels)
-- Integrar com Meta API para agendamento
+### Integração Claude Projects
+- [ ] Avaliar alternativa: contexto persistente por projeto no INTEL
+- [ ] Histórico de pareceres como memória acumulativa
+- [ ] Cada projeto com "assistente dedicado" que lembra análises anteriores
 
-### Google Calendar Sync
-- Sincronizar posts agendados com Google Calendar
-- Notificações de publicação
+### Importação de Interações
+- [ ] Importar histórico Gmail completo para melhorar distribuição de círculos
+- [ ] Importar histórico WhatsApp completo
+- [ ] C5 com 4k+ contatos sem interação → redistribuir após import
 
-### Métricas e Analytics
-- Dashboard de performance por categoria
-- Melhores horários baseado em engajamento real
-- ROI por tipo de conteúdo
+### Editorial Calendar
+- [ ] Sugerir artigos para reconexão com contatos
+- [ ] LinkedIn agendamento direto
+- [ ] Instagram suporte
+
+### Google Tasks Bidirecional
+- [ ] Sync completo de tarefas (pull + push)
+- [ ] Criar tasks no Google a partir de projetos INTEL
+
+### Enriquecimento
+- [ ] Proxycurl/LinkdAPI para dados LinkedIn
+- [ ] Busca automática de fotos
+- [ ] Auto-enrich de contatos C1-C2
+
+### UX
+- [ ] Pagina de contato: análise de mensagens com IA inline
+- [ ] Dashboard: widget de projetos ativos
+- [ ] Mobile: melhorar responsividade

@@ -1,8 +1,10 @@
-# Arquitetura do Sistema ImensIAH Prospects
+# Arquitetura do Sistema INTEL
 
 ## Visao Geral
 
-Sistema de gestao de prospects B2B com scoring inteligente baseado em IA.
+Assistente pessoal inteligente para gestao de relacionamentos, projetos, veiculos e financas pessoais. Combina CRM pessoal com IA (Claude) para analises, briefings e automacoes.
+
+**Dominio**: `intel.almeida-prado.com`
 
 ```
                     +------------------+
@@ -14,15 +16,19 @@ Sistema de gestao de prospects B2B com scoring inteligente baseado em IA.
               |                             |
      +--------v--------+          +---------v--------+
      |    FastAPI      |          |   PostgreSQL     |
-     |   (api/index)   |          | (Vercel Postgres)|
-     +--------+--------+          +------------------+
-              |
+     |   (524 endpoints)|         |    (Neon, 65     |
+     +--------+--------+          |     tabelas)     |
+              |                   +------------------+
     +---------+---------+---------+---------+
     |         |         |         |         |
 +---v---+ +---v---+ +---v---+ +---v---+ +---v---+
-|Google | |Fathom | |Whats  | |Linked | |Claude |
-|OAuth  | |  AI   | | App   | |  In   | |  AI   |
+|Google | |Evolu  | |Claude | |Linked | |Google |
+|APIs   | |tion   | |  AI   | |  In   | |Drive  |
 +-------+ +-------+ +-------+ +-------+ +-------+
+ Calendar   WhatsApp   Vision    Enrich    Storage
+ Gmail      Messages   Analysis  Profiles  Documents
+ Contacts   Groups     Briefings
+ Tasks      Webhooks   OCR
 ```
 
 ## Estrutura de Diretorios
@@ -31,162 +37,159 @@ Sistema de gestao de prospects B2B com scoring inteligente baseado em IA.
 prospect-system/
 ├── api/
 │   └── index.py              # Entry point Vercel
-│
 ├── app/
-│   ├── main.py               # [CORE] Todas as rotas (~85 endpoints)
-│   ├── models.py             # [CORE] Schemas Pydantic
-│   ├── database.py           # [CORE] Conexao PostgreSQL
-│   ├── scoring.py            # Sistema de pontuacao dinamica
-│   ├── auth.py               # Google OAuth
+│   ├── main.py               # [CORE] 524 endpoints (~16k linhas)
+│   ├── database.py           # [CORE] 65 tabelas PostgreSQL
+│   ├── auth.py               # Google OAuth + sessions
 │   │
 │   ├── integrations/         # APIs externas
 │   │   ├── google_calendar.py
 │   │   ├── google_contacts.py
-│   │   ├── fathom.py
-│   │   ├── linkedin.py
-│   │   └── whatsapp.py
+│   │   ├── google_drive.py
+│   │   ├── google_tasks.py
+│   │   ├── gmail.py
+│   │   ├── evolution_api.py  # WhatsApp (Evolution API)
+│   │   ├── whatsapp.py       # WhatsApp helpers
+│   │   └── linkedin.py
 │   │
-│   ├── services/             # Logica de negocio
+│   ├── services/             # 60 modulos de logica de negocio
+│   │   ├── # -- Relacionamentos --
+│   │   ├── circulos.py       # Circulos de proximidade (C1-C5)
+│   │   ├── briefings.py      # Briefings inteligentes pre-reuniao
+│   │   ├── contact_enrichment.py
 │   │   ├── contact_dedup.py
-│   │   └── linkedin_import.py
+│   │   ├── contact_intelligence.py
+│   │   ├── timeline.py
+│   │   ├── search.py
+│   │   │
+│   │   ├── # -- Projetos --
+│   │   ├── projects.py       # CRUD projetos + milestones
+│   │   ├── project_enrichment.py
+│   │   ├── project_smart_update.py  # Smart Update: analisa msgs → atualiza tarefas
+│   │   ├── payment_cycle.py  # Ciclo financeiro automatizado
+│   │   │
+│   │   ├── # -- Comunicacao --
+│   │   ├── whatsapp_sync.py  # Sync WhatsApp individual + grupos
+│   │   ├── gmail_sync.py     # Sync Gmail
+│   │   ├── inbox.py          # Inbox unificado
+│   │   ├── realtime_analyzer.py  # Analise de intencao em msgs
+│   │   ├── smart_fup.py      # Follow-up inteligente automatico
+│   │   │
+│   │   ├── # -- IA & Automacao --
+│   │   ├── ai_agent.py       # Orquestrador de sugestoes AI
+│   │   ├── action_proposals.py   # Propostas de acao (dedup, auto-resolve)
+│   │   ├── action_executor.py
+│   │   ├── smart_triggers.py
+│   │   ├── health_predictions.py
+│   │   ├── message_suggestions.py
+│   │   ├── digest_generator.py
+│   │   │
+│   │   ├── # -- Conteudo --
+│   │   ├── editorial_calendar.py
+│   │   ├── hot_takes.py
+│   │   ├── news_hub.py
+│   │   ├── campaign_service.py
+│   │   │
+│   │   ├── # -- Veiculos --
+│   │   ├── veiculos.py       # Manutencao + upload NF via foto/OCR
+│   │   ├── oficinas.py       # Cadastro de oficinas
+│   │   │
+│   │   ├── # -- Integracao --
+│   │   ├── conselhoos_sync.py # Sync com ConselhoOS
+│   │   ├── linkedin_enrichment.py
+│   │   ├── calendar_sync.py
+│   │   ├── tasks_sync.py
+│   │   └── ... (60 arquivos total)
 │   │
-│   ├── templates/            # HTML (Jinja2)
-│   └── static/               # CSS, JS
+│   ├── templates/            # 34 templates HTML (Jinja2)
+│   └── static/               # CSS, JS, Service Worker
 │
 ├── scripts/                  # Jobs e manutencao
-├── docs/                     # Documentacao (NOVO)
-└── data/                     # Arquivos de dados
+├── docs/                     # Documentacao
+├── dev.sh                    # Script de desenvolvimento local
+└── vercel.json               # Config deploy + crons
 ```
 
-## Modulos e Dependencias
+## Modulos Principais
 
-### Core (Alto Acoplamento - Cuidado!)
+### Relacionamentos (CRM)
+| Modulo | Funcao |
+|--------|--------|
+| circulos.py | Classificacao C1-C5 por proximidade + health score |
+| briefings.py | Briefings pre-reuniao com Claude AI |
+| contact_enrichment.py | Enriquecimento via LinkedIn, web search |
+| contact_dedup.py | Deteccao e merge de duplicatas |
+| dashboard.py | API unificada do dashboard |
 
-| Arquivo | Funcao | Modificado Por |
-|---------|--------|----------------|
-| main.py | Rotas | TODAS features |
-| models.py | Schemas | Maioria |
-| database.py | DB Schema | Mudancas de tabela |
+### Projetos
+| Modulo | Funcao |
+|--------|--------|
+| projects.py | CRUD projetos, milestones, tarefas, notas |
+| project_smart_update.py | Analisa msgs → sugere completar tarefas + cria novas |
+| payment_cycle.py | Ciclo financeiro: email cobranca → detecta pagamento → abre ciclo |
+| project_enrichment.py | Enriquecimento de projetos com IA |
 
-### Integracoes (Baixo Acoplamento - Seguro modificar)
+### Comunicacao
+| Modulo | Funcao |
+|--------|--------|
+| whatsapp_sync.py | Sync WhatsApp individual + grupos vinculados |
+| gmail_sync.py | Sync Gmail com contatos |
+| realtime_analyzer.py | Detecta intencao em mensagens (urgente, reuniao, etc) |
+| action_proposals.py | Propostas de acao com dedup e auto-resolve |
+| smart_fup.py | Follow-up automatico para emails sem resposta |
 
-| Modulo | Funcao | Independente? |
-|--------|--------|---------------|
-| google_calendar.py | Agendar reunioes | Sim |
-| google_contacts.py | Sync contatos | Sim |
-| fathom.py | Gravacao reunioes | Sim |
-| linkedin.py | Enriquecimento | Sim |
-| whatsapp.py | Mensagens | Sim |
+### Veiculos
+| Modulo | Funcao |
+|--------|--------|
+| veiculos.py | Controle manutencao + upload NF via foto com OCR |
+| oficinas.py | Cadastro de oficinas e servicos |
 
-### Services (Medio Acoplamento)
-
-| Servico | Funcao | Depende de |
-|---------|--------|------------|
-| contact_dedup.py | Deduplicacao | models.py |
-| linkedin_import.py | Import LinkedIn | models.py |
-| scoring.py | Pontuacao IA | models.py, database.py |
-
-## Fluxos Principais
-
-### 1. Autenticacao
-```
-Usuario -> /login -> Google OAuth -> /auth/google/callback -> Session Cookie
-```
-
-### 2. Prospect Pipeline
-```
-CSV/Manual -> Pendente -> Admin Aprova -> NOVO -> Contato -> Reuniao -> Convertido
-```
-
-### 3. Scoring Dinamico
-```
-Prospect -> scoring.py -> Fatores (cargo, setor, dados) -> Tier A/B/C/D/E
-                              ^
-                              |
-                    learned_weights (feedback de conversoes)
-```
-
-## Usuarios do Sistema
-
-| Email | Role | Acesso |
-|-------|------|--------|
-| renato@almeida-prado.com | Admin | /admin, /rap/* |
-| andressa@almeida-prado.com | Operador | /, /prospect/* |
-
-## Endpoints por Categoria
-
-### Autenticacao (4)
-- GET /login, /logout
-- GET /auth/google/login, /auth/google/callback
-
-### UI Pages (12)
-- GET /, /admin, /prospect/{id}
-- GET /rap/* (6 paginas customizadas)
-
-### API Prospects (8)
-- GET/POST/PATCH /api/prospects/*
-- POST /api/prospects/{id}/convert
-
-### API Admin (4)
-- GET/POST /api/admin/*
-
-### API Integracoes (15+)
-- /api/whatsapp/*
-- /api/fathom/*
-- /api/webhooks/*
-- /api/contacts/*
-
-## Banco de Dados
-
-### Tabelas Principais
-- `users` - Usuarios do sistema
-- `prospects` - Dados de prospects + score
-- `interactions` - Historico de contatos
-- `meetings` - Reunioes agendadas/realizadas
-- `learned_weights` - Pesos de ML para scoring
+### Conteudo
+| Modulo | Funcao |
+|--------|--------|
+| editorial_calendar.py | Calendario editorial multi-plataforma |
+| hot_takes.py | Hot takes para LinkedIn |
+| news_hub.py | Agregador de noticias relevantes |
+| campaign_service.py | Campanhas de comunicacao |
 
 ## Deploy
 
 - **Plataforma**: Vercel (Serverless)
-- **Regiao**: GRU1 (Brasil)
+- **Regiao**: IAD1
 - **Dominio**: intel.almeida-prado.com
-- **Deploy**: AUTOMATICO via GitHub push (nao precisa acao manual)
-- **Cron**: Sync contatos 9h diario
+- **Deploy**: AUTOMATICO via `git push origin main` (~2min)
+- **Banco Local**: PostgreSQL 15 em localhost:5432/intel
+- **Banco Producao**: Neon PostgreSQL
 
-### Fluxo de Deploy
-```
-git push origin main -> GitHub -> Vercel detecta push -> Build automatico -> Deploy em ~2min
-```
+### Cron Jobs (vercel.json)
+| Schedule | Job | Funcao |
+|----------|-----|--------|
+| 0 5 * * * | daily-sync | Health recalc + Contacts + Calendar + Tasks + Gmail + WhatsApp + AI suggestions + Campaigns + Smart FUP + Payment cycle check |
+| 0 18 * * * | health-recalc | Recalculo de health scores |
+| 0 8 * * 1 | weekly-digest | Digest semanal |
+| 0 4 * * 0 | cleanup | Expirar propostas + limpar notificacoes |
 
-## Gotchas e Conhecimento Importante
+## Gotchas Importantes
 
-### FastAPI Route Ordering
-- Rotas especificas DEVEM vir ANTES de rotas parametrizadas
-- Ex: `/api/contacts/suggestions` ANTES de `/api/contacts/{contact_id}`
-- Caso contrario: erro 422 (FastAPI tenta validar "suggestions" como int)
-
-### Google OAuth Scopes
-- Para sync de Tasks (leitura+escrita): usar `https://www.googleapis.com/auth/tasks`
-- NAO usar `tasks.readonly` se precisar criar/atualizar tasks
-- Usuario precisa reconectar conta Google apos mudanca de scope
-
-### PostgreSQL
-- Funcao `similarity()` requer extensao `pg_trgm` (nao disponivel no Vercel Postgres)
-- Usar `ILIKE` para buscas fuzzy simples
-
-### Desenvolvimento Local
-- Servidor local: `uvicorn app.main:app --reload` (porta 8000)
-- Hot reload automatico com WatchFiles
+1. **FastAPI Route Ordering**: Rotas especificas ANTES de parametrizadas
+2. **PostgreSQL Vercel**: `similarity()` NAO disponivel, usar `ILIKE`
+3. **Google OAuth Scopes**: Reconectar apos mudanca de scope
+4. **Claude API 529/400**: Implementar retry + verificar creditos
+5. **Vercel Body Limit**: ~4.5MB max, comprimir imagens client-side
+6. **WhatsApp Groups**: `@g.us` descartado por padrao, habilitar por projeto
+7. **Modal CSS**: Bootstrap conflita com custom modals, usar inline styles
+8. **Health Score Stale**: Recalcular 2x/dia via cron (5h + 18h)
 
 ## Variaveis de Ambiente
 
 ```
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
-GOOGLE_CALENDAR_ID
-FATHOM_API_KEY
 ANTHROPIC_API_KEY
 POSTGRES_URL
 EVOLUTION_API_URL
 EVOLUTION_API_KEY
+EVOLUTION_INSTANCE
+CONSELHOOS_DATABASE_URL
+CRON_SECRET
 ```
