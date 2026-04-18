@@ -1379,51 +1379,74 @@
             return '<p class="text-muted small mb-0">Nenhuma tarefa vinculada</p>';
         }
 
-        return tasks.map(t => {
-            let dueDateHtml = '';
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Classify each task
+        const overdue = [], todayTasks = [], upcoming = [], completed = [];
+        tasks.forEach(t => {
+            if (t.status === 'completed') { completed.push(t); return; }
+            if (!t.data_vencimento) { upcoming.push(t); return; }
+            const due = new Date(t.data_vencimento);
+            due.setHours(0, 0, 0, 0);
+            const diff = Math.ceil((due - today) / 86400000);
+            t._diff = diff;
+            if (diff < 0) overdue.push(t);
+            else if (diff === 0) todayTasks.push(t);
+            else upcoming.push(t);
+        });
+
+        // Sort each group by date
+        overdue.sort((a, b) => (a._diff || 0) - (b._diff || 0));
+        upcoming.sort((a, b) => new Date(a.data_vencimento || '9999') - new Date(b.data_vencimento || '9999'));
+
+        function renderTaskRow(t) {
+            const isCompleted = t.status === 'completed';
+            let dateHtml = '';
             if (t.data_vencimento) {
-                const dueDate = new Date(t.data_vencimento);
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                dueDate.setHours(0, 0, 0, 0);
-                const diffDays = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
-
-                let dateClass = 'text-muted';
-                let icon = 'bi-calendar';
-                if (t.status !== 'completed') {
-                    if (diffDays < 0) {
-                        dateClass = 'text-danger fw-semibold';
-                        icon = 'bi-exclamation-circle-fill';
-                    } else if (diffDays === 0) {
-                        dateClass = 'text-warning fw-semibold';
-                        icon = 'bi-clock-fill';
-                    } else if (diffDays <= 3) {
-                        dateClass = 'text-warning';
-                    }
+                const due = new Date(t.data_vencimento);
+                due.setHours(0, 0, 0, 0);
+                const diff = Math.ceil((due - today) / 86400000);
+                let cls = 'text-muted', icon = 'bi-calendar';
+                if (!isCompleted) {
+                    if (diff < 0) { cls = 'text-danger fw-semibold'; icon = 'bi-exclamation-circle-fill'; }
+                    else if (diff === 0) { cls = 'text-warning fw-semibold'; icon = 'bi-clock-fill'; }
+                    else if (diff <= 3) { cls = 'text-warning'; }
                 }
-                dueDateHtml = `<small class="${dateClass}"><i class="bi ${icon} me-1"></i>${formatDate(t.data_vencimento)}</small>`;
+                dateHtml = `<small class="${cls}"><i class="bi ${icon} me-1"></i>${formatDate(t.data_vencimento)}</small>`;
             }
-
             return `
                 <div class="d-flex align-items-center gap-2 py-2 border-bottom task-row" data-task-id="${t.id}">
-                    <input type="checkbox" class="form-check-input" ${t.status === 'completed' ? 'checked' : ''}
+                    <input type="checkbox" class="form-check-input" ${isCompleted ? 'checked' : ''}
                         onchange="toggleTask(${t.id}, this.checked)">
-                    <span class="flex-grow-1 ${t.status === 'completed' ? 'text-decoration-line-through text-muted' : ''}"
-                        style="cursor: pointer" onclick="editTask(${t.id})">${t.titulo}</span>
-                    ${dueDateHtml}
-                    ${t.contact_nome ? `<small class="text-muted">${t.contact_nome}</small>` : ''}
-                    <button class="btn btn-sm btn-outline-secondary" onclick="editTask(${t.id})" title="Editar tarefa">
-                        <i class="bi bi-pencil"></i>
+                    <span class="flex-grow-1 ${isCompleted ? 'text-decoration-line-through text-muted' : ''}"
+                        style="cursor: pointer; font-size: 0.9rem;" onclick="editTask(${t.id})">${t.titulo}</span>
+                    ${dateHtml}
+                    ${t.contact_nome ? `<small class="text-muted text-nowrap">${t.contact_nome.split(' ').slice(0,2).join(' ')}</small>` : ''}
+                    <button class="btn btn-sm btn-outline-secondary p-0 px-1" onclick="editTask(${t.id})" title="Editar">
+                        <i class="bi bi-pencil" style="font-size:0.7rem;"></i>
                     </button>
-                    <button class="btn btn-sm btn-outline-primary" onclick="showTaskContext(${t.id})" title="Ver contexto">
-                        <i class="bi bi-lightbulb"></i>
+                    <button class="btn btn-sm btn-outline-danger p-0 px-1" onclick="deleteTask(${t.id})" title="Excluir">
+                        <i class="bi bi-trash" style="font-size:0.7rem;"></i>
                     </button>
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})" title="Excluir tarefa">
-                        <i class="bi bi-trash"></i>
-                    </button>
-                </div>
-            `;
-        }).join('');
+                </div>`;
+        }
+
+        function renderGroup(label, icon, color, items) {
+            if (items.length === 0) return '';
+            return `
+                <div style="margin-bottom: 12px;">
+                    <div style="font-size: 0.75rem; font-weight: 700; color: ${color}; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
+                        <i class="bi ${icon} me-1"></i>${label} (${items.length})
+                    </div>
+                    ${items.map(renderTaskRow).join('')}
+                </div>`;
+        }
+
+        return renderGroup('Vencidas', 'bi-exclamation-triangle-fill', '#ef4444', overdue)
+             + renderGroup('Hoje', 'bi-clock-fill', '#f59e0b', todayTasks)
+             + renderGroup('Proximas', 'bi-calendar-check', '#6366f1', upcoming)
+             + (completed.length > 0 ? renderGroup('Concluidas', 'bi-check-circle-fill', '#10b981', completed) : '');
     }
 
     function renderTimeline() {
