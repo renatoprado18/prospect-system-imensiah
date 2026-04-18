@@ -1178,6 +1178,20 @@ def init_db():
             ON project_events(project_id)
         ''')
 
+        # Project WhatsApp groups - grupos vinculados a projetos
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS project_whatsapp_groups (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+                group_jid TEXT NOT NULL,
+                group_name TEXT,
+                ativo BOOLEAN DEFAULT TRUE,
+                last_synced_at TIMESTAMP,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(project_id, group_jid)
+            )
+        ''')
+
         # Project notes - timeline de atualizacoes/notas
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS project_notes (

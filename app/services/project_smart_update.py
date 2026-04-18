@@ -82,7 +82,22 @@ async def analyze_project_updates(project_id: int) -> Dict:
             """, (member_ids,))
             recent_messages = [dict(r) for r in cursor.fetchall()]
 
-    if not recent_messages:
+        # Mensagens dos grupos de WhatsApp vinculados ao projeto
+        group_messages = []
+        cursor.execute("""
+            SELECT group_jid, group_name FROM project_whatsapp_groups
+            WHERE project_id = %s AND ativo = TRUE
+        """, (project_id,))
+        linked_groups = [dict(r) for r in cursor.fetchall()]
+
+    # Buscar mensagens dos grupos via Evolution API (sync on-demand)
+    if linked_groups:
+        try:
+            group_messages = await _fetch_group_messages(linked_groups)
+        except Exception as e:
+            logger.warning(f"Erro ao buscar msgs dos grupos: {e}")
+
+    if not recent_messages and not group_messages:
         return {
             "suggestions": [],
             "new_tasks_suggested": [],
@@ -108,10 +123,21 @@ async def analyze_project_updates(project_id: int) -> Dict:
     messages_text = ""
     for contact_nome, msgs in convos.items():
         messages_text += f"\n--- Conversa com {contact_nome} ---\n"
-        for m in msgs[-15:]:  # Ultimas 15 por contato
+        for m in msgs[-15:]:
             sender = "RENATO" if m['direcao'] == 'outgoing' else contact_nome
             dt = str(m.get('enviado_em') or m.get('recebido_em') or '?')[:16]
             messages_text += f"[{dt}] {sender}: {(m.get('conteudo') or '')[:500]}\n"
+
+    # Adicionar mensagens dos grupos de WhatsApp
+    if group_messages:
+        for gm in group_messages:
+            messages_text += f"\n--- Grupo WhatsApp: {gm['group_name']} ---\n"
+            for m in gm['messages'][-15:]:
+                dt = str(m.get('timestamp', '?'))[:16]
+                sender = m.get('sender_name', m.get('sender', '?'))
+                content = m.get('content', '')[:500]
+                doc_info = f" [DOCUMENTO: {m.get('doc_name', '')}]" if m.get('has_document') else ""
+                messages_text += f"[{dt}] {sender}: {content}{doc_info}\n"
 
     members_text = ", ".join([f"{m['nome']} ({m.get('papel', 'membro')})" for m in members])
 
@@ -221,6 +247,113 @@ IMPORTANTE:
     except Exception as e:
         logger.error(f"Smart update error: {e}")
         return {"error": str(e)}
+
+
+async def _fetch_group_messages(linked_groups: List[Dict], limit_per_group: int = 20) -> List[Dict]:
+    """
+    Busca mensagens recentes dos grupos de WhatsApp vinculados ao projeto
+    via Evolution API.
+    """
+    import os
+    import httpx as hx
+    from integrations.whatsapp import WhatsAppIntegration
+    wa = WhatsAppIntegration()
+
+    base_url = os.getenv('EVOLUTION_API_URL', '')
+    api_key = os.getenv('EVOLUTION_API_KEY', '')
+    instance = os.getenv('EVOLUTION_INSTANCE', 'default')
+
+    results = []
+    for group in linked_groups:
+        jid = group['group_jid']
+        name = group.get('group_name', jid)
+
+        try:
+            # Buscar mensagens do grupo direto pela API (JID ja e @g.us)
+            async with hx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(
+                    f"{base_url}/chat/findMessages/{instance}",
+                    headers={'apikey': api_key, 'Content-Type': 'application/json'},
+                    json={"where": {"key": {"remoteJid": jid}}, "limit": limit_per_group}
+                )
+                resp_data = resp.json() if resp.status_code == 200 else {}
+                # Evolution API v2: {messages: {total, pages, records: [...]}}
+                msgs_container = resp_data.get('messages', resp_data)
+                if isinstance(msgs_container, dict):
+                    raw_msgs = msgs_container.get('records', [])
+                elif isinstance(msgs_container, list):
+                    raw_msgs = msgs_container
+                else:
+                    raw_msgs = []
+            if not raw_msgs:
+                continue
+
+            parsed = []
+            for m in raw_msgs:
+                msg_data = m.get('message') or {}
+                key = m.get('key') or {}
+                msg_type = m.get('messageType', '')
+
+                # Ignorar reacoes, stickers, etc
+                if msg_type in ('reactionMessage', 'stickerMessage', 'protocolMessage'):
+                    continue
+
+                # Extrair conteudo
+                content = ''
+                has_document = False
+                doc_name = ''
+
+                if 'conversation' in msg_data:
+                    content = msg_data['conversation']
+                elif 'extendedTextMessage' in msg_data:
+                    content = msg_data['extendedTextMessage'].get('text', '')
+                elif 'documentMessage' in msg_data:
+                    doc_name = msg_data['documentMessage'].get('fileName', 'documento')
+                    content = msg_data['documentMessage'].get('caption', f'[Documento: {doc_name}]')
+                    has_document = True
+                elif 'imageMessage' in msg_data:
+                    content = msg_data['imageMessage'].get('caption', '[Imagem]')
+                    has_document = True
+                    doc_name = 'imagem'
+
+                if not content or len(content) < 3:
+                    continue
+
+                # Sender
+                sender = key.get('participant', key.get('participantAlt', '')).replace('@s.whatsapp.net', '').replace('@lid', '')
+                sender_name = m.get('pushName', sender)
+                if key.get('fromMe'):
+                    sender_name = 'RENATO'
+
+                # Timestamp
+                timestamp = m.get('messageTimestamp', m.get('updatedAt', ''))
+                if isinstance(timestamp, (int, float)):
+                    try:
+                        from datetime import datetime as dt_cls
+                        timestamp = dt_cls.fromtimestamp(int(timestamp)).isoformat()
+                    except Exception:
+                        pass
+
+                parsed.append({
+                    'content': content,
+                    'sender': sender,
+                    'sender_name': sender_name,
+                    'timestamp': timestamp,
+                    'has_document': has_document,
+                    'doc_name': doc_name
+                })
+
+            if parsed:
+                results.append({
+                    'group_name': name,
+                    'group_jid': jid,
+                    'messages': parsed
+                })
+
+        except Exception as e:
+            logger.warning(f"Erro ao buscar msgs do grupo {name}: {e}")
+
+    return results
 
 
 async def apply_smart_updates(project_id: int, task_ids: List[int] = None,
