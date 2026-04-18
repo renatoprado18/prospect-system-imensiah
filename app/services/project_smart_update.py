@@ -417,3 +417,220 @@ async def apply_smart_updates(project_id: int, task_ids: List[int] = None,
         conn.commit()
 
     return results
+
+
+async def generate_project_analysis(project_id: int, custom_prompt: str = None) -> Dict:
+    """
+    Gera um parecer/análise IA sobre o projeto, cruzando:
+    - Descrição e tarefas do projeto
+    - Mensagens dos membros (email/WhatsApp)
+    - Mensagens dos grupos de WhatsApp vinculados
+    - Documentos disponíveis
+
+    Args:
+        project_id: ID do projeto
+        custom_prompt: Prompt customizado (opcional, ex: "analise os riscos jurídicos")
+
+    Returns:
+        {analysis: str, sources: [...], saved_note_id: int}
+    """
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return {"error": "ANTHROPIC_API_KEY nao configurada"}
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Projeto
+        cursor.execute("SELECT id, nome, descricao, tipo, status FROM projects WHERE id = %s", (project_id,))
+        project = cursor.fetchone()
+        if not project:
+            return {"error": "Projeto nao encontrado"}
+        project = dict(project)
+
+        # Tarefas
+        cursor.execute("""
+            SELECT t.titulo, t.status, t.data_vencimento, c.nome as responsavel
+            FROM tasks t LEFT JOIN contacts c ON c.id = t.contact_id
+            WHERE t.project_id = %s ORDER BY t.data_vencimento NULLS LAST
+        """, (project_id,))
+        tasks = [dict(r) for r in cursor.fetchall()]
+
+        # Membros
+        cursor.execute("""
+            SELECT c.nome, pm.papel FROM project_members pm
+            JOIN contacts c ON c.id = pm.contact_id WHERE pm.project_id = %s
+        """, (project_id,))
+        members = [dict(r) for r in cursor.fetchall()]
+        member_ids = [m['contact_id'] for m in cursor.execute("""
+            SELECT contact_id FROM project_members WHERE project_id = %s
+        """, (project_id,)) or []]
+
+        # Re-query member IDs properly
+        cursor.execute("SELECT contact_id FROM project_members WHERE project_id = %s", (project_id,))
+        member_ids = [r['contact_id'] for r in cursor.fetchall()]
+
+        # Mensagens individuais
+        individual_msgs = []
+        if member_ids:
+            cursor.execute("""
+                SELECT m.conteudo, m.direcao, m.enviado_em, cv.canal, c.nome as contact_nome
+                FROM messages m
+                JOIN conversations cv ON cv.id = m.conversation_id
+                JOIN contacts c ON c.id = cv.contact_id
+                WHERE cv.contact_id = ANY(%s)
+                  AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - INTERVAL '30 days'
+                  AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 10
+                ORDER BY COALESCE(m.enviado_em, m.recebido_em) DESC LIMIT 20
+            """, (member_ids,))
+            individual_msgs = [dict(r) for r in cursor.fetchall()]
+
+        # Grupos WhatsApp vinculados
+        cursor.execute("""
+            SELECT group_jid, group_name FROM project_whatsapp_groups
+            WHERE project_id = %s AND ativo = TRUE
+        """, (project_id,))
+        linked_groups = [dict(r) for r in cursor.fetchall()]
+
+        # Documentos
+        cursor.execute("""
+            SELECT d.nome, d.google_drive_url FROM documento_links dl
+            JOIN documentos d ON d.id = dl.documento_id
+            WHERE dl.entidade_tipo = 'projeto' AND dl.entidade_id = %s
+        """, (project_id,))
+        docs = [dict(r) for r in cursor.fetchall()]
+
+        # Notas do projeto
+        cursor.execute("""
+            SELECT titulo, conteudo, tipo, criado_em FROM project_notes
+            WHERE project_id = %s ORDER BY criado_em DESC LIMIT 3
+        """, (project_id,))
+        notes = [dict(r) for r in cursor.fetchall()]
+
+    # Buscar mensagens dos grupos
+    group_msgs = []
+    if linked_groups:
+        try:
+            group_msgs = await _fetch_group_messages(linked_groups, limit_per_group=30)
+        except Exception as e:
+            logger.warning(f"Erro ao buscar msgs grupos: {e}")
+
+    # Montar contexto
+    context_parts = []
+
+    context_parts.append(f"PROJETO: {project['nome']}")
+    context_parts.append(f"TIPO: {project.get('tipo', 'negocio')}")
+    context_parts.append(f"DESCRICAO: {project.get('descricao', '')[:500]}")
+    context_parts.append(f"HOJE: {date.today().isoformat()}")
+
+    if members:
+        context_parts.append(f"\nPARTICIPANTES: {', '.join(m['nome'] + ' (' + (m.get('papel') or '') + ')' for m in members)}")
+
+    if tasks:
+        context_parts.append("\nTAREFAS:")
+        for t in tasks:
+            status = 'concluida' if t['status'] == 'completed' else 'pendente'
+            context_parts.append(f"- [{status}] {t['titulo']} | resp: {t.get('responsavel', '-')} | prazo: {t.get('data_vencimento', '-')}")
+
+    if docs:
+        context_parts.append(f"\nDOCUMENTOS DISPONIVEIS ({len(docs)}):")
+        for d in docs:
+            context_parts.append(f"- {d['nome']}")
+
+    if individual_msgs:
+        context_parts.append("\nMENSAGENS RECENTES DOS MEMBROS:")
+        for m in individual_msgs[:10]:
+            sender = "RENATO" if m['direcao'] == 'outgoing' else m['contact_nome']
+            dt = str(m.get('enviado_em', '?'))[:10]
+            context_parts.append(f"[{dt}] {sender}: {(m.get('conteudo') or '')[:400]}")
+
+    if group_msgs:
+        for gm in group_msgs:
+            context_parts.append(f"\nGRUPO WHATSAPP: {gm['group_name']}")
+            for m in gm['messages'][-20:]:
+                dt = str(m.get('timestamp', '?'))[:10]
+                sender = m.get('sender_name', '?')
+                doc_tag = f" [DOC: {m['doc_name']}]" if m.get('has_document') else ""
+                context_parts.append(f"[{dt}] {sender}: {m.get('content', '')[:400]}{doc_tag}")
+
+    full_context = "\n".join(context_parts)
+
+    # Prompt
+    if custom_prompt:
+        user_instruction = custom_prompt
+    else:
+        user_instruction = """Gere um PARECER completo e PRÁTICO sobre este projeto. Inclua:
+
+1. **SITUAÇÃO ATUAL**: Resumo do estado do projeto (2-3 frases)
+2. **PRAZOS CRÍTICOS**: Datas e deadlines identificados nas mensagens/tarefas
+3. **AÇÕES NECESSÁRIAS**: Lista priorizada do que precisa ser feito, por quem, e até quando
+4. **RISCOS**: O que pode dar errado se não agir
+5. **OPORTUNIDADES**: Como maximizar resultados
+6. **PRÓXIMOS PASSOS IMEDIATOS**: 3 ações concretas para esta semana
+
+Seja direto, prático, em português. Use linguagem acessível.
+Baseie-se nos FATOS das mensagens e documentos, não em suposições."""
+
+    prompt = f"""Você é o assistente inteligente do CRM pessoal do Renato. Analise o projeto abaixo e gere um parecer detalhado.
+
+{full_context}
+
+## INSTRUÇÃO
+{user_instruction}"""
+
+    # Chamar Claude
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 2000,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+            )
+
+        if response.status_code != 200:
+            return {"error": f"Erro na API: {response.status_code}", "detail": response.text[:200]}
+
+        analysis_text = response.json().get("content", [{}])[0].get("text", "")
+
+    except Exception as e:
+        return {"error": str(e)}
+
+    # Salvar como nota do projeto
+    note_id = None
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            titulo = f"Parecer IA: {project['nome'][:50]} ({date.today().isoformat()})"
+            cursor.execute("""
+                INSERT INTO project_notes (project_id, conteudo, tipo, titulo, autor)
+                VALUES (%s, %s, 'parecer', %s, 'INTEL IA')
+                RETURNING id
+            """, (project_id, analysis_text, titulo))
+            note_id = cursor.fetchone()['id']
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"Erro ao salvar nota: {e}")
+
+    sources = []
+    if individual_msgs:
+        sources.append(f"{len(individual_msgs)} mensagens individuais")
+    if group_msgs:
+        for gm in group_msgs:
+            sources.append(f"Grupo: {gm['group_name']} ({len(gm['messages'])} msgs)")
+    if docs:
+        sources.append(f"{len(docs)} documentos no Drive")
+
+    return {
+        "analysis": analysis_text,
+        "sources": sources,
+        "saved_note_id": note_id,
+        "project_name": project['nome']
+    }

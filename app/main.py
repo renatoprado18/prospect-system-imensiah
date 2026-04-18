@@ -14535,6 +14535,23 @@ async def api_smart_update_apply(project_id: int, request: Request):
     return result
 
 
+# ============== PROJECT AI ANALYSIS ==============
+
+@app.post("/api/projects/{project_id}/ai-analysis")
+async def api_project_ai_analysis(project_id: int, request: Request):
+    """Gera parecer IA sobre o projeto cruzando mensagens, grupos, docs e tarefas"""
+    from services.project_smart_update import generate_project_analysis
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    custom_prompt = data.get('prompt')
+    result = await generate_project_analysis(project_id, custom_prompt)
+    if result.get('error'):
+        raise HTTPException(status_code=400, detail=result['error'])
+    return result
+
+
 # ============== PROJECT WHATSAPP GROUPS ==============
 
 @app.get("/api/projects/{project_id}/whatsapp-groups")

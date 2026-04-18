@@ -735,6 +735,9 @@
                         <button class="btn btn-outline-primary" onclick="openSmartUpdateModal()" title="Analisar emails e WhatsApp para atualizar tarefas">
                             <i class="bi bi-stars"></i> Atualizar com IA
                         </button>
+                        <button class="btn btn-outline-success" onclick="openAnalysisModal()" title="Gerar parecer completo com IA">
+                            <i class="bi bi-file-earmark-medical"></i> Parecer IA
+                        </button>
                         <button class="btn btn-outline-secondary" onclick="editProject()">
                             <i class="bi bi-pencil"></i>
                         </button>
@@ -2358,6 +2361,78 @@
         }
     }
 
+    // ============ AI Analysis (Parecer) ============
+    let lastAnalysisText = '';
+
+    function openAnalysisModal() {
+        document.getElementById('analysisPromptStep').style.display = 'block';
+        document.getElementById('analysisLoading').style.display = 'none';
+        document.getElementById('analysisResult').style.display = 'none';
+        document.getElementById('analysisError').style.display = 'none';
+        document.getElementById('btnCopyAnalysis').style.display = 'none';
+        document.getElementById('analysisCustomPrompt').value = '';
+        new bootstrap.Modal(document.getElementById('analysisModal')).show();
+    }
+
+    async function generateAnalysis() {
+        const customPrompt = document.getElementById('analysisCustomPrompt').value.trim();
+
+        document.getElementById('analysisPromptStep').style.display = 'none';
+        document.getElementById('analysisLoading').style.display = 'block';
+
+        try {
+            const body = customPrompt ? JSON.stringify({ prompt: customPrompt }) : '{}';
+            const resp = await fetch(`/api/projects/${projectId}/ai-analysis`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: body
+            });
+            const data = await resp.json();
+
+            document.getElementById('analysisLoading').style.display = 'none';
+
+            if (!resp.ok || data.error) {
+                document.getElementById('analysisError').style.display = 'block';
+                document.getElementById('analysisErrorMsg').textContent = data.detail || data.error || 'Erro';
+                return;
+            }
+
+            // Renderizar markdown simples
+            let html = (data.analysis || '')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/^### (.*$)/gm, '<h5 class="mt-3 mb-1">$1</h5>')
+                .replace(/^## (.*$)/gm, '<h4 class="mt-3 mb-2">$1</h4>')
+                .replace(/^# (.*$)/gm, '<h3 class="mt-3 mb-2">$1</h3>')
+                .replace(/^- (.*$)/gm, '<li>$1</li>')
+                .replace(/\n/g, '<br>');
+
+            document.getElementById('analysisContent').innerHTML = html;
+            document.getElementById('analysisResult').style.display = 'block';
+            document.getElementById('btnCopyAnalysis').style.display = 'inline-block';
+
+            // Sources
+            const sources = data.sources || [];
+            document.getElementById('analysisSources').innerHTML =
+                `<i class="bi bi-info-circle me-1"></i>Fontes: ${sources.join(' | ')}` +
+                (data.saved_note_id ? ' | <i class="bi bi-check-circle text-success"></i> Salvo na timeline do projeto' : '');
+
+            lastAnalysisText = data.analysis || '';
+
+            // Reload project to show new note
+            loadProject();
+
+        } catch (e) {
+            document.getElementById('analysisLoading').style.display = 'none';
+            document.getElementById('analysisError').style.display = 'block';
+            document.getElementById('analysisErrorMsg').textContent = 'Erro ao conectar com a API';
+        }
+    }
+
+    function copyAnalysis() {
+        navigator.clipboard.writeText(lastAnalysisText);
+        showToast('Parecer copiado!', 'success');
+    }
+
     // ============ Payment Cycle (Cobranca) ============
     function openCobrancaModal() {
         const config = project.metadata?.payment_cycle;
@@ -2466,6 +2541,59 @@
         }
     }
 </script>
+
+<!-- Modal AI Analysis (Parecer) -->
+<div class="modal fade" id="analysisModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-file-earmark-medical text-success me-2"></i>Parecer IA</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Custom prompt -->
+                <div id="analysisPromptStep">
+                    <p class="text-muted small">A IA vai analisar tarefas, mensagens, grupos WhatsApp e documentos deste projeto.</p>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Foco da análise (opcional)</label>
+                        <input type="text" id="analysisCustomPrompt" class="form-control"
+                               placeholder="Ex: analise os riscos jurídicos, próximos passos para a Emma...">
+                    </div>
+                    <button class="btn btn-success w-100" onclick="generateAnalysis()">
+                        <i class="bi bi-stars me-1"></i>Gerar Parecer
+                    </button>
+                </div>
+
+                <!-- Loading -->
+                <div id="analysisLoading" style="display:none;" class="text-center py-5">
+                    <div class="spinner-border text-success mb-3" style="width:3rem;height:3rem;"></div>
+                    <p class="text-muted">Analisando projeto com IA...</p>
+                    <p class="text-muted small">Cruzando mensagens, grupos WhatsApp e documentos</p>
+                </div>
+
+                <!-- Result -->
+                <div id="analysisResult" style="display:none;">
+                    <div id="analysisContent" style="white-space: pre-wrap; line-height: 1.7; font-size: 0.9rem;"></div>
+                    <div class="mt-3 pt-3 border-top">
+                        <small class="text-muted" id="analysisSources"></small>
+                    </div>
+                </div>
+
+                <!-- Error -->
+                <div id="analysisError" style="display:none;" class="text-center py-4">
+                    <i class="bi bi-exclamation-triangle text-danger" style="font-size: 2rem;"></i>
+                    <p class="mt-2 text-muted" id="analysisErrorMsg"></p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+                <button class="btn btn-outline-primary" onclick="copyAnalysis()" id="btnCopyAnalysis" style="display:none;">
+                    <i class="bi bi-clipboard me-1"></i>Copiar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Modal Smart Update -->
 <div class="modal fade" id="smartUpdateModal" tabindex="-1">
