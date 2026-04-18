@@ -14211,7 +14211,11 @@ async def api_project_briefing(request: Request, project_id: int):
         dt_str = dt.strftime("%d/%m %H:%M") if dt else "?"
         direction = "enviada" if m['direcao'] == 'outgoing' else "recebida"
         content = (m.get('conteudo') or '')[:500].replace('\n', ' ')
-        msgs_text += f"- [{m['canal']}] {dt_str} {direction} {m['contact_nome']}: {content}\n"
+        if m['direcao'] == 'outgoing':
+            who = f"RENATO escreveu para {m['contact_nome']}"
+        else:
+            who = f"{m['contact_nome']} escreveu para RENATO"
+        msgs_text += f"- [{m['canal']}] {dt_str} {who}: {content}\n"
     msgs_text = msgs_text or "(nenhuma mensagem recente dos membros)"
 
     notes_text = ""

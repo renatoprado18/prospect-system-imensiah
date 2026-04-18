@@ -99,8 +99,9 @@ async def analyze_project_updates(project_id: int) -> Dict:
     ])
 
     messages_text = "\n".join([
-        f"[{m.get('canal','?')}] {m['contact_nome']} ({m['direcao']}) "
-        f"em {str(m.get('enviado_em') or m.get('recebido_em') or '?')[:10]}: "
+        f"[{m.get('canal','?')}] "
+        f"{'RENATO escreveu para ' + m['contact_nome'] if m['direcao'] == 'outgoing' else m['contact_nome'] + ' escreveu para RENATO'}"
+        f" em {str(m.get('enviado_em') or m.get('recebido_em') or '?')[:10]}: "
         f"{(m.get('conteudo') or '')[:500]}"
         for m in recent_messages[:20]
     ])
