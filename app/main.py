@@ -14552,6 +14552,134 @@ async def api_project_ai_analysis(project_id: int, request: Request):
     return result
 
 
+# ============== SHARE PROJECT ANALYSIS ==============
+
+@app.post("/api/projects/{project_id}/adapt-analysis")
+async def api_adapt_analysis(project_id: int, request: Request):
+    """Adapta o parecer para um destinatario especifico e canal"""
+    import httpx as _hx
+
+    data = await request.json()
+    analysis = data.get('analysis', '')
+    contact_name = data.get('contact_name', '')
+    channel = data.get('channel', 'whatsapp')
+    project_name = data.get('project_name', '')
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key nao configurada")
+
+    if channel == 'whatsapp':
+        instruction = f"""Reescreva este parecer como uma MENSAGEM DE WHATSAPP para {contact_name}.
+Tom: informal, carinhoso, direto. Como um parente/amigo explicando.
+SEM juridiquês. Máximo 15 linhas. 1-2 emojis no máximo.
+NÃO peça para ler documentos jurídicos.
+Foque em: o que aconteceu (2 frases), o que ELA precisa fazer (3 ações concretas), o que VOCÊ vai fazer.
+Assine como Renato."""
+    else:
+        instruction = f"""Reescreva este parecer como um EMAIL para {contact_name}.
+Tom: profissional mas acessível. Sem juridiquês excessivo.
+Estruture em: Resumo da situação, Ações necessárias, Próximos passos, Prazos.
+Assine como Renato de Faria e Almeida Prado."""
+
+    prompt = f"""{instruction}
+
+PARECER ORIGINAL (projeto: {project_name}):
+{analysis[:3000]}"""
+
+    try:
+        async with _hx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 800,
+                      "messages": [{"role": "user", "content": prompt}]}
+            )
+        if resp.status_code == 200:
+            message = resp.json()["content"][0]["text"]
+            return {"message": message, "channel": channel, "recipient": contact_name}
+        raise HTTPException(status_code=resp.status_code, detail="Erro na API")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/projects/{project_id}/send-analysis")
+async def api_send_analysis(project_id: int, request: Request):
+    """Envia mensagem adaptada do parecer via WhatsApp ou Email"""
+    data = await request.json()
+    contact_id = data.get('contact_id')
+    channel = data.get('channel', 'whatsapp')
+    message = data.get('message', '')
+
+    if not contact_id or not message:
+        raise HTTPException(status_code=400, detail="contact_id e message obrigatorios")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT nome, telefones, emails FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato nao encontrado")
+        contact = dict(contact)
+
+    if channel == 'whatsapp':
+        # Enviar via WhatsApp
+        telefones = contact.get('telefones', [])
+        if isinstance(telefones, str):
+            import json as _json
+            telefones = _json.loads(telefones)
+        phone = None
+        for t in telefones:
+            if t.get('whatsapp') or t.get('number'):
+                phone = t.get('number', '')
+                break
+        if not phone and telefones:
+            phone = telefones[0].get('number', '')
+
+        if not phone:
+            raise HTTPException(status_code=400, detail=f"Contato {contact['nome']} nao tem telefone")
+
+        from integrations.whatsapp import WhatsAppIntegration
+        wa = WhatsAppIntegration()
+        result = await wa.send_text_message(phone, message)
+        return {"status": "sent", "channel": "whatsapp", "to": phone, "result": result}
+
+    elif channel == 'email':
+        emails = contact.get('emails', [])
+        if isinstance(emails, str):
+            import json as _json
+            emails = _json.loads(emails)
+        email = None
+        for e in emails:
+            if e.get('email'):
+                email = e['email']
+                break
+        if not email:
+            raise HTTPException(status_code=400, detail=f"Contato {contact['nome']} nao tem email")
+
+        from integrations.gmail import GmailIntegration
+        from integrations.google_drive import get_valid_token as _get_token
+        with get_db() as conn:
+            token = await _get_token(conn, 'professional')
+        if not token:
+            raise HTTPException(status_code=401, detail="Token Gmail indisponivel")
+
+        gmail = GmailIntegration()
+        # Buscar nome do projeto para subject
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT nome FROM projects WHERE id = %s", (project_id,))
+            proj = cursor.fetchone()
+        subject = f"Atualização: {proj['nome']}" if proj else "Atualização de Projeto"
+
+        result = await gmail.send_message(token, email, subject, message)
+        return {"status": "sent", "channel": "email", "to": email, "result": result}
+
+    raise HTTPException(status_code=400, detail="Canal invalido")
+
+
 # ============== PROJECT WHATSAPP GROUPS ==============
 
 @app.get("/api/projects/{project_id}/whatsapp-groups")

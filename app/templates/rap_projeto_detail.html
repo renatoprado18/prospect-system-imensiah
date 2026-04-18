@@ -2409,6 +2409,7 @@
             document.getElementById('analysisContent').innerHTML = html;
             document.getElementById('analysisResult').style.display = 'block';
             document.getElementById('btnCopyAnalysis').style.display = 'inline-block';
+            document.getElementById('btnShareAnalysis').style.display = 'inline-block';
 
             // Sources
             const sources = data.sources || [];
@@ -2431,6 +2432,122 @@
     function copyAnalysis() {
         navigator.clipboard.writeText(lastAnalysisText);
         showToast('Parecer copiado!', 'success');
+    }
+
+    // ============ Share Analysis ============
+    function openShareStep() {
+        // Populate recipients from project members
+        const select = document.getElementById('shareRecipient');
+        select.innerHTML = '<option value="">Selecione um participante...</option>';
+        const members = project.membros || [];
+        members.forEach(m => {
+            select.innerHTML += `<option value="${m.contact_id}" data-nome="${m.nome}">${m.nome} (${m.papel || 'membro'})</option>`;
+        });
+
+        // Show share step, hide result
+        document.getElementById('analysisResult').style.display = 'none';
+        document.getElementById('analysisShareStep').style.display = 'block';
+        document.getElementById('btnCopyAnalysis').style.display = 'none';
+        document.getElementById('btnShareAnalysis').style.display = 'none';
+        document.getElementById('btnSendShare').style.display = 'inline-block';
+        document.getElementById('btnBackAnalysis').style.display = 'inline-block';
+        document.getElementById('shareMessageText').value = '';
+    }
+
+    function backToAnalysis() {
+        document.getElementById('analysisShareStep').style.display = 'none';
+        document.getElementById('analysisResult').style.display = 'block';
+        document.getElementById('btnCopyAnalysis').style.display = 'inline-block';
+        document.getElementById('btnShareAnalysis').style.display = 'inline-block';
+        document.getElementById('btnSendShare').style.display = 'none';
+        document.getElementById('btnBackAnalysis').style.display = 'none';
+    }
+
+    function updateShareChannel() {
+        const recipientId = document.getElementById('shareRecipient').value;
+        if (!recipientId) return;
+        const recipientName = document.getElementById('shareRecipient').selectedOptions[0]?.dataset?.nome || '';
+        adaptMessageForRecipient(recipientId, recipientName);
+    }
+
+    async function adaptMessageForRecipient(contactId, contactName) {
+        const channel = document.querySelector('input[name="shareChannel"]:checked')?.value || 'whatsapp';
+        const textarea = document.getElementById('shareMessageText');
+        const loading = document.getElementById('shareLoading');
+
+        textarea.style.display = 'none';
+        loading.style.display = 'block';
+
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/adapt-analysis`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    analysis: lastAnalysisText,
+                    contact_id: parseInt(contactId),
+                    contact_name: contactName,
+                    channel: channel,
+                    project_name: project.nome
+                })
+            });
+            const data = await resp.json();
+
+            loading.style.display = 'none';
+            textarea.style.display = 'block';
+
+            if (resp.ok) {
+                textarea.value = data.message || lastAnalysisText;
+            } else {
+                textarea.value = lastAnalysisText;
+                showToast('Erro ao adaptar, mostrando parecer original', 'warning');
+            }
+        } catch (e) {
+            loading.style.display = 'none';
+            textarea.style.display = 'block';
+            textarea.value = lastAnalysisText;
+        }
+    }
+
+    // Atualizar ao trocar canal
+    document.querySelectorAll('input[name="shareChannel"]').forEach(r => {
+        r.addEventListener('change', () => {
+            const recipientId = document.getElementById('shareRecipient').value;
+            const recipientName = document.getElementById('shareRecipient').selectedOptions[0]?.dataset?.nome || '';
+            if (recipientId) adaptMessageForRecipient(recipientId, recipientName);
+        });
+    });
+
+    async function sendSharedMessage() {
+        const recipientId = document.getElementById('shareRecipient').value;
+        const channel = document.querySelector('input[name="shareChannel"]:checked')?.value || 'whatsapp';
+        const message = document.getElementById('shareMessageText').value.trim();
+
+        if (!recipientId || !message) {
+            showToast('Selecione destinatário e verifique a mensagem', 'warning');
+            return;
+        }
+
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/send-analysis`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contact_id: parseInt(recipientId),
+                    channel: channel,
+                    message: message
+                })
+            });
+            const data = await resp.json();
+
+            if (resp.ok) {
+                showToast(`Mensagem enviada via ${channel}!`, 'success');
+                bootstrap.Modal.getInstance(document.getElementById('analysisModal')).hide();
+            } else {
+                showToast(data.detail || 'Erro ao enviar', 'danger');
+            }
+        } catch (e) {
+            showToast('Erro ao enviar mensagem', 'danger');
+        }
     }
 
     // ============ Payment Cycle (Cobranca) ============
@@ -2585,10 +2702,46 @@
                     <p class="mt-2 text-muted" id="analysisErrorMsg"></p>
                 </div>
             </div>
+            <!-- Share step (adaptar + editar + enviar) -->
+            <div id="analysisShareStep" style="display:none;">
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Para quem enviar</label>
+                    <select id="shareRecipient" class="form-select" onchange="updateShareChannel()">
+                        <option value="">Selecione um participante...</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Canal</label>
+                    <div class="btn-group w-100" role="group">
+                        <input type="radio" class="btn-check" name="shareChannel" id="channelWhatsApp" value="whatsapp" checked>
+                        <label class="btn btn-outline-success" for="channelWhatsApp"><i class="bi bi-whatsapp me-1"></i>WhatsApp</label>
+                        <input type="radio" class="btn-check" name="shareChannel" id="channelEmail" value="email">
+                        <label class="btn btn-outline-primary" for="channelEmail"><i class="bi bi-envelope me-1"></i>Email</label>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Mensagem (edite antes de enviar)</label>
+                    <textarea id="shareMessageText" class="form-control" rows="12" style="font-size: 0.9rem;"></textarea>
+                </div>
+                <div id="shareLoading" style="display:none;" class="text-center py-3">
+                    <div class="spinner-border spinner-border-sm text-success"></div>
+                    <span class="ms-2 text-muted">Adaptando parecer para o destinatário...</span>
+                </div>
+            </div>
+
             <div class="modal-footer">
                 <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
                 <button class="btn btn-outline-primary" onclick="copyAnalysis()" id="btnCopyAnalysis" style="display:none;">
                     <i class="bi bi-clipboard me-1"></i>Copiar
+                </button>
+                <button class="btn btn-outline-success" onclick="openShareStep()" id="btnShareAnalysis" style="display:none;">
+                    <i class="bi bi-share me-1"></i>Compartilhar
+                </button>
+                <button class="btn btn-success" onclick="sendSharedMessage()" id="btnSendShare" style="display:none;">
+                    <i class="bi bi-send me-1"></i>Enviar
+                </button>
+                <button class="btn btn-outline-secondary" onclick="backToAnalysis()" id="btnBackAnalysis" style="display:none;">
+                    <i class="bi bi-arrow-left me-1"></i>Voltar
                 </button>
             </div>
         </div>
