@@ -63,12 +63,13 @@ async def analyze_project_updates(project_id: int) -> Dict:
         members = [dict(r) for r in cursor.fetchall()]
         member_ids = [m['contact_id'] for m in members]
 
-        # Mensagens recentes dos membros (ultimos 30 dias, mais mensagens para analise)
+        # Mensagens recentes dos membros (ultimos 30 dias)
+        # Agrupadas por conversa para manter contexto de threads
         recent_messages = []
         if member_ids:
             cursor.execute("""
                 SELECT m.conteudo, m.direcao, m.enviado_em, m.recebido_em,
-                       cv.canal, c.nome as contact_nome
+                       cv.canal, cv.id as conv_id, c.nome as contact_nome
                 FROM messages m
                 JOIN conversations cv ON cv.id = m.conversation_id
                 JOIN contacts c ON c.id = cv.contact_id
@@ -76,8 +77,8 @@ async def analyze_project_updates(project_id: int) -> Dict:
                   AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - INTERVAL '30 days'
                   AND m.conteudo IS NOT NULL
                   AND LENGTH(m.conteudo) > 10
-                ORDER BY COALESCE(m.enviado_em, m.recebido_em) DESC
-                LIMIT 30
+                ORDER BY cv.contact_id, COALESCE(m.enviado_em, m.recebido_em) ASC
+                LIMIT 40
             """, (member_ids,))
             recent_messages = [dict(r) for r in cursor.fetchall()]
 
@@ -98,21 +99,30 @@ async def analyze_project_updates(project_id: int) -> Dict:
         for t in pending_tasks
     ])
 
-    messages_text = "\n".join([
-        f"[{m.get('canal','?')}] "
-        f"{'RENATO escreveu para ' + m['contact_nome'] if m['direcao'] == 'outgoing' else m['contact_nome'] + ' escreveu para RENATO'}"
-        f" em {str(m.get('enviado_em') or m.get('recebido_em') or '?')[:10]}: "
-        f"{(m.get('conteudo') or '')[:500]}"
-        for m in recent_messages[:20]
-    ])
+    # Agrupar mensagens por contato para manter contexto de conversa
+    from collections import defaultdict
+    convos = defaultdict(list)
+    for m in recent_messages:
+        convos[m['contact_nome']].append(m)
+
+    messages_text = ""
+    for contact_nome, msgs in convos.items():
+        messages_text += f"\n--- Conversa com {contact_nome} ---\n"
+        for m in msgs[-15:]:  # Ultimas 15 por contato
+            sender = "RENATO" if m['direcao'] == 'outgoing' else contact_nome
+            dt = str(m.get('enviado_em') or m.get('recebido_em') or '?')[:16]
+            messages_text += f"[{dt}] {sender}: {(m.get('conteudo') or '')[:500]}\n"
 
     members_text = ", ".join([f"{m['nome']} ({m.get('papel', 'membro')})" for m in members])
 
-    prompt = f"""Analise as mensagens recentes dos participantes deste projeto e identifique quais tarefas pendentes podem ser marcadas como concluidas.
+    prompt = f"""Analise as conversas recentes entre Renato e os participantes deste projeto.
+O usuario do sistema e RENATO. Quando ele envia uma mensagem, ele e o remetente.
 
-PROJETO: {project['nome']}
+PROJETO SENDO ANALISADO: {project['nome']}
 DESCRICAO: {project.get('descricao', '')[:300]}
 PARTICIPANTES: {members_text}
+
+ATENCAO: As conversas podem abordar MULTIPLOS assuntos/projetos. Considere APENAS o que e relevante para o projeto "{project['nome']}". Ignore partes das conversas sobre outros projetos ou assuntos pessoais.
 
 TAREFAS PENDENTES:
 {tasks_text}
