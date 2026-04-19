@@ -5426,6 +5426,53 @@ async def update_contact_enrichment_data(contact_id: int, request: Request):
 
 # ============== CONTACT INTELLIGENCE ==============
 
+@app.get("/api/contacts/{contact_id}/article-suggestions")
+async def get_article_suggestions(contact_id: int, limit: int = 3):
+    """Sugere artigos para reconexao com o contato baseado no perfil"""
+    from services.content_matcher import get_content_matcher
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, empresa, cargo, tags, contexto, circulo, health_score, ultimo_contato
+            FROM contacts WHERE id = %s
+        """, (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato nao encontrado")
+        contact = dict(contact)
+
+    tags = contact.get('tags', [])
+    if isinstance(tags, str):
+        import json as _json
+        tags = _json.loads(tags) if tags else []
+
+    matcher = get_content_matcher()
+    suggestions = []
+    for i in range(limit):
+        result = matcher.get_content_for_contact(
+            contact_id=contact_id,
+            contact_tags=tags,
+            contact_setor=contact.get('empresa', ''),
+            limit=1
+        )
+        if result and result not in suggestions:
+            suggestions.append(result)
+
+    # Calcular contexto de reconexao
+    dias_sem_contato = None
+    if contact.get('ultimo_contato'):
+        from datetime import datetime as dt_cls
+        ultimo = contact['ultimo_contato']
+        dias_sem_contato = (dt_cls.now() - ultimo).days if not ultimo.tzinfo else (dt_cls.now(ultimo.tzinfo) - ultimo).days
+
+    return {
+        "contact": {"nome": contact['nome'], "empresa": contact.get('empresa'), "circulo": contact.get('circulo')},
+        "dias_sem_contato": dias_sem_contato,
+        "suggestions": suggestions
+    }
+
+
 @app.post("/api/contacts/{contact_id}/analyze-conversations")
 async def analyze_contact_conversations(contact_id: int):
     """Analisa conversas recentes com o contato e identifica tom, intencoes, pendencias"""

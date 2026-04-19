@@ -2364,12 +2364,19 @@
                                 <button class="btn btn-sm btn-link p-0 ms-1" onclick="analyzeConversations()" title="Analisar conversas com IA" style="color: #8b5cf6;">
                                     <i class="bi bi-chat-square-text"></i>
                                 </button>
+                                <button class="btn btn-sm btn-link p-0 ms-1" onclick="loadArticleSuggestions()" title="Sugerir artigos para reconexao" style="color: #eab308;">
+                                    <i class="bi bi-newspaper"></i>
+                                </button>
                             </h4>
                             <p id="aiSummaryText">${contact.resumo_ai || '<em class="text-muted">Nenhum resumo gerado. Clique em atualizar para gerar.</em>'}</p>
                             <div id="conversationAnalysis" style="display:none; margin-top: 12px; padding: 12px; background: #f0f4ff; border-radius: 8px; border-left: 3px solid #6366f1;">
                                 <div id="conversationAnalysisContent" style="font-size: 0.85rem; line-height: 1.6;"></div>
                             </div>
                             ${contact.ultimo_enriquecimento ? `<small class="text-muted">Atualizado: ${formatDateTime(contact.ultimo_enriquecimento)}</small>` : ''}
+                            <div id="articleSuggestions" style="display:none; margin-top: 12px; padding: 12px; background: #fefce8; border-radius: 8px; border-left: 3px solid #eab308;">
+                                <h6 style="font-size: 0.8rem; color: #92400e; margin-bottom: 8px;"><i class="bi bi-newspaper me-1"></i>Artigos para reconexao</h6>
+                                <div id="articleSuggestionsContent"></div>
+                            </div>
                         </div>
                         <div class="stacked-column">
                             <div class="tile-card compact insights-top">
@@ -4734,6 +4741,37 @@
             } catch (error) {
                 console.error('Error:', error);
                 showNotification('Erro ao salvar alteracoes', 'error');
+            }
+        }
+
+        async function loadArticleSuggestions() {
+            const container = document.getElementById('articleSuggestions');
+            const content = document.getElementById('articleSuggestionsContent');
+            container.style.display = 'block';
+            content.innerHTML = '<div class="spinner-border spinner-border-sm text-warning"></div> Buscando artigos...';
+
+            try {
+                const resp = await fetch(`/api/contacts/${contactId}/article-suggestions?limit=3`);
+                const data = await resp.json();
+
+                if (!data.suggestions || data.suggestions.length === 0) {
+                    content.innerHTML = '<span class="text-muted" style="font-size: 0.8rem;">Nenhum artigo relevante encontrado</span>';
+                    return;
+                }
+
+                const diasText = data.dias_sem_contato != null ? ` (${data.dias_sem_contato} dias sem contato)` : '';
+                content.innerHTML = data.suggestions.map(s => `
+                    <div class="mb-2 p-2 rounded" style="background: white; border: 1px solid #fde68a;">
+                        <div class="fw-semibold" style="font-size: 0.8rem;">
+                            <a href="${s.article_url || s.url || '#'}" target="_blank" style="color: #92400e; text-decoration: none;">
+                                ${s.title || s.article_title || 'Artigo'}
+                            </a>
+                        </div>
+                        ${s.reason ? `<div style="font-size: 0.75rem; color: #78716c;">${s.reason}</div>` : ''}
+                    </div>
+                `).join('') + `<small class="text-muted">${diasText}</small>`;
+            } catch (e) {
+                content.innerHTML = '<span class="text-danger" style="font-size: 0.8rem;">Erro ao buscar artigos</span>';
             }
         }
 
