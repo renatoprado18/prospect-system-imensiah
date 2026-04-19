@@ -47,7 +47,7 @@ CIRCULO_PESSOAL_CONFIG = {
         "badge": "P2",
         "nome": "Proximo",
         "descricao": "Familia, amigos intimos",
-        "frequencia_dias": 14,
+        "frequencia_dias": 30,
         "cor": "#F87171",
         "icone": "heart",
         "peso": 80
@@ -96,7 +96,7 @@ CIRCULO_PROFISSIONAL_CONFIG = {
         "badge": "R2",
         "nome": "Estrategico",
         "descricao": "Conselheiros, mentores",
-        "frequencia_dias": 21,
+        "frequencia_dias": 30,
         "cor": "#8B5CF6",
         "icone": "star-fill",
         "peso": 80
