@@ -104,7 +104,7 @@ async def get_group_with_members(group_jid: str) -> Optional[Dict]:
 
 
 async def list_all_social_groups() -> List[Dict]:
-    """Lista todos os grupos de WhatsApp com nome."""
+    """Lista todos os grupos de WhatsApp, buscando nomes via metadata quando necessario."""
     base_url = os.getenv('EVOLUTION_API_URL', '')
     api_key = os.getenv('EVOLUTION_API_KEY', '')
     instance = os.getenv('EVOLUTION_INSTANCE', 'default')
@@ -123,16 +123,42 @@ async def list_all_social_groups() -> List[Dict]:
             chats = resp.json()
 
             groups = []
-            named_jids = set()
+            unnamed_jids = []
+
             for c in chats:
                 jid = c.get('remoteJid', '')
                 name = c.get('pushName', '')
                 if '@g.us' in jid and name:
                     groups.append({'jid': jid, 'name': name})
-                    named_jids.add(jid)
                 elif '@g.us' in jid:
-                    # Sem nome, tentar via metadata
-                    pass  # Muito lento, pular
+                    unnamed_jids.append(jid)
+
+            # Buscar nomes dos grupos sem nome via metadata (em paralelo)
+            if unnamed_jids:
+                import asyncio as aio
+                async def fetch_name(jid):
+                    try:
+                        r = await client.get(
+                            f'{base_url}/group/findGroupInfos/{instance}?groupJid={jid}',
+                            headers={'apikey': api_key},
+                            timeout=10.0
+                        )
+                        if r.status_code == 200:
+                            info = r.json()
+                            subject = info.get('subject', '')
+                            if subject:
+                                return {'jid': jid, 'name': subject, 'size': info.get('size', 0)}
+                    except:
+                        pass
+                    return None
+
+                # Processar em batches de 10 para não sobrecarregar
+                for i in range(0, len(unnamed_jids), 10):
+                    batch = unnamed_jids[i:i+10]
+                    results = await aio.gather(*[fetch_name(jid) for jid in batch])
+                    for r in results:
+                        if r:
+                            groups.append(r)
 
             return sorted(groups, key=lambda g: g['name'])
 
