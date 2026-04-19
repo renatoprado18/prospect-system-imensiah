@@ -765,10 +765,11 @@
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('filter') === 'needs_attention') {
             specialFilter = 'needs_attention';
-            // Update page title
-            document.querySelector('.page-subtitle, .text-muted')?.remove();
+            // Update page title (sem remover o subtitle que tem o totalCount)
             const header = document.querySelector('h1') || document.querySelector('.page-title');
             if (header) header.textContent = 'Contatos que Precisam Atencao';
+            const subtitle = document.querySelector('.page-subtitle');
+            if (subtitle) subtitle.style.display = 'none';
         }
 
         loadStats();
@@ -882,13 +883,10 @@
 
             // Atualizar stats com total filtrado
             if (specialFilter) {
-                document.getElementById('statTotal').textContent = totalContacts.toLocaleString();
-                document.getElementById('totalCount').textContent = totalContacts.toLocaleString();
-                // Esconder stats irrelevantes quando filtrado
-                const photoStat = document.getElementById('statPhotos');
-                const linkedinStat = document.getElementById('statLinkedin');
-                if (photoStat) photoStat.parentElement.style.display = 'none';
-                if (linkedinStat) linkedinStat.parentElement.style.display = 'none';
+                try {
+                    document.getElementById('statTotal').textContent = totalContacts.toLocaleString();
+                    document.getElementById('totalCount').textContent = totalContacts.toLocaleString();
+                } catch(e) {}
             }
 
             renderContacts();
@@ -899,7 +897,7 @@
                 <div class="empty-state">
                     <i class="bi bi-exclamation-circle"></i>
                     <h3>Erro ao carregar contatos</h3>
-                    <p>Tente novamente mais tarde</p>
+                    <p>${error.message || 'Tente novamente mais tarde'}</p>
                 </div>
             `;
         }
