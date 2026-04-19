@@ -85,3 +85,16 @@ O banco local é cópia do remoto. Para atualizar: `./dev.sh sync`
 | Claude (Anthropic) | Briefings, OCR, análises, Smart Update | ANTHROPIC_API_KEY |
 | Google APIs | Calendar, Gmail, Contacts, Tasks, Drive | GOOGLE_CLIENT_ID/SECRET |
 | Evolution API | WhatsApp send/receive/groups | EVOLUTION_API_URL/KEY |
+| LinkdAPI | Enriquecimento LinkedIn | LINKDAPI_KEY |
+| Fathom | Import reuniões → projetos/tarefas | FATHOM_API_KEY_* |
+
+## Antes de Implementar Qualquer Feature
+
+**OBRIGATORIO**: Consulte `docs/FEATURES.md` antes de criar qualquer funcionalidade nova.
+Esse arquivo mapeia TODAS as features existentes por página, integrações, scripts e crons.
+
+Checklist:
+1. Busque em `docs/FEATURES.md` se a feature já existe
+2. Grep no codebase: `grep -rn "palavra-chave" app/templates/ app/services/ app/main.py`
+3. Verifique se existe endpoint similar: `grep -n "palavra" app/main.py | grep "@app"`
+4. Se criar feature nova, **atualize `docs/FEATURES.md`** no mesmo commit
