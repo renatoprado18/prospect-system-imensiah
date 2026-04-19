@@ -215,9 +215,10 @@ class WhatsAppSyncService:
                     if msg_id:
                         cursor.execute("""
                             SELECT id FROM messages
-                            WHERE conversation_id = %s AND metadata->>'message_id' = %s
+                            WHERE (external_id = %s)
+                               OR (conversation_id = %s AND metadata->>'message_id' = %s)
                             LIMIT 1
-                        """, (conversation_id, msg_id))
+                        """, (msg_id, conversation_id, msg_id))
                     else:
                         cursor.execute("""
                             SELECT id FROM messages
@@ -234,9 +235,9 @@ class WhatsAppSyncService:
                     metadata = json.dumps({"message_id": msg_id, "source": "whatsapp_sync"}) if msg_id else None
 
                     cursor.execute("""
-                        INSERT INTO messages (conversation_id, contact_id, direcao, conteudo, enviado_em, metadata)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """, (conversation_id, contact_id, direction, content, timestamp, metadata))
+                        INSERT INTO messages (conversation_id, contact_id, external_id, direcao, conteudo, enviado_em, metadata)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (conversation_id, contact_id, msg_id, direction, content, timestamp, metadata))
                     saved += 1
 
                     # Se e mensagem outbound (Renato respondeu), dismissar propostas pendentes
