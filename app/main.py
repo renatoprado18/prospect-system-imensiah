@@ -6874,6 +6874,169 @@ async def cron_weekly_digest(request: Request):
         return {"job": "weekly-digest", "status": "error", "error": str(e)}
 
 
+@app.get("/api/cron/sync-whatsapp-history")
+async def cron_sync_whatsapp_history(request: Request):
+    """
+    Cron: Sync WhatsApp message history from Evolution API for contacts
+    that have a phone number but no conversation in the DB.
+    Schedule: 0 6 * * * (daily at 6am UTC)
+    Processes 50 contacts per run to avoid timeout.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _asyncio
+
+    whatsapp_client = WhatsAppIntegration()
+    if not whatsapp_client.base_url or not whatsapp_client.api_key:
+        return {"job": "sync-whatsapp-history", "status": "error",
+                "error": "Evolution API not configured"}
+
+    batch_limit = 50
+    synced = 0
+    total_messages = 0
+    errors = 0
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # Find contacts with phone but no WhatsApp conversation
+            cursor.execute("""
+                SELECT c.id, c.nome, c.telefones
+                FROM contacts c
+                WHERE c.telefones IS NOT NULL
+                  AND c.telefones::text != '[]'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM conversations conv
+                      WHERE conv.contact_id = c.id AND conv.canal = 'whatsapp'
+                  )
+                ORDER BY c.ultimo_contato DESC NULLS LAST
+                LIMIT %s
+            """, (batch_limit,))
+            contacts_to_sync = cursor.fetchall()
+
+        if not contacts_to_sync:
+            return {"job": "sync-whatsapp-history", "status": "success",
+                    "message": "No contacts to sync", "synced": 0}
+
+        for row in contacts_to_sync:
+            phones = row['telefones'] if isinstance(row['telefones'], list) else []
+            phone = None
+            for p in phones:
+                phone_num = p.get('number', '') if isinstance(p, dict) else str(p)
+                digits = ''.join(filter(str.isdigit, phone_num))
+                if len(digits) >= 8:
+                    phone = digits
+                    break
+            if not phone:
+                continue
+
+            try:
+                messages = await whatsapp_client.get_messages_for_chat(phone, limit=100)
+                if not messages:
+                    # Brief pause even on empty to respect rate limit
+                    await _asyncio.sleep(0.5)
+                    continue
+
+                with get_db() as conn:
+                    cursor = conn.cursor()
+
+                    cursor.execute("""
+                        INSERT INTO conversations (contact_id, canal, status, criado_em, atualizado_em)
+                        VALUES (%s, 'whatsapp', 'open', NOW(), NOW())
+                        RETURNING id
+                    """, (row['id'],))
+                    conversation_id = cursor.fetchone()["id"]
+
+                    # Check existing message IDs
+                    cursor.execute("""
+                        SELECT external_id FROM messages
+                        WHERE contact_id = %s AND external_id IS NOT NULL
+                    """, (row['id'],))
+                    existing_ids = {r['external_id'] for r in cursor.fetchall()}
+                    cursor.execute("""
+                        SELECT metadata->>'message_id' as msg_id FROM messages
+                        WHERE contact_id = %s AND metadata->>'message_id' IS NOT NULL
+                    """, (row['id'],))
+                    existing_ids.update(r['msg_id'] for r in cursor.fetchall())
+
+                    inserted = 0
+                    latest_ts = None
+
+                    for msg in messages:
+                        parsed = whatsapp_client.parse_stored_message(msg)
+                        if not parsed:
+                            continue
+                        msg_id_ext = parsed.get("message_id")
+                        if msg_id_ext and msg_id_ext in existing_ids:
+                            continue
+                        ts = parsed.get("timestamp")
+                        cursor.execute("""
+                            INSERT INTO messages
+                            (conversation_id, contact_id, external_id, direcao, conteudo,
+                             enviado_em, metadata, criado_em)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                        """, (
+                            conversation_id, row['id'], msg_id_ext,
+                            parsed.get("direction"), parsed.get("content"), ts,
+                            json.dumps({
+                                "phone": phone,
+                                "push_name": parsed.get("push_name"),
+                                "message_id": msg_id_ext,
+                                "message_type": parsed.get("message_type"),
+                                "is_group": False,
+                                "source": "cron_history_sync",
+                            })
+                        ))
+                        inserted += 1
+                        if msg_id_ext:
+                            existing_ids.add(msg_id_ext)
+                        if ts and (latest_ts is None or ts > latest_ts):
+                            latest_ts = ts
+
+                    if inserted > 0:
+                        cursor.execute("""
+                            UPDATE conversations
+                            SET total_mensagens = %s, ultimo_mensagem = %s, atualizado_em = NOW()
+                            WHERE id = %s
+                        """, (inserted, latest_ts, conversation_id))
+                        cursor.execute("""
+                            UPDATE contacts
+                            SET ultimo_contato = GREATEST(COALESCE(ultimo_contato, '1970-01-01'), %s),
+                                total_interacoes = COALESCE(total_interacoes, 0) + %s
+                            WHERE id = %s
+                        """, (latest_ts, inserted, row['id']))
+                        synced += 1
+                        total_messages += inserted
+                    else:
+                        cursor.execute("DELETE FROM conversations WHERE id = %s",
+                                       (conversation_id,))
+
+                    conn.commit()
+
+            except Exception as e:
+                print(f"[sync-whatsapp-history] Error for contact {row['id']}: {e}")
+                errors += 1
+
+            # Rate limit: 1 req/sec
+            await _asyncio.sleep(1.0)
+
+    except Exception as e:
+        print(f"[sync-whatsapp-history] Fatal error: {e}")
+        return {"job": "sync-whatsapp-history", "status": "error", "error": str(e)}
+
+    return {
+        "job": "sync-whatsapp-history",
+        "timestamp": datetime.now().isoformat(),
+        "status": "success",
+        "contacts_checked": len(contacts_to_sync),
+        "conversations_synced": synced,
+        "messages_imported": total_messages,
+        "errors": errors,
+    }
+
+
 @app.delete("/api/google/accounts/{account_id}")
 async def disconnect_google_account(request: Request, account_id: int):
     """Desconecta uma conta Google"""
