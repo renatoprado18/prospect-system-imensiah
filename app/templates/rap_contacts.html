@@ -828,6 +828,10 @@
 
     async function loadStats() {
         try {
+            if (specialFilter) {
+                // Quando filtrado, stats vem do proprio loadContacts
+                return;
+            }
             const response = await fetch('/api/contacts/stats');
             const stats = await response.json();
 
@@ -875,6 +879,17 @@
 
             contacts = data.contacts;
             totalContacts = data.total;
+
+            // Atualizar stats com total filtrado
+            if (specialFilter) {
+                document.getElementById('statTotal').textContent = totalContacts.toLocaleString();
+                document.getElementById('totalCount').textContent = totalContacts.toLocaleString();
+                // Esconder stats irrelevantes quando filtrado
+                const photoStat = document.getElementById('statPhotos');
+                const linkedinStat = document.getElementById('statLinkedin');
+                if (photoStat) photoStat.parentElement.style.display = 'none';
+                if (linkedinStat) linkedinStat.parentElement.style.display = 'none';
+            }
 
             renderContacts();
             updatePagination();
