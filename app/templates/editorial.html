@@ -965,6 +965,130 @@
     </div>
 </div>
 
+<!-- Funnel PDCA -->
+{% if funnel %}
+<div class="posts-card" style="border-top: 4px solid #6366f1; margin-top: 16px;">
+    <div class="posts-header">
+        <h2><i class="bi bi-funnel me-2" style="color: #6366f1;"></i>Funil Editorial</h2>
+        <span style="font-size: 0.75rem; color: var(--gray-500);">Semana {{ funnel.current_week.week_start }}</span>
+    </div>
+
+    <!-- Funnel Steps -->
+    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 20px; flex-wrap: wrap;">
+        {% set cw = funnel.current_week %}
+        <div style="flex: 1; min-width: 100px; text-align: center; padding: 12px 8px; background: #ede9fe; border-radius: 10px;">
+            <div style="font-size: 1.5rem; font-weight: 700; color: #7c3aed;">{{ cw.posts_published }}/{{ cw.posts_planned }}</div>
+            <div style="font-size: 0.7rem; color: #6d28d9; font-weight: 500;">Posts</div>
+        </div>
+        <i class="bi bi-chevron-right" style="color: var(--gray-400);"></i>
+        <div style="flex: 1; min-width: 100px; text-align: center; padding: 12px 8px; background: #dbeafe; border-radius: 10px;">
+            <div style="font-size: 1.5rem; font-weight: 700; color: #2563eb;">{{ cw.impressions|default(0) }}</div>
+            <div style="font-size: 0.7rem; color: #1d4ed8; font-weight: 500;">Impressoes</div>
+        </div>
+        <i class="bi bi-chevron-right" style="color: var(--gray-400);"></i>
+        <div style="flex: 1; min-width: 100px; text-align: center; padding: 12px 8px; background: #d1fae5; border-radius: 10px;">
+            <div style="font-size: 1.5rem; font-weight: 700; color: #059669;">{{ cw.engagement|default(0) }}</div>
+            <div style="font-size: 0.7rem; color: #047857; font-weight: 500;">Engajamento</div>
+        </div>
+        <i class="bi bi-chevron-right" style="color: var(--gray-400);"></i>
+        <div style="flex: 1; min-width: 100px; text-align: center; padding: 12px 8px; background: #fef3c7; border-radius: 10px;">
+            <div style="font-size: 1.5rem; font-weight: 700; color: #d97706;">{{ cw.messages_received|default(0) }}</div>
+            <div style="font-size: 0.7rem; color: #92400e; font-weight: 500;">Mensagens</div>
+        </div>
+        <i class="bi bi-chevron-right" style="color: var(--gray-400);"></i>
+        <div style="flex: 1; min-width: 100px; text-align: center; padding: 12px 8px; background: #fce7f3; border-radius: 10px;">
+            <div style="font-size: 1.5rem; font-weight: 700; color: #db2777;">{{ cw.meetings_booked|default(0) }}</div>
+            <div style="font-size: 0.7rem; color: #9d174d; font-weight: 500;">Reunioes</div>
+        </div>
+    </div>
+
+    <!-- Weekly Trend + Pillar Performance -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <!-- Weekly Trend -->
+        <div style="background: var(--gray-50); border-radius: 12px; padding: 16px;">
+            <h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 12px 0; color: var(--dark);">
+                <i class="bi bi-graph-up me-1"></i>Tendencia Semanal
+            </h4>
+            {% for week in funnel.monthly_trend %}
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 0.8rem;">
+                <span style="width: 60px; color: var(--gray-500);">{{ week.week[5:] }}</span>
+                <div style="flex: 1; height: 18px; background: var(--gray-200); border-radius: 4px; overflow: hidden; position: relative;">
+                    {% set max_imp = funnel.monthly_trend|map(attribute='impressions')|max or 1 %}
+                    {% set pct = (week.impressions / max_imp * 100) if max_imp > 0 else 0 %}
+                    <div style="height: 100%; width: {{ pct }}%; background: linear-gradient(90deg, #6366f1, #8b5cf6); border-radius: 4px; min-width: 2px;"></div>
+                </div>
+                <span style="width: 50px; text-align: right; font-weight: 500; color: var(--dark);">{{ week.impressions }}</span>
+                {% if loop.index > 1 %}
+                    {% set prev_imp = funnel.monthly_trend[loop.index0 - 1].impressions %}
+                    {% if week.impressions > prev_imp %}
+                    <i class="bi bi-arrow-up-short" style="color: #10b981; font-size: 1rem;"></i>
+                    {% elif week.impressions < prev_imp %}
+                    <i class="bi bi-arrow-down-short" style="color: #ef4444; font-size: 1rem;"></i>
+                    {% else %}
+                    <i class="bi bi-dash" style="color: var(--gray-400); font-size: 1rem;"></i>
+                    {% endif %}
+                {% else %}
+                <span style="width: 16px;"></span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Pillar Performance -->
+        <div style="background: var(--gray-50); border-radius: 12px; padding: 16px;">
+            <h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 12px 0; color: var(--dark);">
+                <i class="bi bi-columns-gap me-1"></i>Por Pilar (30d)
+            </h4>
+            {% if funnel.by_pillar %}
+                {% set pillar_colors = {'neogovernanca': '#3b82f6', 'ia_negocios': '#8b5cf6', 'bastidores': '#f59e0b'} %}
+                {% set pillar_icons = {'neogovernanca': 'bi-building', 'ia_negocios': 'bi-cpu', 'bastidores': 'bi-people'} %}
+                {% for pk, pv in funnel.by_pillar.items() %}
+                <div style="display: flex; align-items: center; gap: 10px; padding: 10px; background: white; border-radius: 8px; margin-bottom: 8px; border-left: 3px solid {{ pillar_colors.get(pk, '#6b7280') }};">
+                    <i class="bi {{ pillar_icons.get(pk, 'bi-tag') }}" style="font-size: 1.1rem; color: {{ pillar_colors.get(pk, '#6b7280') }};"></i>
+                    <div style="flex: 1;">
+                        <div style="font-size: 0.8rem; font-weight: 500; color: var(--dark);">{{ pv.label }}</div>
+                        <div style="font-size: 0.7rem; color: var(--gray-500);">{{ pv.posts }} posts</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 0.9rem; font-weight: 600; color: var(--dark);">{{ pv.avg_engagement }}</div>
+                        <div style="font-size: 0.65rem; color: var(--gray-500);">eng. medio</div>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p style="color: var(--gray-500); font-size: 0.8rem; text-align: center; padding: 20px 0;">Sem dados de pilares ainda</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Recommendations -->
+    {% if funnel.recommendations %}
+    <div style="margin-top: 16px; padding: 12px 16px; background: linear-gradient(135deg, #f0fdf4, #dcfce7); border-radius: 10px; border: 1px solid #bbf7d0;">
+        <div style="font-size: 0.8rem; font-weight: 600; color: #166534; margin-bottom: 6px;">
+            <i class="bi bi-lightbulb me-1"></i>Insights
+        </div>
+        {% for rec in funnel.recommendations[:3] %}
+        <div style="font-size: 0.8rem; color: #15803d; padding: 2px 0;">
+            <i class="bi bi-check2 me-1"></i>{{ rec }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Best Performing -->
+    {% if funnel.best_performing %}
+    <div style="margin-top: 12px; padding: 10px 16px; background: var(--gray-50); border-radius: 8px; display: flex; align-items: center; gap: 10px;">
+        <i class="bi bi-trophy" style="color: #f59e0b; font-size: 1.2rem;"></i>
+        <div style="flex: 1; font-size: 0.8rem;">
+            <span style="font-weight: 500;">Melhor post:</span>
+            <span style="color: var(--gray-600);">{{ funnel.best_performing.title[:50] }}{% if funnel.best_performing.title|length > 50 %}...{% endif %}</span>
+        </div>
+        <span style="font-weight: 600; color: #2563eb; font-size: 0.85rem;">{{ funnel.best_performing.impressions }} imp.</span>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
 <!-- Publicar Hoje - Prioridade máxima -->
 {% if today_posts %}
 <div class="posts-card" style="border-top: 4px solid #3b82f6;">

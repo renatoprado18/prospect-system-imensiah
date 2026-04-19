@@ -15617,6 +15617,44 @@ async def api_project_editorial(project_id: int):
     return {"posts": posts, "total": len(posts)}
 
 
+# ============== EDITORIAL PDCA ==============
+
+@app.get("/api/editorial/funnel")
+async def api_editorial_funnel():
+    """Editorial funnel: Posts -> Impressoes -> Engajamento -> Mensagens -> Reunioes"""
+    from services.editorial_pdca import get_editorial_funnel
+    return get_editorial_funnel()
+
+
+@app.get("/api/cron/editorial-weekly-briefing")
+async def cron_editorial_weekly_briefing(request: Request):
+    """
+    Cron: Gera briefing editorial semanal.
+    Schedule: 0 21 * * 0 (Domingos as 21h UTC / 18h Brasilia)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.editorial_pdca import generate_weekly_briefing
+
+    try:
+        result = await generate_weekly_briefing()
+        return {
+            "job": "editorial-weekly-briefing",
+            "timestamp": datetime.now().isoformat(),
+            "status": result.get("status", "error"),
+            "tasks_created": len(result.get("tasks_created", [])),
+            "note_id": result.get("note_id"),
+            "error": result.get("error"),
+        }
+    except Exception as e:
+        return {
+            "job": "editorial-weekly-briefing",
+            "status": "error",
+            "error": str(e),
+        }
+
+
 # ============== HOT TAKES API ==============
 
 @app.get("/api/hot-takes/version")
@@ -16048,6 +16086,13 @@ async def editorial_page(request: Request):
     stats = get_editorial_stats()
     posts = get_editorial_posts(limit=50)
 
+    # Get funnel data
+    try:
+        from services.editorial_pdca import get_editorial_funnel
+        funnel = get_editorial_funnel()
+    except Exception:
+        funnel = None
+
     # Get projects for filter
     with get_db() as conn:
         cursor = conn.cursor()
@@ -16131,7 +16176,8 @@ async def editorial_page(request: Request):
         "week_days": week_days,
         "today_posts": today_posts,
         "pending_hot_takes": pending_hot_takes,
-        "calendar_alerts": alerts
+        "calendar_alerts": alerts,
+        "funnel": funnel,
     })
 
 

@@ -77,6 +77,11 @@
 - Biblioteca de artigos (141 rascunhos)
 - Modal de edicao com metricas (impressoes, reacoes, comentarios)
 - Agendar publicacao
+- **Funil Editorial PDCA**: Posts → Impressoes → Engajamento → Mensagens → Reunioes
+- **Tendencia semanal** com barras de impressoes (4 semanas)
+- **Performance por pilar**: NeoGovernanca, IA aplicada, Bastidores
+- **Insights automaticos** (melhor pilar, taxa de engajamento, tendencias)
+- **Briefing semanal IA** (cron domingos 18h): analisa performance, sugere 3 posts, cria tarefas
 
 ### Hot Takes (`/hot-takes` → hot_takes.html)
 - Lista de hot takes com status
@@ -144,5 +149,6 @@
 | WhatsApp history sync | /api/cron/sync-whatsapp-history | 6h UTC |
 | Health recalc | /api/cron/recalculate-health | 5h + 18h UTC |
 | Expire proposals | /api/cron/expire-proposals | 4h UTC |
+| Editorial briefing | /api/cron/editorial-weekly-briefing | Dom 21h UTC (18h BR) |
 
 ## Numeros (528 endpoints, 32 templates, 65 tabelas, 60 services)
