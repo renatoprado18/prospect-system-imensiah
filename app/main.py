@@ -5426,6 +5426,76 @@ async def update_contact_enrichment_data(contact_id: int, request: Request):
 
 # ============== CONTACT INTELLIGENCE ==============
 
+@app.post("/api/contacts/{contact_id}/analyze-conversations")
+async def analyze_contact_conversations(contact_id: int):
+    """Analisa conversas recentes com o contato e identifica tom, intencoes, pendencias"""
+    import httpx as _hx
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key nao configurada")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id, nome, empresa, cargo, circulo, contexto FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato nao encontrado")
+        contact = dict(contact)
+
+        # Mensagens recentes (WA + email)
+        cursor.execute("""
+            SELECT m.conteudo, m.direcao, m.enviado_em, cv.canal
+            FROM messages m
+            JOIN conversations cv ON cv.id = m.conversation_id
+            WHERE cv.contact_id = %s
+              AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 5
+            ORDER BY m.enviado_em DESC LIMIT 30
+        """, (contact_id,))
+        messages = [dict(r) for r in cursor.fetchall()]
+
+    if not messages:
+        return {"analysis": "Nenhuma mensagem recente encontrada para analisar.", "has_data": False}
+
+    msgs_text = "\n".join([
+        f"[{str(m.get('enviado_em','?'))[:16]}] {'RENATO' if m['direcao']=='outgoing' else contact['nome']}: {(m.get('conteudo') or '')[:400]}"
+        for m in reversed(messages)
+    ])
+
+    prompt = f"""Analise as conversas recentes entre Renato e {contact['nome']}.
+
+CONTATO: {contact['nome']} | {contact.get('cargo', '')} {('@ ' + contact['empresa']) if contact.get('empresa') else ''} | Circulo {contact.get('circulo', '?')}
+
+CONVERSAS RECENTES:
+{msgs_text}
+
+Gere uma analise CURTA e ACIONAVEL (max 200 palavras):
+
+1. **Tom da relacao**: como esta a dinamica entre eles?
+2. **Assuntos em aberto**: o que ficou pendente?
+3. **Oportunidades**: como Renato pode fortalecer esta relacao?
+4. **Proxima acao sugerida**: 1 acao concreta com prazo
+
+Seja direto. Portugues. Sem juridiques."""
+
+    try:
+        async with _hx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500, "messages": [{"role": "user", "content": prompt}]}
+            )
+        if resp.status_code == 200:
+            analysis = resp.json()["content"][0]["text"]
+            return {"analysis": analysis, "has_data": True, "messages_analyzed": len(messages)}
+        raise HTTPException(status_code=resp.status_code, detail="Erro na API")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/contacts/{contact_id}/intelligence/chat")
 async def contact_intelligence_chat(contact_id: int, request: Request):
     """
@@ -6426,7 +6496,21 @@ async def cron_daily_sync(request: Request):
     except Exception as e:
         results["steps"]["auto_enrich"] = {"status": "error", "error": str(e)}
 
-    # 10. Buscar fotos de contatos sem foto (priorizando C1-C2)
+    # 10. Download documentos dos grupos WhatsApp vinculados a projetos
+    try:
+        from services.project_smart_update import download_group_documents
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT project_id FROM project_whatsapp_groups WHERE ativo = TRUE")
+            project_ids = [r['project_id'] for r in cursor.fetchall()]
+        doc_results = {}
+        for pid in project_ids:
+            doc_results[pid] = await download_group_documents(pid)
+        results["steps"]["group_docs"] = {"status": "success", "projects": len(project_ids), "results": doc_results}
+    except Exception as e:
+        results["steps"]["group_docs"] = {"status": "error", "error": str(e)}
+
+    # 11. Buscar fotos de contatos sem foto (priorizando C1-C2)
     try:
         from services.avatar_fetcher import get_avatar_fetcher
         fetcher = get_avatar_fetcher()
@@ -14583,6 +14667,18 @@ async def api_project_ai_analysis(project_id: int, request: Request):
         data = {}
     custom_prompt = data.get('prompt')
     result = await generate_project_analysis(project_id, custom_prompt)
+    if result.get('error'):
+        raise HTTPException(status_code=400, detail=result['error'])
+    return result
+
+
+# ============== DOWNLOAD GROUP DOCUMENTS ==============
+
+@app.post("/api/projects/{project_id}/download-group-docs")
+async def api_download_group_docs(project_id: int):
+    """Baixa documentos dos grupos WhatsApp vinculados e salva no Google Drive"""
+    from services.project_smart_update import download_group_documents
+    result = await download_group_documents(project_id)
     if result.get('error'):
         raise HTTPException(status_code=400, detail=result['error'])
     return result

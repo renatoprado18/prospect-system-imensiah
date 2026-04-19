@@ -2358,11 +2358,17 @@
                     <div class="tile-grid-asymmetric mb-3">
                         <div class="summary-highlight">
                             <h4><i class="bi bi-robot"></i> Resumo IA
-                                <button class="btn btn-sm btn-link p-0 ms-auto" onclick="enrichContact()" title="Atualizar">
+                                <button class="btn btn-sm btn-link p-0 ms-2" onclick="enrichContact()" title="Atualizar resumo">
                                     <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                                <button class="btn btn-sm btn-link p-0 ms-1" onclick="analyzeConversations()" title="Analisar conversas com IA" style="color: #8b5cf6;">
+                                    <i class="bi bi-chat-square-text"></i>
                                 </button>
                             </h4>
                             <p id="aiSummaryText">${contact.resumo_ai || '<em class="text-muted">Nenhum resumo gerado. Clique em atualizar para gerar.</em>'}</p>
+                            <div id="conversationAnalysis" style="display:none; margin-top: 12px; padding: 12px; background: #f0f4ff; border-radius: 8px; border-left: 3px solid #6366f1;">
+                                <div id="conversationAnalysisContent" style="font-size: 0.85rem; line-height: 1.6;"></div>
+                            </div>
                             ${contact.ultimo_enriquecimento ? `<small class="text-muted">Atualizado: ${formatDateTime(contact.ultimo_enriquecimento)}</small>` : ''}
                         </div>
                         <div class="stacked-column">
@@ -4728,6 +4734,30 @@
             } catch (error) {
                 console.error('Error:', error);
                 showNotification('Erro ao salvar alteracoes', 'error');
+            }
+        }
+
+        async function analyzeConversations() {
+            const container = document.getElementById('conversationAnalysis');
+            const content = document.getElementById('conversationAnalysisContent');
+            container.style.display = 'block';
+            content.innerHTML = '<div class="text-center"><div class="spinner-border spinner-border-sm text-primary"></div> Analisando conversas...</div>';
+
+            try {
+                const resp = await fetch(`/api/contacts/${contactId}/analyze-conversations`, { method: 'POST' });
+                const data = await resp.json();
+                if (resp.ok && data.has_data) {
+                    let html = data.analysis
+                        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                        .replace(/\n/g, '<br>');
+                    content.innerHTML = html + `<br><small class="text-muted">${data.messages_analyzed} mensagens analisadas</small>`;
+                } else if (resp.ok) {
+                    content.innerHTML = '<span class="text-muted">Nenhuma mensagem recente para analisar</span>';
+                } else {
+                    content.innerHTML = `<span class="text-danger">Erro: ${data.detail || 'API indisponivel'}</span>`;
+                }
+            } catch (e) {
+                content.innerHTML = '<span class="text-danger">Erro ao analisar</span>';
             }
         }
 

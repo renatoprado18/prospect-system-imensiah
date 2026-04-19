@@ -845,9 +845,14 @@
                             <h3 class="section-title">
                                 <i class="bi bi-whatsapp text-success"></i> Grupos WhatsApp
                             </h3>
-                            <button class="btn btn-sm btn-outline-success" onclick="openAddGroupModal()">
-                                <i class="bi bi-plus"></i>
-                            </button>
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-sm btn-outline-success" onclick="downloadGroupDocs()" title="Baixar documentos dos grupos">
+                                    <i class="bi bi-download"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-success" onclick="openAddGroupModal()">
+                                    <i class="bi bi-plus"></i>
+                                </button>
+                            </div>
                         </div>
                         <div class="section-body" id="waGroupsList">
                             <p class="text-muted small mb-0">Carregando...</p>
@@ -2513,6 +2518,26 @@
             showToast('Grupo desvinculado', 'success');
         } catch (e) {
             showToast('Erro ao desvincular', 'danger');
+        }
+    }
+
+    async function downloadGroupDocs() {
+        showToast('Baixando documentos dos grupos...', 'info');
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/download-group-docs`, { method: 'POST' });
+            const data = await resp.json();
+            if (resp.ok) {
+                if (data.uploaded > 0) {
+                    showToast(`${data.uploaded} documento(s) baixado(s) e salvo(s) no Drive!`, 'success');
+                    loadProjectDocuments();
+                } else {
+                    showToast('Nenhum documento novo encontrado nos grupos', 'info');
+                }
+            } else {
+                showToast(data.detail || 'Erro ao baixar', 'danger');
+            }
+        } catch (e) {
+            showToast('Erro ao baixar documentos', 'danger');
         }
     }
 

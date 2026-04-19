@@ -373,6 +373,137 @@ async def _fetch_group_messages(linked_groups: List[Dict], limit_per_group: int 
     return results
 
 
+async def download_group_documents(project_id: int) -> Dict:
+    """
+    Baixa documentos dos grupos WhatsApp vinculados ao projeto
+    e salva no Google Drive (pasta do projeto).
+    """
+    import base64 as b64
+    import httpx as hx
+
+    evo_url = os.getenv('EVOLUTION_API_URL', '')
+    evo_key = os.getenv('EVOLUTION_API_KEY', '')
+    evo_instance = os.getenv('EVOLUTION_INSTANCE', 'default')
+
+    if not evo_url:
+        return {"error": "Evolution API nao configurada"}
+
+    results = {"downloaded": 0, "uploaded": 0, "errors": [], "files": []}
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Grupos vinculados
+        cursor.execute("""
+            SELECT group_jid, group_name FROM project_whatsapp_groups
+            WHERE project_id = %s AND ativo = TRUE
+        """, (project_id,))
+        groups = [dict(r) for r in cursor.fetchall()]
+
+        if not groups:
+            return {"error": "Nenhum grupo vinculado"}
+
+        # Documentos ja indexados (evitar duplicados)
+        cursor.execute("""
+            SELECT d.nome FROM documento_links dl
+            JOIN documentos d ON d.id = dl.documento_id
+            WHERE dl.entidade_tipo = 'projeto' AND dl.entidade_id = %s
+        """, (project_id,))
+        existing_docs = {r['nome'] for r in cursor.fetchall()}
+
+    for group in groups:
+        jid = group['group_jid']
+        try:
+            async with hx.AsyncClient(timeout=60.0) as client:
+                # Buscar mensagens com documentos
+                resp = await client.post(
+                    f"{evo_url}/chat/findMessages/{evo_instance}",
+                    headers={'apikey': evo_key, 'Content-Type': 'application/json'},
+                    json={"where": {"key": {"remoteJid": jid}}, "limit": 50}
+                )
+                msgs_data = resp.json().get('messages', {})
+                records = msgs_data.get('records', []) if isinstance(msgs_data, dict) else []
+
+                for r in records:
+                    msg = r.get('message') or {}
+                    key = r.get('key') or {}
+
+                    # Detectar documentos e imagens com caption
+                    doc_msg = msg.get('documentMessage') or msg.get('imageMessage')
+                    if not doc_msg:
+                        continue
+
+                    file_name = doc_msg.get('fileName', doc_msg.get('caption', 'documento'))
+                    mimetype = doc_msg.get('mimetype', 'application/octet-stream')
+
+                    # Pular se ja existe
+                    if file_name in existing_docs:
+                        continue
+
+                    # Baixar via Evolution API
+                    try:
+                        dl_resp = await client.post(
+                            f"{evo_url}/chat/getBase64FromMediaMessage/{evo_instance}",
+                            headers={'apikey': evo_key, 'Content-Type': 'application/json'},
+                            json={"message": {"key": key}, "convertToMp4": False},
+                            timeout=30.0
+                        )
+                        if dl_resp.status_code not in (200, 201):
+                            continue
+
+                        dl_data = dl_resp.json()
+                        file_b64 = dl_data.get('base64', '')
+                        if not file_b64:
+                            continue
+
+                        file_bytes = b64.b64decode(file_b64)
+                        results["downloaded"] += 1
+
+                        # Upload para Google Drive
+                        try:
+                            from integrations.google_drive import upload_file, get_valid_token, create_folder
+
+                            with get_db() as conn2:
+                                access_token = await get_valid_token(conn2, 'professional')
+
+                            if access_token:
+                                # Buscar/criar pasta do projeto no Drive
+                                with get_db() as conn2:
+                                    cursor2 = conn2.cursor()
+                                    cursor2.execute("SELECT google_drive_folder_id FROM projects WHERE id = %s", (project_id,))
+                                    proj = cursor2.fetchone()
+                                    folder_id = proj['google_drive_folder_id'] if proj else None
+
+                                upload_result = await upload_file(access_token, file_bytes, file_name, mimetype, folder_id)
+                                drive_id = upload_result.get('id', '')
+                                drive_url = f"https://drive.google.com/file/d/{drive_id}/view"
+
+                                # Indexar no sistema
+                                from integrations.google_drive import index_document_to_db, link_document_to_entity
+                                with get_db() as conn2:
+                                    doc_id = await index_document_to_db(
+                                        conn2, file_name, drive_id, drive_url,
+                                        mimetype, len(file_bytes), folder_id
+                                    )
+                                    if doc_id:
+                                        await link_document_to_entity(conn2, doc_id, 'projeto', project_id)
+
+                                results["uploaded"] += 1
+                                results["files"].append({"name": file_name, "drive_url": drive_url})
+                                existing_docs.add(file_name)
+
+                        except Exception as e:
+                            results["errors"].append(f"Upload {file_name}: {str(e)}")
+
+                    except Exception as e:
+                        results["errors"].append(f"Download {file_name}: {str(e)}")
+
+        except Exception as e:
+            results["errors"].append(f"Grupo {group['group_name']}: {str(e)}")
+
+    return results
+
+
 async def apply_smart_updates(project_id: int, task_ids: List[int] = None,
                                new_tasks: List[Dict] = None) -> Dict:
     """
