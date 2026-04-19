@@ -566,6 +566,19 @@
         color: var(--gray-500);
         flex-shrink: 0;
     }
+
+    @media (max-width: 768px) {
+        .main-content { margin-left: 0; padding: 12px; }
+        .project-header { padding: 16px; }
+        .project-title { font-size: 1.2rem; }
+        .project-meta { flex-wrap: wrap; gap: 6px; }
+        .d-flex.gap-2 { flex-wrap: wrap; gap: 4px !important; }
+        .d-flex.gap-2 .btn { font-size: 0.75rem; padding: 4px 8px; }
+        .section-card { padding: 12px; }
+        .section-header { flex-direction: column; gap: 8px; align-items: flex-start !important; }
+        .milestone-item { font-size: 0.85rem; }
+        .modal-dialog { margin: 0.5rem; }
+    }
 </style>
 
 <script>

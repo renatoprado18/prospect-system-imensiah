@@ -361,8 +361,18 @@
 }
 
 @media (max-width: 768px) {
-    .contacts-grid { grid-template-columns: 1fr; }
-    .filters-bar { flex-direction: column; }
+    .main-content { margin-left: 0; padding: 12px; }
+    .contacts-grid { grid-template-columns: 1fr; gap: 8px; }
+    .filters-bar { flex-direction: column; gap: 8px; }
+    .alphabet-filter { flex-wrap: wrap; gap: 2px; }
+    .alphabet-filter button { padding: 4px 6px; font-size: 0.7rem; min-width: 24px; }
+    .stats-bar { flex-wrap: wrap; gap: 8px; font-size: 0.75rem; }
+    .contact-card { padding: 12px; }
+    .page-header { flex-direction: column; gap: 8px; }
+    .page-header .btn { width: 100%; }
+}
+@media (max-width: 480px) {
+    .contacts-grid { gap: 6px; }
 }
 
 /* Merge Selection Mode */

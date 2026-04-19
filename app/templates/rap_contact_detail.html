@@ -1617,12 +1617,20 @@
         }
 
         @media (max-width: 768px) {
-            .sidebar { display: none; }
-            .main-content { margin-left: 0; padding: 16px; }
-            .profile-header { flex-direction: column; text-align: center; }
+            .main-content { margin-left: 0; padding: 12px; }
+            .profile-header { flex-direction: column; text-align: center; gap: 12px; }
             .profile-avatar { margin: 0 auto; }
-            .profile-actions { flex-direction: row; justify-content: center; }
+            .profile-actions { flex-direction: row; justify-content: center; flex-wrap: wrap; }
             .contact-cards { justify-content: center; }
+            .profile-info { font-size: 0.85rem; }
+            .profile-info h1 { font-size: 1.2rem; }
+            /* Tabs scroll horizontal */
+            .nav-tabs-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            .nav-tabs { flex-wrap: nowrap; }
+            .nav-tabs .nav-link { white-space: nowrap; font-size: 0.78rem; padding: 8px 10px; }
+            /* Summary cards stack */
+            .summary-highlight { font-size: 0.85rem; }
+            .summary-highlight h4 { font-size: 0.9rem; }
         }
     </style>
 {% endblock %}

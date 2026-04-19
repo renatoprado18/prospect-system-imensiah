@@ -567,9 +567,20 @@
         }
 
         @media (max-width: 768px) {
-            .sidebar { display: none; }
-            .main-content { margin-left: 0; padding: 16px; }
+            .main-content { margin-left: 0; padding: 12px; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+            .morning-briefing { padding: 16px; }
+            .morning-briefing-greeting { font-size: 1.1rem; }
+            .morning-briefing-summary { font-size: 0.9rem; }
+            .morning-briefing-stats { gap: 8px; flex-wrap: wrap; }
+            .briefing-stat { font-size: 0.75rem; padding: 6px 10px; }
+            .proposal-card { flex-direction: column; }
+            .proposal-card .proposal-content h6 { font-size: 0.85rem; }
+            .contact-today-item { padding: 8px; }
+        }
+        @media (max-width: 480px) {
             .stats-grid { grid-template-columns: 1fr; }
+            .page-header h1 { font-size: 1.3rem; }
         }
 
         /* Maintenance Alerts Widget */

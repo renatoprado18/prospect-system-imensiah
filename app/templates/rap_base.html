@@ -367,6 +367,20 @@
         }
         @media (max-width: 768px) {
             .sidebar-toggle { display: block; }
+            /* Modais full-width em mobile */
+            .modal-dialog { margin: 0.5rem; max-width: calc(100% - 1rem); }
+            .modal-content { border-radius: 12px; }
+            /* Tabs scroll horizontal */
+            .nav-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            .nav-tabs .nav-link { white-space: nowrap; font-size: 0.8rem; padding: 8px 12px; }
+            /* Cards compactos */
+            .card { border-radius: 10px; }
+            .card-body { padding: 12px; }
+            /* Botoes compactos */
+            .btn { font-size: 0.85rem; padding: 6px 12px; }
+            .btn-sm { font-size: 0.75rem; padding: 4px 8px; }
+            /* Tabelas scroll */
+            .table-responsive { overflow-x: auto; }
         }
 
         .sidebar-overlay {
