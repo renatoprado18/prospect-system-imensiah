@@ -474,19 +474,24 @@ async def download_group_documents(project_id: int) -> Dict:
                                     proj = cursor2.fetchone()
                                     folder_id = proj['google_drive_folder_id'] if proj else None
 
-                                upload_result = await upload_file(access_token, file_bytes, file_name, mimetype, folder_id)
+                                # Tentar upload na pasta do projeto, fallback para raiz
+                                try:
+                                    upload_result = await upload_file(access_token, file_bytes, file_name, mimetype, folder_id)
+                                except Exception:
+                                    # Pasta nao existe, upload na raiz
+                                    upload_result = await upload_file(access_token, file_bytes, file_name, mimetype, None)
                                 drive_id = upload_result.get('id', '')
                                 drive_url = f"https://drive.google.com/file/d/{drive_id}/view"
 
                                 # Indexar no sistema
                                 from integrations.google_drive import index_document_to_db, link_document_to_entity
                                 with get_db() as conn2:
-                                    doc_id = await index_document_to_db(
+                                    doc_id = index_document_to_db(
                                         conn2, file_name, drive_id, drive_url,
                                         mimetype, len(file_bytes), folder_id
                                     )
                                     if doc_id:
-                                        await link_document_to_entity(conn2, doc_id, 'projeto', project_id)
+                                        link_document_to_entity(conn2, doc_id, 'projeto', project_id)
 
                                 results["uploaded"] += 1
                                 results["files"].append({"name": file_name, "drive_url": drive_url})
