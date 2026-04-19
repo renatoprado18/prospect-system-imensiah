@@ -838,6 +838,21 @@
                         </div>
                     </div>
 
+                    <!-- WhatsApp Groups -->
+                    <div class="section-card" id="waGroupsSection">
+                        <div class="section-header">
+                            <h3 class="section-title">
+                                <i class="bi bi-whatsapp text-success"></i> Grupos WhatsApp
+                            </h3>
+                            <button class="btn btn-sm btn-outline-success" onclick="openAddGroupModal()">
+                                <i class="bi bi-plus"></i>
+                            </button>
+                        </div>
+                        <div class="section-body" id="waGroupsList">
+                            <p class="text-muted small mb-0">Carregando...</p>
+                        </div>
+                    </div>
+
                     <!-- Info -->
                     <div class="section-card">
                         <div class="section-header">
@@ -2384,6 +2399,125 @@
         }
     }
 
+    // ============ WhatsApp Groups ============
+    let waGroups = [];
+    let allWaGroups = null; // Cache of all available groups
+
+    async function loadWaGroups() {
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/whatsapp-groups`);
+            waGroups = resp.ok ? await resp.json() : [];
+            renderWaGroups();
+        } catch (e) {
+            console.error('Erro ao carregar grupos WA:', e);
+        }
+    }
+
+    function renderWaGroups() {
+        const container = document.getElementById('waGroupsList');
+        if (!waGroups || waGroups.length === 0) {
+            container.innerHTML = '<p class="text-muted small mb-0">Nenhum grupo vinculado</p>';
+            return;
+        }
+        container.innerHTML = waGroups.map(g => `
+            <div class="d-flex justify-content-between align-items-center mb-2 p-2 rounded" style="background: var(--bg-secondary, #f1f5f9);">
+                <div>
+                    <div class="fw-semibold small"><i class="bi bi-whatsapp text-success me-1"></i>${g.group_name || g.group_jid}</div>
+                </div>
+                <button class="btn btn-sm text-danger" onclick="unlinkGroup(${g.id})" title="Desvincular">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+        `).join('');
+    }
+
+    function openAddGroupModal() {
+        document.getElementById('groupSearchInput').value = '';
+        document.getElementById('groupSearchResults').innerHTML = '<p class="text-muted small">Digite para buscar grupos</p>';
+        new bootstrap.Modal(document.getElementById('addGroupModal')).show();
+
+        // Carregar lista de grupos se ainda nao carregou
+        if (!allWaGroups) fetchAllGroups();
+    }
+
+    async function fetchAllGroups() {
+        document.getElementById('groupSearchLoading').style.display = 'block';
+        try {
+            const resp = await fetch('/api/whatsapp/groups');
+            allWaGroups = resp.ok ? await resp.json() : [];
+            document.getElementById('groupSearchLoading').style.display = 'none';
+        } catch (e) {
+            document.getElementById('groupSearchLoading').style.display = 'none';
+            allWaGroups = [];
+        }
+    }
+
+    function searchGroups(query) {
+        const container = document.getElementById('groupSearchResults');
+        if (!query || query.length < 2) {
+            container.innerHTML = '<p class="text-muted small">Digite pelo menos 2 caracteres</p>';
+            return;
+        }
+        if (!allWaGroups) {
+            container.innerHTML = '<p class="text-muted small">Carregando grupos...</p>';
+            return;
+        }
+
+        const q = query.toLowerCase();
+        const linked = new Set(waGroups.map(g => g.group_jid));
+        const matches = allWaGroups.filter(g => {
+            const name = (g.name || g.pushName || '').toLowerCase();
+            return name.includes(q) && !linked.has(g.jid);
+        }).slice(0, 10);
+
+        if (matches.length === 0) {
+            container.innerHTML = '<p class="text-muted small">Nenhum grupo encontrado</p>';
+            return;
+        }
+
+        container.innerHTML = matches.map(g => `
+            <div class="d-flex justify-content-between align-items-center p-2 mb-1 rounded border" style="cursor:pointer;" onclick="linkGroup('${g.jid}', '${(g.name || g.pushName || '').replace(/'/g, "\\'")}')">
+                <div>
+                    <div class="fw-semibold small">${g.name || g.pushName || g.jid}</div>
+                </div>
+                <i class="bi bi-plus-circle text-success"></i>
+            </div>
+        `).join('');
+    }
+
+    async function linkGroup(jid, name) {
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/whatsapp-groups`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ group_jid: jid, group_name: name })
+            });
+            if (resp.ok) {
+                showToast(`Grupo "${name}" vinculado!`, 'success');
+                bootstrap.Modal.getInstance(document.getElementById('addGroupModal')).hide();
+                loadWaGroups();
+            } else {
+                showToast('Erro ao vincular grupo', 'danger');
+            }
+        } catch (e) {
+            showToast('Erro ao vincular grupo', 'danger');
+        }
+    }
+
+    async function unlinkGroup(groupId) {
+        if (!confirm('Desvincular este grupo do projeto?')) return;
+        try {
+            await fetch(`/api/projects/${projectId}/whatsapp-groups/${groupId}`, { method: 'DELETE' });
+            loadWaGroups();
+            showToast('Grupo desvinculado', 'success');
+        } catch (e) {
+            showToast('Erro ao desvincular', 'danger');
+        }
+    }
+
+    // Load groups on page load
+    loadWaGroups();
+
     // ============ AI Analysis (Parecer) ============
     let lastAnalysisText = '';
 
@@ -2681,6 +2815,34 @@
         }
     }
 </script>
+
+<!-- Modal Add WhatsApp Group -->
+<div class="modal fade" id="addGroupModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-whatsapp text-success me-2"></i>Vincular Grupo WhatsApp</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="groupSearchStep">
+                    <p class="text-muted small">Busque um grupo pelo nome para vincular a este projeto.</p>
+                    <div class="mb-3">
+                        <input type="text" id="groupSearchInput" class="form-control" placeholder="Buscar grupo..." oninput="searchGroups(this.value)">
+                    </div>
+                    <div id="groupSearchResults" style="max-height: 300px; overflow-y: auto;"></div>
+                    <div id="groupSearchLoading" style="display:none;" class="text-center py-3">
+                        <div class="spinner-border spinner-border-sm text-success"></div>
+                        <span class="ms-2 text-muted">Buscando grupos...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Modal AI Analysis (Parecer) -->
 <div class="modal fade" id="analysisModal" tabindex="-1">

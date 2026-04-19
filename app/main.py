@@ -1448,6 +1448,24 @@ async def fathom_webhook(request: Request):
 # NOTE: O endpoint POST /api/webhooks/whatsapp está definido mais abaixo,
 # na seção "Evolution API Integration", usando handle_evolution_webhook
 
+@app.get("/api/whatsapp/groups")
+async def whatsapp_list_groups():
+    """Lista todos os grupos de WhatsApp disponíveis"""
+    try:
+        chats = await whatsapp.get_all_chats(include_groups=True)
+        groups = []
+        for c in chats:
+            if c.get('_is_group'):
+                groups.append({
+                    'jid': c.get('remoteJid', ''),
+                    'name': c.get('name', c.get('pushName', '')),
+                    'pushName': c.get('pushName', ''),
+                })
+        return sorted(groups, key=lambda g: g.get('name', '') or g.get('pushName', ''))
+    except Exception as e:
+        return []
+
+
 @app.get("/api/whatsapp/status")
 async def whatsapp_status():
     """Get WhatsApp connection status with stats"""
