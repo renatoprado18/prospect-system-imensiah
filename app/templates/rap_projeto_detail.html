@@ -586,6 +586,7 @@
             project = await response.json();
             renderProject();
             loadProjectDocuments();
+            loadWaGroups();
             // Load AI briefing in parallel (non-blocking)
             loadBriefing();
         } catch (error) {
@@ -2515,8 +2516,7 @@
         }
     }
 
-    // Load groups on page load
-    loadWaGroups();
+    // Groups loaded after loadProject() renders the DOM — see loadProject()
 
     // ============ AI Analysis (Parecer) ============
     let lastAnalysisText = '';
