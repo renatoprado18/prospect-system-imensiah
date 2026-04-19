@@ -82,6 +82,14 @@ async def analyze_project_updates(project_id: int) -> Dict:
             """, (member_ids,))
             recent_messages = [dict(r) for r in cursor.fetchall()]
 
+        # Pareceres anteriores (memoria persistente para Smart Update)
+        cursor.execute("""
+            SELECT titulo, conteudo, criado_em FROM project_notes
+            WHERE project_id = %s AND tipo = 'parecer'
+            ORDER BY criado_em DESC LIMIT 2
+        """, (project_id,))
+        prev_analyses = [dict(r) for r in cursor.fetchall()]
+
         # Mensagens dos grupos de WhatsApp vinculados ao projeto
         group_messages = []
         cursor.execute("""
@@ -141,11 +149,20 @@ async def analyze_project_updates(project_id: int) -> Dict:
 
     members_text = ", ".join([f"{m['nome']} ({m.get('papel', 'membro')})" for m in members])
 
+    # Memoria de pareceres anteriores
+    memory_text = ""
+    if prev_analyses:
+        memory_text = "\n\nPARECERES ANTERIORES (memoria do projeto):\n"
+        for pa in reversed(prev_analyses):
+            dt = str(pa.get('criado_em', '?'))[:10]
+            memory_text += f"--- Parecer de {dt} ---\n{(pa.get('conteudo') or '')[:600]}\n\n"
+        memory_text += "INSTRUCAO: Considere os pareceres anteriores. Nao repita sugestoes ja feitas. Foque no que MUDOU.\n"
+
     prompt = f"""Analise as conversas recentes entre Renato e os participantes deste projeto.
 O usuario do sistema e RENATO. Quando ele envia uma mensagem, ele e o remetente.
 
 PROJETO SENDO ANALISADO: {project['nome']}
-DESCRICAO: {project.get('descricao', '')[:300]}
+DESCRICAO: {project.get('descricao', '')[:300]}{memory_text}
 PARTICIPANTES: {members_text}
 
 ATENCAO: As conversas podem abordar MULTIPLOS assuntos/projetos. Considere APENAS o que e relevante para o projeto "{project['nome']}". Ignore partes das conversas sobre outros projetos ou assuntos pessoais.

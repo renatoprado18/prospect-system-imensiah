@@ -6417,6 +6417,24 @@ async def cron_daily_sync(request: Request):
     except Exception as e:
         results["steps"]["campaigns"] = {"status": "error", "error": str(e)}
 
+    # 9. Auto-enrich contatos prioritarios (C1-C2)
+    try:
+        from services.contact_enrichment import auto_enrich_priority_contacts
+        with get_db() as conn:
+            enrich_result = await auto_enrich_priority_contacts(conn, circulo_max=2, limit=5)
+        results["steps"]["auto_enrich"] = {"status": "success", "enriched": len(enrich_result)}
+    except Exception as e:
+        results["steps"]["auto_enrich"] = {"status": "error", "error": str(e)}
+
+    # 10. Buscar fotos de contatos sem foto (priorizando C1-C2)
+    try:
+        from services.avatar_fetcher import get_avatar_fetcher
+        fetcher = get_avatar_fetcher()
+        avatar_result = await fetcher.fetch_photos_batch(limit=10, delay_between=1.0)
+        results["steps"]["avatar_fetch"] = {"status": "success", "result": avatar_result}
+    except Exception as e:
+        results["steps"]["avatar_fetch"] = {"status": "error", "error": str(e)}
+
     results["completed_at"] = datetime.now().isoformat()
 
     return results
