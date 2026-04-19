@@ -15022,6 +15022,31 @@ async def api_send_analysis(project_id: int, request: Request):
     raise HTTPException(status_code=400, detail="Canal invalido")
 
 
+# ============== SOCIAL GROUPS ==============
+
+@app.get("/grupos-sociais", response_class=HTMLResponse)
+async def social_groups_page(request: Request):
+    """Pagina de Grupos Sociais"""
+    return templates.TemplateResponse("rap_social_groups.html", {"request": request})
+
+
+@app.get("/api/social-groups")
+async def api_list_social_groups():
+    """Lista todos os grupos de WhatsApp disponiveis"""
+    from services.social_groups import list_all_social_groups
+    return await list_all_social_groups()
+
+
+@app.get("/api/social-groups/{group_jid:path}")
+async def api_get_social_group(group_jid: str):
+    """Detalhes de um grupo com membros cruzados com contatos INTEL"""
+    from services.social_groups import get_group_with_members
+    result = await get_group_with_members(group_jid)
+    if not result:
+        raise HTTPException(status_code=404, detail="Grupo nao encontrado")
+    return result
+
+
 # ============== PROJECT WHATSAPP GROUPS ==============
 
 @app.get("/api/projects/{project_id}/whatsapp-groups")
