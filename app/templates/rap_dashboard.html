@@ -2167,13 +2167,33 @@
                 const data = await response.json();
 
                 if (!data.hoje || data.hoje.length === 0) {
-                    // No tasks for today
-                    let html = `
-                        <div style="padding: 20px; text-align: center; color: var(--gray-500);">
-                            <i class="bi bi-check-circle" style="font-size: 2rem; color: #22c55e;"></i>
-                            <p style="margin: 8px 0 0; font-size: 0.85rem;">Nada para publicar hoje</p>
-                        </div>
-                    `;
+                    // No tasks for today - show draft suggestion
+                    let html = '';
+                    if (data.draft_sugerido) {
+                        html = `
+                            <div style="padding: 16px;">
+                                <div style="font-size: 0.75rem; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;">
+                                    <i class="bi bi-lightbulb text-warning"></i> Sugestao para hoje
+                                </div>
+                                <div style="font-size: 0.85rem; font-weight: 600; margin-bottom: 6px;">
+                                    ${(data.draft_sugerido.titulo || data.draft_sugerido.article_title || '').substring(0, 60)}${(data.draft_sugerido.titulo || data.draft_sugerido.article_title || '').length > 60 ? '...' : ''}
+                                </div>
+                                <div style="font-size: 0.75rem; color: var(--gray-500); margin-bottom: 10px;">
+                                    ${data.total_drafts || 0} rascunhos disponiveis
+                                </div>
+                                <a href="/editorial" class="btn btn-sm btn-outline-primary" style="font-size: 0.8rem;">
+                                    <i class="bi bi-pencil me-1"></i>Editar e Publicar
+                                </a>
+                            </div>
+                        `;
+                    } else {
+                        html = `
+                            <div style="padding: 20px; text-align: center; color: var(--gray-500);">
+                                <i class="bi bi-check-circle" style="font-size: 2rem; color: #22c55e;"></i>
+                                <p style="margin: 8px 0 0; font-size: 0.85rem;">Nada para publicar hoje</p>
+                            </div>
+                        `;
+                    }
 
                     // Show upcoming if available
                     if (data.proximos && data.proximos.length > 0) {
@@ -2884,19 +2904,12 @@
             }
         }
 
-        // Load briefings pendentes count
-        async function loadBriefingsPendentes() {
-            try {
-                const response = await fetch('/api/briefings/pending?limit=50');
-                if (response.ok) {
-                    const data = await response.json();
-                    const count = Array.isArray(data) ? data.length : (data.contacts?.length || 0);
-                    document.getElementById('statBriefings').textContent = count;
-                } else {
-                    document.getElementById('statBriefings').textContent = '0';
-                }
-            } catch (error) {
-                console.log('Briefings API not available');
+        // Load briefings pendentes count (from dashboard data, not separate endpoint)
+        function loadBriefingsPendentes() {
+            // Usa dados do cache do dashboard (já correto com filtro ultimo_contato IS NOT NULL)
+            if (dataCache.dashboard?.stats?.briefings_pendentes != null) {
+                document.getElementById('statBriefings').textContent = dataCache.dashboard.stats.briefings_pendentes;
+            } else {
                 document.getElementById('statBriefings').textContent = '0';
             }
         }

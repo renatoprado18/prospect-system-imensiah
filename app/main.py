@@ -15648,6 +15648,25 @@ async def api_editorial_dashboard_tasks():
                 'data_publicacao': post['data_publicacao'].isoformat() if post['data_publicacao'] else None
             })
 
+        # Se nada agendado, sugerir um draft
+        if not result['hoje']:
+            cursor.execute("""
+                SELECT id, article_title, tipo, conteudo_adaptado
+                FROM editorial_posts
+                WHERE status = 'draft' AND article_title IS NOT NULL AND article_title != ''
+                ORDER BY RANDOM() LIMIT 1
+            """)
+            draft = cursor.fetchone()
+            if draft:
+                result['draft_sugerido'] = {
+                    'id': draft['id'],
+                    'titulo': draft['article_title'],
+                    'tipo': draft['tipo']
+                }
+
+            cursor.execute("SELECT COUNT(*) FROM editorial_posts WHERE status = 'draft'")
+            result['total_drafts'] = cursor.fetchone()['count']
+
     return result
 
 
