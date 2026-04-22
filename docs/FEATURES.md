@@ -125,7 +125,7 @@
 | WhatsApp (Evolution API) | Envio/recebimento msgs, webhook, historico | EVOLUTION_API_URL/KEY |
 | Google Calendar | Sync eventos, criar/remarcar | GOOGLE_CLIENT_ID/SECRET |
 | Google Gmail | Leitura emails, triage IA | GOOGLE_CLIENT_ID/SECRET |
-| Google Drive | Documentos de contatos/projetos | GOOGLE_CLIENT_ID/SECRET |
+| Google Drive | Documentos de contatos/projetos, push notifications (webhook), auto-reindex | GOOGLE_CLIENT_ID/SECRET, DRIVE_WEBHOOK_TOKEN |
 | Google Tasks | Sync tarefas | GOOGLE_CLIENT_ID/SECRET |
 | Claude (Anthropic) | Briefings, resumos, analises, OCR | ANTHROPIC_API_KEY |
 | LinkdAPI | Enriquecimento LinkedIn (perfil, skills, exp) | LINKDAPI_KEY |
@@ -150,5 +150,6 @@
 | Health recalc | /api/cron/recalculate-health | 5h + 18h UTC |
 | Expire proposals | /api/cron/expire-proposals | 4h UTC |
 | Editorial briefing | /api/cron/editorial-weekly-briefing | Dom 21h UTC (18h BR) |
+| Drive documents reindex | /api/cron/index-drive-documents | 7h UTC |
 
 ## Numeros (528 endpoints, 32 templates, 65 tabelas, 60 services)

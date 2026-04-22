@@ -137,6 +137,19 @@ async def lifespan(app: FastAPI):
     try:
         init_db()
         print("PostgreSQL database initialized")
+        # Fix document 87 column shift (one-time data fix)
+        try:
+            conn = get_db()
+            cursor = conn.cursor()
+            cursor.execute("SELECT nome FROM documentos WHERE id = 87")
+            row = cursor.fetchone()
+            if row and row['nome'] and row['nome'].startswith('1r4Wq3'):
+                from integrations.google_drive import fix_document_column_shift
+                fix_document_column_shift(conn, 87)
+                print("Fixed document 87 column shift")
+            conn.close()
+        except Exception as e:
+            print(f"Doc 87 fix skipped: {e}")
     except Exception as e:
         print(f"DB init error: {e}")
     yield
@@ -5995,7 +6008,10 @@ from integrations.google_drive import (
     index_document_to_db,
     link_document_to_entity,
     get_documents_for_entity,
-    index_folder_documents
+    index_folder_documents,
+    fix_document_column_shift,
+    watch_folder,
+    stop_watch_channel
 )
 
 
@@ -7035,6 +7051,218 @@ async def cron_sync_whatsapp_history(request: Request):
         "messages_imported": total_messages,
         "errors": errors,
     }
+
+
+# ============== Google Drive Cron & Webhooks ==============
+
+@app.get("/api/cron/index-drive-documents")
+async def cron_index_drive_documents(request: Request):
+    """
+    Cron: Re-index Google Drive folders for all projects that have a linked folder.
+    Schedule: 0 7 * * * (daily at 7am UTC)
+    Rate-limited to 1 folder per 2 seconds to avoid Google API throttling.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    total_indexed = 0
+    folders_processed = 0
+    errors = []
+
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        # Get all projects with a Google Drive folder
+        cursor.execute("""
+            SELECT id, nome, google_drive_folder_id
+            FROM projects
+            WHERE google_drive_folder_id IS NOT NULL
+              AND google_drive_folder_id != ''
+        """)
+        projects = cursor.fetchall()
+
+        access_token = await get_valid_token(conn, 'professional')
+        if not access_token:
+            conn.close()
+            return {
+                "job": "index-drive-documents",
+                "status": "error",
+                "error": "Google Drive not connected"
+            }
+
+        for project in projects:
+            try:
+                count = await index_folder_documents(
+                    conn,
+                    access_token,
+                    project['google_drive_folder_id'],
+                    entidade_tipo='projeto',
+                    entidade_id=project['id']
+                )
+                total_indexed += count
+                folders_processed += 1
+            except Exception as e:
+                errors.append({
+                    "project_id": project['id'],
+                    "project_name": project['nome'],
+                    "error": str(e)
+                })
+
+            # Rate limit: 1 folder per 2 seconds
+            await asyncio.sleep(2)
+
+        conn.close()
+    except Exception as e:
+        return {
+            "job": "index-drive-documents",
+            "status": "error",
+            "error": str(e)
+        }
+
+    return {
+        "job": "index-drive-documents",
+        "timestamp": datetime.now().isoformat(),
+        "status": "success",
+        "folders_processed": folders_processed,
+        "documents_indexed": total_indexed,
+        "errors": errors
+    }
+
+
+@app.post("/api/webhooks/google-drive")
+async def webhook_google_drive(request: Request):
+    """
+    Webhook: Receives Google Drive push notifications when files change.
+    Google sends POST requests here when watched folders are modified.
+    No user auth required - verified via channel token.
+    """
+    # Google Drive sends these headers
+    channel_id = request.headers.get("x-goog-channel-id", "")
+    resource_state = request.headers.get("x-goog-resource-state", "")
+    resource_id = request.headers.get("x-goog-resource-id", "")
+    channel_token = request.headers.get("x-goog-channel-token", "")
+
+    # Verify channel token
+    expected_token = os.getenv("DRIVE_WEBHOOK_TOKEN", "")
+    if not expected_token or channel_token != expected_token:
+        raise HTTPException(status_code=403, detail="Invalid channel token")
+
+    # Google sends a 'sync' message when watch is first created - acknowledge it
+    if resource_state == "sync":
+        return {"status": "ok", "message": "sync acknowledged"}
+
+    # Only process 'update' and 'add' events
+    if resource_state not in ("update", "add", "change"):
+        return {"status": "ok", "message": f"ignored state: {resource_state}"}
+
+    # Extract folder_id from channel_id (format: drive-watch-{folder_id}-{random})
+    parts = channel_id.split("-")
+    if len(parts) >= 4 and parts[0] == "drive" and parts[1] == "watch":
+        folder_id = parts[2]
+    else:
+        return {"status": "ok", "message": "unrecognized channel format"}
+
+    # Re-index the folder in background
+    try:
+        conn = get_db()
+
+        # Find the project linked to this folder
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id FROM projects WHERE google_drive_folder_id = %s LIMIT 1
+        """, (folder_id,))
+        project = cursor.fetchone()
+
+        access_token = await get_valid_token(conn, 'professional')
+        if access_token:
+            entidade_tipo = 'projeto' if project else None
+            entidade_id = project['id'] if project else None
+
+            count = await index_folder_documents(
+                conn,
+                access_token,
+                folder_id,
+                entidade_tipo=entidade_tipo,
+                entidade_id=entidade_id
+            )
+            conn.close()
+            return {"status": "ok", "reindexed": count, "folder_id": folder_id}
+        else:
+            conn.close()
+            return {"status": "error", "message": "No valid access token"}
+
+    except Exception as e:
+        print(f"[drive-webhook] Error processing notification: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/drive/watch/{project_id}")
+async def api_watch_project_folder(project_id: int, request: Request):
+    """
+    Set up Google Drive push notifications for a project's folder.
+    The watch expires after ~7 days and needs renewal.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT google_drive_folder_id, nome FROM projects WHERE id = %s", (project_id,))
+    project = cursor.fetchone()
+    if not project or not project['google_drive_folder_id']:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Project not found or no Drive folder linked")
+
+    access_token = await get_valid_token(conn, 'professional')
+    if not access_token:
+        conn.close()
+        raise HTTPException(status_code=401, detail="Google Drive not connected")
+
+    # Build webhook URL
+    base_url = os.getenv("BASE_URL", "https://intel.rafrsp.com")
+    webhook_url = f"{base_url}/api/webhooks/google-drive"
+
+    # Channel token for verification
+    channel_token = os.getenv("DRIVE_WEBHOOK_TOKEN", "")
+    if not channel_token:
+        conn.close()
+        raise HTTPException(status_code=500, detail="DRIVE_WEBHOOK_TOKEN not configured")
+
+    try:
+        result = await watch_folder(
+            access_token,
+            project['google_drive_folder_id'],
+            webhook_url,
+            channel_token
+        )
+
+        # Store watch info for later renewal/cleanup
+        cursor.execute("""
+            INSERT INTO drive_watches (project_id, folder_id, channel_id, resource_id, expiration)
+            VALUES (%s, %s, %s, %s, to_timestamp(%s / 1000.0))
+            ON CONFLICT (project_id) DO UPDATE SET
+                channel_id = EXCLUDED.channel_id,
+                resource_id = EXCLUDED.resource_id,
+                expiration = EXCLUDED.expiration,
+                updated_at = NOW()
+        """, (
+            project_id,
+            project['google_drive_folder_id'],
+            result.get('id'),
+            result.get('resourceId'),
+            result.get('expiration')
+        ))
+        conn.commit()
+        conn.close()
+
+        return {
+            "status": "ok",
+            "channel_id": result.get('id'),
+            "expiration": result.get('expiration'),
+            "project": project['nome']
+        }
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/api/google/accounts/{account_id}")

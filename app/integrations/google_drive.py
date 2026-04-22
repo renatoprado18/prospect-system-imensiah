@@ -4,8 +4,9 @@ Manages folders, documents, and file uploads linked to projects/contacts
 """
 import os
 import json
+import secrets
 import httpx
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from urllib.parse import urlencode
 
@@ -272,8 +273,8 @@ async def get_folder_path(access_token: str, folder_id: str) -> str:
 
 def index_document_to_db(
     db_conn,
-    google_drive_id: str,
     nome: str,
+    google_drive_id: str,
     mime_type: str,
     web_view_link: str,
     tamanho_bytes: int = None,
@@ -416,3 +417,86 @@ async def index_folder_documents(
         count += 1
 
     return count
+
+
+def fix_document_column_shift(db_conn, doc_id: int = 87):
+    """
+    Fix document with shifted columns.
+    Document 87 has: nome=drive_id, google_drive_id=nome, google_drive_url=mime_type, mime_type=url
+    """
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT nome, google_drive_id, google_drive_url, mime_type FROM documentos WHERE id = %s", (doc_id,))
+    row = cursor.fetchone()
+    if not row:
+        return False
+
+    # The values are shifted: nome has drive_id, google_drive_id has nome, etc.
+    actual_drive_id = row['nome']
+    actual_nome = row['google_drive_id']
+    actual_mime_type = row['google_drive_url']
+    actual_url = row['mime_type']
+
+    cursor.execute("""
+        UPDATE documentos
+        SET nome = %s, google_drive_id = %s, google_drive_url = %s, mime_type = %s, atualizado_em = NOW()
+        WHERE id = %s
+    """, (actual_nome, actual_drive_id, actual_url, actual_mime_type, doc_id))
+    db_conn.commit()
+    return True
+
+
+async def watch_folder(access_token: str, folder_id: str, webhook_url: str, channel_token: str) -> Dict:
+    """
+    Set up push notifications for changes in a Drive folder using files.watch.
+    Google will POST to webhook_url when files change.
+    Channel expires in ~7 days (Google maximum).
+    """
+    channel_id = f"drive-watch-{folder_id}-{secrets.token_hex(8)}"
+    expiration = int((datetime.utcnow() + timedelta(days=7)).timestamp() * 1000)
+
+    body = {
+        "id": channel_id,
+        "type": "web_hook",
+        "address": webhook_url,
+        "token": channel_token,
+        "expiration": expiration,
+        "params": {
+            "ttl": str(7 * 24 * 3600)  # 7 days in seconds
+        }
+    }
+
+    async with httpx.AsyncClient() as client:
+        # Watch changes on the folder itself
+        response = await client.post(
+            f"{GOOGLE_DRIVE_API}/files/{folder_id}/watch",
+            json=body,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+        )
+
+        if response.status_code not in [200, 201]:
+            raise Exception(f"Drive watch API error: {response.text}")
+
+        return response.json()
+
+
+async def stop_watch_channel(access_token: str, channel_id: str, resource_id: str) -> bool:
+    """Stop a previously created watch channel"""
+    body = {
+        "id": channel_id,
+        "resourceId": resource_id
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{GOOGLE_DRIVE_API}/channels/stop",
+            json=body,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+        )
+
+        return response.status_code == 204

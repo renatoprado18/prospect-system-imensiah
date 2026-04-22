@@ -1707,6 +1707,20 @@ def init_db():
             ON documento_links(entidade_tipo, entidade_id)
         ''')
 
+        # Drive watches - Google Drive push notification channels
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS drive_watches (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+                folder_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                resource_id TEXT,
+                expiration TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         # =========================================================================
         # VEICULOS - Sistema de Controle de Manutenção de Veículos
         # =========================================================================

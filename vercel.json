@@ -40,6 +40,10 @@
     {
       "path": "/api/cron/editorial-weekly-briefing",
       "schedule": "0 21 * * 0"
+    },
+    {
+      "path": "/api/cron/index-drive-documents",
+      "schedule": "0 7 * * *"
     }
   ]
 }
