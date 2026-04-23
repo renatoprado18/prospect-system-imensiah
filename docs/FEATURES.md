@@ -124,11 +124,28 @@
 ### Artigos (`/artigos` → artigos.html)
 - Biblioteca de artigos do blog
 
+### Intel Bot (WhatsApp conversacional via intel-bot)
+- Bot WhatsApp dedicado na instancia "intel-bot" (numero 5511915020192)
+- Acesso exclusivo do Renato (+5511984153337)
+- Intencoes suportadas:
+  - `create_task`: "Tarefa: ...", "Lembrar de ...", "Preciso ..." → cria tarefa no DB
+  - `schedule_meeting`: "Agendar ...", "Marcar reuniao ...", "Call com ... sexta 15h" → cria evento no calendario
+  - `save_insight`: "Insight: ...", "Nota: ...", "Na reuniao com X, ..." → salva como project_note ou contact_memory
+  - `ask_question`: "Como esta o projeto X?", "Quais tarefas vencidas?" → consulta DB e responde
+  - `send_message`: "Manda pro Rogerio: ..." → envia WhatsApp via instancia principal (rap-whatsapp)
+  - `general`: conversa geral com contexto do CRM
+- Classificacao de intencao via Claude AI (sonnet)
+- Rate limit: ignora emojis e mensagens triviais
+- Notificacoes proativas: editorial briefing semanal, alertas do sistema
+- Service: `app/services/intel_bot.py`
+- Helper: `send_intel_notification(text, phone)` para qualquer servico enviar notificacao
+
 ## Integrações Ativas
 
 | Integracao | Funcionalidade | Config |
 |------------|---------------|--------|
 | WhatsApp (Evolution API) | Envio/recebimento msgs, webhook, historico | EVOLUTION_API_URL/KEY |
+| WhatsApp Intel Bot | Bot conversacional (intel-bot instance) | INTEL_BOT_INSTANCE, INTEL_BOT_NUMBER |
 | Google Calendar | Sync eventos, criar/remarcar | GOOGLE_CLIENT_ID/SECRET |
 | Google Gmail | Leitura emails, triage IA | GOOGLE_CLIENT_ID/SECRET |
 | Google Drive | Documentos de contatos/projetos, push notifications (webhook), auto-reindex | GOOGLE_CLIENT_ID/SECRET, DRIVE_WEBHOOK_TOKEN |

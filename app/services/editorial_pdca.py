@@ -379,6 +379,30 @@ Responda APENAS com o JSON."""
 
         conn.commit()
 
+    # Send WhatsApp notification via intel-bot
+    try:
+        from services.intel_bot import send_intel_notification
+
+        posts_summary = ""
+        for post_plan in briefing.get("posts_sugeridos", []):
+            pilar_label = PILLARS.get(post_plan.get("pilar", ""), {}).get("label", post_plan.get("pilar", ""))
+            posts_summary += f"  - {post_plan.get('dia', '?').title()}: {post_plan.get('tema', '?')[:60]} [{pilar_label}]\n"
+
+        whatsapp_msg = (
+            f"*Briefing Editorial - Semana {next_monday.strftime('%d/%m')}*\n\n"
+            f"Semana passada: {performance['posts_published']} posts, "
+            f"{performance['total_impressions']} impressoes, "
+            f"{performance['total_engagement']} engajamento\n\n"
+            f"*Plano da semana:*\n{posts_summary}\n"
+            f"*Foco:* {briefing.get('pilar_foco', 'A definir')[:120]}\n\n"
+            f"{len(created_tasks)} tarefas criadas no projeto Editorial."
+        )
+
+        import asyncio
+        asyncio.create_task(send_intel_notification(whatsapp_msg))
+    except Exception as e:
+        logger.error(f"Error sending editorial WhatsApp notification: {e}")
+
     return {
         "status": "success",
         "briefing": briefing,

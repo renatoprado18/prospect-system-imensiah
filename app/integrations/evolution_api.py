@@ -420,6 +420,12 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
 
     logger.info(f"Evolution webhook: {event} from {instance}")
 
+    # Route intel-bot messages to the bot handler
+    intel_bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot")
+    instance_name = instance if isinstance(instance, str) else (instance or {}).get("instanceName", "")
+    if instance_name == intel_bot_instance and event == "messages.upsert":
+        return await _handle_intel_bot_message(data)
+
     result = {"event": event, "processed": False}
 
     try:
@@ -722,3 +728,66 @@ async def process_renato_reply(content: str, phone: str):
 
     except Exception as e:
         logger.error(f"Error processing Renato reply: {e}")
+
+
+async def _handle_intel_bot_message(data: Dict) -> Dict:
+    """
+    Handle messages arriving on the intel-bot instance.
+    Routes to the conversational bot handler and sends response back.
+    """
+    import asyncio
+
+    key = data.get("key", {})
+    message = data.get("message", {})
+    remote_jid = key.get("remoteJid", "")
+    from_me = key.get("fromMe", False)
+    message_id = key.get("id", "")
+
+    # Ignore group messages and messages sent by the bot itself
+    if "@g.us" in remote_jid or from_me:
+        return {"processed": False, "reason": "group_or_self"}
+
+    phone = remote_jid.replace("@s.whatsapp.net", "")
+
+    # Extract text content
+    content = ""
+    if "conversation" in message:
+        content = message["conversation"]
+    elif "extendedTextMessage" in message:
+        content = message["extendedTextMessage"].get("text", "")
+
+    if not content:
+        return {"processed": False, "reason": "no_text_content"}
+
+    logger.info(f"Intel bot message from {phone}: {content[:100]}")
+
+    # Process in background so webhook returns fast
+    asyncio.create_task(_process_and_respond_bot(phone, content, message_id))
+
+    return {"processed": True, "reason": "intel_bot", "phone": phone}
+
+
+async def _process_and_respond_bot(phone: str, content: str, message_id: str):
+    """Process bot message and send response back via intel-bot instance."""
+    try:
+        from services.intel_bot import handle_bot_message, send_intel_notification
+
+        response = await handle_bot_message(phone, content, message_id)
+
+        # Empty response means skip (trivial message like emoji)
+        if not response:
+            return
+
+        # Send response back via intel-bot
+        await send_intel_notification(response, phone=phone)
+
+    except Exception as e:
+        logger.error(f"Error in intel bot processing: {e}")
+        try:
+            from services.intel_bot import send_intel_notification
+            await send_intel_notification(
+                "Desculpa, tive um erro interno. Tenta de novo?",
+                phone=phone
+            )
+        except Exception:
+            logger.error("Failed to send error message to user")
