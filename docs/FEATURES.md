@@ -128,12 +128,13 @@
 ## 17. Intel Bot (WhatsApp conversacional via intel-bot)
 - Bot WhatsApp dedicado na instancia "intel-bot" (numero 5511915020192)
 - Acesso exclusivo do Renato (+5511984153337)
-- **Arquitetura**: Claude tool_use com 3 meta-tools — acesso TOTAL ao sistema INTEL
+- **Arquitetura**: Claude tool_use com 4 meta-tools — acesso TOTAL ao INTEL + ConselhoOS
 - **Memoria conversacional**: tabela `bot_conversations` armazena historico (ultimas 20 msgs por telefone)
 - **Modelo**: claude-sonnet-4-20250514 com max_tokens 1000
 - **Loop de ferramentas**: ate 5 iteracoes (Claude pode encadear multiplas queries)
-- **3 Meta-tools poderosas**:
-  - `query_intel(sql)`: query SQL READ-ONLY em QUALQUER tabela do banco. Claude conhece o schema completo e monta queries livremente. Apenas SELECT permitido, limite 20 linhas, rejeita INSERT/UPDATE/DELETE
+- **4 Meta-tools poderosas**:
+  - `query_intel(sql)`: query SQL READ-ONLY em QUALQUER tabela do banco INTEL. Claude conhece o schema completo e monta queries livremente. Apenas SELECT permitido, limite 20 linhas, rejeita INSERT/UPDATE/DELETE
+  - `query_conselhoos(sql)`: query SQL READ-ONLY no banco ConselhoOS (governanca corporativa). Acesso a empresas, reunioes, atas, transcricoes, RACI, decisoes, pautas e documentos. SELECT only, limite 20 linhas
   - `execute_action(action, params)`: executa acoes no sistema (create_task, complete_task, save_note, save_memory, schedule_meeting, send_whatsapp, enrich_contact, update_contact)
   - `draft_message(contact_id, context)`: gera rascunho personalizado com contexto rico (WhatsApp, email, LinkedIn, fatos, memorias)
 - System prompt dinamico: data/hora, projetos ativos, tarefas vencidas, perfil do Renato, schema completo do banco

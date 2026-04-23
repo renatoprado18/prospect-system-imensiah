@@ -101,6 +101,25 @@ TOOLS = [
         }
     },
     {
+        "name": "query_conselhoos",
+        "description": (
+            "Executa uma query SQL READ-ONLY no banco de dados do ConselhoOS (sistema de governanca corporativa). "
+            "Use para buscar dados de empresas assessoradas, reunioes de conselho, atas, transcricoes, "
+            "tarefas RACI, decisoes, pautas e documentos. Apenas SELECT e permitido. "
+            "Resultados limitados a 20 linhas. Use ILIKE para buscas case-insensitive."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sql": {
+                    "type": "string",
+                    "description": "Query SQL SELECT. Ex: SELECT e.nome, e.setor FROM empresas e LIMIT 10"
+                }
+            },
+            "required": ["sql"]
+        }
+    },
+    {
         "name": "draft_message",
         "description": "Gera um rascunho de mensagem personalizada para um contato, usando contexto completo: mensagens recentes, memorias, LinkedIn, fatos e emails.",
         "input_schema": {
@@ -171,6 +190,61 @@ def _tool_query_intel(sql: str) -> str:
     except Exception as e:
         logger.error(f"query_intel error: {e}")
         return json.dumps({"erro": f"Erro SQL: {str(e)}", "query": sql_stripped})
+
+
+def _tool_query_conselhoos(sql: str) -> str:
+    """Execute a read-only SQL query against the ConselhoOS database."""
+    # Security: only allow SELECT statements
+    sql_stripped = sql.strip().rstrip(";").strip()
+    sql_upper = sql_stripped.upper()
+
+    if not sql_upper.startswith("SELECT"):
+        return json.dumps({"erro": "Apenas queries SELECT sao permitidas no ConselhoOS."})
+
+    dangerous = ["INSERT ", "UPDATE ", "DELETE ", "DROP ", "ALTER ", "TRUNCATE ", "CREATE ", "GRANT ", "REVOKE "]
+    for kw in dangerous:
+        if kw in sql_upper:
+            return json.dumps({"erro": f"Query contem operacao proibida: {kw.strip()}"})
+
+    if "LIMIT" not in sql_upper:
+        sql_stripped = sql_stripped + " LIMIT 20"
+
+    conselhoos_url = os.getenv("CONSELHOOS_DATABASE_URL")
+    if not conselhoos_url:
+        return json.dumps({"erro": "CONSELHOOS_DATABASE_URL nao configurada"})
+
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        conn = psycopg2.connect(conselhoos_url, cursor_factory=RealDictCursor)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(sql_stripped)
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
+
+        if not rows:
+            return json.dumps({"resultado": "Nenhum registro encontrado.", "query": sql_stripped})
+
+        results = [dict(r) for r in rows]
+        lines = []
+        for i, row in enumerate(results):
+            parts = []
+            for key, value in row.items():
+                if value is not None:
+                    str_val = str(value)
+                    if len(str_val) > 200:
+                        str_val = str_val[:200] + "..."
+                    parts.append(f"{key}: {str_val}")
+            lines.append(f"[{i+1}] " + " | ".join(parts))
+
+        return f"Encontrados {len(results)} registros:\n" + "\n".join(lines)
+
+    except Exception as e:
+        logger.error(f"query_conselhoos error: {e}")
+        return json.dumps({"erro": f"Erro SQL ConselhoOS: {str(e)}", "query": sql_stripped})
 
 
 async def _tool_execute_action(action: str, params: Dict) -> str:
@@ -551,6 +625,8 @@ async def _execute_tool(name: str, input_data: Dict) -> str:
     try:
         if name == "query_intel":
             return _tool_query_intel(input_data["sql"])
+        elif name == "query_conselhoos":
+            return _tool_query_conselhoos(input_data["sql"])
         elif name == "execute_action":
             return await _tool_execute_action(input_data["action"], input_data.get("params", {}))
         elif name == "draft_message":
@@ -728,6 +804,24 @@ campaigns: id, nome, tipo, status, descricao
 campaign_enrollments: id, campaign_id, contact_id, status
 
 contact_rodas: id, contact_id, roda_nome, data_inicio (rodas de networking)
+
+## CONSELHOOS DATABASE (query_conselhoos):
+O ConselhoOS e o sistema de governanca corporativa do Renato. Banco separado do INTEL.
+Use a tool query_conselhoos para consultar.
+
+empresas: id (uuid), nome, setor, descricao, created_at
+reunioes: id (uuid), empresa_id (uuid), titulo, data (timestamp), status, pauta_md (text), transcricao (text), transcricao_resumo (text), ata_md (text), ata_docx_drive_id, dossie_md (text), fathom_recording_id, created_at
+raci_itens: id (uuid), empresa_id (uuid), area, acao, prazo, status, responsavel_r
+decisoes: id, empresa_id, reuniao_id, decisao, area
+temas_reuniao: id, reuniao_id, titulo, ordem
+pautas_anuais: id, empresa_id, titulo
+documentos: id, empresa_id, titulo, tipo, url
+
+### Exemplos ConselhoOS:
+- Reunioes de empresa: SELECT r.titulo, r.data, r.status, LENGTH(r.ata_md) as ata_chars FROM reunioes r JOIN empresas e ON e.id = r.empresa_id WHERE e.nome ILIKE '%vallen%' ORDER BY r.data DESC
+- Buscar ata: SELECT ata_md FROM reunioes WHERE id = 'uuid'
+- Tarefas RACI pendentes: SELECT area, acao, prazo, status FROM raci_itens WHERE empresa_id = 'uuid' AND status IN ('pendente', 'em_andamento')
+- Decisoes de reuniao: SELECT d.decisao, d.area FROM decisoes d WHERE d.reuniao_id = 'uuid'
 
 ## DICAS SQL:
 - Buscar contato por nome: SELECT id, nome, empresa, cargo FROM contacts WHERE nome ILIKE '%termo%'
