@@ -3121,11 +3121,11 @@
                 const data = await resp.json();
 
                 if (resp.ok) {
-                    showToast('Post criado! Edite em Editorial', 'success');
-                    // Substituir botoes por link
+                    const postId = data.post?.id;
+                    showToast('Post criado! Clique para editar', 'success');
                     const container = document.getElementById('news-actions-' + newsId);
                     if (container) {
-                        container.innerHTML = '<a href="/editorial" style="font-size:0.7rem; color:#8b5cf6;">📝 Editar post</a>';
+                        container.innerHTML = `<a href="/editorial${postId ? '?edit=' + postId : ''}" style="font-size:0.7rem; color:#8b5cf6;">📝 Editar post</a>`;
                     }
                 } else {
                     showToast('Erro ao criar post', 'danger');
