@@ -2086,14 +2086,6 @@
                     </div>
                 </div>
 
-                <!-- Alertas Veiculos compacto -->
-                <div id="maintenanceAlertsCompact" class="mb-3" style="display:none;">
-                    <a href="/veiculos" class="d-flex align-items-center gap-2 p-2 rounded text-decoration-none" style="background: var(--gray-50); border: 1px solid var(--gray-100);">
-                        <i class="bi bi-car-front" style="color: var(--gray-500);"></i>
-                        <span id="maintenanceCompactText" style="font-size: 0.8rem; color: var(--gray-600);">Veículos: verificando...</span>
-                    </a>
-                </div>
-
                 <!-- 3. Projetos Ativos -->
                 <div class="card mb-4">
                     <div class="card-header" style="padding: 12px 16px;">
@@ -2106,9 +2098,14 @@
                             <span class="ms-2 text-muted">Carregando projetos...</span>
                         </div>
                     </div>
+                    <!-- Veiculos compact integrado no card -->
+                    <div id="maintenanceAlertsCompact" style="display:none; border-top: 1px solid var(--gray-100);">
+                        <a href="/veiculos" class="d-flex align-items-center gap-2 p-2 px-3 text-decoration-none" style="font-size: 0.8rem;">
+                            <i class="bi bi-car-front" style="color: var(--gray-400);"></i>
+                            <span id="maintenanceCompactText" style="color: var(--gray-500);">Veículos: verificando...</span>
+                        </a>
+                    </div>
                 </div>
-
-                <!-- (maintenance compact moved above projetos) -->
 
             </div>
         </div>
