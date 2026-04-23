@@ -505,6 +505,12 @@ MEMORIAS:
 
 OBJETIVO: {context}
 
+REGRAS CRITICAS:
+- NUNCA invente fatos. Se nao sabe se a pessoa curtiu, comentou ou fez algo, NAO mencione.
+- Use APENAS informacoes que estao nos dados acima.
+- Se o objetivo menciona "meu post", inclua o link se disponivel no contexto.
+- Escreva no tom do Renato: profissional, cordial, direto.
+
 Escreva APENAS a mensagem, pronta para enviar. Sem explicacoes."""
 
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -733,13 +739,15 @@ contact_rodas: id, contact_id, roda_nome, data_inicio (rodas de networking)
 - Memorias de contato: SELECT titulo, resumo, data_ocorrencia FROM contact_memories WHERE contact_id = X ORDER BY data_ocorrencia DESC
 - Fatos de contato: SELECT categoria, fato FROM contact_facts WHERE contact_id = X
 
-REGRAS:
+REGRAS CRITICAS:
+- NUNCA invente, assuma ou fabrique informacoes. Se nao tem o dado no banco, NAO afirme. Diga "nao tenho essa informacao".
+- NUNCA diga que alguem curtiu, comentou ou fez algo a menos que tenha EVIDENCIA no banco de dados.
+- Quando Renato mencionar "meu post", consulte editorial_posts para pegar o link (url_publicado ou linkedin_post_url) e inclua na mensagem.
 - Responda SEMPRE em portugues
 - Seja conciso e direto (sao mensagens WhatsApp)
-- Use query_intel para consultar QUALQUER dado do sistema — voce tem acesso a TODAS as tabelas
+- Use query_intel para consultar QUALQUER dado — SEMPRE consulte antes de afirmar
 - Use execute_action para criar/modificar dados
-- Use draft_message para rascunhos personalizados com contexto rico
-- NAO invente dados — sempre consulte o banco
+- Use draft_message para rascunhos personalizados (ele tambem segue estas regras)
 - Para datas relativas, use {now.strftime('%Y-%m-%d')} como referencia
 - Formate respostas com *negrito* para destaques (WhatsApp markdown)
 - Voce pode fazer multiplas queries em sequencia para responder perguntas complexas
