@@ -1562,6 +1562,20 @@
              + (completed.length > 0 ? renderGroup('Concluidas', 'bi-check-circle-fill', '#10b981', completed) : '');
     }
 
+    function simpleMarkdown(text) {
+        if (!text) return '';
+        return text
+            .replace(/^### (.+)$/gm, '<h6 class="fw-bold mt-3 mb-1">$1</h6>')
+            .replace(/^## (.+)$/gm, '<h5 class="fw-bold mt-3 mb-1">$1</h5>')
+            .replace(/^# (.+)$/gm, '<h5 class="fw-bold mt-3 mb-2">$1</h5>')
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.+?)\*/g, '<em>$1</em>')
+            .replace(/^- (.+)$/gm, '<li style="margin-left:16px;">$1</li>')
+            .replace(/(<li.*<\/li>\n?)+/g, '<ul style="padding-left:8px;margin:4px 0;">$&</ul>')
+            .replace(/\n{2,}/g, '<br><br>')
+            .replace(/\n/g, '<br>');
+    }
+
     function renderTimeline() {
         const notes = project.notas || [];
         if (notes.length === 0) {
@@ -1572,7 +1586,8 @@
             nota: 'sticky',
             atualizacao: 'arrow-up-circle',
             decisao: 'check-circle',
-            problema: 'exclamation-circle'
+            problema: 'exclamation-circle',
+            pesquisa: 'search'
         };
 
         return notes.map(n => `
@@ -1582,7 +1597,7 @@
                 </div>
                 <div class="flex-grow-1">
                     ${n.titulo ? `<div class="fw-semibold">${n.titulo}</div>` : ''}
-                    <p class="mb-1">${n.conteudo}</p>
+                    <div class="mb-1" style="font-size:0.9rem; line-height:1.5;">${simpleMarkdown(n.conteudo)}</div>
                     <small class="text-muted">${formatDateTime(n.criado_em)}</small>
                 </div>
             </div>
