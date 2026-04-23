@@ -1944,20 +1944,18 @@
 
         <!-- Stats - Compact clickable cards -->
         <div class="stats-grid">
-            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/contatos'">
-                <div class="stat-icon contacts"><i class="bi bi-people"></i></div>
+            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/calendario'">
+                <div class="stat-icon" style="background: rgba(99, 102, 241, 0.1); color: #6366f1;"><i class="bi bi-calendar-event"></i></div>
                 <div class="stat-content">
-                    <div class="stat-value" id="statContacts">-</div>
-                    <div class="stat-label">Contatos</div>
+                    <div class="stat-value" id="statReunioes">-</div>
+                    <div class="stat-label">Reuniões Hoje</div>
                 </div>
             </div>
-            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/circulos'">
-                <div class="stat-icon" style="background: rgba(255, 107, 107, 0.1); color: #FF6B6B;"><i class="bi bi-bullseye"></i></div>
+            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/projetos'">
+                <div class="stat-icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;"><i class="bi bi-folder2-open"></i></div>
                 <div class="stat-content">
-                    <div id="circulosBadges" style="display: flex; gap: 4px; flex-wrap: wrap;">
-                        <span style="font-size: 0.7rem; color: var(--gray-400);">...</span>
-                    </div>
-                    <div class="stat-label">Circulos</div>
+                    <div class="stat-value" id="statProjectsAction">-</div>
+                    <div class="stat-label">Projetos c/ Ação</div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer; border-left: 3px solid var(--warning);" onclick="window.location.href='/contatos?filter=needs_attention'">
@@ -2509,19 +2507,26 @@
                 await loadAllData();
                 const data = dataCache.dashboard || {};
 
-                // Total contacts
-                document.getElementById('statContacts').textContent = (data.stats?.total_contatos || 0).toLocaleString();
+                // Reunioes hoje (from calendar data)
+                const calData = dataCache.calendar || [];
+                const eventosHoje = Array.isArray(calData) ? calData : [];
+                const reunioesCount = eventosHoje.filter(e => {
+                    const t = (e.summary || e.title || '').toLowerCase();
+                    return !t.includes('aniversario') && !t.includes('aniversário') && !t.includes('birthday')
+                        && !t.startsWith('[foco]') && !t.includes('cama') && !t.includes('dormir');
+                }).length;
+                document.getElementById('statReunioes').textContent = reunioesCount;
 
-                // Circulos badges
-                const circulosContainer = document.getElementById('circulosBadges');
+                // Projetos com ação
+                try {
+                    const projResp = await fetch('/api/projects/active-summary?limit=20');
+                    const projData = await projResp.json();
+                    const withAction = projData.filter(p => p.tasks_pendentes > 0 || p.tasks_vencidas > 0).length;
+                    document.getElementById('statProjectsAction').textContent = withAction;
+                } catch(e) { document.getElementById('statProjectsAction').textContent = '-'; }
+
+                // Circulos (keep distribution data for other widgets)
                 if (data.circulos_resumo) {
-                    const colors = {1: '#FF6B6B', 2: '#4ECDC4', 3: '#45B7D1', 4: '#96CEB4', 5: '#DDA0DD'};
-                    let html = '';
-                    for (let i = 1; i <= 5; i++) {
-                        const circulo = data.circulos_resumo[i] || {total: 0};
-                        html += `<span style="background: ${colors[i]}; color: white; padding: 1px 5px; border-radius: 8px; font-size: 0.65rem; font-weight: 600;">C${i}: ${circulo.total}</span>`;
-                    }
-                    circulosContainer.innerHTML = html;
 
                     // Circulo Distribution Bars
                     const distContainer = document.getElementById('circuloDistribution');
@@ -3082,7 +3087,7 @@
                 items.forEach(item => {
                     const relevClass = item.relevancia === 'alta' ? 'border-start border-3 border-warning' : '';
                     html += `
-                        <div class="d-flex align-items-start gap-2 px-3 py-2 ${relevClass}" style="border-bottom: 1px solid #f1f5f9; font-size: 0.82rem;">
+                        <div class="d-flex align-items-start gap-2 px-3 py-2 ${relevClass}" id="clipping-item-${item.news_id || i}" style="border-bottom: 1px solid #f1f5f9; font-size: 0.82rem; transition: opacity 0.3s;">
                             <div style="flex:1; min-width: 0;">
                                 <a href="${item.link || '#'}" target="_blank" style="font-weight: 600; color: var(--text-primary); text-decoration: none; display: block;">
                                     ${item.titulo_resumido || item.title || '?'}
@@ -3098,6 +3103,7 @@
                                     <button class="btn btn-sm p-0" onclick="feedbackNews(this, ${item.news_id}, 'liked')" title="Relevante">👍</button>
                                     <button class="btn btn-sm p-0" onclick="feedbackNews(this, ${item.news_id}, 'disliked')" title="Irrelevante">👎</button>
                                     <button class="btn btn-sm p-0" onclick="newsToPost(${item.news_id}, '${(item.titulo_resumido || '').replace(/'/g, "\\'")}', '${(item.sugestao_post || '').replace(/'/g, "\\'")}')" title="Criar post LinkedIn" style="font-size: 0.75rem;">📝</button>
+                                    <button class="btn btn-sm p-0" onclick="dismissClippingItem(${item.news_id || i})" title="Marcar como lido" style="font-size: 0.75rem;">✓</button>
                                     <button class="btn btn-sm p-0" onclick="suggestShareNews('${(item.titulo_resumido || '').replace(/'/g, "\\'")}', '${(item.link || '').replace(/'/g, "\\'")}', '${(item.categoria || '').replace(/'/g, "\\'")}')" title="Enviar para contato" style="font-size: 0.75rem;">📤</button>
                                 </div>
                                 ` : ''}
@@ -3127,6 +3133,18 @@
                 loadClipping();
             } catch (e) {
                 body.innerHTML = '<div class="text-center py-2 text-danger">Erro ao atualizar</div>';
+            }
+        }
+
+        function dismissClippingItem(id) {
+            const el = document.getElementById('clipping-item-' + id);
+            if (el) {
+                el.style.opacity = '0.2';
+                el.style.maxHeight = '0';
+                el.style.overflow = 'hidden';
+                el.style.padding = '0';
+                el.style.margin = '0';
+                setTimeout(() => el.remove(), 300);
             }
         }
 
@@ -4504,7 +4522,10 @@
                     return;
                 }
 
-                const projects = await response.json();
+                let projects = await response.json();
+
+                // Filtrar: primeiro os que precisam ação (tarefas pendentes), depois OK
+                projects = projects.filter(p => p.tasks_pendentes > 0 || p.tasks_vencidas > 0);
 
                 if (!projects || projects.length === 0) {
                     container.innerHTML = `
@@ -4570,17 +4591,16 @@
                 const data = await response.json();
                 const totalAlertas = data.total_vencidos + data.total_atencao;
 
+                // Sempre modo compacto
+                compact.style.display = 'block';
                 if (totalAlertas === 0) {
-                    // Modo compacto: tudo OK
-                    compact.style.display = 'block';
-                    compactText.textContent = 'Veiculos: tudo em dia ✓';
+                    compactText.textContent = 'Veículos: tudo em dia ✓';
                     compactText.style.color = '#22c55e';
-                    return;
+                } else {
+                    compactText.textContent = `Veículos: ${totalAlertas} alerta${totalAlertas > 1 ? 's' : ''} ⚠️`;
+                    compactText.style.color = '#ef4444';
                 }
-
-                // Tem alertas: mostrar card completo, esconder compacto
-                compact.style.display = 'none';
-                card.style.display = 'block';
+                return; // Nunca mostra card completo no dashboard
                 countBadge.textContent = `${totalAlertas} alerta${totalAlertas > 1 ? 's' : ''}`;
 
                 // Combine and limit alerts
