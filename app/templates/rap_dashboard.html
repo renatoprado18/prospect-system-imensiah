@@ -4527,34 +4527,25 @@
 
         // ============== Maintenance Alerts Widget ==============
         async function loadMaintenanceAlerts() {
-            const card = document.getElementById('maintenanceAlertsCard');
-            const compact = document.getElementById('maintenanceAlertsCompact');
-            const compactText = document.getElementById('maintenanceCompactText');
-            const container = document.getElementById('maintenanceAlertsBody');
-            const countBadge = document.getElementById('maintenanceAlertsCount');
-            if (!compact) return;
-
             try {
                 const response = await fetch('/api/veiculos/alertas');
+                const statEl = document.getElementById('statVeiculos');
+                if (!statEl) return;
+
                 if (!response.ok) {
-                    compact.style.display = 'block';
-                    compactText.textContent = 'Veiculos: erro ao verificar';
+                    statEl.textContent = '?';
                     return;
                 }
 
                 const data = await response.json();
                 const totalAlertas = data.total_vencidos + data.total_atencao;
 
-                // Stat card de veículos
-                const statEl = document.getElementById('statVeiculos');
-                if (statEl) {
+                if (totalAlertas > 0) {
                     statEl.textContent = totalAlertas;
-                    if (totalAlertas > 0) {
-                        statEl.style.color = '#ef4444';
-                    } else {
-                        statEl.textContent = '✓';
-                        statEl.style.color = '#22c55e';
-                    }
+                    statEl.style.color = '#ef4444';
+                } else {
+                    statEl.textContent = '✓';
+                    statEl.style.color = '#22c55e';
                 }
                 return;
                 countBadge.textContent = `${totalAlertas} alerta${totalAlertas > 1 ? 's' : ''}`;
