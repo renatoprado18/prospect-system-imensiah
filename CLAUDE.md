@@ -42,11 +42,11 @@ curl -w "%{time_total}s\n" -o /dev/null -s http://localhost:8000/api/v1/dashboar
 ```
 prospect-system/
 ├── app/
-│   ├── main.py          # 524 endpoints (~16k linhas)
+│   ├── main.py          # 548 endpoints (~16k linhas)
 │   ├── database.py      # 65 tabelas PostgreSQL
-│   ├── services/        # 60 módulos de lógica de negócio
+│   ├── services/        # 62 módulos de lógica de negócio
 │   ├── integrations/    # Google, WhatsApp, LinkedIn, Claude
-│   ├── templates/       # 34 templates HTML (Jinja2)
+│   ├── templates/       # 35 templates HTML (Jinja2)
 │   └── static/          # CSS, JS, Service Worker
 ├── dev.sh               # Script de desenvolvimento
 ├── scripts/             # Scripts auxiliares

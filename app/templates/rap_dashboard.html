@@ -3525,22 +3525,7 @@
             }
         }
 
-        function showToast(message, type = 'info') {
-            // Simple toast notification
-            const toast = document.createElement('div');
-            toast.className = `toast-notification ${type}`;
-            toast.innerHTML = `<i class="bi ${type === 'success' ? 'bi-check-circle' : 'bi-exclamation-circle'}"></i> ${message}`;
-            toast.style.cssText = `
-                position: fixed; bottom: 20px; right: 20px; z-index: 9999;
-                background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : '#6366f1'};
-                color: white; padding: 12px 20px; border-radius: 8px;
-                display: flex; align-items: center; gap: 8px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                animation: slideIn 0.3s ease;
-            `;
-            document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 3000);
-        }
+        // showToast defined earlier (line ~2851) - removed duplicate
 
         // AI API Status Check
         async function checkAIStatus() {
@@ -3579,46 +3564,9 @@
         }
 
         // Init - SINGLE API call for all dashboard data
-        async function initDashboard() {
-            try {
-                const response = await fetch('/api/v1/dashboard');
-                const data = await response.json();
-
-                // Stats
-                document.getElementById('statContacts').textContent = (data.stats?.total_contatos || 0).toLocaleString();
-                document.getElementById('statAtencao').textContent = data.stats?.precisam_atencao || 0;
-                // Briefings pendentes - buscar da API especifica
-                loadBriefingsPendentes();
-
-                // Action proposals (INTEL Proativo)
-                loadActionProposals();
-
-                // Circulos Distribution
-                if (data.circulos_resumo) {
-                    const colors = {1: '#FF6B6B', 2: '#4ECDC4', 3: '#45B7D1', 4: '#96CEB4', 5: '#DDA0DD'};
-                    let total = 0;
-                    for (let i = 1; i <= 5; i++) {
-                        total += (data.circulos_resumo[i]?.total || 0);
-                    }
-
-                    const distContainer = document.getElementById('circuloDistribution');
-                    if (distContainer) {
-                        let distHtml = '';
-                        for (let i = 1; i <= 5; i++) {
-                            const circulo = data.circulos_resumo[i] || {total: 0};
-                            const count = circulo.total;
-                            const percent = total > 0 ? ((count / total) * 100) : 0;
-                            const displayPercent = Math.max(percent, 3);
-                            distHtml += `
-                                <div class="circulo-bar-row">
-                                    <span class="circulo-bar-label">C${i}</span>
-                                    <div class="circulo-bar-container">
-                                        <div class="circulo-bar-fill c${i}" style="width: ${displayPercent}%">
-                                            ${percent >= 5 ? count : ''}
-                                        </div>
-                                    </div>
-                                    <span class="circulo-bar-count">${count.toLocaleString()}</span>
-                                </div>
+        // initDashboard REMOVIDO - era duplicata de loadDashboardData
+        // Tudo consolidado em loadDashboardData() que usa dataCache
+        const _removed_initDashboard = `
                             `;
                         }
                         distContainer.innerHTML = distHtml;
@@ -3682,12 +3630,7 @@
                     todayAgenda.innerHTML = '<div class="empty-state"><i class="bi bi-calendar-x"></i><p>Nenhum compromisso para hoje</p></div>';
                 }
 
-            } catch (error) {
-                console.error('Error loading dashboard:', error);
-            }
-        }
-
-        initDashboard();
+        `; // end of removed initDashboard
 
         // ============== SSE Real-time Updates ==============
         let sseConnection = null;
@@ -4036,37 +3979,8 @@
                 }).join('');
 
             } catch (error) {
-                // Fallback with mock data if API not available
-                container.innerHTML = `
-                    <div class="suggestion-item medium">
-                        <div class="suggestion-icon message">
-                            <i class="bi bi-chat-dots"></i>
-                        </div>
-                        <div class="suggestion-content">
-                            <div class="suggestion-title">Enviar mensagem de acompanhamento</div>
-                            <div class="suggestion-desc">3 contatos sem interacao ha mais de 30 dias</div>
-                        </div>
-                        <div class="suggestion-actions">
-                            <button class="suggestion-btn accept" title="Aceitar"><i class="bi bi-check"></i></button>
-                            <button class="suggestion-btn dismiss" title="Descartar"><i class="bi bi-x"></i></button>
-                        </div>
-                    </div>
-                    <div class="suggestion-item low">
-                        <div class="suggestion-icon birthday">
-                            <i class="bi bi-cake2"></i>
-                        </div>
-                        <div class="suggestion-content">
-                            <div class="suggestion-title">Aniversarios esta semana</div>
-                            <div class="suggestion-desc">2 contatos fazem aniversario nos proximos 7 dias</div>
-                        </div>
-                        <div class="suggestion-actions">
-                            <button class="suggestion-btn accept" title="Aceitar"><i class="bi bi-check"></i></button>
-                            <button class="suggestion-btn dismiss" title="Descartar"><i class="bi bi-x"></i></button>
-                        </div>
-                    </div>
-                `;
-                badge.textContent = '2';
-                badge.style.display = 'inline';
+                console.log('AI Suggestions API not available');
+                widget.style.display = 'none';
             }
         }
 
