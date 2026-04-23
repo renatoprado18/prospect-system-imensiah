@@ -3081,12 +3081,17 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ feedback })
                 });
-                // Visual feedback
-                const container = btn.closest('.d-flex');
+                // Visual feedback só no botão clicado
+                btn.style.opacity = '1';
                 if (feedback === 'liked') {
-                    container.innerHTML = '<span style="font-size:0.7rem; color:#22c55e;">✓ Relevante</span>';
+                    btn.textContent = '✅';
+                    btn.disabled = true;
+                    // Desabilitar o dislike mas manter o criar post
+                    btn.nextElementSibling?.remove(); // remove 👎
                 } else {
-                    container.innerHTML = '<span style="font-size:0.7rem; color:#94a3b8;">✗ Ignorada</span>';
+                    btn.textContent = '❌';
+                    btn.disabled = true;
+                    btn.previousElementSibling?.remove(); // remove 👍
                 }
             } catch (e) {}
         }
