@@ -378,7 +378,6 @@ class ActionProposalsService:
                     ai_reasoning = COALESCE(ai_reasoning, '') || ' | Auto-resolvido: usuario respondeu'
                 WHERE contact_id = %s
                   AND status = 'pending'
-                  AND action_type IN ('pending_response', 'follow_up_alert', 'urgent_alert')
                   AND criado_em < %s
             """, (contact_id, reply_time))
             count = cursor.rowcount
