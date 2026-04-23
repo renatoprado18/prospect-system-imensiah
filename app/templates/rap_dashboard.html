@@ -1867,7 +1867,7 @@
             <div class="proposals-header">
                 <div class="proposals-title">
                     <i class="bi bi-lightning-charge-fill"></i>
-                    <span>Acoes Sugeridas</span>
+                    <span>Ações Sugeridas</span>
                     <span class="proposals-count badge bg-danger" id="proposalsCount">0</span>
                 </div>
                 <div style="display: flex; gap: 4px;">
@@ -1964,7 +1964,7 @@
                 <div class="stat-icon" style="background: rgba(245, 158, 11, 0.1); color: var(--warning);"><i class="bi bi-exclamation-triangle"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statAtencao">-</div>
-                    <div class="stat-label">Precisam Atencao</div>
+                    <div class="stat-label">Precisam Atenção</div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/projetos'">
@@ -2076,7 +2076,7 @@
                 <div class="card mb-4" style="border: 1px solid var(--primary); border-top: 3px solid var(--primary);">
                     <div class="card-header" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(14, 165, 233, 0.05));">
                         <h2 class="card-title" style="color: var(--primary);">
-                            <i class="bi bi-robot me-2"></i>Sugestoes IA
+                            <i class="bi bi-robot me-2"></i>Sugestões IA
                         </h2>
                         <span class="badge bg-primary" id="suggestionsBadge" style="display: none;">0</span>
                     </div>
@@ -2112,7 +2112,7 @@
                 <!-- Full card hidden, shown only if alerts exist -->
                 <div class="card maintenance-alerts-card mb-4" id="maintenanceAlertsCard" style="display:none;">
                     <div class="card-header">
-                        <h2><i class="bi bi-car-front"></i> Manutencao Veicular</h2>
+                        <h2><i class="bi bi-car-front"></i> Manutenção Veicular</h2>
                         <span class="alerts-count" id="maintenanceAlertsCount">...</span>
                     </div>
                     <div class="card-body p-0" id="maintenanceAlertsBody"></div>
@@ -2554,7 +2554,7 @@
                     }
                 }
 
-                // Alertas - precisam atencao (usar stats, não alertas)
+                // Alertas - precisam atenção (usar stats, não alertas)
                 const totalAtencao = data.stats?.precisam_atencao || 0;
                 document.getElementById('statAtencao').textContent = totalAtencao;
 
@@ -3926,7 +3926,7 @@
                     container.innerHTML = `
                         <div class="text-center text-muted py-3">
                             <i class="bi bi-check-circle" style="font-size: 2rem; color: var(--success);"></i>
-                            <p class="mt-2 mb-0">Nenhuma sugestao no momento</p>
+                            <p class="mt-2 mb-0">Nenhuma sugestão no momento</p>
                         </div>
                     `;
                     badge.style.display = 'none';
@@ -4135,7 +4135,7 @@
 
                 const precisamAtencao = stats.precisam_atencao || alertas.total || 0;
                 if (precisamAtencao > 0) {
-                    summaryParts.push(`${precisamAtencao} contato${precisamAtencao > 1 ? 's' : ''} precisando atencao`);
+                    summaryParts.push(`${precisamAtencao} contato${precisamAtencao > 1 ? 's' : ''} precisando atenção`);
                 }
 
                 // Filtrar contatos at-risk apenas dos circulos 1-2 (intimo/proximo)
@@ -4161,7 +4161,7 @@
                     statsHtml += `<div class="briefing-stat" onclick="window.location.href='/circulos'" data-tooltip="Ver aniversariantes"><i class="bi bi-cake2"></i> ${aniversariosHoje.length} aniversario${aniversariosHoje.length > 1 ? 's' : ''}</div>`;
                 }
                 if (precisamAtencao > 0) {
-                    statsHtml += `<div class="briefing-stat" onclick="window.location.href='/contatos?filter=needs_attention'" data-tooltip="Ver contatos que precisam de atencao"><i class="bi bi-exclamation-circle"></i> ${precisamAtencao} precisam atencao</div>`;
+                    statsHtml += `<div class="briefing-stat" onclick="window.location.href='/contatos?filter=needs_attention'" data-tooltip="Ver contatos que precisam de atencao"><i class="bi bi-exclamation-circle"></i> ${precisamAtencao} precisam atenção</div>`;
                 }
 
                 // Health medio (circulos 1-3 = contatos prioritarios)
