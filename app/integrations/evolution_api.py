@@ -593,8 +593,9 @@ async def process_incoming_message(data: Dict) -> Dict:
 
         conn.commit()
 
-    # Analisar mensagem com IA em background (apenas mensagens recebidas)
-    if direction == "incoming" and content:
+    # Analisar mensagem com IA em background (apenas mensagens recebidas de contatos, não do próprio Renato)
+    OWNER_CONTACT_ID = 14911
+    if direction == "incoming" and content and contact_id != OWNER_CONTACT_ID:
         asyncio.create_task(
             analyze_message_in_background(new_msg_id, contact_id, content)
         )
