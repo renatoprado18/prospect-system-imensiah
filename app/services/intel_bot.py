@@ -296,10 +296,10 @@ async def _execute_save_insight(params: Dict) -> str:
 
                 if contact:
                     cursor.execute("""
-                        INSERT INTO contact_memories (contact_id, tipo, conteudo, fonte, criado_em)
-                        VALUES (%s, %s, %s, 'intel_bot', NOW())
+                        INSERT INTO contact_memories (contact_id, tipo, titulo, resumo, conteudo_completo, data_ocorrencia)
+                        VALUES (%s, %s, %s, %s, %s, NOW())
                         RETURNING id
-                    """, (contact["id"], tipo, conteudo))
+                    """, (contact["id"], tipo, conteudo[:80], conteudo[:200], conteudo))
                     mem = cursor.fetchone()
                     conn.commit()
                     return f"Memoria salva para *{contact['nome']}*: {conteudo[:60]}..."
