@@ -6380,207 +6380,164 @@ async def cron_daily_sync(request: Request):
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
 
+    import asyncio as _aio
+
     results = {
         "job": "daily-sync",
         "started_at": datetime.now().isoformat(),
         "steps": {}
     }
 
-    # 1. Health Recalc
-    try:
+    # Helper para executar step com error handling
+    async def run_step(name, func):
+        try:
+            result = await func()
+            results["steps"][name] = {"status": "success", **(result if isinstance(result, dict) else {"result": result})}
+        except Exception as e:
+            results["steps"][name] = {"status": "error", "error": str(e)}
+
+    # ==================== FASE 1: Sync dados (paralelo) ====================
+
+    async def step_health():
         from services.circulos import calcular_health_score
         updated = 0
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, nome, circulo, ultimo_contato, total_interacoes
-                FROM contacts WHERE COALESCE(circulo, 5) <= 4
-            """)
-            contacts = cursor.fetchall()
-            for contact in contacts:
+            cursor.execute("SELECT id, circulo, ultimo_contato, total_interacoes FROM contacts WHERE COALESCE(circulo, 5) <= 4")
+            for contact in cursor.fetchall():
                 try:
                     health = calcular_health_score(dict(contact), contact["circulo"])
                     cursor.execute("UPDATE contacts SET health_score = %s WHERE id = %s", (health, contact["id"]))
                     updated += 1
-                except:
+                except Exception:
                     pass
             conn.commit()
-        results["steps"]["health_recalc"] = {"status": "success", "updated": updated}
-    except Exception as e:
-        results["steps"]["health_recalc"] = {"status": "error", "error": str(e)}
+        return {"updated": updated}
 
-    # 2. Sync Contacts
-    try:
+    async def step_contacts():
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE")
             accounts = [dict(row) for row in cursor.fetchall()]
-
-        contacts_synced = 0
+        synced = 0
         for account in accounts:
             try:
                 stats = await sync_contacts_incremental(
-                    access_token=account["access_token"],
-                    refresh_token=account["refresh_token"],
-                    account_email=account["email"],
-                    sync_token=account.get("sync_token"),
-                    db_connection=conn
-                )
-                contacts_synced += stats.get("total_changes", 0)
-            except:
+                    access_token=account["access_token"], refresh_token=account["refresh_token"],
+                    account_email=account["email"], sync_token=account.get("sync_token"), db_connection=conn)
+                synced += stats.get("total_changes", 0)
+            except Exception:
                 pass
-        results["steps"]["sync_contacts"] = {"status": "success", "changes": contacts_synced}
-    except Exception as e:
-        results["steps"]["sync_contacts"] = {"status": "error", "error": str(e)}
+        return {"changes": synced}
 
-    # 3. Sync Calendar
-    try:
+    async def step_calendar():
         from services.calendar_sync import get_calendar_sync
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE")
             accounts = cursor.fetchall()
-
-        cal_results = []
+        count = 0
         for account in accounts:
             try:
-                sync = get_calendar_sync()
-                stats = await sync.incremental_sync(account["email"])
-                cal_results.append(stats)
-            except:
+                await get_calendar_sync().incremental_sync(account["email"])
+                count += 1
+            except Exception:
                 pass
-        results["steps"]["sync_calendar"] = {"status": "success", "accounts": len(cal_results)}
-    except Exception as e:
-        results["steps"]["sync_calendar"] = {"status": "error", "error": str(e)}
+        return {"accounts": count}
 
-    # 4. Sync Tasks (bidirecional completo)
-    try:
+    async def step_tasks():
         from services.tasks_sync import get_tasks_sync_service
-        tasks_service = get_tasks_sync_service()
-        sync_result = await tasks_service.full_sync()
+        return await get_tasks_sync_service().full_sync()
 
-        if "error" in sync_result:
-            results["steps"]["sync_tasks"] = {"status": "error", "error": sync_result["error"]}
-        else:
-            results["steps"]["sync_tasks"] = {
-                "status": "success",
-                "pushed": sync_result.get("push", {}).get("pushed", 0),
-                "pulled_created": sync_result.get("pull", {}).get("created", 0),
-                "pulled_updated": sync_result.get("pull", {}).get("updated", 0)
-            }
-    except Exception as e:
-        results["steps"]["sync_tasks"] = {"status": "error", "error": str(e)}
+    await _aio.gather(
+        run_step("health_recalc", step_health),
+        run_step("sync_contacts", step_contacts),
+        run_step("sync_calendar", step_calendar),
+        run_step("sync_tasks", step_tasks),
+    )
 
-    # 5. Sync Gmail
-    try:
+    # ==================== FASE 2: Comunicacao (paralelo) ====================
+
+    async def step_gmail():
         from services.gmail_sync import get_gmail_sync_service
-        service = get_gmail_sync_service()
-        gmail_result = await service.sync_all_contacts(months_back=1)
-        results["steps"]["sync_gmail"] = {"status": "success", "result": gmail_result}
-    except Exception as e:
-        results["steps"]["sync_gmail"] = {"status": "error", "error": str(e)}
+        return await get_gmail_sync_service().sync_all_contacts(months_back=1)
 
-    # 5b. Check payment cycle replies
-    try:
+    async def step_whatsapp():
+        from services.whatsapp_sync import get_whatsapp_sync_service
+        return await get_whatsapp_sync_service().sync_all_chats(include_groups=False)
+
+    async def step_payment():
         from services.payment_cycle import check_payment_replies
         with get_db() as conn:
-            pay_token = await get_valid_token(conn, 'professional')
-        if pay_token:
-            payment_result = await check_payment_replies(pay_token)
-            results["steps"]["payment_cycle"] = {"status": "success", "result": payment_result}
-    except Exception as e:
-        results["steps"]["payment_cycle"] = {"status": "error", "error": str(e)}
+            token = await get_valid_token(conn, 'professional')
+        if token:
+            return await check_payment_replies(token)
+        return {"skipped": "no token"}
 
-    # 6. Sync WhatsApp
-    try:
-        from services.whatsapp_sync import get_whatsapp_sync_service
-        service = get_whatsapp_sync_service()
-        wa_result = await service.sync_all_chats(include_groups=False)
-        results["steps"]["sync_whatsapp"] = {"status": "success", "result": wa_result}
-    except Exception as e:
-        results["steps"]["sync_whatsapp"] = {"status": "error", "error": str(e)}
-
-    # 6b. Smart Follow-Up (emails enviados sem resposta)
-    try:
+    async def step_fup():
         from services.smart_fup import check_pending_fups
         with get_db() as conn:
-            fup_token = await get_valid_token(conn, 'professional')
-        if fup_token:
-            fup_result = await check_pending_fups(fup_token)
-            results["steps"]["smart_fup"] = {"status": "success", "result": fup_result}
-    except Exception as e:
-        results["steps"]["smart_fup"] = {"status": "error", "error": str(e)}
+            token = await get_valid_token(conn, 'professional')
+        if token:
+            return await check_pending_fups(token)
+        return {"skipped": "no token"}
 
-    # 7. AI Suggestions
-    try:
+    await _aio.gather(
+        run_step("sync_gmail", step_gmail),
+        run_step("sync_whatsapp", step_whatsapp),
+        run_step("payment_cycle", step_payment),
+        run_step("smart_fup", step_fup),
+    )
+
+    # ==================== FASE 3: IA e processamento (paralelo) ====================
+
+    async def step_ai():
         from services.ai_agent import get_ai_agent
-        agent = get_ai_agent()
-        ai_results = await agent.run_daily_generation()
-        results["steps"]["daily_ai"] = {"status": "success", "suggestions": ai_results.get("suggestions", {})}
-    except Exception as e:
-        results["steps"]["daily_ai"] = {"status": "error", "error": str(e)}
+        return await get_ai_agent().run_daily_generation()
 
-    # 8. Campaign Steps Processing
-    try:
+    async def step_campaigns():
         from services.campaign_executor import CampaignExecutor
-        executor = CampaignExecutor()
-        campaign_results = executor.process_pending_steps(limit=200)
-        results["steps"]["campaigns"] = {
-            "status": "success",
-            "processed": campaign_results.get("processed", 0),
-            "tasks_created": campaign_results.get("tasks_created", 0),
-            "errors": campaign_results.get("errors", 0)
-        }
-    except Exception as e:
-        results["steps"]["campaigns"] = {"status": "error", "error": str(e)}
+        return CampaignExecutor().process_pending_steps(limit=200)
 
-    # 9. Auto-enrich contatos prioritarios (C1-C2)
-    try:
+    async def step_enrich():
         from services.contact_enrichment import auto_enrich_priority_contacts
         with get_db() as conn:
-            enrich_result = await auto_enrich_priority_contacts(conn, circulo_max=2, limit=5)
-        results["steps"]["auto_enrich"] = {"status": "success", "enriched": len(enrich_result)}
-    except Exception as e:
-        results["steps"]["auto_enrich"] = {"status": "error", "error": str(e)}
+            r = await auto_enrich_priority_contacts(conn, circulo_max=2, limit=5)
+        return {"enriched": len(r)}
 
-    # 10. Download documentos dos grupos WhatsApp vinculados a projetos
-    try:
+    async def step_avatars():
+        from services.avatar_fetcher import get_avatar_fetcher
+        return await get_avatar_fetcher().fetch_photos_batch(limit=10, delay_between=1.0)
+
+    async def step_group_docs():
         from services.project_smart_update import download_group_documents
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT project_id FROM project_whatsapp_groups WHERE ativo = TRUE")
-            project_ids = [r['project_id'] for r in cursor.fetchall()]
-        doc_results = {}
-        for pid in project_ids:
-            doc_results[pid] = await download_group_documents(pid)
-        results["steps"]["group_docs"] = {"status": "success", "projects": len(project_ids), "results": doc_results}
-    except Exception as e:
-        results["steps"]["group_docs"] = {"status": "error", "error": str(e)}
+            pids = [r['project_id'] for r in cursor.fetchall()]
+        r = {}
+        for pid in pids:
+            r[pid] = await download_group_documents(pid)
+        return {"projects": len(pids)}
 
-    # 11. Buscar fotos de contatos sem foto (priorizando C1-C2)
-    try:
-        from services.avatar_fetcher import get_avatar_fetcher
-        fetcher = get_avatar_fetcher()
-        avatar_result = await fetcher.fetch_photos_batch(limit=10, delay_between=1.0)
-        results["steps"]["avatar_fetch"] = {"status": "success", "result": avatar_result}
-    except Exception as e:
-        results["steps"]["avatar_fetch"] = {"status": "error", "error": str(e)}
-
-    # 12. Gerar clipping diario de noticias
-    try:
+    async def step_clipping():
         from services.news_hub import generate_daily_clipping
-        clipping_result = await generate_daily_clipping(limit=10)
-        results["steps"]["daily_clipping"] = {"status": "success", "items": len(clipping_result.get('clipping', []))}
-    except Exception as e:
-        results["steps"]["daily_clipping"] = {"status": "error", "error": str(e)}
+        r = await generate_daily_clipping(limit=10)
+        return {"items": len(r.get('clipping', []))}
 
-    # 13. Sync cache de grupos sociais
-    try:
+    async def step_social_groups():
         from services.social_groups import sync_all_groups_cache
-        groups_result = await sync_all_groups_cache()
-        results["steps"]["social_groups_cache"] = {"status": "success", "synced": groups_result.get("synced", 0)}
-    except Exception as e:
-        results["steps"]["social_groups_cache"] = {"status": "error", "error": str(e)}
+        return await sync_all_groups_cache()
+
+    await _aio.gather(
+        run_step("daily_ai", step_ai),
+        run_step("campaigns", step_campaigns),
+        run_step("auto_enrich", step_enrich),
+        run_step("avatar_fetch", step_avatars),
+        run_step("group_docs", step_group_docs),
+        run_step("daily_clipping", step_clipping),
+        run_step("social_groups_cache", step_social_groups),
+    )
 
     results["completed_at"] = datetime.now().isoformat()
 
