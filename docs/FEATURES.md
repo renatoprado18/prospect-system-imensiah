@@ -127,14 +127,24 @@
 ### Intel Bot (WhatsApp conversacional via intel-bot)
 - Bot WhatsApp dedicado na instancia "intel-bot" (numero 5511915020192)
 - Acesso exclusivo do Renato (+5511984153337)
-- Intencoes suportadas:
-  - `create_task`: "Tarefa: ...", "Lembrar de ...", "Preciso ..." → cria tarefa no DB
-  - `schedule_meeting`: "Agendar ...", "Marcar reuniao ...", "Call com ... sexta 15h" → cria evento no calendario
-  - `save_insight`: "Insight: ...", "Nota: ...", "Na reuniao com X, ..." → salva como project_note ou contact_memory
-  - `ask_question`: "Como esta o projeto X?", "Quais tarefas vencidas?" → consulta DB e responde
-  - `send_message`: "Manda pro Rogerio: ..." → envia WhatsApp via instancia principal (rap-whatsapp)
-  - `general`: conversa geral com contexto do CRM
-- Classificacao de intencao via Claude AI (sonnet)
+- **Arquitetura**: Claude tool_use (function calling) — sem classificacao rigida de intencao
+- **Memoria conversacional**: tabela `bot_conversations` armazena historico (ultimas 20 msgs por telefone)
+- **Modelo**: claude-sonnet-4-20250514 com max_tokens 1000
+- **Loop de ferramentas**: ate 3 iteracoes (Claude decide quais tools usar)
+- Ferramentas disponiveis (12 tools):
+  - `search_contact(name)`: busca contatos por nome
+  - `get_contact_detail(contact_id)`: info completa + msgs + memorias
+  - `create_task(titulo, descricao, project_id, prazo_dias)`: cria tarefa
+  - `complete_task(task_id)`: conclui tarefa
+  - `get_overdue_tasks()`: tarefas vencidas
+  - `get_project_status(project_id)`: status projeto + tarefas + notas
+  - `save_insight(text, contact_id, project_id)`: salva nota/insight
+  - `schedule_meeting(titulo, data_hora, duracao_min, contact_id, local)`: cria evento calendario
+  - `send_whatsapp(contact_id, message)`: envia WhatsApp via rap-whatsapp
+  - `get_calendar_today()`: eventos de hoje
+  - `search_projects(query)`: busca projetos
+  - `draft_message(contact_id, context)`: gera rascunho personalizado com contexto
+- System prompt dinamico: data/hora, projetos ativos, tarefas vencidas, perfil do Renato
 - Rate limit: ignora emojis e mensagens triviais
 - Notificacoes proativas: editorial briefing semanal, alertas do sistema
 - Service: `app/services/intel_bot.py`

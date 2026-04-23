@@ -2020,6 +2020,24 @@ def init_db():
             ON editorial_metrics_history(post_id, coletado_em DESC)
         ''')
 
+        # Bot conversations (conversation memory for intel-bot)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bot_conversations (
+                id SERIAL PRIMARY KEY,
+                phone TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                tool_calls JSONB,
+                tool_results JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_bot_conv_phone
+            ON bot_conversations(phone, created_at DESC)
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True
