@@ -15137,6 +15137,99 @@ async def api_smart_update_apply(project_id: int, request: Request):
     return result
 
 
+# ============== PROJECT TASK RESEARCH ==============
+
+@app.post("/api/projects/{project_id}/research-task")
+async def api_research_task(project_id: int, request: Request):
+    """Pesquisa com IA sobre o tema de uma tarefa e salva como nota do projeto."""
+    import httpx
+    from services.projects import get_project, add_project_note
+
+    data = await request.json()
+    task_id = data.get('task_id')
+    query = data.get('query', '')
+
+    if not query:
+        raise HTTPException(status_code=400, detail="query obrigatoria")
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY nao configurada")
+
+    # Get project context
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+
+    # Build research prompt
+    prompt = f"""Voce e um assistente de pesquisa. Faca uma pesquisa detalhada sobre o seguinte tema,
+no contexto do projeto "{project['nome']}":
+
+Tarefa de pesquisa: {query}
+
+Descricao do projeto: {project.get('descricao', 'N/A')}
+
+Instrucoes:
+- Faca uma pesquisa abrangente sobre o tema
+- Inclua: o que e, principais programas/atividades, atuacao no Brasil (se aplicavel), oportunidades de parceria
+- Formate em Markdown com secoes claras
+- Seja objetivo e pratico, focando em informacoes acionaveis
+- Inclua links ou referencias quando possivel
+- Maximo 800 palavras"""
+
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 2000,
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+            )
+
+        if response.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Erro API Claude: {response.status_code}")
+
+        result = response.json()
+        research_text = result.get("content", [{}])[0].get("text", "")
+
+        if not research_text:
+            raise HTTPException(status_code=500, detail="Pesquisa retornou vazio")
+
+        # Save as project note
+        note = add_project_note(project_id, {
+            'tipo': 'pesquisa',
+            'titulo': f'Pesquisa IA: {query}',
+            'conteudo': research_text,
+            'autor': 'IA'
+        })
+
+        # Mark task as completed if task_id provided
+        if task_id:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE tasks SET status = 'completed', descricao = COALESCE(descricao, '') || %s
+                    WHERE id = %s AND project_id = %s
+                """, (f'\n\n--- Pesquisa realizada por IA em {datetime.now().strftime("%d/%m/%Y")} ---', task_id, project_id))
+                conn.commit()
+
+        return {"status": "success", "note": note, "research": research_text}
+
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Timeout na pesquisa")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============== PROJECT AI ANALYSIS ==============
 
 @app.post("/api/projects/{project_id}/ai-analysis")
