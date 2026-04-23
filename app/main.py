@@ -14707,7 +14707,7 @@ async def api_active_projects_summary(limit: int = 5):
 
 @app.get("/api/projects/overdue-count")
 async def api_projects_overdue_count():
-    """Conta projetos com tarefas vencidas"""
+    """Conta projetos com tarefas vencidas (consistente com /projetos)"""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -14715,7 +14715,7 @@ async def api_projects_overdue_count():
             FROM tasks t
             JOIN projects p ON p.id = t.project_id
             WHERE t.status = 'pending'
-              AND t.data_vencimento < NOW()
+              AND t.data_vencimento::date < CURRENT_DATE
               AND p.status = 'ativo'
         """)
         return {"count": cursor.fetchone()['count']}

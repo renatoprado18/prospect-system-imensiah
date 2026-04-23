@@ -1955,7 +1955,7 @@
                 <div class="stat-icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;"><i class="bi bi-folder2-open"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statProjectsAction">-</div>
-                    <div class="stat-label">Projetos Atrasados</div>
+                    <div class="stat-label">Projetos c/ Atenção</div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer; border-left: 3px solid var(--warning);" onclick="window.location.href='/contatos?filter=needs_attention'">
@@ -3333,10 +3333,10 @@
         // Load tarefas vencidas count
         async function loadTasksOverdue() {
             try {
-                const resp = await fetch('/api/tasks?status=pending&limit=100');
+                const resp = await fetch('/api/projects/all-tasks?status=pending&limit=100');
                 if (resp.ok) {
                     const data = await resp.json();
-                    const tasks = data.tasks || data || [];
+                    const tasks = data.tasks || [];
                     const today = new Date().toISOString().split('T')[0];
                     const overdue = tasks.filter(t => t.data_vencimento && t.data_vencimento.split('T')[0] < today).length;
                     document.getElementById('statTasksOverdue').textContent = overdue;
