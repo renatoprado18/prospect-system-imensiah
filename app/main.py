@@ -14707,12 +14707,15 @@ async def api_active_projects_summary(limit: int = 5):
 
 @app.get("/api/tasks/standalone-pending")
 async def api_standalone_pending_tasks():
-    """Conta tarefas pendentes NÃO vinculadas a projetos"""
+    """Conta tarefas pendentes avulsas (exclui campanhas e Google Tasks)"""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT COUNT(*) as count FROM tasks
-            WHERE status = 'pending' AND project_id IS NULL
+            WHERE status = 'pending'
+              AND project_id IS NULL
+              AND COALESCE(origem, '') != 'campaign'
+              AND google_task_id IS NOT NULL
         """)
         return {"count": cursor.fetchone()['count']}
 
