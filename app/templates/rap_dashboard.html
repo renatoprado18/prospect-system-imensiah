@@ -1955,7 +1955,7 @@
                 <div class="stat-icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;"><i class="bi bi-folder2-open"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statProjectsAction">-</div>
-                    <div class="stat-label">Projetos c/ Ação</div>
+                    <div class="stat-label">Projetos Ativos</div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer; border-left: 3px solid var(--warning);" onclick="window.location.href='/contatos?filter=needs_attention'">
@@ -2510,9 +2510,8 @@
                 try {
                     const projResp = await fetch('/api/projects/active-summary?limit=20');
                     const projData = await projResp.json();
-                    // Contar projetos com tarefas pendentes
-                    const withAction = projData.filter(p => (p.tasks_vencidas || 0) > 0 || (p.tasks_pendentes || 0) > 0).length;
-                    document.getElementById('statProjectsAction').textContent = withAction;
+                    const activeCount = projData.filter(p => p.status === 'ativo').length;
+                    document.getElementById('statProjectsAction').textContent = activeCount;
                 } catch(e) { document.getElementById('statProjectsAction').textContent = '-'; }
 
                 // Circulos (keep distribution data for other widgets)
@@ -4530,8 +4529,10 @@
 
                 let projects = await response.json();
 
-                // Filtrar: projetos que precisam ação (tarefas pendentes ou vencidas)
-                projects = projects.filter(p => (p.tasks_vencidas || 0) > 0 || (p.tasks_pendentes || 0) > 0);
+                // Filtrar: top 5 projetos com mais tarefas pendentes
+                projects = projects.filter(p => (p.tasks_pendentes || 0) > 0)
+                    .sort((a, b) => (b.tasks_pendentes || 0) - (a.tasks_pendentes || 0))
+                    .slice(0, 5);
 
                 if (!projects || projects.length === 0) {
                     container.innerHTML = `
