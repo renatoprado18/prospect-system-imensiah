@@ -20,28 +20,77 @@ from database import get_db
 
 logger = logging.getLogger(__name__)
 
-# Fontes RSS (expandir conforme necessário)
+# Fontes RSS - Perfil amplo do Renato: governança, IA, empreendedorismo, esporte, sustentabilidade
 NEWS_SOURCES = {
+    # Negócios & Economia (Brasil)
     "valor_economia": {
         "name": "Valor Econômico",
         "url": "https://pox.globo.com/rss/valor/",
         "category": "economia"
     },
-    "google_business_br": {
-        "name": "Google News - Negócios",
-        "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FuQjBHZ0pDVWlnQVAB?hl=pt-BR&gl=BR&ceid=BR:pt-419",
+    "exame": {
+        "name": "Exame",
+        "url": "https://exame.com/feed/",
         "category": "negocios"
     },
+    # Governança & Conselhos
+    "google_governanca": {
+        "name": "Google News - Governança Corporativa",
+        "url": "https://news.google.com/rss/search?q=governan%C3%A7a+corporativa+conselho+administra%C3%A7%C3%A3o&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+        "category": "governanca"
+    },
+    # IA & Tecnologia
     "google_tech_br": {
         "name": "Google News - Tecnologia",
         "url": "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGRqTVhZU0FuQjBHZ0pDVWlnQVAB?hl=pt-BR&gl=BR&ceid=BR:pt-419",
         "category": "tecnologia"
     },
-    "exame": {
-        "name": "Exame",
-        "url": "https://exame.com/feed/",
-        "category": "negocios"
-    }
+    "google_ia_br": {
+        "name": "Google News - Inteligência Artificial",
+        "url": "https://news.google.com/rss/search?q=intelig%C3%AAncia+artificial+empresas&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+        "category": "ia"
+    },
+    # Empreendedorismo & Startups
+    "google_startups_br": {
+        "name": "Google News - Startups Brasil",
+        "url": "https://news.google.com/rss/search?q=startups+empreendedorismo+brasil&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+        "category": "empreendedorismo"
+    },
+    # Recuperação Judicial / Investimentos (case Fictor)
+    "google_rj_br": {
+        "name": "Google News - Recuperação Judicial",
+        "url": "https://news.google.com/rss/search?q=recupera%C3%A7%C3%A3o+judicial+credores&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+        "category": "juridico"
+    },
+    # ESG & Sustentabilidade
+    "google_esg_br": {
+        "name": "Google News - ESG Brasil",
+        "url": "https://news.google.com/rss/search?q=ESG+sustentabilidade+empresas+brasil&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+        "category": "esg"
+    },
+    # Esporte & Gestão Esportiva (judô, CAP)
+    "google_gestao_esportiva": {
+        "name": "Google News - Gestão Esportiva",
+        "url": "https://news.google.com/rss/search?q=gest%C3%A3o+esportiva+clube+atletico&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+        "category": "esporte"
+    },
+    # Agronegócio (fazendas)
+    "google_agro": {
+        "name": "Google News - Agronegócio",
+        "url": "https://news.google.com/rss/search?q=agroneg%C3%B3cio+sustent%C3%A1vel+fazenda&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+        "category": "agro"
+    },
+    # Internacional - IA (inglês)
+    "mit_tech_review": {
+        "name": "MIT Technology Review",
+        "url": "https://www.technologyreview.com/feed/",
+        "category": "ia"
+    },
+    "hbr": {
+        "name": "Harvard Business Review",
+        "url": "https://hbr.org/resources/images/rss/hbr.xml",
+        "category": "estrategia"
+    },
 }
 
 # Pesos para cálculo de interesse
@@ -823,3 +872,178 @@ Responda em português, de forma direta e prática. Formato:
     except Exception as e:
         logger.error(f"Erro ao gerar conexão: {e}")
         return None
+
+
+# ==================== CLIPPING DIARIO ====================
+
+async def generate_daily_clipping(limit: int = 10) -> Dict:
+    """
+    Gera clipping diário: coleta noticias, filtra com IA, gera resumo.
+
+    Fluxo:
+    1. Coleta noticias de todas as fontes RSS
+    2. IA (Haiku) ranqueia por relevancia ao perfil do Renato
+    3. Retorna top N com resumo de 1 linha cada
+    """
+    import httpx as hx
+
+    # 1. Coletar noticias
+    collection = await collect_news()
+    logger.info(f"Clipping: coletadas {collection['collected']} noticias, {collection['saved']} novas")
+
+    # 2. Buscar noticias das ultimas 24h nao processadas
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, title, description, link, source, category
+            FROM news_items
+            WHERE collected_at > NOW() - INTERVAL '48 hours'
+            ORDER BY collected_at DESC
+            LIMIT 50
+        """)
+        news = [dict(r) for r in cursor.fetchall()]
+
+        # Buscar interesses do usuario para contexto
+        interests = get_user_interests(1)
+
+    if not news:
+        return {"clipping": [], "total_collected": collection['collected'], "summary": "Nenhuma noticia coletada"}
+
+    # 3. IA filtra e ranqueia
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        # Fallback sem IA: usar relevance_score existente
+        for n in news:
+            n['relevance'] = calculate_relevance_score(n, interests)
+        news.sort(key=lambda x: x.get('relevance', 0), reverse=True)
+        return {
+            "clipping": news[:limit],
+            "total_collected": collection['collected'],
+            "summary": f"Top {limit} noticias por relevancia (sem IA)"
+        }
+
+    # Preparar noticias para IA
+    news_text = "\n".join([
+        f"[{i+1}] {n['title']} ({n['source']}) - {(n.get('description') or '')[:150]}"
+        for i, n in enumerate(news[:40])
+    ])
+
+    # Interesses aprendidos
+    top_interests = ""
+    if interests and interests.get('topics'):
+        topics = interests['topics']
+        sorted_topics = sorted(topics.items(), key=lambda x: x[1], reverse=True)[:10]
+        top_interests = f"\nInteresses aprendidos: {', '.join(t[0] for t in sorted_topics)}"
+
+    prompt = f"""Voce e o curador de noticias pessoal do Renato Prado.
+
+PERFIL DO RENATO:
+- Fundador da ImensIAH (plataforma de governanca + IA para conselhos)
+- Conselheiro de empresas (Board Academy, Alba Consultoria, Assespro-SP)
+- Engenheiro (Poli USP), empreendedor serial (6+ empresas)
+- Diretor de Governanca da Assespro-SP
+- Esportista (judo, tenis - Club Athletico Paulistano)
+- Gestor de patrimonio familiar (fazendas, investimentos)
+- Interesses: complexidade, sistemas adaptativos, lideranca, ESG{top_interests}
+
+NOTICIAS DE HOJE:
+{news_text}
+
+Selecione as {limit} noticias MAIS RELEVANTES para o Renato e retorne APENAS JSON:
+{{
+  "clipping": [
+    {{
+      "index": 1,
+      "titulo_resumido": "titulo curto em portugues (max 80 chars)",
+      "resumo": "por que essa noticia importa para o Renato (1 frase, max 120 chars)",
+      "relevancia": "alta/media",
+      "categoria": "governanca/ia/empreendedorismo/esg/juridico/esporte/agro/estrategia",
+      "sugestao_post": "ideia de hot take em 1 frase, ou null se nao aplicavel"
+    }}
+  ],
+  "resumo_dia": "resumo geral do dia em 2 frases para o Renato"
+}}
+
+Priorize: noticias acionaveis, que o Renato pode comentar no LinkedIn, ou que afetam seus projetos/negocios."""
+
+    try:
+        async with hx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 1500,
+                      "messages": [{"role": "user", "content": prompt}]}
+            )
+
+        if resp.status_code != 200:
+            logger.error(f"Clipping IA error: {resp.status_code}")
+            return {"error": f"API error: {resp.status_code}", "total_collected": collection['collected']}
+
+        text = resp.json()["content"][0]["text"]
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            result = json.loads(text[start:end])
+
+            # Enriquecer com links originais
+            for item in result.get('clipping', []):
+                idx = item.get('index', 0) - 1
+                if 0 <= idx < len(news):
+                    item['link'] = news[idx].get('link', '')
+                    item['source'] = news[idx].get('source', '')
+                    item['news_id'] = news[idx].get('id')
+
+            result['total_collected'] = collection['collected']
+            result['total_sources'] = len(NEWS_SOURCES)
+
+            # Salvar clipping no banco
+            try:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO news_clippings (conteudo, resumo_dia, total_noticias, gerado_em)
+                        VALUES (%s, %s, %s, NOW())
+                        RETURNING id
+                    """, (
+                        json.dumps(result.get('clipping', []), ensure_ascii=False),
+                        result.get('resumo_dia', ''),
+                        collection['collected']
+                    ))
+                    result['clipping_id'] = cursor.fetchone()['id']
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"Erro ao salvar clipping: {e}")
+
+            return result
+
+    except json.JSONDecodeError:
+        logger.error("Erro ao parsear JSON do clipping")
+    except Exception as e:
+        logger.error(f"Erro no clipping: {e}")
+
+    return {"error": "Falha ao gerar clipping", "total_collected": collection['collected']}
+
+
+def record_clipping_feedback(news_id: int, feedback: str, user_id: int = 1) -> Dict:
+    """
+    Registra feedback do usuario sobre uma noticia do clipping.
+    feedback: 'liked', 'disliked', 'shared', 'hot_take'
+    Atualiza interesses do usuario para aprendizado.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Buscar noticia
+        cursor.execute("SELECT * FROM news_items WHERE id = %s", (news_id,))
+        news = cursor.fetchone()
+        if not news:
+            return {"error": "Noticia nao encontrada"}
+        news = dict(news)
+
+        # Registrar interacao
+        record_interaction(user_id, news_id, feedback)
+
+        # Atualizar interesses do usuario
+        update_user_interests(user_id, news, feedback)
+
+        return {"status": "ok", "feedback": feedback, "news_id": news_id}

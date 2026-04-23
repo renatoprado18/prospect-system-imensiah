@@ -6582,6 +6582,14 @@ async def cron_daily_sync(request: Request):
     except Exception as e:
         results["steps"]["avatar_fetch"] = {"status": "error", "error": str(e)}
 
+    # 12. Gerar clipping diario de noticias
+    try:
+        from services.news_hub import generate_daily_clipping
+        clipping_result = await generate_daily_clipping(limit=10)
+        results["steps"]["daily_clipping"] = {"status": "success", "items": len(clipping_result.get('clipping', []))}
+    except Exception as e:
+        results["steps"]["daily_clipping"] = {"status": "error", "error": str(e)}
+
     results["completed_at"] = datetime.now().isoformat()
 
     return results
@@ -16053,14 +16061,61 @@ async def api_news_feed(request: Request):
     """Retorna feed de notícias personalizado"""
     from services.news_hub import get_news_feed, detect_trending
 
-    # Detectar trending primeiro
     detect_trending(hours=48)
-
-    # TODO: Pegar user_id da sessão
-    user_id = 1
-
-    feed = get_news_feed(user_id, limit=15)
+    feed = get_news_feed(1, limit=15)
     return feed
+
+
+@app.get("/api/news/clipping")
+async def api_daily_clipping():
+    """Gera ou retorna clipping diario"""
+    from services.news_hub import generate_daily_clipping
+
+    # Verificar se ja tem clipping de hoje
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, conteudo, resumo_dia, total_noticias, gerado_em
+            FROM news_clippings
+            WHERE DATE(gerado_em) = CURRENT_DATE
+            ORDER BY gerado_em DESC LIMIT 1
+        """)
+        existing = cursor.fetchone()
+
+    if existing:
+        existing = dict(existing)
+        import json as _json
+        clipping = existing['conteudo']
+        if isinstance(clipping, str):
+            clipping = _json.loads(clipping)
+        return {
+            "clipping": clipping,
+            "resumo_dia": existing['resumo_dia'],
+            "total_collected": existing['total_noticias'],
+            "clipping_id": existing['id'],
+            "cached": True
+        }
+
+    # Gerar novo
+    result = await generate_daily_clipping(limit=10)
+    return result
+
+
+@app.post("/api/news/clipping/refresh")
+async def api_refresh_clipping():
+    """Forca geracao de novo clipping (mesmo se ja existe hoje)"""
+    from services.news_hub import generate_daily_clipping
+    return await generate_daily_clipping(limit=10)
+
+
+@app.post("/api/news/{news_id}/feedback")
+async def api_news_feedback(news_id: int, request: Request):
+    """Registra feedback sobre noticia (liked/disliked/shared/hot_take)"""
+    from services.news_hub import record_clipping_feedback
+    data = await request.json()
+    feedback = data.get('feedback', 'liked')
+    result = record_clipping_feedback(news_id, feedback)
+    return result
 
 
 @app.post("/api/news/collect")
