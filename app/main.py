@@ -7692,19 +7692,29 @@ async def test_endpoint():
     """Test endpoint"""
     return {"status": "ok", "message": "API v1 working"}
 
+# Cache do dashboard (60s TTL)
+_dashboard_cache = {"data": None, "timestamp": None}
+
 @app.get("/api/v1/dashboard")
 async def get_dashboard_unified(request: Request):
     """
     Retorna TODOS os dados do Dashboard em uma unica chamada.
-    SUPER OTIMIZADO: Uma unica query com CTEs.
+    Cache de 60s para evitar queries pesadas em cada page load.
     """
     import time
     from services.dashboard import get_full_dashboard
-    from database import get_db
+
+    # Usar cache se < 60s
+    global _dashboard_cache
+    if _dashboard_cache["data"] and _dashboard_cache["timestamp"]:
+        age = (datetime.now() - _dashboard_cache["timestamp"]).total_seconds()
+        if age < 60:
+            return _dashboard_cache["data"]
 
     t0 = time.time()
     try:
         result = get_full_dashboard()
+        _dashboard_cache = {"data": result, "timestamp": datetime.now()}
     except Exception as e:
         print(f"[DASHBOARD ERROR] {e}")
         result = {
@@ -16262,10 +16272,17 @@ async def api_news_feed(request: Request):
     return feed
 
 
+_clipping_cache = {"data": None, "date": None}
+
 @app.get("/api/news/clipping")
 async def api_daily_clipping():
-    """Gera ou retorna clipping diario"""
+    """Gera ou retorna clipping diario (cache in-memory)"""
     from services.news_hub import generate_daily_clipping
+
+    global _clipping_cache
+    today = datetime.now().date()
+    if _clipping_cache["data"] and _clipping_cache["date"] == today:
+        return _clipping_cache["data"]
 
     # Verificar se ja tem clipping de hoje
     with get_db() as conn:
@@ -16284,16 +16301,19 @@ async def api_daily_clipping():
         clipping = existing['conteudo']
         if isinstance(clipping, str):
             clipping = _json.loads(clipping)
-        return {
+        result = {
             "clipping": clipping,
             "resumo_dia": existing['resumo_dia'],
             "total_collected": existing['total_noticias'],
             "clipping_id": existing['id'],
             "cached": True
         }
+        _clipping_cache = {"data": result, "date": today}
+        return result
 
     # Gerar novo
     result = await generate_daily_clipping(limit=10)
+    _clipping_cache = {"data": result, "date": today}
     return result
 
 
@@ -17015,10 +17035,18 @@ async def api_listar_veiculos():
     return listar_veiculos()
 
 
+_veiculos_alertas_cache = {"data": None, "timestamp": None}
+
 @app.get("/api/veiculos/alertas")
 async def api_alertas_manutencao():
-    """Retorna alertas de manutencao de todos os veiculos para o dashboard"""
-    return get_alertas_manutencao()
+    """Retorna alertas de manutencao (cache 5min)"""
+    global _veiculos_alertas_cache
+    if _veiculos_alertas_cache["data"] and _veiculos_alertas_cache["timestamp"]:
+        if (datetime.now() - _veiculos_alertas_cache["timestamp"]).total_seconds() < 300:
+            return _veiculos_alertas_cache["data"]
+    result = get_alertas_manutencao()
+    _veiculos_alertas_cache = {"data": result, "timestamp": datetime.now()}
+    return result
 
 
 @app.get("/api/veiculos/{veiculo_id}")
