@@ -1967,11 +1967,11 @@
                     <div class="stat-label">Precisam Atencao</div>
                 </div>
             </div>
-            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/briefings'">
-                <div class="stat-icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;"><i class="bi bi-file-text"></i></div>
+            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/projetos'">
+                <div class="stat-icon" style="background: rgba(239, 68, 68, 0.1); color: #ef4444;"><i class="bi bi-exclamation-circle"></i></div>
                 <div class="stat-content">
-                    <div class="stat-value" id="statBriefings">-</div>
-                    <div class="stat-label">Briefings Pendentes</div>
+                    <div class="stat-value" id="statTasksOverdue">-</div>
+                    <div class="stat-label">Tarefas Vencidas</div>
                 </div>
             </div>
         </div>
@@ -1980,6 +1980,20 @@
         <div class="content-grid">
             <!-- Left Column -->
             <div>
+                <!-- Quem Contatar Hoje (movido da coluna direita - widget mais acionável) -->
+                <div class="card contact-today-card mb-4">
+                    <div class="contact-today-header">
+                        <h2><i class="bi bi-person-check"></i> Quem Contatar Hoje</h2>
+                        <span class="contact-today-count" id="contactTodayCount">0</span>
+                    </div>
+                    <div class="contact-today-list" id="contactTodayList">
+                        <div class="text-center py-3">
+                            <div class="spinner-border spinner-border-sm text-primary"></div>
+                            <span class="ms-2 text-muted">Analisando prioridades...</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Clipping do Dia -->
                 <div class="card mb-4" id="clippingCard" style="display:none;">
                     <div class="card-header" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: white; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
@@ -2009,18 +2023,16 @@
                     </div>
                 </div>
 
-                <!-- LinkedIn Editorial Metrics Card -->
+                <!-- Calendar Strip - 7 dias de conteudo -->
                 <div class="card mb-4" style="border-top: 3px solid #7c3aed;">
-                    <div class="card-header" style="background: linear-gradient(135deg, rgba(124, 58, 237, 0.05), rgba(99, 102, 241, 0.05));">
-                        <h2 class="card-title" style="font-size: 0.9rem; color: #7c3aed;">
-                            <i class="bi bi-bar-chart-line me-2"></i>Editorial Metricas
+                    <div class="card-header" style="background: linear-gradient(135deg, rgba(124, 58, 237, 0.05), rgba(99, 102, 241, 0.05)); padding: 8px 16px;">
+                        <h2 class="card-title" style="font-size: 0.85rem; color: #7c3aed; margin: 0;">
+                            <i class="bi bi-calendar-week me-2"></i>Conteudo da Semana
                         </h2>
-                        <a href="/editorial" class="btn btn-sm btn-outline-secondary" style="font-size: 0.75rem;">Ver editorial</a>
+                        <a href="/editorial" class="btn btn-sm btn-outline-secondary" style="font-size: 0.7rem;">Editorial</a>
                     </div>
-                    <div class="card-body compact" id="editorialMetricsBody" style="padding: 12px 16px;">
-                        <div class="text-center py-2">
-                            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-                        </div>
+                    <div class="card-body" style="padding: 10px 16px;" id="calendarStripBody">
+                        <div class="d-flex gap-2 justify-content-between" id="calendarStrip"></div>
                     </div>
                 </div>
 
@@ -2060,21 +2072,7 @@
 
             <!-- Right Column -->
             <div>
-                <!-- 1. Quem Contatar Hoje (prioridade maxima) -->
-                <div class="card contact-today-card mb-4">
-                    <div class="contact-today-header">
-                        <h2><i class="bi bi-person-check"></i> Quem Contatar Hoje</h2>
-                        <span class="contact-today-count" id="contactTodayCount">0</span>
-                    </div>
-                    <div class="contact-today-list" id="contactTodayList">
-                        <div class="text-center py-3">
-                            <div class="spinner-border spinner-border-sm text-primary"></div>
-                            <span class="ms-2 text-muted">Analisando prioridades...</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 2. AI Suggestions Panel -->
+                <!-- AI Suggestions Panel -->
                 <div class="card mb-4" style="border: 1px solid var(--primary); border-top: 3px solid var(--primary);">
                     <div class="card-header" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(14, 165, 233, 0.05));">
                         <h2 class="card-title" style="color: var(--primary);">
@@ -2104,18 +2102,20 @@
                     </div>
                 </div>
 
-                <!-- 4. Alertas de Manutencao -->
-                <div class="card maintenance-alerts-card mb-4" id="maintenanceAlertsCard">
+                <!-- Alertas Veiculos (colapsado por padrao, expande se houver alertas) -->
+                <div id="maintenanceAlertsCompact" class="mb-3" style="display:none;">
+                    <a href="/veiculos" class="d-flex align-items-center gap-2 p-2 rounded text-decoration-none" style="background: var(--gray-50); border: 1px solid var(--gray-100);">
+                        <i class="bi bi-car-front" style="color: var(--gray-500);"></i>
+                        <span id="maintenanceCompactText" style="font-size: 0.8rem; color: var(--gray-600);">Veiculos: verificando...</span>
+                    </a>
+                </div>
+                <!-- Full card hidden, shown only if alerts exist -->
+                <div class="card maintenance-alerts-card mb-4" id="maintenanceAlertsCard" style="display:none;">
                     <div class="card-header">
                         <h2><i class="bi bi-car-front"></i> Manutencao Veicular</h2>
                         <span class="alerts-count" id="maintenanceAlertsCount">...</span>
                     </div>
-                    <div class="card-body p-0" id="maintenanceAlertsBody">
-                        <div class="text-center py-3">
-                            <div class="spinner-border spinner-border-sm text-danger"></div>
-                            <span class="ms-2 text-muted">Verificando alertas...</span>
-                        </div>
-                    </div>
+                    <div class="card-body p-0" id="maintenanceAlertsBody"></div>
                     <div style="padding: 8px 16px; background: var(--gray-50); border-top: 1px solid var(--gray-100);">
                         <a href="/veiculos" class="btn btn-sm btn-outline-secondary w-100">
                             <i class="bi bi-gear me-1"></i> Gerenciar Veiculos
@@ -2384,6 +2384,56 @@
 
         // ============== Editorial Metrics Card ==============
         async function loadEditorialMetrics() {
+            // Calendar strip - 7 dias de conteudo
+            const strip = document.getElementById('calendarStrip');
+            if (!strip) return;
+
+            try {
+                const resp = await fetch('/api/editorial/dashboard-tasks');
+                const data = await resp.json();
+                const hoje = data.hoje || [];
+                const proximos = data.proximos || [];
+
+                const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+                const today = new Date();
+                let html = '';
+
+                for (let i = 0; i < 7; i++) {
+                    const d = new Date(today);
+                    d.setDate(d.getDate() + i);
+                    const dayName = days[d.getDay()];
+                    const dayNum = d.getDate();
+                    const dateStr = d.toISOString().split('T')[0];
+                    const isToday = i === 0;
+
+                    // Verificar se tem post nesse dia
+                    let status = 'empty';
+                    if (isToday && hoje.length > 0) {
+                        status = hoje.some(p => p.status === 'published') ? 'published' : 'scheduled';
+                    } else {
+                        const hasPost = proximos.find(p => p.data_publicacao && p.data_publicacao.startsWith(dateStr));
+                        if (hasPost) status = 'scheduled';
+                    }
+
+                    const colors = {
+                        'published': 'background:#22c55e;color:white;',
+                        'scheduled': 'background:#6366f1;color:white;',
+                        'empty': 'background:var(--gray-100);color:var(--gray-400);'
+                    };
+                    const border = isToday ? 'border:2px solid #f59e0b;' : '';
+
+                    html += `<div style="text-align:center;flex:1;padding:6px 2px;border-radius:8px;${colors[status]}${border}font-size:0.7rem;">
+                        <div style="font-weight:600;">${dayName}</div>
+                        <div style="font-size:0.85rem;font-weight:700;">${dayNum}</div>
+                        <div>${status === 'published' ? '✓' : status === 'scheduled' ? '📝' : '·'}</div>
+                    </div>`;
+                }
+
+                strip.innerHTML = html;
+            } catch (e) {
+                strip.innerHTML = '<span class="text-muted" style="font-size:0.75rem;">Erro ao carregar</span>';
+            }
+            return; // Skip old metrics code below
             const container = document.getElementById('editorialMetricsBody');
             if (!container) return;
 
@@ -2517,7 +2567,7 @@
                 }
 
                 // Briefings pendentes - buscar da API especifica
-                loadBriefingsPendentes();
+                loadTasksOverdue();
 
                 // Action proposals (INTEL Proativo)
                 loadActionProposals();
@@ -3256,13 +3306,21 @@
             }
         }
 
-        // Load briefings pendentes count (from dashboard data, not separate endpoint)
-        function loadBriefingsPendentes() {
-            // Usa dados do cache do dashboard (já correto com filtro ultimo_contato IS NOT NULL)
-            if (dataCache.dashboard?.stats?.briefings_pendentes != null) {
-                document.getElementById('statBriefings').textContent = dataCache.dashboard.stats.briefings_pendentes;
-            } else {
-                document.getElementById('statBriefings').textContent = '0';
+        // Load tarefas vencidas count
+        async function loadTasksOverdue() {
+            try {
+                const resp = await fetch('/api/tasks?status=pending&limit=100');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const tasks = data.tasks || data || [];
+                    const today = new Date().toISOString().split('T')[0];
+                    const overdue = tasks.filter(t => t.data_vencimento && t.data_vencimento.split('T')[0] < today).length;
+                    document.getElementById('statTasksOverdue').textContent = overdue;
+                } else {
+                    document.getElementById('statTasksOverdue').textContent = '0';
+                }
+            } catch (e) {
+                document.getElementById('statTasksOverdue').textContent = '0';
             }
         }
 
@@ -4561,34 +4619,35 @@
         // ============== Maintenance Alerts Widget ==============
         async function loadMaintenanceAlerts() {
             const card = document.getElementById('maintenanceAlertsCard');
+            const compact = document.getElementById('maintenanceAlertsCompact');
+            const compactText = document.getElementById('maintenanceCompactText');
             const container = document.getElementById('maintenanceAlertsBody');
             const countBadge = document.getElementById('maintenanceAlertsCount');
-            if (!container) return;
+            if (!compact) return;
 
             try {
                 const response = await fetch('/api/veiculos/alertas');
                 if (!response.ok) {
-                    container.innerHTML = '<div class="text-center py-3 text-muted">Erro ao carregar alertas</div>';
+                    compact.style.display = 'block';
+                    compactText.textContent = 'Veiculos: erro ao verificar';
                     return;
                 }
 
                 const data = await response.json();
                 const totalAlertas = data.total_vencidos + data.total_atencao;
 
-                // Update count badge
-                countBadge.textContent = totalAlertas > 0 ? `${totalAlertas} alerta${totalAlertas > 1 ? 's' : ''}` : 'OK';
-
-                // Update card style
                 if (totalAlertas === 0) {
-                    card.classList.add('no-alerts');
-                    container.innerHTML = `
-                        <div class="maintenance-all-ok">
-                            <i class="bi bi-check-circle-fill"></i>
-                            <p>Todos os veiculos em dia!</p>
-                        </div>
-                    `;
+                    // Modo compacto: tudo OK
+                    compact.style.display = 'block';
+                    compactText.textContent = 'Veiculos: tudo em dia ✓';
+                    compactText.style.color = '#22c55e';
                     return;
                 }
+
+                // Tem alertas: mostrar card completo, esconder compacto
+                compact.style.display = 'none';
+                card.style.display = 'block';
+                countBadge.textContent = `${totalAlertas} alerta${totalAlertas > 1 ? 's' : ''}`;
 
                 // Combine and limit alerts
                 const allAlerts = [
