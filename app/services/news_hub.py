@@ -8,6 +8,7 @@ Combina:
 - Descoberta (fora da bolha)
 """
 
+import os
 import httpx
 import json
 import logging
@@ -86,9 +87,9 @@ NEWS_SOURCES = {
         "url": "https://www.technologyreview.com/feed/",
         "category": "ia"
     },
-    "hbr": {
-        "name": "Harvard Business Review",
-        "url": "https://hbr.org/resources/images/rss/hbr.xml",
+    "google_estrategia": {
+        "name": "Google News - Estratégia Empresarial",
+        "url": "https://news.google.com/rss/search?q=estrat%C3%A9gia+empresarial+lideran%C3%A7a&hl=pt-BR&gl=BR&ceid=BR:pt-419",
         "category": "estrategia"
     },
 }
