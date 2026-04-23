@@ -14705,6 +14705,25 @@ async def api_active_projects_summary(limit: int = 5):
     return get_active_projects_summary(limit=limit)
 
 
+@app.get("/api/projects/all-tasks")
+async def api_all_project_tasks(status: str = "pending", limit: int = 10):
+    """Lista tarefas de todos os projetos"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT t.id, t.titulo, t.descricao, t.status, t.data_vencimento, t.prioridade,
+                   p.nome as project_name, c.nome as responsavel
+            FROM tasks t
+            LEFT JOIN projects p ON p.id = t.project_id
+            LEFT JOIN contacts c ON c.id = t.contact_id
+            WHERE t.status = %s
+            ORDER BY t.data_vencimento ASC NULLS LAST
+            LIMIT %s
+        """, (status, limit))
+        tasks = [dict(r) for r in cursor.fetchall()]
+    return {"tasks": tasks}
+
+
 @app.get("/api/projects/overdue-count")
 async def api_projects_overdue_count():
     """Conta projetos com tarefas vencidas (consistente com /projetos)"""
@@ -15443,23 +15462,7 @@ async def api_add_project_task(project_id: int, request: Request):
     return {"status": "success", "task": task, "synced_to_google": True}
 
 
-@app.get("/api/projects/all-tasks")
-async def api_all_project_tasks(status: str = "pending", limit: int = 10):
-    """Lista tarefas de todos os projetos"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT t.id, t.titulo, t.descricao, t.status, t.data_vencimento, t.prioridade,
-                   p.nome as project_name, c.nome as responsavel
-            FROM tasks t
-            LEFT JOIN projects p ON p.id = t.project_id
-            LEFT JOIN contacts c ON c.id = t.contact_id
-            WHERE t.status = %s
-            ORDER BY t.data_vencimento ASC NULLS LAST
-            LIMIT %s
-        """, (status, limit))
-        tasks = [dict(r) for r in cursor.fetchall()]
-    return {"tasks": tasks}
+    # all-tasks moved before {project_id} routes
 
 
 @app.put("/api/projects/tasks/{task_id}")
