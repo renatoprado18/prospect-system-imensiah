@@ -568,16 +568,19 @@
     }
 
     @media (max-width: 768px) {
-        .main-content { margin-left: 0; padding: 12px; }
-        .project-header { padding: 16px; }
+        .main-content { margin-left: 0; padding: 60px 12px 16px 12px; }
+        .project-header { padding: 14px; }
         .project-title { font-size: 1.2rem; }
         .project-meta { flex-wrap: wrap; gap: 6px; }
-        .d-flex.gap-2 { flex-wrap: wrap; gap: 4px !important; }
-        .d-flex.gap-2 .btn { font-size: 0.75rem; padding: 4px 8px; }
+        .d-flex.gap-2 { flex-wrap: wrap; gap: 6px !important; }
+        .d-flex.gap-2 .btn { font-size: 0.8rem; padding: 8px 12px; min-height: 44px; }
         .section-card { padding: 12px; }
         .section-header { flex-direction: column; gap: 8px; align-items: flex-start !important; }
         .milestone-item { font-size: 0.85rem; }
         .modal-dialog { margin: 0.5rem; }
+        /* AI Briefing readability */
+        .briefing-content { font-size: 0.9rem; line-height: 1.6; word-wrap: break-word; overflow-wrap: break-word; }
+        .briefing-content pre { white-space: pre-wrap; overflow-x: auto; font-size: 0.8rem; }
     }
 </style>
 

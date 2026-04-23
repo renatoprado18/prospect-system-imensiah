@@ -141,3 +141,16 @@
 - Notificacoes proativas: editorial briefing semanal, alertas do sistema
 - Service: `app/services/intel_bot.py`
 - Helper: `send_intel_notification(text, phone)` para qualquer servico enviar notificacao
+
+## 18. PWA & Mobile
+- **Manifest**: `/static/manifest.json` (standalone, portrait, theme #6366f1)
+- **Service Worker**: `/static/sw.js` - caches static assets (Bootstrap, icons, fonts) + network-first HTML pages with offline fallback
+- **iOS PWA meta tags**: apple-mobile-web-app-capable, apple-mobile-web-app-status-bar-style (black-translucent), apple-touch-icon
+- **Viewport**: viewport-fit=cover for iPhone notch/Dynamic Island support
+- **Safe areas**: env(safe-area-inset-top) for hamburger button and main content padding
+- **Responsive sidebar**: collapses off-screen on mobile (<768px), hamburger toggle (44px touch target), overlay backdrop, auto-close on nav click
+- **Touch targets**: min 44px height on all buttons, nav items, tabs
+- **Mobile layouts**: all grids (stats, content, tiles, projects) collapse to 1-column on mobile
+- **Horizontal scroll prevention**: overflow-x hidden on main content, scrollable tabs with hidden scrollbar
+- **overscroll-behavior: none** to prevent pull-to-refresh interference
+- **-webkit-text-size-adjust: 100%** to prevent iOS text inflation

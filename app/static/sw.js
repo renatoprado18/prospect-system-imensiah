@@ -2,18 +2,72 @@
  * Service Worker for INTEL Push Notifications
  */
 
-const CACHE_NAME = 'intel-v1';
+const CACHE_NAME = 'intel-v2';
+const STATIC_ASSETS = [
+    '/static/img/icon-192.svg',
+    '/static/img/icon-512.svg',
+    '/static/manifest.json',
+    'https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css',
+    'https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css',
+    'https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js',
+];
 
-// Install event
+// Install event - pre-cache static assets
 self.addEventListener('install', (event) => {
     console.log('Service Worker installed');
-    self.skipWaiting();
+    event.waitUntil(
+        caches.open(CACHE_NAME)
+            .then(cache => cache.addAll(STATIC_ASSETS))
+            .then(() => self.skipWaiting())
+    );
 });
 
-// Activate event
+// Activate event - clean old caches
 self.addEventListener('activate', (event) => {
     console.log('Service Worker activated');
-    event.waitUntil(clients.claim());
+    event.waitUntil(
+        caches.keys().then(keys =>
+            Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
+        ).then(() => clients.claim())
+    );
+});
+
+// Fetch event - network-first for pages, cache-first for static assets
+self.addEventListener('fetch', (event) => {
+    const url = new URL(event.request.url);
+
+    // Only handle GET requests
+    if (event.request.method !== 'GET') return;
+
+    // Skip API calls
+    if (url.pathname.startsWith('/api/')) return;
+
+    // Cache-first for static assets (CDN, /static/)
+    if (url.pathname.startsWith('/static/') || url.hostname.includes('cdn.jsdelivr.net') || url.hostname.includes('fonts.googleapis.com') || url.hostname.includes('fonts.gstatic.com')) {
+        event.respondWith(
+            caches.match(event.request).then(cached => {
+                return cached || fetch(event.request).then(response => {
+                    const clone = response.clone();
+                    caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+                    return response;
+                });
+            })
+        );
+        return;
+    }
+
+    // Network-first for pages (HTML)
+    if (event.request.headers.get('accept')?.includes('text/html')) {
+        event.respondWith(
+            fetch(event.request)
+                .then(response => {
+                    const clone = response.clone();
+                    caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+                    return response;
+                })
+                .catch(() => caches.match(event.request))
+        );
+    }
 });
 
 // Push event - triggered when push notification is received

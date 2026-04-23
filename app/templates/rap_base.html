@@ -2,7 +2,8 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <title>{% block title %}INTEL{% endblock %}</title>
     <!-- Favicon & PWA Icons -->
     <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
@@ -35,11 +36,13 @@
         }
 
         * { box-sizing: border-box; }
+        html { overscroll-behavior: none; }
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             background: var(--gray-100);
             margin: 0;
             min-height: 100vh;
+            -webkit-text-size-adjust: 100%;
         }
 
         /* Sidebar */
@@ -127,7 +130,8 @@
             display: flex;
             align-items: center;
             gap: 10px;
-            padding: 8px 20px;
+            padding: 10px 20px;
+            min-height: 44px;
             color: var(--gray-300);
             text-decoration: none;
             transition: all 0.2s;
@@ -340,30 +344,38 @@
                 top: 0;
                 height: 100vh;
                 z-index: 1040;
-                transition: left 0.3s;
+                transition: left 0.3s ease;
             }
             .sidebar.show { left: 0; }
             .main-content {
                 margin-left: 0 !important;
-                padding: 1rem;
+                padding: 60px 12px 16px 12px;
+                padding-top: calc(56px + env(safe-area-inset-top, 0px));
             }
-            .page-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
+            .page-header { flex-direction: column; align-items: flex-start; gap: 0.75rem; margin-bottom: 16px; }
+            .page-title { font-size: 1.3rem; }
             .search-box { width: 100%; }
-            .card-body { padding: 1rem; }
+            .header-actions { width: 100%; flex-wrap: wrap; }
+            .card-body { padding: 12px; }
+            /* Full-width buttons on mobile */
+            .header-actions .btn { font-size: 0.85rem; }
         }
 
         .sidebar-toggle {
             display: none;
             position: fixed;
-            top: 10px;
+            top: env(safe-area-inset-top, 8px);
             left: 10px;
             z-index: 1050;
             background: var(--primary);
             color: white;
             border: none;
-            padding: 0.5rem 0.75rem;
-            border-radius: 8px;
+            width: 44px;
+            height: 44px;
+            font-size: 1.25rem;
+            border-radius: 10px;
             cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
         }
         @media (max-width: 768px) {
             .sidebar-toggle { display: block; }
@@ -371,16 +383,19 @@
             .modal-dialog { margin: 0.5rem; max-width: calc(100% - 1rem); }
             .modal-content { border-radius: 12px; }
             /* Tabs scroll horizontal */
-            .nav-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-            .nav-tabs .nav-link { white-space: nowrap; font-size: 0.8rem; padding: 8px 12px; }
+            .nav-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+            .nav-tabs::-webkit-scrollbar { display: none; }
+            .nav-tabs .nav-link { white-space: nowrap; font-size: 0.8rem; padding: 10px 14px; min-height: 44px; }
             /* Cards compactos */
             .card { border-radius: 10px; }
             .card-body { padding: 12px; }
-            /* Botoes compactos */
-            .btn { font-size: 0.85rem; padding: 6px 12px; }
-            .btn-sm { font-size: 0.75rem; padding: 4px 8px; }
+            /* Botoes touch-friendly */
+            .btn { font-size: 0.85rem; padding: 8px 14px; min-height: 44px; }
+            .btn-sm { font-size: 0.8rem; padding: 6px 12px; min-height: 36px; }
             /* Tabelas scroll */
-            .table-responsive { overflow-x: auto; }
+            .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            /* Prevent horizontal overflow */
+            .main-content { overflow-x: hidden; }
         }
 
         .sidebar-overlay {
@@ -841,6 +856,16 @@
             document.querySelector('.sidebar')?.classList.toggle('show');
             document.querySelector('.sidebar-overlay')?.classList.toggle('show');
         }
+
+        // Close sidebar when clicking a nav item on mobile
+        document.querySelectorAll('.sidebar .nav-item').forEach(item => {
+            item.addEventListener('click', () => {
+                if (window.innerWidth <= 768) {
+                    document.querySelector('.sidebar')?.classList.remove('show');
+                    document.querySelector('.sidebar-overlay')?.classList.remove('show');
+                }
+            });
+        });
 
         // Global Sync - refresh all data
         async function globalSync() {

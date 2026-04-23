@@ -162,7 +162,7 @@
             gap: 12px;
         }
         @media (max-width: 768px) {
-            .tile-grid-asymmetric, .tile-grid-3col { grid-template-columns: 1fr; }
+            .tile-grid, .tile-grid-asymmetric, .tile-grid-3col { grid-template-columns: 1fr; }
         }
         .stacked-column {
             display: flex;
@@ -1617,20 +1617,30 @@
         }
 
         @media (max-width: 768px) {
-            .main-content { margin-left: 0; padding: 12px; }
+            .main-content { margin-left: 0; padding: 60px 12px 16px 12px; }
             .profile-header { flex-direction: column; text-align: center; gap: 12px; }
             .profile-avatar { margin: 0 auto; }
             .profile-actions { flex-direction: row; justify-content: center; flex-wrap: wrap; }
-            .contact-cards { justify-content: center; }
+            .profile-actions .btn { min-height: 44px; }
+            .contact-cards { justify-content: center; flex-wrap: wrap; }
             .profile-info { font-size: 0.85rem; }
             .profile-info h1 { font-size: 1.2rem; }
             /* Tabs scroll horizontal */
-            .nav-tabs-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            .nav-tabs-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+            .nav-tabs-wrapper::-webkit-scrollbar { display: none; }
             .nav-tabs { flex-wrap: nowrap; }
-            .nav-tabs .nav-link { white-space: nowrap; font-size: 0.78rem; padding: 8px 10px; }
+            .nav-tabs .nav-link { white-space: nowrap; font-size: 0.8rem; padding: 10px 14px; min-height: 44px; }
             /* Summary cards stack */
             .summary-highlight { font-size: 0.85rem; }
             .summary-highlight h4 { font-size: 0.9rem; }
+            /* Tile grids stack on mobile */
+            .tile-grid, .tile-grid-asymmetric, .tile-grid-3col { grid-template-columns: 1fr; }
+            /* Content grid stack */
+            .content-grid { grid-template-columns: 1fr; }
+            /* Intel status bar responsive */
+            .intel-status-bar { flex-direction: column; align-items: flex-start; gap: 8px; }
+            .intel-status-actions { width: 100%; }
+            .intel-status-actions button { flex: 1; min-height: 44px; }
         }
     </style>
 {% endblock %}

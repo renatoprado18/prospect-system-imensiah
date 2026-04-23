@@ -1,8 +1,10 @@
 {
+  "id": "/",
   "name": "INTEL - Assistente Pessoal",
   "short_name": "INTEL",
   "description": "Assistente Pessoal Inteligente para Gestao de Relacionamentos",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#1e293b",
   "theme_color": "#6366f1",
