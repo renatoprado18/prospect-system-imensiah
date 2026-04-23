@@ -414,7 +414,7 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
     from database import get_db
     from services.whatsapp_batch_import import get_batch_importer
 
-    event = payload.get("event")
+    event = (payload.get("event") or "").lower().replace("_", ".")
     instance = payload.get("instance")
     data = payload.get("data", {})
 
