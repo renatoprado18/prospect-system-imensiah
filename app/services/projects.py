@@ -209,6 +209,9 @@ def get_project(project_id: int) -> Optional[Dict]:
         """, (project_id,))
         project['tarefas'] = [dict(row) for row in cursor.fetchall()]
 
+        # Preserve text notes field before overwriting with timeline array
+        project['notas_texto'] = project.get('notas', '') or ''
+
         # Get notes/timeline
         cursor.execute("""
             SELECT * FROM project_notes
