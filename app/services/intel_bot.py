@@ -654,14 +654,18 @@ def _tool_search_projects(query: str) -> str:
 
 
 async def _tool_draft_message(contact_id: int, context: str) -> str:
-    """Draft a personalized message using contact context."""
+    """Draft a personalized message using full AI-enriched contact context."""
     try:
+        from services.contact_enrichment import get_contact_context, format_messages_for_ai
+
         with get_db() as conn:
             cursor = conn.cursor()
 
             # Contact info
             cursor.execute("""
-                SELECT nome, empresa, cargo, linkedin_headline, linkedin_about
+                SELECT id, nome, empresa, cargo, linkedin_headline, linkedin_about,
+                       linkedin_location, linkedin_experience, relationship_context,
+                       resumo_ai, ultimo_contato, circulo
                 FROM contacts WHERE id = %s
             """, (contact_id,))
             contact = cursor.fetchone()
@@ -669,51 +673,59 @@ async def _tool_draft_message(contact_id: int, context: str) -> str:
                 return json.dumps({"erro": f"Contato #{contact_id} nao encontrado"})
             contact = dict(contact)
 
-            # Recent messages
-            cursor.execute("""
-                SELECT m.conteudo, m.direcao, m.enviado_em
-                FROM messages m
-                JOIN conversations cv ON cv.id = m.conversation_id
-                WHERE cv.contact_id = %s
-                ORDER BY m.enviado_em DESC NULLS LAST
-                LIMIT 5
-            """, (contact_id,))
-            msgs = [dict(r) for r in cursor.fetchall()]
+            # Full enriched context (same as "Enriquecer com IA" button)
+            full_context = await get_contact_context(contact_id, conn)
 
-            # Memories
-            cursor.execute("""
-                SELECT titulo, resumo, data_ocorrencia
-                FROM contact_memories WHERE contact_id = %s
-                ORDER BY data_ocorrencia DESC LIMIT 3
-            """, (contact_id,))
-            mems = [dict(r) for r in cursor.fetchall()]
+            # Format all data sources
+            whatsapp_text = format_messages_for_ai(
+                full_context.get("whatsapp_messages", []), contact["nome"], "WhatsApp"
+            ) or "Sem mensagens WhatsApp"
 
-        # Build context for Claude
+            email_text = format_messages_for_ai(
+                full_context.get("email_messages", []), contact["nome"], "Email"
+            ) or "Sem emails"
+
+            facts_text = "\n".join(
+                f"- [{f.get('categoria', '?')}] {f.get('fato', '')}"
+                for f in full_context.get("existing_facts", [])
+            ) or "Sem fatos registrados"
+
+            memories_text = "\n".join(
+                f"- {m.get('titulo', '?')}: {m.get('resumo', '')[:100]}"
+                for m in full_context.get("memories", [])
+            ) or "Sem memorias"
+
+        # Build rich context
         contact_ctx = f"Nome: {contact['nome']}, Empresa: {contact.get('empresa', '?')}, Cargo: {contact.get('cargo', '?')}"
         if contact.get("linkedin_headline"):
             contact_ctx += f"\nLinkedIn: {contact['linkedin_headline']}"
-
-        msgs_ctx = "\n".join(
-            f"  {'Renato' if m['direcao'] == 'outgoing' else contact['nome']}: {m['conteudo'][:150]}"
-            for m in msgs
-        ) or "Sem mensagens recentes"
-
-        mems_ctx = "\n".join(
-            f"  - {m['titulo']}: {m['resumo'][:100]}"
-            for m in mems
-        ) or "Sem memorias"
+        if contact.get("linkedin_about"):
+            contact_ctx += f"\nSobre: {contact['linkedin_about'][:200]}"
+        if contact.get("relationship_context"):
+            contact_ctx += f"\nContexto do relacionamento: {contact['relationship_context']}"
+        if contact.get("resumo_ai"):
+            contact_ctx += f"\nResumo IA: {contact['resumo_ai'][:200]}"
+        if contact.get("ultimo_contato"):
+            contact_ctx += f"\nUltimo contato: {contact['ultimo_contato']}"
 
         system = f"""Voce e o assistente de Renato Prado. Escreva um rascunho de mensagem WhatsApp para o contato abaixo.
 A mensagem deve ser natural, no tom do Renato (profissional mas cordial), em portugues.
+Use o contexto completo do relacionamento para personalizar.
 
 CONTATO:
 {contact_ctx}
 
-MENSAGENS RECENTES:
-{msgs_ctx}
+WHATSAPP (historico):
+{whatsapp_text[:500]}
+
+EMAILS:
+{email_text[:300]}
+
+FATOS CONHECIDOS:
+{facts_text}
 
 MEMORIAS:
-{mems_ctx}
+{memories_text}
 
 OBJETIVO: {context}
 
