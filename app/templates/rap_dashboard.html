@@ -1955,14 +1955,14 @@
                 <div class="stat-icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;"><i class="bi bi-folder2-open"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statProjectsAction">-</div>
-                    <div class="stat-label">Projetos Ativos</div>
+                    <div class="stat-label">Projetos Atrasados</div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer; border-left: 3px solid var(--warning);" onclick="window.location.href='/contatos?filter=needs_attention'">
                 <div class="stat-icon" style="background: rgba(245, 158, 11, 0.1); color: var(--warning);"><i class="bi bi-exclamation-triangle"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statAtencao">-</div>
-                    <div class="stat-label">Precisam Atenção</div>
+                    <div class="stat-label">Contatos c/ Atenção</div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/projetos'">
@@ -2508,10 +2508,11 @@
 
                 // Projetos com ação
                 try {
-                    const projResp = await fetch('/api/projects/active-summary?limit=20');
-                    const projData = await projResp.json();
-                    const activeCount = projData.filter(p => p.status === 'ativo').length;
-                    document.getElementById('statProjectsAction').textContent = activeCount;
+                    const projResp = await fetch('/api/projects/overdue-count');
+                    if (projResp.ok) {
+                        const projCount = await projResp.json();
+                        document.getElementById('statProjectsAction').textContent = projCount.count || 0;
+                    }
                 } catch(e) { document.getElementById('statProjectsAction').textContent = '-'; }
 
                 // Circulos (keep distribution data for other widgets)
