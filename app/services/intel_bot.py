@@ -714,7 +714,7 @@ project_members: project_id, contact_id, papel
 
 project_notes: id, project_id, tipo, titulo, conteudo, autor, criado_em
 
-tasks: id, titulo, descricao, status (pending/completed), project_id, contact_id, data_vencimento, data_conclusao, prioridade (1-10), ai_generated, origem, criado_em
+tasks: id, titulo, descricao, status (pending/completed), project_id, contact_id, data_vencimento, data_conclusao, prioridade (1-10), ai_generated, origem, data_criacao
 
 calendar_events: id, summary, start_datetime, end_datetime, contact_id, location, description, google_event_id
 
@@ -881,9 +881,11 @@ async def handle_bot_message(phone: str, message: str, message_id: str) -> str:
             )
 
         else:
-            # Max iterations reached
+            # Max iterations reached — summarize what was found
             if not final_text:
-                final_text = "Processamento completo. Me manda mais detalhes se precisar."
+                # Try to extract useful info from the last tool results
+                last_results = [msg.get("content", "") for msg in messages if msg.get("role") == "user" and isinstance(msg.get("content"), list)]
+                final_text = "Busquei no sistema mas não encontrei uma resposta definitiva. Pode reformular a pergunta ou dar mais detalhes?"
                 _save_conversation_message(phone, "assistant", final_text)
 
     except httpx.TimeoutException:
