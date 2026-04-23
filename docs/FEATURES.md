@@ -1,188 +1,126 @@
-# Funcionalidades do INTEL — Mapa Completo
+# INTEL - Mapa Completo de Features
 
-> Auto-gerado + mantido manualmente. Consulte ANTES de implementar qualquer feature.
-> Ultima atualizacao: 2026-04-19
+> Consulte ANTES de implementar qualquer feature.
+> Última atualização: 2026-04-23
+> **548 endpoints | 35 páginas | 62 services | 10 integrações | 66 tabelas**
 
-## Por Pagina
+---
 
-### Dashboard (`/` → rap_dashboard.html)
-- Stats gerais (contatos, health, circulos)
-- Acoes sugeridas (action proposals) com botoes executaveis
-- Contatos recentes
-- Tarefas pendentes
-- Calendario resumido
-- **LinkedIn Editorial card**: posts semana, impressoes, engajamento, metricas pendentes, proximo post
+## 1. Dashboard (`/`)
+- Morning Briefing (saudação + resumo do dia) → `dashboard.py`
+- Stat Cards (contatos, círculos, atenção, briefings) → `GET /api/v1/dashboard`
+- **Clipping do Dia** (notícias curadas por IA, 12 fontes RSS) → `GET /api/news/clipping`
+  - 👍👎 Feedback (sistema aprende) → `POST /api/news/{id}/feedback`
+  - 📝 Criar post LinkedIn (gera texto + cruza artigo) → `POST /api/news/to-post`
+  - 📤 Compartilhar com contato (msg personalizada por IA) → `POST /api/share/generate-message`
+- LinkedIn Hoje (posts agendados + sugestão de draft) → `GET /api/editorial/dashboard-tasks`
+- Ações Sugeridas (dedup, auto-resolve on reply) → `GET /api/action-proposals`
+- Quem Contatar Hoje → `GET /api/ai/at-risk`
+- Agenda de Hoje (exclui aniversários) → `GET /api/calendar/today`
+- Tarefas → `GET /api/tasks`
+- Projetos Ativos → `GET /api/projects/active-summary`
+- Alertas Veículos → `GET /api/veiculos/alertas`
+- Status API Claude (cache 1h) → `GET /api/ai/status`
 
-### Contatos (`/contatos` → rap_contacts.html)
-- Lista paginada com busca e filtros (circulo, empresa, tags)
-- Importacao CSV
-- Novo contato manual
+## 2. Contatos (`/contatos`)
+- Lista com busca, filtro letra/contexto, filter=needs_attention
+- Detalhe com tabs: Resumo, Timeline, Informações, Relacionamentos, Rodas, Documentos
+- **Resumo IA** (enriquecimento com Claude) → `contact_enrichment.py`
+- **Análise de conversas inline** (tom, pendências, oportunidades) → `POST /api/contacts/{id}/analyze-conversations`
+- **Artigos para reconexão** → `GET /api/contacts/{id}/article-suggestions`
+- Briefing pré-reunião → `POST /api/contacts/{id}/briefing`
+- Chat IA → `POST /api/contacts/{id}/intelligence/chat`
+- Quick actions contextuais → `GET /api/briefing/quick-actions/{id}`
+- Merge duplicatas → `contact_dedup.py`
+- Exportar CSV/JSON → `export.py`
 
-### Contato Detalhe (`/contatos/{id}` → rap_contact_detail.html)
-- Resumo IA (Claude)
-- Timeline (memorias, interacoes, mensagens)
-- Informacoes (empresa, cargo, telefone, email, LinkedIn)
-- Relacionamentos inferidos
-- Rodas de contato
-- Documentos (Google Drive)
-- **LinkedIn tile**: headline, about, experience, skills, conexoes, foto
-- **Enriquecer LinkedIn** (botao refresh no tile)
-- Fatos extraidos por IA
-- Insights (relevancia, potencial, sentimento)
+## 3. Círculos (`/circulos`)
+- Dashboard C1-C5 com health médio → `circulos.py`
+- Frequências: C1=7d, C2=30d, C3=30d, C4=90d, C5=180d
+- Recálculo 2x/dia (cron 5h + 18h)
+- Definição manual de círculo
 
-### Circulos (`/circulos` → rap_circulos.html)
-- Visualizacao C1-C5 com health scores
-- Reclassificacao de contatos
-- Metricas por circulo
+## 4. Grupos Sociais (`/grupos-sociais`)
+- Mapeia grupos WhatsApp como círculos sociais
+- **Cache** no DB (sync diário, carregamento instantâneo) → `social_groups_cache`
+- Cruzamento participantes × contatos INTEL
+- Health médio, quem precisa atenção
+- Sync manual via botão
 
-### WhatsApp (`/rap/whatsapp` → rap_inbox.html)
-- Inbox de conversas
-- Envio de mensagens
-- Templates de mensagem
+## 5. Projetos (`/projetos`)
+- CRUD com milestones, tarefas, notas, membros, documentos
+- **Smart Update** (IA analisa msgs → sugere completar tarefas/criar novas) → `project_smart_update.py`
+  - Memória de pareceres anteriores (contexto persistente)
+  - Mensagens agrupadas por conversa
+  - Filtra por projeto (ignora outros assuntos)
+- **Parecer IA** (análise contextual com docs + grupos WA) → `POST /api/projects/{id}/ai-analysis`
+- **Compartilhar parecer** (adapta para destinatário via WA/email) → `POST /api/projects/{id}/adapt-analysis`
+- **Ciclo financeiro** (email cobrança → detecta pagamento → auto-ciclo) → `payment_cycle.py`
+- **Grupos WA vinculados** (mensagens incluídas na análise) → `project_whatsapp_groups`
+- **Download docs dos grupos** → Google Drive → `POST /api/projects/{id}/download-group-docs`
+- Link email no milestone (thread Gmail)
 
-### Configuracoes (`/configuracoes` → rap_settings.html)
-- Status conexao WhatsApp (Evolution API)
-- Webhook status
-- **Importar historico WhatsApp** (drag & drop .txt exportados do celular)
+## 6. Veículos (`/veiculos`)
+- Dashboard com itens de manutenção e status
+- **Upload NF via foto** (compressão client-side + OCR Claude Vision + Google Drive) → `POST /api/veiculos/{id}/upload-os`
+- Criar/finalizar OS → `veiculos.py`
+- Editar itens em OS concluídas → `PUT /api/ordens/{id}/editar-itens`
+- Timeline de manutenções
+- Alertas de itens vencidos/atenção
 
-### Projetos (`/projetos` → rap_projetos.html)
-- Lista com filtro por tipo (negocio, patrimonio, pessoal, conselho)
-- Status: ativo, pausado, concluido
-- Indicadores: tarefas vencidas, marcos atrasados
+## 7. Oficinas (`/oficinas`)
+- CRUD com especialidades, serviços, contato → `oficinas.py`
 
-### Projeto Detalhe (`/projetos/{id}` → rap_projeto_detail.html)
-- **AI Briefing** (analisa tarefas, msgs membros, notas, calendario)
-- Tarefas agrupadas (vencidas/hoje/proximas/concluidas)
-- Marcos com status
-- Timeline/notas
-- Participantes
-- Documentos (Google Drive)
+## 8. Editorial Calendar (`/editorial`)
+- Pipeline: import → análise IA → adaptação → agendamento → publicação → métricas
+- 149 posts (7 publicados, 141 drafts)
+- Análise IA: categoria, público, complexidade, score, gancho LinkedIn
+- Bulk schedule, import de artigos
+- **Doc detalhada**: `docs/FEATURE_EDITORIAL.md`
 
-### Campanhas (`/campanhas` → rap_campanhas.html)
-- Campanhas de outreach
-- Acoes pendentes por dia
+## 9. Hot Takes (`/hot-takes`)
+- Gerar de URL, digest, publicar → `hot_takes.py`
 
-### Briefings (`/briefings` → rap_briefings.html)
-- Briefings pre-reuniao gerados por IA
-- Contexto enriquecido (msgs, historico, fatos)
+## 10. News Hub
+- 12 fontes RSS gratuitas (Google News, Valor, Exame, MIT Tech Review, etc.)
+- Clipping diário com IA (Haiku, ~$0.01/dia)
+- Feedback 👍👎 com aprendizado de preferências
+- Sugerir contatos para compartilhar notícia
+- Criar post LinkedIn a partir de notícia
 
-### Calendario (`/calendario` → rap_calendario.html)
-- Eventos Google Calendar sincronizados
-- Vinculo com contatos
+## 11. Comunicação
+- **WhatsApp**: send, receive, sync, webhook, import .txt, grupos → Evolution API
+- **Gmail**: sync, send, threading → Google API
+- **Inbox unificado**: `/inbox`
+- **Smart Follow-Up**: detecta emails sem resposta, cria FUP automático → `smart_fup.py`
+- **Action Proposals**: dedup por contato+tipo, auto-resolve on reply, expire >7d
 
-### Editorial (`/editorial` → editorial.html)
-- Calendario semanal (Seg-Dom)
-- Stats: agendados, publicados, hot takes, biblioteca
-- Posts agendados/publicados com metricas LinkedIn
-- Hot takes (noticia → hook → body → CTA)
-- Biblioteca de artigos (141 rascunhos)
-- Modal de edicao com metricas (impressoes, reacoes, comentarios)
-- Agendar publicacao
-- **Funil Editorial PDCA**: Posts → Impressoes → Engajamento → Mensagens → Reunioes
-- **Tendencia semanal** com barras de impressoes (4 semanas)
-- **Performance por pilar**: NeoGovernanca, IA aplicada, Bastidores
-- **Insights automaticos** (melhor pilar, taxa de engajamento, tendencias)
-- **Briefing semanal IA** (cron domingos 18h): analisa performance, sugere 3 posts, cria tarefas
-- **Upload xlsx metricas**: Drag & drop de arquivo LinkedIn Analytics (.xlsx) com parse automatico
-- **Historico de metricas** (`editorial_metrics_history`): snapshots de metricas ao longo do tempo
-- **Comparativo normalizado 48h**: tabela comparando posts no mesmo ponto temporal
-- **Auto-criacao de tarefas de metricas**: ao publicar, cria tarefa "Coletar metricas" para 48h depois
-- **Dashboard card Editorial Metricas**: posts da semana, impressoes, engajamento, metricas pendentes
+## 12. Calendário (`/calendario`)
+- Sync Google Calendar bidirecional
+- Eventos de hoje no dashboard (exclui aniversários)
 
-### Hot Takes (`/hot-takes` → hot_takes.html)
-- Lista de hot takes com status
-- Criar novo a partir de noticia
-- Publicar com link LinkedIn
+## 13. Briefings (`/briefings`)
+- Contatos que precisam briefing (C1-3, health<50, com interações)
+- Geração com Claude (contexto: fatos, mensagens, tasks)
 
-### LinkedIn Import (`/contatos/linkedin` → rap_linkedin_import.html)
-- Importar conexoes via CSV do LinkedIn
-- Preview antes de importar
+## 14. Campanhas (`/campanhas`)
+- CRUD com steps, executor automático no cron
 
-### LinkedIn Bookmarklet (`/linkedin/bookmarklet` → rap_linkedin_bookmarklet.html)
-- Bookmarklet para enriquecer perfil manualmente
+## 15. Integrações
+| Integração | Uso | Config |
+|------------|-----|--------|
+| Google (Calendar, Contacts, Drive, Tasks, Gmail) | Sync bidirecional | OAuth scopes |
+| WhatsApp (Evolution API) | Send/receive/groups | EVOLUTION_API_URL/KEY |
+| Claude AI (Anthropic) | Briefings, OCR, análises, clipping | ANTHROPIC_API_KEY |
+| LinkedIn (LinkdAPI) | Enriquecimento | LINKDAPI_KEY |
+| Fathom | Import reuniões | FATHOM_API_KEY |
+| ConselhoOS | Sync dados conselhos | CONSELHOOS_DATABASE_URL |
 
-### Analytics (`/analytics` → rap_analytics.html)
-- Dashboard analitico
-- Metricas de engajamento
-
-### Emails (`/emails` → rap_emails.html)
-- Triage de emails com IA
-- Classificacao e prioridade
-
-### Veiculos (`/veiculos` → rap_veiculos.html)
-- Gestao de frota
-- Ordens de servico
-- Timeline de manutencao
-
-### Oficinas (`/oficinas` → rap_oficinas.html)
-- Cadastro de oficinas mecanicas
-
-### News (`/news` → rap_news.html)
-- Feed de noticias relevantes
-- Match com contatos
-
-### Artigos (`/artigos` → artigos.html)
-- Biblioteca de artigos do blog
-
-### Intel Bot (WhatsApp conversacional via intel-bot)
-- Bot WhatsApp dedicado na instancia "intel-bot" (numero 5511915020192)
-- Acesso exclusivo do Renato (+5511984153337)
-- **Arquitetura**: Claude tool_use (function calling) — sem classificacao rigida de intencao
-- **Memoria conversacional**: tabela `bot_conversations` armazena historico (ultimas 20 msgs por telefone)
-- **Modelo**: claude-sonnet-4-20250514 com max_tokens 1000
-- **Loop de ferramentas**: ate 3 iteracoes (Claude decide quais tools usar)
-- Ferramentas disponiveis (12 tools):
-  - `search_contact(name)`: busca contatos por nome
-  - `get_contact_detail(contact_id)`: info completa + msgs + memorias
-  - `create_task(titulo, descricao, project_id, prazo_dias)`: cria tarefa
-  - `complete_task(task_id)`: conclui tarefa
-  - `get_overdue_tasks()`: tarefas vencidas
-  - `get_project_status(project_id)`: status projeto + tarefas + notas
-  - `save_insight(text, contact_id, project_id)`: salva nota/insight
-  - `schedule_meeting(titulo, data_hora, duracao_min, contact_id, local)`: cria evento calendario
-  - `send_whatsapp(contact_id, message)`: envia WhatsApp via rap-whatsapp
-  - `get_calendar_today()`: eventos de hoje
-  - `search_projects(query)`: busca projetos
-  - `draft_message(contact_id, context)`: gera rascunho personalizado com contexto
-- System prompt dinamico: data/hora, projetos ativos, tarefas vencidas, perfil do Renato
-- Rate limit: ignora emojis e mensagens triviais
-- Notificacoes proativas: editorial briefing semanal, alertas do sistema
-- Service: `app/services/intel_bot.py`
-- Helper: `send_intel_notification(text, phone)` para qualquer servico enviar notificacao
-
-## Integrações Ativas
-
-| Integracao | Funcionalidade | Config |
-|------------|---------------|--------|
-| WhatsApp (Evolution API) | Envio/recebimento msgs, webhook, historico | EVOLUTION_API_URL/KEY |
-| WhatsApp Intel Bot | Bot conversacional (intel-bot instance) | INTEL_BOT_INSTANCE, INTEL_BOT_NUMBER |
-| Google Calendar | Sync eventos, criar/remarcar | GOOGLE_CLIENT_ID/SECRET |
-| Google Gmail | Leitura emails, triage IA | GOOGLE_CLIENT_ID/SECRET |
-| Google Drive | Documentos de contatos/projetos, push notifications (webhook), auto-reindex | GOOGLE_CLIENT_ID/SECRET, DRIVE_WEBHOOK_TOKEN |
-| Google Tasks | Sync tarefas | GOOGLE_CLIENT_ID/SECRET |
-| Claude (Anthropic) | Briefings, resumos, analises, OCR | ANTHROPIC_API_KEY |
-| LinkdAPI | Enriquecimento LinkedIn (perfil, skills, exp) | LINKDAPI_KEY |
-| RapidAPI Fresh LinkedIn | Fallback enriquecimento (legado) | RAPIDAPI_KEY |
-| Fathom | Importar reunioes → projetos/tarefas | FATHOM_API_KEY_* |
-
-## Scripts Utilitarios (`scripts/`)
-
-| Script | Funcao |
-|--------|--------|
-| import_fathom_meeting.py | Importar reuniao Fathom → projetos/tarefas |
-| sync_whatsapp_history.py | Sync historico WhatsApp via Evolution API |
-| sync-local-db.sh | Sync producao → banco local |
-| enrich_linkedin_batch.py | Batch enrichment LinkedIn (legado) |
-
-## Cron Jobs (vercel.json)
-
-| Cron | Endpoint | Frequencia |
-|------|----------|------------|
-| Daily sync | /api/cron/daily-sync | 5h UTC |
-| WhatsApp history sync | /api/cron/sync-whatsapp-history | 6h UTC |
-| Health recalc | /api/cron/recalculate-health | 5h + 18h UTC |
-| Expire proposals | /api/cron/expire-proposals | 4h UTC |
-| Editorial briefing | /api/cron/editorial-weekly-briefing | Dom 21h UTC (18h BR) |
-| Drive documents reindex | /api/cron/index-drive-documents | 7h UTC |
-
-## Numeros (528 endpoints, 32 templates, 65 tabelas, 60 services)
+## 16. Cron Jobs (vercel.json)
+| Horário | Job | Steps |
+|---------|-----|-------|
+| 5h diário | daily-sync | Health, Contacts, Calendar, Tasks, Gmail, PaymentCycle, WA, SmartFUP, AI, Campaigns, AutoEnrich, GroupDocs, Avatars, Clipping, SocialGroupsCache (13 steps) |
+| 6h diário | sync-whatsapp-history | Histórico WA |
+| 18h diário | health-recalc | Health scores |
+| 8h segunda | weekly-digest | Digest semanal |
+| 4h domingo | cleanup | Expirar propostas, limpar notificações |
