@@ -523,6 +523,21 @@ def init_db():
             ON messages(contact_id)
         ''')
 
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_messages_enviado
+            ON messages(enviado_em DESC NULLS LAST)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_messages_external_id
+            ON messages(external_id) WHERE external_id IS NOT NULL
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_contacts_ultimo_contato
+            ON contacts(ultimo_contato DESC NULLS LAST)
+        ''')
+
         # Contact memories (historical interactions)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS contact_memories (

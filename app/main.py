@@ -137,19 +137,6 @@ async def lifespan(app: FastAPI):
     try:
         init_db()
         print("PostgreSQL database initialized")
-        # Fix document 87 column shift (one-time data fix)
-        try:
-            conn = get_db()
-            cursor = conn.cursor()
-            cursor.execute("SELECT nome FROM documentos WHERE id = 87")
-            row = cursor.fetchone()
-            if row and row['nome'] and row['nome'].startswith('1r4Wq3'):
-                from integrations.google_drive import fix_document_column_shift
-                fix_document_column_shift(conn, 87)
-                print("Fixed document 87 column shift")
-            conn.close()
-        except Exception as e:
-            print(f"Doc 87 fix skipped: {e}")
     except Exception as e:
         print(f"DB init error: {e}")
     yield
@@ -167,7 +154,11 @@ app = FastAPI(
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://intel.almeida-prado.com",
+        "https://prospect-system.vercel.app",
+        "http://localhost:8000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -204,8 +195,11 @@ whatsapp = WhatsAppIntegration()
 
 # Debug endpoint
 @app.get("/api/debug/dashboard")
-async def debug_dashboard():
+async def debug_dashboard(request: Request):
     """Debug endpoint to test dashboard functions individually."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
     import traceback
     results = {}
 
@@ -387,28 +381,7 @@ async def ai_api_status():
 
     return _claude_api_status
 
-@app.post("/api/admin/reset-db")
-async def reset_database():
-    """Reseta o banco de dados (CUIDADO!)"""
-    conn = get_db()
-    cursor = conn.cursor()
-
-    # Drop unique index if exists
-    cursor.execute("DROP INDEX IF EXISTS idx_prospects_email")
-
-    # Clear prospects table
-    cursor.execute("DELETE FROM prospects")
-
-    # Recreate non-unique index
-    cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_prospects_email
-        ON prospects(email) WHERE email IS NOT NULL AND email != ''
-    ''')
-
-    conn.commit()
-    conn.close()
-
-    return {"status": "reset", "message": "Database cleared and index recreated"}
+# reset-db REMOVIDO por segurança (era acessível sem auth)
 
 
 # ============== API Routes - Auth ==============
@@ -7245,7 +7218,7 @@ async def api_watch_project_folder(project_id: int, request: Request):
         raise HTTPException(status_code=401, detail="Google Drive not connected")
 
     # Build webhook URL
-    base_url = os.getenv("BASE_URL", "https://intel.rafrsp.com")
+    base_url = os.getenv("BASE_URL", "https://intel.almeida-prado.com")
     webhook_url = f"{base_url}/api/webhooks/google-drive"
 
     # Channel token for verification
