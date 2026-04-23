@@ -16347,6 +16347,85 @@ async def api_refresh_clipping():
     return await generate_daily_clipping(limit=10)
 
 
+@app.post("/api/news/to-post")
+async def api_news_to_post(request: Request):
+    """Cria post editorial a partir de noticia do clipping, gerando texto e cruzando com artigos"""
+    import httpx as _hx
+
+    data = await request.json()
+    titulo = data.get('titulo', '')
+    sugestao = data.get('sugestao', '')
+    news_id = data.get('news_id')
+
+    # Buscar artigo relacionado dos drafts
+    article_url = None
+    article_match = None
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # Buscar draft que melhor combina por keywords no titulo
+        words = [w.lower() for w in titulo.split() if len(w) > 4]
+        if words:
+            like_clause = " OR ".join(["article_title ILIKE %s" for _ in words[:5]])
+            params = [f"%{w}%" for w in words[:5]]
+            cursor.execute(f"""
+                SELECT id, article_title, article_url FROM editorial_posts
+                WHERE status = 'draft' AND article_url IS NOT NULL AND article_url != ''
+                  AND ({like_clause})
+                LIMIT 1
+            """, params)
+            match = cursor.fetchone()
+            if match:
+                article_match = dict(match)
+                article_url = match['article_url']
+
+    # Gerar texto para LinkedIn com IA
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    linkedin_text = ""
+    if api_key:
+        try:
+            prompt = f"""Gere um post para LinkedIn do Renato Prado sobre esta noticia.
+
+NOTICIA: {titulo}
+SUGESTAO DE ANGULO: {sugestao or 'livre'}
+{f'ARTIGO RELACIONADO DO RENATO: {article_match["article_title"]} ({article_url})' if article_match else ''}
+
+Regras:
+- Max 200 palavras
+- Tom: executivo mas acessivel, com opiniao forte
+- Comece com um gancho que prende atenção
+- Conecte com governanca, IA ou empreendedorismo quando possivel
+- Termine com pergunta ou call to action
+- {f'Mencione e linke o artigo: {article_url}' if article_url else 'Sem link de artigo'}
+- Inclua 3-4 hashtags relevantes no final
+- Em portugues"""
+
+            async with _hx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500,
+                          "messages": [{"role": "user", "content": prompt}]}
+                )
+                if resp.status_code == 200:
+                    linkedin_text = resp.json()["content"][0]["text"]
+        except Exception as e:
+            linkedin_text = sugestao or titulo
+
+    # Criar post editorial
+    from services.editorial_calendar import create_editorial_post
+    post = create_editorial_post({
+        'article_title': titulo,
+        'article_url': article_url or '',
+        'tipo': 'hot_take',
+        'canal': 'linkedin',
+        'status': 'draft',
+        'conteudo_adaptado': linkedin_text,
+        'notas': f"Criado do clipping diario. {('Sugestao IA: ' + sugestao) if sugestao else ''}",
+    })
+
+    return {"status": "success", "post": post}
+
+
 @app.post("/api/news/{news_id}/feedback")
 async def api_news_feedback(news_id: int, request: Request):
     """Registra feedback sobre noticia (liked/disliked/shared/hot_take)"""

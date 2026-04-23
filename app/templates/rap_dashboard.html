@@ -3097,7 +3097,6 @@
         }
 
         async function newsToPost(newsId, titulo, sugestao) {
-            // Criar tarefa editorial + feedback 'hot_take'
             try {
                 // Registrar como hot_take no feedback
                 await fetch(`/api/news/${newsId}/feedback`, {
@@ -3106,16 +3105,14 @@
                     body: JSON.stringify({ feedback: 'hot_take' })
                 });
 
-                // Criar post editorial como draft
-                const resp = await fetch('/api/editorial', {
+                // Criar post via endpoint que gera texto + cruza com artigos
+                const resp = await fetch('/api/news/to-post', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        article_title: titulo,
-                        tipo: 'hot_take',
-                        canal: 'linkedin',
-                        status: 'draft',
-                        notas: sugestao ? 'Sugestao IA: ' + sugestao : 'Baseado no clipping diario'
+                        news_id: newsId,
+                        titulo: titulo,
+                        sugestao: sugestao
                     })
                 });
                 const data = await resp.json();
