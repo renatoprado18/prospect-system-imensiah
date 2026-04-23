@@ -1,0 +1,94 @@
+{% extends "rap_base.html" %}
+
+{% block title %}Tarefas Avulsas - INTEL{% endblock %}
+{% block page_title %}Tarefas Avulsas{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle">Tarefas não vinculadas a projetos</p>{% endblock %}
+
+{% block extra_css %}
+.task-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    transition: background 0.2s;
+}
+.task-item:hover { background: var(--bg-secondary, #f8fafc); }
+.task-checkbox {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 2px solid #cbd5e1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+}
+.task-checkbox:hover { border-color: #22c55e; }
+.task-checkbox.done { background: #22c55e; border-color: #22c55e; color: white; }
+.task-title { font-weight: 600; font-size: 0.9rem; }
+.task-meta { font-size: 0.75rem; color: var(--text-secondary, #64748b); }
+.task-overdue { color: #ef4444; font-weight: 600; }
+.empty-state { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-body p-0" id="tasksList">
+        <div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    async function loadTasks() {
+        const container = document.getElementById('tasksList');
+        try {
+            const resp = await fetch('/api/projects/all-tasks?status=pending&limit=50');
+            const data = await resp.json();
+            const tasks = (data.tasks || []).filter(t => !t.project_name);
+
+            if (tasks.length === 0) {
+                container.innerHTML = '<div class="empty-state"><i class="bi bi-check-circle text-success" style="font-size:3rem;"></i><p class="mt-2">Nenhuma tarefa avulsa pendente</p></div>';
+                return;
+            }
+
+            const today = new Date().toISOString().split('T')[0];
+            container.innerHTML = tasks.map(t => {
+                const isOverdue = t.data_vencimento && t.data_vencimento.split('T')[0] < today;
+                const dateStr = t.data_vencimento ? new Date(t.data_vencimento).toLocaleDateString('pt-BR', {day: '2-digit', month: 'short'}) : '';
+                const resp = t.responsavel || '';
+                return `
+                    <div class="task-item" id="task-${t.id}">
+                        <div class="task-checkbox" onclick="completeTask(${t.id})"></div>
+                        <div style="flex:1;">
+                            <div class="task-title">${t.titulo}</div>
+                            <div class="task-meta">
+                                ${dateStr ? `<span class="${isOverdue ? 'task-overdue' : ''}"><i class="bi bi-clock me-1"></i>${dateStr}</span>` : ''}
+                                ${resp ? `<span class="ms-2"><i class="bi bi-person me-1"></i>${resp}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>`;
+            }).join('');
+        } catch (e) {
+            container.innerHTML = '<div class="empty-state text-danger">Erro ao carregar tarefas</div>';
+        }
+    }
+
+    async function completeTask(taskId) {
+        try {
+            await fetch(`/api/projects/tasks/${taskId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({status: 'completed'})
+            });
+            const el = document.getElementById('task-' + taskId);
+            if (el) {
+                el.querySelector('.task-checkbox').classList.add('done');
+                el.querySelector('.task-checkbox').innerHTML = '<i class="bi bi-check" style="font-size:0.8rem;"></i>';
+                el.style.opacity = '0.4';
+                setTimeout(() => el.remove(), 500);
+            }
+        } catch (e) {}
+    }
+
+    loadTasks();
+</script>
+{% endblock %}

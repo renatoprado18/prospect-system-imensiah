@@ -1965,11 +1965,11 @@
                     <div class="stat-label">Contatos c/ Atenção</div>
                 </div>
             </div>
-            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/projetos'">
+            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/tarefas-pendentes'">
                 <div class="stat-icon" style="background: rgba(239, 68, 68, 0.1); color: #ef4444;"><i class="bi bi-exclamation-circle"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statTasksOverdue">-</div>
-                    <div class="stat-label">Tarefas Vencidas</div>
+                    <div class="stat-label">Tarefas Avulsas</div>
                 </div>
             </div>
         </div>
@@ -3333,13 +3333,10 @@
         // Load tarefas vencidas count
         async function loadTasksOverdue() {
             try {
-                const resp = await fetch('/api/projects/all-tasks?status=pending&limit=100');
+                const resp = await fetch('/api/tasks/standalone-pending');
                 if (resp.ok) {
                     const data = await resp.json();
-                    const tasks = data.tasks || [];
-                    const today = new Date().toISOString().split('T')[0];
-                    const overdue = tasks.filter(t => t.data_vencimento && t.data_vencimento.split('T')[0] < today).length;
-                    document.getElementById('statTasksOverdue').textContent = overdue;
+                    document.getElementById('statTasksOverdue').textContent = data.count || 0;
                 } else {
                     document.getElementById('statTasksOverdue').textContent = '0';
                 }

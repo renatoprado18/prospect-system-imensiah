@@ -14705,6 +14705,24 @@ async def api_active_projects_summary(limit: int = 5):
     return get_active_projects_summary(limit=limit)
 
 
+@app.get("/api/tasks/standalone-pending")
+async def api_standalone_pending_tasks():
+    """Conta tarefas pendentes NÃO vinculadas a projetos"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM tasks
+            WHERE status = 'pending' AND project_id IS NULL
+        """)
+        return {"count": cursor.fetchone()['count']}
+
+
+@app.get("/tarefas-pendentes", response_class=HTMLResponse)
+async def tarefas_pendentes_page(request: Request):
+    """Página de tarefas avulsas (sem projeto)"""
+    return templates.TemplateResponse("rap_tarefas_avulsas.html", {"request": request})
+
+
 @app.get("/api/projects/all-tasks")
 async def api_all_project_tasks(status: str = "pending", limit: int = 10):
     """Lista tarefas de todos os projetos"""
