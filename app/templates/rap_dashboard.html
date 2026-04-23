@@ -50,7 +50,7 @@
         /* Stats Cards - Compact */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(5, 1fr);
             gap: 12px;
             margin-bottom: 16px;
         }
@@ -1837,29 +1837,10 @@
 {% endblock %}
 
 {% block content %}
-        <!-- Morning Briefing -->
-        <div class="morning-briefing" id="morningBriefing">
-            <div class="morning-briefing-header">
-                <i class="bi bi-sun"></i>
-                <div>
-                    <div class="morning-briefing-greeting" id="briefingGreeting">Bom dia, Renato!</div>
-                    <div class="morning-briefing-date" id="briefingDate"></div>
-                </div>
-            </div>
-            <div class="morning-briefing-summary" id="briefingSummary">
-                Carregando seu resumo do dia...
-            </div>
-            <div class="morning-briefing-stats" id="briefingStats">
-                <!-- Preenchido via JS -->
-            </div>
-            <div class="morning-briefing-focus" id="briefingFocus" style="display: none;">
-                <div class="focus-label">Foco sugerido</div>
-                <div class="focus-contact" id="focusContact" onclick="goToFocusContact()">
-                    <i class="bi bi-person"></i>
-                    <span id="focusContactName">-</span>
-                    <span id="focusContactReason" style="opacity: 0.8; font-size: 0.8rem;"></span>
-                </div>
-            </div>
+        <!-- Data atual -->
+        <div id="currentDateBar" style="font-size: 0.85rem; color: var(--gray-500); margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+            <i class="bi bi-calendar3"></i>
+            <span id="currentDateText"></span>
         </div>
 
         <!-- Action Proposals Widget (INTEL Proativo) -->
@@ -1972,6 +1953,13 @@
                     <div class="stat-label">Tarefas Avulsas</div>
                 </div>
             </div>
+            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/veiculos'">
+                <div class="stat-icon" style="background: rgba(107, 114, 128, 0.1); color: #6b7280;"><i class="bi bi-car-front"></i></div>
+                <div class="stat-content">
+                    <div class="stat-value" id="statVeiculos">-</div>
+                    <div class="stat-label">Alertas Veículos</div>
+                </div>
+            </div>
         </div>
 
         <!-- Content Grid -->
@@ -2070,43 +2058,7 @@
 
             <!-- Right Column -->
             <div>
-                <!-- AI Suggestions Panel -->
-                <div class="card mb-4" style="border: 1px solid var(--primary); border-top: 3px solid var(--primary);">
-                    <div class="card-header" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(14, 165, 233, 0.05));">
-                        <h2 class="card-title" style="color: var(--primary);">
-                            <i class="bi bi-robot me-2"></i>Sugestões IA
-                        </h2>
-                        <span class="badge bg-primary" id="suggestionsBadge" style="display: none;">0</span>
-                    </div>
-                    <div class="card-body" id="aiSuggestions">
-                        <div class="text-center py-3">
-                            <div class="spinner-border spinner-border-sm text-primary"></div>
-                            <span class="ms-2 text-muted">Carregando sugestoes...</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 3. Projetos Ativos -->
-                <div class="card mb-4">
-                    <div class="card-header" style="padding: 12px 16px;">
-                        <h2 class="card-title"><i class="bi bi-folder me-2" style="color: #6366f1;"></i>Projetos Ativos</h2>
-                        <a href="/projetos" class="btn btn-sm btn-outline-primary">Ver Todos</a>
-                    </div>
-                    <div class="card-body" id="projectsWidget" style="padding: 0;">
-                        <div class="text-center py-3">
-                            <div class="spinner-border spinner-border-sm text-primary"></div>
-                            <span class="ms-2 text-muted">Carregando projetos...</span>
-                        </div>
-                    </div>
-                    <!-- Veiculos compact integrado no card -->
-                    <div id="maintenanceAlertsCompact" style="display:none; border-top: 1px solid var(--gray-100);">
-                        <a href="/veiculos" class="d-flex align-items-center gap-2 p-2 px-3 text-decoration-none" style="font-size: 0.8rem;">
-                            <i class="bi bi-car-front" style="color: var(--gray-400);"></i>
-                            <span id="maintenanceCompactText" style="color: var(--gray-500);">Veículos: verificando...</span>
-                        </a>
-                    </div>
-                </div>
-
+                <!-- Coluna direita: apenas Agenda, Tarefas e Conteudo -->
             </div>
         </div>
 {% endblock %}
@@ -4593,16 +4545,18 @@
                 const data = await response.json();
                 const totalAlertas = data.total_vencidos + data.total_atencao;
 
-                // Sempre modo compacto
-                compact.style.display = 'block';
-                if (totalAlertas === 0) {
-                    compactText.textContent = 'Veículos: tudo em dia ✓';
-                    compactText.style.color = '#22c55e';
-                } else {
-                    compactText.textContent = `Veículos: ${totalAlertas} alerta${totalAlertas > 1 ? 's' : ''} ⚠️`;
-                    compactText.style.color = '#ef4444';
+                // Stat card de veículos
+                const statEl = document.getElementById('statVeiculos');
+                if (statEl) {
+                    statEl.textContent = totalAlertas;
+                    if (totalAlertas > 0) {
+                        statEl.style.color = '#ef4444';
+                    } else {
+                        statEl.textContent = '✓';
+                        statEl.style.color = '#22c55e';
+                    }
                 }
-                return; // Nunca mostra card completo no dashboard
+                return;
                 countBadge.textContent = `${totalAlertas} alerta${totalAlertas > 1 ? 's' : ''}`;
 
                 // Combine and limit alerts
@@ -4641,9 +4595,13 @@
 
         // Load all dashboard data on page load
         // Pre-load all shared data in parallel, then render UI
+        // Data atual no topo
+        const dateOpts = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+        const dateStr = new Date().toLocaleDateString('pt-BR', dateOpts);
+        document.getElementById('currentDateText').textContent = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+
         loadAllData().then(() => {
             loadDashboardData();
-            loadMorningBriefing();
             loadContactToday();
             loadTodayAgenda();
             loadLinkedInTasks();
@@ -4652,8 +4610,6 @@
 
         // Load secondary features after short delay (lower priority)
         setTimeout(() => {
-            loadAISuggestions();
-            loadProjectsWidget();
             loadMaintenanceAlerts();
             loadTasks();
             checkAIStatus();
