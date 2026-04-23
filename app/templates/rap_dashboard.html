@@ -2086,6 +2086,14 @@
                     </div>
                 </div>
 
+                <!-- Alertas Veiculos compacto -->
+                <div id="maintenanceAlertsCompact" class="mb-3" style="display:none;">
+                    <a href="/veiculos" class="d-flex align-items-center gap-2 p-2 rounded text-decoration-none" style="background: var(--gray-50); border: 1px solid var(--gray-100);">
+                        <i class="bi bi-car-front" style="color: var(--gray-500);"></i>
+                        <span id="maintenanceCompactText" style="font-size: 0.8rem; color: var(--gray-600);">Veículos: verificando...</span>
+                    </a>
+                </div>
+
                 <!-- 3. Projetos Ativos -->
                 <div class="card mb-4">
                     <div class="card-header" style="padding: 12px 16px;">
@@ -2100,26 +2108,7 @@
                     </div>
                 </div>
 
-                <!-- Alertas Veiculos (colapsado por padrao, expande se houver alertas) -->
-                <div id="maintenanceAlertsCompact" class="mb-3" style="display:none;">
-                    <a href="/veiculos" class="d-flex align-items-center gap-2 p-2 rounded text-decoration-none" style="background: var(--gray-50); border: 1px solid var(--gray-100);">
-                        <i class="bi bi-car-front" style="color: var(--gray-500);"></i>
-                        <span id="maintenanceCompactText" style="font-size: 0.8rem; color: var(--gray-600);">Veiculos: verificando...</span>
-                    </a>
-                </div>
-                <!-- Full card hidden, shown only if alerts exist -->
-                <div class="card maintenance-alerts-card mb-4" id="maintenanceAlertsCard" style="display:none;">
-                    <div class="card-header">
-                        <h2><i class="bi bi-car-front"></i> Manutenção Veicular</h2>
-                        <span class="alerts-count" id="maintenanceAlertsCount">...</span>
-                    </div>
-                    <div class="card-body p-0" id="maintenanceAlertsBody"></div>
-                    <div style="padding: 8px 16px; background: var(--gray-50); border-top: 1px solid var(--gray-100);">
-                        <a href="/veiculos" class="btn btn-sm btn-outline-secondary w-100">
-                            <i class="bi bi-gear me-1"></i> Gerenciar Veiculos
-                        </a>
-                    </div>
-                </div>
+                <!-- (maintenance compact moved above projetos) -->
 
             </div>
         </div>
@@ -2521,7 +2510,8 @@
                 try {
                     const projResp = await fetch('/api/projects/active-summary?limit=20');
                     const projData = await projResp.json();
-                    const withAction = projData.filter(p => p.tasks_pendentes > 0 || p.tasks_vencidas > 0).length;
+                    // Contar apenas projetos com tarefas VENCIDAS (não apenas pendentes)
+                    const withAction = projData.filter(p => p.tasks_vencidas > 0).length;
                     document.getElementById('statProjectsAction').textContent = withAction;
                 } catch(e) { document.getElementById('statProjectsAction').textContent = '-'; }
 
@@ -2703,10 +2693,26 @@
         async function loadTasks() {
             const container = document.getElementById('tasksList');
             try {
-                const response = await fetch('/api/tasks?limit=10&status=pending');
-                if (!response.ok) throw new Error('API indisponivel');
-                const data = await response.json();
-                const tasks = data.tasks || data || [];
+                // Tentar Google Tasks primeiro, fallback para tarefas locais
+                let tasks = [];
+                try {
+                    const response = await fetch('/api/tasks?limit=10&status=pending');
+                    if (response.ok) {
+                        const data = await response.json();
+                        tasks = data.tasks || data || [];
+                    }
+                } catch(e) {}
+
+                // Fallback: buscar tarefas de projetos (banco local)
+                if (tasks.length === 0) {
+                    try {
+                        const resp2 = await fetch('/api/projects/all-tasks?status=pending&limit=10');
+                        if (resp2.ok) {
+                            const data2 = await resp2.json();
+                            tasks = data2.tasks || data2 || [];
+                        }
+                    } catch(e) {}
+                }
 
                 if (!tasks || tasks.length === 0) {
                     container.innerHTML = `
@@ -4524,8 +4530,8 @@
 
                 let projects = await response.json();
 
-                // Filtrar: primeiro os que precisam ação (tarefas pendentes), depois OK
-                projects = projects.filter(p => p.tasks_pendentes > 0 || p.tasks_vencidas > 0);
+                // Filtrar: apenas projetos com tarefas vencidas ou marcos atrasados
+                projects = projects.filter(p => p.tasks_vencidas > 0);
 
                 if (!projects || projects.length === 0) {
                     container.innerHTML = `
