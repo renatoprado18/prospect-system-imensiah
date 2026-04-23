@@ -16383,21 +16383,23 @@ async def api_news_to_post(request: Request):
     linkedin_text = ""
     if api_key:
         try:
-            prompt = f"""Gere um post para LinkedIn do Renato Prado sobre esta noticia.
+            prompt = f"""Gere um post COMPLETO para LinkedIn do Renato Prado sobre esta noticia.
 
 NOTICIA: {titulo}
 SUGESTAO DE ANGULO: {sugestao or 'livre'}
 {f'ARTIGO RELACIONADO DO RENATO: {article_match["article_title"]} ({article_url})' if article_match else ''}
 
-Regras:
-- Max 200 palavras
-- Tom: executivo mas acessivel, com opiniao forte
-- Comece com um gancho que prende atenção
-- Conecte com governanca, IA ou empreendedorismo quando possivel
-- Termine com pergunta ou call to action
-- {f'Mencione e linke o artigo: {article_url}' if article_url else 'Sem link de artigo'}
-- Inclua 3-4 hashtags relevantes no final
-- Em portugues"""
+FORMATO OBRIGATORIO (minimo 150 palavras, maximo 250):
+
+1. GANCHO (1 frase impactante que prende atencao)
+2. CONTEXTO (2-3 frases sobre a noticia)
+3. OPINIAO DO RENATO (3-4 frases com visao forte, conectando com governanca/IA/empreendedorismo)
+{f'4. LINK DO ARTIGO: "Escrevi sobre isso em: {article_url}"' if article_url else '4. REFLEXAO FINAL (1-2 frases)'}
+5. CALL TO ACTION (pergunta para gerar engajamento)
+6. HASHTAGS (3-4 hashtags relevantes)
+
+Tom: executivo mas acessivel, com opiniao forte. Em portugues.
+NAO use markdown (sem ** ou ## ou *). Texto puro para colar no LinkedIn."""
 
             async with _hx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
