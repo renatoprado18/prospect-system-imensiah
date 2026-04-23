@@ -3037,10 +3037,13 @@
                                 </div>
                                 ${item.sugestao_post ? `<div style="font-size: 0.7rem; color: #8b5cf6; margin-top: 3px;"><i class="bi bi-lightning me-1"></i>${item.sugestao_post}</div>` : ''}
                             </div>
-                            <div class="d-flex gap-1 flex-shrink-0" style="margin-top: 2px;">
+                            <div class="d-flex flex-column gap-1 flex-shrink-0" id="news-actions-${item.news_id || 0}">
                                 ${item.news_id ? `
-                                <button class="btn btn-sm p-0" onclick="feedbackNews(${item.news_id}, 'liked')" title="Relevante" style="font-size: 0.8rem;">👍</button>
-                                <button class="btn btn-sm p-0" onclick="feedbackNews(${item.news_id}, 'disliked')" title="Irrelevante" style="font-size: 0.8rem;">👎</button>
+                                <div class="d-flex gap-1">
+                                    <button class="btn btn-sm p-0" onclick="feedbackNews(this, ${item.news_id}, 'liked')" title="Relevante">👍</button>
+                                    <button class="btn btn-sm p-0" onclick="feedbackNews(this, ${item.news_id}, 'disliked')" title="Irrelevante">👎</button>
+                                    <button class="btn btn-sm p-0" onclick="newsToPost(${item.news_id}, '${(item.titulo_resumido || '').replace(/'/g, "\\'")}', '${(item.sugestao_post || '').replace(/'/g, "\\'")}')" title="Criar post LinkedIn" style="font-size: 0.75rem;">📝</button>
+                                </div>
                                 ` : ''}
                             </div>
                         </div>`;
@@ -3071,7 +3074,7 @@
             }
         }
 
-        async function feedbackNews(newsId, feedback) {
+        async function feedbackNews(btn, newsId, feedback) {
             try {
                 await fetch(`/api/news/${newsId}/feedback`, {
                     method: 'POST',
@@ -3079,8 +3082,52 @@
                     body: JSON.stringify({ feedback })
                 });
                 // Visual feedback
-                event.target.style.opacity = '0.3';
+                const container = btn.closest('.d-flex');
+                if (feedback === 'liked') {
+                    container.innerHTML = '<span style="font-size:0.7rem; color:#22c55e;">✓ Relevante</span>';
+                } else {
+                    container.innerHTML = '<span style="font-size:0.7rem; color:#94a3b8;">✗ Ignorada</span>';
+                }
             } catch (e) {}
+        }
+
+        async function newsToPost(newsId, titulo, sugestao) {
+            // Criar tarefa editorial + feedback 'hot_take'
+            try {
+                // Registrar como hot_take no feedback
+                await fetch(`/api/news/${newsId}/feedback`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ feedback: 'hot_take' })
+                });
+
+                // Criar post editorial como draft
+                const resp = await fetch('/api/editorial', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        article_title: titulo,
+                        tipo: 'hot_take',
+                        canal: 'linkedin',
+                        status: 'draft',
+                        notas: sugestao ? 'Sugestao IA: ' + sugestao : 'Baseado no clipping diario'
+                    })
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    showToast('Post criado! Edite em Editorial', 'success');
+                    // Substituir botoes por link
+                    const container = document.getElementById('news-actions-' + newsId);
+                    if (container) {
+                        container.innerHTML = '<a href="/editorial" style="font-size:0.7rem; color:#8b5cf6;">📝 Editar post</a>';
+                    }
+                } else {
+                    showToast('Erro ao criar post', 'danger');
+                }
+            } catch (e) {
+                showToast('Erro ao criar post', 'danger');
+            }
         }
 
         // Load briefings pendentes count (from dashboard data, not separate endpoint)
