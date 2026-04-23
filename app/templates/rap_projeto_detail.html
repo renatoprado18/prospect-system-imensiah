@@ -1929,10 +1929,8 @@
                 body: JSON.stringify(data)
             });
             if (!resp.ok) throw new Error('Erro ao salvar');
-            const result = await resp.json();
-            project = {...project, ...result.project};
-            renderProject();
             bootstrap.Modal.getInstance(document.getElementById('editProjectModal')).hide();
+            await loadProject();
             showToast('Projeto atualizado com sucesso', 'success');
         } catch (e) {
             alert('Erro ao salvar projeto: ' + e.message);
