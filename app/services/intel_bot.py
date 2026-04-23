@@ -25,7 +25,7 @@ INTEL_BOT_NUMBER = os.getenv("INTEL_BOT_NUMBER", "5511915020192")
 RENATO_PHONE = "5511984153337"
 RENATO_PHONE_SUFFIXES = ["11984153337", "984153337"]
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
-MAX_TOOL_ITERATIONS = 3
+MAX_TOOL_ITERATIONS = 5
 
 # Rate limit: skip trivial messages
 SKIP_PATTERNS = re.compile(
@@ -45,194 +45,64 @@ def _is_renato(phone: str) -> bool:
     return False
 
 
-# ==================== TOOL DEFINITIONS ====================
+# ==================== TOOL DEFINITIONS (3 meta-tools) ====================
 
 TOOLS = [
     {
-        "name": "search_contact",
-        "description": "Busca contatos pelo nome. Retorna id, nome, empresa, cargo, telefone e data da ultima mensagem.",
+        "name": "query_intel",
+        "description": (
+            "Executa uma query SQL READ-ONLY no banco de dados do INTEL. "
+            "Use para buscar QUALQUER informacao: contatos, mensagens, projetos, tarefas, "
+            "memorias, calendario, editorial, etc. Apenas SELECT e permitido. "
+            "Resultados limitados a 20 linhas. Use ILIKE para buscas case-insensitive. "
+            "Para datas relativas use CURRENT_DATE, CURRENT_TIMESTAMP, INTERVAL."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {
+                "sql": {
                     "type": "string",
-                    "description": "Nome ou parte do nome do contato"
+                    "description": "Query SQL SELECT. Ex: SELECT id, nome FROM contacts WHERE nome ILIKE '%joao%' LIMIT 10"
                 }
             },
-            "required": ["name"]
+            "required": ["sql"]
         }
     },
     {
-        "name": "get_contact_detail",
-        "description": "Retorna informacoes completas de um contato: dados, ultimas 5 mensagens e ultimas 3 memorias.",
+        "name": "execute_action",
+        "description": (
+            "Executa uma acao no sistema INTEL. Acoes disponiveis:\n"
+            "- create_task: cria tarefa (titulo, descricao?, project_id?, contact_id?, prazo_dias?, prioridade?)\n"
+            "- complete_task: conclui tarefa (task_id)\n"
+            "- save_note: salva nota em projeto (project_id, titulo, conteudo, tipo?)\n"
+            "- save_memory: salva memoria de contato (contact_id, titulo, resumo, conteudo_completo?, tipo?)\n"
+            "- schedule_meeting: cria evento (titulo, data_hora ISO, duracao_min?, contact_id?, local?, descricao?)\n"
+            "- send_whatsapp: envia WhatsApp via rap-whatsapp (contact_id, message)\n"
+            "- enrich_contact: enriquece contato com IA (contact_id)\n"
+            "- update_contact: atualiza campos do contato (contact_id, fields: {campo: valor})"
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "contact_id": {
-                    "type": "integer",
-                    "description": "ID do contato"
+                "action": {
+                    "type": "string",
+                    "description": "Nome da acao",
+                    "enum": [
+                        "create_task", "complete_task", "save_note", "save_memory",
+                        "schedule_meeting", "send_whatsapp", "enrich_contact", "update_contact"
+                    ]
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Parametros da acao (variam por acao)"
                 }
             },
-            "required": ["contact_id"]
-        }
-    },
-    {
-        "name": "create_task",
-        "description": "Cria uma tarefa no CRM. Pode vincular a um projeto.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "titulo": {
-                    "type": "string",
-                    "description": "Titulo da tarefa"
-                },
-                "descricao": {
-                    "type": "string",
-                    "description": "Descricao opcional"
-                },
-                "project_id": {
-                    "type": "integer",
-                    "description": "ID do projeto (opcional)"
-                },
-                "prazo_dias": {
-                    "type": "integer",
-                    "description": "Prazo em dias a partir de hoje (ex: 1 = amanha, 7 = semana que vem)"
-                }
-            },
-            "required": ["titulo"]
-        }
-    },
-    {
-        "name": "complete_task",
-        "description": "Marca uma tarefa como concluida.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task_id": {
-                    "type": "integer",
-                    "description": "ID da tarefa a concluir"
-                }
-            },
-            "required": ["task_id"]
-        }
-    },
-    {
-        "name": "get_overdue_tasks",
-        "description": "Retorna todas as tarefas pendentes com data de vencimento anterior a hoje.",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
-        }
-    },
-    {
-        "name": "get_project_status",
-        "description": "Retorna informacoes de um projeto: dados, tarefas pendentes e notas recentes.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "project_id": {
-                    "type": "integer",
-                    "description": "ID do projeto"
-                }
-            },
-            "required": ["project_id"]
-        }
-    },
-    {
-        "name": "save_insight",
-        "description": "Salva um insight/nota no CRM. Pode vincular a um contato ou projeto.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "text": {
-                    "type": "string",
-                    "description": "Conteudo do insight/nota"
-                },
-                "contact_id": {
-                    "type": "integer",
-                    "description": "ID do contato (opcional)"
-                },
-                "project_id": {
-                    "type": "integer",
-                    "description": "ID do projeto (opcional)"
-                }
-            },
-            "required": ["text"]
-        }
-    },
-    {
-        "name": "schedule_meeting",
-        "description": "Cria um evento no calendario (Google Calendar).",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "titulo": {
-                    "type": "string",
-                    "description": "Titulo do evento"
-                },
-                "data_hora": {
-                    "type": "string",
-                    "description": "Data e hora no formato ISO 8601 (ex: 2026-04-15T10:00:00)"
-                },
-                "duracao_min": {
-                    "type": "integer",
-                    "description": "Duracao em minutos (padrao: 60)"
-                },
-                "contact_id": {
-                    "type": "integer",
-                    "description": "ID do contato participante (opcional)"
-                },
-                "local": {
-                    "type": "string",
-                    "description": "Local do evento (opcional)"
-                }
-            },
-            "required": ["titulo", "data_hora"]
-        }
-    },
-    {
-        "name": "send_whatsapp",
-        "description": "Envia mensagem WhatsApp para um contato via instancia principal (rap-whatsapp). Use para enviar mensagens a terceiros, NAO para responder ao Renato.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "contact_id": {
-                    "type": "integer",
-                    "description": "ID do contato destinatario"
-                },
-                "message": {
-                    "type": "string",
-                    "description": "Texto da mensagem a enviar"
-                }
-            },
-            "required": ["contact_id", "message"]
-        }
-    },
-    {
-        "name": "get_calendar_today",
-        "description": "Retorna os eventos de hoje no calendario.",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
-        }
-    },
-    {
-        "name": "search_projects",
-        "description": "Busca projetos pelo nome.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Termo de busca"
-                }
-            },
-            "required": ["query"]
+            "required": ["action", "params"]
         }
     },
     {
         "name": "draft_message",
-        "description": "Gera um rascunho de mensagem personalizada para um contato, usando contexto de mensagens recentes, memorias e dados do LinkedIn.",
+        "description": "Gera um rascunho de mensagem personalizada para um contato, usando contexto completo: mensagens recentes, memorias, LinkedIn, fatos e emails.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -253,403 +123,309 @@ TOOLS = [
 
 # ==================== TOOL IMPLEMENTATIONS ====================
 
-def _tool_search_contact(name: str) -> str:
+def _tool_query_intel(sql: str) -> str:
+    """Execute a read-only SQL query against the INTEL database."""
+    # Security: only allow SELECT statements
+    sql_stripped = sql.strip().rstrip(";").strip()
+    sql_upper = sql_stripped.upper()
+
+    # Reject non-SELECT queries
+    if not sql_upper.startswith("SELECT"):
+        return json.dumps({"erro": "Apenas queries SELECT sao permitidas. INSERT/UPDATE/DELETE nao sao aceitos nesta tool. Use execute_action para modificar dados."})
+
+    # Reject dangerous keywords even in subqueries
+    dangerous = ["INSERT ", "UPDATE ", "DELETE ", "DROP ", "ALTER ", "TRUNCATE ", "CREATE ", "GRANT ", "REVOKE "]
+    for kw in dangerous:
+        if kw in sql_upper:
+            return json.dumps({"erro": f"Query contem operacao proibida: {kw.strip()}"})
+
+    # Ensure LIMIT exists (add LIMIT 20 if missing)
+    if "LIMIT" not in sql_upper:
+        sql_stripped = sql_stripped + " LIMIT 20"
+
     try:
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT c.id, c.nome, c.empresa, c.cargo, c.telefones,
-                    (SELECT m.conteudo FROM messages m
-                     JOIN conversations cv ON cv.id = m.conversation_id
-                     WHERE cv.contact_id = c.id
-                     ORDER BY m.enviado_em DESC NULLS LAST LIMIT 1) as ultima_msg,
-                    (SELECT m.enviado_em FROM messages m
-                     JOIN conversations cv ON cv.id = m.conversation_id
-                     WHERE cv.contact_id = c.id
-                     ORDER BY m.enviado_em DESC NULLS LAST LIMIT 1) as data_ultima_msg
-                FROM contacts c
-                WHERE c.nome ILIKE %s
-                ORDER BY c.ultimo_contato DESC NULLS LAST
-                LIMIT 10
-            """, (f"%{name}%",))
-            contacts = [dict(r) for r in cursor.fetchall()]
+            cursor.execute(sql_stripped)
+            rows = cursor.fetchall()
 
-        if not contacts:
-            return json.dumps({"resultado": f"Nenhum contato encontrado com '{name}'"})
+        if not rows:
+            return json.dumps({"resultado": "Nenhum registro encontrado.", "query": sql_stripped})
 
-        results = []
-        for c in contacts:
-            phone = ""
-            if c.get("telefones"):
-                phones = c["telefones"]
-                if isinstance(phones, str):
-                    try:
-                        phones = json.loads(phones)
-                    except:
-                        phones = []
-                if isinstance(phones, list) and phones:
-                    phone = str(phones[0])
+        # Format as readable text
+        results = [dict(r) for r in rows]
+        lines = []
+        for i, row in enumerate(results):
+            parts = []
+            for key, value in row.items():
+                if value is not None:
+                    # Truncate long values
+                    str_val = str(value)
+                    if len(str_val) > 200:
+                        str_val = str_val[:200] + "..."
+                    parts.append(f"{key}: {str_val}")
+            lines.append(f"[{i+1}] " + " | ".join(parts))
 
-            results.append({
-                "id": c["id"],
-                "nome": c["nome"],
-                "empresa": c.get("empresa", ""),
-                "cargo": c.get("cargo", ""),
-                "telefone": phone,
-                "ultima_msg": (c.get("ultima_msg") or "")[:100],
-                "data_ultima_msg": str(c["data_ultima_msg"]) if c.get("data_ultima_msg") else None
-            })
+        return f"Encontrados {len(results)} registros:\n" + "\n".join(lines)
 
-        return json.dumps({"contatos": results}, default=str, ensure_ascii=False)
     except Exception as e:
-        logger.error(f"search_contact error: {e}")
-        return json.dumps({"erro": str(e)})
+        logger.error(f"query_intel error: {e}")
+        return json.dumps({"erro": f"Erro SQL: {str(e)}", "query": sql_stripped})
 
 
-def _tool_get_contact_detail(contact_id: int) -> str:
+async def _tool_execute_action(action: str, params: Dict) -> str:
+    """Execute a write action on the INTEL system."""
     try:
-        with get_db() as conn:
-            cursor = conn.cursor()
+        if action == "create_task":
+            titulo = params.get("titulo")
+            if not titulo:
+                return json.dumps({"erro": "titulo e obrigatorio"})
+            descricao = params.get("descricao", "")
+            project_id = params.get("project_id")
+            contact_id = params.get("contact_id")
+            prazo_dias = params.get("prazo_dias")
+            prioridade = params.get("prioridade", 5)
 
-            cursor.execute("""
-                SELECT id, nome, empresa, cargo, telefones, emails,
-                       linkedin_url, circulo, health_score, ultimo_contato,
-                       linkedin_headline, linkedin_about
-                FROM contacts WHERE id = %s
-            """, (contact_id,))
-            contact = cursor.fetchone()
-            if not contact:
-                return json.dumps({"erro": f"Contato #{contact_id} nao encontrado"})
-            contact = dict(contact)
+            data_vencimento = None
+            if prazo_dias is not None:
+                data_vencimento = datetime.now() + timedelta(days=prazo_dias)
 
-            # Last 5 messages
-            cursor.execute("""
-                SELECT m.conteudo, m.direcao, m.enviado_em
-                FROM messages m
-                JOIN conversations cv ON cv.id = m.conversation_id
-                WHERE cv.contact_id = %s
-                ORDER BY m.enviado_em DESC NULLS LAST
-                LIMIT 5
-            """, (contact_id,))
-            msgs = [dict(r) for r in cursor.fetchall()]
-
-            # Last 3 memories
-            cursor.execute("""
-                SELECT tipo, titulo, resumo, data_ocorrencia
-                FROM contact_memories
-                WHERE contact_id = %s
-                ORDER BY data_ocorrencia DESC
-                LIMIT 3
-            """, (contact_id,))
-            mems = [dict(r) for r in cursor.fetchall()]
-
-        return json.dumps({
-            "contato": contact,
-            "ultimas_mensagens": msgs,
-            "memorias_recentes": mems
-        }, default=str, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"get_contact_detail error: {e}")
-        return json.dumps({"erro": str(e)})
-
-
-def _tool_create_task(titulo: str, descricao: str = "", project_id: int = None, prazo_dias: int = None) -> str:
-    try:
-        data_vencimento = None
-        if prazo_dias is not None:
-            data_vencimento = datetime.now() + timedelta(days=prazo_dias)
-
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO tasks (
-                    titulo, descricao, project_id, contact_id,
-                    data_vencimento, prioridade, ai_generated, origem, status
-                ) VALUES (%s, %s, %s, %s, %s, 5, TRUE, 'intel_bot', 'pending')
-                RETURNING id
-            """, (titulo, descricao, project_id, 14911, data_vencimento))
-            task = cursor.fetchone()
-            conn.commit()
-
-        date_str = f" para {data_vencimento.strftime('%d/%m %H:%M')}" if data_vencimento else ""
-        proj_str = f" no projeto #{project_id}" if project_id else ""
-        return json.dumps({
-            "sucesso": True,
-            "task_id": task["id"],
-            "mensagem": f"Tarefa #{task['id']} criada: {titulo}{proj_str}{date_str}"
-        }, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"create_task error: {e}")
-        return json.dumps({"erro": str(e)})
-
-
-def _tool_complete_task(task_id: int) -> str:
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE tasks SET status = 'completed', data_conclusao = NOW()
-                WHERE id = %s AND status = 'pending'
-                RETURNING id, titulo
-            """, (task_id,))
-            task = cursor.fetchone()
-            conn.commit()
-
-        if not task:
-            return json.dumps({"erro": f"Tarefa #{task_id} nao encontrada ou ja concluida"})
-
-        return json.dumps({
-            "sucesso": True,
-            "mensagem": f"Tarefa #{task['id']} concluida: {task['titulo']}"
-        }, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"complete_task error: {e}")
-        return json.dumps({"erro": str(e)})
-
-
-def _tool_get_overdue_tasks() -> str:
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT t.id, t.titulo, t.data_vencimento, t.prioridade,
-                       p.nome as projeto
-                FROM tasks t
-                LEFT JOIN projects p ON p.id = t.project_id
-                WHERE t.status = 'pending'
-                AND t.data_vencimento IS NOT NULL
-                AND t.data_vencimento < CURRENT_DATE
-                ORDER BY t.data_vencimento ASC
-                LIMIT 20
-            """)
-            tasks = [dict(r) for r in cursor.fetchall()]
-
-        if not tasks:
-            return json.dumps({"mensagem": "Nenhuma tarefa vencida!"})
-
-        return json.dumps({"tarefas_vencidas": tasks, "total": len(tasks)}, default=str, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"get_overdue_tasks error: {e}")
-        return json.dumps({"erro": str(e)})
-
-
-def _tool_get_project_status(project_id: int) -> str:
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-
-            cursor.execute("""
-                SELECT id, nome, descricao, tipo, status, prioridade, data_previsao
-                FROM projects WHERE id = %s
-            """, (project_id,))
-            project = cursor.fetchone()
-            if not project:
-                return json.dumps({"erro": f"Projeto #{project_id} nao encontrado"})
-            project = dict(project)
-
-            # Pending tasks
-            cursor.execute("""
-                SELECT id, titulo, status, data_vencimento, prioridade
-                FROM tasks WHERE project_id = %s AND status = 'pending'
-                ORDER BY data_vencimento ASC NULLS LAST
-                LIMIT 10
-            """, (project_id,))
-            tasks = [dict(r) for r in cursor.fetchall()]
-
-            # Recent notes
-            cursor.execute("""
-                SELECT titulo, conteudo, tipo, criado_em
-                FROM project_notes WHERE project_id = %s
-                ORDER BY criado_em DESC LIMIT 5
-            """, (project_id,))
-            notes = [dict(r) for r in cursor.fetchall()]
-
-        return json.dumps({
-            "projeto": project,
-            "tarefas_pendentes": tasks,
-            "notas_recentes": notes
-        }, default=str, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"get_project_status error: {e}")
-        return json.dumps({"erro": str(e)})
-
-
-def _tool_save_insight(text: str, contact_id: int = None, project_id: int = None) -> str:
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-
-            if contact_id:
+            with get_db() as conn:
+                cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO contact_memories (contact_id, tipo, titulo, resumo, conteudo_completo, data_ocorrencia)
-                    VALUES (%s, 'insight', %s, %s, %s, NOW())
+                    INSERT INTO tasks (
+                        titulo, descricao, project_id, contact_id,
+                        data_vencimento, prioridade, ai_generated, origem, status
+                    ) VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'intel_bot', 'pending')
                     RETURNING id
-                """, (contact_id, text[:80], text[:200], text))
-                mem = cursor.fetchone()
+                """, (titulo, descricao, project_id, contact_id, data_vencimento, prioridade))
+                task = cursor.fetchone()
                 conn.commit()
-                return json.dumps({
-                    "sucesso": True,
-                    "tipo": "contact_memory",
-                    "id": mem["id"],
-                    "mensagem": f"Insight salvo como memoria do contato #{contact_id}"
-                }, ensure_ascii=False)
 
-            if project_id:
+            date_str = f" para {data_vencimento.strftime('%d/%m %H:%M')}" if data_vencimento else ""
+            proj_str = f" no projeto #{project_id}" if project_id else ""
+            return json.dumps({
+                "sucesso": True,
+                "task_id": task["id"],
+                "mensagem": f"Tarefa #{task['id']} criada: {titulo}{proj_str}{date_str}"
+            }, ensure_ascii=False)
+
+        elif action == "complete_task":
+            task_id = params.get("task_id")
+            if not task_id:
+                return json.dumps({"erro": "task_id e obrigatorio"})
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE tasks SET status = 'completed', data_conclusao = NOW()
+                    WHERE id = %s AND status = 'pending'
+                    RETURNING id, titulo
+                """, (task_id,))
+                task = cursor.fetchone()
+                conn.commit()
+
+            if not task:
+                return json.dumps({"erro": f"Tarefa #{task_id} nao encontrada ou ja concluida"})
+            return json.dumps({
+                "sucesso": True,
+                "mensagem": f"Tarefa #{task['id']} concluida: {task['titulo']}"
+            }, ensure_ascii=False)
+
+        elif action == "save_note":
+            project_id = params.get("project_id")
+            titulo = params.get("titulo", "Nota via Bot")
+            conteudo = params.get("conteudo", "")
+            tipo = params.get("tipo", "insight")
+
+            if not project_id:
+                # Use first active project
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT id FROM projects WHERE status = 'ativo' ORDER BY prioridade ASC LIMIT 1")
+                    row = cursor.fetchone()
+                    project_id = row["id"] if row else None
+
+            if not project_id:
+                return json.dumps({"erro": "Nenhum projeto ativo encontrado"})
+
+            with get_db() as conn:
+                cursor = conn.cursor()
                 cursor.execute("""
                     INSERT INTO project_notes (project_id, tipo, titulo, conteudo, autor)
-                    VALUES (%s, 'insight', %s, %s, 'Renato (via Bot)')
+                    VALUES (%s, %s, %s, %s, 'Renato (via Bot)')
                     RETURNING id
-                """, (project_id, text[:80], text))
+                """, (project_id, tipo, titulo, conteudo))
                 note = cursor.fetchone()
                 conn.commit()
+
+            return json.dumps({
+                "sucesso": True,
+                "note_id": note["id"],
+                "mensagem": f"Nota '{titulo}' salva no projeto #{project_id}"
+            }, ensure_ascii=False)
+
+        elif action == "save_memory":
+            contact_id = params.get("contact_id")
+            if not contact_id:
+                return json.dumps({"erro": "contact_id e obrigatorio"})
+            titulo = params.get("titulo", "Memoria via Bot")
+            resumo = params.get("resumo", "")
+            conteudo_completo = params.get("conteudo_completo", resumo)
+            tipo = params.get("tipo", "insight")
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO contact_memories (contact_id, tipo, titulo, resumo, conteudo_completo, data_ocorrencia)
+                    VALUES (%s, %s, %s, %s, %s, NOW())
+                    RETURNING id
+                """, (contact_id, tipo, titulo, resumo, conteudo_completo))
+                mem = cursor.fetchone()
+                conn.commit()
+
+            return json.dumps({
+                "sucesso": True,
+                "memory_id": mem["id"],
+                "mensagem": f"Memoria '{titulo}' salva para contato #{contact_id}"
+            }, ensure_ascii=False)
+
+        elif action == "schedule_meeting":
+            titulo = params.get("titulo")
+            data_hora = params.get("data_hora")
+            if not titulo or not data_hora:
+                return json.dumps({"erro": "titulo e data_hora sao obrigatorios"})
+
+            duracao_min = params.get("duracao_min", 60)
+            contact_id = params.get("contact_id")
+            local = params.get("local")
+
+            try:
+                start_dt = datetime.fromisoformat(data_hora.replace("Z", "+00:00"))
+            except ValueError:
+                return json.dumps({"erro": f"Formato de data invalido: {data_hora}. Use ISO 8601 (ex: 2026-04-15T10:00:00)"})
+
+            end_dt = start_dt + timedelta(minutes=duracao_min)
+
+            from services.calendar_events import get_calendar_events
+            cal = get_calendar_events()
+            event = cal.create_event(
+                summary=titulo,
+                start_datetime=start_dt,
+                end_datetime=end_dt,
+                location=local,
+                contact_id=contact_id,
+                create_in_google=True
+            )
+
+            return json.dumps({
+                "sucesso": True,
+                "event_id": event.get("id"),
+                "mensagem": f"Evento '{titulo}' criado em {start_dt.strftime('%d/%m %H:%M')} ({duracao_min}min)"
+            }, ensure_ascii=False)
+
+        elif action == "send_whatsapp":
+            contact_id = params.get("contact_id")
+            message = params.get("message")
+            if not contact_id or not message:
+                return json.dumps({"erro": "contact_id e message sao obrigatorios"})
+
+            from integrations.evolution_api import get_evolution_client
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, nome, telefones FROM contacts WHERE id = %s", (contact_id,))
+                contact = cursor.fetchone()
+
+            if not contact:
+                return json.dumps({"erro": f"Contato #{contact_id} nao encontrado"})
+
+            contact = dict(contact)
+            phones = contact.get("telefones")
+            if isinstance(phones, str):
+                try:
+                    phones = json.loads(phones)
+                except:
+                    phones = []
+
+            if not phones or (isinstance(phones, list) and not phones):
+                return json.dumps({"erro": f"Contato {contact['nome']} nao tem telefone"})
+
+            phone = phones[0] if isinstance(phones, list) else str(phones)
+            phone_clean = ''.join(filter(str.isdigit, str(phone)))
+
+            client = get_evolution_client()
+            result = await client.send_text(phone_clean, message, instance_name="rap-whatsapp")
+
+            if "error" not in result:
                 return json.dumps({
                     "sucesso": True,
-                    "tipo": "project_note",
-                    "id": note["id"],
-                    "mensagem": f"Insight salvo no projeto #{project_id}"
+                    "mensagem": f"Mensagem enviada para {contact['nome']}"
                 }, ensure_ascii=False)
+            else:
+                return json.dumps({"erro": f"Falha ao enviar: {result.get('error', 'desconhecido')}"})
 
-            # Fallback: save in first active project
-            cursor.execute("""
-                INSERT INTO project_notes (project_id, tipo, titulo, conteudo, autor)
-                VALUES (
-                    (SELECT id FROM projects WHERE status = 'ativo' ORDER BY prioridade ASC LIMIT 1),
-                    'insight', %s, %s, 'Renato (via Bot)'
+        elif action == "enrich_contact":
+            contact_id = params.get("contact_id")
+            if not contact_id:
+                return json.dumps({"erro": "contact_id e obrigatorio"})
+
+            from services.contact_enrichment import enrich_contact_with_ai
+
+            with get_db() as conn:
+                result = await enrich_contact_with_ai(contact_id, conn)
+
+            return json.dumps({
+                "sucesso": True,
+                "mensagem": f"Contato #{contact_id} enriquecido com IA",
+                "resultado": {k: str(v)[:100] for k, v in result.items()} if isinstance(result, dict) else str(result)[:200]
+            }, ensure_ascii=False)
+
+        elif action == "update_contact":
+            contact_id = params.get("contact_id")
+            fields = params.get("fields", {})
+            if not contact_id or not fields:
+                return json.dumps({"erro": "contact_id e fields sao obrigatorios"})
+
+            # Whitelist of updatable fields
+            allowed = {
+                "nome", "apelido", "empresa", "cargo", "emails", "telefones",
+                "linkedin", "circulo", "relationship_context", "manual_notes",
+                "company_website", "contexto"
+            }
+            safe_fields = {k: v for k, v in fields.items() if k in allowed}
+            if not safe_fields:
+                return json.dumps({"erro": f"Nenhum campo permitido. Campos validos: {', '.join(sorted(allowed))}"})
+
+            set_clauses = []
+            values = []
+            for k, v in safe_fields.items():
+                set_clauses.append(f"{k} = %s")
+                values.append(v)
+            values.append(contact_id)
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    f"UPDATE contacts SET {', '.join(set_clauses)}, atualizado_em = CURRENT_TIMESTAMP WHERE id = %s RETURNING id, nome",
+                    values
                 )
-                RETURNING id, project_id
-            """, (text[:80], text))
-            note = cursor.fetchone()
-            conn.commit()
+                updated = cursor.fetchone()
+                conn.commit()
+
+            if not updated:
+                return json.dumps({"erro": f"Contato #{contact_id} nao encontrado"})
+
             return json.dumps({
                 "sucesso": True,
-                "tipo": "project_note",
-                "id": note["id"],
-                "project_id": note["project_id"],
-                "mensagem": f"Insight salvo como nota geral"
+                "mensagem": f"Contato {updated['nome']} atualizado: {', '.join(safe_fields.keys())}"
             }, ensure_ascii=False)
 
-    except Exception as e:
-        logger.error(f"save_insight error: {e}")
-        return json.dumps({"erro": str(e)})
-
-
-def _tool_schedule_meeting(titulo: str, data_hora: str, duracao_min: int = 60,
-                           contact_id: int = None, local: str = None) -> str:
-    try:
-        start_dt = datetime.fromisoformat(data_hora.replace("Z", "+00:00"))
-        end_dt = start_dt + timedelta(minutes=duracao_min)
-
-        from services.calendar_events import get_calendar_events
-        cal = get_calendar_events()
-        event = cal.create_event(
-            summary=titulo,
-            start_datetime=start_dt,
-            end_datetime=end_dt,
-            location=local,
-            contact_id=contact_id,
-            create_in_google=True
-        )
-
-        return json.dumps({
-            "sucesso": True,
-            "event_id": event.get("id"),
-            "mensagem": f"Evento '{titulo}' criado em {start_dt.strftime('%d/%m %H:%M')} ({duracao_min}min)"
-        }, ensure_ascii=False)
-    except ValueError:
-        return json.dumps({"erro": f"Formato de data invalido: {data_hora}. Use ISO 8601 (ex: 2026-04-15T10:00:00)"})
-    except Exception as e:
-        logger.error(f"schedule_meeting error: {e}")
-        return json.dumps({"erro": str(e)})
-
-
-async def _tool_send_whatsapp(contact_id: int, message: str) -> str:
-    try:
-        from integrations.evolution_api import get_evolution_client
-
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id, nome, telefones FROM contacts WHERE id = %s
-            """, (contact_id,))
-            contact = cursor.fetchone()
-
-        if not contact:
-            return json.dumps({"erro": f"Contato #{contact_id} nao encontrado"})
-
-        contact = dict(contact)
-        phones = contact.get("telefones")
-        if isinstance(phones, str):
-            try:
-                phones = json.loads(phones)
-            except:
-                phones = []
-
-        if not phones or (isinstance(phones, list) and not phones):
-            return json.dumps({"erro": f"Contato {contact['nome']} nao tem telefone"})
-
-        phone = phones[0] if isinstance(phones, list) else str(phones)
-        phone_clean = ''.join(filter(str.isdigit, str(phone)))
-
-        client = get_evolution_client()
-        result = await client.send_text(phone_clean, message, instance_name="rap-whatsapp")
-
-        if "error" not in result:
-            return json.dumps({
-                "sucesso": True,
-                "mensagem": f"Mensagem enviada para {contact['nome']}"
-            }, ensure_ascii=False)
         else:
-            return json.dumps({"erro": f"Falha ao enviar: {result.get('error', 'desconhecido')}"})
+            return json.dumps({"erro": f"Acao desconhecida: {action}. Acoes validas: create_task, complete_task, save_note, save_memory, schedule_meeting, send_whatsapp, enrich_contact, update_contact"})
 
     except Exception as e:
-        logger.error(f"send_whatsapp error: {e}")
-        return json.dumps({"erro": str(e)})
-
-
-def _tool_get_calendar_today() -> str:
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT e.id, e.summary, e.start_datetime, e.end_datetime,
-                       e.location, e.description, c.nome as contact_name
-                FROM calendar_events e
-                LEFT JOIN contacts c ON c.id = e.contact_id
-                WHERE e.start_datetime::date = CURRENT_DATE
-                ORDER BY e.start_datetime ASC
-                LIMIT 15
-            """)
-            events = [dict(r) for r in cursor.fetchall()]
-
-        if not events:
-            return json.dumps({"mensagem": "Nenhum evento hoje."})
-
-        return json.dumps({"eventos_hoje": events}, default=str, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"get_calendar_today error: {e}")
-        return json.dumps({"erro": str(e)})
-
-
-def _tool_search_projects(query: str) -> str:
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT p.id, p.nome, p.tipo, p.status, p.prioridade,
-                    (SELECT COUNT(*) FROM tasks WHERE project_id = p.id AND status = 'pending') as tasks_pendentes
-                FROM projects p
-                WHERE p.nome ILIKE %s
-                ORDER BY p.prioridade ASC
-                LIMIT 10
-            """, (f"%{query}%",))
-            projects = [dict(r) for r in cursor.fetchall()]
-
-        if not projects:
-            return json.dumps({"resultado": f"Nenhum projeto encontrado com '{query}'"})
-
-        return json.dumps({"projetos": projects}, default=str, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"search_projects error: {e}")
+        logger.error(f"execute_action error ({action}): {e}")
         return json.dumps({"erro": str(e)})
 
 
@@ -767,43 +543,10 @@ Escreva APENAS a mensagem, pronta para enviar. Sem explicacoes."""
 async def _execute_tool(name: str, input_data: Dict) -> str:
     """Execute a tool by name and return the result as string."""
     try:
-        if name == "search_contact":
-            return _tool_search_contact(input_data["name"])
-        elif name == "get_contact_detail":
-            return _tool_get_contact_detail(input_data["contact_id"])
-        elif name == "create_task":
-            return _tool_create_task(
-                titulo=input_data["titulo"],
-                descricao=input_data.get("descricao", ""),
-                project_id=input_data.get("project_id"),
-                prazo_dias=input_data.get("prazo_dias")
-            )
-        elif name == "complete_task":
-            return _tool_complete_task(input_data["task_id"])
-        elif name == "get_overdue_tasks":
-            return _tool_get_overdue_tasks()
-        elif name == "get_project_status":
-            return _tool_get_project_status(input_data["project_id"])
-        elif name == "save_insight":
-            return _tool_save_insight(
-                text=input_data["text"],
-                contact_id=input_data.get("contact_id"),
-                project_id=input_data.get("project_id")
-            )
-        elif name == "schedule_meeting":
-            return _tool_schedule_meeting(
-                titulo=input_data["titulo"],
-                data_hora=input_data["data_hora"],
-                duracao_min=input_data.get("duracao_min", 60),
-                contact_id=input_data.get("contact_id"),
-                local=input_data.get("local")
-            )
-        elif name == "send_whatsapp":
-            return await _tool_send_whatsapp(input_data["contact_id"], input_data["message"])
-        elif name == "get_calendar_today":
-            return _tool_get_calendar_today()
-        elif name == "search_projects":
-            return _tool_search_projects(input_data["query"])
+        if name == "query_intel":
+            return _tool_query_intel(input_data["sql"])
+        elif name == "execute_action":
+            return await _tool_execute_action(input_data["action"], input_data.get("params", {}))
         elif name == "draft_message":
             return await _tool_draft_message(input_data["contact_id"], input_data["context"])
         else:
@@ -934,6 +677,7 @@ def _build_system_prompt() -> str:
         logger.error(f"Error building system prompt context: {e}")
 
     return f"""Voce e o INTEL Bot, assistente pessoal de Renato Prado no WhatsApp.
+Voce tem acesso TOTAL ao sistema INTEL via SQL e acoes. Pode consultar QUALQUER dado e executar QUALQUER acao.
 
 SOBRE RENATO:
 - CEO e consultor de governanca corporativa
@@ -946,15 +690,59 @@ CONTEXTO ATUAL:
 {projects_str}
 - Tarefas vencidas: {overdue_count}
 
+## SCHEMA DO BANCO (tabelas principais para query_intel):
+
+contacts: id, nome, apelido, empresa, cargo, emails (jsonb), telefones (jsonb), linkedin, linkedin_url, linkedin_headline, linkedin_about, linkedin_experience, linkedin_skills, linkedin_location, circulo (C1-C5), health_score, ultimo_contato, resumo_ai, relationship_context, manual_notes, foto_url, company_website, contexto, total_interacoes, criado_em, atualizado_em
+
+messages: id, conversation_id, contact_id, direcao (incoming/outgoing), conteudo, tipo, enviado_em, lido
+
+conversations: id, contact_id, canal (whatsapp/email), ultimo_mensagem, total_mensagens
+
+contact_memories: id, contact_id, tipo (insight/reuniao/fato/relato), titulo, resumo, conteudo_completo, data_ocorrencia, fonte, criado_em
+
+contact_facts: id, contact_id, categoria, fato, fonte, confianca, criado_em
+
+projects: id, nome, tipo (negocio/patrimonio/pessoal/conselho), status (ativo/pausado/concluido), descricao, prioridade, data_previsao, criado_em
+
+project_members: project_id, contact_id, papel
+
+project_notes: id, project_id, tipo, titulo, conteudo, autor, criado_em
+
+tasks: id, titulo, descricao, status (pending/completed), project_id, contact_id, data_vencimento, data_conclusao, prioridade (1-10), ai_generated, origem, criado_em
+
+calendar_events: id, summary, start_datetime, end_datetime, contact_id, location, description, google_event_id
+
+editorial_posts: id, article_title, tipo, status, data_publicacao, linkedin_impressoes, linkedin_reacoes, linkedin_comentarios, linkedin_compartilhamentos
+
+hot_takes: id, news_title, hook, body, status, published_at, criado_em
+
+action_proposals: id, action_type, title, description, status, contact_id, urgency, criado_em
+
+campaigns: id, nome, tipo, status, descricao
+campaign_enrollments: id, campaign_id, contact_id, status
+
+contact_rodas: id, contact_id, roda_nome, data_inicio (rodas de networking)
+
+## DICAS SQL:
+- Buscar contato por nome: SELECT id, nome, empresa, cargo FROM contacts WHERE nome ILIKE '%termo%'
+- Mensagens recentes de um contato: SELECT m.conteudo, m.direcao, m.enviado_em FROM messages m JOIN conversations cv ON cv.id = m.conversation_id WHERE cv.contact_id = X ORDER BY m.enviado_em DESC LIMIT 10
+- Tarefas pendentes: SELECT id, titulo, data_vencimento FROM tasks WHERE status = 'pending' ORDER BY data_vencimento ASC NULLS LAST
+- Projetos ativos: SELECT id, nome, tipo FROM projects WHERE status = 'ativo' ORDER BY prioridade ASC
+- Eventos de hoje: SELECT summary, start_datetime, end_datetime FROM calendar_events WHERE start_datetime::date = CURRENT_DATE ORDER BY start_datetime
+- Contatos por circulo: SELECT nome, empresa FROM contacts WHERE circulo = 'C1'
+- Memorias de contato: SELECT titulo, resumo, data_ocorrencia FROM contact_memories WHERE contact_id = X ORDER BY data_ocorrencia DESC
+- Fatos de contato: SELECT categoria, fato FROM contact_facts WHERE contact_id = X
+
 REGRAS:
 - Responda SEMPRE em portugues
 - Seja conciso e direto (sao mensagens WhatsApp)
-- Use as ferramentas para consultar/criar dados no CRM
-- Se o usuario perguntar sobre contatos, projetos ou tarefas, USE as ferramentas para buscar dados reais
-- Se pedir para criar tarefa, agendar reuniao, etc., USE a ferramenta correspondente
-- NAO invente dados — consulte o CRM
+- Use query_intel para consultar QUALQUER dado do sistema — voce tem acesso a TODAS as tabelas
+- Use execute_action para criar/modificar dados
+- Use draft_message para rascunhos personalizados com contexto rico
+- NAO invente dados — sempre consulte o banco
 - Para datas relativas, use {now.strftime('%Y-%m-%d')} como referencia
 - Formate respostas com *negrito* para destaques (WhatsApp markdown)
+- Voce pode fazer multiplas queries em sequencia para responder perguntas complexas
 - Se nao souber algo, diga e sugira como ajudar"""
 
 
