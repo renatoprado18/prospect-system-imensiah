@@ -422,7 +422,7 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
     logger.info(f"Evolution webhook: {event} from {instance}")
 
     # Route intel-bot messages to the bot handler
-    intel_bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot")
+    intel_bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot").strip()
     instance_name = instance if isinstance(instance, str) else (instance or {}).get("instanceName", "")
     if instance_name == intel_bot_instance and event == "messages.upsert":
         return await _handle_intel_bot_message(data)
