@@ -3173,9 +3173,12 @@
             }
         }
 
-        function selectShareContact(el, contactId, nome, phone, email) {
+        async function selectShareContact(el, contactId, nome, phone, email) {
             // Destacar selecionado
-            document.querySelectorAll('#shareNewsSuggestions > div').forEach(d => d.style.borderColor = '#e2e8f0');
+            document.querySelectorAll('#shareNewsSuggestions > div').forEach(d => {
+                d.style.borderColor = '#e2e8f0';
+                d.style.background = '';
+            });
             el.style.borderColor = '#6366f1';
             el.style.background = '#f0f4ff';
 
@@ -3184,10 +3187,27 @@
             shareNewsData.phone = phone;
             shareNewsData.email = email;
 
-            // Gerar mensagem sugerida
-            const msg = `Oi ${nome.split(' ')[0]}! Vi esta notícia e lembrei de você: "${shareNewsData.titulo}"\n\n${shareNewsData.link}\n\nO que acha?`;
-            document.getElementById('shareNewsMessage').value = msg;
+            // Gerar mensagem personalizada com IA
+            const textarea = document.getElementById('shareNewsMessage');
+            textarea.value = 'Gerando mensagem personalizada...';
             document.getElementById('shareNewsSendBtn').style.display = 'inline-block';
+
+            try {
+                const resp = await fetch('/api/share/generate-message', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        contact_id: contactId,
+                        title: shareNewsData.titulo,
+                        url: shareNewsData.link,
+                        type: 'post'
+                    })
+                });
+                const data = await resp.json();
+                textarea.value = data.message || `Oi ${nome.split(' ')[0]}! Vi este conteudo e lembrei de voce:\n\n${shareNewsData.link}`;
+            } catch (e) {
+                textarea.value = `Oi ${nome.split(' ')[0]}! Vi este conteudo e lembrei de voce:\n\n${shareNewsData.link}`;
+            }
         }
 
         function closeShareNewsModal() {

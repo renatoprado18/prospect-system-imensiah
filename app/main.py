@@ -16439,6 +16439,106 @@ NAO use markdown (sem ** ou ## ou *). Texto puro para colar no LinkedIn."""
     return {"status": "success", "post": post}
 
 
+@app.post("/api/share/generate-message")
+async def api_generate_share_message(request: Request):
+    """Gera mensagem personalizada para compartilhar conteudo com um contato"""
+    import httpx as _hx
+    import json as _json
+
+    data = await request.json()
+    contact_id = data.get('contact_id')
+    content_title = data.get('title', '')
+    content_url = data.get('url', '')
+    content_type = data.get('type', 'post')  # post, article, news
+
+    if not contact_id:
+        raise HTTPException(status_code=400, detail="contact_id obrigatorio")
+
+    # Buscar contexto do contato
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, nome, apelido, empresa, cargo, circulo, contexto, tags, resumo_ai
+            FROM contacts WHERE id = %s
+        """, (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato nao encontrado")
+        contact = dict(contact)
+
+        # Fatos do contato
+        cursor.execute("SELECT categoria, fato FROM contact_facts WHERE contact_id = %s LIMIT 5", (contact_id,))
+        fatos = [dict(r) for r in cursor.fetchall()]
+
+        # Mensagens recentes (para captar tom)
+        cursor.execute("""
+            SELECT LEFT(m.conteudo, 150) as msg, m.direcao
+            FROM messages m JOIN conversations cv ON cv.id = m.conversation_id
+            WHERE cv.contact_id = %s ORDER BY m.enviado_em DESC LIMIT 3
+        """, (contact_id,))
+        msgs = [dict(r) for r in cursor.fetchall()]
+
+    # Gerar mensagem com IA
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        # Fallback sem IA
+        nome = contact.get('apelido') or contact['nome'].split()[0]
+        return {"message": f"Oi {nome}! Publiquei este conteudo e achei que pode te interessar:\n\n{content_url}\n\nAbraco!"}
+
+    nome = contact.get('apelido') or contact['nome'].split()[0]
+    tags = contact.get('tags', [])
+    if isinstance(tags, str):
+        tags = _json.loads(tags) if tags else []
+
+    fatos_text = "\n".join([f"- {f['fato']}" for f in fatos]) if fatos else "Sem fatos registrados"
+    msgs_text = "\n".join([
+        f"{'Renato' if m['direcao']=='outgoing' else nome}: {m['msg']}"
+        for m in msgs
+    ]) if msgs else "Sem historico recente"
+
+    prompt = f"""Gere uma mensagem de WhatsApp do Renato para {contact['nome']} compartilhando um conteudo que publicou.
+
+CONTEXTO DO RELACIONAMENTO:
+- Nome: {contact['nome']} | Apelido: {nome}
+- Profissao: {contact.get('cargo', '?')} @ {contact.get('empresa', '?')}
+- Proximidade: Circulo {contact['circulo']} ({contact.get('contexto', '')})
+- Tags: {', '.join(tags)}
+- Fatos sobre esta pessoa:
+{fatos_text}
+- Conversa recente:
+{msgs_text}
+
+CONTEUDO QUE RENATO PUBLICOU NO LINKEDIN:
+Titulo: {content_title}
+Link: {content_url}
+
+INSTRUCOES - Gere APENAS a mensagem, nada mais:
+1. Use o apelido "{nome}" (nao nome completo)
+2. CONECTE o artigo com algo ESPECIFICO da relacao (ex: "lembrei da nossa conversa sobre conselhos")
+3. Explique em 1 frase por que ESTA PESSOA especificamente se interessaria
+4. Inclua o link no meio da mensagem (nao no final isolado)
+5. Tom: como amigo que manda algo relevante, nao como vendedor
+6. Max 4-5 linhas
+7. Portugues, max 1 emoji"""
+
+    try:
+        async with _hx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 300,
+                      "messages": [{"role": "user", "content": prompt}]}
+            )
+        if resp.status_code == 200:
+            message = resp.json()["content"][0]["text"]
+            return {"message": message, "contact_name": contact['nome']}
+    except Exception:
+        pass
+
+    return {"message": f"Oi {nome}! Publiquei este conteudo e achei que pode te interessar:\n\n{content_url}\n\nAbraco!"}
+
+
 @app.get("/api/news/suggest-contacts")
 async def api_suggest_contacts_for_news(titulo: str = "", categoria: str = ""):
     """Sugere contatos que podem se interessar por uma noticia"""
