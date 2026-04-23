@@ -3098,6 +3098,11 @@
         }
 
         async function newsToPost(newsId, titulo, sugestao) {
+            // Prevenir clique duplo
+            const container = document.getElementById('news-actions-' + newsId);
+            if (container && container.dataset.creating) return;
+            if (container) container.dataset.creating = 'true';
+
             try {
                 // Registrar como hot_take no feedback
                 await fetch(`/api/news/${newsId}/feedback`, {

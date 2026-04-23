@@ -1192,6 +1192,21 @@ def init_db():
             )
         ''')
 
+        # Social groups cache
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS social_groups_cache (
+                id SERIAL PRIMARY KEY,
+                group_jid TEXT UNIQUE NOT NULL,
+                group_name TEXT NOT NULL,
+                total_participants INTEGER DEFAULT 0,
+                participants_phones JSONB DEFAULT '[]'::jsonb,
+                known_contact_ids JSONB DEFAULT '[]'::jsonb,
+                known_count INTEGER DEFAULT 0,
+                health_medio INTEGER,
+                last_synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         # Project notes - timeline de atualizacoes/notas
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS project_notes (

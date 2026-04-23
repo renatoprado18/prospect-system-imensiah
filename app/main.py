@@ -6601,6 +6601,14 @@ async def cron_daily_sync(request: Request):
     except Exception as e:
         results["steps"]["daily_clipping"] = {"status": "error", "error": str(e)}
 
+    # 13. Sync cache de grupos sociais
+    try:
+        from services.social_groups import sync_all_groups_cache
+        groups_result = await sync_all_groups_cache()
+        results["steps"]["social_groups_cache"] = {"status": "success", "synced": groups_result.get("synced", 0)}
+    except Exception as e:
+        results["steps"]["social_groups_cache"] = {"status": "error", "error": str(e)}
+
     results["completed_at"] = datetime.now().isoformat()
 
     return results
@@ -15279,18 +15287,26 @@ async def social_groups_page(request: Request):
 
 @app.get("/api/social-groups")
 async def api_list_social_groups():
-    """Lista todos os grupos de WhatsApp disponiveis"""
+    """Lista grupos sociais (do cache se disponivel)"""
     from services.social_groups import list_all_social_groups
     return await list_all_social_groups()
 
 
 @app.get("/api/social-groups/{group_jid:path}")
 async def api_get_social_group(group_jid: str):
-    """Detalhes de um grupo com membros cruzados com contatos INTEL"""
+    """Detalhes de um grupo com membros (do cache)"""
     from services.social_groups import get_group_with_members
     result = await get_group_with_members(group_jid)
     if not result:
         raise HTTPException(status_code=404, detail="Grupo nao encontrado")
+    return result
+
+
+@app.post("/api/social-groups/sync")
+async def api_sync_social_groups():
+    """Forca sync do cache de grupos sociais"""
+    from services.social_groups import sync_all_groups_cache
+    result = await sync_all_groups_cache()
     return result
 
 
