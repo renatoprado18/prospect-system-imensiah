@@ -2583,5 +2583,14 @@ async function loadComparison48h() {
 
 // Load comparison on page load
 document.addEventListener('DOMContentLoaded', loadComparison48h);
+
+// Auto-open post editor from URL param (?edit=ID)
+document.addEventListener('DOMContentLoaded', () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const editId = urlParams.get('edit');
+    if (editId) {
+        setTimeout(() => openPostModal(parseInt(editId)), 500);
+    }
+});
 </script>
 {% endblock %}
