@@ -11384,10 +11384,31 @@ async def get_action_proposals_list(
     limit: int = 20,
     include_resolved: bool = False
 ):
-    """Lista propostas de acao pendentes"""
+    """Lista propostas de acao pendentes (auto-limpa stale antes)"""
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    # Auto-resolver ações onde usuario já respondeu (cleanup on read)
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE action_proposals ap
+                SET status = 'resolved', responded_at = NOW(),
+                    ai_reasoning = COALESCE(ap.ai_reasoning, '') || ' | Auto-resolvido ao carregar dashboard'
+                WHERE ap.status = 'pending'
+                  AND EXISTS (
+                      SELECT 1 FROM messages m
+                      JOIN conversations cv ON cv.id = m.conversation_id
+                      WHERE cv.contact_id = ap.contact_id
+                        AND m.direcao = 'outgoing'
+                        AND m.enviado_em > ap.criado_em
+                  )
+            """)
+            conn.commit()
+    except Exception:
+        pass
 
     from services.action_proposals import get_action_proposals
     service = get_action_proposals()

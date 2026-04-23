@@ -2510,8 +2510,8 @@
                 try {
                     const projResp = await fetch('/api/projects/active-summary?limit=20');
                     const projData = await projResp.json();
-                    // Contar apenas projetos com tarefas VENCIDAS (não apenas pendentes)
-                    const withAction = projData.filter(p => p.tasks_vencidas > 0).length;
+                    // Contar projetos com tarefas pendentes
+                    const withAction = projData.filter(p => (p.tasks_vencidas || 0) > 0 || (p.tasks_pendentes || 0) > 0).length;
                     document.getElementById('statProjectsAction').textContent = withAction;
                 } catch(e) { document.getElementById('statProjectsAction').textContent = '-'; }
 
@@ -4530,8 +4530,8 @@
 
                 let projects = await response.json();
 
-                // Filtrar: apenas projetos com tarefas vencidas ou marcos atrasados
-                projects = projects.filter(p => p.tasks_vencidas > 0);
+                // Filtrar: projetos que precisam ação (tarefas pendentes ou vencidas)
+                projects = projects.filter(p => (p.tasks_vencidas || 0) > 0 || (p.tasks_pendentes || 0) > 0);
 
                 if (!projects || projects.length === 0) {
                     container.innerHTML = `
