@@ -3043,6 +3043,7 @@
                                     <button class="btn btn-sm p-0" onclick="feedbackNews(this, ${item.news_id}, 'liked')" title="Relevante">👍</button>
                                     <button class="btn btn-sm p-0" onclick="feedbackNews(this, ${item.news_id}, 'disliked')" title="Irrelevante">👎</button>
                                     <button class="btn btn-sm p-0" onclick="newsToPost(${item.news_id}, '${(item.titulo_resumido || '').replace(/'/g, "\\'")}', '${(item.sugestao_post || '').replace(/'/g, "\\'")}')" title="Criar post LinkedIn" style="font-size: 0.75rem;">📝</button>
+                                    <button class="btn btn-sm p-0" onclick="suggestShareNews('${(item.titulo_resumido || '').replace(/'/g, "\\'")}', '${(item.link || '').replace(/'/g, "\\'")}', '${(item.categoria || '').replace(/'/g, "\\'")}')" title="Enviar para contato" style="font-size: 0.75rem;">📤</button>
                                 </div>
                                 ` : ''}
                             </div>
@@ -3129,6 +3130,99 @@
                 }
             } catch (e) {
                 showToast('Erro ao criar post', 'danger');
+            }
+        }
+
+        // ============== Share News to Contact ==============
+        let shareNewsData = {};
+
+        async function suggestShareNews(titulo, link, categoria) {
+            shareNewsData = { titulo, link, categoria };
+
+            // Abrir modal
+            const modal = document.getElementById('shareNewsModal');
+            modal.style.display = 'flex';
+            document.getElementById('shareNewsTitle').textContent = titulo;
+            document.getElementById('shareNewsSuggestions').innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-primary"></div> Buscando contatos relevantes...</div>';
+            document.getElementById('shareNewsMessage').value = '';
+            document.getElementById('shareNewsSendBtn').style.display = 'none';
+
+            // Buscar contatos sugeridos
+            try {
+                const resp = await fetch(`/api/news/suggest-contacts?titulo=${encodeURIComponent(titulo)}&categoria=${encodeURIComponent(categoria)}`);
+                const data = await resp.json();
+
+                if (data.contacts && data.contacts.length > 0) {
+                    document.getElementById('shareNewsSuggestions').innerHTML = data.contacts.map(c => `
+                        <div class="d-flex align-items-center gap-2 p-2 rounded mb-1" style="cursor:pointer; border: 1px solid #e2e8f0;"
+                             onclick="selectShareContact(this, ${c.id}, '${c.nome.replace(/'/g, "\\'")}', '${(c.phone || '').replace(/'/g, "\\'")}', '${(c.email || '').replace(/'/g, "\\'")}')">
+                            <div style="width:32px;height:32px;border-radius:50%;background:#e2e8f0;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:600;">
+                                ${c.foto_url ? '<img src="' + c.foto_url + '" style="width:32px;height:32px;border-radius:50%;object-fit:cover;">' : c.nome.split(' ').map(n=>n[0]).slice(0,2).join('').toUpperCase()}
+                            </div>
+                            <div style="flex:1;">
+                                <div style="font-weight:600;font-size:0.82rem;">${c.nome}</div>
+                                <div style="font-size:0.7rem;color:#64748b;">${c.cargo ? c.cargo + (c.empresa ? ' @ ' + c.empresa : '') : c.empresa || 'C' + c.circulo} — ${c.reason}</div>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    document.getElementById('shareNewsSuggestions').innerHTML = '<p class="text-muted small">Nenhum contato sugerido. Use a busca abaixo.</p>';
+                }
+            } catch (e) {
+                document.getElementById('shareNewsSuggestions').innerHTML = '<p class="text-danger small">Erro ao buscar contatos</p>';
+            }
+        }
+
+        function selectShareContact(el, contactId, nome, phone, email) {
+            // Destacar selecionado
+            document.querySelectorAll('#shareNewsSuggestions > div').forEach(d => d.style.borderColor = '#e2e8f0');
+            el.style.borderColor = '#6366f1';
+            el.style.background = '#f0f4ff';
+
+            shareNewsData.contactId = contactId;
+            shareNewsData.contactName = nome;
+            shareNewsData.phone = phone;
+            shareNewsData.email = email;
+
+            // Gerar mensagem sugerida
+            const msg = `Oi ${nome.split(' ')[0]}! Vi esta notícia e lembrei de você: "${shareNewsData.titulo}"\n\n${shareNewsData.link}\n\nO que acha?`;
+            document.getElementById('shareNewsMessage').value = msg;
+            document.getElementById('shareNewsSendBtn').style.display = 'inline-block';
+        }
+
+        function closeShareNewsModal() {
+            document.getElementById('shareNewsModal').style.display = 'none';
+        }
+
+        async function sendShareNews() {
+            const msg = document.getElementById('shareNewsMessage').value;
+            if (!shareNewsData.contactId || !msg) return;
+
+            const channel = shareNewsData.phone ? 'whatsapp' : 'email';
+
+            try {
+                if (channel === 'whatsapp' && shareNewsData.phone) {
+                    const resp = await fetch('/api/whatsapp/send', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ phone: shareNewsData.phone, message: msg })
+                    });
+                    if (resp.ok) {
+                        showToast(`Enviado para ${shareNewsData.contactName} via WhatsApp!`, 'success');
+                        closeShareNewsModal();
+                    } else {
+                        showToast('Erro ao enviar WhatsApp', 'danger');
+                    }
+                } else {
+                    // Copiar para clipboard como fallback
+                    navigator.clipboard.writeText(msg);
+                    showToast('Mensagem copiada! Cole no email/WhatsApp', 'info');
+                    closeShareNewsModal();
+                }
+            } catch (e) {
+                navigator.clipboard.writeText(msg);
+                showToast('Mensagem copiada!', 'info');
+                closeShareNewsModal();
             }
         }
 
@@ -3571,10 +3665,8 @@
         const SSE_MAX_RECONNECTS = 5;
 
         function connectSSE() {
-            // Skip SSE on Vercel (serverless doesn't support long connections well)
-            // Use polling fallback instead
-            if (window.location.hostname.includes('vercel.app')) {
-                console.log('SSE: Using polling fallback for Vercel');
+            // SSE doesn't work well on Vercel serverless - always use polling
+            if (window.location.hostname.includes('vercel') || window.location.hostname.includes('almeida-prado')) {
                 startPolling();
                 return;
             }
@@ -4616,4 +4708,29 @@
             document.getElementById('suggestionModal').classList.remove('show');
         }
     </script>
+
+    <!-- Modal Share News -->
+    <div id="shareNewsModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.92);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(4px);" onclick="if(event.target===this)closeShareNewsModal()">
+        <div style="background:#fff;border-radius:16px;width:90%;max-width:500px;max-height:90vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.5);border:2px solid #6366f1;">
+            <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
+                <h5 style="margin:0;font-size:1rem;"><i class="bi bi-share text-primary me-2"></i>Compartilhar com contato</h5>
+                <button onclick="closeShareNewsModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;">&times;</button>
+            </div>
+            <div style="padding:16px 20px;">
+                <div style="font-size:0.85rem;font-weight:600;margin-bottom:12px;" id="shareNewsTitle"></div>
+                <div style="font-size:0.75rem;color:#64748b;margin-bottom:8px;">Contatos sugeridos:</div>
+                <div id="shareNewsSuggestions" style="max-height:200px;overflow-y:auto;margin-bottom:12px;"></div>
+                <div style="margin-bottom:8px;">
+                    <label style="font-size:0.75rem;font-weight:600;color:#475569;">Mensagem:</label>
+                    <textarea id="shareNewsMessage" rows="4" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;resize:vertical;"></textarea>
+                </div>
+            </div>
+            <div style="padding:12px 20px;border-top:1px solid #e2e8f0;display:flex;gap:8px;justify-content:flex-end;">
+                <button onclick="closeShareNewsModal()" style="padding:6px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;">Cancelar</button>
+                <button id="shareNewsSendBtn" onclick="sendShareNews()" style="display:none;padding:6px 16px;border:none;border-radius:8px;background:#22c55e;color:#fff;cursor:pointer;font-weight:600;">
+                    <i class="bi bi-send me-1"></i>Enviar
+                </button>
+            </div>
+        </div>
+    </div>
 {% endblock %}

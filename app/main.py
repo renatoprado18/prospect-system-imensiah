@@ -16439,6 +16439,65 @@ NAO use markdown (sem ** ou ## ou *). Texto puro para colar no LinkedIn."""
     return {"status": "success", "post": post}
 
 
+@app.get("/api/news/suggest-contacts")
+async def api_suggest_contacts_for_news(titulo: str = "", categoria: str = ""):
+    """Sugere contatos que podem se interessar por uma noticia"""
+    import json as _json
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cat_to_tags = {
+            'governanca': ['conselheiro', 'board-academy', 'assespro', 'diretoria'],
+            'ia': ['imensiah', 'tecnologia', 'c-level'],
+            'empreendedorismo': ['ex-socio', 'carambola', 'parenet', 'c-level'],
+            'esg': ['esg', 'sustentabilidade', 'board-academy'],
+            'esporte': ['cap', 'judo', 'tenis', 'charuto'],
+            'agro': ['fazenda', 'agro'],
+            'juridico': ['juridico', 'advogado'],
+            'estrategia': ['conselheiro', 'board-academy', 'mentor', 'c-level'],
+        }
+        relevant_tags = cat_to_tags.get(categoria, ['c-level', 'conselheiro'])
+        tag_clause = " OR ".join(["tags::text ILIKE %s" for _ in relevant_tags[:5]])
+        params = [f"%{t}%" for t in relevant_tags[:5]]
+
+        cursor.execute(f"""
+            SELECT id, nome, empresa, cargo, circulo, health_score, foto_url, tags, telefones, emails
+            FROM contacts WHERE circulo <= 3 AND ({tag_clause})
+            ORDER BY circulo ASC, health_score ASC LIMIT 10
+        """, params)
+
+        contacts = []
+        for row in cursor.fetchall():
+            c = dict(row)
+            telefones = c.get('telefones', [])
+            if isinstance(telefones, str):
+                telefones = _json.loads(telefones) if telefones else []
+            phone = ''
+            for t in telefones:
+                if t.get('number'):
+                    phone = t['number']
+                    break
+
+            emails = c.get('emails', [])
+            if isinstance(emails, str):
+                emails = _json.loads(emails) if emails else []
+            email = emails[0].get('email', '') if emails else ''
+
+            tags = c.get('tags', [])
+            if isinstance(tags, str):
+                tags = _json.loads(tags) if tags else []
+            matching = [t for t in tags if t in relevant_tags]
+            reason = ', '.join(matching[:3]) if matching else f'C{c["circulo"]}'
+
+            contacts.append({
+                'id': c['id'], 'nome': c['nome'], 'empresa': c.get('empresa', ''),
+                'cargo': c.get('cargo', ''), 'circulo': c['circulo'],
+                'foto_url': c.get('foto_url', ''), 'phone': phone, 'email': email, 'reason': reason
+            })
+
+    return {"contacts": contacts}
+
+
 @app.post("/api/news/{news_id}/feedback")
 async def api_news_feedback(news_id: int, request: Request):
     """Registra feedback sobre noticia (liked/disliked/shared/hot_take)"""
