@@ -14705,6 +14705,22 @@ async def api_active_projects_summary(limit: int = 5):
     return get_active_projects_summary(limit=limit)
 
 
+@app.get("/api/projects/overdue-count")
+async def api_projects_overdue_count():
+    """Conta projetos com tarefas vencidas"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(DISTINCT t.project_id) as count
+            FROM tasks t
+            JOIN projects p ON p.id = t.project_id
+            WHERE t.status = 'pending'
+              AND t.data_vencimento < NOW()
+              AND p.status = 'ativo'
+        """)
+        return {"count": cursor.fetchone()['count']}
+
+
 @app.get("/api/projects/{project_id}")
 async def api_get_project(project_id: int):
     """Retorna projeto com todos os detalhes."""
@@ -15425,22 +15441,6 @@ async def api_add_project_task(project_id: int, request: Request):
         task = dict(row) if row else result
 
     return {"status": "success", "task": task, "synced_to_google": True}
-
-
-@app.get("/api/projects/overdue-count")
-async def api_projects_overdue_count():
-    """Conta projetos com tarefas vencidas"""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT COUNT(DISTINCT t.project_id) as count
-            FROM tasks t
-            JOIN projects p ON p.id = t.project_id
-            WHERE t.status = 'pending'
-              AND t.data_vencimento < NOW()
-              AND p.status = 'ativo'
-        """)
-        return {"count": cursor.fetchone()['count']}
 
 
 @app.get("/api/projects/all-tasks")
