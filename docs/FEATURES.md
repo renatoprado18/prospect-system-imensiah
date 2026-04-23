@@ -11,6 +11,7 @@
 - Contatos recentes
 - Tarefas pendentes
 - Calendario resumido
+- **LinkedIn Editorial card**: posts semana, impressoes, engajamento, metricas pendentes, proximo post
 
 ### Contatos (`/contatos` → rap_contacts.html)
 - Lista paginada com busca e filtros (circulo, empresa, tags)
@@ -82,6 +83,11 @@
 - **Performance por pilar**: NeoGovernanca, IA aplicada, Bastidores
 - **Insights automaticos** (melhor pilar, taxa de engajamento, tendencias)
 - **Briefing semanal IA** (cron domingos 18h): analisa performance, sugere 3 posts, cria tarefas
+- **Upload xlsx metricas**: Drag & drop de arquivo LinkedIn Analytics (.xlsx) com parse automatico
+- **Historico de metricas** (`editorial_metrics_history`): snapshots de metricas ao longo do tempo
+- **Comparativo normalizado 48h**: tabela comparando posts no mesmo ponto temporal
+- **Auto-criacao de tarefas de metricas**: ao publicar, cria tarefa "Coletar metricas" para 48h depois
+- **Dashboard card Editorial Metricas**: posts da semana, impressoes, engajamento, metricas pendentes
 
 ### Hot Takes (`/hot-takes` → hot_takes.html)
 - Lista de hot takes com status

@@ -1997,6 +1997,29 @@ def init_db():
             ON news_interactions(news_id, action)
         ''')
 
+        # Editorial Metrics History - track metrics snapshots over time
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS editorial_metrics_history (
+                id SERIAL PRIMARY KEY,
+                post_id INTEGER REFERENCES editorial_posts(id) ON DELETE CASCADE,
+                impressoes INTEGER DEFAULT 0,
+                reacoes INTEGER DEFAULT 0,
+                comentarios INTEGER DEFAULT 0,
+                compartilhamentos INTEGER DEFAULT 0,
+                visitas_perfil INTEGER DEFAULT 0,
+                seguidores INTEGER DEFAULT 0,
+                salvamentos INTEGER DEFAULT 0,
+                coletado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                dias_apos_publicacao INTEGER,
+                fonte TEXT DEFAULT 'manual'
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_metrics_history_post
+            ON editorial_metrics_history(post_id, coletado_em DESC)
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True

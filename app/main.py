@@ -15675,6 +15675,16 @@ async def api_editorial_dashboard_tasks():
             cursor.execute("SELECT COUNT(*) FROM editorial_posts WHERE status = 'draft'")
             result['total_drafts'] = cursor.fetchone()['count']
 
+        # Count posts needing metrics (published, 48h+ ago, no metrics)
+        cursor.execute("""
+            SELECT COUNT(*) FROM editorial_posts
+            WHERE status = 'published'
+              AND data_publicado IS NOT NULL
+              AND data_publicado < NOW() - INTERVAL '48 hours'
+              AND (linkedin_impressoes IS NULL OR linkedin_impressoes = 0)
+        """)
+        result['needs_metrics_count'] = cursor.fetchone()['count']
+
     return result
 
 
@@ -15933,6 +15943,235 @@ async def cron_editorial_weekly_briefing(request: Request):
             "status": "error",
             "error": str(e),
         }
+
+
+# ============== EDITORIAL METRICS API ==============
+
+@app.post("/api/editorial/{post_id}/metrics")
+async def api_editorial_post_metrics(post_id: int, request: Request):
+    """Save metrics for an editorial post (manual or from xlsx upload)"""
+    data = await request.json()
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id, data_publicado, status FROM editorial_posts WHERE id = %s", (post_id,))
+        post = cursor.fetchone()
+        if not post:
+            raise HTTPException(status_code=404, detail="Post nao encontrado")
+
+        impressoes = data.get('impressoes', 0) or 0
+        reacoes = data.get('reacoes', 0) or 0
+        comentarios = data.get('comentarios', 0) or 0
+        compartilhamentos = data.get('compartilhamentos', 0) or 0
+        cliques = data.get('cliques', 0) or 0
+        visitas_perfil = data.get('visitas_perfil', 0) or 0
+        seguidores = data.get('seguidores', 0) or 0
+        salvamentos = data.get('salvamentos', 0) or 0
+        fonte = data.get('fonte', 'manual')
+
+        dias_apos = None
+        if post.get('data_publicado'):
+            delta = datetime.now() - post['data_publicado']
+            dias_apos = delta.days
+
+        cursor.execute("""
+            UPDATE editorial_posts
+            SET linkedin_impressoes = %s,
+                linkedin_reacoes = %s,
+                linkedin_comentarios = %s,
+                linkedin_compartilhamentos = %s,
+                linkedin_cliques = %s,
+                linkedin_metricas_em = CURRENT_TIMESTAMP,
+                atualizado_em = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (impressoes, reacoes, comentarios, compartilhamentos, cliques, post_id))
+
+        cursor.execute("""
+            INSERT INTO editorial_metrics_history (
+                post_id, impressoes, reacoes, comentarios, compartilhamentos,
+                visitas_perfil, seguidores, salvamentos, dias_apos_publicacao, fonte
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (post_id, impressoes, reacoes, comentarios, compartilhamentos,
+              visitas_perfil, seguidores, salvamentos, dias_apos, fonte))
+        history_id = cursor.fetchone()['id']
+
+        cursor.execute("""
+            UPDATE tasks
+            SET status = 'completed', data_conclusao = CURRENT_TIMESTAMP
+            WHERE origem = 'editorial_metrics'
+              AND status = 'pending'
+              AND descricao LIKE %s
+        """, (f'%post_id={post_id}%',))
+
+        conn.commit()
+
+    return {
+        "status": "success",
+        "post_id": post_id,
+        "history_id": history_id,
+        "dias_apos_publicacao": dias_apos
+    }
+
+
+@app.post("/api/editorial/metrics/upload")
+async def api_editorial_metrics_upload(request: Request):
+    """Accept parsed xlsx data and auto-match post by URL"""
+    data = await request.json()
+    post_url = data.get('post_url', '').strip()
+    metrics = data.get('metrics', {})
+
+    if not post_url and not data.get('post_id'):
+        raise HTTPException(status_code=400, detail="post_url ou post_id obrigatorio")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        post_id = data.get('post_id')
+        if not post_id and post_url:
+            cursor.execute("""
+                SELECT id FROM editorial_posts
+                WHERE linkedin_post_url = %s OR url_publicado = %s
+                ORDER BY id DESC LIMIT 1
+            """, (post_url, post_url))
+            row = cursor.fetchone()
+            if row:
+                post_id = row['id']
+
+        if not post_id and post_url and 'linkedin.com' in post_url:
+            url_part = post_url.split('/')[-1].split('?')[0] if post_url else ''
+            if url_part:
+                cursor.execute("""
+                    SELECT id FROM editorial_posts
+                    WHERE linkedin_post_url LIKE %s OR url_publicado LIKE %s
+                    ORDER BY id DESC LIMIT 1
+                """, (f'%{url_part}%', f'%{url_part}%'))
+                row = cursor.fetchone()
+                if row:
+                    post_id = row['id']
+
+        if not post_id:
+            return {
+                "status": "not_found",
+                "message": "Nenhum post encontrado com essa URL. Selecione o post manualmente.",
+                "post_url": post_url
+            }
+
+        cursor.execute("SELECT id, data_publicado, status FROM editorial_posts WHERE id = %s", (post_id,))
+        post = cursor.fetchone()
+
+        dias_apos = None
+        if post.get('data_publicado'):
+            delta = datetime.now() - post['data_publicado']
+            dias_apos = delta.days
+
+        impressoes = metrics.get('impressoes', 0) or 0
+        reacoes = metrics.get('reacoes', 0) or 0
+        comentarios = metrics.get('comentarios', 0) or 0
+        compartilhamentos = metrics.get('compartilhamentos', 0) or 0
+        cliques = metrics.get('cliques', 0) or 0
+        visitas_perfil = metrics.get('visitas_perfil', 0) or 0
+        seguidores = metrics.get('seguidores', 0) or 0
+        salvamentos = metrics.get('salvamentos', 0) or 0
+
+        cursor.execute("""
+            UPDATE editorial_posts
+            SET linkedin_impressoes = %s,
+                linkedin_reacoes = %s,
+                linkedin_comentarios = %s,
+                linkedin_compartilhamentos = %s,
+                linkedin_cliques = %s,
+                linkedin_metricas_em = CURRENT_TIMESTAMP,
+                atualizado_em = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (impressoes, reacoes, comentarios, compartilhamentos, cliques, post_id))
+
+        cursor.execute("""
+            INSERT INTO editorial_metrics_history (
+                post_id, impressoes, reacoes, comentarios, compartilhamentos,
+                visitas_perfil, seguidores, salvamentos, dias_apos_publicacao, fonte
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (post_id, impressoes, reacoes, comentarios, compartilhamentos,
+              visitas_perfil, seguidores, salvamentos, dias_apos, 'xlsx_upload'))
+        history_id = cursor.fetchone()['id']
+
+        cursor.execute("""
+            UPDATE tasks
+            SET status = 'completed', data_conclusao = CURRENT_TIMESTAMP
+            WHERE origem = 'editorial_metrics'
+              AND status = 'pending'
+              AND descricao LIKE %s
+        """, (f'%post_id={post_id}%',))
+
+        conn.commit()
+
+    return {
+        "status": "success",
+        "post_id": post_id,
+        "history_id": history_id,
+        "dias_apos_publicacao": dias_apos
+    }
+
+
+@app.get("/api/editorial/metrics/comparison")
+async def api_editorial_metrics_comparison():
+    """Get normalized comparison of all published posts at their 48h mark"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT DISTINCT ON (emh.post_id)
+                emh.post_id,
+                ep.article_title,
+                ep.data_publicado,
+                ep.ai_categoria,
+                emh.impressoes,
+                emh.reacoes,
+                emh.comentarios,
+                emh.compartilhamentos,
+                emh.salvamentos,
+                emh.dias_apos_publicacao,
+                emh.coletado_em,
+                CASE WHEN emh.impressoes > 0
+                    THEN ROUND(((emh.reacoes + emh.comentarios)::numeric / emh.impressoes) * 100, 2)
+                    ELSE 0
+                END as taxa_engajamento
+            FROM editorial_metrics_history emh
+            JOIN editorial_posts ep ON ep.id = emh.post_id
+            WHERE ep.status = 'published'
+            ORDER BY emh.post_id, ABS(COALESCE(emh.dias_apos_publicacao, 999) - 2) ASC
+        """)
+        rows = [dict(r) for r in cursor.fetchall()]
+
+        # Include legacy posts with metrics but no history entries
+        cursor.execute("""
+            SELECT ep.id as post_id, ep.article_title, ep.data_publicado, ep.ai_categoria,
+                   ep.linkedin_impressoes as impressoes, ep.linkedin_reacoes as reacoes,
+                   ep.linkedin_comentarios as comentarios, ep.linkedin_compartilhamentos as compartilhamentos,
+                   0 as salvamentos,
+                   CASE WHEN ep.data_publicado IS NOT NULL
+                       THEN EXTRACT(DAY FROM (COALESCE(ep.linkedin_metricas_em, CURRENT_TIMESTAMP) - ep.data_publicado))::integer
+                       ELSE NULL
+                   END as dias_apos_publicacao,
+                   ep.linkedin_metricas_em as coletado_em,
+                   CASE WHEN ep.linkedin_impressoes > 0
+                       THEN ROUND(((COALESCE(ep.linkedin_reacoes,0) + COALESCE(ep.linkedin_comentarios,0))::numeric / ep.linkedin_impressoes) * 100, 2)
+                       ELSE 0
+                   END as taxa_engajamento
+            FROM editorial_posts ep
+            WHERE ep.status = 'published'
+              AND ep.linkedin_impressoes > 0
+              AND ep.id NOT IN (SELECT DISTINCT post_id FROM editorial_metrics_history)
+            ORDER BY ep.data_publicado DESC
+        """)
+        legacy_rows = [dict(r) for r in cursor.fetchall()]
+
+        all_posts = rows + legacy_rows
+        all_posts.sort(key=lambda x: x.get('impressoes') or 0, reverse=True)
+
+        return {"posts": all_posts, "total": len(all_posts)}
 
 
 # ============== HOT TAKES API ==============

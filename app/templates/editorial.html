@@ -1086,8 +1086,45 @@
         <span style="font-weight: 600; color: #2563eb; font-size: 0.85rem;">{{ funnel.best_performing.impressions }} imp.</span>
     </div>
     {% endif %}
+
+    <!-- 48h Normalized Comparison Table -->
+    <div id="comparison-48h" style="margin-top: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <h4 style="font-size: 0.85rem; font-weight: 600; margin: 0; color: var(--dark);">
+                <i class="bi bi-bar-chart-line me-1"></i>Comparativo Normalizado (48h)
+            </h4>
+            <button onclick="loadComparison48h()" style="background: none; border: none; color: #6366f1; cursor: pointer; font-size: 0.75rem;">
+                <i class="bi bi-arrow-clockwise"></i> Atualizar
+            </button>
+        </div>
+        <div id="comparison-table-body" style="font-size: 0.8rem;">
+            <p style="color: var(--gray-500); text-align: center; padding: 12px;">Carregando...</p>
+        </div>
+    </div>
 </div>
 {% endif %}
+
+<!-- Xlsx Metrics Upload -->
+<div class="posts-card" style="border-top: 4px solid #7c3aed; margin-top: 16px;">
+    <div class="posts-header">
+        <h2><i class="bi bi-file-earmark-spreadsheet me-2" style="color: #7c3aed;"></i>Importar Metricas (xlsx)</h2>
+    </div>
+    <div id="xlsx-drop-zone" style="border: 2px dashed var(--gray-300); border-radius: 12px; padding: 24px; text-align: center; cursor: pointer; transition: all 0.2s; margin: 0 16px 16px;"
+         ondragover="event.preventDefault(); this.style.borderColor='#7c3aed'; this.style.background='#f5f3ff';"
+         ondragleave="this.style.borderColor='var(--gray-300)'; this.style.background='transparent';"
+         ondrop="handleXlsxDrop(event)"
+         onclick="document.getElementById('xlsx-file-input').click()">
+        <i class="bi bi-cloud-arrow-up" style="font-size: 2rem; color: #7c3aed;"></i>
+        <p style="margin: 8px 0 0; color: var(--gray-600); font-size: 0.85rem;">
+            Arraste o arquivo .xlsx do LinkedIn Analytics aqui
+        </p>
+        <p style="margin: 4px 0 0; color: var(--gray-400); font-size: 0.75rem;">
+            ou clique para selecionar
+        </p>
+        <input type="file" id="xlsx-file-input" accept=".xlsx,.xls" style="display: none;" onchange="handleXlsxFile(this.files[0])">
+    </div>
+    <div id="xlsx-preview" style="display: none; padding: 0 16px 16px;"></div>
+</div>
 
 <!-- Publicar Hoje - Prioridade máxima -->
 {% if today_posts %}
@@ -1520,6 +1557,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 <script>
 const ARTICLES_URL = 'https://almeida-prado.com';
 
@@ -2262,5 +2300,288 @@ document.querySelectorAll('.ed-modal').forEach(modal => {
         }
     });
 });
+
+// ============== XLSX Metrics Upload ==============
+
+function handleXlsxDrop(event) {
+    event.preventDefault();
+    event.target.closest('#xlsx-drop-zone').style.borderColor = 'var(--gray-300)';
+    event.target.closest('#xlsx-drop-zone').style.background = 'transparent';
+    const files = event.dataTransfer.files;
+    if (files.length > 0) handleXlsxFile(files[0]);
+}
+
+function handleXlsxFile(file) {
+    if (!file) return;
+    if (!file.name.match(/\.xlsx?$/i)) {
+        alert('Por favor, selecione um arquivo .xlsx');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, {type: 'array'});
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(sheet, {header: 1});
+
+            // Parse LinkedIn analytics format
+            const metrics = parseLinkedInMetrics(rows);
+            showXlsxPreview(metrics, file.name);
+        } catch (err) {
+            console.error('Error parsing xlsx:', err);
+            alert('Erro ao ler arquivo: ' + err.message);
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+function parseLinkedInMetrics(rows) {
+    const metrics = {
+        impressoes: 0, reacoes: 0, comentarios: 0,
+        compartilhamentos: 0, visitas_perfil: 0,
+        seguidores: 0, salvamentos: 0, cliques: 0,
+        post_url: ''
+    };
+
+    // LinkedIn xlsx has rows like "Impressões | 167" or cells with label/value pairs
+    for (const row of rows) {
+        if (!row || row.length === 0) continue;
+        const cellText = String(row[0] || '').trim();
+
+        // Check for URL in cells
+        for (const cell of row) {
+            const cellStr = String(cell || '');
+            if (cellStr.includes('linkedin.com/feed/update') || cellStr.includes('linkedin.com/posts/')) {
+                metrics.post_url = cellStr.trim();
+            }
+        }
+
+        // Parse "Label | Value" format
+        const parts = cellText.split('|').map(s => s.trim());
+        if (parts.length >= 2) {
+            const label = parts[0].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            const value = parseInt(parts[1].replace(/[.,]/g, '')) || 0;
+
+            if (label.includes('impress')) metrics.impressoes = value;
+            else if (label.includes('reac')) metrics.reacoes = value;
+            else if (label.includes('comentar')) metrics.comentarios = value;
+            else if (label.includes('compartilh') || label.includes('repost')) metrics.compartilhamentos = value;
+            else if (label.includes('visita') && label.includes('perfil')) metrics.visitas_perfil = value;
+            else if (label.includes('seguidor') || label.includes('follower')) metrics.seguidores = value;
+            else if (label.includes('salvament') || label.includes('save')) metrics.salvamentos = value;
+            else if (label.includes('clique') || label.includes('click')) metrics.cliques = value;
+        }
+
+        // Also try: cell[0] is label, cell[1] is value (two-column format)
+        if (row.length >= 2 && typeof row[1] === 'number') {
+            const label = String(row[0]).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            const value = row[1];
+
+            if (label.includes('impress')) metrics.impressoes = value;
+            else if (label.includes('reac')) metrics.reacoes = value;
+            else if (label.includes('comentar')) metrics.comentarios = value;
+            else if (label.includes('compartilh') || label.includes('repost')) metrics.compartilhamentos = value;
+            else if (label.includes('visita') && label.includes('perfil')) metrics.visitas_perfil = value;
+            else if (label.includes('seguidor') || label.includes('follower')) metrics.seguidores = value;
+            else if (label.includes('salvament') || label.includes('save')) metrics.salvamentos = value;
+            else if (label.includes('clique') || label.includes('click')) metrics.cliques = value;
+        }
+    }
+
+    return metrics;
+}
+
+function showXlsxPreview(metrics, filename) {
+    const preview = document.getElementById('xlsx-preview');
+    preview.style.display = 'block';
+
+    preview.innerHTML = `
+        <div style="background: #f5f3ff; border-radius: 12px; padding: 16px; border: 1px solid #c4b5fd;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <span style="font-size: 0.85rem; font-weight: 600; color: #5b21b6;">
+                    <i class="bi bi-file-earmark-check me-1"></i>${filename}
+                </span>
+                <button onclick="document.getElementById('xlsx-preview').style.display='none'" style="background:none;border:none;color:var(--gray-400);cursor:pointer;">&times;</button>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;">
+                <div style="text-align: center; padding: 8px; background: white; border-radius: 8px;">
+                    <div style="font-size: 1.1rem; font-weight: 700; color: #2563eb;">${metrics.impressoes}</div>
+                    <div style="font-size: 0.7rem; color: var(--gray-500);">Impressoes</div>
+                </div>
+                <div style="text-align: center; padding: 8px; background: white; border-radius: 8px;">
+                    <div style="font-size: 1.1rem; font-weight: 700; color: #059669;">${metrics.reacoes}</div>
+                    <div style="font-size: 0.7rem; color: var(--gray-500);">Reacoes</div>
+                </div>
+                <div style="text-align: center; padding: 8px; background: white; border-radius: 8px;">
+                    <div style="font-size: 1.1rem; font-weight: 700; color: #d97706;">${metrics.comentarios}</div>
+                    <div style="font-size: 0.7rem; color: var(--gray-500);">Comentarios</div>
+                </div>
+                <div style="text-align: center; padding: 8px; background: white; border-radius: 8px;">
+                    <div style="font-size: 1.1rem; font-weight: 700; color: #7c3aed;">${metrics.compartilhamentos}</div>
+                    <div style="font-size: 0.7rem; color: var(--gray-500);">Compartilh.</div>
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;">
+                <div style="text-align: center; padding: 6px; background: white; border-radius: 8px;">
+                    <div style="font-size: 0.9rem; font-weight: 600;">${metrics.visitas_perfil}</div>
+                    <div style="font-size: 0.65rem; color: var(--gray-500);">Visitas Perfil</div>
+                </div>
+                <div style="text-align: center; padding: 6px; background: white; border-radius: 8px;">
+                    <div style="font-size: 0.9rem; font-weight: 600;">${metrics.seguidores}</div>
+                    <div style="font-size: 0.65rem; color: var(--gray-500);">Seguidores</div>
+                </div>
+                <div style="text-align: center; padding: 6px; background: white; border-radius: 8px;">
+                    <div style="font-size: 0.9rem; font-weight: 600;">${metrics.salvamentos}</div>
+                    <div style="font-size: 0.65rem; color: var(--gray-500);">Salvamentos</div>
+                </div>
+                <div style="text-align: center; padding: 6px; background: white; border-radius: 8px;">
+                    <div style="font-size: 0.9rem; font-weight: 600;">${metrics.cliques}</div>
+                    <div style="font-size: 0.65rem; color: var(--gray-500);">Cliques</div>
+                </div>
+            </div>
+            ${metrics.post_url ? `<div style="font-size: 0.75rem; color: var(--gray-500); margin-bottom: 8px;"><i class="bi bi-link-45deg"></i> ${metrics.post_url.substring(0, 60)}...</div>` : ''}
+            <div style="margin-bottom: 12px;">
+                <label style="font-size: 0.8rem; font-weight: 500; margin-bottom: 4px; display: block;">Associar ao post:</label>
+                <select id="xlsx-post-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 8px; font-size: 0.85rem;">
+                    <option value="">-- Auto-detectar por URL --</option>
+                </select>
+            </div>
+            <button onclick="submitXlsxMetrics()" style="width: 100%; padding: 10px; background: #7c3aed; color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer;">
+                <i class="bi bi-cloud-upload me-1"></i> Salvar Metricas
+            </button>
+        </div>
+    `;
+
+    // Store metrics for submission
+    window._xlsxMetrics = metrics;
+
+    // Load published posts for the dropdown
+    fetch('/api/editorial?status=published')
+        .then(r => r.json())
+        .then(posts => {
+            const select = document.getElementById('xlsx-post-select');
+            (posts || []).forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = `#${p.id} - ${(p.article_title || '').substring(0, 50)}`;
+                select.appendChild(opt);
+            });
+        });
+}
+
+async function submitXlsxMetrics() {
+    const metrics = window._xlsxMetrics;
+    if (!metrics) return;
+
+    const selectedPostId = document.getElementById('xlsx-post-select')?.value;
+
+    try {
+        let response;
+        if (selectedPostId) {
+            // Direct save to specific post
+            response = await fetch(`/api/editorial/${selectedPostId}/metrics`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({...metrics, fonte: 'xlsx_upload'})
+            });
+        } else {
+            // Auto-match by URL
+            response = await fetch('/api/editorial/metrics/upload', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    post_url: metrics.post_url,
+                    metrics: metrics
+                })
+            });
+        }
+
+        const result = await response.json();
+        if (result.status === 'success') {
+            document.getElementById('xlsx-preview').innerHTML = `
+                <div style="background: #d1fae5; border-radius: 12px; padding: 16px; text-align: center; border: 1px solid #6ee7b7;">
+                    <i class="bi bi-check-circle" style="font-size: 2rem; color: #059669;"></i>
+                    <p style="margin: 8px 0 0; color: #065f46; font-weight: 600;">Metricas salvas com sucesso!</p>
+                    <p style="margin: 4px 0 0; color: #047857; font-size: 0.8rem;">Post #${result.post_id} - ${result.dias_apos_publicacao || '?'} dias apos publicacao</p>
+                </div>
+            `;
+            setTimeout(() => location.reload(), 2000);
+        } else if (result.status === 'not_found') {
+            alert(result.message || 'Post nao encontrado. Selecione manualmente.');
+        } else {
+            alert('Erro ao salvar: ' + (result.detail || 'Erro desconhecido'));
+        }
+    } catch (err) {
+        alert('Erro: ' + err.message);
+    }
+}
+
+// ============== 48h Comparison Table ==============
+
+async function loadComparison48h() {
+    const container = document.getElementById('comparison-table-body');
+    if (!container) return;
+
+    try {
+        const response = await fetch('/api/editorial/metrics/comparison');
+        const data = await response.json();
+
+        if (!data.posts || data.posts.length === 0) {
+            container.innerHTML = '<p style="color: var(--gray-500); text-align: center; padding: 12px;">Nenhum post com metricas registradas</p>';
+            return;
+        }
+
+        let html = `
+            <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                <thead>
+                    <tr style="background: var(--gray-100); border-bottom: 2px solid var(--gray-200);">
+                        <th style="padding: 8px; text-align: left; max-width: 150px;">Post</th>
+                        <th style="padding: 8px; text-align: right;">Imp.</th>
+                        <th style="padding: 8px; text-align: right;">Reac.</th>
+                        <th style="padding: 8px; text-align: right;">Com.</th>
+                        <th style="padding: 8px; text-align: right;">Comp.</th>
+                        <th style="padding: 8px; text-align: right;">Eng.%</th>
+                        <th style="padding: 8px; text-align: right;">Dias</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        const maxImp = Math.max(...data.posts.map(p => p.impressoes || 0), 1);
+
+        data.posts.slice(0, 10).forEach((p, i) => {
+            const pct = ((p.impressoes || 0) / maxImp * 100).toFixed(0);
+            const bgColor = i % 2 === 0 ? 'white' : 'var(--gray-50)';
+            html += `
+                <tr style="background: ${bgColor}; border-bottom: 1px solid var(--gray-100);">
+                    <td style="padding: 6px 8px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${p.article_title || ''}">
+                        <div style="background: linear-gradient(90deg, rgba(99,102,241,0.15) ${pct}%, transparent ${pct}%); padding: 2px 4px; border-radius: 4px;">
+                            ${(p.article_title || '').substring(0, 30)}${(p.article_title || '').length > 30 ? '...' : ''}
+                        </div>
+                    </td>
+                    <td style="padding: 6px 8px; text-align: right; font-weight: 600;">${p.impressoes || 0}</td>
+                    <td style="padding: 6px 8px; text-align: right;">${p.reacoes || 0}</td>
+                    <td style="padding: 6px 8px; text-align: right;">${p.comentarios || 0}</td>
+                    <td style="padding: 6px 8px; text-align: right;">${p.compartilhamentos || 0}</td>
+                    <td style="padding: 6px 8px; text-align: right; font-weight: 600; color: ${p.taxa_engajamento > 3 ? '#059669' : p.taxa_engajamento > 1 ? '#d97706' : '#6b7280'};">
+                        ${p.taxa_engajamento || 0}%
+                    </td>
+                    <td style="padding: 6px 8px; text-align: right; color: var(--gray-500);">${p.dias_apos_publicacao != null ? p.dias_apos_publicacao + 'd' : '-'}</td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table></div>';
+        container.innerHTML = html;
+    } catch (err) {
+        container.innerHTML = '<p style="color: var(--gray-400); text-align: center;">Erro ao carregar comparativo</p>';
+    }
+}
+
+// Load comparison on page load
+document.addEventListener('DOMContentLoaded', loadComparison48h);
 </script>
 {% endblock %}

@@ -752,6 +752,7 @@ def mark_hot_take_published(hot_take_id: int, linkedin_url: str = None) -> dict:
 
         # Atualiza também o editorial_post se existir
         if result and result.get('editorial_post_id'):
+            editorial_post_id = result['editorial_post_id']
             cursor.execute('''
                 UPDATE editorial_posts
                 SET status = 'published',
@@ -759,7 +760,18 @@ def mark_hot_take_published(hot_take_id: int, linkedin_url: str = None) -> dict:
                     data_publicado = COALESCE(data_publicado, %s),
                     linkedin_post_url = COALESCE(%s, linkedin_post_url)
                 WHERE id = %s
-            ''', (linkedin_url, datetime.now(), linkedin_url, result['editorial_post_id']))
+                RETURNING article_title, data_publicado
+            ''', (linkedin_url, datetime.now(), linkedin_url, editorial_post_id))
+            ep = cursor.fetchone()
+
+            # Auto-create metrics collection task (48h after publish)
+            if ep:
+                from services.editorial_calendar import _create_metrics_collection_task
+                _create_metrics_collection_task(
+                    cursor, editorial_post_id,
+                    ep.get('article_title', ''),
+                    ep.get('data_publicado')
+                )
 
         conn.commit()
 

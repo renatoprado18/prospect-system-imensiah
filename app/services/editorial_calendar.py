@@ -208,9 +208,26 @@ def update_editorial_post(post_id: int, data: Dict) -> Optional[Dict]:
         updates.append("atualizado_em = CURRENT_TIMESTAMP")
         params.append(post_id)
 
+        # Check if this is a transition to 'published' (need old status)
+        is_publishing = data.get('status') == 'published'
+        old_status = None
+        if is_publishing:
+            cursor.execute("SELECT status FROM editorial_posts WHERE id = %s", (post_id,))
+            old_row = cursor.fetchone()
+            old_status = old_row['status'] if old_row else None
+
         query = f"UPDATE editorial_posts SET {', '.join(updates)} WHERE id = %s RETURNING *"
         cursor.execute(query, params)
         post = cursor.fetchone()
+
+        # Auto-create metrics collection task when transitioning to published
+        if post and is_publishing and old_status != 'published':
+            _create_metrics_collection_task(
+                cursor, post_id,
+                post.get('article_title', ''),
+                post.get('data_publicado')
+            )
+
         return dict(post) if post else None
 
 
@@ -285,6 +302,31 @@ def schedule_post(post_id: int, data_publicacao: datetime, create_task: bool = T
         return dict(cursor.fetchone())
 
 
+def _create_metrics_collection_task(cursor, post_id: int, post_title: str, publish_date=None):
+    """Create a task to collect metrics 48h after publication."""
+    from datetime import datetime, timedelta
+    due_date = (publish_date or datetime.now()) + timedelta(hours=48)
+    titulo_truncated = (post_title or 'Post')[:40]
+
+    cursor.execute("""
+        INSERT INTO tasks (
+            titulo, descricao, project_id, contact_id,
+            data_vencimento, prioridade, ai_generated, origem,
+            tags, status
+        ) VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'editorial_metrics', %s, 'pending')
+        RETURNING id
+    """, (
+        f"Coletar metricas: {titulo_truncated}",
+        f"Coletar metricas do LinkedIn para o post publicado.\npost_id={post_id}",
+        22,  # project_id: Editorial LinkedIn
+        14911,  # contact_id: Renato
+        due_date,
+        6,  # priority
+        json.dumps(["editorial", "metricas"]),
+    ))
+    return cursor.fetchone()
+
+
 def mark_as_published(post_id: int, url_publicado: Optional[str] = None, metricas: Optional[Dict] = None) -> Dict:
     """Mark a post as published"""
     with get_db() as conn:
@@ -310,6 +352,14 @@ def mark_as_published(post_id: int, url_publicado: Optional[str] = None, metrica
                 SET status = 'completed', data_conclusao = CURRENT_TIMESTAMP
                 WHERE id = %s
             """, (post['task_id'],))
+
+        # Auto-create metrics collection task (48h after publish)
+        if post:
+            _create_metrics_collection_task(
+                cursor, post_id,
+                post.get('article_title', ''),
+                post.get('data_publicado')
+            )
 
         return dict(post) if post else None
 
