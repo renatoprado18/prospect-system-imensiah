@@ -3622,73 +3622,7 @@
         }
 
         // Init - SINGLE API call for all dashboard data
-        // initDashboard REMOVIDO - era duplicata de loadDashboardData
-        // Tudo consolidado em loadDashboardData() que usa dataCache
-        const _removed_initDashboard = `
-                            `;
-                        }
-                        distContainer.innerHTML = distHtml;
-                    }
-                }
-
-                // Recent Contacts
-                if (data.contatos_recentes) {
-                    const container = document.getElementById('recentContacts');
-                    if (container) {
-                        let html = '';
-                        data.contatos_recentes.forEach(c => {
-                            const initials = (c.nome || '?').split(' ').map(n => n[0]).join('').substring(0,2).toUpperCase();
-                            html += `
-                                <a href="/contacts/${c.id}" class="contact-item">
-                                    <div class="contact-avatar" style="background: var(--primary-light);">
-                                        ${c.foto_url ? `<img src="${c.foto_url}" alt="">` : initials}
-                                    </div>
-                                    <div class="contact-info">
-                                        <div class="contact-name">${c.nome || 'Sem nome'}</div>
-                                        <div class="contact-company">${c.empresa || ''}</div>
-                                    </div>
-                                </a>
-                            `;
-                        });
-                        container.innerHTML = html || '<div class="empty-state">Nenhum contato recente</div>';
-                    }
-                }
-
-                // Birthdays / Lembretes
-                if (data.aniversarios && data.aniversarios.length > 0) {
-                    const reminder = document.getElementById('birthdayReminder');
-                    if (reminder) {
-                        const aniv = data.aniversarios[0];
-                        reminder.innerHTML = `
-                            <div class="reminder-icon">🎂</div>
-                            <div class="reminder-content">
-                                <div class="reminder-title">Aniversario proximo</div>
-                                <div class="reminder-meta">${aniv.nome} - ${aniv.dias_ate === 0 ? 'HOJE!' : `em ${aniv.dias_ate} dias`}</div>
-                            </div>
-                        `;
-                    }
-                }
-
-                // Inbox badge
-                const inboxBadge = document.getElementById('inboxBadge');
-                if (inboxBadge && data.inbox_unread > 0) {
-                    inboxBadge.textContent = data.inbox_unread;
-                    inboxBadge.style.display = 'inline';
-                }
-
-                // Tasks - show empty state
-                const tasksList = document.getElementById('tasksList');
-                if (tasksList) {
-                    tasksList.innerHTML = '<div class="empty-state"><i class="bi bi-check-circle"></i><p>Nenhuma tarefa pendente</p></div>';
-                }
-
-                // Calendar - show empty state
-                const todayAgenda = document.getElementById('todayAgenda');
-                if (todayAgenda) {
-                    todayAgenda.innerHTML = '<div class="empty-state"><i class="bi bi-calendar-x"></i><p>Nenhum compromisso para hoje</p></div>';
-                }
-
-        `; // end of removed initDashboard
+        // initDashboard removido (era duplicata de loadDashboardData)
 
         // ============== SSE Real-time Updates ==============
         let sseConnection = null;
