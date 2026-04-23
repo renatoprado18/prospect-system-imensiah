@@ -1993,36 +1993,11 @@
                     </div>
                 </div>
 
-                <!-- LinkedIn Tasks - O que publicar hoje -->
-                <div class="card linkedin-tasks-card mb-4">
-                    <div class="card-header">
-                        <h2><i class="bi bi-linkedin me-2"></i>LinkedIn Hoje</h2>
-                        <a href="/editorial" class="btn btn-sm" style="background: rgba(255,255,255,0.2); color: white; border: none;">
-                            Ver Editorial
-                        </a>
-                    </div>
-                    <div class="card-body p-0" id="linkedinTasksBody">
-                        <div class="loading">
-                            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-                            <span class="ms-2 text-muted">Carregando...</span>
-                        </div>
-                    </div>
-                </div>
+            </div>
 
-                <!-- Calendar Strip - 7 dias de conteudo -->
-                <div class="card mb-4" style="border-top: 3px solid #7c3aed;">
-                    <div class="card-header" style="background: linear-gradient(135deg, rgba(124, 58, 237, 0.05), rgba(99, 102, 241, 0.05)); padding: 8px 16px;">
-                        <h2 class="card-title" style="font-size: 0.85rem; color: #7c3aed; margin: 0;">
-                            <i class="bi bi-calendar-week me-2"></i>Conteudo da Semana
-                        </h2>
-                        <a href="/editorial" class="btn btn-sm btn-outline-secondary" style="font-size: 0.7rem;">Editorial</a>
-                    </div>
-                    <div class="card-body" style="padding: 10px 16px;" id="calendarStripBody">
-                        <div class="d-flex gap-2 justify-content-between" id="calendarStrip"></div>
-                    </div>
-                </div>
-
-                <!-- Today's Agenda -->
+            <!-- Right Column -->
+            <div>
+                <!-- Agenda de Hoje -->
                 <div class="card mb-4">
                     <div class="card-header">
                         <h2 class="card-title"><i class="bi bi-calendar-event me-2"></i>Agenda de Hoje</h2>
@@ -2036,8 +2011,8 @@
                     </div>
                 </div>
 
-                <!-- Tasks -->
-                <div class="card">
+                <!-- Tarefas -->
+                <div class="card mb-4">
                     <div class="card-header">
                         <h2 class="card-title"><i class="bi bi-check2-square me-2"></i>Tarefas</h2>
                         <div class="d-flex gap-2">
@@ -2054,11 +2029,33 @@
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- Right Column -->
-            <div>
-                <!-- Coluna direita: apenas Agenda, Tarefas e Conteudo -->
+                <!-- LinkedIn Hoje -->
+                <div class="card linkedin-tasks-card mb-4">
+                    <div class="card-header">
+                        <h2><i class="bi bi-linkedin me-2"></i>LinkedIn Hoje</h2>
+                        <a href="/editorial" class="btn btn-sm" style="background: rgba(255,255,255,0.2); color: white; border: none;">Ver Editorial</a>
+                    </div>
+                    <div class="card-body p-0" id="linkedinTasksBody">
+                        <div class="loading">
+                            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                            <span class="ms-2 text-muted">Carregando...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Conteudo da Semana -->
+                <div class="card mb-4" style="border-top: 3px solid #7c3aed;">
+                    <div class="card-header" style="background: linear-gradient(135deg, rgba(124, 58, 237, 0.05), rgba(99, 102, 241, 0.05)); padding: 8px 16px;">
+                        <h2 class="card-title" style="font-size: 0.85rem; color: #7c3aed; margin: 0;">
+                            <i class="bi bi-calendar-week me-2"></i>Conteudo da Semana
+                        </h2>
+                        <a href="/editorial" class="btn btn-sm btn-outline-secondary" style="font-size: 0.7rem;">Editorial</a>
+                    </div>
+                    <div class="card-body" style="padding: 10px 16px;" id="calendarStripBody">
+                        <div class="d-flex gap-2 justify-content-between" id="calendarStrip"></div>
+                    </div>
+                </div>
             </div>
         </div>
 {% endblock %}
