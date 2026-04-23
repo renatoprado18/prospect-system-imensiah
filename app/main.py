@@ -301,6 +301,17 @@ def row_to_dict(row):
 
 # ============== Health Check ==============
 
+
+@app.get("/api/bot-status")
+async def bot_status():
+    """Check if intel bot code is deployed"""
+    import os
+    return {
+        "bot_code": "v2",
+        "intel_bot_instance": os.getenv("INTEL_BOT_INSTANCE", "NOT_SET"),
+        "intel_bot_number": os.getenv("INTEL_BOT_NUMBER", "NOT_SET"),
+    }
+
 @app.get("/api/health")
 async def health_check():
     """Verifica status do sistema e banco de dados"""
