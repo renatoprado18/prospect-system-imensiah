@@ -15767,6 +15767,13 @@ async def api_editorial_get_analysis(post_id: int):
     }
 
 
+@app.get("/api/editorial/funnel")
+async def api_editorial_funnel():
+    """Editorial funnel: Posts -> Impressoes -> Engajamento -> Mensagens -> Reunioes"""
+    from services.editorial_pdca import get_editorial_funnel
+    return get_editorial_funnel()
+
+
 @app.get("/api/editorial/{post_id}")
 async def api_editorial_get(post_id: int):
     """Retorna um post especifico"""
@@ -15908,13 +15915,6 @@ async def api_project_editorial(project_id: int):
 
 
 # ============== EDITORIAL PDCA ==============
-
-@app.get("/api/editorial/funnel")
-async def api_editorial_funnel():
-    """Editorial funnel: Posts -> Impressoes -> Engajamento -> Mensagens -> Reunioes"""
-    from services.editorial_pdca import get_editorial_funnel
-    return get_editorial_funnel()
-
 
 @app.get("/api/cron/editorial-weekly-briefing")
 async def cron_editorial_weekly_briefing(request: Request):
