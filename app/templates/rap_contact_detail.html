@@ -2503,9 +2503,14 @@
                     <div class="card">
                         <div class="card-header">
                             <h2 class="card-title"><i class="bi bi-clock-history"></i> Timeline Completa</h2>
-                            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
-                                <i class="bi bi-plus"></i> Adicionar
-                            </button>
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-sm btn-outline-success" onclick="openRegisterCall()">
+                                    <i class="bi bi-telephone"></i> Registrar Ligacao
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addInteractionModal">
+                                    <i class="bi bi-plus"></i> Adicionar
+                                </button>
+                            </div>
                         </div>
                         <div class="card-body" id="unifiedTimelineContainer">
                             <div class="text-center text-muted py-4">
@@ -5799,6 +5804,16 @@
             // Navigate to calendar with contact pre-selected
             const contactName = contactData?.contact?.nome || '';
             window.location.href = `/calendario?new=true&contact_id=${contactId}&contact_name=${encodeURIComponent(contactName)}`;
+        }
+
+        function openRegisterCall() {
+            const form = document.getElementById('interactionForm');
+            form.reset();
+            form.querySelector('[name="tipo"]').value = 'telefone';
+            form.querySelector('[name="titulo"]').value = 'Ligacao telefonica';
+            form.querySelector('[name="data_interacao"]').value = new Date().toISOString().slice(0, 16);
+            form.querySelector('[name="descricao"]').placeholder = 'O que conversaram? Decisoes, pendencias, proximos passos...';
+            new bootstrap.Modal(document.getElementById('addInteractionModal')).show();
         }
 
         async function saveInteraction() {

@@ -761,6 +761,74 @@ async def process_renato_reply(content: str, phone: str):
         logger.error(f"Error processing Renato reply: {e}")
 
 
+async def _transcribe_bot_audio(key: Dict, data: Dict) -> str:
+    """Download audio from WhatsApp and transcribe using Claude."""
+    import base64
+
+    evo_url = os.getenv("EVOLUTION_API_URL", "")
+    evo_key = os.getenv("EVOLUTION_API_KEY", "")
+    bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot")
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+
+    if not evo_url or not api_key:
+        return ""
+
+    # Download audio as base64
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        dl_resp = await client.post(
+            f"{evo_url}/chat/getBase64FromMediaMessage/{bot_instance}",
+            headers={"apikey": evo_key, "Content-Type": "application/json"},
+            json={"message": {"key": key}, "convertToMp4": True}
+        )
+        if dl_resp.status_code not in (200, 201):
+            return ""
+
+        dl_data = dl_resp.json()
+        audio_b64 = dl_data.get("base64", "")
+        mimetype = dl_data.get("mimetype", "audio/mp4")
+        if not audio_b64:
+            return ""
+
+    # Transcribe with Claude (multimodal)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 1000,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mimetype if "/" in mimetype else "audio/mp4",
+                                "data": audio_b64
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": "Transcreva este audio em portugues. Retorne APENAS a transcricao, sem comentarios."
+                        }
+                    ]
+                }]
+            }
+        )
+
+    if resp.status_code == 200:
+        result = resp.json()
+        return result.get("content", [{}])[0].get("text", "")
+
+    logger.warning(f"Claude transcription failed: {resp.status_code}")
+    return ""
+
+
 async def _handle_intel_bot_message(data: Dict) -> Dict:
     """
     Handle messages arriving on the intel-bot instance.
@@ -791,6 +859,14 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
         content = message["conversation"]
     elif "extendedTextMessage" in message:
         content = message["extendedTextMessage"].get("text", "")
+    elif "audioMessage" in message:
+        # Transcribe audio via Evolution API + Claude
+        try:
+            content = await _transcribe_bot_audio(key, data)
+            if content:
+                content = f"[Audio transcrito] {content}"
+        except Exception as e:
+            logger.error(f"Audio transcription error: {e}")
 
     if not content:
         return {"processed": False, "reason": "no_text_content"}

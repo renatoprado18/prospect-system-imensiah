@@ -878,10 +878,19 @@ REGRAS CRITICAS:
 - Use query_intel para consultar QUALQUER dado — SEMPRE consulte antes de afirmar
 - Use execute_action para criar/modificar dados
 - Use draft_message para rascunhos personalizados (ele tambem segue estas regras)
+- Use project_chat para perguntas sobre projetos especificos (busque o ID antes)
 - Para datas relativas, use {now.strftime('%Y-%m-%d')} como referencia
 - Formate respostas com *negrito* para destaques (WhatsApp markdown)
 - Voce pode fazer multiplas queries em sequencia para responder perguntas complexas
-- Se nao souber algo, diga e sugira como ajudar"""
+- Se nao souber algo, diga e sugira como ajudar
+
+REGISTRO DE LIGACOES:
+- Quando Renato disser "liguei para X", "conversei com X por telefone", ou enviar audio descrevendo uma ligacao:
+  1. Busque o contato (query_intel)
+  2. Salve como memoria do contato (execute_action: save_memory com tipo 'ligacao')
+  3. Se mencionar pendencias, crie tarefas de follow-up
+  4. Confirme o registro
+- Audios transcritos chegam como "[Audio transcrito] texto..."  — trate como texto normal"""
 
 
 # ==================== MAIN HANDLER ====================
