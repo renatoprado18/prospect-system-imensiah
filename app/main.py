@@ -15347,6 +15347,108 @@ async def api_project_ai_analysis(project_id: int, request: Request):
     return result
 
 
+# ============== CONDENSE PARECERES ==============
+
+@app.post("/api/projects/{project_id}/condense-analyses")
+async def api_condense_analyses(project_id: int):
+    """Condensa multiplos pareceres IA em um resumo executivo acumulativo"""
+    import httpx as _hx
+    from services.projects import get_project, add_project_note
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY nao configurada")
+
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+
+    # Get all pareceres
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, titulo, conteudo, criado_em FROM project_notes
+            WHERE project_id = %s AND tipo = 'parecer'
+            ORDER BY criado_em ASC
+        """, (project_id,))
+        pareceres = [dict(r) for r in cursor.fetchall()]
+
+    if len(pareceres) < 3:
+        raise HTTPException(status_code=400, detail="Minimo 3 pareceres para condensar")
+
+    # Build prompt with all pareceres
+    pareceres_text = "\n\n---\n\n".join([
+        f"### {p['titulo']} ({str(p['criado_em'])[:10]})\n{p['conteudo']}"
+        for p in pareceres
+    ])
+
+    prompt = f"""Voce e um consultor estrategico. Abaixo estao {len(pareceres)} pareceres de IA gerados ao longo do tempo sobre o projeto "{project['nome']}".
+
+Sua tarefa: CONDENSAR todos em um unico RESUMO EXECUTIVO ACUMULATIVO.
+
+PARECERES:
+{pareceres_text}
+
+INSTRUCOES:
+1. **Evolucao do projeto**: como o projeto evoluiu ao longo dos pareceres
+2. **Decisoes tomadas**: o que foi decidido e executado
+3. **Situacao atual**: status consolidado
+4. **Riscos e pendencias**: o que ainda precisa de atencao
+5. **Recomendacoes**: proximos passos priorizados
+
+- Maximo 600 palavras
+- Portugues, objetivo, acionavel
+- Formate em Markdown com secoes claras
+- NAO repita informacoes redundantes entre pareceres
+- Destaque MUDANCAS e TENDENCIAS ao longo do tempo"""
+
+    try:
+        async with _hx.AsyncClient(timeout=45.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "messages": [{"role": "user", "content": prompt}]}
+            )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"Erro API: {resp.status_code}")
+
+        summary = resp.json()["content"][0]["text"]
+
+        # Save as resumo_executivo
+        note = add_project_note(project_id, {
+            'tipo': 'resumo_executivo',
+            'titulo': f'Resumo Executivo: {project["nome"]} ({len(pareceres)} pareceres condensados)',
+            'conteudo': summary,
+            'autor': 'INTEL IA'
+        })
+
+        # Archive old pareceres (keep last 2, remove older ones)
+        ids_to_keep = [p['id'] for p in pareceres[-2:]]
+        ids_to_archive = [p['id'] for p in pareceres if p['id'] not in ids_to_keep]
+
+        if ids_to_archive:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE project_notes SET tipo = 'parecer_arquivado'
+                    WHERE id = ANY(%s)
+                """, (ids_to_archive,))
+                conn.commit()
+
+        return {
+            "status": "success",
+            "note_id": note.get('id'),
+            "pareceres_condensed": len(pareceres),
+            "pareceres_archived": len(ids_to_archive),
+            "summary_preview": summary[:300]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============== DOWNLOAD GROUP DOCUMENTS ==============
 
 @app.post("/api/projects/{project_id}/download-group-docs")

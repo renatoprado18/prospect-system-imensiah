@@ -1587,10 +1587,24 @@
             atualizacao: 'arrow-up-circle',
             decisao: 'check-circle',
             problema: 'exclamation-circle',
-            pesquisa: 'search'
+            pesquisa: 'search',
+            parecer: 'file-earmark-medical',
+            resumo_executivo: 'journal-bookmark-fill'
         };
 
-        return notes.map(n => `
+        // Filter out archived pareceres
+        const visibleNotes = notes.filter(n => n.tipo !== 'parecer_arquivado');
+
+        // Show condense button if 3+ pareceres
+        const parecerCount = notes.filter(n => n.tipo === 'parecer').length;
+        const condenseBtn = parecerCount >= 3 ? `
+            <div class="text-end mb-2">
+                <button class="btn btn-sm btn-outline-info" onclick="condenseAnalyses()">
+                    <i class="bi bi-journal-bookmark me-1"></i>Condensar ${parecerCount} pareceres
+                </button>
+            </div>` : '';
+
+        return condenseBtn + visibleNotes.map(n => `
             <div class="timeline-item">
                 <div class="timeline-icon">
                     <i class="bi bi-${icons[n.tipo] || 'sticky'}"></i>
@@ -2733,6 +2747,23 @@
 
     // ============ AI Analysis (Parecer) ============
     let lastAnalysisText = '';
+
+    async function condenseAnalyses() {
+        if (!confirm('Condensar todos os pareceres em um resumo executivo? Pareceres antigos serão arquivados.')) return;
+        showToast('Condensando pareceres...', 'info');
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/condense-analyses`, {method: 'POST'});
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || 'Erro');
+            }
+            const data = await resp.json();
+            showToast(`${data.pareceres_condensed} pareceres condensados em resumo executivo`, 'success');
+            await loadProject();
+        } catch (e) {
+            alert('Erro ao condensar: ' + e.message);
+        }
+    }
 
     function openAnalysisModal() {
         document.getElementById('analysisPromptStep').style.display = 'block';
