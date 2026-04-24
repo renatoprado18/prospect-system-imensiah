@@ -773,12 +773,12 @@ async def _transcribe_bot_audio(key: Dict, data: Dict) -> str:
     if not evo_url or not api_key:
         return ""
 
-    # Download audio as base64
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # Download audio as base64 (tight timeout for Vercel)
+    async with httpx.AsyncClient(timeout=8.0) as client:
         dl_resp = await client.post(
             f"{evo_url}/chat/getBase64FromMediaMessage/{bot_instance}",
             headers={"apikey": evo_key, "Content-Type": "application/json"},
-            json={"message": {"key": key}, "convertToMp4": True}
+            json={"message": {"key": key}, "convertToMp4": False}
         )
         if dl_resp.status_code not in (200, 201):
             return ""
@@ -789,8 +789,8 @@ async def _transcribe_bot_audio(key: Dict, data: Dict) -> str:
         if not audio_b64:
             return ""
 
-    # Transcribe with Claude (multimodal)
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    # Transcribe with Claude (multimodal, tight timeout)
+    async with httpx.AsyncClient(timeout=8.0) as client:
         resp = await client.post(
             "https://api.anthropic.com/v1/messages",
             headers={
@@ -869,11 +869,22 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
 
     logger.info(f"Intel bot message from {phone}: {'[audio]' if is_audio else content[:100]}")
 
-    # Process in background so webhook returns fast (< 10s for Vercel)
+    # For audio: transcribe first (sync), then process in background
     if is_audio:
-        asyncio.create_task(_process_audio_and_respond_bot(phone, key, data, message_id))
-    else:
-        asyncio.create_task(_process_and_respond_bot(phone, content, message_id))
+        try:
+            transcribed = await _transcribe_bot_audio(key, data)
+            if transcribed:
+                content = f"[Audio transcrito] {transcribed}"
+            else:
+                from services.intel_bot import send_intel_notification
+                await send_intel_notification("Nao consegui transcrever o audio. Pode digitar?", phone=phone)
+                return {"processed": True, "reason": "audio_failed"}
+        except Exception as e:
+            logger.error(f"Audio transcription error: {e}")
+            return {"processed": False, "reason": f"audio_error: {e}"}
+
+    # Process bot response in background
+    asyncio.create_task(_process_and_respond_bot(phone, content, message_id))
 
     return {"processed": True, "reason": "intel_bot", "phone": phone}
 
