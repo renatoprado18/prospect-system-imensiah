@@ -660,12 +660,19 @@ def init_db():
             ('last_synced_at', 'TIMESTAMP'),
             ('sync_status', "TEXT DEFAULT 'local_only'"),
             ('etag', 'TEXT'),
-            ('project_id', 'INTEGER REFERENCES projects(id)')
+            ('project_id', 'INTEGER REFERENCES projects(id)'),
+            ('conselhoos_raci_id', 'TEXT')
         ]:
             try:
                 cursor.execute(f'ALTER TABLE tasks ADD COLUMN IF NOT EXISTS {col} {col_def}')
             except:
                 pass
+
+        # Index for ConselhoOS RACI sync lookups
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_tasks_conselhoos_raci
+            ON tasks(conselhoos_raci_id) WHERE conselhoos_raci_id IS NOT NULL
+        ''')
 
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_tasks_status
@@ -2076,6 +2083,37 @@ def init_db():
         ''')
         cursor.execute('''
             ALTER TABLE social_groups_cache ADD COLUMN IF NOT EXISTS sync_enabled BOOLEAN DEFAULT FALSE
+        ''')
+
+        # Group messages - mensagens de grupos WhatsApp sincronizados
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS group_messages (
+                id SERIAL PRIMARY KEY,
+                group_jid TEXT NOT NULL,
+                message_id TEXT UNIQUE,
+                sender_phone TEXT,
+                sender_name TEXT,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+                content TEXT,
+                message_type TEXT DEFAULT 'text',
+                timestamp TIMESTAMP NOT NULL,
+                from_me BOOLEAN DEFAULT FALSE,
+                metadata JSONB DEFAULT '{}',
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_group_messages_jid_ts
+            ON group_messages(group_jid, timestamp DESC)
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_group_messages_contact
+            ON group_messages(contact_id) WHERE contact_id IS NOT NULL
+        ''')
+
+        # Track last sync timestamp per group
+        cursor.execute('''
+            ALTER TABLE social_groups_cache ADD COLUMN IF NOT EXISTS last_message_sync TIMESTAMP
         ''')
 
         conn.commit()

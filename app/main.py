@@ -6532,6 +6532,10 @@ async def cron_daily_sync(request: Request):
         from services.social_groups import sync_all_groups_cache
         return await sync_all_groups_cache()
 
+    async def step_group_messages():
+        from services.group_message_sync import sync_group_messages
+        return await sync_group_messages(limit_per_group=50)
+
     await _aio.gather(
         run_step("daily_ai", step_ai),
         run_step("campaigns", step_campaigns),
@@ -6540,6 +6544,7 @@ async def cron_daily_sync(request: Request):
         run_step("group_docs", step_group_docs),
         run_step("daily_clipping", step_clipping),
         run_step("social_groups_cache", step_social_groups),
+        run_step("group_messages_sync", step_group_messages),
     )
 
     results["completed_at"] = datetime.now().isoformat()
@@ -15410,6 +15415,13 @@ async def api_sync_social_groups():
     from services.social_groups import sync_all_groups_cache
     result = await sync_all_groups_cache()
     return result
+
+
+@app.post("/api/social-groups/sync-messages")
+async def api_sync_group_messages():
+    """Sincroniza mensagens dos grupos marcados"""
+    from services.group_message_sync import sync_group_messages
+    return await sync_group_messages(limit_per_group=50)
 
 
 @app.post("/api/social-groups/toggle-sync")
