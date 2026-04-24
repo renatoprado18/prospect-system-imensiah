@@ -1527,21 +1527,17 @@
             }
             const contactName = t.contact_nome ? t.contact_nome.split(' ').slice(0,2).join(' ') : '';
             return `
-                <div class="d-flex align-items-start gap-2 py-2 border-bottom task-row" data-task-id="${t.id}" style="min-height: 40px;">
-                    <input type="checkbox" class="form-check-input mt-1 flex-shrink-0" ${isCompleted ? 'checked' : ''}
+                <div class="task-row" data-task-id="${t.id}" style="display: grid; grid-template-columns: 22px 1fr 90px 90px 40px; align-items: center; gap: 6px; padding: 7px 2px;">
+                    <input type="checkbox" class="form-check-input" style="margin:0;" ${isCompleted ? 'checked' : ''}
                         onchange="toggleTask(${t.id}, this.checked)">
-                    <div class="flex-grow-1" style="cursor: pointer; min-width: 0;" onclick="editTask(${t.id})">
-                        <div class="${isCompleted ? 'text-decoration-line-through text-muted' : ''}" style="font-size: 0.85rem; line-height: 1.3;">${t.titulo}</div>
+                    <div style="cursor: pointer; overflow: hidden; text-overflow: ellipsis;" onclick="editTask(${t.id})">
+                        <span class="${isCompleted ? 'text-decoration-line-through text-muted' : ''}" style="font-size: 0.85rem;">${t.titulo}</span>
                     </div>
-                    <div class="d-flex align-items-center gap-2 flex-shrink-0" style="min-width: 200px; justify-content: flex-end;">
-                        ${dateHtml}
-                        ${contactName ? `<span class="text-muted text-nowrap" style="font-size: 0.75rem; min-width: 80px; text-align: right;">${contactName}</span>` : '<span style="min-width: 80px;"></span>'}
-                        <button class="btn btn-sm btn-outline-secondary p-0 px-1" onclick="editTask(${t.id})" title="Editar">
-                            <i class="bi bi-pencil" style="font-size:0.65rem;"></i>
-                        </button>
-                    <button class="btn btn-sm btn-outline-danger p-0 px-1" onclick="deleteTask(${t.id})" title="Excluir">
-                        <i class="bi bi-trash" style="font-size:0.65rem;"></i>
-                    </button>
+                    <div style="text-align: right;">${dateHtml}</div>
+                    <div style="text-align: right; font-size: 0.75rem; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${contactName}</div>
+                    <div style="display: flex; gap: 2px; justify-content: flex-end;">
+                        <span onclick="editTask(${t.id})" style="cursor:pointer; color:#cbd5e1; font-size:0.65rem;"><i class="bi bi-pencil"></i></span>
+                        <span onclick="deleteTask(${t.id})" style="cursor:pointer; color:#cbd5e1; font-size:0.65rem;"><i class="bi bi-trash"></i></span>
                     </div>
                 </div>`;
         }
