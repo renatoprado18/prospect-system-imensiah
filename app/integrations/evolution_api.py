@@ -869,19 +869,24 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
 
     logger.info(f"Intel bot message from {phone}: {'[audio]' if is_audio else content[:100]}")
 
-    # For audio: transcribe first (sync), then process in background
+    # For audio: dispatch to Railway worker (Vercel 10s timeout is too short)
     if is_audio:
-        try:
-            transcribed = await _transcribe_bot_audio(key, data)
-            if transcribed:
-                content = f"[Audio transcrito] {transcribed}"
-            else:
-                from services.intel_bot import send_intel_notification
-                await send_intel_notification("Nao consegui transcrever o audio. Pode digitar?", phone=phone)
-                return {"processed": True, "reason": "audio_failed"}
-        except Exception as e:
-            logger.error(f"Audio transcription error: {e}")
-            return {"processed": False, "reason": f"audio_error: {e}"}
+        audio_worker_url = os.getenv("AUDIO_WORKER_URL", "")
+        worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026")
+        if audio_worker_url:
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    await client.post(
+                        f"{audio_worker_url}/transcribe",
+                        json={"key": key, "phone": phone, "message_id": message_id, "secret": worker_secret}
+                    )
+                return {"processed": True, "reason": "audio_dispatched_to_worker"}
+            except Exception as e:
+                logger.error(f"Audio worker dispatch failed: {e}")
+        # Fallback if no worker
+        from services.intel_bot import send_intel_notification
+        await send_intel_notification("Audio ainda nao suportado. Pode digitar?", phone=phone)
+        return {"processed": True, "reason": "audio_no_worker"}
 
     # Process bot response in background
     asyncio.create_task(_process_and_respond_bot(phone, content, message_id))

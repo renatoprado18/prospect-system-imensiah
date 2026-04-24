@@ -9596,6 +9596,22 @@ async def get_whatsapp_messages(request: Request, contact_id: int, limit: int = 
 
 from integrations.evolution_api import get_evolution_client, handle_evolution_webhook
 
+@app.post("/api/webhooks/bot-message")
+async def bot_message_endpoint(request: Request):
+    """Endpoint for external workers to send processed messages to the bot."""
+    import asyncio
+    data = await request.json()
+    phone = data.get("phone", "")
+    content = data.get("content", "")
+    message_id = data.get("message_id", "")
+    if not phone or not content:
+        raise HTTPException(status_code=400, detail="phone and content required")
+
+    from integrations.evolution_api import _process_and_respond_bot
+    asyncio.create_task(_process_and_respond_bot(phone, content, message_id))
+    return {"status": "processing"}
+
+
 @app.post("/api/webhooks/whatsapp")
 async def whatsapp_webhook(request: Request):
     """
