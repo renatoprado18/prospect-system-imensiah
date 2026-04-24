@@ -82,29 +82,59 @@ class ConselhoOSRaciSyncService:
             logger.info(f"Created INTEL project '{empresa_nome}' (id={project_id}) for ConselhoOS empresa {empresa_id}")
             return project_id
 
-    def _find_contact_by_name(self, name: str) -> Optional[int]:
+    def _find_contact_by_name(self, name: str, empresa_id: str = None) -> Optional[int]:
         """
-        Find an INTEL contact by name (fuzzy match).
+        Find an INTEL contact by name.
+        First checks ConselhoOS pessoas table (most reliable), then falls back to INTEL contacts.
 
         Returns contact_id or None.
         """
         if not name:
             return None
 
+        name_clean = name.strip()
+
+        # Step 1: Check ConselhoOS pessoas table (has intel_contact_id)
+        try:
+            conselhoos_conn = self._get_conselhoos_conn()
+            conselhoos_cur = conselhoos_conn.cursor()
+
+            query = """
+                SELECT intel_contact_id FROM pessoas
+                WHERE intel_contact_id IS NOT NULL
+                  AND (LOWER(nome) LIKE LOWER(%s) OR LOWER(nome) = LOWER(%s))
+            """
+            params = [f"%{name_clean}%", name_clean]
+
+            if empresa_id:
+                query += " AND empresa_id = %s::uuid"
+                params.append(empresa_id)
+
+            query += " LIMIT 1"
+            conselhoos_cur.execute(query, params)
+            row = conselhoos_cur.fetchone()
+            conselhoos_conn.close()
+
+            if row and row.get("intel_contact_id"):
+                return row["intel_contact_id"]
+        except Exception as e:
+            logger.warning(f"Could not check pessoas table: {e}")
+
+        # Step 2: Fallback to INTEL contacts
         with get_db() as conn:
             cursor = conn.cursor()
 
             # Exact match
             cursor.execute(
                 "SELECT id FROM contacts WHERE LOWER(nome) = LOWER(%s) LIMIT 1",
-                (name.strip(),)
+                (name_clean,)
             )
             row = cursor.fetchone()
             if row:
                 return row["id"]
 
             # Partial match (first + last name)
-            parts = name.strip().split()
+            parts = name_clean.split()
             if len(parts) >= 2:
                 cursor.execute(
                     "SELECT id FROM contacts WHERE LOWER(nome) LIKE LOWER(%s) AND LOWER(nome) LIKE LOWER(%s) LIMIT 1",
@@ -212,8 +242,12 @@ class ConselhoOSRaciSyncService:
 
                         project_id = empresas_seen[emp_nome]
 
-                        # Find contact matching responsavel_r
-                        contact_id = self._find_contact_by_name(raci.get("responsavel_r"))
+                        # Find contact matching responsavel_r (uses ConselhoOS pessoas first)
+                        responsavel = raci.get("responsavel_r", "")
+                        # Handle multiple responsaveis (take first)
+                        if "," in str(responsavel):
+                            responsavel = responsavel.split(",")[0].strip()
+                        contact_id = self._find_contact_by_name(responsavel, empresa_id=raci.get("empresa_id"))
 
                         # Build task title and description
                         area = raci.get("area", "Geral")
