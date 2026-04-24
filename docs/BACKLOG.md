@@ -1,71 +1,71 @@
 # INTEL - Backlog
 
-## Prioridade Alta
+## Concluído ✅
 
-### Grupos Sociais (WhatsApp como mapa de relacionamentos)
-**Conceito**: Usar grupos de WhatsApp como fonte de verdade para mapear círculos sociais. Extrair participantes, cruzar com contatos INTEL, identificar interesses mútuos e oportunidades de conexão.
+### Grupos Sociais
+- [x] Extrair participantes dos grupos via Evolution API
+- [x] Cruzar telefones com contatos INTEL
+- [x] Página "Meus Grupos" com membros, health médio
+- [x] Toggle sync por grupo (sync_enabled)
+- [x] Labels do WA Business nos cards
+- [x] Sync periódico de mensagens dos grupos marcados (cron)
+- [x] Visualização de mensagens no modal do grupo
+- [x] Cruzamento entre grupos (quem está em A e B)
+- [x] Sugestão de introduções baseada em grupos em comum
 
-**Grupos identificados**:
-- CAP: CHARUTO CAP (50), Judô CAP (20), CAP Travessias (226), Véios do CAP (15), Primos Sauna (3)
-- Profissional: Assespro (4 grupos), Board Academy (3), Alba Consultoria, ImensIAH
-- CELINT: Alumni CELINT SP (361), Clube do Charuto 24/10 (26)
-- Fictor: ACFICTOR (2 grupos) — já vinculados ao projeto
+### Enriquecimento & LinkedIn
+- [x] Auto-enrich C1-C3 no cron (contatos + fotos)
+- [x] Detectar mudanças de emprego via LinkedIn (LinkdAPI)
+- [x] Notificar mudanças como action proposal urgente
+- [x] Batch enrichment no cron diário
 
-**Casos de uso**:
-- Reconexão com pretexto (interesses mútuos)
-- Introduções estratégicas (cruzar membros entre grupos)
-- Mapear influência (quem participa de mais grupos em comum)
-- Networking pré-evento (quem do grupo precisa atenção)
+### Projetos
+- [x] Edição de projetos (modal completo)
+- [x] Pesquisa com IA em tarefas (botão + salva nota)
+- [x] Markdown rendering nas notas/timeline
+- [x] Smart Update com memória de pareceres
+- [x] Download docs grupos WA → Google Drive
 
-**Implementação**:
-- [ ] Extrair participantes dos grupos via Evolution API
-- [ ] Cruzar telefones com contatos INTEL
-- [ ] Página "Meus Grupos" com membros, health médio, sugestões
-- [ ] Cruzamento entre grupos (quem está em A e B)
-- [ ] Sugestão de introduções baseada em interesses
+### Contatos
+- [x] IA inline: analisar conversas com botão
+- [x] Sugerir artigos para reconexão (ContentMatcher)
+- [x] Google Tasks sync bidirecional (3x/dia)
 
-### Download docs grupos WhatsApp → Google Drive
-- [x] Endpoint e botão implementados
-- [ ] Testar em produção com docs dos grupos ACFICTOR
-- [ ] Tratar imagens com caption (não só PDFs)
+### Editorial
+- [x] Clipping diário com IA
+- [x] Feedback learning
+- [x] Compartilhar com contato
 
 ---
 
-## Prioridade Média
+## Pendente — Média Prioridade
 
-### Contexto Persistente Avançado
-- [x] Pareceres alimentam próximo parecer
-- [x] Smart Update usa memória de pareceres
-- [ ] Resumo acumulativo por projeto (condensar 10 pareceres em 1 resumo)
+### Contexto Persistente
+- [ ] Resumo acumulativo por projeto (condensar 10 pareceres em 1)
 - [ ] "Assistente dedicado" por projeto com personalidade/contexto fixo
 
-### Enriquecimento Contínuo
-- [x] Auto-enrich C1-C2 no cron
-- [x] Busca fotos WhatsApp no cron
-- [ ] Enriquecer contatos C3 com LinkedIn (LinkdAPI)
-- [ ] Detectar mudanças de emprego via LinkedIn
-
 ### Editorial Calendar
-- [x] Artigos para reconexão na página do contato
-- [ ] Sugerir artigo específico baseado no perfil do contato (IA)
 - [ ] LinkedIn agendamento direto via API
+- [ ] Auto-agendar posts semanais (IA seleciona 3-5 drafts)
+
+### Fluxos
+- [ ] Registrar conversa após ligação (post-call flow)
+- [ ] Resumo semanal por email
 
 ---
 
-## Prioridade Baixa
+## Pendente — Baixa Prioridade
 
 ### UX
-- [x] Mobile responsividade (base, dashboard, contato, projeto, contatos)
 - [ ] Dark mode
 - [ ] PWA com notificações push em mobile
 - [ ] Atalhos de teclado (além do Cmd+K)
 
 ### Integrações
 - [ ] Instagram suporte (carrossel, reels)
-- [ ] Sync com ConselhoOS mais profundo (tarefas RACI no dashboard)
+- [ ] Sync com ConselhoOS (tarefas RACI no dashboard)
 - [ ] Import de contatos via LinkedIn CSV
 
 ### Infra
-- [ ] WhatsApp sync mais robusto (Evolution API lenta/instável)
-- [ ] Cache de queries pesadas (dashboard, circles)
+- [ ] WhatsApp sync mais robusto (Evolution API instável)
 - [ ] Logs de auditoria (quem fez o quê)
