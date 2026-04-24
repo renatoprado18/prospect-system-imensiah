@@ -634,8 +634,46 @@ def _render_table(doc, table_text: str, section_title: str = ''):
         while len(row) < num_cols:
             row.append('')
 
+    # RACI: abbreviate headers and area column
+    if is_raci:
+        name_abbrev = {
+            'thalita': 'Tha', 'gui': 'Gui', 'amadeo': 'Ama', 'renata': 'Ren',
+            'verid.': 'Ver', 'verid': 'Ver', 'lara': 'Lar', 'renato': 'Rto',
+        }
+        area_abbrev = {
+            'marketing': 'Mkt', 'financeiro': 'Fin', 'rh': 'RH',
+            'eq. médica': 'Eq.Med', 'eq.médica': 'Eq.Med', 'eq. medica': 'Eq.Med',
+            'operações': 'Oper', 'operacoes': 'Oper',
+            'ti / crm': 'TI', 'ti/crm': 'TI', 'ti': 'TI',
+            'influencers': 'Infl', 'estética': 'Est', 'estetica': 'Est',
+        }
+        # Abbreviate header names (person columns)
+        if rows:
+            for ci in range(3, len(rows[0])):
+                abbr = name_abbrev.get(rows[0][ci].strip().lower())
+                if abbr:
+                    rows[0][ci] = abbr
+        # Abbreviate area column in data rows
+        for ri in range(1, len(rows)):
+            if rows[ri]:
+                abbr = area_abbrev.get(rows[ri][0].strip().lower())
+                if abbr:
+                    rows[ri][0] = abbr
+
     table = doc.add_table(rows=len(rows), cols=num_cols)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+    # RACI: set column widths (narrow person cols, wide action col)
+    if is_raci and num_cols >= 4:
+        col_widths = []
+        for ci in range(num_cols):
+            if ci == 0:    col_widths.append(Cm(1.8))   # Área
+            elif ci == 1:  col_widths.append(Cm(8.0))   # Ação/Entrega — WIDE
+            elif ci == 2:  col_widths.append(Cm(1.5))   # Prazo
+            else:          col_widths.append(Cm(1.0))    # Person — narrow
+        for ci, width in enumerate(col_widths):
+            for row in table.rows:
+                row.cells[ci].width = width
 
     # Set table style with borders
     tbl = table._tbl
