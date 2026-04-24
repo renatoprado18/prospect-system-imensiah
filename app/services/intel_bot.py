@@ -137,6 +137,29 @@ TOOLS = [
             "required": ["contact_id", "context"]
         }
     },
+    {
+        "name": "project_chat",
+        "description": (
+            "Conversa com o assistente dedicado de um projeto. "
+            "O assistente tem contexto completo: tarefas, membros, notas, pareceres, mensagens. "
+            "Pode consultar dados e executar acoes (criar tarefas, salvar notas, etc). "
+            "Use quando o usuario perguntar sobre um projeto especifico."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "type": "integer",
+                    "description": "ID do projeto (busque antes com query_intel se nao souber)"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Pergunta ou instrucao sobre o projeto"
+                }
+            },
+            "required": ["project_id", "message"]
+        }
+    },
 ]
 
 
@@ -631,6 +654,10 @@ async def _execute_tool(name: str, input_data: Dict) -> str:
             return await _tool_execute_action(input_data["action"], input_data.get("params", {}))
         elif name == "draft_message":
             return await _tool_draft_message(input_data["contact_id"], input_data["context"])
+        elif name == "project_chat":
+            from services.project_assistant import chat as project_chat
+            result = await project_chat(input_data["project_id"], input_data["message"])
+            return result.get("response", result.get("error", "Sem resposta"))
         else:
             return json.dumps({"erro": f"Tool desconhecida: {name}"})
     except Exception as e:
