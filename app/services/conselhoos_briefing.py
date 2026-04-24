@@ -127,7 +127,7 @@ def _collect_raci_pendentes(cos_cursor, empresa_id: str) -> List[Dict]:
             END as urgencia
         FROM raci_itens
         WHERE empresa_id = %s::uuid
-          AND status NOT IN ('concluido', 'cancelado')
+          AND status NOT IN ('concluido')
         ORDER BY prazo ASC
         LIMIT 30
     """, (empresa_id,))
@@ -215,11 +215,12 @@ def _collect_intel_contact_data(contact_id: int) -> Dict:
 
             # Last 5 WhatsApp messages
             cursor.execute("""
-                SELECT conteudo, direcao, enviado_em
-                FROM messages
-                WHERE contact_id = %s
-                  AND canal = 'whatsapp'
-                ORDER BY enviado_em DESC
+                SELECT m.conteudo, m.direcao, m.enviado_em
+                FROM messages m
+                JOIN conversations cv ON cv.id = m.conversation_id
+                WHERE cv.contact_id = %s
+                  AND cv.canal = 'whatsapp'
+                ORDER BY m.enviado_em DESC NULLS LAST
                 LIMIT 5
             """, (contact_id,))
             for row in cursor.fetchall():
@@ -230,7 +231,7 @@ def _collect_intel_contact_data(contact_id: int) -> Dict:
 
             # Last 3 contact memories
             cursor.execute("""
-                SELECT tipo, conteudo, data_ocorrencia, importancia
+                SELECT tipo, titulo, resumo as conteudo, data_ocorrencia, importancia
                 FROM contact_memories
                 WHERE contact_id = %s
                 ORDER BY data_ocorrencia DESC
@@ -306,14 +307,14 @@ def _collect_intel_project_data(empresa_nome: str) -> Dict:
 
             # Recent action proposals for contacts in this project
             cursor.execute("""
-                SELECT ap.tipo, ap.titulo, ap.descricao, ap.status,
+                SELECT ap.action_type as tipo, ap.title as titulo, ap.description as descricao, ap.status,
                        c.nome as contact_nome
                 FROM action_proposals ap
                 JOIN project_members pm ON pm.contact_id = ap.contact_id
                 JOIN contacts c ON c.id = ap.contact_id
                 WHERE pm.project_id = %s
-                  AND ap.created_at >= NOW() - INTERVAL '30 days'
-                ORDER BY ap.created_at DESC
+                  AND ap.criado_em >= NOW() - INTERVAL '30 days'
+                ORDER BY ap.criado_em DESC
                 LIMIT 10
             """, (project_id,))
             for row in cursor.fetchall():
