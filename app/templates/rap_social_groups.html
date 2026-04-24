@@ -54,6 +54,17 @@
     color: var(--text-secondary, #64748b);
 }
 .group-stat { display: flex; align-items: center; gap: 4px; }
+.group-labels { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
+.group-label-badge {
+    font-size: 0.65rem; padding: 2px 8px; border-radius: 10px;
+    background: #e2e8f0; color: #475569; font-weight: 600;
+}
+.sync-toggle {
+    position: absolute; top: 12px; right: 12px;
+}
+.sync-toggle input { width: 36px; height: 20px; cursor: pointer; }
+.group-card { position: relative; }
+.group-card.sync-on { border-color: #22c55e; border-width: 2px; }
 
 /* Detail modal */
 .member-card {
@@ -150,18 +161,32 @@
                 const healthDot = g.health != null
                     ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${g.health>=70?'#22c55e':g.health>=40?'#f59e0b':'#ef4444'};margin-right:4px;" title="Health ${g.health}%"></span>`
                     : '';
+                const labels = (g.labels || []).map(l =>
+                    `<span class="group-label-badge">${l.name || l}</span>`
+                ).join('');
+                const syncOn = g.sync_enabled ? 'sync-on' : '';
+                const syncChecked = g.sync_enabled ? 'checked' : '';
                 return `
-                <div class="group-card" onclick="openGroupDetail('${g.jid}', '${(g.name || '').replace(/'/g, "\\'")}')">
-                    <div class="group-card-header">
-                        <div class="group-icon"><i class="bi bi-people-fill"></i></div>
-                        <div>
-                            <div class="group-name">${g.name}</div>
+                <div class="group-card ${syncOn}" id="card-${g.jid.replace(/[@.]/g,'_')}">
+                    <div class="sync-toggle" title="Sincronizar mensagens">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" ${syncChecked}
+                                onchange="toggleSync('${g.jid}', this.checked, event)">
                         </div>
                     </div>
-                    <div class="group-stats">
-                        ${g.total ? `<div class="group-stat"><i class="bi bi-people"></i> ${g.total}</div>` : ''}
-                        ${g.known ? `<div class="group-stat"><i class="bi bi-person-check"></i> ${g.known} conhecidos</div>` : ''}
-                        ${g.health != null ? `<div class="group-stat">${healthDot}${g.health}%</div>` : ''}
+                    <div onclick="openGroupDetail('${g.jid}', '${(g.name || '').replace(/'/g, "\\'")}')" style="cursor:pointer;">
+                        <div class="group-card-header">
+                            <div class="group-icon"><i class="bi bi-people-fill"></i></div>
+                            <div>
+                                <div class="group-name">${g.name}</div>
+                            </div>
+                        </div>
+                        <div class="group-stats">
+                            ${g.total ? `<div class="group-stat"><i class="bi bi-people"></i> ${g.total}</div>` : ''}
+                            ${g.known ? `<div class="group-stat"><i class="bi bi-person-check"></i> ${g.known} conhecidos</div>` : ''}
+                            ${g.health != null ? `<div class="group-stat">${healthDot}${g.health}%</div>` : ''}
+                        </div>
+                        ${labels ? `<div class="group-labels">${labels}</div>` : ''}
                     </div>
                 </div>`;
             }).join('');
@@ -264,6 +289,27 @@
             loadGroups();
         } catch (e) {
             grid.innerHTML = '<div class="loading-center text-danger">Erro ao sincronizar</div>';
+        }
+    }
+
+    async function toggleSync(jid, enabled, event) {
+        event.stopPropagation();
+        try {
+            const resp = await fetch(`/api/social-groups/${encodeURIComponent(jid)}/sync`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({enabled})
+            });
+            if (!resp.ok) throw new Error();
+            const cardId = 'card-' + jid.replace(/[@.]/g, '_');
+            const card = document.getElementById(cardId);
+            if (card) {
+                if (enabled) card.classList.add('sync-on');
+                else card.classList.remove('sync-on');
+            }
+        } catch (e) {
+            alert('Erro ao atualizar sync');
+            event.target.checked = !enabled;
         }
     }
 

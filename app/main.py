@@ -15423,6 +15423,18 @@ async def api_sync_social_groups():
     return result
 
 
+@app.put("/api/social-groups/{group_jid:path}/sync")
+async def api_toggle_group_sync(group_jid: str, request: Request):
+    """Ativa/desativa sincronizacao de um grupo"""
+    from services.social_groups import toggle_group_sync
+    data = await request.json()
+    enabled = data.get('enabled', False)
+    success = toggle_group_sync(group_jid, enabled)
+    if not success:
+        raise HTTPException(status_code=404, detail="Grupo nao encontrado")
+    return {"status": "success", "sync_enabled": enabled}
+
+
 # ============== PROJECT WHATSAPP GROUPS ==============
 
 @app.get("/api/projects/{project_id}/whatsapp-groups")

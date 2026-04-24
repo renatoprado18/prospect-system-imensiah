@@ -1218,6 +1218,8 @@ def init_db():
                 known_contact_ids JSONB DEFAULT '[]'::jsonb,
                 known_count INTEGER DEFAULT 0,
                 health_medio INTEGER,
+                labels JSONB DEFAULT '[]'::jsonb,
+                sync_enabled BOOLEAN DEFAULT FALSE,
                 last_synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -2066,6 +2068,14 @@ def init_db():
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_bot_conv_phone
             ON bot_conversations(phone, created_at DESC)
+        ''')
+
+        # Migration: add labels and sync_enabled to social_groups_cache
+        cursor.execute('''
+            ALTER TABLE social_groups_cache ADD COLUMN IF NOT EXISTS labels JSONB DEFAULT '[]'::jsonb
+        ''')
+        cursor.execute('''
+            ALTER TABLE social_groups_cache ADD COLUMN IF NOT EXISTS sync_enabled BOOLEAN DEFAULT FALSE
         ''')
 
         conn.commit()

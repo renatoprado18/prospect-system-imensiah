@@ -60,6 +60,36 @@ def _cross_phone_with_contacts(phones: List[str]) -> List[Dict]:
     return known
 
 
+async def _fetch_labels_map(client, base_url, api_key, instance) -> dict:
+    """Busca labels do WA Business e mapeia id -> nome."""
+    try:
+        resp = await client.get(
+            f'{base_url}/label/findLabels/{instance}',
+            headers={'apikey': api_key}
+        )
+        if resp.status_code == 200:
+            return {l['id']: l['name'] for l in resp.json()}
+    except Exception as e:
+        logger.warning(f"Erro ao buscar labels: {e}")
+    return {}
+
+
+async def _fetch_chat_labels(client, base_url, api_key, instance, jid) -> list:
+    """Busca labels de um chat especifico via findChatByRemoteJid."""
+    try:
+        resp = await client.get(
+            f'{base_url}/chat/findChatByRemoteJid/{instance}?remoteJid={jid}',
+            headers={'apikey': api_key},
+            timeout=5.0
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get('labels') or []
+    except Exception:
+        pass
+    return []
+
+
 async def sync_all_groups_cache() -> Dict:
     """Sincroniza cache de todos os grupos. Roda no cron diario."""
     base_url = os.getenv('EVOLUTION_API_URL', '')
@@ -73,7 +103,10 @@ async def sync_all_groups_cache() -> Dict:
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # 1. Buscar todos os chats
+            # 1. Buscar labels map (id -> nome)
+            labels_map = await _fetch_labels_map(client, base_url, api_key, instance)
+
+            # 2. Buscar todos os chats
             resp = await client.post(
                 f'{base_url}/chat/findChats/{instance}',
                 headers={'apikey': api_key, 'Content-Type': 'application/json'},
@@ -91,7 +124,7 @@ async def sync_all_groups_cache() -> Dict:
                     if name:
                         named[jid] = name
 
-            # 2. Buscar metadados de cada grupo (nome, participantes)
+            # 3. Buscar metadados e labels de cada grupo
             import asyncio as aio
 
             async def fetch_group(jid):
@@ -111,17 +144,22 @@ async def sync_all_groups_cache() -> Dict:
                             phone = phone_jid.replace('@s.whatsapp.net', '').replace('@lid', '')
                             if phone and len(phone) > 8:
                                 phones.append(phone)
+
+                        # Buscar labels do chat
+                        label_ids = await _fetch_chat_labels(client, base_url, api_key, instance, jid)
+                        labels = [{'id': lid, 'name': labels_map.get(lid, lid)} for lid in label_ids]
+
                         return {
                             'jid': jid,
                             'name': name,
                             'total': info.get('size', len(participants)),
-                            'phones': phones
+                            'phones': phones,
+                            'labels': labels
                         }
                 except Exception:
                     pass
-                # Fallback: usar nome do chat se disponivel
                 if jid in named:
-                    return {'jid': jid, 'name': named[jid], 'total': 0, 'phones': []}
+                    return {'jid': jid, 'name': named[jid], 'total': 0, 'phones': [], 'labels': []}
                 return None
 
             # Processar em batches de 10
@@ -131,7 +169,7 @@ async def sync_all_groups_cache() -> Dict:
                 batch_results = await aio.gather(*[fetch_group(jid) for jid in batch])
                 all_groups.extend([r for r in batch_results if r])
 
-            # 3. Cruzar telefones com contatos e salvar cache
+            # 4. Cruzar telefones com contatos e salvar cache
             with get_db() as conn:
                 cursor = conn.cursor()
 
@@ -144,8 +182,8 @@ async def sync_all_groups_cache() -> Dict:
 
                         cursor.execute("""
                             INSERT INTO social_groups_cache (group_jid, group_name, total_participants,
-                                participants_phones, known_contact_ids, known_count, health_medio, last_synced_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                                participants_phones, known_contact_ids, known_count, health_medio, labels, last_synced_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
                             ON CONFLICT (group_jid) DO UPDATE SET
                                 group_name = EXCLUDED.group_name,
                                 total_participants = EXCLUDED.total_participants,
@@ -153,11 +191,12 @@ async def sync_all_groups_cache() -> Dict:
                                 known_contact_ids = EXCLUDED.known_contact_ids,
                                 known_count = EXCLUDED.known_count,
                                 health_medio = EXCLUDED.health_medio,
+                                labels = EXCLUDED.labels,
                                 last_synced_at = NOW()
                         """, (
                             g['jid'], g['name'], g['total'],
                             json.dumps(g['phones']), json.dumps(known_ids),
-                            len(known), health_medio
+                            len(known), health_medio, json.dumps(g['labels'])
                         ))
                         results["synced"] += 1
                     except Exception as e:
@@ -178,12 +217,19 @@ def list_cached_groups() -> List[Dict]:
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT group_jid, group_name, total_participants, known_count, health_medio, last_synced_at
+            SELECT group_jid, group_name, total_participants, known_count, health_medio,
+                   labels, sync_enabled, last_synced_at
             FROM social_groups_cache
             WHERE group_name IS NOT NULL
-            ORDER BY group_name
+            ORDER BY sync_enabled DESC, group_name
         """)
-        return [dict(r) for r in cursor.fetchall()]
+        rows = []
+        for r in cursor.fetchall():
+            row = dict(r)
+            if isinstance(row.get('labels'), str):
+                row['labels'] = json.loads(row['labels'])
+            rows.append(row)
+        return rows
 
 
 def get_cached_group_detail(group_jid: str) -> Optional[Dict]:
@@ -238,13 +284,40 @@ def get_cached_group_detail(group_jid: str) -> Optional[Dict]:
         }
 
 
+def toggle_group_sync(group_jid: str, enabled: bool) -> bool:
+    """Ativa/desativa sincronizacao de um grupo."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE social_groups_cache SET sync_enabled = %s WHERE group_jid = %s
+            RETURNING id
+        """, (enabled, group_jid))
+        result = cursor.fetchone()
+        conn.commit()
+        return result is not None
+
+
+def get_sync_enabled_groups() -> List[Dict]:
+    """Retorna grupos marcados para sincronizacao."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT group_jid, group_name FROM social_groups_cache
+            WHERE sync_enabled = TRUE AND group_name IS NOT NULL
+            ORDER BY group_name
+        """)
+        return [dict(r) for r in cursor.fetchall()]
+
+
 async def list_all_social_groups() -> List[Dict]:
     """Lista grupos — do cache se disponivel, senao da API."""
     cached = list_cached_groups()
     if cached:
         return [{'jid': g['group_jid'], 'name': g['group_name'],
                  'known': g['known_count'], 'total': g['total_participants'],
-                 'health': g.get('health_medio')} for g in cached]
+                 'health': g.get('health_medio'),
+                 'labels': g.get('labels', []),
+                 'sync_enabled': g.get('sync_enabled', False)} for g in cached]
 
     # Fallback: buscar da API (lento, primeira vez)
     return await _fetch_groups_from_api()
