@@ -1586,32 +1586,43 @@ async function copyAndOpen(postId) {
         const post = await response.json();
 
         const content = post.conteudo_adaptado || post.article_description || '';
-        const hashtags = post.hashtags || '';
+        const hashtags = (post.hashtags && Array.isArray(post.hashtags)) ? post.hashtags.join(' ') : (post.hashtags || '');
         const fullContent = content + (hashtags ? '\n\n' + hashtags : '');
 
         await navigator.clipboard.writeText(fullContent);
+        showToast && showToast('Conteúdo copiado!', 'success');
 
-        // Open LinkedIn share
-        window.open('https://www.linkedin.com/feed/', '_blank');
+        // Open LinkedIn share dialog directly
+        const shareUrl = post.article_url || post.url_publicado || '';
+        if (shareUrl) {
+            window.open(`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`, '_blank');
+        } else {
+            window.open('https://www.linkedin.com/post/new', '_blank');
+        }
 
-        // Ask if published
+        // Ask for published URL
         setTimeout(() => {
-            if (confirm('Você publicou este post no LinkedIn?\n\nClique OK para marcar como publicado.')) {
-                markAsPublished(postId);
+            const postUrl = prompt('Cole a URL do post publicado no LinkedIn\n(ou deixe vazio para cancelar):');
+            if (postUrl !== null && postUrl.trim() !== '') {
+                markAsPublished(postId, postUrl.trim());
+            } else if (postUrl !== null) {
+                if (confirm('Marcar como publicado sem URL?')) {
+                    markAsPublished(postId);
+                }
             }
-        }, 2000);
+        }, 3000);
     } catch (error) {
         console.error('Error:', error);
         alert('Erro ao preparar publicação');
     }
 }
 
-async function markAsPublished(postId) {
+async function markAsPublished(postId, linkedinUrl) {
     try {
         const response = await fetch(`/api/editorial/${postId}/publish`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+            body: JSON.stringify({url_publicado: linkedinUrl || ''})
         });
         if (!response.ok) {
             const err = await response.json();
