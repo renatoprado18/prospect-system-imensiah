@@ -641,10 +641,13 @@ async def notify_renato_proposal(proposal: Dict):
         proposal_id = proposal.get('id', '')
 
         message = (
-            f"🔔 Nova acao sugerida: {title}\n"
+            f"🔔 *{title}*\n"
             f"{description[:200]}\n\n"
-            f"Abrir: https://intel.almeida-prado.com/dashboard\n"
-            f"_Ref: #{proposal_id}_"
+            f"Responda aqui:\n"
+            f'• "ver" — mostro mais detalhes\n'
+            f'• "executar" — executo a acao\n'
+            f'• "ignorar" — descarto\n\n'
+            f"Ref: #{proposal_id}"
         )
 
         await send_intel_notification(message)

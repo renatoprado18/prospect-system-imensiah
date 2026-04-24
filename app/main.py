@@ -11467,7 +11467,7 @@ async def get_action_proposals_stats(request: Request, days: int = 30):
 @app.post("/api/action-proposals/test-notification")
 @app.get("/api/action-proposals/test-notification")
 async def test_proposal_notification(request: Request, contact_name: str = "Pedro Salles"):
-    """Endpoint de teste - cria proposta fake e envia notificacao WhatsApp (sem auth)"""
+    """Endpoint de teste - cria proposta fake e envia notificacao via intel-bot (sem auth)"""
     from services.action_proposals import get_action_proposals
     from services.whatsapp_notifications import get_whatsapp_notifications
 
@@ -11512,7 +11512,7 @@ async def test_proposal_notification(request: Request, contact_name: str = "Pedr
     return {
         "success": sent,
         "proposal_id": proposal['id'],
-        "message": "Notificacao enviada! Clique nos links para executar" if sent else "Falha ao enviar notificacao"
+        "message": "Notificacao enviada via intel-bot! Responda na conversa para executar" if sent else "Falha ao enviar notificacao"
     }
 
 
@@ -11545,11 +11545,9 @@ async def quick_action_proposal(proposal_id: int, option: str, confirm: bool = F
     """
     from services.action_proposals import get_action_proposals
     from services.action_executor import get_action_executor
-    from services.whatsapp_notifications import get_whatsapp_notifications
 
     proposals_service = get_action_proposals()
     executor = get_action_executor()
-    notifications = get_whatsapp_notifications()
 
     # Buscar proposta
     proposal = proposals_service.get_proposal(proposal_id)
@@ -11605,10 +11603,11 @@ async def quick_action_proposal(proposal_id: int, option: str, confirm: bool = F
     result = await executor.execute(proposal_id, option_id=option)
 
     if result.get('success'):
-        # Enviar confirmacao via WhatsApp
+        # Enviar confirmacao via intel-bot
         try:
-            await notifications._send_reply(f"✅ {result.get('message', 'Ação executada!')}")
-        except:
+            from services.whatsapp_notifications import get_whatsapp_notifications
+            await get_whatsapp_notifications().send_confirmation(f"✅ {result.get('message', 'Acao executada!')}")
+        except Exception:
             pass
 
         return HTMLResponse(content=f"""

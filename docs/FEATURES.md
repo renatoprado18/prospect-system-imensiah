@@ -139,16 +139,23 @@
   - `draft_message(contact_id, context)`: gera rascunho personalizado com contexto rico (WhatsApp, email, LinkedIn, fatos, memorias)
 - System prompt dinamico: data/hora, projetos ativos, tarefas vencidas, perfil do Renato, schema completo do banco
 - Rate limit: ignora emojis e mensagens triviais
-- Notificacoes proativas: editorial briefing semanal, alertas do sistema
+- **Notificacoes proativas consolidadas**: TODAS as notificacoes do sistema vao via intel-bot (nao mais via rap-whatsapp "mensagem pra si mesmo")
+  - Action proposals: formato conversacional, Renato responde ao bot para agir (sem links)
+  - Editorial briefing semanal, alertas do sistema
+  - Smart message processor: emails, reunioes, telefones detectados
 - Service: `app/services/intel_bot.py`
 - Helper: `send_intel_notification(text, phone)` para qualquer servico enviar notificacao
+- **Notificacao de Proposals** (`whatsapp_notifications.py`): formato conversacional sem links
+  - Renato recebe notificacao no intel-bot com opcoes em texto ("responder", "criar tarefa", "ignorar")
+  - Renato responde ao bot e Claude processa a acao em contexto (tool_use)
+  - Ref: #ID no footer para rastreabilidade
 - **Smart Message Processor**: pos-processamento inteligente de mensagens recebidas → `smart_message_processor.py`
   - Detecta emails (regex + contexto): verifica se ja existe, analisa mensagens anteriores com Claude para atribuir ao contato correto
   - Auto-executa casos claros (email pedido e respondido): atualiza contato e notifica Renato
   - Detecta propostas de reuniao (horarios, datas, dias da semana, "amanha", "semana que vem")
   - Detecta telefones (10-11 digitos, formato BR) e propoe adicionar ao contato
   - Cria action proposals para casos ambiguos com opcoes (Atualizar/Criar novo/Ignorar)
-  - Notifica Renato via intel-bot para cada proposta criada
+  - Notifica Renato via intel-bot para cada proposta criada (formato conversacional)
   - Chamado automaticamente em `analyze_message_in_background` (evolution_api.py)
 
 ## 18. PWA & Mobile
