@@ -6667,6 +6667,10 @@ async def cron_daily_sync(request: Request):
         from services.group_message_sync import sync_group_messages
         return await sync_group_messages(limit_per_group=50)
 
+    async def step_auto_publish():
+        from services.auto_publisher import publish_due_posts
+        return await publish_due_posts()
+
     async def step_linkedin_enrichment():
         from services.linkedin_enrichment import get_linkedin_enrichment
         from services.action_proposals import get_action_proposals
@@ -6715,6 +6719,7 @@ async def cron_daily_sync(request: Request):
         run_step("social_groups_cache", step_social_groups),
         run_step("group_messages_sync", step_group_messages),
         run_step("linkedin_enrichment", step_linkedin_enrichment),
+        run_step("auto_publish", step_auto_publish),
     )
 
     results["completed_at"] = datetime.now().isoformat()
@@ -16364,6 +16369,67 @@ async def api_editorial_publish(post_id: int, request: Request):
     if not post:
         raise HTTPException(status_code=404, detail="Post nao encontrado")
     return {"status": "success", "post": post}
+
+
+@app.post("/api/editorial/auto-select-week")
+async def api_auto_select_week(request: Request):
+    """IA seleciona os melhores posts para a semana"""
+    from services.auto_publisher import select_weekly_posts, schedule_selected_posts
+    from services.action_proposals import get_action_proposals
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    count = data.get('count', 4)
+
+    result = await select_weekly_posts(posts_per_week=count)
+    if result.get('error'):
+        raise HTTPException(status_code=400, detail=result['error'])
+
+    selected = result.get('selected', [])
+    if not selected:
+        return {"status": "no_posts", "message": "Nenhum post selecionado"}
+
+    # Create action proposal for approval
+    titles = '\n'.join([f"- {s['titulo']}: {s.get('reason','')}" for s in selected])
+    ap = get_action_proposals()
+    proposal = ap.create_proposal({
+        "action_type": "weekly_editorial",
+        "title": f"{len(selected)} posts selecionados para a semana",
+        "description": f"Posts selecionados pela IA:\n{titles}",
+        "trigger_text": "Selecao automatica semanal",
+        "ai_reasoning": "Mix de hot-takes e reposts com diversidade de temas",
+        "confidence": 0.85,
+        "urgency": "medium",
+        "action_params": {"selected": selected},
+    })
+
+    return {
+        "status": "pending_approval",
+        "selected": selected,
+        "proposal_id": proposal.get('id') if proposal else None,
+        "total_candidates": result.get('total_candidates', 0)
+    }
+
+
+@app.post("/api/editorial/approve-week")
+async def api_approve_week(request: Request):
+    """Aprova e agenda os posts da semana selecionados"""
+    from services.auto_publisher import schedule_selected_posts
+    data = await request.json()
+    selected = data.get('selected', [])
+    if not selected:
+        raise HTTPException(status_code=400, detail="Nenhum post para agendar")
+    result = schedule_selected_posts(selected)
+    return result
+
+
+@app.post("/api/editorial/publish-due")
+async def api_publish_due():
+    """Publica posts agendados cuja hora ja chegou"""
+    from services.auto_publisher import publish_due_posts
+    return await publish_due_posts()
 
 
 @app.post("/api/editorial/bulk-schedule")
