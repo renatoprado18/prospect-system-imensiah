@@ -289,20 +289,12 @@ def toggle_group_sync(group_jid: str, enabled: bool) -> bool:
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Ensure column exists
-        try:
-            cursor.execute("ALTER TABLE social_groups_cache ADD COLUMN IF NOT EXISTS sync_enabled BOOLEAN DEFAULT FALSE")
-            conn.commit()
-        except Exception:
-            conn.rollback()
-
-        # Check if group exists
-        cursor.execute("SELECT id FROM social_groups_cache WHERE group_jid = %s", (group_jid,))
-        row = cursor.fetchone()
-        if not row:
-            return False
-
-        cursor.execute("UPDATE social_groups_cache SET sync_enabled = %s WHERE group_jid = %s", (enabled, group_jid))
+        # Upsert: create if not exists, update if exists
+        cursor.execute("""
+            INSERT INTO social_groups_cache (group_jid, group_name, sync_enabled)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (group_jid) DO UPDATE SET sync_enabled = %s
+        """, (group_jid, group_jid, enabled, enabled))
         conn.commit()
         return result is not None
 
