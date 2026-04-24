@@ -390,22 +390,105 @@ class ConselhoOSRaciSyncService:
 
     # ==================== Full Sync ====================
 
+    def sync_pessoas_to_project_members(self) -> Dict[str, Any]:
+        """
+        Sync ConselhoOS pessoas → INTEL project_members.
+        For each empresa with pessoas, find/create the INTEL project
+        and add pessoas as project_members (linked by intel_contact_id).
+        """
+        result = {"added": 0, "skipped": 0, "errors": []}
+
+        try:
+            conselhoos_conn = self._get_conselhoos_conn()
+            conselhoos_cur = conselhoos_conn.cursor()
+
+            # Get all pessoas with intel_contact_id
+            conselhoos_cur.execute("""
+                SELECT p.nome, p.email, p.papel, p.cargo, p.intel_contact_id,
+                       e.id as empresa_id, e.nome as empresa_nome
+                FROM pessoas p
+                JOIN empresas e ON e.id = p.empresa_id
+                WHERE p.intel_contact_id IS NOT NULL AND p.ativo = true
+            """)
+            pessoas = conselhoos_cur.fetchall()
+
+            if not pessoas:
+                logger.info("No pessoas with intel_contact_id found")
+                return result
+
+            with get_db() as intel_conn:
+                intel_cur = intel_conn.cursor()
+
+                # Group by empresa
+                empresas_map = {}
+                for p in pessoas:
+                    emp_nome = p['empresa_nome']
+                    if emp_nome not in empresas_map:
+                        empresas_map[emp_nome] = {
+                            'empresa_id': p['empresa_id'],
+                            'pessoas': []
+                        }
+                    empresas_map[emp_nome]['pessoas'].append(p)
+
+                for emp_nome, emp_data in empresas_map.items():
+                    try:
+                        project_id = self._find_or_create_project(emp_nome, str(emp_data['empresa_id']))
+
+                        for pessoa in emp_data['pessoas']:
+                            contact_id = pessoa['intel_contact_id']
+                            papel = pessoa['papel'] or pessoa['cargo'] or ''
+
+                            # Check if already a member
+                            intel_cur.execute("""
+                                SELECT id FROM project_members
+                                WHERE project_id = %s AND contact_id = %s
+                            """, (project_id, contact_id))
+
+                            if intel_cur.fetchone():
+                                result["skipped"] += 1
+                                continue
+
+                            intel_cur.execute("""
+                                INSERT INTO project_members (project_id, contact_id, papel)
+                                VALUES (%s, %s, %s)
+                                ON CONFLICT (project_id, contact_id) DO NOTHING
+                            """, (project_id, contact_id, papel))
+                            result["added"] += 1
+                            logger.info(f"Added {pessoa['nome']} to project {emp_nome}")
+
+                    except Exception as e:
+                        error_msg = f"Error syncing pessoas for {emp_nome}: {e}"
+                        logger.error(error_msg)
+                        result["errors"].append(error_msg)
+
+            conselhoos_conn.close()
+
+        except Exception as e:
+            error_msg = f"Error in sync_pessoas_to_project_members: {e}"
+            logger.error(error_msg)
+            result["errors"].append(error_msg)
+
+        return result
+
     def full_sync(self) -> Dict[str, Any]:
         """
         Run full bidirectional sync.
 
-        1. Sync RACI -> Tasks (all empresas)
-        2. Sync completed Tasks -> RACI
+        1. Sync Pessoas -> Project Members
+        2. Sync RACI -> Tasks (all empresas)
+        3. Sync completed Tasks -> RACI
 
         Returns:
             Combined results.
         """
-        logger.info("Starting full ConselhoOS RACI <-> INTEL Tasks sync")
+        logger.info("Starting full ConselhoOS <-> INTEL sync")
 
+        pessoas_results = self.sync_pessoas_to_project_members()
         raci_results = self.sync_raci_to_tasks()
         task_results = self.sync_task_status_to_raci()
 
         return {
+            "pessoas_to_members": pessoas_results,
             "raci_to_tasks": raci_results,
             "tasks_to_raci": task_results,
             "synced_at": datetime.now().isoformat()
