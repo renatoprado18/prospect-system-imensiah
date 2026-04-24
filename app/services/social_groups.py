@@ -312,21 +312,30 @@ def get_sync_enabled_groups() -> List[Dict]:
 
 
 async def list_all_social_groups() -> List[Dict]:
-    """Lista grupos — do cache se disponivel, senao da API."""
+    """Lista grupos — do cache completo se disponivel, senao da API + sync flags."""
     cached = list_cached_groups()
-    if cached:
+
+    # Cache is "complete" if it has >10 groups with real names (not JIDs)
+    real_cache = [g for g in cached if g['group_name'] and '@' not in g['group_name']]
+
+    if len(real_cache) > 10:
         return [{'jid': g['group_jid'], 'name': g['group_name'],
                  'known': g['known_count'], 'total': g['total_participants'],
                  'health': g.get('health_medio'),
                  'labels': g.get('labels', []),
-                 'sync_enabled': g.get('sync_enabled', False)} for g in cached]
+                 'sync_enabled': g.get('sync_enabled', False)} for g in cached
+                if g['group_name'] and '@' not in g['group_name']]
 
-    # Fallback: buscar da API (lento, primeira vez)
-    return await _fetch_groups_from_api()
+    # Fallback: API + merge sync flags from cache
+    api_groups = await _fetch_groups_from_api()
+    sync_map = {g['group_jid']: g.get('sync_enabled', False) for g in cached}
+    for g in api_groups:
+        g['sync_enabled'] = sync_map.get(g['jid'], False)
+    return api_groups
 
 
 async def _fetch_groups_from_api() -> List[Dict]:
-    """Busca grupos da Evolution API (lento, usado apenas se cache vazio)."""
+    """Busca grupos da Evolution API via fetchAllGroups (tem nomes corretos)."""
     base_url = os.getenv('EVOLUTION_API_URL', '')
     api_key = os.getenv('EVOLUTION_API_KEY', '')
     instance = os.getenv('EVOLUTION_INSTANCE', 'default')
@@ -336,15 +345,17 @@ async def _fetch_groups_from_api() -> List[Dict]:
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f'{base_url}/chat/findChats/{instance}',
-                headers={'apikey': api_key, 'Content-Type': 'application/json'},
-                json={}
+            resp = await client.get(
+                f'{base_url}/group/fetchAllGroups/{instance}?getParticipants=false',
+                headers={'apikey': api_key}
             )
-            chats = resp.json()
+            if resp.status_code != 200:
+                return []
+            groups = resp.json()
             return sorted(
-                [{'jid': c.get('remoteJid', ''), 'name': c.get('pushName', '')}
-                 for c in chats if '@g.us' in c.get('remoteJid', '') and c.get('pushName')],
+                [{'jid': g.get('id', ''), 'name': g.get('subject', ''),
+                  'total': g.get('size', 0), 'labels': [], 'sync_enabled': False}
+                 for g in groups if g.get('subject')],
                 key=lambda g: g['name']
             )
     except Exception as e:
