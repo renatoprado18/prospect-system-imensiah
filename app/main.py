@@ -9940,13 +9940,10 @@ async def conselhoos_pre_meeting_briefing(request: Request):
     """
     Generate an adaptive pre-meeting briefing combining ConselhoOS
     ritual data with INTEL relational intelligence.
+    No auth required (server-to-server from ConselhoOS).
 
     Body: { "reuniao_id": "uuid-string" }
     """
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Nao autenticado")
-
     data = await request.json()
     reuniao_id = data.get("reuniao_id")
 
