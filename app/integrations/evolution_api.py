@@ -647,6 +647,18 @@ async def analyze_message_in_background(message_id: int, contact_id: int, conten
     except Exception as e:
         logger.error(f"Error analyzing message {message_id}: {e}")
 
+    # Smart Message Processor: detecta emails, reunioes, telefones
+    try:
+        from services.smart_message_processor import process_message_intelligence
+        await process_message_intelligence(
+            message_id=message_id,
+            contact_id=contact_id,
+            content=content,
+            direction="incoming"
+        )
+    except Exception as e:
+        logger.error(f"Error in smart message processor for msg {message_id}: {e}")
+
 
 async def process_sent_message(data: Dict) -> Dict:
     """Processa confirmação de mensagem enviada - tambem verifica respostas a propostas"""

@@ -142,6 +142,14 @@
 - Notificacoes proativas: editorial briefing semanal, alertas do sistema
 - Service: `app/services/intel_bot.py`
 - Helper: `send_intel_notification(text, phone)` para qualquer servico enviar notificacao
+- **Smart Message Processor**: pos-processamento inteligente de mensagens recebidas → `smart_message_processor.py`
+  - Detecta emails (regex + contexto): verifica se ja existe, analisa mensagens anteriores com Claude para atribuir ao contato correto
+  - Auto-executa casos claros (email pedido e respondido): atualiza contato e notifica Renato
+  - Detecta propostas de reuniao (horarios, datas, dias da semana, "amanha", "semana que vem")
+  - Detecta telefones (10-11 digitos, formato BR) e propoe adicionar ao contato
+  - Cria action proposals para casos ambiguos com opcoes (Atualizar/Criar novo/Ignorar)
+  - Notifica Renato via intel-bot para cada proposta criada
+  - Chamado automaticamente em `analyze_message_in_background` (evolution_api.py)
 
 ## 18. PWA & Mobile
 - **Manifest**: `/static/manifest.json` (standalone, portrait, theme #6366f1)
