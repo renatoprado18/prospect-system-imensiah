@@ -855,28 +855,49 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
 
     # Extract text content
     content = ""
+    is_audio = False
     if "conversation" in message:
         content = message["conversation"]
     elif "extendedTextMessage" in message:
         content = message["extendedTextMessage"].get("text", "")
     elif "audioMessage" in message:
-        # Transcribe audio via Evolution API + Claude
-        try:
-            content = await _transcribe_bot_audio(key, data)
-            if content:
-                content = f"[Audio transcrito] {content}"
-        except Exception as e:
-            logger.error(f"Audio transcription error: {e}")
+        is_audio = True
+        content = "__AUDIO_PENDING__"
 
     if not content:
         return {"processed": False, "reason": "no_text_content"}
 
-    logger.info(f"Intel bot message from {phone}: {content[:100]}")
+    logger.info(f"Intel bot message from {phone}: {'[audio]' if is_audio else content[:100]}")
 
-    # Process in background so webhook returns fast
-    asyncio.create_task(_process_and_respond_bot(phone, content, message_id))
+    # Process in background so webhook returns fast (< 10s for Vercel)
+    if is_audio:
+        asyncio.create_task(_process_audio_and_respond_bot(phone, key, data, message_id))
+    else:
+        asyncio.create_task(_process_and_respond_bot(phone, content, message_id))
 
     return {"processed": True, "reason": "intel_bot", "phone": phone}
+
+
+async def _process_audio_and_respond_bot(phone: str, key: Dict, data: Dict, message_id: str):
+    """Transcribe audio then process as bot message. Runs in background."""
+    try:
+        from services.intel_bot import send_intel_notification
+
+        content = await _transcribe_bot_audio(key, data)
+        if not content:
+            await send_intel_notification("Nao consegui transcrever o audio. Pode digitar?", phone=phone)
+            return
+
+        content = f"[Audio transcrito] {content}"
+        await _process_and_respond_bot(phone, content, message_id)
+
+    except Exception as e:
+        logger.error(f"Audio bot processing error: {e}")
+        try:
+            from services.intel_bot import send_intel_notification
+            await send_intel_notification("Erro ao processar audio. Tenta digitar?", phone=phone)
+        except Exception:
+            pass
 
 
 async def _process_and_respond_bot(phone: str, content: str, message_id: str):
