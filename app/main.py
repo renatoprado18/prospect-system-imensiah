@@ -14,6 +14,7 @@ env_path = Path(__file__).resolve().parent.parent / '.env'
 load_dotenv(env_path)
 
 import os
+import sys
 import json
 import asyncio
 import httpx
@@ -158,6 +159,8 @@ app.add_middleware(
         "https://intel.almeida-prado.com",
         "https://prospect-system.vercel.app",
         "http://localhost:8000",
+        "https://conselhoos.vercel.app",
+        "http://localhost:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -17946,6 +17949,125 @@ def api_enrich_contact_linkedin(contact_id: int):
         raise HTTPException(status_code=400, detail=result.get("error"))
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Ata DOCX Generation + Google Drive Upload
+# ---------------------------------------------------------------------------
+
+class AtaDocxRequest(BaseModel):
+    ata_md: str
+    empresa_nome: str
+    data_reuniao: str
+    drive_folder_id: Optional[str] = None
+    access_token: Optional[str] = None
+
+
+@app.post("/api/ata/generate-docx")
+async def generate_ata_docx_endpoint(req: AtaDocxRequest):
+    """
+    Generate a professionally formatted DOCX from ata markdown.
+    Optionally uploads to Google Drive if access_token and drive_folder_id are provided.
+    Returns the DOCX file or the Drive file link.
+    """
+    import tempfile
+    import os
+    from fastapi.responses import FileResponse
+
+    # Add scripts dir to path so we can import the generator
+    scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scripts')
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from ata_to_docx import generate_ata_docx
+
+    # Generate DOCX to temp file
+    with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        generate_ata_docx(req.ata_md, req.empresa_nome, req.data_reuniao, tmp_path)
+
+        # If Drive credentials provided, upload to Google Drive
+        if req.access_token and req.drive_folder_id:
+            file_name = f"Ata Conselho - {req.empresa_nome} - {req.data_reuniao}.docx"
+
+            # Upload to Google Drive using resumable upload
+            async with httpx.AsyncClient() as client:
+                # Step 1: Initiate resumable upload
+                metadata = {
+                    "name": file_name,
+                    "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "parents": [req.drive_folder_id],
+                }
+                init_resp = await client.post(
+                    "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true",
+                    headers={
+                        "Authorization": f"Bearer {req.access_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=metadata,
+                    timeout=30.0,
+                )
+                if init_resp.status_code not in (200, 308):
+                    raise HTTPException(status_code=init_resp.status_code,
+                                        detail=f"Drive initiate upload failed: {init_resp.text}")
+
+                upload_url = init_resp.headers.get("Location")
+                if not upload_url:
+                    raise HTTPException(status_code=500, detail="No upload URL returned from Drive")
+
+                # Step 2: Upload file content
+                with open(tmp_path, 'rb') as f:
+                    file_bytes = f.read()
+
+                upload_resp = await client.put(
+                    upload_url,
+                    content=file_bytes,
+                    headers={
+                        "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "Content-Length": str(len(file_bytes)),
+                    },
+                    timeout=60.0,
+                )
+                if upload_resp.status_code not in (200, 201):
+                    raise HTTPException(status_code=upload_resp.status_code,
+                                        detail=f"Drive upload failed: {upload_resp.text}")
+
+                result = upload_resp.json()
+                file_id = result.get("id")
+
+                # Step 3: Get web view link
+                meta_resp = await client.get(
+                    f"https://www.googleapis.com/drive/v3/files/{file_id}?fields=webViewLink,webContentLink&supportsAllDrives=true",
+                    headers={"Authorization": f"Bearer {req.access_token}"},
+                    timeout=15.0,
+                )
+                meta_data = meta_resp.json() if meta_resp.status_code == 200 else {}
+
+                return {
+                    "success": True,
+                    "file_id": file_id,
+                    "file_name": file_name,
+                    "web_view_link": meta_data.get("webViewLink", f"https://docs.google.com/document/d/{file_id}/edit"),
+                    "web_content_link": meta_data.get("webContentLink"),
+                }
+
+        else:
+            # No Drive upload - return the DOCX file directly
+            file_name = f"Ata Conselho - {req.empresa_nome} - {req.data_reuniao}.docx"
+            return FileResponse(
+                tmp_path,
+                media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                filename=file_name,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise HTTPException(status_code=500, detail=f"DOCX generation failed: {str(e)}")
 
 
 # Vercel handler
