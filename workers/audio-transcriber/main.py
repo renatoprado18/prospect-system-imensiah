@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="INTEL Audio Transcriber")
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
 INTEL_BOT_INSTANCE = os.getenv("INTEL_BOT_INSTANCE", "intel-bot")
@@ -71,49 +72,32 @@ async def transcribe_audio(request: Request):
             await _send_response(phone, "Audio vazio. Pode digitar?")
             return {"error": "empty_audio"}
 
-        # Clean mimetype (WhatsApp sends "audio/ogg; codecs=opus")
-        clean_mimetype = mimetype.split(";")[0].strip() if mimetype else "audio/ogg"
-        logger.info(f"Audio downloaded: {len(audio_b64)} chars, type={clean_mimetype}")
+        logger.info(f"Audio downloaded: {len(audio_b64)} chars, type={mimetype}")
 
-        # Step 2: Transcribe with Claude
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        # Step 2: Transcribe with Groq Whisper (free, fast, supports ogg)
+        import base64
+        audio_bytes = base64.b64decode(audio_b64)
+
+        # Determine file extension from mimetype
+        ext_map = {"audio/ogg": "ogg", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/wav": "wav"}
+        clean_mime = mimetype.split(";")[0].strip() if mimetype else "audio/ogg"
+        ext = ext_map.get(clean_mime, "ogg")
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                },
-                json={
-                    "model": "claude-sonnet-4-20250514",
-                    "max_tokens": 1000,
-                    "messages": [{
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "document",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": clean_mimetype,
-                                    "data": audio_b64
-                                }
-                            },
-                            {
-                                "type": "text",
-                                "text": "Transcreva este audio em portugues. Retorne APENAS a transcricao, sem comentarios."
-                            }
-                        ]
-                    }]
-                }
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                files={"file": (f"audio.{ext}", audio_bytes, clean_mime)},
+                data={"model": "whisper-large-v3-turbo", "language": "pt"}
             )
 
         if resp.status_code != 200:
             error_detail = resp.text[:500]
-            logger.error(f"Claude transcription failed: {resp.status_code} - {error_detail}")
+            logger.error(f"Groq transcription failed: {resp.status_code} - {error_detail}")
             await _send_response(phone, f"Erro na transcricao ({resp.status_code}). Pode digitar?")
             return {"error": f"transcription_failed: {resp.status_code}", "detail": error_detail}
 
-        transcription = resp.json().get("content", [{}])[0].get("text", "")
+        transcription = resp.json().get("text", "")
         if not transcription:
             await _send_response(phone, "Nao consegui entender o audio. Pode digitar?")
             return {"error": "empty_transcription"}
