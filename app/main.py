@@ -6536,6 +6536,44 @@ async def cron_daily_sync(request: Request):
         from services.group_message_sync import sync_group_messages
         return await sync_group_messages(limit_per_group=50)
 
+    async def step_linkedin_enrichment():
+        from services.linkedin_enrichment import get_linkedin_enrichment
+        from services.action_proposals import get_action_proposals
+        enricher = get_linkedin_enrichment()
+        result = await enricher.enrich_batch(limit=10, circulo_max=3)
+
+        # Create action proposals for job changes
+        proposals_created = 0
+        for r in result.get("results", []):
+            jc = r.get("job_change")
+            if jc:
+                ap = get_action_proposals()
+                change_type = "mudou de empresa" if jc["type"] == "job_change" else "foi promovido(a)"
+                ap.create_proposal({
+                    "action_type": "linkedin_job_change",
+                    "contact_id": r["contact_id"],
+                    "title": f'{r["nome"]} {change_type}',
+                    "description": f'De {jc.get("old_company", "?")} ({jc.get("old_title", "?")}) para {jc.get("new_company", "?")} ({jc.get("new_title", "?")})',
+                    "trigger_text": f'Detectado via LinkedIn em {jc.get("detected_at", "")[:10]}',
+                    "ai_reasoning": "Mudanca de emprego e oportunidade para reconexao e parabens",
+                    "confidence": 0.9,
+                    "urgency": "high",
+                    "action_params": {"job_change": jc},
+                })
+                # Mark as notified in history
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE linkedin_enrichment_history SET notificado = TRUE
+                        WHERE contact_id = %s AND notificado = FALSE
+                        ORDER BY detectado_em DESC LIMIT 1
+                    """, (r["contact_id"],))
+                    conn.commit()
+                proposals_created += 1
+
+        result["proposals_created"] = proposals_created
+        return result
+
     await _aio.gather(
         run_step("daily_ai", step_ai),
         run_step("campaigns", step_campaigns),
@@ -6545,6 +6583,7 @@ async def cron_daily_sync(request: Request):
         run_step("daily_clipping", step_clipping),
         run_step("social_groups_cache", step_social_groups),
         run_step("group_messages_sync", step_group_messages),
+        run_step("linkedin_enrichment", step_linkedin_enrichment),
     )
 
     results["completed_at"] = datetime.now().isoformat()
