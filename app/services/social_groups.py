@@ -288,13 +288,21 @@ def toggle_group_sync(group_jid: str, enabled: bool) -> bool:
     """Ativa/desativa sincronizacao de um grupo."""
     with get_db() as conn:
         cursor = conn.cursor()
-        # Ensure column exists (migration)
-        cursor.execute("ALTER TABLE social_groups_cache ADD COLUMN IF NOT EXISTS sync_enabled BOOLEAN DEFAULT FALSE")
-        cursor.execute("""
-            UPDATE social_groups_cache SET sync_enabled = %s WHERE group_jid = %s
-            RETURNING id
-        """, (enabled, group_jid))
-        result = cursor.fetchone()
+
+        # Ensure column exists
+        try:
+            cursor.execute("ALTER TABLE social_groups_cache ADD COLUMN IF NOT EXISTS sync_enabled BOOLEAN DEFAULT FALSE")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+
+        # Check if group exists
+        cursor.execute("SELECT id FROM social_groups_cache WHERE group_jid = %s", (group_jid,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+
+        cursor.execute("UPDATE social_groups_cache SET sync_enabled = %s WHERE group_jid = %s", (enabled, group_jid))
         conn.commit()
         return result is not None
 
