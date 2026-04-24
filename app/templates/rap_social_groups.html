@@ -295,10 +295,10 @@
     async function toggleSync(jid, enabled, event) {
         event.stopPropagation();
         try {
-            const resp = await fetch(`/api/social-groups/${encodeURIComponent(jid)}/sync`, {
-                method: 'PUT',
+            const resp = await fetch('/api/social-groups/toggle-sync', {
+                method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({enabled})
+                body: JSON.stringify({group_jid: jid, enabled})
             });
             if (!resp.ok) throw new Error();
             const cardId = 'card-' + jid.replace(/[@.]/g, '_');

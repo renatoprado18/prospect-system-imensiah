@@ -15423,12 +15423,15 @@ async def api_sync_social_groups():
     return result
 
 
-@app.put("/api/social-groups/{group_jid:path}/sync")
-async def api_toggle_group_sync(group_jid: str, request: Request):
+@app.post("/api/social-groups/toggle-sync")
+async def api_toggle_group_sync(request: Request):
     """Ativa/desativa sincronizacao de um grupo"""
     from services.social_groups import toggle_group_sync
     data = await request.json()
+    group_jid = data.get('group_jid')
     enabled = data.get('enabled', False)
+    if not group_jid:
+        raise HTTPException(status_code=400, detail="group_jid obrigatorio")
     success = toggle_group_sync(group_jid, enabled)
     if not success:
         raise HTTPException(status_code=404, detail="Grupo nao encontrado")
