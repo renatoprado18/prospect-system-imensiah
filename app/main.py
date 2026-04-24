@@ -9618,18 +9618,23 @@ async def worker_contact_lookup(request: Request):
 
 @app.post("/api/webhooks/bot-message")
 async def bot_message_endpoint(request: Request):
-    """Endpoint for external workers to send processed messages to the bot."""
-    import asyncio
+    """Endpoint for external workers to send processed messages to the bot.
+    Runs synchronously (caller must handle timeout)."""
     data = await request.json()
     phone = data.get("phone", "")
     content = data.get("content", "")
     message_id = data.get("message_id", "")
+    secret = data.get("secret", "")
+    if secret != os.getenv("WORKER_SECRET", "intel-audio-2026"):
+        raise HTTPException(status_code=401, detail="Unauthorized")
     if not phone or not content:
         raise HTTPException(status_code=400, detail="phone and content required")
 
-    from integrations.evolution_api import _process_and_respond_bot
-    asyncio.create_task(_process_and_respond_bot(phone, content, message_id))
-    return {"status": "processing"}
+    from services.intel_bot import handle_bot_message, send_intel_notification
+    response = await handle_bot_message(phone, content, message_id)
+    if response:
+        await send_intel_notification(response, phone=phone)
+    return {"status": "success", "response": response or ""}
 
 
 @app.post("/api/webhooks/whatsapp")

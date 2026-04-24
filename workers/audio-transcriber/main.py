@@ -107,120 +107,31 @@ async def transcribe_audio(request: Request):
         # Step 3: Send transcribed text to INTEL bot for processing
         content = f"[Audio transcrito] {transcription}"
 
-        # Step 3: Process with Claude directly (avoid Vercel timeout)
-        bot_response = await _process_with_claude(phone, content)
-
-        if bot_response:
-            await _send_response(phone, bot_response)
-            return {"status": "success", "transcription": transcription[:200]}
-        else:
+        # Step 3: Send to intel-bot for full processing (has query_intel, save_memory, etc)
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                bot_resp = await client.post(
+                    f"{INTEL_API_URL}/api/webhooks/bot-message",
+                    headers={"Content-Type": "application/json"},
+                    json={"phone": phone, "content": content, "message_id": message_id,
+                          "secret": WORKER_SECRET},
+                    timeout=55.0
+                )
+            if bot_resp.status_code == 200:
+                return {"status": "success", "transcription": transcription[:200]}
+            else:
+                logger.warning(f"Bot API failed: {bot_resp.status_code}")
+                await _send_response(phone, f"Transcrevi seu audio:\n\n_{transcription}_")
+                return {"status": "partial", "transcription": transcription[:200]}
+        except httpx.TimeoutException:
+            logger.warning("Bot API timeout - sending transcription directly")
             await _send_response(phone, f"Transcrevi seu audio:\n\n_{transcription}_")
-            return {"status": "partial", "transcription": transcription[:200]}
+            return {"status": "partial_timeout", "transcription": transcription[:200]}
 
     except Exception as e:
         logger.error(f"Transcription error: {e}")
         await _send_response(phone, "Erro ao processar audio. Tenta digitar?")
         return {"error": str(e)}
-
-
-async def _fetch_context_from_intel(content: str) -> str:
-    """Fetch relevant context from INTEL CRM based on transcription content."""
-    try:
-        # Extract names mentioned in the transcription
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            # Use Claude to extract contact names from the transcription
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                },
-                json={
-                    "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 100,
-                    "messages": [{"role": "user", "content": f"Extraia APENAS os nomes de pessoas mencionados neste texto. Retorne um por linha, sem mais nada:\n\n{content}"}]
-                }
-            )
-            if resp.status_code != 200:
-                return ""
-
-            names = resp.json().get("content", [{}])[0].get("text", "").strip().split("\n")
-
-        # Search each name in INTEL via authenticated endpoint
-        context_parts = []
-        async with httpx.AsyncClient(timeout=10.0) as search_client:
-            for name in names[:3]:
-                name = name.strip().strip("-").strip("*").strip()
-                if len(name) < 3:
-                    continue
-                try:
-                    search_resp = await search_client.post(
-                        f"{INTEL_API_URL}/api/webhooks/contact-lookup",
-                        json={"name": name, "secret": WORKER_SECRET},
-                        timeout=5.0
-                    )
-                    if search_resp.status_code == 200:
-                        results = search_resp.json().get("contacts", [])
-                        for c in results[:1]:
-                            context_parts.append(
-                                f"- {c.get('nome','')}: {c.get('cargo','')} @ {c.get('empresa','')}, "
-                                f"Circulo C{c.get('circulo','?')}, Health {c.get('health_score','?')}%"
-                            )
-                except Exception:
-                    pass
-
-        return "\n".join(context_parts)
-    except Exception as e:
-        logger.error(f"Context fetch error: {e}")
-        return ""
-
-
-async def _process_with_claude(phone: str, content: str) -> str:
-    """Process transcribed audio with Claude to generate bot response."""
-    try:
-        # Fetch CRM context for mentioned contacts
-        context = await _fetch_context_from_intel(content)
-        context_section = f"\n\nCONTATOS MENCIONADOS (do CRM INTEL):\n{context}" if context else ""
-
-        from datetime import datetime
-        system_prompt = f"""Voce e o INTEL Bot, assistente pessoal de Renato Almeida Prado.
-Renato enviou um audio que foi transcrito. Analise o conteudo e responda de forma util.
-{context_section}
-
-REGRAS:
-- Se ele descrever uma ligacao/conversa: confirme o registro, mencione o contato pelo nome completo e empresa
-- Se mencionar problemas: identifique e sugira proximos passos acionaveis
-- Se pedir para criar tarefa: confirme e sugira (ele pode criar depois)
-- Responda em portugues, conciso (WhatsApp)
-- Use *negrito* para destaques
-- Data atual: {datetime.now().strftime('%d/%m/%Y %H:%M')}"""
-
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": ANTHROPIC_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json"
-                },
-                json={
-                    "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 500,
-                    "system": system_prompt,
-                    "messages": [{"role": "user", "content": content}]
-                }
-            )
-
-        if resp.status_code == 200:
-            return resp.json().get("content", [{}])[0].get("text", "")
-
-        logger.error(f"Claude response failed: {resp.status_code}")
-        return None
-
-    except Exception as e:
-        logger.error(f"Claude processing error: {e}")
-        return None
 
 
 async def _send_response(phone: str, message: str):
