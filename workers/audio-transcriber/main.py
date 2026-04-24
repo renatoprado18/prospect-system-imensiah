@@ -107,25 +107,61 @@ async def transcribe_audio(request: Request):
         # Step 3: Send transcribed text to INTEL bot for processing
         content = f"[Audio transcrito] {transcription}"
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            bot_resp = await client.post(
-                f"{INTEL_API_URL}/api/webhooks/bot-message",
-                headers={"Content-Type": "application/json"},
-                json={"phone": phone, "content": content, "message_id": message_id}
-            )
+        # Step 3: Process with Claude directly (avoid Vercel timeout)
+        bot_response = await _process_with_claude(phone, content)
 
-        if bot_resp.status_code == 200:
+        if bot_response:
+            await _send_response(phone, bot_response)
             return {"status": "success", "transcription": transcription[:200]}
         else:
-            # Fallback: send transcription directly as response
-            logger.warning(f"Bot API failed: {bot_resp.status_code}, sending direct")
-            await _send_response(phone, f"Transcrevi seu audio:\n\n_{transcription}_\n\n(Nao consegui processar pelo bot)")
+            await _send_response(phone, f"Transcrevi seu audio:\n\n_{transcription}_")
             return {"status": "partial", "transcription": transcription[:200]}
 
     except Exception as e:
         logger.error(f"Transcription error: {e}")
         await _send_response(phone, "Erro ao processar audio. Tenta digitar?")
         return {"error": str(e)}
+
+
+async def _process_with_claude(phone: str, content: str) -> str:
+    """Process transcribed audio with Claude to generate bot response."""
+    try:
+        system_prompt = f"""Voce e o INTEL Bot, assistente pessoal de Renato Almeida Prado.
+Renato enviou um audio que foi transcrito. Analise o conteudo e responda de forma util.
+
+REGRAS:
+- Se ele descrever uma ligacao/conversa: confirme o registro e sugira proximos passos
+- Se pedir para criar tarefa: confirme (mas nao pode criar, apenas sugerir)
+- Se fizer uma pergunta: responda objetivamente
+- Responda em portugues, conciso (WhatsApp)
+- Use *negrito* para destaques
+- Data atual: {__import__('datetime').datetime.now().strftime('%d/%m/%Y %H:%M')}"""
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 500,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": content}]
+                }
+            )
+
+        if resp.status_code == 200:
+            return resp.json().get("content", [{}])[0].get("text", "")
+
+        logger.error(f"Claude response failed: {resp.status_code}")
+        return None
+
+    except Exception as e:
+        logger.error(f"Claude processing error: {e}")
+        return None
 
 
 async def _send_response(phone: str, message: str):
