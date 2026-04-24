@@ -425,16 +425,97 @@ def generate_ata_docx(ata_md: str, empresa_nome: str, data_reuniao: str, output_
     doc.add_paragraph()
 
     # -----------------------------------------------------------------------
-    # Participants
+    # Participants as formatted table
     # -----------------------------------------------------------------------
     p = doc.add_paragraph()
-    _set_paragraph_spacing(p, before=6, after=6)
+    _set_paragraph_spacing(p, before=6, after=4)
     _add_run(p, "PARTICIPANTES", bold=True, size=9, color=COLOR_SUBTITLE)
 
     if parsed['participantes_text']:
-        p = doc.add_paragraph()
-        _set_paragraph_spacing(p, before=2, after=10)
-        _add_run(p, parsed['participantes_text'], size=10, color=COLOR_DARK)
+        # Parse participants: "Name (Role) | Name (Role) | ..."
+        import re as _re
+        raw = parsed['participantes_text'].replace('\n', ' ').replace('  ', ' ')
+        # Split by | but also handle cases where | is missing (line breaks became spaces)
+        # First split by |
+        parts = [p.strip() for p in raw.split('|') if p.strip()]
+        # Then split any part that has multiple "Name (Role)" patterns
+        expanded = []
+        for part in parts:
+            # Match "Name (Role) Name2 (Role2)" → split into separate entries
+            sub_parts = _re.findall(r'[A-ZÀ-Ý][^()]*\([^)]+\)', part)
+            if len(sub_parts) > 1:
+                expanded.extend([sp.strip() for sp in sub_parts])
+            else:
+                expanded.append(part)
+        parts = expanded
+
+        # Full name mappings (markdown may use short names)
+        full_names = {
+            'guilherme': 'Guilherme Cintra',
+            'renato': 'Renato de Faria e Almeida Prado',
+        }
+
+        participants = []
+        for part in parts:
+            m = _re.match(r'^(.+?)\s*\((.+?)\)\s*$', part)
+            if m:
+                name = m.group(1).strip()
+                role = m.group(2).strip()
+                # Replace short names with full names
+                name_lower = name.lower().strip()
+                if name_lower in full_names:
+                    name = full_names[name_lower]
+                participants.append((name, role))
+            else:
+                name = part.strip()
+                name_lower = name.lower()
+                if name_lower in full_names:
+                    name = full_names[name_lower]
+                participants.append((name, ''))
+
+        # Create table: 3 columns, as many rows as needed
+        cols = 3
+        rows_needed = (len(participants) + cols - 1) // cols
+        table = doc.add_table(rows=rows_needed, cols=cols)
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        # No borders, light background
+        tbl = table._tbl
+        tblPr = tbl.tblPr if tbl.tblPr is not None else parse_xml(f'<w:tblPr {nsdecls("w")}/>')
+        borders = parse_xml(
+            f'<w:tblBorders {nsdecls("w")}>'
+            f'  <w:top w:val="none" w:sz="0" w:space="0"/>'
+            f'  <w:left w:val="none" w:sz="0" w:space="0"/>'
+            f'  <w:bottom w:val="none" w:sz="0" w:space="0"/>'
+            f'  <w:right w:val="none" w:sz="0" w:space="0"/>'
+            f'  <w:insideH w:val="none" w:sz="0" w:space="0"/>'
+            f'  <w:insideV w:val="none" w:sz="0" w:space="0"/>'
+            f'</w:tblBorders>'
+        )
+        tblPr.append(borders)
+        tblW = parse_xml(f'<w:tblW {nsdecls("w")} w:w="5000" w:type="pct"/>')
+        tblPr.append(tblW)
+
+        for idx, (name, role) in enumerate(participants):
+            row_idx = idx // cols
+            col_idx = idx % cols
+            cell = table.cell(row_idx, col_idx)
+            cell.text = ''
+            _set_cell_shading(cell, "f0f4f8")
+            _set_cell_margins(cell, top=40, bottom=40, left=60, right=60)
+            cp = cell.paragraphs[0]
+            _set_paragraph_spacing(cp, before=0, after=0, line_spacing=1.1)
+            _add_run(cp, name, bold=True, size=9, color=COLOR_DARK)
+            if role:
+                cp.add_run('\n')
+                _add_run(cp, role, size=7, color=COLOR_GRAY)
+
+        # Fill empty cells
+        for idx in range(len(participants), rows_needed * cols):
+            row_idx = idx // cols
+            col_idx = idx % cols
+            cell = table.cell(row_idx, col_idx)
+            cell.text = ''
 
     _add_horizontal_rule(doc)
 
@@ -634,46 +715,86 @@ def _render_table(doc, table_text: str, section_title: str = ''):
         while len(row) < num_cols:
             row.append('')
 
-    # RACI: abbreviate headers and area column
+    # RACI: abbreviate headers and area column, track for legend
+    raci_name_legend = {}   # abbrev → full name
+    raci_area_legend = {}   # abbrev → full area name
     if is_raci:
+        # Use initials (first letter of first + last name) when possible, else 3 letters
         name_abbrev = {
-            'thalita': 'Tha', 'gui': 'Gui', 'amadeo': 'Ama', 'renata': 'Ren',
-            'verid.': 'Ver', 'verid': 'Ver', 'lara': 'Lar', 'renato': 'Rto',
+            'thalita': ('TM', 'Thalita Mendes'),
+            'gui': ('GC', 'Guilherme Cintra'),
+            'amadeo': ('AC', 'Amadeo Comin'),
+            'renata': ('RC', 'Renata Comin'),
+            'verid.': ('Ve', 'Veridiana'),
+            'verid': ('Ve', 'Veridiana'),
+            'lara': ('LG', 'Lara Gasparini'),
+            'renato': ('RP', 'Renato Prado'),
         }
         area_abbrev = {
-            'marketing': 'Mkt', 'financeiro': 'Fin', 'rh': 'RH',
-            'eq. médica': 'Eq.Med', 'eq.médica': 'Eq.Med', 'eq. medica': 'Eq.Med',
-            'operações': 'Oper', 'operacoes': 'Oper',
-            'ti / crm': 'TI', 'ti/crm': 'TI', 'ti': 'TI',
-            'influencers': 'Infl', 'estética': 'Est', 'estetica': 'Est',
+            'marketing': ('Mkt', 'Marketing'),
+            'financeiro': ('Fin', 'Financeiro'),
+            'rh': ('RH', 'Recursos Humanos'),
+            'eq. médica': ('Eq.Med', 'Equipe Médica'),
+            'eq.médica': ('Eq.Med', 'Equipe Médica'),
+            'eq. medica': ('Eq.Med', 'Equipe Médica'),
+            'operações': ('Oper', 'Operações'),
+            'operacoes': ('Oper', 'Operações'),
+            'ti / crm': ('TI', 'TI / CRM'),
+            'ti/crm': ('TI', 'TI / CRM'),
+            'ti': ('TI', 'TI / CRM'),
+            'influencers': ('Infl', 'Influencers'),
+            'estética': ('Est', 'Estética'),
+            'estetica': ('Est', 'Estética'),
         }
         # Abbreviate header names (person columns)
         if rows:
             for ci in range(3, len(rows[0])):
-                abbr = name_abbrev.get(rows[0][ci].strip().lower())
-                if abbr:
-                    rows[0][ci] = abbr
-        # Abbreviate area column in data rows
+                key = rows[0][ci].strip().lower()
+                entry = name_abbrev.get(key)
+                if entry:
+                    rows[0][ci] = entry[0]
+                    raci_name_legend[entry[0]] = entry[1]
+        # Abbreviate area column in data rows (strip ** bold markers first)
         for ri in range(1, len(rows)):
             if rows[ri]:
-                abbr = area_abbrev.get(rows[ri][0].strip().lower())
-                if abbr:
-                    rows[ri][0] = abbr
+                key = rows[ri][0].strip().replace('**', '').strip().lower()
+                entry = area_abbrev.get(key)
+                if entry:
+                    rows[ri][0] = entry[0]
+                    raci_area_legend[entry[0]] = entry[1]
 
     table = doc.add_table(rows=len(rows), cols=num_cols)
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-    # RACI: set column widths (narrow person cols, wide action col)
+    # RACI: set aggressive column widths via XML
     if is_raci and num_cols >= 4:
-        col_widths = []
-        for ci in range(num_cols):
-            if ci == 0:    col_widths.append(Cm(1.8))   # Área
-            elif ci == 1:  col_widths.append(Cm(8.0))   # Ação/Entrega — WIDE
-            elif ci == 2:  col_widths.append(Cm(1.5))   # Prazo
-            else:          col_widths.append(Cm(1.0))    # Person — narrow
-        for ci, width in enumerate(col_widths):
-            for row in table.rows:
-                row.cells[ci].width = width
+        from docx.oxml.ns import qn
+        tbl_xml = table._tbl
+        # Remove auto column width and set fixed
+        tblPr_temp = tbl_xml.tblPr if tbl_xml.tblPr is not None else parse_xml(f'<w:tblPr {nsdecls("w")}/>')
+        layout = parse_xml(f'<w:tblLayout {nsdecls("w")} w:type="fixed"/>')
+        tblPr_temp.append(layout)
+
+        # Set gridCol widths in twips (1 cm = 567 twips)
+        tblGrid = tbl_xml.find(qn('w:tblGrid'))
+        if tblGrid is not None:
+            for gridCol in tblGrid.findall(qn('w:gridCol')):
+                tblGrid.remove(gridCol)
+        else:
+            tblGrid = parse_xml(f'<w:tblGrid {nsdecls("w")}/>')
+            tbl_xml.insert(1, tblGrid)
+
+        person_count = num_cols - 3
+        # Total page width ~16cm = 9072 twips
+        area_w = 800      # ~1.4cm
+        acao_w = 9072 - 800 - 740 - (person_count * 400)  # remainder for Ação
+        prazo_w = 740      # ~1.3cm
+        person_w = 400     # ~0.7cm
+
+        widths = [area_w, acao_w, prazo_w] + [person_w] * person_count
+        for w in widths:
+            gridCol = parse_xml(f'<w:gridCol {nsdecls("w")} w:w="{w}"/>')
+            tblGrid.append(gridCol)
 
     # Set table style with borders
     tbl = table._tbl
@@ -714,7 +835,7 @@ def _render_table(doc, table_text: str, section_title: str = ''):
                 if row_idx % 2 == 0:
                     _set_cell_shading(cell, COLOR_TABLE_ALT_BG)
 
-                # RACI coloring
+                # RACI coloring (person columns start at 3)
                 if is_raci and col_idx >= 3 and clean_text in ('R', 'A', 'C', 'I'):
                     raci_colors = {
                         'R': COLOR_RACI_R,
@@ -736,16 +857,33 @@ def _render_table(doc, table_text: str, section_title: str = ''):
 
     # RACI legend
     if is_raci:
+        # RACI codes legend
         p = doc.add_paragraph()
-        _set_paragraph_spacing(p, before=4, after=8)
-        _add_run(p, "R ", bold=True, size=8, color=RGBColor(0x2E, 0x86, 0xC1))
-        _add_run(p, "Responsável pela execução  ", size=8, color=COLOR_GRAY)
-        _add_run(p, "A ", bold=True, size=8, color=RGBColor(0x27, 0xAE, 0x60))
-        _add_run(p, "Aprovador / Autoridade final  ", size=8, color=COLOR_GRAY)
-        _add_run(p, "C ", bold=True, size=8, color=RGBColor(0xF3, 0x9C, 0x12))
-        _add_run(p, "Consultado / Contribui  ", size=8, color=COLOR_GRAY)
-        _add_run(p, "I ", bold=True, size=8, color=RGBColor(0x7F, 0x8C, 0x8D))
-        _add_run(p, "Informado do resultado", size=8, color=COLOR_GRAY)
+        _set_paragraph_spacing(p, before=4, after=2)
+        _add_run(p, "R ", bold=True, size=7, color=RGBColor(0x2E, 0x86, 0xC1))
+        _add_run(p, "Responsável  ", size=7, color=COLOR_GRAY)
+        _add_run(p, "A ", bold=True, size=7, color=RGBColor(0x27, 0xAE, 0x60))
+        _add_run(p, "Aprovador  ", size=7, color=COLOR_GRAY)
+        _add_run(p, "C ", bold=True, size=7, color=RGBColor(0xF3, 0x9C, 0x12))
+        _add_run(p, "Consultado  ", size=7, color=COLOR_GRAY)
+        _add_run(p, "I ", bold=True, size=7, color=RGBColor(0x7F, 0x8C, 0x8D))
+        _add_run(p, "Informado", size=7, color=COLOR_GRAY)
+
+        # Person abbreviations legend
+        if raci_name_legend:
+            p = doc.add_paragraph()
+            _set_paragraph_spacing(p, before=2, after=2)
+            _add_run(p, "Pessoas: ", bold=True, size=7, color=COLOR_GRAY)
+            items = [f"{k} = {v}" for k, v in raci_name_legend.items()]
+            _add_run(p, " · ".join(items), size=7, color=COLOR_GRAY)
+
+        # Area abbreviations legend
+        if raci_area_legend:
+            p = doc.add_paragraph()
+            _set_paragraph_spacing(p, before=2, after=8)
+            _add_run(p, "Áreas: ", bold=True, size=7, color=COLOR_GRAY)
+            items = [f"{k} = {v}" for k, v in raci_area_legend.items()]
+            _add_run(p, " · ".join(items), size=7, color=COLOR_GRAY)
 
     # Add spacing after table
     doc.add_paragraph()
