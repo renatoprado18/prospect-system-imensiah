@@ -15405,16 +15405,6 @@ async def api_list_social_groups():
     return await list_all_social_groups()
 
 
-@app.get("/api/social-groups/{group_jid:path}")
-async def api_get_social_group(group_jid: str):
-    """Detalhes de um grupo com membros (do cache)"""
-    from services.social_groups import get_group_with_members
-    result = await get_group_with_members(group_jid)
-    if not result:
-        raise HTTPException(status_code=404, detail="Grupo nao encontrado")
-    return result
-
-
 @app.post("/api/social-groups/sync")
 async def api_sync_social_groups():
     """Forca sync do cache de grupos sociais"""
@@ -15436,6 +15426,16 @@ async def api_toggle_group_sync(request: Request):
     if not success:
         raise HTTPException(status_code=404, detail="Grupo nao encontrado")
     return {"status": "success", "sync_enabled": enabled}
+
+
+@app.get("/api/social-groups/{group_jid:path}")
+async def api_get_social_group(group_jid: str):
+    """Detalhes de um grupo com membros (do cache)"""
+    from services.social_groups import get_group_with_members
+    result = await get_group_with_members(group_jid)
+    if not result:
+        raise HTTPException(status_code=404, detail="Grupo nao encontrado")
+    return result
 
 
 # ============== PROJECT WHATSAPP GROUPS ==============
