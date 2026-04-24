@@ -15510,6 +15510,20 @@ async def api_sync_social_groups():
     return result
 
 
+@app.get("/api/social-groups/crossover")
+async def api_social_groups_crossover():
+    """Contatos que participam de 2+ grupos em comum"""
+    from services.social_groups import get_contact_crossover
+    return {"contacts": get_contact_crossover()}
+
+
+@app.get("/api/social-groups/introductions")
+async def api_social_groups_introductions(limit: int = 10):
+    """Sugestoes de introducoes entre contatos de grupos em comum"""
+    from services.social_groups import suggest_introductions
+    return {"introductions": suggest_introductions(limit=limit)}
+
+
 @app.post("/api/social-groups/sync-messages")
 async def api_sync_group_messages():
     """Sincroniza mensagens dos grupos marcados"""
@@ -18248,6 +18262,181 @@ async def generate_ata_docx_endpoint(req: AtaDocxRequest):
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise HTTPException(status_code=500, detail=f"DOCX generation failed: {str(e)}")
+
+
+# ============== ATA SEND EMAIL ==============
+
+class AtaSendEmailRequest(BaseModel):
+    ata_drive_id: str
+    raci_drive_id: Optional[str] = None
+    recipients: List[dict]  # [{email, name}]
+    subject: str
+    body: str
+    empresa_nome: str
+    contact_ids: Optional[List[int]] = None
+
+
+@app.post("/api/ata/send-email")
+async def send_ata_email(req: AtaSendEmailRequest):
+    """
+    Share ata (and optionally RACI sheet) with recipients via Google Drive
+    permissions + Gmail email.
+    """
+    from integrations.google_drive import get_valid_token
+    from integrations.gmail import GmailIntegration
+
+    if not req.recipients:
+        raise HTTPException(status_code=400, detail="Nenhum destinatário informado")
+
+    conn = get_connection()
+    try:
+        access_token = await get_valid_token(conn, 'professional')
+        if not access_token:
+            raise HTTPException(status_code=401, detail="Token Google não disponível")
+
+        # 1. Set commenter permission on ata for each recipient
+        permission_errors = []
+        for recipient in req.recipients:
+            email = recipient.get("email")
+            if not email:
+                continue
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(
+                        f"https://www.googleapis.com/drive/v3/files/{req.ata_drive_id}/permissions?sendNotificationEmail=false",
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "role": "commenter",
+                            "type": "user",
+                            "emailAddress": email,
+                        },
+                        timeout=15.0,
+                    )
+                    if resp.status_code not in [200, 201]:
+                        permission_errors.append(f"{email}: {resp.text}")
+            except Exception as e:
+                permission_errors.append(f"{email}: {str(e)}")
+
+        # 2. Set commenter permission on RACI sheet (if provided)
+        if req.raci_drive_id:
+            for recipient in req.recipients:
+                email = recipient.get("email")
+                if not email:
+                    continue
+                try:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.post(
+                            f"https://www.googleapis.com/drive/v3/files/{req.raci_drive_id}/permissions?sendNotificationEmail=false",
+                            headers={
+                                "Authorization": f"Bearer {access_token}",
+                                "Content-Type": "application/json",
+                            },
+                            json={
+                                "role": "commenter",
+                                "type": "user",
+                                "emailAddress": email,
+                            },
+                            timeout=15.0,
+                        )
+                except Exception:
+                    pass  # Non-fatal for RACI
+
+        # 3. Get web view links
+        ata_link = f"https://docs.google.com/document/d/{req.ata_drive_id}/edit"
+        raci_link = None
+        if req.raci_drive_id:
+            raci_link = f"https://docs.google.com/spreadsheets/d/{req.raci_drive_id}/edit"
+
+        # 4. Build HTML email
+        body_html = req.body.replace("\n", "<br>")
+
+        links_html = f"""
+<div style="margin: 20px 0; padding: 16px; background: #f8f9fa; border-left: 4px solid #2c3e50; border-radius: 4px;">
+  <p style="margin: 0 0 8px 0; font-size: 14px;">
+    &#128196; <strong>Ata da Reunião:</strong>
+    <a href="{ata_link}" style="color: #2980b9; text-decoration: underline;">Abrir documento</a>
+  </p>
+  {f'''<p style="margin: 0; font-size: 14px;">
+    &#128203; <strong>Matriz RACI:</strong>
+    <a href="{raci_link}" style="color: #2980b9; text-decoration: underline;">Abrir planilha</a>
+  </p>''' if raci_link else ''}
+</div>
+"""
+
+        full_html = f"""
+<div style="font-family: 'Georgia', serif; font-size: 14px; color: #2c3e50; line-height: 1.6;">
+  {body_html}
+  {links_html}
+</div>
+"""
+
+        plain_text = req.body
+        if raci_link:
+            plain_text += f"\n\nAta: {ata_link}\nRACI: {raci_link}"
+        else:
+            plain_text += f"\n\nAta: {ata_link}"
+
+        # 5. Send email via Gmail
+        gmail_instance = GmailIntegration()
+        all_emails = [r["email"] for r in req.recipients if r.get("email")]
+        to_str = ", ".join(all_emails)
+
+        result = await gmail_instance.send_message(
+            access_token=access_token,
+            to=to_str,
+            subject=req.subject,
+            body=plain_text,
+            html_body=full_html,
+        )
+
+        if isinstance(result, dict) and "error" in result:
+            raise HTTPException(status_code=500, detail=f"Erro ao enviar email: {result['error']}")
+
+        # 6. Register interaction in INTEL for each contact_id
+        registered_contacts = 0
+        if req.contact_ids:
+            cursor = conn.cursor()
+            for contact_id in req.contact_ids:
+                try:
+                    cursor.execute("""
+                        INSERT INTO contact_interactions (contact_id, tipo, titulo, descricao, data_interacao)
+                        VALUES (%s, %s, %s, %s, NOW())
+                    """, (
+                        contact_id,
+                        "email",
+                        f"Ata de conselho enviada - {req.empresa_nome}",
+                        f"Ata de reunião de conselho ({req.empresa_nome}) enviada por email com permissão de comentários.",
+                    ))
+                    cursor.execute("""
+                        UPDATE contacts
+                        SET ultimo_contato = NOW(),
+                            total_interacoes = COALESCE(total_interacoes, 0) + 1,
+                            atualizado_em = NOW()
+                        WHERE id = %s
+                    """, (contact_id,))
+                    registered_contacts += 1
+                except Exception:
+                    pass
+            conn.commit()
+
+        return {
+            "status": "sent",
+            "sent_to": len(all_emails),
+            "registered_contacts": registered_contacts,
+            "permission_errors": permission_errors if permission_errors else None,
+            "ata_link": ata_link,
+            "raci_link": raci_link,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 
 # Vercel handler

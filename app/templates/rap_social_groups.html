@@ -125,12 +125,29 @@
 {% endblock %}
 
 {% block content %}
-<div class="groups-grid" id="groupsGrid">
-    <div class="loading-center">
-        <div class="spinner-border text-success mb-3"></div>
-        <p>Carregando grupos do WhatsApp...</p>
+<!-- Page Tabs -->
+<div style="border-bottom: 2px solid #e2e8f0; margin-bottom: 16px; display: flex; gap: 4px;">
+    <button class="tab-btn active" onclick="showPageTab('groups', this)">
+        <i class="bi bi-people-fill me-1"></i>Grupos
+    </button>
+    <button class="tab-btn" onclick="showPageTab('crossover', this)">
+        <i class="bi bi-intersect me-1"></i>Cruzamento
+    </button>
+    <button class="tab-btn" onclick="showPageTab('intros', this)">
+        <i class="bi bi-arrow-left-right me-1"></i>Introduções
+    </button>
+</div>
+
+<div id="pageGroups">
+    <div class="groups-grid" id="groupsGrid">
+        <div class="loading-center">
+            <div class="spinner-border text-success mb-3"></div>
+            <p>Carregando grupos do WhatsApp...</p>
+        </div>
     </div>
 </div>
+<div id="pageCrossover" style="display:none;"></div>
+<div id="pageIntros" style="display:none;"></div>
 
 <!-- Detail Modal -->
 <div class="modal fade" id="groupDetailModal" tabindex="-1">
@@ -376,6 +393,111 @@
         } catch (e) {
             alert('Erro ao atualizar sync');
             event.target.checked = !enabled;
+        }
+    }
+
+    function showPageTab(tab, btn) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('pageGroups').style.display = tab === 'groups' ? '' : 'none';
+        document.getElementById('pageCrossover').style.display = tab === 'crossover' ? '' : 'none';
+        document.getElementById('pageIntros').style.display = tab === 'intros' ? '' : 'none';
+
+        if (tab === 'crossover') loadCrossover();
+        if (tab === 'intros') loadIntroductions();
+    }
+
+    async function loadCrossover() {
+        const container = document.getElementById('pageCrossover');
+        container.innerHTML = '<div class="loading-center"><div class="spinner-border text-success mb-2"></div><p>Cruzando participantes...</p></div>';
+        try {
+            const resp = await fetch('/api/social-groups/crossover');
+            const data = await resp.json();
+            const contacts = data.contacts || [];
+
+            if (contacts.length === 0) {
+                container.innerHTML = '<div class="loading-center"><p class="text-muted">Nenhum contato em mais de um grupo</p></div>';
+                return;
+            }
+
+            container.innerHTML = `
+                <p class="text-muted mb-3">${contacts.length} contatos participam de 2 ou mais grupos</p>
+                <div class="groups-grid">
+                ${contacts.map(c => {
+                    const initials = (c.nome || '?').split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase();
+                    const avatar = c.foto_url ? `<img src="${c.foto_url}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;">` : `<div class="member-avatar">${initials}</div>`;
+                    return `
+                    <a href="/contatos/${c.id}" class="group-card" style="text-decoration:none;color:inherit;">
+                        <div class="d-flex align-items-center gap-3 mb-2">
+                            ${avatar}
+                            <div>
+                                <div class="group-name">${c.nome}</div>
+                                <div style="font-size:0.75rem;color:#64748b;">${c.cargo ? c.cargo + (c.empresa ? ' @ ' + c.empresa : '') : c.empresa || ''}</div>
+                            </div>
+                            <span class="badge bg-success ms-auto">${c.group_count} grupos</span>
+                        </div>
+                        <div style="display:flex;flex-wrap:wrap;gap:4px;">
+                            ${c.groups.map(g => `<span class="group-label-badge">${g}</span>`).join('')}
+                        </div>
+                    </a>`;
+                }).join('')}
+                </div>`;
+        } catch (e) {
+            container.innerHTML = '<div class="loading-center text-danger">Erro ao carregar cruzamento</div>';
+        }
+    }
+
+    async function loadIntroductions() {
+        const container = document.getElementById('pageIntros');
+        container.innerHTML = '<div class="loading-center"><div class="spinner-border text-success mb-2"></div><p>Analisando conexoes...</p></div>';
+        try {
+            const resp = await fetch('/api/social-groups/introductions?limit=15');
+            const data = await resp.json();
+            const intros = data.introductions || [];
+
+            if (intros.length === 0) {
+                container.innerHTML = '<div class="loading-center"><p class="text-muted">Nenhuma sugestao de introducao encontrada</p></div>';
+                return;
+            }
+
+            container.innerHTML = `
+                <p class="text-muted mb-3">${intros.length} sugestoes de introducao baseadas em grupos em comum</p>
+                ${intros.map(intro => {
+                    const a = intro.contact_a;
+                    const b = intro.contact_b;
+                    const aInit = (a.nome || '?').split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase();
+                    const bInit = (b.nome || '?').split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase();
+                    const aAvatar = a.foto_url ? `<img src="${a.foto_url}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;">` : `<div class="member-avatar">${aInit}</div>`;
+                    const bAvatar = b.foto_url ? `<img src="${b.foto_url}" style="width:36px;height:36px;border-radius:50%;object-fit:cover;">` : `<div class="member-avatar">${bInit}</div>`;
+                    return `
+                    <div class="group-card mb-3" style="cursor:default;">
+                        <div class="d-flex align-items-center gap-3">
+                            <a href="/contatos/${a.id}" class="d-flex align-items-center gap-2" style="text-decoration:none;color:inherit;flex:1;">
+                                ${aAvatar}
+                                <div>
+                                    <div class="fw-bold" style="font-size:0.85rem;">${a.nome}</div>
+                                    <div style="font-size:0.7rem;color:#64748b;">${a.cargo || ''} ${a.empresa ? '@ ' + a.empresa : ''}</div>
+                                </div>
+                            </a>
+                            <div style="font-size:1.2rem;color:#22c55e;"><i class="bi bi-arrow-left-right"></i></div>
+                            <a href="/contatos/${b.id}" class="d-flex align-items-center gap-2" style="text-decoration:none;color:inherit;flex:1;">
+                                ${bAvatar}
+                                <div>
+                                    <div class="fw-bold" style="font-size:0.85rem;">${b.nome}</div>
+                                    <div style="font-size:0.7rem;color:#64748b;">${b.cargo || ''} ${b.empresa ? '@ ' + b.empresa : ''}</div>
+                                </div>
+                            </a>
+                        </div>
+                        <div style="margin-top:8px;font-size:0.8rem;color:#475569;">
+                            <i class="bi bi-lightbulb text-warning me-1"></i>${intro.reason}
+                        </div>
+                        <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
+                            ${intro.shared_groups.map(g => `<span class="group-label-badge">${g}</span>`).join('')}
+                        </div>
+                    </div>`;
+                }).join('')}`;
+        } catch (e) {
+            container.innerHTML = '<div class="loading-center text-danger">Erro ao carregar sugestoes</div>';
         }
     }
 

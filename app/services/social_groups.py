@@ -394,3 +394,141 @@ async def get_group_with_members(group_jid: str) -> Optional[Dict]:
         'attention_list': sorted([m for m in known if (m.get('health_score') or 100) < 50],
                                   key=lambda m: m.get('health_score', 0)),
     }
+
+
+def get_contact_crossover() -> List[Dict]:
+    """
+    Cruza participantes entre grupos.
+    Retorna contatos que participam de 2+ grupos, ordenados por quantidade.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get all groups with known_contact_ids
+        cursor.execute("""
+            SELECT group_jid, group_name, known_contact_ids
+            FROM social_groups_cache
+            WHERE group_name IS NOT NULL AND known_count > 0
+        """)
+        groups = [dict(r) for r in cursor.fetchall()]
+
+    # Build contact -> groups map
+    contact_groups = {}  # contact_id -> [group_names]
+    for g in groups:
+        ids = g.get('known_contact_ids', [])
+        if isinstance(ids, str):
+            ids = json.loads(ids)
+        for cid in ids:
+            if cid not in contact_groups:
+                contact_groups[cid] = []
+            contact_groups[cid].append(g['group_name'])
+
+    # Filter contacts in 2+ groups
+    multi = {cid: gnames for cid, gnames in contact_groups.items() if len(gnames) >= 2}
+    if not multi:
+        return []
+
+    # Get contact details
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, empresa, cargo, circulo, health_score, foto_url
+            FROM contacts WHERE id = ANY(%s)
+        """, (list(multi.keys()),))
+        contacts = {r['id']: dict(r) for r in cursor.fetchall()}
+
+    results = []
+    for cid, gnames in multi.items():
+        if cid in contacts:
+            c = contacts[cid]
+            c['groups'] = sorted(gnames)
+            c['group_count'] = len(gnames)
+            results.append(c)
+
+    return sorted(results, key=lambda x: -x['group_count'])
+
+
+def suggest_introductions(limit: int = 10) -> List[Dict]:
+    """
+    Sugere introducoes entre contatos que compartilham grupos.
+    Busca pares de contatos em grupos em comum que NAO tem interacao direta.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Get all groups with known_contact_ids
+        cursor.execute("""
+            SELECT group_jid, group_name, known_contact_ids
+            FROM social_groups_cache
+            WHERE group_name IS NOT NULL AND known_count >= 2
+        """)
+        groups = [dict(r) for r in cursor.fetchall()]
+
+    # Build pairs: (contact_a, contact_b) -> [shared_groups]
+    pairs = {}
+    for g in groups:
+        ids = g.get('known_contact_ids', [])
+        if isinstance(ids, str):
+            ids = json.loads(ids)
+        ids = sorted(set(ids))
+        for i in range(len(ids)):
+            for j in range(i + 1, len(ids)):
+                pair = (ids[i], ids[j])
+                if pair not in pairs:
+                    pairs[pair] = []
+                pairs[pair].append(g['group_name'])
+
+    # Filter pairs with 2+ shared groups (stronger connection signal)
+    strong_pairs = {p: gs for p, gs in pairs.items() if len(gs) >= 2}
+    if not strong_pairs:
+        # Fall back to any shared group
+        strong_pairs = dict(sorted(pairs.items(), key=lambda x: -len(x[1]))[:limit])
+
+    if not strong_pairs:
+        return []
+
+    # Get contact details
+    all_ids = set()
+    for a, b in strong_pairs.keys():
+        all_ids.add(a)
+        all_ids.add(b)
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, empresa, cargo, circulo, health_score, foto_url
+            FROM contacts WHERE id = ANY(%s)
+        """, (list(all_ids),))
+        contacts = {r['id']: dict(r) for r in cursor.fetchall()}
+
+    results = []
+    for (a_id, b_id), shared_groups in sorted(strong_pairs.items(), key=lambda x: -len(x[1])):
+        if a_id not in contacts or b_id not in contacts:
+            continue
+        ca = contacts[a_id]
+        cb = contacts[b_id]
+        results.append({
+            'contact_a': ca,
+            'contact_b': cb,
+            'shared_groups': shared_groups,
+            'shared_count': len(shared_groups),
+            'reason': _generate_intro_reason(ca, cb, shared_groups)
+        })
+        if len(results) >= limit:
+            break
+
+    return results
+
+
+def _generate_intro_reason(a: Dict, b: Dict, groups: List[str]) -> str:
+    """Gera razao para sugestao de introducao."""
+    groups_str = ' e '.join(groups[:3])
+    parts = []
+    if a.get('empresa') and b.get('empresa') and a['empresa'] != b['empresa']:
+        parts.append(f"trabalham em empresas diferentes ({a['empresa']} e {b['empresa']})")
+    if a.get('cargo') and b.get('cargo'):
+        parts.append(f"atuam como {a['cargo']} e {b['cargo']}")
+    base = f"Ambos participam de {groups_str}"
+    if parts:
+        return f"{base}. {parts[0].capitalize()}."
+    return f"{base}."
