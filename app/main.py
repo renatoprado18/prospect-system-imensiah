@@ -18051,6 +18051,7 @@ class AtaDocxRequest(BaseModel):
     data_reuniao: str
     drive_folder_id: Optional[str] = None
     access_token: Optional[str] = None
+    template: Optional[str] = None  # None = default template. Future: "vallen", "alba", etc.
 
 
 @app.post("/api/ata/generate-docx")
@@ -18064,11 +18065,25 @@ async def generate_ata_docx_endpoint(req: AtaDocxRequest):
     import os
     from fastapi.responses import FileResponse
 
-    # Add scripts dir to path so we can import the generator
+    # Load the appropriate template
     scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scripts')
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
-    from ata_to_docx import generate_ata_docx
+
+    if req.template:
+        # Try to load custom template: scripts/templates/{template}_ata.py
+        templates_dir = os.path.join(scripts_dir, 'templates')
+        if templates_dir not in sys.path:
+            sys.path.insert(0, templates_dir)
+        try:
+            mod = __import__(f"{req.template}_ata")
+            generate_ata_docx = mod.generate_ata_docx
+        except ImportError:
+            # Fallback to default
+            from ata_to_docx import generate_ata_docx
+    else:
+        # Default template
+        from ata_to_docx import generate_ata_docx
 
     # Generate DOCX to temp file
     with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as tmp:

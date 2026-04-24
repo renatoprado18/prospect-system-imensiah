@@ -1,15 +1,28 @@
 """
 Gerador de Ata de Conselho em formato DOCX profissional.
 
-Converte markdown da ata (armazenado em reunioes.ata_md no ConselhoOS)
-em um documento DOCX formatado seguindo o modelo visual da Vallen Clinic.
+TEMPLATE PADRAO — usado quando a empresa nao tem template especifico.
+
+Formato:
+- Header centralizado com nome da empresa
+- Metadata compacta (4 colunas: duracao, participantes, itens, proxima)
+- Participantes como cards (3 colunas, nome bold + papel cinza)
+- Secoes numeradas com subsecoes
+- Tabelas financeiras com header escuro e zebra
+- Matriz RACI com iniciais (TM, GC, etc.) e areas abreviadas (Mkt, Fin, etc.)
+- Pendencias com emojis coloridos (vermelho/amarelo/verde)
+- Proximos passos como tabela 2 colunas
+- Rodape com proxima reuniao + confidencial
 
 Uso standalone:
     python scripts/ata_to_docx.py
 
 Uso como modulo:
     from scripts.ata_to_docx import generate_ata_docx
-    generate_ata_docx(ata_md, "VALLEN CLINIC", "08 de Abril de 2026", "/tmp/output.docx")
+    generate_ata_docx(ata_md, "EMPRESA", "08 de Abril de 2026", "/tmp/output.docx")
+
+Para templates especificos por empresa, crie um modulo em scripts/templates/
+que exporte a mesma funcao generate_ata_docx(ata_md, empresa_nome, data_reuniao, output_path).
 """
 
 import re

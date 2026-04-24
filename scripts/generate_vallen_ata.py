@@ -173,17 +173,20 @@ foi discutido na reuniao de abril.
 
 REGRAS CRITICAS:
 1. Mantenha EXATAMENTE a mesma estrutura: header, metadata, participantes, secoes numeradas, tabelas financeiras, matriz RACI, pendencias, proximos passos, encerramento
-2. O header deve ser: VALLEN CLINIC | Ata do Conselho | {meeting_date_str}
-3. O rodape de cada pagina: "Proxima reuniao de conselho: [DATA] | Confidencial"
-4. Use secoes numeradas como na ata modelo
-5. Dentro de cada secao: "O que foi apresentado", "Diagnostico/Gaps", "Decisoes Tomadas"
-6. Inclua tabelas financeiras formatadas quando dados forem mencionados
-7. A MATRIZ RACI deve listar TODAS as acoes com responsaveis, usando o formato da ata modelo
-8. Secao de PENDENCIAS com classificacao por criticidade (CRITICO, IMPORTANTE, GOVERNANCA)
-9. PROXIMOS PASSOS IMEDIATOS no final
-10. NUNCA invente dados. Se algo nao ficou claro na transcricao, registre como "a ser confirmado"
-11. Mantenha o tom formal mas acessivel da ata modelo
-12. A proxima reuniao apos abril sera em maio de 2026 (verificar data exata na transcricao)
+2. O header aparece UMA VEZ no inicio. NAO repita headers nem footers ao longo do documento.
+3. Use secoes numeradas como na ata modelo
+4. Dentro de cada secao: "O que foi apresentado", "Diagnostico/Gaps", "Decisoes Tomadas"
+5. TODAS as tabelas (financeiras, RACI, comparativas) devem usar formato PIPE do markdown:
+   | Coluna1 | Coluna2 | Coluna3 |
+   |---------|---------|---------|
+   | valor1  | valor2  | valor3  |
+6. A MATRIZ RACI DEVE ser uma tabela pipe com colunas: Area, Acao/Entrega, Prazo, e uma coluna por pessoa (Thalita, Gui, Amadeo, Renata, Verid., Lara). Valores: R, A, C, I ou vazio.
+7. Secao de PENDENCIAS com emojis: 🔴 CRITICO, 🟡 IMPORTANTE, 🟢 GOVERNANCA
+8. PROXIMOS PASSOS IMEDIATOS como tabela pipe: | Acao | Responsavel |
+9. NUNCA invente dados. Se algo nao ficou claro na transcricao, registre como "a ser confirmado"
+10. Mantenha o tom formal mas acessivel da ata modelo
+11. NAO inclua linhas tipo "Proxima reuniao de conselho: X | Confidencial" repetidas. Isso so aparece UMA VEZ no final.
+12. NAO inclua o titulo "VALLEN CLINIC | Ata do Conselho" repetido. So aparece UMA VEZ no inicio.
 
 CONTEXTO ADICIONAL:
 - Pauta prevista: {pauta[:2000] if pauta else 'Nao disponivel'}
