@@ -389,6 +389,62 @@ async def ai_api_status():
 
 # ============== API Routes - Auth ==============
 
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_policy():
+    """Privacy Policy page for LinkedIn App and integrations"""
+    return HTMLResponse(content="""<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy Policy - INTEL by Almeida Prado</title>
+<style>body{font-family:-apple-system,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color:#1e293b;line-height:1.7;}
+h1{color:#6366f1;}h2{color:#334155;margin-top:32px;}a{color:#6366f1;}</style></head><body>
+<h1>Privacy Policy</h1>
+<p><strong>INTEL</strong> — Personal CRM & Intelligence Platform<br>
+Operated by Renato Almeida Prado<br>
+Last updated: April 24, 2026</p>
+
+<h2>1. What We Collect</h2>
+<p>INTEL collects and processes data solely for personal CRM and relationship management purposes:</p>
+<ul>
+<li>Contact information (name, email, phone, company, role)</li>
+<li>Communication history (emails, WhatsApp messages)</li>
+<li>Calendar events and tasks</li>
+<li>LinkedIn profile data (public profile information via authorized API access)</li>
+</ul>
+
+<h2>2. How We Use Data</h2>
+<p>Data is used exclusively to:</p>
+<ul>
+<li>Manage personal and professional relationships</li>
+<li>Generate AI-powered insights and recommendations</li>
+<li>Schedule and track communications</li>
+<li>Publish content to LinkedIn on behalf of the authenticated user</li>
+</ul>
+
+<h2>3. Data Storage & Security</h2>
+<p>All data is stored securely in encrypted databases (Neon PostgreSQL). Access is restricted to the authenticated account owner. No data is shared with third parties.</p>
+
+<h2>4. Third-Party Services</h2>
+<p>INTEL integrates with the following services under their respective terms:</p>
+<ul>
+<li>Google APIs (Calendar, Gmail, Drive, Tasks, Contacts)</li>
+<li>LinkedIn API (profile reading, content publishing)</li>
+<li>WhatsApp via Evolution API (messaging)</li>
+<li>Anthropic Claude AI (analysis and content generation)</li>
+</ul>
+
+<h2>5. Data Retention</h2>
+<p>Data is retained as long as the account is active. Users can request data deletion at any time by contacting the platform owner.</p>
+
+<h2>6. User Rights</h2>
+<p>Users have the right to access, correct, export, or delete their personal data. Contact: <a href="mailto:renato@almeida-prado.com">renato@almeida-prado.com</a></p>
+
+<h2>7. Contact</h2>
+<p>Renato Almeida Prado<br>
+<a href="https://intel.almeida-prado.com">intel.almeida-prado.com</a><br>
+<a href="mailto:renato@almeida-prado.com">renato@almeida-prado.com</a></p>
+</body></html>""")
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: Optional[str] = None, email: Optional[str] = None):
     """Página de login"""
