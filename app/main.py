@@ -9930,6 +9930,50 @@ async def cron_sync_conselhoos_raci(request: Request):
     return results
 
 
+# ---------- ConselhoOS Pre-Meeting Briefing ----------
+
+from services.conselhoos_briefing import generate_pre_meeting_briefing, check_and_generate_briefings_tomorrow
+
+
+@app.post("/api/conselhoos/briefing/pre-meeting")
+async def conselhoos_pre_meeting_briefing(request: Request):
+    """
+    Generate an adaptive pre-meeting briefing combining ConselhoOS
+    ritual data with INTEL relational intelligence.
+
+    Body: { "reuniao_id": "uuid-string" }
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = await request.json()
+    reuniao_id = data.get("reuniao_id")
+
+    if not reuniao_id:
+        raise HTTPException(status_code=400, detail="reuniao_id obrigatorio")
+
+    result = await generate_pre_meeting_briefing(reuniao_id)
+
+    if result.get("error"):
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return result
+
+
+@app.get("/api/cron/conselhoos-briefing-tomorrow")
+async def cron_conselhoos_briefing_tomorrow(request: Request):
+    """
+    Cron: Auto-generate briefings for reunioes happening tomorrow.
+    Runs daily, checks for meetings 24h away.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    results = await check_and_generate_briefings_tomorrow()
+    return {"results": results, "checked_at": datetime.now().isoformat()}
+
+
 # ============== Google Calendar Endpoints ==============
 
 from integrations.google_calendar import get_calendar_integration
