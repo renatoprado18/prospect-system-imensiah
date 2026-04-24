@@ -15468,6 +15468,27 @@ Instrucoes:
 
 # ============== PROJECT AI ANALYSIS ==============
 
+@app.post("/api/projects/{project_id}/chat")
+async def api_project_chat(project_id: int, request: Request):
+    """Chat com assistente IA dedicado ao projeto"""
+    from services.project_assistant import chat
+    data = await request.json()
+    message = data.get('message', '')
+    if not message:
+        raise HTTPException(status_code=400, detail="message obrigatoria")
+    result = await chat(project_id, message)
+    if result.get('error'):
+        raise HTTPException(status_code=400, detail=result['error'])
+    return result
+
+
+@app.get("/api/projects/{project_id}/chat-history")
+async def api_project_chat_history(project_id: int, limit: int = 20):
+    """Historico de conversa do assistente do projeto"""
+    from services.project_assistant import _get_conversation_history
+    return {"messages": _get_conversation_history(project_id, limit)}
+
+
 @app.post("/api/projects/{project_id}/ai-analysis")
 async def api_project_ai_analysis(project_id: int, request: Request):
     """Gera parecer IA sobre o projeto cruzando mensagens, grupos, docs e tarefas"""

@@ -2116,6 +2116,21 @@ def init_db():
             ALTER TABLE social_groups_cache ADD COLUMN IF NOT EXISTS last_message_sync TIMESTAMP
         ''')
 
+        # Project assistant conversation history
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS project_assistant_messages (
+                id SERIAL PRIMARY KEY,
+                project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_project_assistant_proj
+            ON project_assistant_messages(project_id, criado_em DESC)
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True

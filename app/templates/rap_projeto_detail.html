@@ -910,6 +910,29 @@
                     </div>
                 </div>
 
+                    <!-- Project Assistant Chat -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h3 class="section-title">
+                                <i class="bi bi-robot text-primary"></i> Assistente do Projeto
+                            </h3>
+                        </div>
+                        <div class="section-body" style="padding: 0;">
+                            <div id="projectChatMessages" style="max-height: 300px; overflow-y: auto; padding: 12px; font-size: 0.85rem;">
+                                <p class="text-muted small text-center">Pergunte sobre o projeto, peça para criar tarefas ou analisar progresso.</p>
+                            </div>
+                            <div style="display: flex; gap: 6px; padding: 8px 12px; border-top: 1px solid #e2e8f0;">
+                                <input type="text" id="projectChatInput" class="form-control form-control-sm"
+                                    placeholder="Pergunte ao assistente..." onkeydown="if(event.key==='Enter')sendProjectChat()">
+                                <button class="btn btn-sm btn-primary" onclick="sendProjectChat()" id="btnProjectChat">
+                                    <i class="bi bi-send"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
                 <!-- Sidebar -->
                 <div class="col-lg-4">
                     <!-- Members -->
@@ -2747,6 +2770,85 @@
 
     // ============ AI Analysis (Parecer) ============
     let lastAnalysisText = '';
+
+    // Project Assistant Chat
+    async function loadChatHistory() {
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/chat-history?limit=20`);
+            const data = await resp.json();
+            const msgs = data.messages || [];
+            if (msgs.length === 0) return;
+
+            const container = document.getElementById('projectChatMessages');
+            container.innerHTML = msgs.map(m => {
+                const cls = m.role === 'user' ? 'text-end' : '';
+                const bg = m.role === 'user' ? '#e0e7ff' : '#f1f5f9';
+                return `<div class="${cls}" style="margin-bottom:6px;">
+                    <div style="display:inline-block;max-width:85%;background:${bg};padding:6px 10px;border-radius:8px;font-size:0.83rem;text-align:left;">
+                        ${simpleMarkdown(m.content)}
+                    </div>
+                </div>`;
+            }).join('');
+            container.scrollTop = container.scrollHeight;
+        } catch(e) {}
+    }
+
+    async function sendProjectChat() {
+        const input = document.getElementById('projectChatInput');
+        const msg = input.value.trim();
+        if (!msg) return;
+
+        const container = document.getElementById('projectChatMessages');
+        const btn = document.getElementById('btnProjectChat');
+
+        // Show user message
+        container.innerHTML += `<div class="text-end" style="margin-bottom:6px;">
+            <div style="display:inline-block;max-width:85%;background:#e0e7ff;padding:6px 10px;border-radius:8px;font-size:0.83rem;text-align:left;">${msg}</div>
+        </div>`;
+        container.innerHTML += `<div style="margin-bottom:6px;"><div style="display:inline-block;background:#f1f5f9;padding:6px 10px;border-radius:8px;font-size:0.83rem;">
+            <div class="spinner-border spinner-border-sm" style="width:0.7rem;height:0.7rem;"></div> Pensando...
+        </div></div>`;
+        container.scrollTop = container.scrollHeight;
+
+        input.value = '';
+        btn.disabled = true;
+
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/chat`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message: msg})
+            });
+            const data = await resp.json();
+
+            // Remove "Pensando..."
+            container.lastElementChild.remove();
+
+            if (data.response) {
+                container.innerHTML += `<div style="margin-bottom:6px;">
+                    <div style="display:inline-block;max-width:85%;background:#f1f5f9;padding:6px 10px;border-radius:8px;font-size:0.83rem;">
+                        ${simpleMarkdown(data.response)}
+                    </div>
+                </div>`;
+            } else {
+                container.innerHTML += `<div style="margin-bottom:6px;"><div style="display:inline-block;background:#fee2e2;padding:6px 10px;border-radius:8px;font-size:0.83rem;">Erro: ${data.detail || 'Falha na resposta'}</div></div>`;
+            }
+            container.scrollTop = container.scrollHeight;
+
+            // Reload project if assistant made changes
+            if (data.response && (data.response.includes('Tarefa') || data.response.includes('Nota'))) {
+                setTimeout(() => loadProject(), 1000);
+            }
+        } catch(e) {
+            container.lastElementChild.remove();
+            container.innerHTML += `<div style="margin-bottom:6px;"><div style="display:inline-block;background:#fee2e2;padding:6px 10px;border-radius:8px;font-size:0.83rem;">Erro de conexao</div></div>`;
+        }
+        btn.disabled = false;
+        input.focus();
+    }
+
+    // Load chat history after project loads
+    setTimeout(loadChatHistory, 500);
 
     async function condenseAnalyses() {
         if (!confirm('Condensar todos os pareceres em um resumo executivo? Pareceres antigos serão arquivados.')) return;
