@@ -288,6 +288,8 @@ def toggle_group_sync(group_jid: str, enabled: bool) -> bool:
     """Ativa/desativa sincronizacao de um grupo."""
     with get_db() as conn:
         cursor = conn.cursor()
+        # Ensure column exists (migration)
+        cursor.execute("ALTER TABLE social_groups_cache ADD COLUMN IF NOT EXISTS sync_enabled BOOLEAN DEFAULT FALSE")
         cursor.execute("""
             UPDATE social_groups_cache SET sync_enabled = %s WHERE group_jid = %s
             RETURNING id
