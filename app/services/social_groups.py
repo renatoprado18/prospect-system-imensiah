@@ -296,7 +296,7 @@ def toggle_group_sync(group_jid: str, enabled: bool) -> bool:
             ON CONFLICT (group_jid) DO UPDATE SET sync_enabled = %s
         """, (group_jid, group_jid, enabled, enabled))
         conn.commit()
-        return result is not None
+        return True
 
 
 def get_sync_enabled_groups() -> List[Dict]:
