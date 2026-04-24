@@ -123,19 +123,77 @@ async def transcribe_audio(request: Request):
         return {"error": str(e)}
 
 
+async def _fetch_context_from_intel(content: str) -> str:
+    """Fetch relevant context from INTEL CRM based on transcription content."""
+    try:
+        # Extract names mentioned in the transcription
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Use Claude to extract contact names from the transcription
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 100,
+                    "messages": [{"role": "user", "content": f"Extraia APENAS os nomes de pessoas mencionados neste texto. Retorne um por linha, sem mais nada:\n\n{content}"}]
+                }
+            )
+            if resp.status_code != 200:
+                return ""
+
+            names = resp.json().get("content", [{}])[0].get("text", "").strip().split("\n")
+
+        # Search each name in INTEL
+        context_parts = []
+        for name in names[:3]:  # Max 3 names
+            name = name.strip().strip("-").strip()
+            if len(name) < 3:
+                continue
+            try:
+                search_resp = await client.get(
+                    f"{INTEL_API_URL}/api/contacts/suggestions?q={name}&limit=1",
+                    timeout=5.0
+                )
+                if search_resp.status_code == 200:
+                    results = search_resp.json()
+                    if isinstance(results, list) and results:
+                        c = results[0]
+                        context_parts.append(
+                            f"- {c.get('nome','')}: {c.get('cargo','')} @ {c.get('empresa','')}, "
+                            f"Circulo {c.get('circulo','?')}, Health {c.get('health_score','?')}%"
+                        )
+            except Exception:
+                pass
+
+        return "\n".join(context_parts)
+    except Exception as e:
+        logger.error(f"Context fetch error: {e}")
+        return ""
+
+
 async def _process_with_claude(phone: str, content: str) -> str:
     """Process transcribed audio with Claude to generate bot response."""
     try:
+        # Fetch CRM context for mentioned contacts
+        context = await _fetch_context_from_intel(content)
+        context_section = f"\n\nCONTATOS MENCIONADOS (do CRM INTEL):\n{context}" if context else ""
+
+        from datetime import datetime
         system_prompt = f"""Voce e o INTEL Bot, assistente pessoal de Renato Almeida Prado.
 Renato enviou um audio que foi transcrito. Analise o conteudo e responda de forma util.
+{context_section}
 
 REGRAS:
-- Se ele descrever uma ligacao/conversa: confirme o registro e sugira proximos passos
-- Se pedir para criar tarefa: confirme (mas nao pode criar, apenas sugerir)
-- Se fizer uma pergunta: responda objetivamente
+- Se ele descrever uma ligacao/conversa: confirme o registro, mencione o contato pelo nome completo e empresa
+- Se mencionar problemas: identifique e sugira proximos passos acionaveis
+- Se pedir para criar tarefa: confirme e sugira (ele pode criar depois)
 - Responda em portugues, conciso (WhatsApp)
 - Use *negrito* para destaques
-- Data atual: {__import__('datetime').datetime.now().strftime('%d/%m/%Y %H:%M')}"""
+- Data atual: {datetime.now().strftime('%d/%m/%Y %H:%M')}"""
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(

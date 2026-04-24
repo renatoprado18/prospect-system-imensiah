@@ -875,18 +875,21 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
         worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026")
         if audio_worker_url:
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    await client.post(
+                # Fire-and-forget: don't wait for response (Railway processes async)
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    resp = await client.post(
                         f"{audio_worker_url}/transcribe",
                         json={"key": key, "phone": phone, "message_id": message_id, "secret": worker_secret}
                     )
+                    logger.info(f"Audio dispatched to worker: {resp.status_code}")
                 return {"processed": True, "reason": "audio_dispatched_to_worker"}
             except Exception as e:
                 logger.error(f"Audio worker dispatch failed: {e}")
-        # Fallback if no worker
-        from services.intel_bot import send_intel_notification
-        await send_intel_notification("Audio ainda nao suportado. Pode digitar?", phone=phone)
-        return {"processed": True, "reason": "audio_no_worker"}
+                # Don't send fallback - worker might still be processing
+                return {"processed": True, "reason": f"audio_dispatch_error: {e}"}
+        # Only if AUDIO_WORKER_URL not configured at all
+        logger.warning("AUDIO_WORKER_URL not set, audio not supported")
+        return {"processed": False, "reason": "audio_no_worker_url"}
 
     # Process bot response in background
     asyncio.create_task(_process_and_respond_bot(phone, content, message_id))
