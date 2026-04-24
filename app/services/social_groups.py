@@ -335,7 +335,7 @@ async def list_all_social_groups() -> List[Dict]:
 
 
 async def _fetch_groups_from_api() -> List[Dict]:
-    """Busca grupos da Evolution API via fetchAllGroups (tem nomes corretos)."""
+    """Busca grupos da Evolution API via findChats (rapido, ~2s)."""
     base_url = os.getenv('EVOLUTION_API_URL', '')
     api_key = os.getenv('EVOLUTION_API_KEY', '')
     instance = os.getenv('EVOLUTION_INSTANCE', 'default')
@@ -344,20 +344,17 @@ async def _fetch_groups_from_api() -> List[Dict]:
         return []
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.get(
-                f'{base_url}/group/fetchAllGroups/{instance}?getParticipants=false',
-                headers={'apikey': api_key}
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f'{base_url}/chat/findChats/{instance}',
+                headers={'apikey': api_key, 'Content-Type': 'application/json'},
+                json={}
             )
-            if resp.status_code != 200:
-                return []
-            groups = resp.json()
-            return sorted(
-                [{'jid': g.get('id', ''), 'name': g.get('subject', ''),
-                  'total': g.get('size', 0), 'labels': [], 'sync_enabled': False}
-                 for g in groups if g.get('subject')],
-                key=lambda g: g['name']
-            )
+            chats = resp.json()
+            groups = [{'jid': c.get('remoteJid', ''), 'name': c.get('pushName') or c.get('remoteJid', ''),
+                       'total': 0, 'labels': [], 'sync_enabled': False}
+                      for c in chats if '@g.us' in c.get('remoteJid', '')]
+            return sorted(groups, key=lambda g: g['name'])
     except Exception as e:
         logger.error(f"Erro ao listar grupos: {e}")
         return []
