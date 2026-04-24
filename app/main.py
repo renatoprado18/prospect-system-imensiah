@@ -18079,15 +18079,50 @@ async def generate_ata_docx_endpoint(req: AtaDocxRequest):
 
         # If Drive credentials provided, upload to Google Drive
         if req.access_token and req.drive_folder_id:
-            file_name = f"Ata Conselho - {req.empresa_nome} - {req.data_reuniao}.docx"
+            file_name = f"Ata Conselho {req.empresa_nome} - {req.data_reuniao}.docx"
 
             # Upload to Google Drive using resumable upload
             async with httpx.AsyncClient() as client:
+                # Find or create "Atas" subfolder
+                folders_resp = await client.get(
+                    f"https://www.googleapis.com/drive/v3/files?q='{req.drive_folder_id}'+in+parents+and+name='Atas'+and+mimeType='application/vnd.google-apps.folder'+and+trashed=false&fields=files(id)",
+                    headers={"Authorization": f"Bearer {req.access_token}"},
+                    timeout=15.0,
+                )
+                atas_folder_id = req.drive_folder_id
+                if folders_resp.status_code == 200:
+                    folders = folders_resp.json().get("files", [])
+                    if folders:
+                        atas_folder_id = folders[0]["id"]
+                    else:
+                        create_resp = await client.post(
+                            "https://www.googleapis.com/drive/v3/files",
+                            headers={"Authorization": f"Bearer {req.access_token}", "Content-Type": "application/json"},
+                            json={"name": "Atas", "mimeType": "application/vnd.google-apps.folder", "parents": [req.drive_folder_id]},
+                            timeout=15.0,
+                        )
+                        if create_resp.status_code == 200:
+                            atas_folder_id = create_resp.json().get("id", req.drive_folder_id)
+
+                # Delete existing ata with same name (overwrite)
+                existing_resp = await client.get(
+                    f"https://www.googleapis.com/drive/v3/files?q='{atas_folder_id}'+in+parents+and+name='{file_name}'+and+trashed=false&fields=files(id)",
+                    headers={"Authorization": f"Bearer {req.access_token}"},
+                    timeout=15.0,
+                )
+                if existing_resp.status_code == 200:
+                    for f in existing_resp.json().get("files", []):
+                        await client.delete(
+                            f"https://www.googleapis.com/drive/v3/files/{f['id']}",
+                            headers={"Authorization": f"Bearer {req.access_token}"},
+                            timeout=10.0,
+                        )
+
                 # Step 1: Initiate resumable upload
                 metadata = {
                     "name": file_name,
                     "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "parents": [req.drive_folder_id],
+                    "parents": [atas_folder_id],
                 }
                 init_resp = await client.post(
                     "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true",
@@ -18137,6 +18172,7 @@ async def generate_ata_docx_endpoint(req: AtaDocxRequest):
                 return {
                     "success": True,
                     "file_id": file_id,
+                    "drive_file_id": file_id,
                     "file_name": file_name,
                     "web_view_link": meta_data.get("webViewLink", f"https://docs.google.com/document/d/{file_id}/edit"),
                     "web_content_link": meta_data.get("webContentLink"),
