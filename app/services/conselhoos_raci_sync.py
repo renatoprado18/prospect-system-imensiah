@@ -68,14 +68,28 @@ class ConselhoOSRaciSyncService:
             if row:
                 return row["id"]
 
+            # Get Drive folder from ConselhoOS
+            drive_folder_id = None
+            try:
+                cos_conn = self._get_conselhoos_conn()
+                cos_cur = cos_conn.cursor()
+                cos_cur.execute("SELECT drive_folder_id FROM empresas WHERE id = %s::uuid", (empresa_id,))
+                row = cos_cur.fetchone()
+                if row:
+                    drive_folder_id = row.get("drive_folder_id")
+                cos_conn.close()
+            except Exception:
+                pass
+
             # Create new project
             cursor.execute("""
-                INSERT INTO projects (nome, descricao, tipo, status)
-                VALUES (%s, %s, 'conselho', 'ativo')
+                INSERT INTO projects (nome, descricao, tipo, status, google_drive_folder_id)
+                VALUES (%s, %s, 'conselho', 'ativo', %s)
                 RETURNING id
             """, (
                 empresa_nome,
-                f"Projeto de conselho vinculado ao ConselhoOS (empresa_id: {empresa_id})"
+                f"Conselho consultivo vinculado ao ConselhoOS",
+                drive_folder_id,
             ))
             project_id = cursor.fetchone()["id"]
             conn.commit()
@@ -252,7 +266,7 @@ class ConselhoOSRaciSyncService:
                         # Build task title and description
                         area = raci.get("area", "Geral")
                         acao = raci.get("acao", "")
-                        titulo = f"[{area}] {acao}"
+                        titulo = acao  # Clean title, area tracked in descricao
                         if len(titulo) > 500:
                             titulo = titulo[:497] + "..."
 
