@@ -445,6 +445,81 @@ Last updated: April 24, 2026</p>
 </body></html>""")
 
 
+# ============== LINKEDIN OAUTH ==============
+
+@app.get("/api/linkedin/authorize")
+async def linkedin_authorize():
+    """Redirect to LinkedIn OAuth authorization page"""
+    from integrations.linkedin_posting import get_auth_url
+    url = get_auth_url()
+    return RedirectResponse(url=url)
+
+
+@app.get("/api/linkedin/callback")
+async def linkedin_callback(code: str = None, error: str = None, state: str = None):
+    """LinkedIn OAuth callback - exchange code for token"""
+    if error:
+        return HTMLResponse(f"<h2>Erro LinkedIn</h2><p>{error}</p><a href='/editorial'>Voltar</a>")
+    if not code:
+        return HTMLResponse("<h2>Erro</h2><p>Codigo de autorizacao nao recebido</p>")
+
+    from integrations.linkedin_posting import exchange_code_for_token
+    result = await exchange_code_for_token(code)
+
+    if result.get("error"):
+        return HTMLResponse(f"<h2>Erro</h2><p>{result['error']}</p><a href='/editorial'>Voltar</a>")
+
+    name = result.get("profile", {}).get("name", "")
+    return HTMLResponse(f"""<html><body style="font-family:sans-serif;text-align:center;padding:60px;">
+        <h2 style="color:#22c55e;">LinkedIn conectado!</h2>
+        <p>Autenticado como <strong>{name}</strong></p>
+        <p>Token valido por 60 dias.</p>
+        <a href="/editorial" style="color:#6366f1;">Ir para Editorial</a>
+    </body></html>""")
+
+
+@app.get("/api/linkedin/status")
+async def linkedin_status():
+    """Check LinkedIn connection status"""
+    from integrations.linkedin_posting import get_stored_token
+    token = get_stored_token()
+    if token:
+        return {"connected": True, "name": token.get("name"), "expires_at": str(token.get("expires_at"))}
+    return {"connected": False}
+
+
+@app.post("/api/editorial/{post_id}/publish-linkedin")
+async def api_publish_to_linkedin(post_id: int):
+    """Publish a post directly to LinkedIn"""
+    from integrations.linkedin_posting import publish_post
+    from services.editorial_calendar import get_post, mark_as_published
+
+    post = get_post(post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post nao encontrado")
+
+    content = post.get("conteudo_adaptado") or post.get("article_description") or ""
+    hashtags = post.get("hashtags", [])
+    if isinstance(hashtags, list):
+        hashtags = " ".join(hashtags)
+    full_text = content + ("\n\n" + hashtags if hashtags else "")
+
+    if not full_text.strip():
+        raise HTTPException(status_code=400, detail="Post sem conteudo")
+
+    article_url = post.get("article_url") or ""
+
+    result = await publish_post(full_text, article_url if article_url else None)
+
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    # Mark as published with LinkedIn URL
+    mark_as_published(post_id, url_publicado=result.get("post_url", ""))
+
+    return {"status": "success", "linkedin_url": result.get("post_url"), "post_id": result.get("post_id")}
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: Optional[str] = None, email: Optional[str] = None):
     """Página de login"""
