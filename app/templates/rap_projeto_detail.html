@@ -1525,24 +1525,24 @@
                 }
                 dateHtml = `<small class="${cls}"><i class="bi ${icon} me-1"></i>${formatDate(t.data_vencimento)}</small>`;
             }
+            const contactName = t.contact_nome ? t.contact_nome.split(' ').slice(0,2).join(' ') : '';
             return `
-                <div class="d-flex align-items-center gap-2 py-2 border-bottom task-row" data-task-id="${t.id}">
-                    <input type="checkbox" class="form-check-input" ${isCompleted ? 'checked' : ''}
+                <div class="d-flex align-items-start gap-2 py-2 border-bottom task-row" data-task-id="${t.id}" style="min-height: 40px;">
+                    <input type="checkbox" class="form-check-input mt-1 flex-shrink-0" ${isCompleted ? 'checked' : ''}
                         onchange="toggleTask(${t.id}, this.checked)">
-                    <span class="flex-grow-1 ${isCompleted ? 'text-decoration-line-through text-muted' : ''}"
-                        style="cursor: pointer; font-size: 0.9rem;" onclick="editTask(${t.id})">${t.titulo}</span>
-                    ${dateHtml}
-                    ${t.contact_nome ? `<small class="text-muted text-nowrap">${t.contact_nome.split(' ').slice(0,2).join(' ')}</small>` : ''}
-                    ${!isCompleted && /pesquis/i.test(t.titulo) ? `
-                    <button class="btn btn-sm btn-outline-info p-0 px-1" onclick="researchTask(${t.id})" title="Pesquisar com IA" id="btnResearch-${t.id}">
-                        <i class="bi bi-search" style="font-size:0.7rem;"></i>
-                    </button>` : ''}
-                    <button class="btn btn-sm btn-outline-secondary p-0 px-1" onclick="editTask(${t.id})" title="Editar">
-                        <i class="bi bi-pencil" style="font-size:0.7rem;"></i>
-                    </button>
+                    <div class="flex-grow-1" style="cursor: pointer; min-width: 0;" onclick="editTask(${t.id})">
+                        <div class="${isCompleted ? 'text-decoration-line-through text-muted' : ''}" style="font-size: 0.85rem; line-height: 1.3;">${t.titulo}</div>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 flex-shrink-0" style="min-width: 200px; justify-content: flex-end;">
+                        ${dateHtml}
+                        ${contactName ? `<span class="text-muted text-nowrap" style="font-size: 0.75rem; min-width: 80px; text-align: right;">${contactName}</span>` : '<span style="min-width: 80px;"></span>'}
+                        <button class="btn btn-sm btn-outline-secondary p-0 px-1" onclick="editTask(${t.id})" title="Editar">
+                            <i class="bi bi-pencil" style="font-size:0.65rem;"></i>
+                        </button>
                     <button class="btn btn-sm btn-outline-danger p-0 px-1" onclick="deleteTask(${t.id})" title="Excluir">
-                        <i class="bi bi-trash" style="font-size:0.7rem;"></i>
+                        <i class="bi bi-trash" style="font-size:0.65rem;"></i>
                     </button>
+                    </div>
                 </div>`;
         }
 
