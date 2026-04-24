@@ -9701,6 +9701,60 @@ async def get_contact_conselhoos_reunioes(request: Request, contact_id: int, lim
     return {"reunioes": reunioes}
 
 
+# ---------- ConselhoOS RACI <-> Tasks Sync ----------
+
+from services.conselhoos_raci_sync import get_raci_sync_service
+
+
+@app.post("/api/conselhoos/raci/sync")
+async def manual_sync_raci(request: Request):
+    """
+    Manual trigger: bidirectional sync between ConselhoOS RACI and INTEL tasks.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    data = {}
+    try:
+        data = await request.json()
+    except Exception:
+        pass
+
+    empresa_nome = data.get("empresa_nome")
+
+    service = get_raci_sync_service()
+
+    if empresa_nome:
+        raci_results = service.sync_raci_to_tasks(empresa_nome=empresa_nome)
+    else:
+        raci_results = service.sync_raci_to_tasks()
+
+    task_results = service.sync_task_status_to_raci()
+
+    return {
+        "raci_to_tasks": raci_results,
+        "tasks_to_raci": task_results,
+        "synced_at": datetime.now().isoformat()
+    }
+
+
+@app.get("/api/cron/sync-conselhoos-raci")
+async def cron_sync_conselhoos_raci(request: Request):
+    """
+    Cron: Daily bidirectional sync ConselhoOS RACI <-> INTEL Tasks.
+
+    1. Creates INTEL tasks for new ConselhoOS RACI items
+    2. Marks ConselhoOS RACIs as done when INTEL task is completed
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    service = get_raci_sync_service()
+    results = service.full_sync()
+    return results
+
+
 # ============== Google Calendar Endpoints ==============
 
 from integrations.google_calendar import get_calendar_integration
@@ -15422,6 +15476,16 @@ async def api_sync_group_messages():
     """Sincroniza mensagens dos grupos marcados"""
     from services.group_message_sync import sync_group_messages
     return await sync_group_messages(limit_per_group=50)
+
+
+@app.post("/api/social-groups/messages")
+async def api_get_group_messages(request: Request):
+    """Retorna mensagens de um grupo"""
+    from services.group_message_sync import get_group_messages
+    data = await request.json()
+    group_jid = data.get('group_jid', '')
+    limit = data.get('limit', 50)
+    return {"messages": get_group_messages(group_jid, limit=limit)}
 
 
 @app.post("/api/social-groups/toggle-sync")
