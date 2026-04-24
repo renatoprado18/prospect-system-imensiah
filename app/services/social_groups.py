@@ -351,9 +351,9 @@ async def _fetch_groups_from_api() -> List[Dict]:
                 json={}
             )
             chats = resp.json()
-            groups = [{'jid': c.get('remoteJid', ''), 'name': c.get('pushName') or c.get('remoteJid', ''),
+            groups = [{'jid': c.get('remoteJid', ''), 'name': c.get('pushName', ''),
                        'total': 0, 'labels': [], 'sync_enabled': False}
-                      for c in chats if '@g.us' in c.get('remoteJid', '')]
+                      for c in chats if '@g.us' in c.get('remoteJid', '') and c.get('pushName')]
             return sorted(groups, key=lambda g: g['name'])
     except Exception as e:
         logger.error(f"Erro ao listar grupos: {e}")
