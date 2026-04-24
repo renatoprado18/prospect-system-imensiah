@@ -466,6 +466,7 @@ async def process_incoming_message(data: Dict) -> Dict:
 
     # Extrair dados
     remote_jid = key.get("remoteJid", "")
+    remote_jid_alt = key.get("remoteJidAlt", "")
     from_me = key.get("fromMe", False)
     message_id = key.get("id")
 
@@ -473,8 +474,20 @@ async def process_incoming_message(data: Dict) -> Dict:
     if "@g.us" in remote_jid:
         return {"processed": False, "reason": "group_message"}
 
-    # Extrair telefone
-    phone = remote_jid.replace("@s.whatsapp.net", "")
+    # Extrair telefone - handle LID format (WhatsApp Meta migration)
+    # LID format: 179220563128482@lid — use remoteJidAlt for real phone
+    if "@lid" in remote_jid and remote_jid_alt and "@s.whatsapp.net" in remote_jid_alt:
+        phone = remote_jid_alt.replace("@s.whatsapp.net", "")
+        logger.info(f"LID resolved: {remote_jid} -> {phone} via remoteJidAlt")
+    elif "@s.whatsapp.net" in remote_jid:
+        phone = remote_jid.replace("@s.whatsapp.net", "")
+    else:
+        # Unknown format — try alt, skip if nothing works
+        if remote_jid_alt and "@s.whatsapp.net" in remote_jid_alt:
+            phone = remote_jid_alt.replace("@s.whatsapp.net", "")
+        else:
+            logger.warning(f"Cannot resolve phone from JID: {remote_jid} alt: {remote_jid_alt}")
+            return {"processed": False, "reason": "unresolvable_jid"}
 
     # Extrair conteúdo
     content = ""
@@ -682,7 +695,11 @@ async def process_sent_message(data: Dict) -> Dict:
 
     # Verificar se e resposta a proposta (mensagem enviada por Renato)
     if from_me and content and is_proposal_response(content):
-        phone = remote_jid.replace("@s.whatsapp.net", "")
+        remote_jid_alt = key.get("remoteJidAlt", "")
+        if "@lid" in remote_jid and remote_jid_alt and "@s.whatsapp.net" in remote_jid_alt:
+            phone = remote_jid_alt.replace("@s.whatsapp.net", "")
+        else:
+            phone = remote_jid.replace("@s.whatsapp.net", "")
         logger.info(f"Detected proposal response in send.message: {content}")
         asyncio.create_task(process_renato_reply(content, phone))
         return {"processed": True, "reason": "proposal_response", "content": content}
@@ -754,6 +771,7 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
     key = data.get("key", {})
     message = data.get("message", {})
     remote_jid = key.get("remoteJid", "")
+    remote_jid_alt = key.get("remoteJidAlt", "")
     from_me = key.get("fromMe", False)
     message_id = key.get("id", "")
 
@@ -761,7 +779,11 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
     if "@g.us" in remote_jid or from_me:
         return {"processed": False, "reason": "group_or_self"}
 
-    phone = remote_jid.replace("@s.whatsapp.net", "")
+    # Handle LID format
+    if "@lid" in remote_jid and remote_jid_alt and "@s.whatsapp.net" in remote_jid_alt:
+        phone = remote_jid_alt.replace("@s.whatsapp.net", "")
+    else:
+        phone = remote_jid.replace("@s.whatsapp.net", "").replace("@lid", "")
 
     # Extract text content
     content = ""
