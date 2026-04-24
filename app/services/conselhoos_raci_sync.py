@@ -70,12 +70,12 @@ class ConselhoOSRaciSyncService:
 
             # Create new project
             cursor.execute("""
-                INSERT INTO projects (nome, descricao, status, origem)
-                VALUES (%s, %s, 'active', 'conselhoos')
+                INSERT INTO projects (nome, descricao, tipo, status)
+                VALUES (%s, %s, 'conselho', 'ativo')
                 RETURNING id
             """, (
                 empresa_nome,
-                f"Projeto vinculado ao ConselhoOS (empresa_id: {empresa_id})"
+                f"Projeto de conselho vinculado ao ConselhoOS (empresa_id: {empresa_id})"
             ))
             project_id = cursor.fetchone()["id"]
             conn.commit()
