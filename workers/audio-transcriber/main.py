@@ -71,10 +71,12 @@ async def transcribe_audio(request: Request):
             await _send_response(phone, "Audio vazio. Pode digitar?")
             return {"error": "empty_audio"}
 
-        logger.info(f"Audio downloaded: {len(audio_b64)} chars, type={mimetype}")
+        # Clean mimetype (WhatsApp sends "audio/ogg; codecs=opus")
+        clean_mimetype = mimetype.split(";")[0].strip() if mimetype else "audio/ogg"
+        logger.info(f"Audio downloaded: {len(audio_b64)} chars, type={clean_mimetype}")
 
         # Step 2: Transcribe with Claude
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -83,7 +85,7 @@ async def transcribe_audio(request: Request):
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": "claude-sonnet-4-20250514",
                     "max_tokens": 1000,
                     "messages": [{
                         "role": "user",
@@ -92,7 +94,7 @@ async def transcribe_audio(request: Request):
                                 "type": "document",
                                 "source": {
                                     "type": "base64",
-                                    "media_type": mimetype if "/" in mimetype else "audio/ogg",
+                                    "media_type": clean_mimetype,
                                     "data": audio_b64
                                 }
                             },
@@ -106,9 +108,10 @@ async def transcribe_audio(request: Request):
             )
 
         if resp.status_code != 200:
-            logger.error(f"Claude transcription failed: {resp.status_code} - {resp.text[:200]}")
-            await _send_response(phone, "Erro na transcricao. Pode digitar?")
-            return {"error": f"transcription_failed: {resp.status_code}"}
+            error_detail = resp.text[:500]
+            logger.error(f"Claude transcription failed: {resp.status_code} - {error_detail}")
+            await _send_response(phone, f"Erro na transcricao ({resp.status_code}). Pode digitar?")
+            return {"error": f"transcription_failed: {resp.status_code}", "detail": error_detail}
 
         transcription = resp.json().get("content", [{}])[0].get("text", "")
         if not transcription:
