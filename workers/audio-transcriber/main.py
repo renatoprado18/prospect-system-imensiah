@@ -147,27 +147,28 @@ async def _fetch_context_from_intel(content: str) -> str:
 
             names = resp.json().get("content", [{}])[0].get("text", "").strip().split("\n")
 
-        # Search each name in INTEL
+        # Search each name in INTEL via authenticated endpoint
         context_parts = []
-        for name in names[:3]:  # Max 3 names
-            name = name.strip().strip("-").strip()
-            if len(name) < 3:
-                continue
-            try:
-                search_resp = await client.get(
-                    f"{INTEL_API_URL}/api/contacts/suggestions?q={name}&limit=1",
-                    timeout=5.0
-                )
-                if search_resp.status_code == 200:
-                    results = search_resp.json()
-                    if isinstance(results, list) and results:
-                        c = results[0]
-                        context_parts.append(
-                            f"- {c.get('nome','')}: {c.get('cargo','')} @ {c.get('empresa','')}, "
-                            f"Circulo {c.get('circulo','?')}, Health {c.get('health_score','?')}%"
-                        )
-            except Exception:
-                pass
+        async with httpx.AsyncClient(timeout=10.0) as search_client:
+            for name in names[:3]:
+                name = name.strip().strip("-").strip("*").strip()
+                if len(name) < 3:
+                    continue
+                try:
+                    search_resp = await search_client.post(
+                        f"{INTEL_API_URL}/api/webhooks/contact-lookup",
+                        json={"name": name, "secret": WORKER_SECRET},
+                        timeout=5.0
+                    )
+                    if search_resp.status_code == 200:
+                        results = search_resp.json().get("contacts", [])
+                        for c in results[:1]:
+                            context_parts.append(
+                                f"- {c.get('nome','')}: {c.get('cargo','')} @ {c.get('empresa','')}, "
+                                f"Circulo C{c.get('circulo','?')}, Health {c.get('health_score','?')}%"
+                            )
+                except Exception:
+                    pass
 
         return "\n".join(context_parts)
     except Exception as e:

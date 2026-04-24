@@ -9596,6 +9596,26 @@ async def get_whatsapp_messages(request: Request, contact_id: int, limit: int = 
 
 from integrations.evolution_api import get_evolution_client, handle_evolution_webhook
 
+@app.post("/api/webhooks/contact-lookup")
+async def worker_contact_lookup(request: Request):
+    """Lookup contacts by name for external workers (authenticated by secret)."""
+    data = await request.json()
+    secret = data.get("secret", "")
+    if secret != os.getenv("WORKER_SECRET", "intel-audio-2026"):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    name = data.get("name", "")
+    if not name or len(name) < 2:
+        return {"contacts": []}
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, nome, empresa, cargo, circulo, health_score
+            FROM contacts WHERE nome ILIKE %s
+            ORDER BY circulo ASC NULLS LAST LIMIT 3
+        """, (f'%{name}%',))
+        return {"contacts": [dict(r) for r in cursor.fetchall()]}
+
+
 @app.post("/api/webhooks/bot-message")
 async def bot_message_endpoint(request: Request):
     """Endpoint for external workers to send processed messages to the bot."""
