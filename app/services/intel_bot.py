@@ -72,7 +72,9 @@ TOOLS = [
         "name": "execute_action",
         "description": (
             "Executa uma acao no sistema INTEL. Acoes disponiveis:\n"
-            "- create_task: cria tarefa (titulo, descricao?, project_id?, contact_id?, prazo_dias?, prioridade?)\n"
+            "- create_task: cria tarefa (titulo, descricao?, project_id?, contact_id?, data_vencimento? YYYY-MM-DD, prazo_dias?, prioridade?). "
+            "IMPORTANTE: use data_vencimento com data absoluta (ex: '2026-04-24') quando o usuario mencionar 'hoje', 'amanha', uma data especifica. "
+            "prazo_dias e apenas fallback quando nao souber a data.\n"
             "- complete_task: conclui tarefa (task_id)\n"
             "- save_note: salva nota em projeto (project_id, titulo, conteudo, tipo?)\n"
             "- save_memory: salva memoria de contato (contact_id, titulo, resumo, conteudo_completo?, tipo?)\n"
@@ -284,8 +286,15 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
             prioridade = params.get("prioridade", 5)
 
             data_vencimento = None
-            if prazo_dias is not None:
-                data_vencimento = datetime.now() + timedelta(days=prazo_dias)
+            # Prefer absolute date if provided
+            dv_str = params.get("data_vencimento")
+            if dv_str:
+                try:
+                    data_vencimento = datetime.strptime(str(dv_str)[:10], "%Y-%m-%d")
+                except Exception:
+                    pass
+            if data_vencimento is None and prazo_dias is not None:
+                data_vencimento = (datetime.now() + timedelta(days=prazo_dias)).replace(hour=0, minute=0, second=0)
 
             with get_db() as conn:
                 cursor = conn.cursor()
