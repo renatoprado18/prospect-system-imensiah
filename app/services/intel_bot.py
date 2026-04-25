@@ -758,7 +758,8 @@ def _save_conversation_message(phone: str, role: str, content: str,
     # Don't save garbage messages
     if not content or not content.strip():
         return
-    garbage = ['demorou demais para processar', 'Erro interno', 'Tenta de novo?']
+    garbage = ['demorou demais para processar', 'Erro interno', 'Tenta de novo?',
+               '__IMAGE_PENDING__', '__AUDIO_PENDING__', 'Busquei no sistema mas não encontrei']
     if any(g in content for g in garbage):
         return
 
