@@ -247,6 +247,18 @@ class RodasService:
                     JOIN contacts c ON c.id = r.contact_id
                     WHERE r.status = 'pendente'
                       AND r.tipo != 'favor_feito'  -- favor_feito e historico, nao gera acao
+                      -- Filtrar rodas stale: proximo_passo/topico com >14 dias E comunicação posterior
+                      AND NOT (
+                          r.tipo IN ('proximo_passo', 'topico')
+                          AND r.criado_em < NOW() - INTERVAL '14 days'
+                          AND EXISTS (
+                              SELECT 1 FROM messages m
+                              JOIN conversations cv ON cv.id = m.conversation_id
+                              WHERE cv.contact_id = r.contact_id
+                                AND m.direcao = 'outgoing'
+                                AND m.enviado_em > r.criado_em
+                          )
+                      )
                 )
                 SELECT *
                 FROM ranked_rodas
