@@ -335,9 +335,31 @@ class CampaignService:
             delay = first_step['delay_dias'] if first_step else 0
             next_action = datetime.now() + timedelta(days=delay)
 
+            # Check if campaign has LinkedIn steps
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM campaign_steps
+                WHERE campaign_id = %s AND tipo IN ('linkedin_like', 'linkedin_comment', 'linkedin_message')
+            """, (campaign_id,))
+            has_linkedin_steps = cursor.fetchone()['count'] > 0
+
+            # If campaign has LinkedIn steps, get contacts without LinkedIn URL to skip
+            skip_no_linkedin = set()
+            if has_linkedin_steps:
+                placeholders = ",".join(["%s"] * len(contact_ids))
+                cursor.execute(f"""
+                    SELECT id FROM contacts
+                    WHERE id IN ({placeholders})
+                      AND (linkedin IS NULL OR linkedin = '')
+                """, contact_ids)
+                skip_no_linkedin = {row['id'] for row in cursor.fetchall()}
+                if skip_no_linkedin:
+                    logger.info(f"Campanha {campaign_id}: pulando {len(skip_no_linkedin)} contatos sem LinkedIn")
+
             # Enrollar contatos
             enrolled_count = 0
             for contact_id in contact_ids:
+                if contact_id in skip_no_linkedin:
+                    continue
                 try:
                     cursor.execute("""
                         INSERT INTO campaign_enrollments (

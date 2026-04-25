@@ -218,6 +218,15 @@ class CampaignExecutor:
 
     def _handle_linkedin_like(self, cursor, enrollment: Dict) -> Dict:
         """Cria tarefa para curtir post no LinkedIn."""
+        linkedin_url = enrollment.get('linkedin_url') or ''
+
+        # Skip if no LinkedIn URL
+        if not linkedin_url:
+            return {"skipped": True, "reason": "no_linkedin_url"}
+
+        # Build direct link to recent posts
+        posts_url = linkedin_url.rstrip('/') + '/recent-activity/all/'
+
         task_id = self._create_task(
             cursor,
             enrollment,
@@ -225,9 +234,8 @@ class CampaignExecutor:
             descricao=f"""Curta um post recente de {enrollment['contact_nome']} ({enrollment['contact_cargo'] or ''} na {enrollment['contact_empresa'] or ''}).
 
 📋 Campanha: {enrollment['campaign_nome']}
-🎯 Motivo: {enrollment['motivo_contato'] or 'Engajamento inicial'}
 
-🔗 LinkedIn: {enrollment['linkedin_url'] or 'Buscar no LinkedIn'}
+🔗 Ver posts recentes: {posts_url}
 
 💡 Dica: Escolha um post relevante para você poder comentar na sequência.""",
             prioridade=5
@@ -236,9 +244,17 @@ class CampaignExecutor:
 
     def _handle_linkedin_comment(self, cursor, enrollment: Dict) -> Dict:
         """Cria tarefa para comentar no LinkedIn."""
+        linkedin_url = enrollment.get('linkedin_url') or ''
+
+        # Skip if no LinkedIn URL
+        if not linkedin_url:
+            return {"skipped": True, "reason": "no_linkedin_url"}
+
         config = enrollment.get('config', {})
         if isinstance(config, str):
             config = json.loads(config)
+
+        posts_url = linkedin_url.rstrip('/') + '/recent-activity/all/'
 
         task_id = self._create_task(
             cursor,
@@ -247,9 +263,8 @@ class CampaignExecutor:
             descricao=f"""Faça um comentário relevante em um post de {enrollment['contact_nome']}.
 
 📋 Campanha: {enrollment['campaign_nome']}
-🎯 Motivo: {enrollment['motivo_contato'] or 'Construir relacionamento'}
 
-🔗 LinkedIn: {enrollment['linkedin_url'] or 'Buscar no LinkedIn'}
+🔗 Ver posts recentes: {posts_url}
 
 💡 Sugestões de comentário:
 - Adicione valor com uma perspectiva complementar
