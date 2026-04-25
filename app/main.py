@@ -7024,21 +7024,22 @@ async def cron_weekly_digest(request: Request):
         if digest and digest.get("id"):
             try:
                 from services.intel_bot import send_intel_notification
-                vencidas = len(digest.get("tarefas_vencidas", []))
-                concluidas = digest.get("tarefas_concluidas", 0)
-                sem_contato = len(digest.get("sem_contato", []))
-
-                alertas = []
-                if vencidas:
-                    alertas.append(f"⚠️ {vencidas} tarefas vencidas")
-                if sem_contato:
-                    alertas.append(f"👥 {sem_contato} contatos C1-C2 sem interação")
+                # Build rich WhatsApp summary
+                resumo = digest.get("resumo", "")
+                # Convert markdown headers to WhatsApp bold
+                wa_resumo = resumo.replace("## ", "\n*").replace("\n*", "\n*")
+                # Clean up: bold section titles
+                import re
+                wa_resumo = re.sub(r'\*\*(.+?)\*\*', r'*\1*', wa_resumo)
+                # Limit to ~1500 chars for WhatsApp readability
+                if len(wa_resumo) > 1500:
+                    wa_resumo = wa_resumo[:1500] + "..."
 
                 wa_text = (
-                    f"📊 *Resumo Semanal INTEL*\n\n"
-                    f"✅ {concluidas} concluídas\n"
-                    + ("\n".join(alertas) + "\n" if alertas else "")
-                    + f"\n👉 https://intel.almeida-prado.com/resumo-semanal?id={digest['id']}"
+                    f"📊 *Resumo Semanal INTEL*\n"
+                    f"_{digest.get('titulo', '')}_\n\n"
+                    f"{wa_resumo}\n\n"
+                    f"👉 https://intel.almeida-prado.com/resumo-semanal?id={digest['id']}"
                 )
                 await send_intel_notification(wa_text)
             except Exception as e:
@@ -18891,6 +18892,204 @@ async def send_ata_email(req: AtaSendEmailRequest):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
+
+
+# ============== DAILY MORNING BRIEFING ==============
+
+@app.get("/api/cron/daily-morning-briefing")
+async def cron_daily_morning_briefing(request: Request):
+    """
+    Cron: Daily morning briefing via WhatsApp.
+    Schedule: 0 10 * * * (10:00 UTC = 7:00 AM Sao Paulo)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.intel_bot import send_intel_notification
+
+    try:
+        now = datetime.now()
+        date_str = now.strftime("%d/%m")
+        dias_semana = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"]
+        dia_semana = dias_semana[now.weekday()]
+
+        sections = []
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # 1. Overdue tasks
+            cursor.execute("""
+                SELECT COUNT(*) as total FROM tasks
+                WHERE status = 'pending' AND data_vencimento < CURRENT_DATE
+            """)
+            overdue_count = cursor.fetchone()["total"]
+
+            # 2. Tasks due today
+            cursor.execute("""
+                SELECT titulo FROM tasks
+                WHERE status = 'pending' AND data_vencimento::date = CURRENT_DATE
+                ORDER BY prioridade ASC LIMIT 5
+            """)
+            today_tasks = [r["titulo"] for r in cursor.fetchall()]
+
+            # 3. Calendar events today
+            cursor.execute("""
+                SELECT summary, start_datetime FROM calendar_events
+                WHERE start_datetime::date = CURRENT_DATE
+                ORDER BY start_datetime
+                LIMIT 5
+            """)
+            events = cursor.fetchall()
+
+            # 4. Editorial posts to publish today
+            cursor.execute("""
+                SELECT article_title, data_publicacao FROM editorial_posts
+                WHERE status IN ('scheduled', 'ready')
+                  AND data_publicacao::date = CURRENT_DATE
+                ORDER BY data_publicacao
+            """)
+            editorial_today = cursor.fetchall()
+
+            # 5. Posts needing metrics (published ~48h ago, no metrics yet)
+            cursor.execute("""
+                SELECT article_title, data_publicado FROM editorial_posts
+                WHERE status = 'published'
+                  AND data_publicado BETWEEN (NOW() - INTERVAL '52 hours') AND (NOW() - INTERVAL '44 hours')
+                  AND linkedin_metricas_em IS NULL
+            """)
+            needs_metrics = cursor.fetchall()
+
+            # 6. Unread action proposals
+            cursor.execute("""
+                SELECT COUNT(*) as total FROM action_proposals
+                WHERE status = 'pending'
+            """)
+            proposals_count = cursor.fetchone()["total"]
+
+        # Build message
+        header = f"Bom dia, Renato!\n\n*Hoje, {date_str} ({dia_semana}):*"
+
+        if overdue_count > 0:
+            sections.append(f"⚠️ {overdue_count} tarefas vencidas")
+
+        if today_tasks:
+            task_lines = "\n".join(f"  • {t}" for t in today_tasks)
+            sections.append(f"📌 {len(today_tasks)} tarefas para hoje:\n{task_lines}")
+
+        if events:
+            event_lines = "\n".join(
+                f"  • {e['summary']} ({e['start_datetime'].strftime('%H:%M')})"
+                for e in events
+            )
+            sections.append(f"📅 Reunioes:\n{event_lines}")
+
+        if editorial_today or needs_metrics:
+            ed_parts = []
+            for ep in editorial_today:
+                hora = ep['data_publicacao'].strftime('%Hh') if ep.get('data_publicacao') else ""
+                ed_parts.append(f"  • Post agendado: {ep['article_title']} ({hora})")
+            if needs_metrics:
+                ed_parts.append(f"  • Coletar metricas: {len(needs_metrics)} posts de ~48h atras")
+            sections.append(f"📊 Editorial:\n" + "\n".join(ed_parts))
+
+        if proposals_count > 0:
+            sections.append(f"💬 {proposals_count} propostas de acao pendentes")
+
+        if not sections:
+            return {
+                "job": "daily-morning-briefing",
+                "status": "skipped",
+                "reason": "nothing to report",
+            }
+
+        msg = f"☀️ {header}\n\n" + "\n\n".join(sections)
+
+        # Truncate to ~500 chars max
+        if len(msg) > 500:
+            msg = msg[:497] + "..."
+
+        await send_intel_notification(msg)
+
+        return {
+            "job": "daily-morning-briefing",
+            "status": "sent",
+            "timestamp": now.isoformat(),
+            "overdue": overdue_count,
+            "today_tasks": len(today_tasks),
+            "events": len(events),
+            "editorial": len(editorial_today),
+            "needs_metrics": len(needs_metrics),
+            "proposals": proposals_count,
+        }
+
+    except Exception as e:
+        return {
+            "job": "daily-morning-briefing",
+            "status": "error",
+            "error": str(e),
+        }
+
+
+# ============== EDITORIAL METRICS REMINDER ==============
+
+@app.get("/api/cron/editorial-metrics-reminder")
+async def cron_editorial_metrics_reminder(request: Request):
+    """
+    Cron: Remind to collect editorial metrics for posts published ~48h ago.
+    Schedule: 0 14 * * * (14:00 UTC = 11:00 AM Sao Paulo)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.intel_bot import send_intel_notification
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT article_title, data_publicado FROM editorial_posts
+                WHERE status = 'published'
+                  AND data_publicado BETWEEN (NOW() - INTERVAL '52 hours') AND (NOW() - INTERVAL '44 hours')
+                  AND linkedin_metricas_em IS NULL
+                ORDER BY data_publicado
+            """)
+            posts = [dict(r) for r in cursor.fetchall()]
+
+        if not posts:
+            return {
+                "job": "editorial-metrics-reminder",
+                "status": "skipped",
+                "reason": "no posts needing metrics",
+            }
+
+        post_lines = "\n".join(
+            f"• \"{p['article_title']}\" ({p['data_publicado'].strftime('%d/%m')})"
+            for p in posts
+        )
+
+        msg = (
+            f"📊 Hora de coletar metricas!\n\n"
+            f"{len(posts)} posts completaram 48h:\n"
+            f"{post_lines}\n\n"
+            f"Baixe o xlsx do LinkedIn e me envie, ou arraste no /editorial."
+        )
+
+        await send_intel_notification(msg)
+
+        return {
+            "job": "editorial-metrics-reminder",
+            "status": "sent",
+            "posts_count": len(posts),
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    except Exception as e:
+        return {
+            "job": "editorial-metrics-reminder",
+            "status": "error",
+            "error": str(e),
+        }
 
 
 # Vercel handler
