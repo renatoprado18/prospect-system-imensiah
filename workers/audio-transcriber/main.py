@@ -134,6 +134,122 @@ async def transcribe_audio(request: Request):
         return {"error": str(e)}
 
 
+@app.post("/analyze-image")
+async def analyze_image(request: Request):
+    """
+    Receive image from WhatsApp, analyze with Claude Vision,
+    send to intel-bot for processing.
+    """
+    import base64
+
+    data = await request.json()
+    if data.get("secret") != WORKER_SECRET:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    key = data.get("key", {})
+    phone = data.get("phone", "")
+    message_id = data.get("message_id", "")
+    caption = data.get("caption", "")
+
+    if not phone or not key:
+        return JSONResponse(status_code=400, content={"error": "missing phone or key"})
+
+    logger.info(f"Image analysis request for {phone}, caption: {caption[:50]}")
+
+    try:
+        # Step 1: Download image from Evolution API
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            dl_resp = await client.post(
+                f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{INTEL_BOT_INSTANCE}",
+                headers={"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"},
+                json={"message": {"key": key}, "convertToMp4": False}
+            )
+
+        if dl_resp.status_code not in (200, 201):
+            await _send_response(phone, "Nao consegui baixar a imagem.")
+            return {"error": "download_failed"}
+
+        dl_data = dl_resp.json()
+        image_b64 = dl_data.get("base64", "")
+        mimetype = dl_data.get("mimetype", "image/jpeg").split(";")[0].strip()
+
+        if not image_b64:
+            await _send_response(phone, "Imagem vazia.")
+            return {"error": "empty_image"}
+
+        logger.info(f"Image downloaded: {len(image_b64)} chars, type={mimetype}")
+
+        # Step 2: Analyze with Claude Vision
+        user_instruction = caption if caption else "Descreva o que voce ve nesta imagem. Se for uma tela do sistema, identifique o que pode ser melhorado. Se for uma mensagem, resuma o conteudo."
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 1000,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": mimetype,
+                                    "data": image_b64
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": user_instruction
+                            }
+                        ]
+                    }]
+                }
+            )
+
+        if resp.status_code != 200:
+            logger.error(f"Claude Vision failed: {resp.status_code} - {resp.text[:200]}")
+            await _send_response(phone, "Erro ao analisar imagem.")
+            return {"error": f"vision_failed: {resp.status_code}"}
+
+        analysis = resp.json().get("content", [{}])[0].get("text", "")
+        if not analysis:
+            await _send_response(phone, "Nao consegui analisar a imagem.")
+            return {"error": "empty_analysis"}
+
+        logger.info(f"Image analyzed: {analysis[:100]}")
+
+        # Step 3: Send to intel-bot for processing with CRM context
+        content = f"[Imagem analisada] {caption + ': ' if caption else ''}{analysis}"
+
+        async with httpx.AsyncClient(timeout=55.0) as client:
+            bot_resp = await client.post(
+                f"{INTEL_API_URL}/api/webhooks/bot-message",
+                headers={"Content-Type": "application/json"},
+                json={"phone": phone, "content": content, "message_id": message_id,
+                      "secret": WORKER_SECRET},
+                timeout=55.0
+            )
+
+        if bot_resp.status_code == 200:
+            return {"status": "success", "analysis": analysis[:200]}
+        else:
+            # Fallback: send analysis directly
+            await _send_response(phone, f"📸 *Analise da imagem:*\n\n{analysis}")
+            return {"status": "partial"}
+
+    except Exception as e:
+        logger.error(f"Image analysis error: {e}")
+        await _send_response(phone, "Erro ao processar imagem.")
+        return {"error": str(e)}
+
+
 async def _send_response(phone: str, message: str):
     """Send WhatsApp message via intel-bot instance."""
     try:

@@ -88,6 +88,14 @@ O banco local é cópia do remoto. Para atualizar: `./dev.sh sync`
 | LinkdAPI | Enriquecimento LinkedIn | LINKDAPI_KEY |
 | Fathom | Import reuniões → projetos/tarefas | FATHOM_API_KEY_* |
 
+## No Início de Cada Sessão
+
+**OBRIGATÓRIO**: Verificar feedback pendente do usuário via WhatsApp:
+```sql
+SELECT id, tipo, conteudo, criado_em FROM system_feedback WHERE status = 'pending' ORDER BY criado_em DESC
+```
+Se houver feedback pendente, informar ao usuário e priorizar na sessão.
+
 ## Antes de Implementar Qualquer Feature
 
 **OBRIGATORIO**: Consulte `docs/FEATURES.md` antes de criar qualquer funcionalidade nova.

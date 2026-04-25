@@ -856,6 +856,7 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
     # Extract text content
     content = ""
     is_audio = False
+    is_image = False
     if "conversation" in message:
         content = message["conversation"]
     elif "extendedTextMessage" in message:
@@ -863,6 +864,10 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
     elif "audioMessage" in message:
         is_audio = True
         content = "__AUDIO_PENDING__"
+    elif "imageMessage" in message:
+        is_image = True
+        caption = message["imageMessage"].get("caption", "")
+        content = caption or "__IMAGE_PENDING__"
 
     if not content:
         return {"processed": False, "reason": "no_text_content"}
@@ -890,6 +895,24 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
         # Only if AUDIO_WORKER_URL not configured at all
         logger.warning("AUDIO_WORKER_URL not set, audio not supported")
         return {"processed": False, "reason": "audio_no_worker_url"}
+
+    # For images: dispatch to Railway worker for Claude Vision analysis
+    if is_image:
+        worker_url = os.getenv("AUDIO_WORKER_URL", "")
+        worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026")
+        if worker_url:
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    resp = await client.post(
+                        f"{worker_url}/analyze-image",
+                        json={"key": key, "phone": phone, "message_id": message_id,
+                              "caption": content if content != "__IMAGE_PENDING__" else "",
+                              "secret": worker_secret}
+                    )
+                    logger.info(f"Image dispatched to worker: {resp.status_code}")
+                return {"processed": True, "reason": "image_dispatched_to_worker"}
+            except Exception as e:
+                logger.error(f"Image worker dispatch failed: {e}")
 
     # Process bot response in background
     asyncio.create_task(_process_and_respond_bot(phone, content, message_id))

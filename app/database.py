@@ -2131,6 +2131,20 @@ def init_db():
             ON project_assistant_messages(project_id, criado_em DESC)
         ''')
 
+        # System feedback from WhatsApp
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS system_feedback (
+                id SERIAL PRIMARY KEY,
+                tipo TEXT DEFAULT 'feedback',
+                conteudo TEXT NOT NULL,
+                screenshot_url TEXT,
+                status TEXT DEFAULT 'pending',
+                resolved_at TIMESTAMP,
+                resolution TEXT,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         conn.commit()
         print("Database initialized successfully")
         return True

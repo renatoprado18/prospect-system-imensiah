@@ -81,7 +81,8 @@ TOOLS = [
             "- schedule_meeting: cria evento (titulo, data_hora ISO, duracao_min?, contact_id?, local?, descricao?)\n"
             "- send_whatsapp: envia WhatsApp via rap-whatsapp (contact_id, message)\n"
             "- enrich_contact: enriquece contato com IA (contact_id)\n"
-            "- update_contact: atualiza campos do contato (contact_id, fields: {campo: valor})"
+            "- update_contact: atualiza campos do contato (contact_id, fields: {campo: valor})\n"
+            "- save_feedback: salva feedback/melhoria do sistema INTEL (conteudo, tipo?: bug|melhoria|ideia|feedback)"
         ),
         "input_schema": {
             "type": "object",
@@ -91,7 +92,8 @@ TOOLS = [
                     "description": "Nome da acao",
                     "enum": [
                         "create_task", "complete_task", "save_note", "save_memory",
-                        "schedule_meeting", "send_whatsapp", "enrich_contact", "update_contact"
+                        "schedule_meeting", "send_whatsapp", "enrich_contact", "update_contact",
+                        "save_feedback"
                     ]
                 },
                 "params": {
@@ -559,8 +561,28 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 "mensagem": f"Contato {updated['nome']} atualizado: {', '.join(safe_fields.keys())}"
             }, ensure_ascii=False)
 
+        elif action == "save_feedback":
+            conteudo = params.get("conteudo", "")
+            tipo = params.get("tipo", "feedback")
+            if not conteudo:
+                return json.dumps({"erro": "conteudo e obrigatorio"})
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO system_feedback (tipo, conteudo) VALUES (%s, %s)
+                    RETURNING id
+                """, (tipo, conteudo))
+                fb_id = cursor.fetchone()["id"]
+                conn.commit()
+
+            return json.dumps({
+                "sucesso": True,
+                "mensagem": f"Feedback #{fb_id} registrado ({tipo}). Sera analisado na proxima sessao de desenvolvimento."
+            }, ensure_ascii=False)
+
         else:
-            return json.dumps({"erro": f"Acao desconhecida: {action}. Acoes validas: create_task, complete_task, save_note, save_memory, schedule_meeting, send_whatsapp, enrich_contact, update_contact"})
+            return json.dumps({"erro": f"Acao desconhecida: {action}"})
 
     except Exception as e:
         logger.error(f"execute_action error ({action}): {e}")
@@ -922,7 +944,13 @@ REGISTRO DE LIGACOES:
   2. Salve como memoria do contato (execute_action: save_memory com tipo 'ligacao')
   3. Se mencionar pendencias, crie tarefas de follow-up
   4. Confirme o registro
-- Audios transcritos chegam como "[Audio transcrito] texto..."  — trate como texto normal"""
+- Audios transcritos chegam como "[Audio transcrito] texto..."  — trate como texto normal
+
+FEEDBACK DO SISTEMA:
+- Quando Renato disser "feedback:", "melhoria:", "bug:", ou descrever um problema do INTEL:
+  1. Use execute_action com action="save_feedback", params={{conteudo: "...", tipo: "feedback|bug|melhoria|ideia"}}
+  2. Confirme que foi registrado para a proxima sessao de desenvolvimento
+- Imagens analisadas chegam como "[Imagem analisada] descricao..."  — se for screenshot do INTEL, salve como feedback"""
 
 
 # ==================== MAIN HANDLER ====================
