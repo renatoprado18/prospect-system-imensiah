@@ -18750,6 +18750,127 @@ def api_enrich_campaign_linkedin(campaign_id: int, limit: int = 50):
     return enrich_campaign_contacts(campaign_id, limit)
 
 
+@app.post("/api/v1/campaigns/enrich-linkedin-tasks")
+async def api_enrich_linkedin_tasks(limit: int = 20):
+    """
+    Enrich pending LinkedIn tasks with actual post links via LinkdAPI.
+    - Tasks for contacts without LinkedIn URL → cancelled
+    - Tasks for contacts without posts → cancelled
+    - Tasks for contacts with posts → updated with direct post link
+    """
+    import httpx
+    conn = get_db()
+    cursor = conn.cursor()
+
+    api_key = os.getenv("LINKDAPI_KEY")
+    if not api_key:
+        conn.close()
+        raise HTTPException(400, "LINKDAPI_KEY not configured")
+
+    # Get pending LinkedIn tasks (not yet enriched)
+    cursor.execute("""
+        SELECT t.id, t.titulo, t.contact_id, c.nome, c.linkedin
+        FROM tasks t
+        JOIN contacts c ON c.id = t.contact_id
+        WHERE (t.titulo LIKE 'LinkedIn: Curtir%%' OR t.titulo LIKE 'LinkedIn: Comentar%%')
+          AND t.status = 'pending'
+          AND t.descricao NOT LIKE '%%linkedin.com/feed/update%%'
+        ORDER BY t.id
+    """)
+    tasks = [dict(r) for r in cursor.fetchall()]
+
+    stats = {"cancelled_no_linkedin": 0, "cancelled_no_posts": 0, "enriched": 0, "errors": 0}
+
+    # Cancel tasks without LinkedIn URL
+    no_linkedin_ids = [t["id"] for t in tasks if not t.get("linkedin")]
+    if no_linkedin_ids:
+        placeholders = ",".join(["%s"] * len(no_linkedin_ids))
+        cursor.execute(f"""
+            UPDATE tasks SET status = 'cancelled'
+            WHERE id IN ({placeholders})
+        """, no_linkedin_ids)
+        stats["cancelled_no_linkedin"] = len(no_linkedin_ids)
+
+    # Enrich tasks with LinkedIn URL
+    with_linkedin = [t for t in tasks if t.get("linkedin")][:limit]
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for task in with_linkedin:
+            try:
+                linkedin_url = task["linkedin"].rstrip("/")
+                username = linkedin_url.split("/in/")[-1].split("/")[0].split("?")[0]
+                if not username:
+                    continue
+
+                # Get URN
+                resp = await client.get(
+                    "https://linkdapi.com/api/v1/profile/full",
+                    headers={"X-linkdapi-apikey": api_key},
+                    params={"username": username}
+                )
+                if resp.status_code != 200:
+                    stats["errors"] += 1
+                    continue
+
+                urn = (resp.json().get("data") or {}).get("urn")
+                if not urn:
+                    stats["errors"] += 1
+                    continue
+
+                # Get posts
+                resp2 = await client.get(
+                    "https://linkdapi.com/api/v1/posts/all",
+                    headers={"X-linkdapi-apikey": api_key},
+                    params={"urn": urn}
+                )
+                if resp2.status_code != 200:
+                    stats["errors"] += 1
+                    continue
+
+                posts = (resp2.json().get("data") or {}).get("posts") or []
+
+                # Find most recent original post
+                post = None
+                for p in posts[:10]:
+                    header = p.get("header") or ""
+                    if "reposted" in header.lower():
+                        continue
+                    text = p.get("text") or ""
+                    if len(text) < 10:
+                        continue
+                    post = p
+                    break
+
+                if not post or not post.get("url"):
+                    # No posts → cancel task
+                    cursor.execute("UPDATE tasks SET status = 'cancelled' WHERE id = %s", (task["id"],))
+                    stats["cancelled_no_posts"] += 1
+                    continue
+
+                # Update task with post link
+                post_text = (post["text"][:150] + "...") if len(post["text"]) > 150 else post["text"]
+                is_curtir = "Curtir" in task["titulo"]
+                action = "Curta" if is_curtir else "Comente neste"
+                new_desc = f"""{action} post de {task['nome']}:
+
+"{post_text}"
+
+🔗 Abrir post: {post['url']}
+
+💡 {"Depois de curtir, prepare um comentário relevante." if is_curtir else "Adicione valor com uma perspectiva complementar, não genérica."}"""
+
+                cursor.execute("UPDATE tasks SET descricao = %s WHERE id = %s", (new_desc, task["id"]))
+                stats["enriched"] += 1
+
+            except Exception as e:
+                logger.error(f"Error enriching task {task['id']}: {e}")
+                stats["errors"] += 1
+
+    conn.commit()
+    conn.close()
+    return stats
+
+
 @app.post("/api/v1/contacts/{contact_id}/enrich-linkedin")
 def api_enrich_contact_linkedin(contact_id: int):
     """Enrich a single contact with LinkedIn data."""

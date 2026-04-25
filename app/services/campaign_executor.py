@@ -216,37 +216,109 @@ class CampaignExecutor:
     # STEP HANDLERS
     # =========================================================================
 
+    def _fetch_recent_post(self, linkedin_url: str) -> Optional[Dict]:
+        """Fetch most recent LinkedIn post via LinkdAPI."""
+        import os
+        import httpx
+
+        api_key = os.getenv("LINKDAPI_KEY")
+        if not api_key:
+            return None
+
+        # Extract username from URL
+        username = linkedin_url.rstrip('/').split('/in/')[-1].split('/')[0].split('?')[0]
+        if not username:
+            return None
+
+        try:
+            # Step 1: Get URN from profile
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.get(
+                    "https://linkdapi.com/api/v1/profile/full",
+                    headers={"X-linkdapi-apikey": api_key},
+                    params={"username": username}
+                )
+                if resp.status_code != 200:
+                    return None
+                data = resp.json()
+                urn = (data.get("data") or {}).get("urn")
+                if not urn:
+                    return None
+
+                # Step 2: Fetch recent posts
+                resp2 = client.get(
+                    "https://linkdapi.com/api/v1/posts/all",
+                    headers={"X-linkdapi-apikey": api_key},
+                    params={"urn": urn}
+                )
+                if resp2.status_code != 200:
+                    return None
+                posts_data = resp2.json()
+                posts = (posts_data.get("data") or {}).get("posts") or []
+
+                # Find most recent non-repost with text
+                for post in posts[:10]:
+                    header = post.get("header") or ""
+                    if "reposted" in header.lower():
+                        continue
+                    text = post.get("text") or ""
+                    if len(text) < 10:
+                        continue
+                    return {
+                        "url": post.get("url"),
+                        "text": text[:200],
+                        "posted_at": post.get("postedAt"),
+                        "engagements": post.get("engagements"),
+                    }
+
+                # No original posts found
+                return None
+
+        except Exception as e:
+            logger.warning(f"Error fetching LinkedIn posts for {username}: {e}")
+            return None
+
     def _handle_linkedin_like(self, cursor, enrollment: Dict) -> Dict:
-        """Cria tarefa para curtir post no LinkedIn."""
+        """Cria tarefa para curtir post no LinkedIn com link direto."""
         linkedin_url = enrollment.get('linkedin_url') or ''
 
-        # Skip if no LinkedIn URL
         if not linkedin_url:
             return {"skipped": True, "reason": "no_linkedin_url"}
 
-        # Build direct link to recent posts
-        posts_url = linkedin_url.rstrip('/') + '/recent-activity/all/'
+        # Fetch actual recent post
+        post = self._fetch_recent_post(linkedin_url)
+
+        if not post or not post.get("url"):
+            # No posts found — pause enrollment, nothing to like
+            cursor.execute("""
+                UPDATE campaign_enrollments SET status = 'paused'
+                WHERE id = %s
+            """, (enrollment['enrollment_id'],))
+            logger.info(f"Paused enrollment {enrollment['enrollment_id']} "
+                        f"({enrollment['contact_nome']}): no LinkedIn posts found")
+            return {"skipped": True, "reason": "no_posts_found"}
+
+        post_preview = post["text"][:100] + ("..." if len(post["text"]) > 100 else "")
 
         task_id = self._create_task(
             cursor,
             enrollment,
             titulo=f"LinkedIn: Curtir post de {enrollment['contact_nome']}",
-            descricao=f"""Curta um post recente de {enrollment['contact_nome']} ({enrollment['contact_cargo'] or ''} na {enrollment['contact_empresa'] or ''}).
+            descricao=f"""Curta este post de {enrollment['contact_nome']}:
 
-📋 Campanha: {enrollment['campaign_nome']}
+"{post_preview}"
 
-🔗 Ver posts recentes: {posts_url}
+🔗 Abrir post: {post['url']}
 
-💡 Dica: Escolha um post relevante para você poder comentar na sequência.""",
+💡 Dica: Depois de curtir, prepare um comentário relevante para a próxima etapa.""",
             prioridade=5
         )
-        return {"task_created": True, "task_id": task_id}
+        return {"task_created": True, "task_id": task_id, "post_url": post["url"]}
 
     def _handle_linkedin_comment(self, cursor, enrollment: Dict) -> Dict:
-        """Cria tarefa para comentar no LinkedIn."""
+        """Cria tarefa para comentar no LinkedIn com link direto."""
         linkedin_url = enrollment.get('linkedin_url') or ''
 
-        # Skip if no LinkedIn URL
         if not linkedin_url:
             return {"skipped": True, "reason": "no_linkedin_url"}
 
@@ -254,19 +326,29 @@ class CampaignExecutor:
         if isinstance(config, str):
             config = json.loads(config)
 
-        posts_url = linkedin_url.rstrip('/') + '/recent-activity/all/'
+        # Fetch actual recent post
+        post = self._fetch_recent_post(linkedin_url)
+
+        if not post or not post.get("url"):
+            cursor.execute("""
+                UPDATE campaign_enrollments SET status = 'paused'
+                WHERE id = %s
+            """, (enrollment['enrollment_id'],))
+            return {"skipped": True, "reason": "no_posts_found"}
+
+        post_preview = post["text"][:150] + ("..." if len(post["text"]) > 150 else "")
 
         task_id = self._create_task(
             cursor,
             enrollment,
             titulo=f"LinkedIn: Comentar post de {enrollment['contact_nome']}",
-            descricao=f"""Faça um comentário relevante em um post de {enrollment['contact_nome']}.
+            descricao=f"""Comente neste post de {enrollment['contact_nome']}:
 
-📋 Campanha: {enrollment['campaign_nome']}
+"{post_preview}"
 
-🔗 Ver posts recentes: {posts_url}
+🔗 Abrir post: {post['url']}
 
-💡 Sugestões de comentário:
+💡 Sugestões:
 - Adicione valor com uma perspectiva complementar
 - Faça uma pergunta relevante
 - Compartilhe uma experiência relacionada
@@ -274,7 +356,7 @@ class CampaignExecutor:
 ⚠️ Evite comentários genéricos como "Ótimo post!" """,
             prioridade=6
         )
-        return {"task_created": True, "task_id": task_id}
+        return {"task_created": True, "task_id": task_id, "post_url": post["url"]}
 
     def _handle_linkedin_message(self, cursor, enrollment: Dict) -> Dict:
         """Cria sugestão e tarefa para DM no LinkedIn."""
