@@ -18833,6 +18833,22 @@ async def send_ata_email(req: AtaSendEmailRequest):
                     pass
             conn.commit()
 
+        # 7. Auto-complete tasks related to sending ata
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE tasks SET status = 'completed', data_conclusao = NOW()
+                WHERE status = 'pending'
+                  AND (titulo ILIKE %s OR titulo ILIKE '%enviar ata%')
+                RETURNING id, titulo
+            """, (f'%enviar ata%{req.empresa_nome}%',))
+            completed_tasks = [dict(r) for r in cursor.fetchall()]
+            conn.commit()
+            if completed_tasks:
+                logger.info(f"Auto-completed {len(completed_tasks)} ata tasks: {[t['titulo'] for t in completed_tasks]}")
+        except Exception as e:
+            logger.error(f"Error auto-completing ata tasks: {e}")
+
         return {
             "status": "sent",
             "sent_to": len(all_emails),
