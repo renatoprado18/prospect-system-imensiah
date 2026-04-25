@@ -91,6 +91,13 @@
 
 ---
 
+## Pendente — Média Prioridade
+
+### Dashboard
+- [ ] Melhorar card "Quem Contatar Hoje" — filtrar contatos irrelevantes, priorizar por círculo e contexto real
+
+---
+
 ## Pendente — Baixa Prioridade
 
 ### UX
