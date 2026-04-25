@@ -1291,6 +1291,30 @@
             box-sizing: border-box;
         }
 
+        .contact-today-facts {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 4px;
+        }
+
+        .fact-chip {
+            font-size: 0.65rem;
+            color: var(--gray-500);
+            background: #f0f4ff;
+            padding: 2px 8px;
+            border-radius: 10px;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            line-height: 1.3;
+        }
+
+        .fact-chip i {
+            font-size: 0.55rem;
+            color: var(--gray-400);
+        }
+
         /* Action buttons */
         .contact-today-actions {
             display: flex;
@@ -4238,10 +4262,18 @@
                         'attention': 'Atencao'
                     };
 
-                    // Mostrar conteudo da roda se existir
-                    const rodaContent = roda ? `
+                    // Mostrar conteudo da roda se existir (only when reason_label is generic)
+                    const rodaContent = (roda && s.reason_label.length < 30) ? `
                         <div class="contact-today-roda">
                             ${roda.conteudo}
+                        </div>
+                    ` : '';
+
+                    // Mostrar context facts (conversation starters)
+                    const facts = s.context_facts || [];
+                    const factsSection = facts.length > 0 ? `
+                        <div class="contact-today-facts">
+                            ${facts.slice(0, 2).map(f => `<span class="fact-chip"><i class="bi bi-chat-quote"></i> ${f.fato.length > 60 ? f.fato.substring(0, 60) + '...' : f.fato}</span>`).join('')}
                         </div>
                     ` : '';
 
@@ -4313,6 +4345,7 @@
                                     ${s.reason_label}
                                 </div>
                                 ${rodaContent}
+                                ${factsSection}
                                 ${businessSection}
                                 ${contentSection}
                             </div>

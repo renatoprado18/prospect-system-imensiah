@@ -8286,6 +8286,61 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
             except Exception as e:
                 print(f"[SUGGESTIONS] Error checking contacted today: {e}")
 
+    # === FILTRAR CONTATOS IRRELEVANTES ===
+    import re
+    _SKIP_PATTERNS = re.compile(
+        r'(?i)(edif[ií]cio|condom[ií]nio|portaria|zeladoria|administra[cç][aã]o|'
+        r'recep[cç][aã]o|s[íi]ndico|coworking|hotel |pousada |restaurante |'
+        r'loja |mercado |farm[aá]cia |cl[ií]nica |laborat[oó]rio |'
+        r'assist[eê]ncia |manuten[cç][aã]o|delivery|uber |99 |ifood|'
+        r'particular po[cç]os)', re.IGNORECASE
+    )
+    def _is_relevant_contact(nome: str) -> bool:
+        if not nome or len(nome.strip()) < 3:
+            return False
+        # Skip contacts that look like places/services
+        if _SKIP_PATTERNS.search(nome):
+            return False
+        # Skip if name is all numbers/symbols
+        clean = re.sub(r'[\d\s\-\+\(\)]+', '', nome)
+        if len(clean) < 2:
+            return False
+        return True
+
+    # === BUSCAR FATOS PARA CONTEXTO ===
+    all_candidate_ids = []
+    all_candidate_ids.extend([a["contact"]["id"] for a in aniversarios_hoje])
+    all_candidate_ids.extend([r["contact"]["id"] for r in rodas_dashboard])
+    all_candidate_ids.extend([c["id"] for c in contatos_health_baixo])
+
+    facts_by_contact = {}
+    if all_candidate_ids:
+        with get_db() as conn2:
+            cursor2 = conn2.cursor()
+            placeholders = ",".join(["%s"] * len(all_candidate_ids))
+            try:
+                cursor2.execute(f"""
+                    SELECT contact_id, categoria, fato
+                    FROM contact_facts
+                    WHERE contact_id IN ({placeholders})
+                    ORDER BY
+                        CASE WHEN categoria IN ('personal', 'pessoal', 'interest', 'interesse', 'preference', 'preferencia') THEN 0
+                             WHEN categoria IN ('relationship', 'relacionamento') THEN 1
+                             ELSE 2 END,
+                        criado_em DESC
+                """, all_candidate_ids)
+                for row in cursor2.fetchall():
+                    cid = row["contact_id"]
+                    if cid not in facts_by_contact:
+                        facts_by_contact[cid] = []
+                    if len(facts_by_contact[cid]) < 3:
+                        facts_by_contact[cid].append({
+                            "categoria": row["categoria"],
+                            "fato": row["fato"]
+                        })
+            except Exception as e:
+                print(f"[SUGGESTIONS] Error fetching facts: {e}")
+
     # Montar lista unificada com prioridade
     contact_ids_used = set()
 
@@ -8295,11 +8350,13 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
             break
         contact_id = item["contact"]["id"]
         if contact_id in contacted_today:
-            continue  # Ja contactou hoje, pular
+            continue
+        if not _is_relevant_contact(item["contact"].get("nome", "")):
+            continue
         if contact_id not in contact_ids_used:
-            # Aniversario nao precisa de content_suggestion
             item["content_suggestion"] = None
-            item["business_match"] = None  # Aniversario nao precisa de business match
+            item["business_match"] = None
+            item["context_facts"] = facts_by_contact.get(contact_id, [])
             suggestions.append(item)
             contact_ids_used.add(contact_id)
 
@@ -8310,30 +8367,42 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
 
         contact_id = item["contact"]["id"]
         if contact_id in contacted_today:
-            continue  # Ja contactou hoje, pular
+            continue
         if contact_id in contact_ids_used:
+            continue
+        if not _is_relevant_contact(item["contact"].get("nome", "")):
             continue
 
         roda = item["roda"]
         tipo = roda["tipo"]
         dias_pendente = roda.get("dias_pendente", 0)
+        conteudo = roda.get("conteudo", "")
 
-        # Calcular prioridade
+        # Calcular prioridade — usar circulo como sub-prioridade
+        circulo = item["contact"].get("circulo") or 5
+        # Sub-priority: priority * 10 + circulo (lower = higher priority)
         if tipo == "promessa" and dias_pendente > 3:
-            priority = 1
-            reason_label = f"Promessa pendente ({dias_pendente} dias)"
+            priority = 10 + circulo
+            reason_label = f"Promessa pendente ({dias_pendente}d)"
         elif tipo == "promessa":
-            priority = 2
+            priority = 20 + circulo
             reason_label = f"Promessa pendente"
         elif tipo == "favor_recebido":
-            priority = 3
-            reason_label = "Favor recebido - retribuir"
+            priority = 30 + circulo
+            reason_label = "Favor recebido — retribuir"
         elif tipo == "proximo_passo":
-            priority = 4
-            reason_label = "Próximo passo combinado"
+            priority = 40 + circulo
+            # Use roda content as the label when available
+            if conteudo and len(conteudo) > 5:
+                reason_label = conteudo[:80] + ("..." if len(conteudo) > 80 else "")
+            else:
+                reason_label = "Próximo passo combinado"
         else:  # topico
-            priority = 5
-            reason_label = "Tópico para retomar"
+            priority = 50 + circulo
+            if conteudo and len(conteudo) > 5:
+                reason_label = conteudo[:80] + ("..." if len(conteudo) > 80 else "")
+            else:
+                reason_label = "Tópico para retomar"
 
         # Buscar sugestao de conteudo para este contato/roda
         content_suggestion = None
@@ -8368,7 +8437,8 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
             "priority": priority,
             "message_template": get_message_template(tipo, item["contact"]["nome"], roda.get("conteudo")),
             "content_suggestion": content_suggestion,
-            "business_match": business_match
+            "business_match": business_match,
+            "context_facts": facts_by_contact.get(contact_id, [])
         })
         contact_ids_used.add(contact_id)
 
@@ -8379,8 +8449,10 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
 
         contact_id = contato["id"]
         if contact_id in contacted_today:
-            continue  # Ja contactou hoje, pular
+            continue
         if contact_id in contact_ids_used:
+            continue
+        if not _is_relevant_contact(contato.get("nome", "")):
             continue
 
         health = contato.get("health_score", 50)
@@ -8408,26 +8480,28 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
             except Exception as e:
                 print(f"[SUGGESTIONS] Error getting business match for low-health contact {contact_id}: {e}")
 
+            circulo = contato.get("circulo") or 5
             suggestions.append({
                 "contact": {
                     "id": contato["id"],
                     "nome": contato["nome"],
                     "empresa": contato.get("empresa"),
                     "cargo": contato.get("cargo"),
-                    "circulo": contato.get("circulo"),
+                    "circulo": circulo,
                     "foto_url": contato.get("foto_url"),
                 },
                 "reason": "low_health",
                 "reason_label": f"Relacionamento esfriando ({health}%)",
                 "roda": None,
-                "priority": 6,
+                "priority": 60 + circulo,
                 "message_template": get_message_template("low_health", contato["nome"]),
                 "content_suggestion": content_suggestion,
-                "business_match": business_match
+                "business_match": business_match,
+                "context_facts": facts_by_contact.get(contact_id, [])
             })
             contact_ids_used.add(contact_id)
 
-    # Ordenar por prioridade
+    # Ordenar por prioridade (menor = mais importante, já inclui circulo como desempate)
     suggestions.sort(key=lambda x: x["priority"])
 
     return {
