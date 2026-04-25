@@ -8298,12 +8298,32 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
     def _is_relevant_contact(nome: str) -> bool:
         if not nome or len(nome.strip()) < 3:
             return False
-        # Skip contacts that look like places/services
         if _SKIP_PATTERNS.search(nome):
             return False
-        # Skip if name is all numbers/symbols
         clean = re.sub(r'[\d\s\-\+\(\)]+', '', nome)
         if len(clean) < 2:
+            return False
+        return True
+
+    def _should_suggest_contact(contact: dict) -> bool:
+        """Filter contacts that don't need proactive outreach suggestions."""
+        # Skip contacts with very high health AND contacted recently (daily collaborators)
+        health = contact.get("health_score") or 0
+        ultimo = contact.get("ultimo_contato")
+        if not ultimo:
+            return True
+        try:
+            if hasattr(ultimo, 'date'):
+                ultimo_date = ultimo.date()
+            else:
+                from dateutil.parser import parse as parse_date
+                ultimo_date = parse_date(str(ultimo)).date()
+            from datetime import date
+            dias_sem = (date.today() - ultimo_date).days
+        except Exception:
+            return True
+        # If health is perfect AND contacted in last 2 days, they're a daily collaborator
+        if health >= 90 and dias_sem <= 2:
             return False
         return True
 
@@ -8371,6 +8391,10 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
         if contact_id in contact_ids_used:
             continue
         if not _is_relevant_contact(item["contact"].get("nome", "")):
+            continue
+
+        # Skip daily collaborators (high health + recent contact)
+        if not _should_suggest_contact(item["contact"]):
             continue
 
         roda = item["roda"]

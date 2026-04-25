@@ -229,6 +229,8 @@ class RodasService:
                         c.cargo,
                         c.circulo,
                         c.foto_url,
+                        c.health_score,
+                        c.ultimo_contato,
                         ROW_NUMBER() OVER (
                             PARTITION BY r.contact_id
                             ORDER BY
@@ -284,6 +286,8 @@ class RodasService:
                         'cargo': row['cargo'],
                         'circulo': row['circulo'],
                         'foto_url': row['foto_url'],
+                        'health_score': row.get('health_score'),
+                        'ultimo_contato': row['ultimo_contato'].isoformat() if row.get('ultimo_contato') else None,
                     }
                 })
 
