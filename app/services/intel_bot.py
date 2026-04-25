@@ -985,21 +985,25 @@ contact_rodas: id, contact_id, roda_nome, data_inicio (rodas de networking)
 
 ## CONSELHOOS DATABASE (query_conselhoos):
 O ConselhoOS e o sistema de governanca corporativa do Renato. Banco separado do INTEL.
-Use a tool query_conselhoos para consultar.
+- Use query_conselhoos para CONSULTAR (SELECT)
+- Use execute_conselhoos para CRIAR/MODIFICAR (INSERT, UPDATE, DELETE)
+IMPORTANTE: Quando Renato pedir para CRIAR algo no ConselhoOS, use execute_conselhoos com INSERT. NAO tente buscar primeiro se ele explicitamente pediu para criar.
 
-empresas: id (uuid), nome, setor, descricao, created_at
-reunioes: id (uuid), empresa_id (uuid), titulo, data (timestamp), status, pauta_md (text), transcricao (text), transcricao_resumo (text), ata_md (text), ata_docx_drive_id, dossie_md (text), fathom_recording_id, created_at
-raci_itens: id (uuid), empresa_id (uuid), area, acao, prazo, status, responsavel_r
-decisoes: id, empresa_id, reuniao_id, decisao, area
-temas_reuniao: id, reuniao_id, titulo, ordem
-pautas_anuais: id, empresa_id, titulo
-documentos: id, empresa_id, titulo, tipo, url
+Tabelas:
+- empresas: id (uuid), nome, setor, descricao, ativa (bool), created_at
+- reunioes: id (uuid), empresa_id (uuid), titulo, data (timestamp), status, pauta_md, ata_md, created_at
+- raci_itens: id (uuid), empresa_id (uuid), area, acao, prazo, status, responsavel_r
+- decisoes: id, empresa_id, reuniao_id, decisao, area
+- pessoas: id (uuid), empresa_id (uuid), nome, cargo, email, telefone, intel_contact_id
+- temas_reuniao: id, reuniao_id, titulo, ordem
+- pautas_anuais: id, empresa_id, titulo
+- documentos: id, empresa_id, titulo, tipo, url
 
 ### Exemplos ConselhoOS:
-- Reunioes de empresa: SELECT r.titulo, r.data, r.status, LENGTH(r.ata_md) as ata_chars FROM reunioes r JOIN empresas e ON e.id = r.empresa_id WHERE e.nome ILIKE '%vallen%' ORDER BY r.data DESC
-- Buscar ata: SELECT ata_md FROM reunioes WHERE id = 'uuid'
-- Tarefas RACI pendentes: SELECT area, acao, prazo, status FROM raci_itens WHERE empresa_id = 'uuid' AND status IN ('pendente', 'em_andamento')
-- Decisoes de reuniao: SELECT d.decisao, d.area FROM decisoes d WHERE d.reuniao_id = 'uuid'
+- CRIAR empresa: execute_conselhoos → INSERT INTO empresas (id, nome, setor) VALUES (gen_random_uuid(), 'Nome', 'Setor') RETURNING id, nome
+- CRIAR pessoa: execute_conselhoos → INSERT INTO pessoas (id, empresa_id, nome, cargo) VALUES (gen_random_uuid(), 'uuid-empresa', 'Nome', 'Cargo') RETURNING id, nome
+- Reunioes: query_conselhoos → SELECT r.titulo, r.data FROM reunioes r JOIN empresas e ON e.id = r.empresa_id WHERE e.nome ILIKE '%vallen%'
+- RACI pendentes: query_conselhoos → SELECT area, acao, prazo FROM raci_itens WHERE empresa_id = 'uuid' AND status = 'pendente'
 
 ## DICAS SQL:
 - Buscar contato por nome: SELECT id, nome, empresa, cargo FROM contacts WHERE nome ILIKE '%termo%'
