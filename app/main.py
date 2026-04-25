@@ -7024,17 +7024,21 @@ async def cron_weekly_digest(request: Request):
         if digest and digest.get("id"):
             try:
                 from services.intel_bot import send_intel_notification
-                m = digest.get("metricas", {})
-                total_msgs = (m.get("mensagens_recebidas", 0) or 0) + (m.get("mensagens_enviadas", 0) or 0)
-                contatos = m.get("contatos_interagidos", 0) or 0
-                sugestoes = digest.get("sugestoes", [])
-                alerta = f"\n⚠️ {sugestoes[0]}" if sugestoes else ""
+                vencidas = len(digest.get("tarefas_vencidas", []))
+                concluidas = digest.get("tarefas_concluidas", 0)
+                sem_contato = len(digest.get("sem_contato", []))
+
+                alertas = []
+                if vencidas:
+                    alertas.append(f"⚠️ {vencidas} tarefas vencidas")
+                if sem_contato:
+                    alertas.append(f"👥 {sem_contato} contatos C1-C2 sem interação")
 
                 wa_text = (
                     f"📊 *Resumo Semanal INTEL*\n\n"
-                    f"💬 {total_msgs} mensagens · 👥 {contatos} contatos"
-                    f"{alerta}\n\n"
-                    f"👉 https://intel.almeida-prado.com/resumo-semanal?id={digest['id']}"
+                    f"✅ {concluidas} concluídas\n"
+                    + ("\n".join(alertas) + "\n" if alertas else "")
+                    + f"\n👉 https://intel.almeida-prado.com/resumo-semanal?id={digest['id']}"
                 )
                 await send_intel_notification(wa_text)
             except Exception as e:
@@ -18861,19 +18865,14 @@ async def send_ata_email(req: AtaSendEmailRequest):
                     pass
             conn.commit()
 
-        # 7. Auto-complete tasks related to sending ata
+        # 7. Auto-complete tasks related to sending ata (via task auto-resolver)
         try:
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE tasks SET status = 'completed', data_conclusao = NOW()
-                WHERE status = 'pending'
-                  AND (titulo ILIKE %s OR titulo ILIKE '%enviar ata%')
-                RETURNING id, titulo
-            """, (f'%enviar ata%{req.empresa_nome}%',))
-            completed_tasks = [dict(r) for r in cursor.fetchall()]
-            conn.commit()
-            if completed_tasks:
-                logger.info(f"Auto-completed {len(completed_tasks)} ata tasks: {[t['titulo'] for t in completed_tasks]}")
+            from services.task_auto_resolver import check_and_resolve_tasks
+            await check_and_resolve_tasks("email_sent", {
+                "empresa_nome": req.empresa_nome,
+                "subject": req.subject,
+                "contact_name": req.recipients[0].get("name", "") if req.recipients else "",
+            })
         except Exception as e:
             logger.error(f"Error auto-completing ata tasks: {e}")
 
