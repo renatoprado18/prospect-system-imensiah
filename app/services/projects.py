@@ -319,6 +319,21 @@ def get_project_briefing_context(project_id: int) -> Optional[Dict]:
         """, (project_id,))
         milestones = [dict(r) for r in cursor.fetchall()]
 
+        # Recent memories from project members (calls, meetings, facts)
+        member_memories = []
+        if member_ids:
+            cursor.execute("""
+                SELECT cm.titulo, cm.resumo, cm.tipo, cm.data_ocorrencia, c.nome as contact_nome
+                FROM contact_memories cm
+                JOIN contacts c ON c.id = cm.contact_id
+                WHERE cm.contact_id = ANY(%s)
+                  AND (cm.data_ocorrencia > NOW() - INTERVAL '30 days'
+                       OR cm.id IN (SELECT id FROM contact_memories WHERE contact_id = ANY(%s) ORDER BY id DESC LIMIT 5))
+                ORDER BY cm.data_ocorrencia DESC NULLS LAST
+                LIMIT 10
+            """, (member_ids, member_ids))
+            member_memories = [dict(r) for r in cursor.fetchall()]
+
         return {
             'project': project,
             'tasks': tasks,
@@ -327,6 +342,7 @@ def get_project_briefing_context(project_id: int) -> Optional[Dict]:
             'notes': notes,
             'events': events,
             'milestones': milestones,
+            'member_memories': member_memories,
         }
 
 

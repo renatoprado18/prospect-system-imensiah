@@ -15154,6 +15154,11 @@ async def api_project_briefing(request: Request, project_id: int):
         dt_str = str(ms['data_prevista']) if ms.get('data_prevista') else "sem data"
         milestones_text += f"- [{st}] {ms['titulo']} | previsto: {dt_str}\n"
 
+    memories_text = ""
+    for mem in ctx.get('member_memories', []):
+        dt_str = mem['data_ocorrencia'].strftime("%d/%m") if mem.get('data_ocorrencia') else "?"
+        memories_text += f"- [{dt_str}] {mem.get('contact_nome','?')} ({mem.get('tipo','nota')}): {mem.get('titulo','')} - {(mem.get('resumo',''))[:200]}\n"
+
     prompt = f"""Voce e o assistente inteligente do CRM pessoal do Renato. Ele acabou de abrir o projeto abaixo.
 Gere um BRIEFING conciso e acionavel.
 
@@ -15182,7 +15187,11 @@ NOTAS/TIMELINE:
 EVENTOS/CALENDARIO:
 {events_text or '(nenhum evento)'}
 
+MEMORIAS/REGISTROS DE LIGACOES DOS MEMBROS:
+{memories_text or '(nenhuma memoria recente)'}
+
 ## INSTRUCOES
+- Se existe uma memoria de ligacao registrada sobre um tema, a conversa JA ACONTECEU. NAO alerte que esta pendente.
 
 - "enviada" = mensagem de Renato (outgoing). "recebida" = mensagem do contato (incoming).
 - NAO diga que uma mensagem "parece incompleta" a menos que ela termine abruptamente no meio de uma frase.
