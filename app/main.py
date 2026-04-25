@@ -3555,6 +3555,135 @@ async def list_contacts(
     }
 
 
+@app.get("/api/contacts/needs-attention")
+async def contacts_needs_attention(limit: int = Query(30, le=100)):
+    """Contatos que precisam de atenção com motivos e contexto para conversa"""
+    from services.circulos import get_prioridades_por_contexto
+    conn = get_db()
+    cursor = conn.cursor()
+
+    try:
+        # Get prioritized contacts with factors
+        prioridades = get_prioridades_por_contexto(limit_per_context=limit)
+        all_contacts = prioridades.get("profissional", []) + prioridades.get("pessoal", [])
+        all_contacts.sort(key=lambda x: x.get("priority_score", 0), reverse=True)
+
+        if not all_contacts:
+            return {"contacts": [], "total": 0}
+
+        contact_ids = [c["id"] for c in all_contacts]
+
+        # Fetch contact facts (conversation starters)
+        facts_by_contact = {}
+        if contact_ids:
+            placeholders = ",".join(["%s"] * len(contact_ids))
+            cursor.execute(f"""
+                SELECT contact_id, categoria, fato
+                FROM contact_facts
+                WHERE contact_id IN ({placeholders})
+                ORDER BY
+                    CASE WHEN categoria IN ('personal', 'pessoal', 'interest', 'interesse', 'preference', 'preferencia') THEN 0
+                         WHEN categoria IN ('relationship', 'relacionamento') THEN 1
+                         ELSE 2 END,
+                    criado_em DESC
+            """, contact_ids)
+            for row in cursor.fetchall():
+                cid = row["contact_id"]
+                if cid not in facts_by_contact:
+                    facts_by_contact[cid] = []
+                if len(facts_by_contact[cid]) < 5:
+                    facts_by_contact[cid].append({
+                        "categoria": row["categoria"],
+                        "fato": row["fato"]
+                    })
+
+        # Fetch recent memories (last 90 days, top 2 per contact)
+        memories_by_contact = {}
+        if contact_ids:
+            cursor.execute(f"""
+                SELECT DISTINCT ON (contact_id) contact_id, titulo, resumo,
+                       data_ocorrencia, topicos
+                FROM contact_memories
+                WHERE contact_id IN ({placeholders})
+                  AND data_ocorrencia > NOW() - INTERVAL '365 days'
+                ORDER BY contact_id, data_ocorrencia DESC
+            """, contact_ids)
+            for row in cursor.fetchall():
+                cid = row["contact_id"]
+                if cid not in memories_by_contact:
+                    memories_by_contact[cid] = []
+                memories_by_contact[cid].append({
+                    "titulo": row["titulo"],
+                    "resumo": row["resumo"],
+                    "data": row["data_ocorrencia"].isoformat() if row["data_ocorrencia"] else None,
+                    "topicos": row["topicos"] or []
+                })
+
+        # Fetch pending tasks for these contacts
+        tasks_by_contact = {}
+        if contact_ids:
+            cursor.execute(f"""
+                SELECT contact_id, titulo, data_vencimento
+                FROM tasks
+                WHERE contact_id IN ({placeholders})
+                  AND status = 'pending'
+                ORDER BY contact_id, data_vencimento ASC NULLS LAST
+            """, contact_ids)
+            for row in cursor.fetchall():
+                cid = row["contact_id"]
+                if cid not in tasks_by_contact:
+                    tasks_by_contact[cid] = []
+                if len(tasks_by_contact[cid]) < 3:
+                    tasks_by_contact[cid].append({
+                        "titulo": row["titulo"],
+                        "vencimento": row["data_vencimento"].isoformat() if row["data_vencimento"] else None
+                    })
+
+        # Build enriched response
+        enriched = []
+        for contact in all_contacts[:limit]:
+            cid = contact["id"]
+            facts = facts_by_contact.get(cid, [])
+            memories = memories_by_contact.get(cid, [])
+            tasks = tasks_by_contact.get(cid, [])
+
+            # Separate personal facts (conversation starters) from professional
+            conversation_starters = [f for f in facts if f["categoria"] in
+                                     ("personal", "pessoal", "interest", "interesse",
+                                      "preference", "preferencia")]
+            relationship_facts = [f for f in facts if f["categoria"] in
+                                  ("relationship", "relacionamento")]
+            professional_facts = [f for f in facts if f["categoria"] not in
+                                  ("personal", "pessoal", "interest", "interesse",
+                                   "preference", "preferencia", "relationship", "relacionamento")]
+
+            enriched.append({
+                "id": cid,
+                "nome": contact.get("nome"),
+                "empresa": contact.get("empresa"),
+                "cargo": contact.get("cargo"),
+                "foto_url": contact.get("foto_url"),
+                "contexto": contact.get("contexto", "professional"),
+                "circulo": contact.get("circulo"),
+                "health_score": contact.get("health_score"),
+                "badge": contact.get("badge"),
+                "category": contact.get("category"),
+                "priority_score": contact.get("priority_score"),
+                "dias_sem_contato": contact.get("dias_sem_contato"),
+                "fatores": contact.get("fatores", []),
+                "conversation_starters": conversation_starters,
+                "relationship_facts": relationship_facts,
+                "professional_context": professional_facts[:2],
+                "recent_memory": memories[0] if memories else None,
+                "pending_tasks": tasks,
+            })
+
+        return {"contacts": enriched, "total": len(enriched)}
+
+    finally:
+        conn.close()
+
+
 @app.get("/api/contacts/stats")
 async def contacts_stats():
     """Estatísticas dos contatos"""
@@ -13855,6 +13984,20 @@ def get_digest(
 
     if not digest:
         raise HTTPException(status_code=404, detail="Digest nao encontrado")
+
+    # Enrich with live data
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT t.id, t.titulo, t.data_vencimento, p.nome as projeto FROM tasks t LEFT JOIN projects p ON p.id = t.project_id WHERE t.status = 'pending' AND t.data_vencimento < NOW() ORDER BY t.data_vencimento LIMIT 10")
+        digest["tarefas_vencidas"] = [dict(r) for r in cursor.fetchall()]
+        cursor.execute("SELECT c.id, c.nome, c.empresa, c.circulo FROM contacts c WHERE c.circulo <= 2 AND c.ultimo_contato IS NOT NULL AND c.ultimo_contato < NOW() - INTERVAL '14 days' ORDER BY c.circulo LIMIT 10")
+        digest["sem_contato"] = [dict(r) for r in cursor.fetchall()]
+        cursor.execute("SELECT COUNT(*) as t FROM tasks WHERE status='completed' AND data_conclusao >= NOW()-INTERVAL '7 days'")
+        digest["tarefas_concluidas"] = cursor.fetchone()["t"]
+        cursor.execute("SELECT p.nome, COUNT(*) FILTER (WHERE t.status='pending' AND t.data_vencimento<NOW()) as vencidas FROM projects p LEFT JOIN tasks t ON t.project_id=p.id WHERE p.status='ativo' GROUP BY p.nome HAVING COUNT(*) FILTER (WHERE t.status='pending' AND t.data_vencimento<NOW())>0 ORDER BY vencidas DESC LIMIT 5")
+        digest["projetos_atencao"] = [dict(r) for r in cursor.fetchall()]
+        cursor.execute("SELECT summary, start_datetime FROM calendar_events WHERE start_datetime >= CURRENT_DATE AND start_datetime < CURRENT_DATE+INTERVAL '7 days' ORDER BY start_datetime LIMIT 10")
+        digest["agenda_proxima"] = [dict(r) for r in cursor.fetchall()]
 
     return digest
 
