@@ -1,22 +1,27 @@
 """
-Audio Transcriber Worker - Railway
-Receives audio transcription requests, downloads from Evolution API,
-transcribes with Claude, and sends bot response via WhatsApp.
+INTEL Worker - Railway
+Handles bot message processing, audio transcription, and image analysis.
+Runs on Railway with no timeout limit.
 """
 import os
 import json
 import logging
 import httpx
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="INTEL Audio Transcriber")
+app = FastAPI(title="INTEL Worker")
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+CONSELHOOS_DATABASE_URL = os.getenv("CONSELHOOS_DATABASE_URL", "")
 EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
 INTEL_BOT_INSTANCE = os.getenv("INTEL_BOT_INSTANCE", "intel-bot")
@@ -32,9 +37,8 @@ async def health():
 @app.post("/process-message")
 async def process_message(request: Request):
     """
-    Process a text bot message directly on Railway (no timeout limit).
-    Uses Claude API directly with the bot's system prompt and tools,
-    then sends the response via WhatsApp.
+    Process bot message directly on Railway with full DB access.
+    No timeout limit. Has access to INTEL + ConselhoOS databases.
     """
     data = await request.json()
     if data.get("secret") != WORKER_SECRET:
@@ -50,45 +54,280 @@ async def process_message(request: Request):
     logger.info(f"Processing bot message for {phone}: {content[:80]}")
 
     try:
-        # Call INTEL bot-message endpoint (sync, Vercel has 10s but we retry)
-        async with httpx.AsyncClient(timeout=55.0) as client:
-            bot_resp = await client.post(
-                f"{INTEL_API_URL}/api/webhooks/bot-message",
-                headers={"Content-Type": "application/json"},
-                json={"phone": phone, "content": content, "message_id": message_id,
-                      "secret": WORKER_SECRET}
-            )
-        if bot_resp.status_code == 200:
-            return {"status": "success"}
-        else:
-            logger.warning(f"Bot API returned {bot_resp.status_code}: {bot_resp.text[:200]}")
-            # Fallback: simple Claude response without CRM tools
-            await _fallback_response(phone, content)
-            return {"status": "fallback"}
+        response = await _run_bot(phone, content, message_id)
+        if response:
+            await _send_response(phone, response)
+        return {"status": "success", "response_length": len(response or "")}
     except Exception as e:
-        logger.error(f"Process message error: {e}")
-        await _fallback_response(phone, content)
-        return {"status": "fallback", "error": str(e)}
+        logger.error(f"Bot processing error: {e}")
+        await _send_response(phone, "Desculpa, tive um erro. Tenta de novo?")
+        return {"status": "error", "error": str(e)}
 
 
-async def _fallback_response(phone: str, content: str):
-    """Simple Claude response when bot-message endpoint fails."""
+# ==================== BOT ENGINE (runs on Railway) ====================
+
+BOT_TOOLS = [
+    {
+        "name": "query_intel",
+        "description": "SELECT no banco INTEL (contatos, mensagens, projetos, tarefas, memorias). Apenas SELECT. LIMIT 20.",
+        "input_schema": {"type": "object", "properties": {"sql": {"type": "string"}}, "required": ["sql"]}
+    },
+    {
+        "name": "query_conselhoos",
+        "description": "SELECT no banco ConselhoOS (empresas, reunioes, raci_itens, decisoes, pessoas). Apenas SELECT.",
+        "input_schema": {"type": "object", "properties": {"sql": {"type": "string"}}, "required": ["sql"]}
+    },
+    {
+        "name": "execute_conselhoos",
+        "description": "INSERT/UPDATE/DELETE no ConselhoOS. IDs UUID (gen_random_uuid()). Tabelas: empresas, reunioes, raci_itens, decisoes, pessoas, documentos.",
+        "input_schema": {"type": "object", "properties": {"sql": {"type": "string"}}, "required": ["sql"]}
+    },
+    {
+        "name": "execute_intel",
+        "description": (
+            "Executa acao no INTEL:\n"
+            "- create_task: {titulo, descricao?, project_id?, contact_id?, data_vencimento? YYYY-MM-DD}\n"
+            "- complete_task: {task_id}\n"
+            "- save_note: {project_id, titulo, conteudo}\n"
+            "- save_memory: {contact_id, titulo, resumo, tipo?}\n"
+            "- save_feedback: {conteudo, tipo? bug|melhoria|ideia}"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string"},
+                "params": {"type": "object"}
+            },
+            "required": ["action", "params"]
+        }
+    }
+]
+
+
+def _db_query(url: str, sql: str, write: bool = False) -> str:
+    """Execute SQL on a database."""
+    if not url:
+        return json.dumps({"erro": "Database URL nao configurada"})
+
+    sql = sql.strip().rstrip(";").strip()
+    sql_upper = sql.upper()
+
+    if not write:
+        if not sql_upper.startswith("SELECT"):
+            return json.dumps({"erro": "Apenas SELECT permitido"})
+        if "LIMIT" not in sql_upper:
+            sql += " LIMIT 20"
+
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        conn = psycopg2.connect(url, cursor_factory=RealDictCursor)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(sql)
+            if write:
+                result = f"{cursor.rowcount} registro(s) afetado(s)"
+                try:
+                    rows = cursor.fetchall()
+                    if rows:
+                        result += "\n" + " | ".join(f"{k}: {v}" for k, v in dict(rows[0]).items())
+                except Exception:
+                    pass
+                conn.commit()
+                return json.dumps({"sucesso": True, "resultado": result}, ensure_ascii=False)
+            else:
+                rows = [dict(r) for r in cursor.fetchall()]
+                if not rows:
+                    return "Nenhum resultado"
+                lines = []
+                for i, row in enumerate(rows):
+                    parts = [f"{k}: {str(v)[:200]}" for k, v in row.items() if v is not None]
+                    lines.append(f"[{i+1}] " + " | ".join(parts))
+                return f"{len(rows)} resultados:\n" + "\n".join(lines)
+        finally:
+            conn.close()
+    except Exception as e:
+        return json.dumps({"erro": str(e)})
+
+
+def _execute_intel_action(action: str, params: dict) -> str:
+    """Execute an INTEL CRM action."""
+    if not DATABASE_URL:
+        return json.dumps({"erro": "DATABASE_URL nao configurada"})
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        cursor = conn.cursor()
+
+        if action == "create_task":
+            dv = params.get("data_vencimento")
+            if dv:
+                try:
+                    dv = datetime.strptime(str(dv)[:10], "%Y-%m-%d")
+                except Exception:
+                    dv = None
+            if not dv and params.get("prazo_dias"):
+                dv = datetime.now() + timedelta(days=params["prazo_dias"])
+
+            cursor.execute("""
+                INSERT INTO tasks (titulo, descricao, project_id, contact_id, data_vencimento,
+                    prioridade, ai_generated, origem, status)
+                VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'intel_bot', 'pending') RETURNING id
+            """, (params.get("titulo"), params.get("descricao", ""), params.get("project_id"),
+                  params.get("contact_id"), dv, params.get("prioridade", 5)))
+            tid = cursor.fetchone()["id"]
+            conn.commit()
+            conn.close()
+            return f"Tarefa #{tid} criada: {params.get('titulo')}"
+
+        elif action == "complete_task":
+            cursor.execute("UPDATE tasks SET status='completed', data_conclusao=NOW() WHERE id=%s RETURNING titulo",
+                          (params["task_id"],))
+            r = cursor.fetchone()
+            conn.commit()
+            conn.close()
+            return f"Tarefa concluida: {r['titulo']}" if r else "Tarefa nao encontrada"
+
+        elif action == "save_note":
+            cursor.execute("INSERT INTO project_notes (project_id, titulo, conteudo, tipo, autor) VALUES (%s,%s,%s,%s,'INTEL Bot') RETURNING id",
+                          (params.get("project_id"), params.get("titulo", ""), params.get("conteudo", ""), params.get("tipo", "nota")))
+            nid = cursor.fetchone()["id"]
+            conn.commit()
+            conn.close()
+            return f"Nota #{nid} salva"
+
+        elif action == "save_memory":
+            cursor.execute("INSERT INTO contact_memories (contact_id, titulo, resumo, tipo) VALUES (%s,%s,%s,%s) RETURNING id",
+                          (params["contact_id"], params.get("titulo", ""), params.get("resumo", ""), params.get("tipo", "nota")))
+            mid = cursor.fetchone()["id"]
+            conn.commit()
+            conn.close()
+            return f"Memoria #{mid} salva"
+
+        elif action == "save_feedback":
+            cursor.execute("INSERT INTO system_feedback (tipo, conteudo) VALUES (%s,%s) RETURNING id",
+                          (params.get("tipo", "feedback"), params.get("conteudo", "")))
+            fid = cursor.fetchone()["id"]
+            conn.commit()
+            conn.close()
+            return f"Feedback #{fid} registrado"
+
+        conn.close()
+        return f"Acao desconhecida: {action}"
+    except Exception as e:
+        return f"Erro: {e}"
+
+
+def _run_tool(name: str, input_data: dict) -> str:
+    """Execute a bot tool."""
+    if name == "query_intel":
+        return _db_query(DATABASE_URL, input_data["sql"])
+    elif name == "query_conselhoos":
+        return _db_query(CONSELHOOS_DATABASE_URL, input_data["sql"])
+    elif name == "execute_conselhoos":
+        return _db_query(CONSELHOOS_DATABASE_URL, input_data["sql"], write=True)
+    elif name == "execute_intel":
+        return _execute_intel_action(input_data.get("action", ""), input_data.get("params", {}))
+    return "Tool desconhecida"
+
+
+def _load_history(phone: str, limit: int = 15) -> list:
+    """Load conversation history from INTEL DB."""
+    if not DATABASE_URL:
+        return []
+    try:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        cursor = conn.cursor()
+        cursor.execute("SELECT role, content FROM bot_conversations WHERE phone=%s ORDER BY created_at DESC LIMIT %s", (phone, limit))
+        rows = list(reversed([dict(r) for r in cursor.fetchall()]))
+        conn.close()
+        return rows
+    except Exception:
+        return []
+
+
+def _save_msg(phone: str, role: str, content: str):
+    """Save message to conversation history."""
+    if not content or not content.strip():
+        return
+    garbage = ['demorou demais', 'Erro interno', '__IMAGE_PENDING__', '__AUDIO_PENDING__']
+    if any(g in content for g in garbage):
+        return
+    if not DATABASE_URL:
+        return
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO bot_conversations (phone, role, content) VALUES (%s,%s,%s)", (phone, role, content))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+async def _run_bot(phone: str, message: str, message_id: str) -> str:
+    """Full bot processing with tool_use loop. Runs on Railway (no timeout)."""
+    now = datetime.now()
+
+    system_prompt = f"""Voce e o INTEL Bot, assistente pessoal de Renato Almeida Prado (executivo, tecnologia e governanca).
+
+TOOLS:
+- query_intel: consultar CRM (contatos, mensagens, projetos, tarefas, memorias, calendario)
+- query_conselhoos: consultar sistema de governanca (empresas, reunioes, atas, RACI, decisoes)
+- execute_conselhoos: CRIAR/MODIFICAR no ConselhoOS (INSERT/UPDATE/DELETE). IDs UUID (gen_random_uuid())
+- execute_intel: criar tarefas, salvar notas, memorias, feedback
+
+REGRAS:
+- NUNCA invente informacoes. Consulte antes de afirmar.
+- Quando pedir para CRIAR algo no ConselhoOS, use execute_conselhoos com INSERT direto.
+- Responda em portugues, conciso (WhatsApp). Use *negrito* para destaques.
+- Data atual: {now.strftime('%Y-%m-%d %H:%M')}
+- Audios transcritos: "[Audio transcrito] texto"
+- Imagens analisadas: "[Imagem analisada] descricao"
+- Feedback do sistema: use execute_intel save_feedback"""
+
+    # Load history
+    history = _load_history(phone)
+    _save_msg(phone, "user", message)
+    messages = [{"role": r["role"], "content": r["content"]} for r in history] + [{"role": "user", "content": message}]
+
+    # Tool loop
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for iteration in range(3):
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01",
-                          "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500,
-                      "system": "Voce e o INTEL Bot. Responda de forma util e concisa em portugues.",
-                      "messages": [{"role": "user", "content": content}]}
+                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 1000,
+                      "system": system_prompt, "tools": BOT_TOOLS, "messages": messages}
             )
-        if resp.status_code == 200:
-            text = resp.json().get("content", [{}])[0].get("text", "")
-            if text:
-                await _send_response(phone, text)
-    except Exception as e:
-        logger.error(f"Fallback response error: {e}")
+
+            if resp.status_code != 200:
+                logger.error(f"Claude error: {resp.status_code}")
+                return None
+
+            result = resp.json()
+            text_parts = []
+            tool_uses = []
+
+            for block in result.get("content", []):
+                if block["type"] == "text":
+                    text_parts.append(block["text"])
+                elif block["type"] == "tool_use":
+                    tool_uses.append(block)
+
+            if result.get("stop_reason") == "end_turn" or not tool_uses:
+                response = "\n".join(text_parts)
+                _save_msg(phone, "assistant", response)
+                return response
+
+            # Execute tools
+            messages.append({"role": "assistant", "content": result["content"]})
+            tool_results = []
+            for tool in tool_uses:
+                logger.info(f"Tool: {tool['name']} input: {json.dumps(tool.get('input', {}))[:200]}")
+                output = _run_tool(tool["name"], tool.get("input", {}))
+                tool_results.append({"type": "tool_result", "tool_use_id": tool["id"], "content": output})
+            messages.append({"role": "user", "content": tool_results})
+
+    return None
 
 
 @app.post("/transcribe")
