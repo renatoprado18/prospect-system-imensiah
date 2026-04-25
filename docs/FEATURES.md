@@ -24,6 +24,7 @@
 
 ## 2. Contatos (`/contatos`)
 - Lista com busca, filtro letra/contexto, filter=needs_attention
+- **Contatos que precisam de atenção** (enriched): `GET /api/contacts/needs-attention` — priority scoring + motivos (fatores), conversation starters (contact_facts), tarefas pendentes, última memória. Cards com borda colorida (urgent/important/attention), health indicator, "Para conversar sobre"
 - Detalhe com tabs: Resumo, Timeline, Informações, Relacionamentos, Rodas, Documentos
 - **Resumo IA** (enriquecimento com Claude) → `contact_enrichment.py`
 - **Análise de conversas inline** (tom, pendências, oportunidades) → `POST /api/contacts/{id}/analyze-conversations`

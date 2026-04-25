@@ -78,6 +78,12 @@
 - [x] Geração de ata DOCX + envio por email
 - [x] RACI como Google Sheet
 
+### Intelligence Automations
+- [x] Task auto-resolver: auto-completa tarefas quando ações são executadas (email, WhatsApp, reunião, contato)
+- [x] Daily morning briefing (cron 7h SP): tarefas vencidas, agenda, editorial, propostas
+- [x] Editorial metrics reminder (cron 11h SP): lembra de coletar métricas 48h após publicação
+- [x] Contatos que precisam de atenção enriquecidos: motivos, conversation starters (fatos pessoais, profissionais, relacionamento), tarefas pendentes, última memória
+
 ### Infra
 - [x] Mobile responsividade + PWA
 - [x] Railway worker para transcrição de áudio
