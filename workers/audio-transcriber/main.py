@@ -29,6 +29,68 @@ async def health():
     return {"status": "ok", "service": "audio-transcriber"}
 
 
+@app.post("/process-message")
+async def process_message(request: Request):
+    """
+    Process a text bot message directly on Railway (no timeout limit).
+    Uses Claude API directly with the bot's system prompt and tools,
+    then sends the response via WhatsApp.
+    """
+    data = await request.json()
+    if data.get("secret") != WORKER_SECRET:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    phone = data.get("phone", "")
+    content = data.get("content", "")
+    message_id = data.get("message_id", "")
+
+    if not phone or not content:
+        return JSONResponse(status_code=400, content={"error": "missing phone or content"})
+
+    logger.info(f"Processing bot message for {phone}: {content[:80]}")
+
+    try:
+        # Call INTEL bot-message endpoint (sync, Vercel has 10s but we retry)
+        async with httpx.AsyncClient(timeout=55.0) as client:
+            bot_resp = await client.post(
+                f"{INTEL_API_URL}/api/webhooks/bot-message",
+                headers={"Content-Type": "application/json"},
+                json={"phone": phone, "content": content, "message_id": message_id,
+                      "secret": WORKER_SECRET}
+            )
+        if bot_resp.status_code == 200:
+            return {"status": "success"}
+        else:
+            logger.warning(f"Bot API returned {bot_resp.status_code}: {bot_resp.text[:200]}")
+            # Fallback: simple Claude response without CRM tools
+            await _fallback_response(phone, content)
+            return {"status": "fallback"}
+    except Exception as e:
+        logger.error(f"Process message error: {e}")
+        await _fallback_response(phone, content)
+        return {"status": "fallback", "error": str(e)}
+
+
+async def _fallback_response(phone: str, content: str):
+    """Simple Claude response when bot-message endpoint fails."""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01",
+                          "content-type": "application/json"},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500,
+                      "system": "Voce e o INTEL Bot. Responda de forma util e concisa em portugues.",
+                      "messages": [{"role": "user", "content": content}]}
+            )
+        if resp.status_code == 200:
+            text = resp.json().get("content", [{}])[0].get("text", "")
+            if text:
+                await _send_response(phone, text)
+    except Exception as e:
+        logger.error(f"Fallback response error: {e}")
+
+
 @app.post("/transcribe")
 async def transcribe_audio(request: Request):
     """

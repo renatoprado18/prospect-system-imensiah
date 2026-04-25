@@ -914,7 +914,22 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
             except Exception as e:
                 logger.error(f"Image worker dispatch failed: {e}")
 
-    # Process bot response in background
+    # Dispatch ALL bot messages to Railway worker (Vercel 10s timeout is too short for tool_use)
+    worker_url = os.getenv("AUDIO_WORKER_URL", "")
+    worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026")
+    if worker_url:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.post(
+                    f"{worker_url}/process-message",
+                    json={"phone": phone, "content": content, "message_id": message_id, "secret": worker_secret}
+                )
+                logger.info(f"Bot message dispatched to worker: {resp.status_code}")
+            return {"processed": True, "reason": "bot_dispatched_to_worker"}
+        except Exception as e:
+            logger.error(f"Bot worker dispatch failed: {e}")
+
+    # Fallback: process in Vercel (may timeout)
     asyncio.create_task(_process_and_respond_bot(phone, content, message_id))
 
     return {"processed": True, "reason": "intel_bot", "phone": phone}
