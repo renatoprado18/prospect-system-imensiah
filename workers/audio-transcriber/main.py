@@ -79,7 +79,7 @@ BOT_TOOLS = [
     },
     {
         "name": "execute_conselhoos",
-        "description": "INSERT/UPDATE/DELETE no ConselhoOS. IDs UUID (gen_random_uuid()). Tabelas: empresas, reunioes, raci_itens, decisoes, pessoas, documentos.",
+        "description": "INSERT/UPDATE/DELETE no ConselhoOS. IDs UUID (gen_random_uuid()). IMPORTANTE: ao criar empresas, SEMPRE inclua user_id='115322753506978752025'. Tabelas: empresas (id,nome,setor,descricao,user_id,cor_hex), reunioes, raci_itens, decisoes, pessoas, documentos.",
         "input_schema": {"type": "object", "properties": {"sql": {"type": "string"}}, "required": ["sql"]}
     },
     {
