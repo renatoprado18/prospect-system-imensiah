@@ -755,6 +755,13 @@ def _load_conversation_history(phone: str, limit: int = 20) -> List[Dict]:
 def _save_conversation_message(phone: str, role: str, content: str,
                                 tool_calls: Any = None, tool_results: Any = None):
     """Save a single message to conversation history."""
+    # Don't save garbage messages
+    if not content or not content.strip():
+        return
+    garbage = ['demorou demais para processar', 'Erro interno', 'Tenta de novo?']
+    if any(g in content for g in garbage):
+        return
+
     try:
         tc_json = json.dumps(tool_calls) if tool_calls else None
         tr_json = json.dumps(tool_results) if tool_results else None
