@@ -518,10 +518,50 @@ class ConselhoOSRaciSyncService:
 
         return result
 
+    def sync_empresas_to_projects(self) -> Dict[str, Any]:
+        """Ensure every ConselhoOS empresa has a corresponding INTEL project."""
+        results = {"created": 0, "existing": 0, "errors": []}
+        try:
+            cos_conn = self._get_conselhoos_conn()
+            cos_cur = cos_conn.cursor()
+            cos_cur.execute("SELECT id, nome, setor, descricao, drive_folder_id FROM empresas ORDER BY nome")
+            empresas = [dict(r) for r in cos_cur.fetchall()]
+            cos_conn.close()
+
+            for emp in empresas:
+                try:
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "SELECT id FROM projects WHERE LOWER(nome) = LOWER(%s) OR LOWER(nome) LIKE LOWER(%s) LIMIT 1",
+                            (emp['nome'], f"%{emp['nome']}%")
+                        )
+                        if cursor.fetchone():
+                            results["existing"] += 1
+                        else:
+                            cursor.execute("""
+                                INSERT INTO projects (nome, descricao, tipo, status, google_drive_folder_id)
+                                VALUES (%s, %s, 'conselho', 'ativo', %s)
+                                RETURNING id
+                            """, (
+                                emp['nome'],
+                                emp.get('descricao') or f"Conselho consultivo - {emp.get('setor', '')}",
+                                emp.get('drive_folder_id')
+                            ))
+                            conn.commit()
+                            results["created"] += 1
+                            logger.info(f"Created INTEL project for ConselhoOS empresa: {emp['nome']}")
+                except Exception as e:
+                    results["errors"].append(f"{emp['nome']}: {e}")
+        except Exception as e:
+            results["errors"].append(str(e))
+        return results
+
     def full_sync(self) -> Dict[str, Any]:
         """
         Run full bidirectional sync.
 
+        0. Sync Empresas -> Projects
         1. Sync Pessoas -> Project Members
         2. Sync RACI -> Tasks (all empresas)
         3. Sync completed Tasks -> RACI
@@ -531,11 +571,13 @@ class ConselhoOSRaciSyncService:
         """
         logger.info("Starting full ConselhoOS <-> INTEL sync")
 
+        empresas_results = self.sync_empresas_to_projects()
         pessoas_results = self.sync_pessoas_to_project_members()
         raci_results = self.sync_raci_to_tasks()
         task_results = self.sync_task_status_to_raci()
 
         return {
+            "empresas_to_projects": empresas_results,
             "pessoas_to_members": pessoas_results,
             "raci_to_tasks": raci_results,
             "tasks_to_raci": task_results,
