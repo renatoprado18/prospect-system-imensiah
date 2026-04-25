@@ -213,7 +213,7 @@ class DigestGeneratorService:
 
             # 4. Mudanças de emprego detectadas na semana
             cursor.execute("""
-                SELECT h.empresa_anterior, h.empresa_nova, h.cargo_novo, h.tipo_mudanca,
+                SELECT h.empresa_anterior, h.empresa_nova, h.cargo_nova, h.tipo_mudanca,
                        c.nome, c.id as contact_id
                 FROM linkedin_enrichment_history h
                 JOIN contacts c ON c.id = h.contact_id
