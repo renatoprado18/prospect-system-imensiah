@@ -124,6 +124,31 @@ TOOLS = [
         }
     },
     {
+        "name": "execute_conselhoos",
+        "description": (
+            "Executa uma query SQL de ESCRITA no banco do ConselhoOS (INSERT, UPDATE, DELETE). "
+            "Use para criar empresas, reunioes, tarefas RACI, decisoes, pautas, etc.\n"
+            "Tabelas principais:\n"
+            "- empresas (id UUID, nome, setor, descricao, ativa, created_at)\n"
+            "- reunioes (id UUID, empresa_id UUID FK, data DATE, tipo, status, pauta_texto, ata_markdown, transcricao)\n"
+            "- decisoes (id UUID, reuniao_id UUID FK, decisao, area, responsavel, prazo DATE, status)\n"
+            "- raci (id UUID, reuniao_id UUID FK, tarefa, responsavel_r, aprovador_a, consultado_c, informado_i, prazo DATE, status)\n"
+            "- pessoas (id UUID, empresa_id UUID FK, nome, cargo, email, telefone, intel_contact_id INTEGER)\n"
+            "- documentos (id UUID, empresa_id UUID FK, tipo, titulo, url, created_at)\n"
+            "IMPORTANTE: IDs sao UUID. Use gen_random_uuid() para gerar novos IDs."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sql": {
+                    "type": "string",
+                    "description": "Query SQL INSERT/UPDATE/DELETE. Ex: INSERT INTO empresas (id, nome, setor) VALUES (gen_random_uuid(), 'Empresa X', 'Tecnologia')"
+                }
+            },
+            "required": ["sql"]
+        }
+    },
+    {
         "name": "draft_message",
         "description": "Gera um rascunho de mensagem personalizada para um contato, usando contexto completo: mensagens recentes, memorias, LinkedIn, fatos e emails.",
         "input_schema": {
@@ -271,6 +296,59 @@ def _tool_query_conselhoos(sql: str) -> str:
 
     except Exception as e:
         logger.error(f"query_conselhoos error: {e}")
+        return json.dumps({"erro": f"Erro SQL ConselhoOS: {str(e)}", "query": sql_stripped})
+
+
+def _tool_execute_conselhoos(sql: str) -> str:
+    """Execute a write SQL query against the ConselhoOS database."""
+    sql_stripped = sql.strip().rstrip(";").strip()
+    sql_upper = sql_stripped.upper()
+
+    # Block destructive operations
+    dangerous = ["DROP ", "TRUNCATE ", "ALTER ", "GRANT ", "REVOKE "]
+    for kw in dangerous:
+        if kw in sql_upper:
+            return json.dumps({"erro": f"Operacao proibida: {kw.strip()}"})
+
+    # Must be INSERT, UPDATE, or DELETE
+    allowed_starts = ("INSERT", "UPDATE", "DELETE")
+    if not sql_upper.startswith(allowed_starts):
+        return json.dumps({"erro": "Apenas INSERT, UPDATE e DELETE sao permitidos. Use query_conselhoos para SELECT."})
+
+    conselhoos_url = os.getenv("CONSELHOOS_DATABASE_URL")
+    if not conselhoos_url:
+        return json.dumps({"erro": "CONSELHOOS_DATABASE_URL nao configurada"})
+
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        conn = psycopg2.connect(conselhoos_url, cursor_factory=RealDictCursor)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(sql_stripped)
+
+            # Try to get RETURNING data
+            result_text = f"{cursor.rowcount} registro(s) afetado(s)"
+            try:
+                rows = cursor.fetchall()
+                if rows:
+                    results = [dict(r) for r in rows]
+                    parts = []
+                    for key, value in results[0].items():
+                        parts.append(f"{key}: {value}")
+                    result_text += "\n" + " | ".join(parts)
+            except Exception:
+                pass
+
+            conn.commit()
+        finally:
+            conn.close()
+
+        return json.dumps({"sucesso": True, "resultado": result_text}, ensure_ascii=False)
+
+    except Exception as e:
+        logger.error(f"execute_conselhoos error: {e}")
         return json.dumps({"erro": f"Erro SQL ConselhoOS: {str(e)}", "query": sql_stripped})
 
 
@@ -713,6 +791,8 @@ async def _execute_tool(name: str, input_data: Dict) -> str:
             return _tool_query_intel(input_data["sql"])
         elif name == "query_conselhoos":
             return _tool_query_conselhoos(input_data["sql"])
+        elif name == "execute_conselhoos":
+            return _tool_execute_conselhoos(input_data["sql"])
         elif name == "execute_action":
             return await _tool_execute_action(input_data["action"], input_data.get("params", {}))
         elif name == "draft_message":
