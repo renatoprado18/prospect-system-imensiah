@@ -158,7 +158,24 @@
   - Notifica Renato via intel-bot para cada proposta criada (formato conversacional)
   - Chamado automaticamente em `analyze_message_in_background` (evolution_api.py)
 
-## 18. PWA & Mobile
+## 18. Intelligence Automations
+- **Task Auto-Resolver**: `services/task_auto_resolver.py` - auto-completa tarefas pendentes quando acoes correspondentes sao executadas
+  - email_sent: match com tarefas "enviar ata", "mandar email" + empresa/contato
+  - whatsapp_sent: match com tarefas "mensagem para X", "follow-up X", "cobrar X"
+  - meeting_created: match com tarefas "agendar reuniao", "marcar call" + contato
+  - contact_updated: match com tarefas "pegar email", "cadastrar email" + contato
+  - Clear match (score >= 0.8): auto-completa + notifica Renato
+  - Ambiguous match (score 0.4-0.8): pergunta via WhatsApp "Posso marcar como concluida?"
+  - Integrado em: intel_bot.py (send_whatsapp, schedule_meeting, update_contact), main.py (send_ata_email)
+- **Daily Morning Briefing**: cron 0 10 * * * (7h Brasilia) → `/api/cron/daily-morning-briefing`
+  - Resume do dia: tarefas vencidas, tarefas de hoje, reunioes, editorial, propostas pendentes
+  - Formato conciso WhatsApp (max 500 chars), so inclui secoes com conteudo
+  - Enviado via send_intel_notification
+- **Editorial Metrics Reminder**: cron 0 14 * * * (11h Brasilia) → `/api/cron/editorial-metrics-reminder`
+  - Detecta posts publicados ~48h atras sem metricas coletadas (linkedin_metricas_em IS NULL)
+  - Envia lembrete via WhatsApp com lista de posts e instrucoes para coletar
+
+## 19. PWA & Mobile
 - **Manifest**: `/static/manifest.json` (standalone, portrait, theme #6366f1)
 - **Service Worker**: `/static/sw.js` - caches static assets (Bootstrap, icons, fonts) + network-first HTML pages with offline fallback
 - **iOS PWA meta tags**: apple-mobile-web-app-capable, apple-mobile-web-app-status-bar-style (black-translucent), apple-touch-icon

@@ -424,6 +424,17 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 create_in_google=True
             )
 
+            # Auto-resolve matching tasks
+            try:
+                from services.task_auto_resolver import check_and_resolve_tasks
+                await check_and_resolve_tasks("meeting_created", {
+                    "contact_id": contact_id,
+                    "contact_name": params.get("contact_name", ""),
+                    "subject": titulo,
+                })
+            except Exception as e:
+                logger.error(f"Task auto-resolve error (meeting): {e}")
+
             return json.dumps({
                 "sucesso": True,
                 "event_id": event.get("id"),
@@ -464,6 +475,16 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
             result = await client.send_text(phone_clean, message, instance_name="rap-whatsapp")
 
             if "error" not in result:
+                # Auto-resolve matching tasks
+                try:
+                    from services.task_auto_resolver import check_and_resolve_tasks
+                    await check_and_resolve_tasks("whatsapp_sent", {
+                        "contact_id": contact_id,
+                        "contact_name": contact['nome'],
+                    })
+                except Exception as e:
+                    logger.error(f"Task auto-resolve error (whatsapp): {e}")
+
                 return json.dumps({
                     "sucesso": True,
                     "mensagem": f"Mensagem enviada para {contact['nome']}"
@@ -521,6 +542,17 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
 
             if not updated:
                 return json.dumps({"erro": f"Contato #{contact_id} nao encontrado"})
+
+            # Auto-resolve matching tasks (e.g. "pegar email de X")
+            try:
+                from services.task_auto_resolver import check_and_resolve_tasks
+                await check_and_resolve_tasks("contact_updated", {
+                    "contact_id": contact_id,
+                    "contact_name": updated['nome'],
+                    "fields_updated": list(safe_fields.keys()),
+                })
+            except Exception as e:
+                logger.error(f"Task auto-resolve error (contact_update): {e}")
 
             return json.dumps({
                 "sucesso": True,

@@ -48,6 +48,14 @@
     {
       "path": "/api/cron/sync-conselhoos-raci",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/daily-morning-briefing",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/editorial-metrics-reminder",
+      "schedule": "0 14 * * *"
     }
   ]
 }

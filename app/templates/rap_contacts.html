@@ -375,6 +375,141 @@
     .contacts-grid { gap: 6px; }
 }
 
+/* Attention Cards */
+.attention-card {
+    background: white;
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    transition: all 0.2s;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+    border-left: 4px solid transparent;
+}
+
+.attention-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+}
+
+.attention-card.urgent { border-left-color: #ef4444; }
+.attention-card.important { border-left-color: #f59e0b; }
+.attention-card.attention { border-left-color: #6366f1; }
+
+.attention-reasons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 10px 0;
+}
+
+.reason-tag {
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.73rem;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.reason-tag.birthday { background: #fef3c7; color: #92400e; }
+.reason-tag.task { background: #fee2e2; color: #991b1b; }
+.reason-tag.message { background: #dbeafe; color: #1e40af; }
+.reason-tag.project { background: #e0e7ff; color: #3730a3; }
+.reason-tag.time { background: #f3f4f6; color: #374151; }
+
+.conversation-starters {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--gray-100);
+}
+
+.conversation-starters-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--gray-400);
+    margin-bottom: 6px;
+    font-weight: 600;
+}
+
+.starter-item {
+    font-size: 0.8rem;
+    color: var(--gray-600);
+    padding: 3px 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    line-height: 1.3;
+}
+
+.starter-item i {
+    color: var(--gray-400);
+    margin-top: 2px;
+    flex-shrink: 0;
+    font-size: 0.7rem;
+}
+
+.pending-tasks-section {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--gray-200);
+}
+
+.pending-task-item {
+    font-size: 0.78rem;
+    color: var(--gray-500);
+    padding: 2px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.pending-task-item i {
+    color: #f59e0b;
+    font-size: 0.7rem;
+}
+
+.last-memory {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: var(--gray-50, #f9fafb);
+    border-radius: 8px;
+    font-size: 0.78rem;
+    color: var(--gray-500);
+    line-height: 1.3;
+}
+
+.last-memory .memory-date {
+    font-size: 0.7rem;
+    color: var(--gray-400);
+}
+
+.health-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 12px;
+}
+
+.health-indicator.low { background: #fee2e2; color: #991b1b; }
+.health-indicator.medium { background: #fef3c7; color: #92400e; }
+.health-indicator.ok { background: #d1fae5; color: #065f46; }
+
+.contacts-grid.attention-grid {
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+}
+
+@media (max-width: 768px) {
+    .attention-card { padding: 14px; }
+    .contacts-grid.attention-grid { grid-template-columns: 1fr; }
+}
+
 /* Merge Selection Mode */
 .contact-card-wrapper {
     position: relative;
@@ -765,11 +900,15 @@
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('filter') === 'needs_attention') {
             specialFilter = 'needs_attention';
-            // Update page title (sem remover o subtitle que tem o totalCount)
             const header = document.querySelector('h1') || document.querySelector('.page-title');
-            if (header) header.textContent = 'Contatos que Precisam Atencao';
+            if (header) header.textContent = 'Contatos que Precisam de Atenção';
             const subtitle = document.querySelector('.page-subtitle');
             if (subtitle) subtitle.style.display = 'none';
+            // Hide alphabet filter and context filters in attention mode
+            const alphaFilter = document.getElementById('alphabetFilter');
+            if (alphaFilter) alphaFilter.style.display = 'none';
+            const filterGroup = document.querySelector('.filter-group');
+            if (filterGroup) filterGroup.style.display = 'none';
         }
 
         loadStats();
@@ -857,22 +996,28 @@
         `;
 
         try {
-            let url = `/api/contacts?limit=${perPage}&offset=${(currentPage - 1) * perPage}`;
+            let url;
 
-            if (currentLetter) {
-                url += `&letter=${currentLetter}`;
-            }
+            if (specialFilter === 'needs_attention') {
+                // Use enriched endpoint for needs-attention
+                url = `/api/contacts/needs-attention?limit=${perPage}`;
+                if (currentSearch) {
+                    // Filter client-side for search in attention mode
+                }
+            } else {
+                url = `/api/contacts?limit=${perPage}&offset=${(currentPage - 1) * perPage}`;
 
-            if (currentSearch) {
-                url += `&search=${encodeURIComponent(currentSearch)}`;
-            }
+                if (currentLetter) {
+                    url += `&letter=${currentLetter}`;
+                }
 
-            if (currentFilter !== 'all') {
-                url += `&contexto=${currentFilter}`;
-            }
+                if (currentSearch) {
+                    url += `&search=${encodeURIComponent(currentSearch)}`;
+                }
 
-            if (specialFilter) {
-                url += `&filter=${specialFilter}`;
+                if (currentFilter !== 'all') {
+                    url += `&contexto=${currentFilter}`;
+                }
             }
 
             const response = await fetch(url);
@@ -880,6 +1025,17 @@
 
             contacts = data.contacts;
             totalContacts = data.total;
+
+            // Client-side search filter for attention mode
+            if (specialFilter === 'needs_attention' && currentSearch) {
+                const term = currentSearch.toLowerCase();
+                contacts = contacts.filter(c =>
+                    (c.nome || '').toLowerCase().includes(term) ||
+                    (c.empresa || '').toLowerCase().includes(term) ||
+                    (c.cargo || '').toLowerCase().includes(term)
+                );
+                totalContacts = contacts.length;
+            }
 
             // Atualizar stats com total filtrado
             if (specialFilter) {
@@ -917,10 +1073,124 @@
             return;
         }
 
-        container.innerHTML = `
-            <div class="contacts-grid">
-                ${contacts.map(contact => renderContactCard(contact)).join('')}
-            </div>
+        if (specialFilter === 'needs_attention') {
+            container.innerHTML = `
+                <div class="contacts-grid attention-grid">
+                    ${contacts.map(contact => renderAttentionCard(contact)).join('')}
+                </div>
+            `;
+        } else {
+            container.innerHTML = `
+                <div class="contacts-grid">
+                    ${contacts.map(contact => renderContactCard(contact)).join('')}
+                </div>
+            `;
+        }
+    }
+
+    function renderAttentionCard(contact) {
+        const initials = contact.nome.split(' ')
+            .filter(n => n.length > 0)
+            .map(n => n[0])
+            .slice(0, 2)
+            .join('')
+            .toUpperCase();
+
+        const category = contact.category || 'attention';
+        const healthClass = (contact.health_score || 50) < 30 ? 'low' : (contact.health_score || 50) < 50 ? 'medium' : 'ok';
+
+        // Reason tags
+        const reasonIcons = {
+            birthday: 'bi-gift',
+            task: 'bi-check-square',
+            message: 'bi-chat-dots',
+            project: 'bi-kanban',
+            time: 'bi-clock-history'
+        };
+        const reasons = (contact.fatores || []).map(f => {
+            const icon = reasonIcons[f.tipo] || 'bi-flag';
+            return `<span class="reason-tag ${f.tipo}"><i class="bi ${icon}"></i> ${f.label}</span>`;
+        }).join('');
+
+        // Conversation starters
+        let startersHtml = '';
+        const starters = contact.conversation_starters || [];
+        const relFacts = contact.relationship_facts || [];
+        const profCtx = contact.professional_context || [];
+        const allStarters = [...starters, ...relFacts, ...profCtx].slice(0, 3);
+        if (allStarters.length > 0) {
+            const items = allStarters.map(s =>
+                `<div class="starter-item"><i class="bi bi-chat-quote"></i> ${s.fato}</div>`
+            ).join('');
+            startersHtml = `
+                <div class="conversation-starters">
+                    <div class="conversation-starters-title">Para conversar sobre</div>
+                    ${items}
+                </div>
+            `;
+        }
+
+        // Pending tasks
+        let tasksHtml = '';
+        if (contact.pending_tasks && contact.pending_tasks.length > 0) {
+            const items = contact.pending_tasks.map(t => {
+                const venc = t.vencimento ? ` (${new Date(t.vencimento).toLocaleDateString('pt-BR')})` : '';
+                return `<div class="pending-task-item"><i class="bi bi-exclamation-circle"></i> ${t.titulo}${venc}</div>`;
+            }).join('');
+            tasksHtml = `<div class="pending-tasks-section">${items}</div>`;
+        }
+
+        // Last memory
+        let memoryHtml = '';
+        if (contact.recent_memory) {
+            const mem = contact.recent_memory;
+            const memDate = mem.data ? new Date(mem.data).toLocaleDateString('pt-BR') : '';
+            const memText = mem.resumo || mem.titulo || '';
+            if (memText) {
+                const truncated = memText.length > 120 ? memText.substring(0, 120) + '...' : memText;
+                memoryHtml = `
+                    <div class="last-memory">
+                        <span class="memory-date">${memDate}</span> ${truncated}
+                    </div>
+                `;
+            }
+        }
+
+        // Days since contact
+        const diasInfo = contact.dias_sem_contato
+            ? `<span style="font-size:0.75rem;color:var(--gray-400)">${contact.dias_sem_contato}d atrás</span>`
+            : '';
+
+        return `
+            <a href="/contatos/${contact.id}" class="attention-card ${category}">
+                <div class="contact-header">
+                    <div class="contact-avatar">
+                        ${contact.foto_url
+                            ? `<img src="${contact.foto_url}" alt="${contact.nome}">`
+                            : initials
+                        }
+                    </div>
+                    <div class="contact-info">
+                        <div class="contact-name">${contact.nome}</div>
+                        ${contact.cargo
+                            ? `<div class="contact-role"><i class="bi bi-briefcase"></i> ${contact.cargo}</div>`
+                            : ''
+                        }
+                        ${contact.empresa
+                            ? `<div class="contact-company">${contact.empresa}</div>`
+                            : ''
+                        }
+                    </div>
+                    <div style="text-align:right">
+                        <span class="health-indicator ${healthClass}">${contact.health_score || '?'}%</span>
+                        <div style="margin-top:4px">${diasInfo}</div>
+                    </div>
+                </div>
+                ${reasons ? `<div class="attention-reasons">${reasons}</div>` : ''}
+                ${startersHtml}
+                ${tasksHtml}
+                ${memoryHtml}
+            </a>
         `;
     }
 
