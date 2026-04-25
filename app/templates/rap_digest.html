@@ -1,0 +1,162 @@
+{% extends "rap_base.html" %}
+
+{% block title %}Resumo Semanal - INTEL{% endblock %}
+{% block page_title %}Resumo Semanal{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle">Visão consolidada da semana</p>{% endblock %}
+
+{% block extra_css %}
+.digest-header { text-align: center; margin-bottom: 24px; }
+.digest-period { font-size: 1.1rem; color: var(--text-secondary); }
+.metrics-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.metric-card { background: var(--card-bg, #fff); border: 1px solid var(--border-color, #e2e8f0); border-radius: 12px; padding: 16px; text-align: center; }
+.metric-value { font-size: 1.8rem; font-weight: 700; color: var(--primary, #6366f1); }
+.metric-label { font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px; }
+.section-title { font-weight: 700; font-size: 0.95rem; margin: 20px 0 12px; color: var(--text-primary); }
+.highlight-item { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 0.9rem; }
+.contact-row { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; transition: background 0.2s; }
+.contact-row:hover { background: var(--bg-secondary, #f8fafc); }
+.contact-avatar { width: 36px; height: 36px; border-radius: 50%; background: #e2e8f0; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.8rem; color: #64748b; flex-shrink: 0; }
+.contact-avatar img { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
+.ai-summary { background: linear-gradient(135deg, #f0f4ff, #ede9fe); border-radius: 12px; padding: 16px; margin: 20px 0; border-left: 4px solid #6366f1; font-size: 0.9rem; line-height: 1.6; }
+.empty-state { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+.digest-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+{% endblock %}
+
+{% block content %}
+<div id="digestContainer">
+    <div class="empty-state">
+        <div class="spinner-border text-primary mb-3"></div>
+        <p>Carregando resumo...</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const digestId = urlParams.get('id');
+
+    async function loadDigest() {
+        const container = document.getElementById('digestContainer');
+        try {
+            let url = '/api/digests';
+            if (digestId) {
+                url = `/api/digests/${digestId}`;
+            }
+
+            const resp = await fetch(url);
+            let digest;
+
+            if (digestId) {
+                digest = await resp.json();
+            } else {
+                const data = await resp.json();
+                const digests = data.digests || data || [];
+                if (digests.length === 0) {
+                    container.innerHTML = '<div class="empty-state"><i class="bi bi-journal-text" style="font-size:3rem;opacity:0.3;"></i><p class="mt-2">Nenhum resumo semanal gerado ainda.</p><button class="btn btn-primary mt-2" onclick="generateDigest()"><i class="bi bi-magic me-1"></i>Gerar Agora</button></div>';
+                    return;
+                }
+                digest = digests[0];
+            }
+
+            renderDigest(digest);
+        } catch (e) {
+            container.innerHTML = '<div class="empty-state text-danger">Erro ao carregar resumo</div>';
+        }
+    }
+
+    function renderDigest(d) {
+        const container = document.getElementById('digestContainer');
+        const metricas = d.metricas || {};
+        const highlights = d.highlights || [];
+        const sugestoes = d.sugestoes || [];
+        const contatos = d.contatos_destaque || [];
+
+        // Parse JSON strings if needed
+        const parseJson = (v) => typeof v === 'string' ? JSON.parse(v) : v;
+        const m = parseJson(metricas);
+        const h = parseJson(highlights);
+        const s = parseJson(sugestoes);
+        const c = parseJson(contatos);
+
+        let html = `
+            <div class="digest-header">
+                <h3>${d.titulo || 'Resumo Semanal'}</h3>
+                <div class="digest-period">${d.periodo_inicio ? new Date(d.periodo_inicio).toLocaleDateString('pt-BR') : ''} — ${d.periodo_fim ? new Date(d.periodo_fim).toLocaleDateString('pt-BR') : ''}</div>
+            </div>
+
+            ${d.ai_summary ? `<div class="ai-summary"><i class="bi bi-stars me-2 text-primary"></i>${d.ai_summary}</div>` : ''}
+            ${d.resumo ? `<div class="ai-summary"><i class="bi bi-stars me-2 text-primary"></i>${d.resumo}</div>` : ''}
+
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-value">${(m.mensagens_recebidas || 0) + (m.mensagens_enviadas || 0)}</div>
+                    <div class="metric-label">Mensagens</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${m.contatos_interagidos || 0}</div>
+                    <div class="metric-label">Contatos</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${m.mensagens_enviadas || 0}</div>
+                    <div class="metric-label">Enviadas</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value">${m.sugestoes_aceitas || 0}</div>
+                    <div class="metric-label">Sugestões Aceitas</div>
+                </div>
+            </div>`;
+
+        if (h.length > 0) {
+            html += `<div class="section-title"><i class="bi bi-star-fill text-warning me-2"></i>Destaques</div>`;
+            html += h.map(item => `<div class="highlight-item"><i class="bi bi-check-circle text-success"></i> ${item}</div>`).join('');
+        }
+
+        if (c.length > 0) {
+            html += `<div class="section-title"><i class="bi bi-people-fill text-primary me-2"></i>Principais Interações</div>`;
+            html += c.map(ct => {
+                const initials = (ct.nome || '?').split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase();
+                const avatar = ct.foto_url ? `<img src="${ct.foto_url}">` : initials;
+                return `
+                    <a href="/contatos/${ct.id}" class="contact-row" style="text-decoration:none;color:inherit;">
+                        <div class="contact-avatar">${avatar}</div>
+                        <div style="flex:1;">
+                            <div style="font-weight:600;font-size:0.85rem;">${ct.nome}</div>
+                            <div style="font-size:0.75rem;color:#64748b;">${ct.empresa || ''} · C${ct.circulo || '?'}</div>
+                        </div>
+                        <span class="badge bg-primary">${ct.mensagens} msgs</span>
+                    </a>`;
+            }).join('');
+        }
+
+        if (s.length > 0) {
+            html += `<div class="section-title"><i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>Atenção</div>`;
+            html += s.map(item => `<div class="highlight-item"><i class="bi bi-exclamation-circle text-warning"></i> ${item}</div>`).join('');
+        }
+
+        html += `<div class="text-center mt-4">
+            <button class="btn btn-outline-primary btn-sm" onclick="generateDigest()"><i class="bi bi-arrow-clockwise me-1"></i>Gerar Novo</button>
+        </div>`;
+
+        container.innerHTML = html;
+    }
+
+    async function generateDigest() {
+        const container = document.getElementById('digestContainer');
+        container.innerHTML = '<div class="empty-state"><div class="spinner-border text-primary mb-3"></div><p>Gerando resumo semanal...</p></div>';
+        try {
+            const resp = await fetch('/api/digests/weekly', { method: 'POST' });
+            const data = await resp.json();
+            if (data.id) {
+                window.location.href = `/resumo-semanal?id=${data.id}`;
+            } else {
+                renderDigest(data);
+            }
+        } catch (e) {
+            container.innerHTML = '<div class="empty-state text-danger">Erro ao gerar resumo</div>';
+        }
+    }
+
+    loadDigest();
+</script>
+{% endblock %}

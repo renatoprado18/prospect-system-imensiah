@@ -7020,6 +7020,26 @@ async def cron_weekly_digest(request: Request):
         generator = get_digest_generator()
         digest = generator.generate_weekly_digest()
 
+        # Send WhatsApp notification with ultra-summary
+        if digest and digest.get("id"):
+            try:
+                from services.intel_bot import send_intel_notification
+                m = digest.get("metricas", {})
+                total_msgs = (m.get("mensagens_recebidas", 0) or 0) + (m.get("mensagens_enviadas", 0) or 0)
+                contatos = m.get("contatos_interagidos", 0) or 0
+                sugestoes = digest.get("sugestoes", [])
+                alerta = f"\n⚠️ {sugestoes[0]}" if sugestoes else ""
+
+                wa_text = (
+                    f"📊 *Resumo Semanal INTEL*\n\n"
+                    f"💬 {total_msgs} mensagens · 👥 {contatos} contatos"
+                    f"{alerta}\n\n"
+                    f"👉 https://intel.almeida-prado.com/resumo-semanal?id={digest['id']}"
+                )
+                await send_intel_notification(wa_text)
+            except Exception as e:
+                logger.warning(f"Failed to send digest WhatsApp: {e}")
+
         return {
             "job": "weekly-digest",
             "timestamp": datetime.now().isoformat(),
@@ -15835,6 +15855,14 @@ async def api_send_analysis(project_id: int, request: Request):
         return {"status": "sent", "channel": "email", "to": email, "result": result}
 
     raise HTTPException(status_code=400, detail="Canal invalido")
+
+
+# ============== WEEKLY DIGEST ==============
+
+@app.get("/resumo-semanal", response_class=HTMLResponse)
+async def weekly_digest_page(request: Request):
+    """Pagina de Resumo Semanal"""
+    return templates.TemplateResponse("rap_digest.html", {"request": request})
 
 
 # ============== SOCIAL GROUPS ==============
