@@ -7,8 +7,8 @@ import os
 import json
 import logging
 import httpx
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
+from psycopg.rows import dict_row
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -119,7 +119,7 @@ def _db_query(url: str, sql: str, write: bool = False) -> str:
             sql += " LIMIT 20"
 
     try:
-        conn = psycopg2.connect(url, cursor_factory=RealDictCursor)
+        conn = psycopg.connect(url, row_factory=dict_row)
         try:
             cursor = conn.cursor()
             cursor.execute(sql)
@@ -154,7 +154,7 @@ def _execute_intel_action(action: str, params: dict) -> str:
         return json.dumps({"erro": "DATABASE_URL nao configurada"})
 
     try:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
         cursor = conn.cursor()
 
         if action == "create_task":
@@ -234,7 +234,7 @@ def _load_history(phone: str, limit: int = 15) -> list:
     if not DATABASE_URL:
         return []
     try:
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
         cursor = conn.cursor()
         cursor.execute("SELECT role, content FROM bot_conversations WHERE phone=%s ORDER BY created_at DESC LIMIT %s", (phone, limit))
         rows = list(reversed([dict(r) for r in cursor.fetchall()]))
@@ -254,7 +254,7 @@ def _save_msg(phone: str, role: str, content: str):
     if not DATABASE_URL:
         return
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = psycopg.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO bot_conversations (phone, role, content) VALUES (%s,%s,%s)", (phone, role, content))
         conn.commit()
