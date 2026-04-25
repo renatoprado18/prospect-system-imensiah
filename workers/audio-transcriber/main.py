@@ -223,10 +223,53 @@ def _run_tool(name: str, input_data: dict) -> str:
     elif name == "query_conselhoos":
         return _db_query(CONSELHOOS_DATABASE_URL, input_data["sql"])
     elif name == "execute_conselhoos":
-        return _db_query(CONSELHOOS_DATABASE_URL, input_data["sql"], write=True)
+        result = _db_query(CONSELHOOS_DATABASE_URL, input_data["sql"], write=True)
+        # Auto-create INTEL project when empresa is created
+        sql_upper = input_data.get("sql", "").upper()
+        if "INSERT" in sql_upper and "EMPRESAS" in sql_upper:
+            _auto_create_project_for_empresa(input_data["sql"], result)
+        return result
     elif name == "execute_intel":
         return _execute_intel_action(input_data.get("action", ""), input_data.get("params", {}))
     return "Tool desconhecida"
+
+
+def _auto_create_project_for_empresa(sql: str, result: str):
+    """When a ConselhoOS empresa is created, auto-create INTEL project."""
+    if not DATABASE_URL:
+        return
+    try:
+        # Extract empresa name from SQL (between quotes after nome)
+        import re
+        match = re.search(r"'([^']+)'", sql.split("nome" if "nome" in sql.lower() else ",")[0] + sql)
+        # Better: query the empresa we just created
+        conn_cos = psycopg.connect(CONSELHOOS_DATABASE_URL, row_factory=dict_row)
+        cursor_cos = conn_cos.cursor()
+        cursor_cos.execute("SELECT nome, setor, descricao, drive_folder_id FROM empresas ORDER BY created_at DESC LIMIT 1")
+        emp = cursor_cos.fetchone()
+        conn_cos.close()
+
+        if not emp:
+            return
+
+        # Check if project already exists in INTEL
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM projects WHERE LOWER(nome) = LOWER(%s) LIMIT 1", (emp['nome'],))
+        if cursor.fetchone():
+            conn.close()
+            return
+
+        cursor.execute("""
+            INSERT INTO projects (nome, descricao, tipo, status, google_drive_folder_id)
+            VALUES (%s, %s, 'conselho', 'ativo', %s) RETURNING id
+        """, (emp['nome'], emp.get('descricao') or f"Conselho consultivo - {emp.get('setor', '')}", emp.get('drive_folder_id')))
+        pid = cursor.fetchone()['id']
+        conn.commit()
+        conn.close()
+        logger.info(f"Auto-created INTEL project #{pid} for empresa {emp['nome']}")
+    except Exception as e:
+        logger.error(f"Auto-create project error: {e}")
 
 
 def _load_history(phone: str, limit: int = 15) -> list:
