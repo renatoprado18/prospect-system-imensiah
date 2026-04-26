@@ -146,6 +146,7 @@ def _db_query(url: str, sql: str, write: bool = False) -> str:
             sql += " LIMIT 20"
 
     try:
+        logger.info(f"DB query: {sql[:150]}")
         conn = psycopg.connect(url, row_factory=dict_row)
         try:
             cursor = conn.cursor()
@@ -331,7 +332,8 @@ def _save_msg(phone: str, role: str, content: str):
     """Save message to conversation history."""
     if not content or not content.strip():
         return
-    garbage = ['demorou demais', 'Erro interno', '__IMAGE_PENDING__', '__AUDIO_PENDING__']
+    garbage = ['demorou demais', 'Erro interno', '__IMAGE_PENDING__', '__AUDIO_PENDING__',
+               'indisponível', 'indisponivel', 'Não consigo acessar']
     if any(g in content for g in garbage):
         return
     if not DATABASE_URL:
