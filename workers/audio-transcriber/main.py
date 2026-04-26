@@ -34,6 +34,33 @@ async def health():
     return {"status": "ok", "service": "audio-transcriber"}
 
 
+@app.get("/debug-db")
+async def debug_db():
+    """Test database connectivity."""
+    results = {}
+    # Test INTEL DB
+    try:
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        cursor = conn.cursor()
+        cursor.execute("SELECT count(*) as total FROM contacts")
+        results["intel"] = {"ok": True, "contacts": cursor.fetchone()["total"]}
+        conn.close()
+    except Exception as e:
+        results["intel"] = {"ok": False, "error": str(e), "url_prefix": DATABASE_URL[:50] if DATABASE_URL else "EMPTY"}
+
+    # Test ConselhoOS DB
+    try:
+        conn = psycopg.connect(CONSELHOOS_DATABASE_URL, row_factory=dict_row)
+        cursor = conn.cursor()
+        cursor.execute("SELECT count(*) as total FROM empresas")
+        results["conselhoos"] = {"ok": True, "empresas": cursor.fetchone()["total"]}
+        conn.close()
+    except Exception as e:
+        results["conselhoos"] = {"ok": False, "error": str(e)}
+
+    return results
+
+
 @app.post("/process-message")
 async def process_message(request: Request):
     """
