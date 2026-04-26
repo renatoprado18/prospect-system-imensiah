@@ -167,12 +167,25 @@ def _execute_intel_action(action: str, params: dict) -> str:
             if not dv and params.get("prazo_dias"):
                 dv = datetime.now() + timedelta(days=params["prazo_dias"])
 
+            # Validate foreign keys
+            contact_id = params.get("contact_id")
+            if contact_id:
+                cursor.execute("SELECT id FROM contacts WHERE id = %s", (contact_id,))
+                if not cursor.fetchone():
+                    contact_id = None  # Invalid, skip
+
+            project_id = params.get("project_id")
+            if project_id:
+                cursor.execute("SELECT id FROM projects WHERE id = %s", (project_id,))
+                if not cursor.fetchone():
+                    project_id = None
+
             cursor.execute("""
                 INSERT INTO tasks (titulo, descricao, project_id, contact_id, data_vencimento,
                     prioridade, ai_generated, origem, status)
                 VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'intel_bot', 'pending') RETURNING id
-            """, (params.get("titulo"), params.get("descricao", ""), params.get("project_id"),
-                  params.get("contact_id"), dv, params.get("prioridade", 5)))
+            """, (params.get("titulo"), params.get("descricao", ""), project_id,
+                  contact_id, dv, params.get("prioridade", 5)))
             tid = cursor.fetchone()["id"]
             conn.commit()
             conn.close()
