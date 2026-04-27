@@ -10,7 +10,7 @@ import httpx
 import psycopg
 from psycopg.rows import dict_row
 from datetime import datetime, timedelta
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 
 logging.basicConfig(level=logging.INFO)
@@ -758,10 +758,11 @@ REGRAS:
 
 
 @app.post("/generate-ata")
-async def generate_ata_endpoint(request: Request):
+async def generate_ata_endpoint(request: Request, background_tasks: BackgroundTasks):
     """
     Generate a comprehensive ata from meeting transcription using Claude.
-    Saves directly to ConselhoOS database. No timeout limit on Railway.
+    Returns immediately, processes in background on Railway (no timeout).
+    Saves directly to ConselhoOS database when done.
     """
     data = await request.json()
     reuniao_id = data.get("reuniao_id")
@@ -775,7 +776,23 @@ async def generate_ata_endpoint(request: Request):
     if not transcricao or not reuniao_id:
         return JSONResponse({"error": "reuniao_id e transcricao obrigatorios"}, status_code=400)
 
-    logger.info(f"Generating ata for {empresa_nome}, reuniao {reuniao_id} ({len(transcricao)} chars)")
+    logger.info(f"Queuing ata generation for {empresa_nome}, reuniao {reuniao_id} ({len(transcricao)} chars)")
+
+    # Process in background — return immediately so Vercel caller doesn't timeout
+    background_tasks.add_task(
+        _generate_ata_background,
+        reuniao_id, transcricao, empresa_nome, data_reuniao,
+        pauta_md, conselhoos_db_url, participantes_info
+    )
+
+    return {"status": "processing", "message": "Ata sendo gerada em background. Recarregue em ~60s."}
+
+
+async def _generate_ata_background(
+    reuniao_id, transcricao, empresa_nome, data_reuniao,
+    pauta_md, conselhoos_db_url, participantes_info
+):
+    """Background task for ata generation."""
 
     prompt = f"""Você é um secretário executivo de alto nível especializado em governança corporativa.
 Analise a transcrição desta reunião de conselho e produza uma ATA COMPLETA E DETALHADA.
