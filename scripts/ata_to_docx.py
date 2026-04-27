@@ -157,6 +157,141 @@ def _add_rich_text(paragraph, text, default_size=10, default_color=None, default
 
 
 # ---------------------------------------------------------------------------
+# Markdown preprocessor — normalizes Claude output to expected format
+# ---------------------------------------------------------------------------
+
+def _preprocess_markdown(md: str) -> str:
+    """Convert Claude's markdown ata to the format parse_ata_markdown expects.
+
+    Handles:
+    - # Title → plain text (empresa name)
+    - ## SECTION → plain text with section markers
+    - **bold** → keeps as-is (handled by _add_formatted_text)
+    - | tables | → keeps as-is (handled by section body renderer)
+    - ### subsections → numbered subsections
+    """
+    lines = md.split('\n')
+    out = []
+    section_num = 0
+    empresa = ''
+    found_header = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Skip empty markdown artifacts
+        if stripped == '---':
+            continue
+
+        # # Title — extract empresa name
+        if stripped.startswith('# ') and not found_header:
+            found_header = True
+            # Extract empresa from "# ALBA CONSULTORIA — Ata de Reunião de Conselho"
+            title = stripped[2:]
+            if '—' in title:
+                empresa = title.split('—')[0].strip()
+            elif '-' in title and 'Ata' in title:
+                empresa = title.split('-')[0].strip().split('–')[0].strip()
+            else:
+                empresa = title
+            out.append(empresa)
+            out.append('')
+            out.append('Ata de Reunião de Conselho')
+            continue
+
+        # **Data:** ... | **Duração:** ... — metadata line
+        if stripped.startswith('**Data:**'):
+            # Parse: **Data:** 16 de abril de 2026 | **Duração:** ~1h | **Participantes:** 6
+            parts = stripped.split('|')
+            date_part = parts[0].replace('**Data:**', '').strip() if parts else ''
+            out.append(f"{date_part} · Reunião ordinária mensal")
+            out.append('')
+            # Extract metadata
+            meta = {}
+            for part in parts:
+                part = part.strip().replace('**', '')
+                if 'Duração:' in part:
+                    meta['duracao'] = part.split('Duração:')[1].strip()
+                elif 'Participantes:' in part:
+                    meta['participantes'] = part.split('Participantes:')[1].strip()
+            out.append('Duração')
+            out.append(meta.get('duracao', '—'))
+            out.append('')
+            out.append('Participantes')
+            out.append(meta.get('participantes', '—'))
+            out.append('')
+            out.append('Itens de ação')
+            out.append('—')
+            out.append('')
+            out.append('Próxima reunião')
+            out.append('—')
+            out.append('')
+            continue
+
+        # ## PARTICIPANTES — section header
+        if stripped.startswith('## PARTICIPANTES') or stripped == '## Participantes':
+            out.append('PARTICIPANTES')
+            out.append('')
+            continue
+
+        # ## DECISÕES APROVADAS
+        if 'DECISÕES' in stripped.upper() and stripped.startswith('##'):
+            title = stripped.lstrip('#').strip()
+            section_num += 1
+            out.append(f'{section_num}. {title}')
+            out.append('')
+            continue
+
+        # ## PENDÊNCIAS
+        if 'PENDÊNCIAS' in stripped.upper() and stripped.startswith('##'):
+            title = stripped.lstrip('#').strip()
+            section_num += 1
+            out.append(f'{section_num}. {title}')
+            out.append('')
+            continue
+
+        # ## PRÓXIMA REUNIÃO
+        if 'PRÓXIMA REUNIÃO' in stripped.upper() and stripped.startswith('##'):
+            title = stripped.lstrip('#').strip()
+            section_num += 1
+            out.append(f'{section_num}. {title}')
+            out.append('')
+            continue
+
+        # ## N. SECTION TITLE — numbered section
+        m = re.match(r'^##\s+(\d+)\.\s+(.+)$', stripped)
+        if m:
+            section_num = int(m.group(1))
+            out.append(f'{section_num}. {m.group(2)}')
+            out.append('')
+            continue
+
+        # ## SECTION TITLE — unnumbered section (make it numbered)
+        if stripped.startswith('## '):
+            title = stripped[3:].strip()
+            section_num += 1
+            out.append(f'{section_num}. {title}')
+            out.append('')
+            continue
+
+        # ### Subsection
+        m = re.match(r'^###\s+(\d+\.\d+)\s+(.+)$', stripped)
+        if m:
+            out.append(f'{m.group(1)} {m.group(2)}')
+            continue
+
+        if stripped.startswith('### '):
+            title = stripped[4:].strip()
+            out.append(title)
+            continue
+
+        # Regular line — pass through (keeps **bold**, tables, bullets)
+        out.append(line)
+
+    return '\n'.join(out)
+
+
+# ---------------------------------------------------------------------------
 # Markdown parser
 # ---------------------------------------------------------------------------
 
@@ -340,6 +475,8 @@ def generate_ata_docx(ata_md: str, empresa_nome: str, data_reuniao: str, output_
     Returns:
         output_path
     """
+    # Preprocess markdown from Claude to expected format
+    ata_md = _preprocess_markdown(ata_md)
     parsed = parse_ata_markdown(ata_md)
     doc = Document()
 
