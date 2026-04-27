@@ -10264,6 +10264,20 @@ async def cron_conselhoos_briefing_tomorrow(request: Request):
     return {"results": results, "checked_at": datetime.now().isoformat()}
 
 
+@app.get("/api/cron/pre-meeting-briefings")
+async def cron_pre_meeting_briefings(request: Request):
+    """
+    Cron: Send WhatsApp briefings 1h before meetings.
+    Schedule: 0 * * * * (every hour)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.pre_meeting_briefing import check_upcoming_meetings
+    results = await check_upcoming_meetings()
+    return {"job": "pre-meeting-briefings", "timestamp": datetime.now().isoformat(), **results}
+
+
 # ============== Google Calendar Endpoints ==============
 
 from integrations.google_calendar import get_calendar_integration

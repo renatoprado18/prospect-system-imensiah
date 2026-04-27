@@ -56,6 +56,10 @@
     {
       "path": "/api/cron/editorial-metrics-reminder",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/pre-meeting-briefings",
+      "schedule": "0 * * * *"
     }
   ]
 }
