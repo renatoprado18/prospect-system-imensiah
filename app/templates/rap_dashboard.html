@@ -2727,6 +2727,11 @@
             }
         }
 
+        function linkify(text) {
+            if (!text) return '';
+            return text.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:#6366f1;text-decoration:underline;word-break:break-all">$1</a>');
+        }
+
         async function showTaskDetail(taskId) {
             try {
                 const response = await fetch(`/api/tasks/${taskId}/context`);
@@ -2745,7 +2750,7 @@
                         <h5>${title}</h5>
                         <span class="badge ${status === 'completed' ? 'bg-success' : 'bg-warning'}">${status === 'completed' ? 'Concluída' : 'Pendente'}</span>
                     </div>
-                    ${desc ? `<p class="text-muted mb-3">${desc}</p>` : ''}
+                    ${desc ? `<p class="text-muted mb-3" style="white-space:pre-line">${linkify(desc)}</p>` : ''}
                     <div class="task-detail-meta">
                         ${dueDate ? `<div><i class="bi bi-calendar me-2"></i><strong>Vencimento:</strong> ${new Date(dueDate).toLocaleDateString('pt-BR')}</div>` : ''}
                         ${contactName ? `<div><i class="bi bi-person me-2"></i><strong>Contato:</strong> ${contactName}</div>` : ''}

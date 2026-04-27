@@ -2001,6 +2001,11 @@
         new bootstrap.Modal(document.getElementById('addTaskModal')).show();
     }
 
+    function linkify(text) {
+        if (!text) return '';
+        return text.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:#6366f1;text-decoration:underline;word-break:break-all">$1</a>');
+    }
+
     function editTask(taskId) {
         // Find task in project data
         const task = (project.tarefas || []).find(t => t.id === taskId);
@@ -2130,7 +2135,7 @@
             <div class="task-context-section">
                 <h6><i class="bi bi-check2-square me-1"></i>Tarefa</h6>
                 <div class="fw-semibold">${task.titulo || 'Sem titulo'}</div>
-                ${task.descricao ? `<p class="text-muted mb-0 mt-1">${task.descricao}</p>` : ''}
+                ${task.descricao ? `<p class="text-muted mb-0 mt-1" style="white-space:pre-line">${linkify(task.descricao)}</p>` : ''}
             </div>
         `;
 
