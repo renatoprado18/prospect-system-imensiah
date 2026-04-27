@@ -865,9 +865,14 @@
                             <h3 class="section-title">
                                 <i class="bi bi-check2-square text-primary"></i> Tarefas
                             </h3>
-                            <button class="btn btn-sm btn-outline-primary" onclick="openAddTaskModal()">
-                                <i class="bi bi-plus"></i> Adicionar
-                            </button>
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-sm btn-outline-secondary" onclick="copyTasksForWhatsApp()" title="Copiar tarefas para WhatsApp">
+                                    <i class="bi bi-whatsapp"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-primary" onclick="openAddTaskModal()">
+                                    <i class="bi bi-plus"></i> Adicionar
+                                </button>
+                            </div>
                         </div>
                         <div class="section-body">
                             ${renderTasks()}
@@ -2851,6 +2856,51 @@
 
     // Load chat history after project loads
     setTimeout(loadChatHistory, 500);
+
+    function copyTasksForWhatsApp() {
+        const tasks = project.tarefas || [];
+        const pending = tasks.filter(t => t.status !== 'completed');
+        if (pending.length === 0) {
+            alert('Nenhuma tarefa pendente');
+            return;
+        }
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const overdue = [];
+        const upcoming = [];
+
+        pending.forEach(t => {
+            if (!t.data_vencimento) { upcoming.push(t); return; }
+            const due = new Date(t.data_vencimento);
+            due.setHours(0, 0, 0, 0);
+            if (due < today) overdue.push(t);
+            else upcoming.push(t);
+        });
+
+        const formatTask = (t) => {
+            const resp = t.contact_nome ? t.contact_nome.split(' ').slice(0, 2).join(' ') : '';
+            const date = t.data_vencimento ? new Date(t.data_vencimento).toLocaleDateString('pt-BR') : '';
+            return `• ${t.titulo}${date ? ' (' + date + ')' : ''}${resp ? ' — ' + resp : ''}`;
+        };
+
+        let text = `📋 *${project.nome} — Tarefas Pendentes*\n`;
+
+        if (overdue.length > 0) {
+            text += `\n🔴 *Vencidas (${overdue.length})*\n`;
+            text += overdue.map(formatTask).join('\n');
+        }
+
+        if (upcoming.length > 0) {
+            text += `\n\n📅 *Próximas (${upcoming.length})*\n`;
+            text += upcoming.map(formatTask).join('\n');
+        }
+
+        navigator.clipboard.writeText(text).then(() => {
+            showToast('Tarefas copiadas para WhatsApp!', 'success');
+        });
+    }
 
     async function saveArticleToProject() {
         const url = prompt('Cole a URL do artigo:');
