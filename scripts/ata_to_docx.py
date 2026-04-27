@@ -166,7 +166,7 @@ def _preprocess_markdown(md: str) -> str:
     Handles:
     - # Title → plain text (empresa name)
     - ## SECTION → plain text with section markers
-    - **bold** → keeps as-is (handled by _add_formatted_text)
+    - **bold** → keeps as-is (handled by _add_rich_text)
     - | tables | → keeps as-is (handled by section body renderer)
     - ### subsections → numbered subsections
     """
@@ -465,24 +465,14 @@ def _extract_tables_and_text(body: str) -> list:
 def generate_ata_docx(ata_md: str, empresa_nome: str, data_reuniao: str, output_path: str) -> str:
     """
     Generate a professionally formatted DOCX from ata markdown.
-
-    Args:
-        ata_md: The ata content in markdown format
-        empresa_nome: Company name (e.g. "VALLEN CLINIC")
-        data_reuniao: Meeting date string (e.g. "08 de Abril de 2026")
-        output_path: Path for the output DOCX file
-
-    Returns:
-        output_path
+    Flexible renderer — works with any section structure from Claude.
     """
-    # Preprocess markdown from Claude to expected format
-    ata_md = _preprocess_markdown(ata_md)
-    parsed = parse_ata_markdown(ata_md)
     doc = Document()
 
     # -----------------------------------------------------------------------
     # Page setup: A4, portrait, margins
     # -----------------------------------------------------------------------
+    # Page setup
     section = doc.sections[0]
     section.page_width = Cm(21.0)
     section.page_height = Cm(29.7)
@@ -492,28 +482,197 @@ def generate_ata_docx(ata_md: str, empresa_nome: str, data_reuniao: str, output_
     section.left_margin = Cm(2.5)
     section.right_margin = Cm(2.5)
 
-    # -----------------------------------------------------------------------
-    # Default font
-    # -----------------------------------------------------------------------
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(10)
     style.paragraph_format.line_spacing = 1.15
 
-    # -----------------------------------------------------------------------
-    # Header block (centered)
-    # -----------------------------------------------------------------------
-    # Company name
+    # --- Render markdown directly to DOCX ---
+    _render_markdown_to_docx(doc, ata_md, empresa_nome, data_reuniao)
+
+    # Footer
+    _add_horizontal_rule(doc)
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _add_run(p, f"Próxima reunião de conselho: {data_reuniao} | Confidencial",
+             size=8, color=COLOR_LIGHT_GRAY, italic=True)
+
+    doc.save(output_path)
+    return output_path
+
+
+def _render_markdown_to_docx(doc, md: str, empresa_nome: str, data_reuniao: str):
+    """Flexible markdown-to-DOCX renderer. Handles any section structure."""
+    lines = md.split('\n')
+    i = 0
+    in_table = False
+    table_rows = []
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Skip empty lines and horizontal rules
+        if not stripped or stripped == '---':
+            if in_table and table_rows:
+                _flush_table(doc, table_rows)
+                table_rows = []
+                in_table = False
+            i += 1
+            continue
+
+        # Table rows
+        if stripped.startswith('|') and '|' in stripped[1:]:
+            # Skip separator rows (|---|---|)
+            if re.match(r'^\|[\s\-:|]+\|$', stripped):
+                i += 1
+                continue
+            in_table = True
+            cells = [c.strip() for c in stripped.strip('|').split('|')]
+            table_rows.append(cells)
+            i += 1
+            continue
+
+        # Flush pending table
+        if in_table and table_rows:
+            _flush_table(doc, table_rows)
+            table_rows = []
+            in_table = False
+
+        # # Title (H1)
+        if stripped.startswith('# '):
+            title = stripped[2:].strip()
+            # Extract empresa from title
+            if '—' in title:
+                empresa_display = title.split('—')[0].strip()
+            else:
+                empresa_display = empresa_nome
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _set_paragraph_spacing(p, before=0, after=2)
+            _add_run(p, empresa_display, bold=True, size=18, color=COLOR_DARK)
+            # Subtitle
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _set_paragraph_spacing(p, before=0, after=2)
+            _add_run(p, "Ata de Reunião de Conselho", size=12, color=COLOR_SUBTITLE)
+            i += 1
+            continue
+
+        # **Data:** ... | **Duração:** ... — metadata line
+        if stripped.startswith('**Data:**'):
+            # Parse metadata
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _set_paragraph_spacing(p, before=0, after=6)
+            clean = stripped.replace('**', '')
+            _add_run(p, clean, size=10, color=COLOR_DATE)
+            _add_horizontal_rule(doc)
+            i += 1
+            continue
+
+        # ## Section header (H2)
+        if stripped.startswith('## '):
+            title = stripped[3:].strip()
+            _add_horizontal_rule(doc)
+            p = doc.add_paragraph()
+            _set_paragraph_spacing(p, before=8, after=4)
+            _add_run(p, title, bold=True, size=12, color=COLOR_DARK)
+            i += 1
+            continue
+
+        # ### Subsection (H3)
+        if stripped.startswith('### '):
+            title = stripped[4:].strip()
+            p = doc.add_paragraph()
+            _set_paragraph_spacing(p, before=6, after=2)
+            _add_run(p, title, bold=True, size=10, color=RGBColor(0x34, 0x49, 0x5e))
+            i += 1
+            continue
+
+        # Bullet point
+        if stripped.startswith('- ') or stripped.startswith('• ') or stripped.startswith('* '):
+            text = stripped[2:].strip()
+            p = doc.add_paragraph()
+            _set_paragraph_spacing(p, before=1, after=1)
+            p.paragraph_format.left_indent = Cm(1.0)
+            _add_run(p, "•  ", size=10, color=COLOR_DARK)
+            _add_rich_text(p, text)
+            i += 1
+            continue
+
+        # Numbered list (1. 2. etc.)
+        m = re.match(r'^(\d+)\.\s+(.+)$', stripped)
+        if m:
+            num = m.group(1)
+            text = m.group(2)
+            p = doc.add_paragraph()
+            _set_paragraph_spacing(p, before=1, after=1)
+            p.paragraph_format.left_indent = Cm(0.8)
+            _add_run(p, f"{num}. ", bold=True, size=10, color=COLOR_DARK)
+            _add_rich_text(p, text)
+            i += 1
+            continue
+
+        # Regular paragraph
+        p = doc.add_paragraph()
+        _set_paragraph_spacing(p, before=2, after=2)
+        _add_rich_text(p, stripped)
+        i += 1
+
+    # Flush remaining table
+    if table_rows:
+        _flush_table(doc, table_rows)
+
+
+def _flush_table(doc, rows):
+    """Render a markdown table as a formatted DOCX table."""
+    if not rows:
+        return
+
+    num_cols = max(len(r) for r in rows)
+    table = doc.add_table(rows=len(rows), cols=num_cols)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+    for r_idx, row_data in enumerate(rows):
+        for c_idx, cell_text in enumerate(row_data):
+            if c_idx >= num_cols:
+                break
+            cell = table.cell(r_idx, c_idx)
+            cell.text = ""
+            p = cell.paragraphs[0]
+            _set_paragraph_spacing(p, before=1, after=1)
+
+            is_header = (r_idx == 0)
+            clean_text = cell_text.replace('**', '').strip()
+            _add_run(p, clean_text,
+                     bold=is_header,
+                     size=8 if not is_header else 9,
+                     color=RGBColor(0xFF, 0xFF, 0xFF) if is_header else COLOR_DARK)
+
+            # Header row styling
+            if is_header:
+                shading = parse_xml(
+                    f'<w:shd {nsdecls("w")} w:fill="2c3e50" w:val="clear"/>'
+                )
+                cell._tc.get_or_add_tcPr().append(shading)
+            elif r_idx % 2 == 0:
+                shading = parse_xml(
+                    f'<w:shd {nsdecls("w")} w:fill="f8f9fa" w:val="clear"/>'
+                )
+                cell._tc.get_or_add_tcPr().append(shading)
+
+
+# ---------------------------------------------------------------------------
+# Legacy Vallen-specific renderer (kept for backwards compatibility)
+# Use generate_ata_docx() for new atas — it's the flexible renderer.
+# ---------------------------------------------------------------------------
+def _legacy_vallen_header(doc, empresa_nome, data_reuniao, parsed):
+    """Old Vallen-specific header — not used by new renderer."""
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     _set_paragraph_spacing(p, before=0, after=2)
     _add_run(p, empresa_nome, bold=True, size=18, color=COLOR_DARK)
-
-    # Subtitle
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _set_paragraph_spacing(p, before=0, after=2)
-    _add_run(p, "Ata de Reunião de Conselho", size=12, color=COLOR_SUBTITLE)
 
     # Date line
     date_line = parsed.get('data_linha', '') or f"{data_reuniao} · Reunião ordinária mensal"
