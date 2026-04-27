@@ -859,16 +859,19 @@ def _save_conversation_message(phone: str, role: str, content: str,
 
 
 def _build_messages_from_history(history: List[Dict]) -> List[Dict]:
-    """Convert DB history rows to Claude messages format."""
-    messages = []
+    """Convert DB history rows to Claude messages format.
+
+    Handles consecutive same-role messages by merging them,
+    which is required by Claude API (strict user/assistant alternation).
+    """
+    raw_messages = []
     for row in history:
         role = row["role"]
         content = row["content"]
 
         if role == "user":
-            messages.append({"role": "user", "content": content})
+            raw_messages.append({"role": "user", "content": content})
         elif role == "assistant":
-            # If there were tool calls, reconstruct the multi-block content
             if row.get("tool_calls"):
                 blocks = []
                 if content:
@@ -883,9 +886,8 @@ def _build_messages_from_history(history: List[Dict]) -> List[Dict]:
                         "name": tc["name"],
                         "input": tc["input"]
                     })
-                messages.append({"role": "assistant", "content": blocks})
+                raw_messages.append({"role": "assistant", "content": blocks})
 
-                # Add tool results
                 if row.get("tool_results"):
                     tool_results = row["tool_results"]
                     if isinstance(tool_results, str):
@@ -897,9 +899,45 @@ def _build_messages_from_history(history: List[Dict]) -> List[Dict]:
                             "tool_use_id": tr["tool_use_id"],
                             "content": tr["content"]
                         })
-                    messages.append({"role": "user", "content": result_blocks})
+                    raw_messages.append({"role": "user", "content": result_blocks})
             else:
-                messages.append({"role": "assistant", "content": content})
+                raw_messages.append({"role": "assistant", "content": content})
+
+    # Merge consecutive same-role messages (required by Claude API)
+    messages = []
+    for msg in raw_messages:
+        if not messages:
+            messages.append(msg)
+            continue
+
+        prev = messages[-1]
+        if msg["role"] == prev["role"]:
+            # Merge: combine content
+            if msg["role"] == "user":
+                prev_text = prev["content"] if isinstance(prev["content"], str) else ""
+                new_text = msg["content"] if isinstance(msg["content"], str) else ""
+                if prev_text and new_text:
+                    # Merge consecutive user texts
+                    prev["content"] = prev_text + "\n" + new_text
+                elif isinstance(msg["content"], list):
+                    # Tool results — keep as separate message with dummy assistant between
+                    messages.append({"role": "assistant", "content": "(continuando...)"})
+                    messages.append(msg)
+                elif isinstance(prev["content"], list):
+                    # Previous was tool results, new is text
+                    messages.append({"role": "assistant", "content": "(continuando...)"})
+                    messages.append(msg)
+            elif msg["role"] == "assistant":
+                # Merge consecutive assistant messages: keep only the last one (final response)
+                prev_text = prev["content"] if isinstance(prev["content"], str) else ""
+                new_text = msg["content"] if isinstance(msg["content"], str) else ""
+                if prev_text and new_text:
+                    prev["content"] = new_text  # Keep latest
+                elif isinstance(msg["content"], list):
+                    messages.append({"role": "user", "content": "(aguardando...)"})
+                    messages.append(msg)
+        else:
+            messages.append(msg)
 
     return messages
 
@@ -1061,6 +1099,22 @@ async def handle_bot_message(phone: str, message: str, message_id: str) -> str:
     if SKIP_PATTERNS.match(message.strip()):
         logger.debug(f"Skipping trivial message: {message}")
         return ""
+
+    # 2b. Dedup: skip if identical message was received in last 30s
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id FROM bot_conversations
+                WHERE phone = %s AND role = 'user' AND content = %s
+                  AND created_at > NOW() - INTERVAL '30 seconds'
+                LIMIT 1
+            """, (phone, message))
+            if cursor.fetchone():
+                logger.info(f"Skipping duplicate bot message: {message[:50]}")
+                return ""
+    except Exception as e:
+        logger.warning(f"Dedup check error: {e}")
 
     # 3. Save user message to history
     _save_conversation_message(phone, "user", message)
