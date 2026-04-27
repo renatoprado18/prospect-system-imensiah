@@ -10289,6 +10289,20 @@ async def cron_pre_meeting_briefings(request: Request):
     return {"job": "pre-meeting-briefings", "timestamp": datetime.now().isoformat(), **results}
 
 
+@app.get("/api/cron/group-digest")
+async def cron_group_digest(request: Request):
+    """
+    Cron: Daily digest of WhatsApp group messages.
+    Schedule: 0 21 * * * (21h daily)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.group_digest import generate_daily_group_digests
+    results = await generate_daily_group_digests()
+    return {"job": "group-digest", "timestamp": datetime.now().isoformat(), **results}
+
+
 # ============== Google Calendar Endpoints ==============
 
 from integrations.google_calendar import get_calendar_integration
