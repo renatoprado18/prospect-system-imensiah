@@ -521,6 +521,137 @@ REGRAS:
     return None
 
 
+@app.post("/generate-ata")
+async def generate_ata_endpoint(request: Request):
+    """
+    Generate a comprehensive ata from meeting transcription using Claude.
+    Saves directly to ConselhoOS database. No timeout limit on Railway.
+    """
+    data = await request.json()
+    reuniao_id = data.get("reuniao_id")
+    transcricao = data.get("transcricao", "")
+    empresa_nome = data.get("empresa_nome", "")
+    data_reuniao = data.get("data_reuniao", "")
+    pauta_md = data.get("pauta_md", "")
+    conselhoos_db_url = data.get("conselhoos_db_url") or CONSELHOOS_DATABASE_URL
+    participantes_info = data.get("participantes", "")
+
+    if not transcricao or not reuniao_id:
+        return JSONResponse({"error": "reuniao_id e transcricao obrigatorios"}, status_code=400)
+
+    logger.info(f"Generating ata for {empresa_nome}, reuniao {reuniao_id} ({len(transcricao)} chars)")
+
+    prompt = f"""Você é um secretário executivo de alto nível especializado em governança corporativa.
+Analise a transcrição desta reunião de conselho e produza uma ATA COMPLETA E DETALHADA.
+
+**Empresa:** {empresa_nome}
+**Data:** {data_reuniao}
+{f"**Participantes conhecidos:** {participantes_info}" if participantes_info else ""}
+{f"**Pauta prevista:**\n{pauta_md}" if pauta_md else ""}
+
+INSTRUÇÕES DE QUALIDADE:
+1. A ata deve ter entre 8.000 e 15.000 caracteres — seja DETALHADO
+2. Use tabelas Markdown para dados financeiros (faturamento, metas, indicadores)
+3. Cada decisão deve ter: o que foi decidido, por quê, quem é responsável, prazo
+4. Cada discussão deve ter: contexto, argumentos apresentados, conclusão
+5. Identifique números, valores em R$, percentuais e datas mencionados
+6. Capture nuances: preocupações expressas, ressalvas, condições
+7. Distingua entre DECISÕES (aprovadas pelo conselho) e PENDÊNCIAS (a resolver)
+8. Se houve divergência de opinião, registre ambos os lados
+9. Use formatação profissional com cabeçalhos numerados (1., 1.1, 1.2...)
+
+ESTRUTURA OBRIGATÓRIA:
+
+# [EMPRESA] — Ata de Reunião de Conselho
+**Data:** ... | **Duração:** ~Xh | **Participantes:** N presentes
+
+## PARTICIPANTES
+Lista com nome, cargo/papel e status (presente/ausente)
+
+## 1. CONTEXTO E ABERTURA
+Contexto da reunião, revisão de ata anterior se mencionada
+
+## 2. [TEMA PRINCIPAL 1] — título descritivo
+### 2.1 Subtema
+Análise detalhada com números, tabelas se aplicável
+
+## 3. [TEMA PRINCIPAL 2] — título descritivo
+(continuar para cada tema relevante)
+
+## DECISÕES APROVADAS
+Lista numerada com responsável e prazo
+
+## PENDÊNCIAS E PRÓXIMOS PASSOS
+Lista com responsável e prazo
+
+## PRÓXIMA REUNIÃO
+Data se mencionada
+
+---
+
+**Transcrição:**
+{transcricao[:80000]}
+
+Produza a ata completa em Markdown. NUNCA invente informações não presentes na transcrição."""
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 16000,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+
+        if resp.status_code != 200:
+            logger.error(f"Claude API error: {resp.status_code} {resp.text[:200]}")
+            return JSONResponse({"error": f"Claude API error: {resp.status_code}"}, status_code=500)
+
+        result = resp.json()
+        ata_md = result["content"][0]["text"]
+        logger.info(f"Ata generated: {len(ata_md)} chars")
+
+        # Save to ConselhoOS database
+        if conselhoos_db_url:
+            try:
+                with psycopg.connect(conselhoos_db_url) as conn:
+                    conn.execute(
+                        "UPDATE reunioes SET ata_md = %s, updated_at = NOW() WHERE id = %s",
+                        (ata_md, reuniao_id)
+                    )
+                    conn.commit()
+                logger.info(f"Ata saved to ConselhoOS for reuniao {reuniao_id}")
+            except Exception as e:
+                logger.error(f"Error saving ata to ConselhoOS: {e}")
+                return JSONResponse({
+                    "status": "generated_not_saved",
+                    "error": str(e),
+                    "ata_md": ata_md
+                }, status_code=200)
+
+        # Notify via WhatsApp
+        try:
+            await _send_response(
+                os.getenv("RENATO_PHONE", "5511984153337"),
+                f"✅ Ata gerada para {empresa_nome} ({data_reuniao}). {len(ata_md)} chars. Recarregue a página."
+            )
+        except Exception:
+            pass
+
+        return {"status": "success", "chars": len(ata_md), "ata_md": ata_md}
+
+    except Exception as e:
+        logger.error(f"Ata generation error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.post("/transcribe")
 async def transcribe_audio(request: Request):
     """
