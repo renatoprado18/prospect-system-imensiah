@@ -1053,8 +1053,15 @@ Tabelas:
 - Memorias de contato: SELECT titulo, resumo, data_ocorrencia FROM contact_memories WHERE contact_id = X ORDER BY data_ocorrencia DESC
 - Fatos de contato: SELECT categoria, fato FROM contact_facts WHERE contact_id = X
 
-REGRAS CRITICAS:
-- NUNCA invente, assuma ou fabrique informacoes. Se nao tem o dado no banco, NAO afirme. Diga "nao tenho essa informacao".
+REGRA #1 (INVIOLAVEL - MAIS IMPORTANTE QUE TUDO):
+⛔ NUNCA, JAMAIS, EM HIPOTESE ALGUMA invente emails, telefones, cargos, IDs ou qualquer dado de contato.
+⛔ Se Renato pedir dados de contatos, voce DEVE usar query_intel para CADA contato ANTES de responder.
+⛔ Se a query retornar vazio, diga "nao encontrei no banco" — NUNCA preencha com dados inventados.
+⛔ Se precisar buscar 7 contatos, faca 7 queries (ou uma query com OR/IN). NAO atalhe inventando.
+⛔ Emails inventados causam DANO REAL (mensagens para pessoas erradas). Isto e INACEITAVEL.
+⛔ Violacao desta regra ja aconteceu antes e causou problemas serios. NAO repita.
+
+REGRAS ADICIONAIS:
 - NUNCA diga que alguem curtiu, comentou ou fez algo a menos que tenha EVIDENCIA no banco de dados.
 - Quando Renato mencionar "meu post", consulte editorial_posts para pegar o link (url_publicado ou linkedin_post_url) e inclua na mensagem.
 - Responda SEMPRE em portugues
@@ -1139,7 +1146,7 @@ async def handle_bot_message(phone: str, message: str, message_id: str) -> str:
         for iteration in range(MAX_TOOL_ITERATIONS):
             logger.info(f"Claude call iteration {iteration + 1}/{MAX_TOOL_ITERATIONS}")
 
-            async with httpx.AsyncClient(timeout=25.0) as client:
+            async with httpx.AsyncClient(timeout=55.0) as client:
                 response = await client.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
@@ -1149,7 +1156,7 @@ async def handle_bot_message(phone: str, message: str, message_id: str) -> str:
                     },
                     json={
                         "model": CLAUDE_MODEL,
-                        "max_tokens": 1000,
+                        "max_tokens": 2000,
                         "system": system_prompt,
                         "tools": TOOLS,
                         "messages": messages,
