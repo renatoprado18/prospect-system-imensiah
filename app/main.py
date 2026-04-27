@@ -18944,6 +18944,150 @@ class AtaDocxRequest(BaseModel):
     template: Optional[str] = None  # None = default template. Future: "vallen", "alba", etc.
 
 
+@app.post("/api/ata/generate")
+async def generate_ata_from_transcription(request: Request, background_tasks: BackgroundTasks):
+    """
+    Generate ata from transcription using Claude — runs in BACKGROUND.
+    Both ConselhoOS and INTEL are Hobby (10s timeout), so this:
+    1. Returns immediately with {status: "processing"}
+    2. Generates ata with Claude in background
+    3. Saves result directly to ConselhoOS DB
+    """
+    data = await request.json()
+    reuniao_id = data.get("reuniao_id")
+    transcricao = data.get("transcricao", "")
+    empresa_nome = data.get("empresa_nome", "")
+    data_reuniao = data.get("data_reuniao", "")
+    pauta_md = data.get("pauta_md", "")
+    conselhoos_db_url = data.get("conselhoos_db_url")
+
+    if not transcricao or not reuniao_id:
+        raise HTTPException(400, "reuniao_id e transcricao obrigatorios")
+
+    background_tasks.add_task(
+        _generate_ata_background, reuniao_id, transcricao,
+        empresa_nome, data_reuniao, pauta_md, conselhoos_db_url
+    )
+
+    return {"status": "processing", "message": "Ata sendo gerada em background. Recarregue em ~30s."}
+
+
+def _generate_ata_background(
+    reuniao_id: str, transcricao: str, empresa_nome: str,
+    data_reuniao: str, pauta_md: str, conselhoos_db_url: str
+):
+    """Background task: generate ata with Claude and save to ConselhoOS DB."""
+    import anthropic
+    import re as _re
+
+    prompt = f"""Analise a transcrição desta reunião de conselho e gere uma ata estruturada em JSON.
+
+**Empresa:** {empresa_nome}
+**Data:** {data_reuniao}
+
+{f"**Pauta prevista:**{chr(10)}{pauta_md}{chr(10)}" if pauta_md else ""}
+
+**Transcrição:**
+{transcricao[:50000]}
+
+Gere um JSON com esta estrutura:
+{{
+  "resumoExecutivo": "Resumo em 3-5 frases",
+  "participantes": [{{"nome": "Nome", "cargo": "Cargo", "presente": true}}],
+  "decisoes": [{{"decisao": "Texto", "responsavel": "Nome", "prazo": "DD/MM/YYYY", "urgencia": "alta|media|baixa"}}],
+  "raciItens": [{{"acao": "Texto", "responsible": "Nome", "accountable": "Nome", "consulted": "Nome", "informed": "Nome", "prazo": "DD/MM/YYYY"}}],
+  "discussoes": [{{"tema": "Tema", "resumo": "Resumo", "indicadores": "verde|amarelo|vermelho"}}],
+  "pendencias": [{{"item": "Texto", "responsavel": "Nome"}}],
+  "proximaReuniao": "DD/MM/YYYY ou null"
+}}
+
+Regras:
+1. Extraia APENAS fatos mencionados na transcrição — NUNCA invente
+2. Identifique todos os participantes pela voz/menção
+3. Decisões devem ser ações concretas com responsável
+4. RACI: R=quem executa, A=quem aprova, C=consultado, I=informado
+5. Prazos no formato DD/MM/YYYY
+
+Retorne APENAS o JSON válido."""
+
+    try:
+        client = anthropic.Anthropic()
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=8000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        response_text = message.content[0].text if message.content[0].type == "text" else ""
+        json_match = _re.search(r'\{[\s\S]*\}', response_text)
+        if not json_match:
+            logger.error(f"Ata generation: no JSON in response for {reuniao_id}")
+            return
+
+        ata = json.loads(json_match.group(0))
+
+        # Convert to markdown
+        md_lines = [f"# Ata de Reunião - {empresa_nome}", f"**Data:** {data_reuniao}", ""]
+        if ata.get("resumoExecutivo"):
+            md_lines += ["## Resumo Executivo", ata["resumoExecutivo"], ""]
+        if ata.get("participantes"):
+            md_lines.append("## Participantes")
+            for p in ata["participantes"]:
+                status = "✅" if p.get("presente") else "❌"
+                md_lines.append(f"- {status} **{p['nome']}** - {p.get('cargo', '')}")
+            md_lines.append("")
+        if ata.get("decisoes"):
+            md_lines.append("## Decisões")
+            for d in ata["decisoes"]:
+                md_lines.append(f"- **{d['decisao']}** → {d.get('responsavel', '?')} (prazo: {d.get('prazo', 'N/A')})")
+            md_lines.append("")
+        if ata.get("discussoes"):
+            md_lines.append("## Discussões")
+            for disc in ata["discussoes"]:
+                md_lines.append(f"### {disc['tema']}")
+                md_lines.append(disc.get("resumo", ""))
+                md_lines.append("")
+        if ata.get("pendencias"):
+            md_lines.append("## Pendências")
+            for pend in ata["pendencias"]:
+                md_lines.append(f"- {pend['item']} → {pend.get('responsavel', '?')}")
+            md_lines.append("")
+        if ata.get("proximaReuniao"):
+            md_lines.append(f"**Próxima reunião:** {ata['proximaReuniao']}")
+        ata_md = "\n".join(md_lines)
+
+        # Save directly to ConselhoOS database
+        if conselhoos_db_url:
+            try:
+                import psycopg2
+                conn = psycopg2.connect(conselhoos_db_url)
+                cursor = conn.cursor()
+                cursor.execute(
+                    'UPDATE reunioes SET "ataMd" = %s, "updatedAt" = NOW() WHERE id = %s',
+                    (ata_md, reuniao_id)
+                )
+                conn.commit()
+                conn.close()
+                logger.info(f"Ata saved to ConselhoOS for reuniao {reuniao_id}")
+            except Exception as e:
+                logger.error(f"Error saving ata to ConselhoOS: {e}")
+
+        # Also notify via WhatsApp
+        try:
+            from services.whatsapp_notifications import send_intel_notification
+            import asyncio
+            asyncio.run(send_intel_notification(
+                f"✅ Ata gerada para {empresa_nome} ({data_reuniao}). "
+                f"{len(ata.get('decisoes', []))} decisões, "
+                f"{len(ata.get('raciItens', []))} itens RACI."
+            ))
+        except Exception:
+            pass
+
+    except Exception as e:
+        logger.error(f"Background ata generation error: {e}")
+
+
 @app.post("/api/ata/generate-docx")
 async def generate_ata_docx_endpoint(req: AtaDocxRequest):
     """
