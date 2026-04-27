@@ -758,12 +758,14 @@ REGRAS:
 
 
 @app.post("/generate-ata")
-async def generate_ata_endpoint(request: Request, background_tasks: BackgroundTasks):
+async def generate_ata_endpoint(request: Request):
     """
     Generate a comprehensive ata from meeting transcription using Claude.
     Returns immediately, processes in background on Railway (no timeout).
     Saves directly to ConselhoOS database when done.
     """
+    import asyncio
+
     data = await request.json()
     reuniao_id = data.get("reuniao_id")
     transcricao = data.get("transcricao", "")
@@ -777,12 +779,14 @@ async def generate_ata_endpoint(request: Request, background_tasks: BackgroundTa
         return JSONResponse({"error": "reuniao_id e transcricao obrigatorios"}, status_code=400)
 
     logger.info(f"Queuing ata generation for {empresa_nome}, reuniao {reuniao_id} ({len(transcricao)} chars)")
+    logger.info(f"ConselhoOS DB URL: {conselhoos_db_url[:30]}..." if conselhoos_db_url else "NO CONSELHOOS_DB_URL!")
 
-    # Process in background — return immediately so Vercel caller doesn't timeout
-    background_tasks.add_task(
-        _generate_ata_background,
-        reuniao_id, transcricao, empresa_nome, data_reuniao,
-        pauta_md, conselhoos_db_url, participantes_info
+    # Fire background task using asyncio (Railway keeps running after response)
+    asyncio.create_task(
+        _generate_ata_background(
+            reuniao_id, transcricao, empresa_nome, data_reuniao,
+            pauta_md, conselhoos_db_url, participantes_info
+        )
     )
 
     return {"status": "processing", "message": "Ata sendo gerada em background. Recarregue em ~60s."}
@@ -793,6 +797,22 @@ async def _generate_ata_background(
     pauta_md, conselhoos_db_url, participantes_info
 ):
     """Background task for ata generation."""
+    logger.info(f"[ATA-BG] Starting generation for {empresa_nome} ({len(transcricao)} chars)")
+
+    try:
+        await _do_generate_ata(
+            reuniao_id, transcricao, empresa_nome, data_reuniao,
+            pauta_md, conselhoos_db_url, participantes_info
+        )
+    except Exception as e:
+        logger.error(f"[ATA-BG] FATAL ERROR: {e}", exc_info=True)
+
+
+async def _do_generate_ata(
+    reuniao_id, transcricao, empresa_nome, data_reuniao,
+    pauta_md, conselhoos_db_url, participantes_info
+):
+    """Actual ata generation logic."""
 
     prompt = f"""Você é um secretário executivo de alto nível especializado em governança corporativa.
 Analise a transcrição desta reunião de conselho e produza uma ATA COMPLETA E DETALHADA.
