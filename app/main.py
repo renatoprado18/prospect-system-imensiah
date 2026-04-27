@@ -19063,7 +19063,7 @@ Retorne APENAS o JSON válido."""
                 conn = psycopg2.connect(conselhoos_db_url)
                 cursor = conn.cursor()
                 cursor.execute(
-                    'UPDATE reunioes SET "ataMd" = %s, "updatedAt" = NOW() WHERE id = %s',
+                    'UPDATE reunioes SET ata_md = %s, updated_at = NOW() WHERE id = %s',
                     (ata_md, reuniao_id)
                 )
                 conn.commit()
