@@ -61,6 +61,242 @@ async def debug_db():
     return results
 
 
+@app.post("/organize-empresa")
+async def organize_empresa(request: Request):
+    """
+    Organize Drive folder + extract empresa data. No timeout limit.
+    Called by ConselhoOS or directly.
+    """
+    data = await request.json()
+    if data.get("secret") != WORKER_SECRET:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    empresa_id = data.get("empresa_id", "")
+    folder_id = data.get("folder_id", "")
+    access_token = data.get("access_token", "")
+
+    if not folder_id:
+        return JSONResponse(status_code=400, content={"error": "folder_id required"})
+
+    logger.info(f"Organizing empresa {empresa_id}, folder {folder_id}")
+
+    results = {"subfolders_created": [], "files_moved": [], "docs_read": 0, "extracted": None}
+
+    try:
+        # 1. List all items in folder
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        resp = await _drive_list(folder_id, headers)
+        items = resp.get("files", [])
+        logger.info(f"Found {len(items)} items in folder")
+
+        folders = {f["name"].lower(): f["id"] for f in items if "folder" in f.get("mimeType", "")}
+        files = [f for f in items if "folder" not in f.get("mimeType", "")]
+
+        # 2. Create standard subfolders
+        standard = ["Atas", "Documentos", "RACI", "Pauta Anual", "Financeiro", "Preparação"]
+        for name in standard:
+            if name.lower() not in folders:
+                created = await _drive_create_folder(name, folder_id, headers)
+                if created:
+                    folders[name.lower()] = created["id"]
+                    results["subfolders_created"].append(name)
+
+        # 3. Move loose files to correct subfolders
+        for f in files:
+            name_lower = f["name"].lower()
+            target = None
+
+            if any(k in name_lower for k in ["ata", "minuta", "acta"]):
+                target = folders.get("atas")
+            elif any(k in name_lower for k in ["raci", "ação", "acao"]):
+                target = folders.get("raci")
+            elif any(k in name_lower for k in ["pauta", "agenda"]):
+                target = folders.get("pauta anual")
+            elif any(k in name_lower for k in ["dfin", "financ", "balancete", "dre", "balanço", "receita", "orçamento"]):
+                target = folders.get("financeiro")
+            elif any(k in name_lower for k in ["briefing", "preparação", "preparacao"]):
+                target = folders.get("preparação")
+
+            if target:
+                moved = await _drive_move_file(f["id"], target, headers)
+                if moved:
+                    target_name = next((n for n, fid in folders.items() if fid == target), "?")
+                    results["files_moved"].append({"name": f["name"], "to": target_name})
+
+        # 4. Read Google Docs content for enrichment
+        readable = ["application/vnd.google-apps.document", "application/vnd.google-apps.spreadsheet",
+                     "application/vnd.google-apps.presentation"]
+
+        # Also try to export .docx and .pptx files
+        all_readable = [f for f in items if f.get("mimeType", "") in readable]
+
+        # Scan subfolders too
+        for fname, fid in folders.items():
+            try:
+                sub_resp = await _drive_list(fid, headers)
+                for sf in sub_resp.get("files", []):
+                    if sf.get("mimeType", "") in readable:
+                        all_readable.append(sf)
+            except Exception:
+                pass
+
+        doc_contents = []
+        for doc in all_readable[:15]:
+            try:
+                content = await _drive_export_text(doc["id"], headers)
+                if content:
+                    doc_contents.append({"name": doc["name"], "content": content[:3000]})
+                    results["docs_read"] += 1
+            except Exception:
+                pass
+
+        # Also use file names for context
+        file_list = "\n".join([f"[{f.get('folder', 'raiz') if 'folder' in f else 'raiz'}] {f['name']}" for f in items])
+
+        # 5. Claude enrichment
+        if doc_contents or items:
+            doc_texts = "\n".join([f"\n--- {d['name']} ---\n{d['content']}" for d in doc_contents])
+
+            prompt = f"""Analise os documentos desta empresa e extraia TODAS as informações.
+
+EMPRESA: {data.get('empresa_nome', 'desconhecida')}
+
+ARQUIVOS ({len(items)}):
+{file_list}
+
+CONTEÚDO DOS DOCUMENTOS LIDOS ({len(doc_contents)}):
+{doc_texts or '(nenhum documento Google Docs encontrado)'}
+
+Extraia APENAS JSON (sem markdown):
+{{
+  "setor": "setor de atuação",
+  "descricao": "descrição em 2-3 frases",
+  "contexto_md": "contexto detalhado em markdown: histórico, missão, valores, posicionamento, desafios",
+  "pessoas": [
+    {{"nome": "Nome", "cargo": "Cargo", "tipo": "socio|conselheiro|executivo|funcionario"}}
+  ],
+  "riscos": ["risco 1", "risco 2"],
+  "plano_estrategico": "resumo do plano estratégico",
+  "insights": {{
+    "governanca": "estrutura, maturidade",
+    "mercado": "setor, posicionamento",
+    "financeiro": "se disponível",
+    "operacional": "estrutura, processos"
+  }}
+}}
+
+Extraia APENAS do que está nos documentos. NÃO invente."""
+
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                ai_resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01",
+                             "content-type": "application/json"},
+                    json={"model": "claude-sonnet-4-20250514", "max_tokens": 2000,
+                          "messages": [{"role": "user", "content": prompt}]}
+                )
+
+            if ai_resp.status_code == 200:
+                text = ai_resp.json().get("content", [{}])[0].get("text", "")
+                js = text.find("{")
+                je = text.rfind("}") + 1
+                if js >= 0:
+                    extracted = json.loads(text[js:je])
+                    results["extracted"] = extracted
+
+                    # Update empresa in ConselhoOS DB
+                    if CONSELHOOS_DATABASE_URL and empresa_id:
+                        conn = psycopg.connect(CONSELHOOS_DATABASE_URL, row_factory=dict_row)
+                        cursor = conn.cursor()
+
+                        updates = []
+                        values = []
+                        if extracted.get("setor"):
+                            updates.append("setor = %s")
+                            values.append(extracted["setor"])
+                        if extracted.get("descricao"):
+                            updates.append("descricao = %s")
+                            values.append(extracted["descricao"])
+                        if extracted.get("contexto_md"):
+                            updates.append("contexto_md = %s")
+                            values.append(extracted["contexto_md"])
+                        if extracted.get("insights"):
+                            updates.append("insights_json = %s")
+                            values.append(json.dumps(extracted["insights"]))
+                        if extracted.get("pessoas"):
+                            updates.append("pessoas_chave = %s")
+                            values.append(json.dumps(extracted["pessoas"]))
+
+                        if updates:
+                            updates.append("updated_at = NOW()")
+                            values.append(empresa_id)
+                            cursor.execute(f"UPDATE empresas SET {', '.join(updates)} WHERE id = %s", values)
+                            conn.commit()
+
+                        # Create pessoas records
+                        for p in extracted.get("pessoas", []):
+                            if not p.get("nome"):
+                                continue
+                            cursor.execute("SELECT id FROM pessoas WHERE empresa_id = %s AND nome = %s", (empresa_id, p["nome"]))
+                            if not cursor.fetchone():
+                                cursor.execute(
+                                    "INSERT INTO pessoas (id, empresa_id, nome, cargo) VALUES (gen_random_uuid(), %s, %s, %s)",
+                                    (empresa_id, p["nome"], p.get("cargo", ""))
+                                )
+                        conn.commit()
+                        conn.close()
+
+        return results
+
+    except Exception as e:
+        logger.error(f"Organize empresa error: {e}")
+        return {"error": str(e)}
+
+
+async def _drive_list(folder_id: str, headers: dict) -> dict:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"https://www.googleapis.com/drive/v3/files?q='{folder_id}'+in+parents+and+trashed=false&fields=files(id,name,mimeType)&pageSize=100",
+            headers=headers)
+        return resp.json() if resp.status_code == 200 else {"files": []}
+
+
+async def _drive_create_folder(name: str, parent_id: str, headers: dict) -> dict | None:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(
+            "https://www.googleapis.com/drive/v3/files",
+            headers={**headers, "Content-Type": "application/json"},
+            json={"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]})
+        return resp.json() if resp.status_code == 200 else None
+
+
+async def _drive_move_file(file_id: str, target_folder: str, headers: dict) -> bool:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        # Get current parents
+        resp = await client.get(f"https://www.googleapis.com/drive/v3/files/{file_id}?fields=parents", headers=headers)
+        if resp.status_code != 200:
+            return False
+        parents = resp.json().get("parents", [])
+        # Move
+        resp = await client.patch(
+            f"https://www.googleapis.com/drive/v3/files/{file_id}?addParents={target_folder}&removeParents={','.join(parents)}",
+            headers=headers)
+        return resp.status_code == 200
+
+
+async def _drive_export_text(file_id: str, headers: dict) -> str | None:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(
+            f"https://www.googleapis.com/drive/v3/files/{file_id}/export?mimeType=text/plain",
+            headers=headers)
+        if resp.status_code == 200:
+            return resp.text
+        # Fallback: direct download
+        resp = await client.get(f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media", headers=headers)
+        return resp.text if resp.status_code == 200 else None
+
+
 @app.post("/process-message")
 async def process_message(request: Request):
     """
