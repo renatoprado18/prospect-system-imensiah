@@ -38,6 +38,13 @@
 - [ ] Resumo diário dos grupos WA com sync ativo
 - [ ] Extrair decisões, pendências, menções a Renato
 
+### Knowledge Base por Projeto
+- [x] Salvar artigos da web como knowledge (fetch + AI summary)
+- [x] 3 formas: botão na página, bot WhatsApp, API
+- [ ] Compartilhar artigo com stakeholders do projeto (mensagem personalizada por contato)
+- [ ] Sugerir artigos automaticamente baseado no contexto do projeto (news clipping → projetos)
+- [ ] Resumo periódico da knowledge base (condensar artigos em briefing)
+
 ### Post-call Automático
 - [ ] Detectar fim de evento no Calendar → perguntar "Como foi a reunião?"
 - [ ] Criar nota/memória com base na resposta
