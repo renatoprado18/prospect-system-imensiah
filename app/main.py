@@ -8306,12 +8306,14 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
         return True
 
     def _should_suggest_contact(contact: dict) -> bool:
-        """Filter contacts that don't need proactive outreach suggestions."""
-        # Skip contacts with very high health AND contacted recently (daily collaborators)
+        """Filter contacts that don't need proactive outreach right now."""
         health = contact.get("health_score") or 0
+        circulo = contact.get("circulo") or 5
         ultimo = contact.get("ultimo_contato")
+
         if not ultimo:
-            return True
+            return True  # Never contacted = should suggest
+
         try:
             if hasattr(ultimo, 'date'):
                 ultimo_date = ultimo.date()
@@ -8322,9 +8324,20 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
             dias_sem = (date.today() - ultimo_date).days
         except Exception:
             return True
-        # If health is perfect AND contacted in last 2 days, they're a daily collaborator
-        if health >= 90 and dias_sem <= 2:
+
+        # Skip contacts with good health AND contacted within their circle frequency
+        # C1: 7 days, C2: 14 days, C3: 30 days, C4: 45 days
+        freq_by_circulo = {1: 7, 2: 14, 3: 30, 4: 45, 5: 90}
+        freq = freq_by_circulo.get(circulo, 90)
+
+        # If health is good (>=70) AND contacted within frequency window, skip
+        if health >= 70 and dias_sem <= freq * 0.7:
             return False
+
+        # C4-C5 with health >= 50: only show if overdue
+        if circulo >= 4 and health >= 50 and dias_sem < freq:
+            return False
+
         return True
 
     # === BUSCAR FATOS PARA CONTEXTO ===
@@ -8402,27 +8415,25 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
         dias_pendente = roda.get("dias_pendente", 0)
         conteudo = roda.get("conteudo", "")
 
-        # Calcular prioridade — usar circulo como sub-prioridade
+        # Calcular prioridade — círculo pesa mais, tipo de roda desempata
         circulo = item["contact"].get("circulo") or 5
-        # Sub-priority: priority * 10 + circulo (lower = higher priority)
+        tipo_bonus = {"promessa": 0, "favor_recebido": 1, "proximo_passo": 2, "topico": 3}.get(tipo, 4)
+        # Priority: circulo * 10 + tipo_bonus (C1 promessa = 10, C4 topico = 43)
+        priority = circulo * 10 + tipo_bonus
+        # Boost overdue promessas
         if tipo == "promessa" and dias_pendente > 3:
-            priority = 10 + circulo
-            reason_label = f"Promessa pendente ({dias_pendente}d)"
-        elif tipo == "promessa":
-            priority = 20 + circulo
-            reason_label = f"Promessa pendente"
+            priority -= 5
+
+        if tipo == "promessa":
+            reason_label = f"Promessa pendente ({dias_pendente}d)" if dias_pendente > 1 else "Promessa pendente"
         elif tipo == "favor_recebido":
-            priority = 30 + circulo
             reason_label = "Favor recebido — retribuir"
         elif tipo == "proximo_passo":
-            priority = 40 + circulo
-            # Use roda content as the label when available
             if conteudo and len(conteudo) > 5:
                 reason_label = conteudo[:80] + ("..." if len(conteudo) > 80 else "")
             else:
                 reason_label = "Próximo passo combinado"
         else:  # topico
-            priority = 50 + circulo
             if conteudo and len(conteudo) > 5:
                 reason_label = conteudo[:80] + ("..." if len(conteudo) > 80 else "")
             else:
@@ -8517,7 +8528,7 @@ def get_contact_suggestions_v1(limit: int = 6, hide_contacted: bool = True):
                 "reason": "low_health",
                 "reason_label": f"Relacionamento esfriando ({health}%)",
                 "roda": None,
-                "priority": 60 + circulo,
+                "priority": circulo * 10 + 5,  # Same tier as rodas, slightly lower
                 "message_template": get_message_template("low_health", contato["nome"]),
                 "content_suggestion": content_suggestion,
                 "business_match": business_match,
