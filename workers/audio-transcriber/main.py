@@ -260,7 +260,8 @@ def _execute_intel_action(action: str, params: dict) -> str:
             if not project_id or not url:
                 return "project_id e url obrigatorios"
             try:
-                async_resp = await _save_article_via_api(project_id, url)
+                import asyncio
+                async_resp = asyncio.run(_save_article_via_api(project_id, url))
                 return async_resp
             except Exception as e:
                 return f"Erro ao salvar artigo: {e}"
