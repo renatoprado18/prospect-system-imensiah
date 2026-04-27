@@ -308,6 +308,22 @@ def _create_metrics_collection_task(cursor, post_id: int, post_title: str, publi
     due_date = (publish_date or datetime.now()) + timedelta(hours=48)
     titulo_truncated = (post_title or 'Post')[:40]
 
+    # Fetch post URL
+    post_url = None
+    try:
+        cursor.execute("""
+            SELECT linkedin_post_url, url_publicado FROM editorial_posts WHERE id = %s
+        """, (post_id,))
+        row = cursor.fetchone()
+        if row:
+            post_url = row['linkedin_post_url'] or row['url_publicado']
+    except Exception:
+        pass
+
+    descricao = f"Coletar metricas do LinkedIn para o post publicado.\npost_id={post_id}"
+    if post_url:
+        descricao += f"\n\n🔗 Abrir post: {post_url}"
+
     cursor.execute("""
         INSERT INTO tasks (
             titulo, descricao, project_id, contact_id,
@@ -317,7 +333,7 @@ def _create_metrics_collection_task(cursor, post_id: int, post_title: str, publi
         RETURNING id
     """, (
         f"Coletar metricas: {titulo_truncated}",
-        f"Coletar metricas do LinkedIn para o post publicado.\npost_id={post_id}",
+        descricao,
         22,  # project_id: Editorial LinkedIn
         14911,  # contact_id: Renato
         due_date,
