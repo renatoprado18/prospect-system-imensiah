@@ -2426,9 +2426,12 @@ function parseLinkedInMetrics(rows) {
         }
 
         // Also try: cell[0] is label, cell[1] is value (two-column format)
-        if (row.length >= 2 && typeof row[1] === 'number') {
+        // LinkedIn exports numbers as strings, so parse them
+        const cell1 = row.length >= 2 ? row[1] : null;
+        const numValue = (typeof cell1 === 'number') ? cell1 : parseInt(String(cell1 || '').replace(/[.,\s]/g, ''));
+        if (row.length >= 2 && !isNaN(numValue)) {
             const label = String(row[0]).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-            const value = row[1];
+            const value = numValue;
 
             if (label.includes('impress')) metrics.impressoes = value;
             else if (label.includes('reac')) metrics.reacoes = value;
@@ -2438,6 +2441,7 @@ function parseLinkedInMetrics(rows) {
             else if (label.includes('seguidor') || label.includes('follower')) metrics.seguidores = value;
             else if (label.includes('salvament') || label.includes('save')) metrics.salvamentos = value;
             else if (label.includes('clique') || label.includes('click')) metrics.cliques = value;
+            else if (label.includes('envio')) metrics.compartilhamentos += value;
         }
     }
 
