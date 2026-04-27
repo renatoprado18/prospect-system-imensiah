@@ -2511,9 +2511,10 @@ function showXlsxPreview(metrics, filename) {
     // Load published posts for the dropdown
     fetch('/api/editorial?status=published')
         .then(r => r.json())
-        .then(posts => {
+        .then(data => {
+            const posts = data.posts || data || [];
             const select = document.getElementById('xlsx-post-select');
-            (posts || []).forEach(p => {
+            posts.forEach(p => {
                 const opt = document.createElement('option');
                 opt.value = p.id;
                 opt.textContent = `#${p.id} - ${(p.article_title || '').substring(0, 50)}`;
