@@ -157,6 +157,7 @@
                 <div class="mb-3">
                     <label class="form-label">Descricao</label>
                     <textarea class="form-control" id="taskDescricao" rows="2" placeholder="Detalhes da tarefa..."></textarea>
+                    <div id="taskLinks" style="margin-top:6px"></div>
                 </div>
                 <div class="row">
                     <div class="col-md-6 mb-3">
@@ -1996,6 +1997,7 @@
         document.getElementById('taskResponsavelSearch').value = '';
         document.getElementById('taskContactId').value = '';
         document.getElementById('taskResponsavelResults').innerHTML = '';
+        document.getElementById('taskLinks').innerHTML = '';
 
         // Show modal
         new bootstrap.Modal(document.getElementById('addTaskModal')).show();
@@ -2023,6 +2025,21 @@
         document.getElementById('taskContactId').value = task.contact_id || '';
         document.getElementById('taskResponsavelSearch').value = task.contact_nome || '';
         document.getElementById('taskResponsavelResults').innerHTML = '';
+
+        // Extract URLs and show as clickable buttons
+        const linksContainer = document.getElementById('taskLinks');
+        const urls = (task.descricao || '').match(/https?:\/\/[^\s]+/g) || [];
+        if (urls.length > 0) {
+            linksContainer.innerHTML = urls.map(url => {
+                let label = 'Abrir link';
+                let icon = 'bi-box-arrow-up-right';
+                if (url.includes('linkedin.com')) { label = 'Abrir no LinkedIn'; icon = 'bi-linkedin'; }
+                else if (url.includes('drive.google.com')) { label = 'Abrir no Drive'; icon = 'bi-google'; }
+                return `<a href="${url}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:#6366f1;color:white;border-radius:8px;font-size:0.85rem;text-decoration:none;margin-right:6px"><i class="bi ${icon}"></i>${label}</a>`;
+            }).join('');
+        } else {
+            linksContainer.innerHTML = '';
+        }
 
         new bootstrap.Modal(document.getElementById('addTaskModal')).show();
     }
