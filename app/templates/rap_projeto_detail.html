@@ -900,9 +900,14 @@
                             <h3 class="section-title">
                                 <i class="bi bi-clock-history text-secondary"></i> Timeline
                             </h3>
-                            <button class="btn btn-sm btn-outline-primary" onclick="openAddNoteModal()">
-                                <i class="bi bi-plus"></i> Atualizacao
-                            </button>
+                            <div class="d-flex gap-1">
+                                <button class="btn btn-sm btn-outline-info" onclick="saveArticleToProject()" title="Salvar artigo da web">
+                                    <i class="bi bi-link-45deg"></i> Artigo
+                                </button>
+                                <button class="btn btn-sm btn-outline-primary" onclick="openAddNoteModal()">
+                                    <i class="bi bi-plus"></i> Atualizacao
+                                </button>
+                            </div>
                         </div>
                         <div class="section-body">
                             ${renderTimeline()}
@@ -1586,7 +1591,8 @@
             problema: 'exclamation-circle',
             pesquisa: 'search',
             parecer: 'file-earmark-medical',
-            resumo_executivo: 'journal-bookmark-fill'
+            resumo_executivo: 'journal-bookmark-fill',
+            article: 'link-45deg'
         };
 
         // Filter out archived pareceres
@@ -1607,7 +1613,7 @@
                     <i class="bi bi-${icons[n.tipo] || 'sticky'}"></i>
                 </div>
                 <div class="flex-grow-1">
-                    ${n.titulo ? `<div class="fw-semibold">${n.titulo}</div>` : ''}
+                    ${n.titulo ? `<div class="fw-semibold">${n.tipo === 'article' && n.metadata?.url ? `<a href="${n.metadata.url}" target="_blank" style="text-decoration:none;color:inherit;">${n.titulo} <i class="bi bi-box-arrow-up-right" style="font-size:0.7rem;"></i></a>` : n.titulo}</div>` : ''}
                     <div class="mb-1" style="font-size:0.9rem; line-height:1.5;">${simpleMarkdown(n.conteudo)}</div>
                     <small class="text-muted">${formatDateTime(n.criado_em)}</small>
                 </div>
@@ -2823,6 +2829,28 @@
 
     // Load chat history after project loads
     setTimeout(loadChatHistory, 500);
+
+    async function saveArticleToProject() {
+        const url = prompt('Cole a URL do artigo:');
+        if (!url || !url.trim()) return;
+        showToast('Buscando e resumindo artigo...', 'info');
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/save-article`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({url: url.trim()})
+            });
+            if (!resp.ok) {
+                const err = await resp.json();
+                throw new Error(err.detail || 'Erro');
+            }
+            const data = await resp.json();
+            showToast(`Artigo salvo: ${data.title}`, 'success');
+            await loadProject();
+        } catch (e) {
+            alert('Erro ao salvar artigo: ' + e.message);
+        }
+    }
 
     async function condenseAnalyses() {
         if (!confirm('Condensar todos os pareceres em um resumo executivo? Pareceres antigos serão arquivados.')) return;

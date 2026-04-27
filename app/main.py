@@ -15732,6 +15732,20 @@ async def api_smart_update_apply(project_id: int, request: Request):
 
 # ============== PROJECT TASK RESEARCH ==============
 
+@app.post("/api/projects/{project_id}/save-article")
+async def api_save_article(project_id: int, request: Request):
+    """Fetch, summarize and save an article URL to the project knowledge base."""
+    from services.article_knowledge import save_article_to_project
+    data = await request.json()
+    url = data.get("url", "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL obrigatória")
+    result = await save_article_to_project(project_id, url)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
 @app.post("/api/projects/{project_id}/research-task")
 async def api_research_task(project_id: int, request: Request):
     """Pesquisa com IA sobre o tema de uma tarefa e salva como nota do projeto."""

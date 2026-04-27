@@ -117,7 +117,8 @@ BOT_TOOLS = [
             "- complete_task: {task_id}\n"
             "- save_note: {project_id, titulo, conteudo}\n"
             "- save_memory: {contact_id, titulo, resumo, tipo?}\n"
-            "- save_feedback: {conteudo, tipo? bug|melhoria|ideia}"
+            "- save_feedback: {conteudo, tipo? bug|melhoria|ideia}\n"
+            "- save_article: {project_id, url} — busca artigo, resume com IA, salva no projeto"
         ),
         "input_schema": {
             "type": "object",
@@ -251,6 +252,19 @@ def _execute_intel_action(action: str, params: dict) -> str:
             conn.close()
             return f"Feedback #{fid} registrado"
 
+        elif action == "save_article":
+            conn.close()
+            # Call the INTEL API to fetch, summarize, and save
+            project_id = params.get("project_id")
+            url = params.get("url", "")
+            if not project_id or not url:
+                return "project_id e url obrigatorios"
+            try:
+                async_resp = await _save_article_via_api(project_id, url)
+                return async_resp
+            except Exception as e:
+                return f"Erro ao salvar artigo: {e}"
+
         conn.close()
         return f"Acao desconhecida: {action}"
     except Exception as e:
@@ -273,6 +287,70 @@ def _run_tool(name: str, input_data: dict) -> str:
     elif name == "execute_intel":
         return _execute_intel_action(input_data.get("action", ""), input_data.get("params", {}))
     return "Tool desconhecida"
+
+
+async def _save_article_via_api(project_id: int, url: str) -> str:
+    """Fetch, summarize, and save article to project via INTEL API."""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{INTEL_API_URL}/api/projects/{project_id}/save-article",
+                headers={"Content-Type": "application/json"},
+                json={"url": url}
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            return f"Artigo salvo no projeto: {data.get('title', url)}\nResumo: {data.get('summary', '')[:300]}"
+        else:
+            # Fallback: save directly
+            return await _save_article_direct(project_id, url)
+    except Exception:
+        return await _save_article_direct(project_id, url)
+
+
+async def _save_article_direct(project_id: int, url: str) -> str:
+    """Save article directly from worker (fallback if API fails)."""
+    try:
+        # Fetch
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code != 200:
+            return f"Erro HTTP {resp.status_code} ao buscar artigo"
+
+        html = resp.text
+        import re
+        title_match = re.search(r'property="og:title"\s+content="([^"]+)"', html)
+        title = title_match.group(1) if title_match else url
+
+        # Strip HTML
+        text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
+        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()[:3000]
+
+        # Summarize with Claude
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            ai_resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 400,
+                      "messages": [{"role": "user", "content": f"Resuma este artigo em português, 3-4 frases + pontos-chave:\n\nTÍTULO: {title}\n\n{text}"}]}
+            )
+        summary = ai_resp.json()["content"][0]["text"] if ai_resp.status_code == 200 else text[:300]
+
+        # Save
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO project_notes (project_id, tipo, titulo, conteudo, autor, metadata)
+            VALUES (%s, 'article', %s, %s, 'INTEL Bot', %s) RETURNING id
+        """, (project_id, title, summary, json.dumps({"url": url})))
+        nid = cursor.fetchone()["id"]
+        conn.commit()
+        conn.close()
+        return f"Artigo #{nid} salvo: {title}\nResumo: {summary[:300]}"
+    except Exception as e:
+        return f"Erro: {e}"
 
 
 def _auto_create_project_for_empresa(sql: str, result: str):
