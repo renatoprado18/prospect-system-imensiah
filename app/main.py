@@ -17025,6 +17025,7 @@ async def api_editorial_metrics_upload(request: Request):
                 post_id = row['id']
 
         if not post_id and post_url and 'linkedin.com' in post_url:
+            # Try matching by last URL segment
             url_part = post_url.split('/')[-1].split('?')[0] if post_url else ''
             if url_part:
                 cursor.execute("""
@@ -17035,6 +17036,22 @@ async def api_editorial_metrics_upload(request: Request):
                 row = cursor.fetchone()
                 if row:
                     post_id = row['id']
+
+        if not post_id and post_url:
+            # Extract numeric ID prefix (first 10 digits) from URN/activity ID
+            import re
+            digits = re.findall(r'(\d{10,})', post_url)
+            for d in digits:
+                prefix = d[:10]  # First 10 digits are usually shared between share/activity URNs
+                cursor.execute("""
+                    SELECT id FROM editorial_posts
+                    WHERE (linkedin_post_url LIKE %s OR url_publicado LIKE %s)
+                    ORDER BY id DESC LIMIT 1
+                """, (f'%{prefix}%', f'%{prefix}%'))
+                row = cursor.fetchone()
+                if row:
+                    post_id = row['id']
+                    break
 
         if not post_id:
             return {
