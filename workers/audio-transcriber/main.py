@@ -346,6 +346,24 @@ BOT_TOOLS = [
         "input_schema": {"type": "object", "properties": {"sql": {"type": "string"}}, "required": ["sql"]}
     },
     {
+        "name": "manage_email",
+        "description": (
+            "Gerencia emails do Gmail. Acoes:\n"
+            "- archive_non_urgent: arquiva emails nao-urgentes do inbox (filtra newsletters, notificacoes, spam)\n"
+            "- list_inbox: lista emails recentes do inbox (limit?)\n"
+            "- archive_by_subject: arquiva emails com assunto especifico (subject_contains)\n"
+            "Parametros: {action, account? 'professional'|'personal'|'both', subject_contains?, limit?}"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string"},
+                "params": {"type": "object"}
+            },
+            "required": ["action", "params"]
+        }
+    },
+    {
         "name": "execute_intel",
         "description": (
             "Executa acao no INTEL:\n"
@@ -523,7 +541,180 @@ def _run_tool(name: str, input_data: dict) -> str:
         return result
     elif name == "execute_intel":
         return _execute_intel_action(input_data.get("action", ""), input_data.get("params", {}))
+    elif name == "manage_email":
+        return await _manage_email(input_data.get("action", ""), input_data.get("params", {}))
     return "Tool desconhecida"
+
+
+async def _get_gmail_token(account_type: str = "professional") -> tuple[str | None, str | None]:
+    """Get fresh Gmail access token for an account."""
+    if not DATABASE_URL:
+        return None, None
+    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    cursor = conn.cursor()
+    cursor.execute("SELECT email, access_token, refresh_token, token_expiry FROM google_accounts WHERE tipo = %s AND conectado = TRUE LIMIT 1", (account_type,))
+    account = cursor.fetchone()
+    conn.close()
+    if not account:
+        return None, None
+
+    # Check if token is fresh
+    if account.get('token_expiry') and account['token_expiry'] > datetime.now():
+        return account['access_token'], account['email']
+
+    # Refresh
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    if not account.get('refresh_token'):
+        return None, None
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post("https://oauth2.googleapis.com/token", data={
+                "client_id": client_id, "client_secret": client_secret,
+                "refresh_token": account['refresh_token'], "grant_type": "refresh_token"
+            })
+        if resp.status_code == 200:
+            new_token = resp.json()["access_token"]
+            conn = psycopg.connect(DATABASE_URL)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE google_accounts SET access_token = %s, token_expiry = NOW() + INTERVAL '1 hour' WHERE email = %s",
+                          (new_token, account['email']))
+            conn.commit()
+            conn.close()
+            return new_token, account['email']
+    except Exception as e:
+        logger.error(f"Gmail token refresh: {e}")
+    return None, None
+
+
+async def _manage_email(action: str, params: dict) -> str:
+    """Manage Gmail emails (archive, list, etc.)."""
+    account_type = params.get("account", "both")
+    accounts_to_check = ["professional", "personal"] if account_type == "both" else [account_type]
+
+    if action == "archive_non_urgent":
+        total_archived = 0
+        details = []
+
+        for acct in accounts_to_check:
+            token, email = await _get_gmail_token(acct)
+            if not token:
+                details.append(f"{acct}: token indisponível")
+                continue
+
+            try:
+                # List inbox messages
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(
+                        "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=in:inbox&maxResults=50",
+                        headers={"Authorization": f"Bearer {token}"})
+                    if resp.status_code != 200:
+                        details.append(f"{acct}: erro ao listar")
+                        continue
+                    messages = resp.json().get("messages", [])
+
+                # Get details and classify
+                non_urgent_ids = []
+                for msg in messages:
+                    try:
+                        detail = await client.get(
+                            f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg['id']}?format=metadata&metadataHeaders=From&metadataHeaders=Subject",
+                            headers={"Authorization": f"Bearer {token}"})
+                        if detail.status_code != 200:
+                            continue
+                        d = detail.json()
+                        headers = {h['name']: h['value'] for h in d.get('payload', {}).get('headers', [])}
+                        subject = (headers.get('Subject', '') or '').lower()
+                        sender = (headers.get('From', '') or '').lower()
+
+                        # Non-urgent patterns
+                        is_non_urgent = any(p in subject or p in sender for p in [
+                            'newsletter', 'digest', 'weekly', 'update', 'notification',
+                            'noreply', 'no-reply', 'mailer-daemon', 'unsubscribe',
+                            'linkedin', 'github', 'slack', 'notion', 'calendar',
+                            'promoção', 'desconto', 'oferta', 'fatura', 'nfe',
+                            'nota fiscal', 'boleto', 'comprovante', 'recibo'
+                        ])
+                        if is_non_urgent:
+                            non_urgent_ids.append(msg['id'])
+                    except Exception:
+                        continue
+
+                # Archive (remove INBOX label)
+                if non_urgent_ids:
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        resp = await client.post(
+                            "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify",
+                            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                            json={"ids": non_urgent_ids, "removeLabelIds": ["INBOX"]})
+                        if resp.status_code == 204:
+                            total_archived += len(non_urgent_ids)
+                            details.append(f"{email}: {len(non_urgent_ids)} arquivados")
+                        else:
+                            details.append(f"{email}: erro ao arquivar ({resp.status_code})")
+                else:
+                    details.append(f"{email}: nenhum não-urgente encontrado")
+
+            except Exception as e:
+                details.append(f"{acct}: {e}")
+
+        return f"Arquivados: {total_archived} emails\n" + "\n".join(details)
+
+    elif action == "archive_by_subject":
+        subject_filter = params.get("subject_contains", "")
+        if not subject_filter:
+            return "Parâmetro subject_contains obrigatório"
+
+        total_archived = 0
+        for acct in accounts_to_check:
+            token, email = await _get_gmail_token(acct)
+            if not token:
+                continue
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(
+                        f"https://gmail.googleapis.com/gmail/v1/users/me/messages?q=in:inbox+subject:{subject_filter}&maxResults=20",
+                        headers={"Authorization": f"Bearer {token}"})
+                    messages = resp.json().get("messages", [])
+                    if messages:
+                        ids = [m['id'] for m in messages]
+                        await client.post(
+                            "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify",
+                            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                            json={"ids": ids, "removeLabelIds": ["INBOX"]})
+                        total_archived += len(ids)
+            except Exception:
+                pass
+
+        return f"Arquivados {total_archived} emails com '{subject_filter}'"
+
+    elif action == "list_inbox":
+        limit = params.get("limit", 10)
+        results = []
+        for acct in accounts_to_check:
+            token, email = await _get_gmail_token(acct)
+            if not token:
+                continue
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(
+                        f"https://gmail.googleapis.com/gmail/v1/users/me/messages?q=in:inbox&maxResults={limit}",
+                        headers={"Authorization": f"Bearer {token}"})
+                    messages = resp.json().get("messages", [])
+                    for msg in messages[:limit]:
+                        detail = await client.get(
+                            f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg['id']}?format=metadata&metadataHeaders=From&metadataHeaders=Subject",
+                            headers={"Authorization": f"Bearer {token}"})
+                        if detail.status_code == 200:
+                            d = detail.json()
+                            hdrs = {h['name']: h['value'] for h in d.get('payload', {}).get('headers', [])}
+                            results.append(f"[{acct}] {hdrs.get('Subject','?')} — {hdrs.get('From','?')[:40]}")
+            except Exception:
+                pass
+        return f"Inbox ({len(results)}):\n" + "\n".join(results) if results else "Inbox vazio"
+
+    return f"Ação desconhecida: {action}"
 
 
 async def _save_article_via_api(project_id: int, url: str) -> str:
