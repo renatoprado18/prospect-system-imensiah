@@ -814,12 +814,33 @@ async def _do_generate_ata(
 ):
     """Actual ata generation logic."""
 
+    # Fetch real participant data from ConselhoOS
+    if not participantes_info and conselhoos_db_url:
+        try:
+            with psycopg.connect(conselhoos_db_url) as conn:
+                rows = conn.execute("""
+                    SELECT p.nome, p.cargo, p.papel
+                    FROM pessoas p
+                    JOIN reunioes r ON r.empresa_id = p.empresa_id
+                    WHERE r.id = %s
+                    ORDER BY p.nome
+                """, (reuniao_id,)).fetchall()
+                if rows:
+                    parts = []
+                    for r in rows:
+                        cargo = r[1] or r[2] or ''
+                        parts.append(f"{r[0]} ({cargo})" if cargo else r[0])
+                    participantes_info = ", ".join(parts)
+                    logger.info(f"[ATA-BG] Found {len(rows)} participants from ConselhoOS")
+        except Exception as e:
+            logger.warning(f"[ATA-BG] Error fetching participants: {e}")
+
     prompt = f"""Você é um secretário executivo de alto nível especializado em governança corporativa.
 Analise a transcrição desta reunião de conselho e produza uma ATA COMPLETA E DETALHADA.
 
 **Empresa:** {empresa_nome}
 **Data:** {data_reuniao}
-{f"**Participantes conhecidos:** {participantes_info}" if participantes_info else ""}
+{f"**Participantes cadastrados (use estes nomes e cargos EXATOS):** {participantes_info}" if participantes_info else ""}
 {f"**Pauta prevista:**\n{pauta_md}" if pauta_md else ""}
 
 INSTRUÇÕES DE QUALIDADE:
@@ -865,7 +886,12 @@ Data se mencionada
 **Transcrição:**
 {transcricao[:80000]}
 
-Produza a ata completa em Markdown. NUNCA invente informações não presentes na transcrição."""
+Produza a ata completa em Markdown.
+
+REGRAS CRÍTICAS:
+- NUNCA invente informações não presentes na transcrição
+- Use os nomes e cargos EXATOS da lista de participantes cadastrados (se fornecida)
+- Se não souber o cargo de alguém, deixe em branco — NÃO invente cargos como CEO, Sócio, etc."""
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
