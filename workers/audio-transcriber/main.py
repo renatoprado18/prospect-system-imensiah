@@ -329,7 +329,19 @@ async def process_message(request: Request):
 
 # ==================== BOT ENGINE (runs on Railway) ====================
 
+BRAVE_API_KEY = os.getenv("BRAVE_API_KEY", "")
+
 BOT_TOOLS = [
+    {
+        "name": "web_search",
+        "description": "Pesquisa na internet. Use para buscar informacoes atuais, noticias, dados de empresas, pessoas, etc.",
+        "input_schema": {"type": "object", "properties": {"query": {"type": "string", "description": "Termo de busca"}}, "required": ["query"]}
+    },
+    {
+        "name": "fetch_url",
+        "description": "Busca conteudo de uma URL (artigo, pagina web). Retorna titulo + texto extraido. Use para ler artigos, noticias, documentos online.",
+        "input_schema": {"type": "object", "properties": {"url": {"type": "string"}, "summarize": {"type": "boolean", "description": "Se true, resume com IA"}}, "required": ["url"]}
+    },
     {
         "name": "query_intel",
         "description": "SELECT no banco INTEL (contatos, mensagens, projetos, tarefas, memorias). Apenas SELECT. LIMIT 20.",
@@ -526,8 +538,81 @@ def _execute_intel_action(action: str, params: dict) -> str:
         return f"Erro: {e}"
 
 
+async def _web_search(query: str) -> str:
+    """Search the web via Brave Search API."""
+    if not BRAVE_API_KEY:
+        return "Web search indisponivel (BRAVE_API_KEY nao configurada)"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                headers={"X-Subscription-Token": BRAVE_API_KEY, "Accept": "application/json"},
+                params={"q": query, "count": 5, "search_lang": "pt"}
+            )
+        if resp.status_code != 200:
+            return f"Erro na busca: {resp.status_code}"
+        data = resp.json()
+        results = data.get("web", {}).get("results", [])
+        if not results:
+            return "Nenhum resultado encontrado"
+        lines = []
+        for r in results[:5]:
+            lines.append(f"**{r.get('title','')}**\n{r.get('description','')}\nURL: {r.get('url','')}")
+        return "\n\n".join(lines)
+    except Exception as e:
+        return f"Erro: {e}"
+
+
+async def _fetch_url(url: str, summarize: bool = False) -> str:
+    """Fetch and extract content from a URL."""
+    import re
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        if resp.status_code != 200:
+            return f"Erro HTTP {resp.status_code}"
+
+        html = resp.text
+        # Extract title
+        title_match = re.search(r'property="og:title"\s+content="([^"]+)"', html)
+        title = title_match.group(1) if title_match else ""
+        if not title:
+            title_match = re.search(r'<title>([^<]+)</title>', html)
+            title = title_match.group(1) if title_match else url
+
+        # Extract text
+        text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
+        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+        article = re.search(r'<article[^>]*>(.*?)</article>', text, flags=re.DOTALL)
+        if article:
+            text = article.group(1)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()[:4000]
+
+        result = f"**{title}**\n\n{text[:2000]}"
+
+        if summarize and ANTHROPIC_API_KEY:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                ai_resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 300,
+                          "messages": [{"role": "user", "content": f"Resuma em 3-4 frases:\n\n{title}\n{text[:3000]}"}]}
+                )
+            if ai_resp.status_code == 200:
+                summary = ai_resp.json()["content"][0]["text"]
+                result = f"**{title}**\n\n{summary}\n\nFonte: {url}"
+
+        return result
+    except Exception as e:
+        return f"Erro ao buscar URL: {e}"
+
+
 def _run_tool(name: str, input_data: dict) -> str:
-    """Execute a bot tool."""
+    """Execute a bot tool (sync wrapper)."""
+    if name in ("web_search", "fetch_url", "manage_email"):
+        # These are async, handled in _run_tool_async
+        return "ERROR: use _run_tool_async"
     if name == "query_intel":
         return _db_query(DATABASE_URL, input_data["sql"])
     elif name == "query_conselhoos":
@@ -880,10 +965,13 @@ TABELAS CONSELHOOS:
 - pessoas: id (uuid), empresa_id, nome, cargo, email, intel_contact_id
 
 TOOLS:
+- web_search: pesquisar na internet (noticias, empresas, pessoas, qualquer coisa)
+- fetch_url: buscar conteudo de uma URL (artigo, pagina). Use summarize=true para resumir.
 - query_intel: SELECT no banco INTEL. SEMPRE use nomes de tabela acima.
 - query_conselhoos: SELECT no ConselhoOS.
 - execute_conselhoos: INSERT/UPDATE/DELETE no ConselhoOS. IDs UUID (gen_random_uuid()).
-- execute_intel: criar tarefas, salvar notas, memorias, feedback.
+- execute_intel: criar tarefas, salvar notas, memorias, feedback, salvar artigos.
+- manage_email: gerenciar Gmail (archive_non_urgent, list_inbox, archive_by_subject).
 
 EXEMPLOS SQL:
 - Tarefas pendentes: SELECT id, titulo, data_vencimento FROM tasks WHERE status = 'pending' ORDER BY data_vencimento
@@ -909,7 +997,7 @@ REGRAS:
 
     # Tool loop
     async with httpx.AsyncClient(timeout=30.0) as client:
-        for iteration in range(3):
+        for iteration in range(10):
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
@@ -941,7 +1029,17 @@ REGRAS:
             tool_results = []
             for tool in tool_uses:
                 logger.info(f"Tool: {tool['name']} input: {json.dumps(tool.get('input', {}))[:200]}")
-                output = _run_tool(tool["name"], tool.get("input", {}))
+                tool_name = tool["name"]
+                tool_input = tool.get("input", {})
+                # Handle async tools
+                if tool_name == "web_search":
+                    output = await _web_search(tool_input.get("query", ""))
+                elif tool_name == "fetch_url":
+                    output = await _fetch_url(tool_input.get("url", ""), tool_input.get("summarize", False))
+                elif tool_name == "manage_email":
+                    output = await _manage_email(tool_input.get("action", ""), tool_input.get("params", {}))
+                else:
+                    output = _run_tool(tool_name, tool_input)
                 tool_results.append({"type": "tool_result", "tool_use_id": tool["id"], "content": output})
             messages.append({"role": "user", "content": tool_results})
 
