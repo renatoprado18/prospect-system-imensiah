@@ -10299,7 +10299,8 @@ async def cron_group_digest(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
 
     from services.group_digest import generate_daily_group_digests
-    results = await generate_daily_group_digests()
+    days = int(request.query_params.get("days", "1"))
+    results = await generate_daily_group_digests(days=days)
     return {"job": "group-digest", "timestamp": datetime.now().isoformat(), **results}
 
 

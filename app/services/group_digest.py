@@ -16,7 +16,7 @@ from database import get_db
 logger = logging.getLogger(__name__)
 
 
-async def generate_daily_group_digests() -> Dict:
+async def generate_daily_group_digests(days: int = 1) -> Dict:
     """
     Generate digest for all sync-enabled groups.
     Called by cron daily (evening).
@@ -48,7 +48,7 @@ async def generate_daily_group_digests() -> Dict:
     digests = []
     for group in groups:
         try:
-            digest = await _generate_group_digest(group['group_jid'], group['group_name'])
+            digest = await _generate_group_digest(group['group_jid'], group['group_name'], days)
             if digest:
                 digests.append(digest)
                 results["groups_processed"] += 1
@@ -68,7 +68,7 @@ async def generate_daily_group_digests() -> Dict:
     return results
 
 
-async def _generate_group_digest(group_jid: str, group_name: str) -> Dict | None:
+async def _generate_group_digest(group_jid: str, group_name: str, days: int = 1) -> Dict | None:
     """Generate AI digest for a single group's messages from today."""
     with get_db() as conn:
         cursor = conn.cursor()
@@ -77,9 +77,9 @@ async def _generate_group_digest(group_jid: str, group_name: str) -> Dict | None
         cursor.execute("""
             SELECT sender_name, content, message_type, timestamp, from_me
             FROM group_messages
-            WHERE group_jid = %s AND timestamp >= CURRENT_DATE - INTERVAL '1 day'
+            WHERE group_jid = %s AND timestamp >= CURRENT_DATE - INTERVAL '%s days'
             ORDER BY timestamp ASC
-        """, (group_jid,))
+        """, (group_jid, days))
         messages = [dict(r) for r in cursor.fetchall()]
 
     if not messages or len(messages) < 3:
