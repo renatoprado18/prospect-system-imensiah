@@ -10304,6 +10304,21 @@ async def cron_group_digest(request: Request):
     return {"job": "group-digest", "timestamp": datetime.now().isoformat(), **results}
 
 
+@app.get("/api/cron/email-digest")
+async def cron_email_digest(request: Request):
+    """
+    Cron: Daily digest of emails received.
+    Schedule: 0 21 * * * (18h SP)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.email_digest import generate_email_digest
+    days = int(request.query_params.get("days", "1"))
+    results = await generate_email_digest(days=days)
+    return {"job": "email-digest", "timestamp": datetime.now().isoformat(), **results}
+
+
 # ============== Google Calendar Endpoints ==============
 
 from integrations.google_calendar import get_calendar_integration
