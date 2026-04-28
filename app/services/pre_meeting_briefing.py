@@ -27,9 +27,10 @@ async def check_upcoming_meetings() -> Dict:
         cursor = conn.cursor()
 
         now = datetime.now()
-        one_hour = now + timedelta(hours=1)
+        # Find ALL meetings for today (runs once in the morning)
+        today_start = now.replace(hour=0, minute=0, second=0)
+        today_end = today_start + timedelta(days=1)
 
-        # Find meetings starting in the next 45-75 minutes (window to avoid duplicates)
         cursor.execute("""
             SELECT ce.id, ce.summary, ce.start_datetime, ce.end_datetime,
                    ce.contact_id, ce.attendees, ce.location, ce.description,
@@ -40,7 +41,7 @@ async def check_upcoming_meetings() -> Dict:
             WHERE ce.start_datetime BETWEEN %s AND %s
               AND ce.status != 'cancelled'
             ORDER BY ce.start_datetime
-        """, (now + timedelta(minutes=45), now + timedelta(minutes=75)))
+        """, (today_start, today_end))
 
         meetings = [dict(r) for r in cursor.fetchall()]
         results["checked"] = len(meetings)
