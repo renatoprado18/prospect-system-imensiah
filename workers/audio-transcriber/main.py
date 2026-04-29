@@ -443,7 +443,7 @@ def _db_query(url: str, sql: str, write: bool = False) -> str:
         return json.dumps({"erro": str(e)})
 
 
-def _execute_intel_action(action: str, params: dict) -> str:
+async def _execute_intel_action(action: str, params: dict) -> str:
     """Execute an INTEL CRM action."""
     if not DATABASE_URL:
         return json.dumps({"erro": "DATABASE_URL nao configurada"})
@@ -526,8 +526,7 @@ def _execute_intel_action(action: str, params: dict) -> str:
             if not project_id or not url:
                 return "project_id e url obrigatorios"
             try:
-                import asyncio
-                async_resp = asyncio.run(_save_article_via_api(project_id, url))
+                async_resp = await _save_article_via_api(project_id, url)
                 return async_resp
             except Exception as e:
                 return f"Erro ao salvar artigo: {e}"
@@ -609,10 +608,7 @@ async def _fetch_url(url: str, summarize: bool = False) -> str:
 
 
 def _run_tool(name: str, input_data: dict) -> str:
-    """Execute a bot tool (sync wrapper)."""
-    if name in ("web_search", "fetch_url", "manage_email"):
-        # These are async, handled in _run_tool_async
-        return "ERROR: use _run_tool_async"
+    """Execute a bot tool (sync only - DB queries)."""
     if name == "query_intel":
         return _db_query(DATABASE_URL, input_data["sql"])
     elif name == "query_conselhoos":
@@ -624,10 +620,6 @@ def _run_tool(name: str, input_data: dict) -> str:
         if "INSERT" in sql_upper and "EMPRESAS" in sql_upper:
             _auto_create_project_for_empresa(input_data["sql"], result)
         return result
-    elif name == "execute_intel":
-        return _execute_intel_action(input_data.get("action", ""), input_data.get("params", {}))
-    elif name == "manage_email":
-        return await _manage_email(input_data.get("action", ""), input_data.get("params", {}))
     return "Tool desconhecida"
 
 
@@ -1031,13 +1023,15 @@ REGRAS:
                 logger.info(f"Tool: {tool['name']} input: {json.dumps(tool.get('input', {}))[:200]}")
                 tool_name = tool["name"]
                 tool_input = tool.get("input", {})
-                # Handle async tools
+                # Route to correct handler
                 if tool_name == "web_search":
                     output = await _web_search(tool_input.get("query", ""))
                 elif tool_name == "fetch_url":
                     output = await _fetch_url(tool_input.get("url", ""), tool_input.get("summarize", False))
                 elif tool_name == "manage_email":
                     output = await _manage_email(tool_input.get("action", ""), tool_input.get("params", {}))
+                elif tool_name == "execute_intel":
+                    output = await _execute_intel_action(tool_input.get("action", ""), tool_input.get("params", {}))
                 else:
                     output = _run_tool(tool_name, tool_input)
                 tool_results.append({"type": "tool_result", "tool_use_id": tool["id"], "content": output})
