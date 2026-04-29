@@ -546,7 +546,7 @@ async def _web_search(query: str) -> str:
             resp = await client.get(
                 "https://api.search.brave.com/res/v1/web/search",
                 headers={"X-Subscription-Token": BRAVE_API_KEY, "Accept": "application/json"},
-                params={"q": query, "count": 5, "search_lang": "pt"}
+                params={"q": query, "count": 5}
             )
         if resp.status_code != 200:
             return f"Erro na busca: {resp.status_code}"
