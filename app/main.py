@@ -16895,12 +16895,44 @@ async def api_auto_select_week(request: Request):
 
 @app.post("/api/editorial/approve-week")
 async def api_approve_week(request: Request):
-    """Aprova e agenda os posts da semana selecionados"""
+    """Aprova e agenda os posts da semana selecionados."""
     from services.auto_publisher import schedule_selected_posts
-    data = await request.json()
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
     selected = data.get('selected', [])
+
+    # If no selected provided, grab all drafts with data_publicacao set (pre-selected by AI)
     if not selected:
-        raise HTTPException(status_code=400, detail="Nenhum post para agendar")
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, article_title as titulo, tipo as source, data_publicacao,
+                       conteudo_adaptado as conteudo, article_url as news_link,
+                       hashtags, hot_take_id
+                FROM editorial_posts
+                WHERE status = 'draft' AND data_publicacao IS NOT NULL
+                ORDER BY data_publicacao
+            """)
+            drafts = [dict(r) for r in cursor.fetchall()]
+
+            if not drafts:
+                raise HTTPException(status_code=400, detail="Nenhum post draft com data para aprovar")
+
+            # Schedule them (just change status to scheduled)
+            for d in drafts:
+                cursor.execute("UPDATE editorial_posts SET status = 'scheduled' WHERE id = %s", (d['id'],))
+                if d.get('hot_take_id'):
+                    cursor.execute("UPDATE hot_takes SET status = 'scheduled' WHERE id = %s", (d['hot_take_id'],))
+            conn.commit()
+
+            return {
+                "status": "approved",
+                "scheduled": [{"id": d['id'], "titulo": d['titulo'], "scheduled_for": str(d['data_publicacao'])} for d in drafts]
+            }
+
     result = schedule_selected_posts(selected)
     return result
 

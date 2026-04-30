@@ -3401,6 +3401,9 @@
                 if (opt.action === 'dismiss') {
                     return `<button class="btn btn-sm ${btnClass}" onclick="dismissProposal(${proposal.id})">${opt.label}</button>`;
                 }
+                if (opt.action === 'api_call' && opt.url) {
+                    return `<button class="btn btn-sm ${btnClass}" onclick="apiCallProposal(${proposal.id}, '${opt.url}', '${opt.method || 'POST'}')">${opt.label}</button>`;
+                }
                 return `<button class="btn btn-sm ${btnClass}" onclick="executeProposal(${proposal.id}, '${opt.id}')">${opt.label}</button>`;
             }).join('');
 
@@ -3489,6 +3492,23 @@
                 showToast('Erro ao executar acao', 'error');
             } finally {
                 if (btn) btn.disabled = false;
+            }
+        }
+
+        async function apiCallProposal(proposalId, url, method) {
+            try {
+                const resp = await fetch(url, {method: method, headers: {'Content-Type': 'application/json'}, body: '{}'});
+                const data = await resp.json();
+                if (resp.ok) {
+                    showToast(data.message || `${data.scheduled?.length || 0} posts aprovados e agendados!`, 'success');
+                    // Dismiss the proposal
+                    await fetch(`/api/action-proposals/${proposalId}/dismiss`, {method: 'POST'});
+                    loadActionProposals();
+                } else {
+                    showToast(data.detail || 'Erro ao executar', 'error');
+                }
+            } catch (e) {
+                showToast('Erro: ' + e.message, 'error');
             }
         }
 
