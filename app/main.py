@@ -17286,6 +17286,38 @@ async def api_hot_take_get(hot_take_id: int):
     raise HTTPException(status_code=404, detail="Hot take nao encontrado")
 
 
+@app.post("/api/hot-takes/{hot_take_id}/quick-schedule")
+async def api_hot_take_quick_schedule(hot_take_id: int):
+    """Quick approve: schedule hot-take for next available slot, create editorial_post."""
+    from services.hot_takes import schedule_hot_take
+
+    # Find next available slot (next weekday at 9h or 12h)
+    now = datetime.now()
+    slot = None
+    for day_offset in range(1, 14):
+        d = now + timedelta(days=day_offset)
+        if d.weekday() < 5:  # Mon-Fri
+            for hour in [9, 12]:
+                candidate = d.replace(hour=hour, minute=0, second=0, microsecond=0)
+                if candidate > now:
+                    # Check if slot is free
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT id FROM editorial_posts WHERE status='scheduled' AND data_publicacao = %s", (candidate,))
+                        if not cursor.fetchone():
+                            slot = candidate
+                            break
+            if slot:
+                break
+
+    if not slot:
+        slot = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0)
+
+    result = schedule_hot_take(hot_take_id, slot.isoformat(), create_editorial=True)
+    result['scheduled_for'] = slot.strftime('%d/%m %H:%M')
+    return result
+
+
 @app.post("/api/hot-takes/{hot_take_id}/schedule")
 async def api_hot_take_schedule(hot_take_id: int, request: Request):
     """Agenda hot take para publicacao e cria entrada no calendario editorial"""

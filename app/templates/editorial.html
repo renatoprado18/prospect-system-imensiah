@@ -1267,11 +1267,11 @@
 <div class="editorial-two-col">
     <!-- Left Column: Hot Takes & Today -->
     <div class="editorial-left">
-        <!-- Pending Hot Takes -->
+        <!-- Para Revisar: Hot takes + editorial drafts prontos para aprovação -->
         <div class="action-card pending-card">
             <div class="action-header">
-                <h3><i class="bi bi-fire me-2"></i>Hot Takes para Agendar</h3>
-                <a href="/hot-takes" class="btn btn-sm btn-outline-warning">Ver todos</a>
+                <h3><i class="bi bi-eye me-2"></i>Para Revisar</h3>
+                <a href="/hot-takes" class="btn btn-sm btn-outline-warning">Ver Hot Takes</a>
             </div>
             {% if pending_hot_takes %}
             <div class="action-list">
@@ -1279,12 +1279,17 @@
                 <div class="action-item">
                     <div class="action-icon"><i class="bi bi-fire text-warning"></i></div>
                     <div class="action-info">
-                        <div class="action-title">{{ ht.hook[:50] if ht.hook else 'Sem titulo' }}{% if ht.hook and ht.hook|length > 50 %}...{% endif %}</div>
+                        <div class="action-title">{{ ht.hook[:50] if ht.hook else ht.news_title[:50] if ht.news_title else 'Sem titulo' }}...</div>
                         <div class="action-meta">{{ ht.created_at[:10] if ht.created_at else '' }}</div>
                     </div>
-                    <a href="/hot-takes" class="btn btn-sm btn-warning">
-                        <i class="bi bi-calendar-plus"></i> Agendar
-                    </a>
+                    <div class="d-flex gap-1">
+                        <button class="btn btn-sm btn-outline-primary" onclick="quickApproveHotTake({{ ht.id }})" title="Aprovar e agendar">
+                            <i class="bi bi-check-lg"></i>
+                        </button>
+                        <a href="/hot-takes" class="btn btn-sm btn-outline-secondary" title="Editar">
+                            <i class="bi bi-pencil"></i>
+                        </a>
+                    </div>
                 </div>
                 {% endfor %}
             </div>
@@ -1296,7 +1301,7 @@
             {% else %}
             <div class="action-empty">
                 <i class="bi bi-check-circle text-success"></i>
-                <span>Todos os hot takes foram agendados!</span>
+                <span>Nenhum conteúdo para revisar</span>
             </div>
             {% endif %}
         </div>
@@ -1583,6 +1588,22 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+async function quickApproveHotTake(hotTakeId) {
+    if (!confirm('Aprovar e agendar este hot-take para o próximo slot disponível?')) return;
+    try {
+        const resp = await fetch(`/api/hot-takes/${hotTakeId}/quick-schedule`, {method: 'POST'});
+        const data = await resp.json();
+        if (resp.ok) {
+            alert(`Agendado para ${data.scheduled_for || 'próximo slot'}!`);
+            location.reload();
+        } else {
+            alert('Erro: ' + (data.detail || 'Falha ao agendar'));
+        }
+    } catch (e) {
+        alert('Erro: ' + e.message);
+    }
 }
 
 async function publishToLinkedIn(postId) {
