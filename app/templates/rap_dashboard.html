@@ -3392,8 +3392,15 @@
             const options = proposal.options || [];
             const optionsHtml = options.slice(0, 3).map(opt => {
                 const btnClass = opt.action === 'dismiss' ? 'btn-link text-muted' :
-                                 opt.id.includes('reschedule') || opt.id.includes('respond') ? 'btn-primary' :
+                                 opt.id.includes('approve') || opt.id.includes('respond') ? 'btn-primary' :
+                                 opt.id.includes('review') || opt.id.includes('reschedule') ? 'btn-outline-primary' :
                                  opt.action === 'cancel' ? 'btn-outline-danger' : 'btn-outline-secondary';
+                if (opt.action === 'navigate' && opt.url) {
+                    return `<a href="${opt.url}" class="btn btn-sm ${btnClass}">${opt.label}</a>`;
+                }
+                if (opt.action === 'dismiss') {
+                    return `<button class="btn btn-sm ${btnClass}" onclick="dismissProposal(${proposal.id})">${opt.label}</button>`;
+                }
                 return `<button class="btn btn-sm ${btnClass}" onclick="executeProposal(${proposal.id}, '${opt.id}')">${opt.label}</button>`;
             }).join('');
 
@@ -3471,6 +3478,8 @@
                         window.location.href = `/contatos/${result.result.contact_id}`;
                     } else if (result.result?.action === 'task_created') {
                         showToast(`Tarefa #${result.result.task_id} criada`, 'success');
+                    } else if (result.result?.action === 'navigate' && result.result?.url) {
+                        window.location.href = result.result.url;
                     }
                 } else {
                     showToast(result.message || 'Erro ao executar acao', 'error');
