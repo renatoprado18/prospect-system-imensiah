@@ -1240,7 +1240,7 @@
     {% if stats.upcoming %}
     <div class="posts-list">
         {% for post in stats.upcoming %}
-        <div class="post-item" onclick="openPostModal({{ post.id }})" style="cursor: pointer;">
+        <div class="post-item" onclick="{% if post.tipo == 'hot_take' %}window.location='/hot-takes?id={{ post.hot_take_id or post.id }}'{% else %}openPostModal({{ post.id }}){% endif %}" style="cursor: pointer;">
             <div class="post-canal {% if post.tipo == 'hot_take' %}both{% else %}linkedin{% endif %}">
                 {% if post.tipo == 'hot_take' %}<i class="bi bi-fire"></i>{% else %}<i class="bi bi-linkedin"></i>{% endif %}
             </div>
@@ -1248,7 +1248,7 @@
                 <div class="post-title">{{ post.article_title[:50] }}{% if post.article_title|length > 50 %}...{% endif %}</div>
                 <div class="post-meta">
                     <span><i class="bi bi-calendar"></i> {{ post.data_publicacao.strftime('%d/%m %H:%M') if post.data_publicacao else '' }}</span>
-                    <span><i class="bi bi-tag"></i> {{ post.ai_categoria or 'Sem categoria' }}</span>
+                    <span><i class="bi bi-tag"></i> {{ post.ai_categoria or 'Hot Take' }}</span>
                 </div>
             </div>
             <span class="post-status scheduled">Agendado</span>
