@@ -608,7 +608,7 @@ def get_stats() -> Dict:
         """)
         stats = dict(cursor.fetchone())
 
-        # Query 2: Upcoming - editorial_posts + hot_takes scheduled
+        # Query 2: Upcoming - editorial_posts (unified) + orphan hot_takes only
         cursor.execute("""
             SELECT id, article_title, canal, tipo, status,
                    data_publicacao, ai_categoria, hot_take_id
@@ -619,13 +619,14 @@ def get_stats() -> Dict:
                    status, scheduled_for as data_publicacao, 'Hot Take' as ai_categoria, id as hot_take_id
             FROM hot_takes
             WHERE status = 'scheduled' AND scheduled_for >= NOW()
+              AND editorial_post_id IS NULL
             ORDER BY data_publicacao ASC
             LIMIT 8
         """)
         stats['upcoming'] = [dict(p) for p in cursor.fetchall()]
 
-        # Update scheduled count to include hot_takes
-        cursor.execute("SELECT COUNT(*) as c FROM hot_takes WHERE status = 'scheduled' AND scheduled_for >= NOW()")
+        # Update scheduled count: editorial_posts already counted, add only orphan hot_takes
+        cursor.execute("SELECT COUNT(*) as c FROM hot_takes WHERE status = 'scheduled' AND scheduled_for >= NOW() AND editorial_post_id IS NULL")
         stats['scheduled'] = (stats.get('scheduled') or 0) + cursor.fetchone()['c']
 
         return stats
