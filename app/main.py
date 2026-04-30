@@ -10234,6 +10234,31 @@ async def cron_sync_conselhoos_raci(request: Request):
     return results
 
 
+@app.get("/api/cron/raci-weekly-report")
+async def cron_raci_weekly_report(request: Request):
+    """Cron: Weekly RACI status report to WhatsApp groups. Monday 8h SP."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.raci_weekly_report import send_raci_to_groups
+    results = await send_raci_to_groups()
+    return results
+
+
+@app.post("/api/raci/update-from-message")
+async def raci_update_from_message(request: Request):
+    """Process a WhatsApp group message that updates a RACI item."""
+    data = await request.json()
+    message = data.get("message", "")
+    empresa_id = data.get("empresa_id", "")
+    if not message or not empresa_id:
+        raise HTTPException(400, "message and empresa_id required")
+    from services.raci_weekly_report import parse_raci_update
+    result = parse_raci_update(message, empresa_id)
+    if result:
+        return {"status": "updated", **result}
+    return {"status": "no_match"}
+
+
 # ---------- ConselhoOS Pre-Meeting Briefing ----------
 
 from services.conselhoos_briefing import generate_pre_meeting_briefing, check_and_generate_briefings_tomorrow

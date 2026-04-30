@@ -470,8 +470,55 @@ async def process_incoming_message(data: Dict) -> Dict:
     from_me = key.get("fromMe", False)
     message_id = key.get("id")
 
-    # Ignorar mensagens de grupos por enquanto
+    # Group messages: check for RACI updates
     if "@g.us" in remote_jid:
+        if not from_me:
+            text_content = ""
+            msg_data = data.get("data", {})
+            if msg_data.get("message", {}).get("conversation"):
+                text_content = msg_data["message"]["conversation"]
+            elif msg_data.get("message", {}).get("extendedTextMessage", {}).get("text"):
+                text_content = msg_data["message"]["extendedTextMessage"]["text"]
+
+            if text_content and any(kw in text_content.lower() for kw in
+                ['concluído', 'concluido', 'feito', 'pronto', 'andamento', 'iniciado', 'cancelado']):
+                try:
+                    from database import get_db
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            SELECT pwg.project_id, p.nome FROM project_whatsapp_groups pwg
+                            JOIN projects p ON p.id = pwg.project_id
+                            WHERE pwg.group_jid = %s AND pwg.ativo = TRUE
+                        """, (remote_jid,))
+                        group_project = cursor.fetchone()
+
+                    if group_project:
+                        import httpx
+                        cos_db = os.getenv("CONSELHOOS_DATABASE_URL", "")
+                        if cos_db:
+                            import psycopg2 as pg2
+                            conn2 = pg2.connect(cos_db)
+                            cur2 = conn2.cursor()
+                            cur2.execute("SELECT id FROM empresas WHERE LOWER(nome) LIKE LOWER(%s) LIMIT 1",
+                                        (f"%{group_project['nome']}%",))
+                            emp = cur2.fetchone()
+                            conn2.close()
+                            if emp:
+                                from services.raci_weekly_report import parse_raci_update
+                                result = parse_raci_update(text_content, emp[0])
+                                if result:
+                                    logger.info(f"RACI updated from group message: {result}")
+                                    # Reply confirmation
+                                    client = get_evolution_client()
+                                    await client.send_text(
+                                        remote_jid,
+                                        f"✅ Atualizado: *{result['acao'][:50]}* → {result['new_status']}",
+                                        instance_name="rap-whatsapp"
+                                    )
+                except Exception as e:
+                    logger.warning(f"RACI group update error: {e}")
+
         return {"processed": False, "reason": "group_message"}
 
     # Extrair telefone - handle LID format (WhatsApp Meta migration)
