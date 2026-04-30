@@ -1138,6 +1138,22 @@
     <div id="xlsx-preview" style="display: none; padding: 0 16px 16px;"></div>
 </div>
 
+<!-- Pipeline Editorial -->
+<div class="posts-card" style="border-top: 3px solid #6366f1;">
+    <div class="posts-header">
+        <h2><i class="bi bi-kanban me-2" style="color: #6366f1;"></i>Pipeline Editorial</h2>
+    </div>
+    <div style="display: flex; gap: 4px; padding: 0 16px 12px; flex-wrap: wrap;">
+        <button class="btn btn-sm btn-outline-warning pipeline-tab active" onclick="loadPipeline('draft', this)">📝 Selecionados</button>
+        <button class="btn btn-sm btn-outline-primary pipeline-tab" onclick="loadPipeline('scheduled', this)">📅 Agendados</button>
+        <button class="btn btn-sm btn-outline-success pipeline-tab" onclick="loadPipeline('published', this)">✅ Publicados</button>
+        <button class="btn btn-sm btn-outline-secondary pipeline-tab" onclick="loadPipeline('needs_metrics', this)">📊 Métricas</button>
+    </div>
+    <div id="pipelineContent" style="padding: 0 16px 16px;">
+        <div class="text-muted text-center py-3">Carregando...</div>
+    </div>
+</div>
+
 <!-- Publicar Hoje - Prioridade máxima -->
 {% if today_posts %}
 <div class="posts-card" style="border-top: 4px solid #3b82f6;">
@@ -2669,5 +2685,136 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => openPostModal(parseInt(editId)), 500);
     }
 });
+
+// Pipeline Editorial
+async function loadPipeline(status, btn) {
+    // Update active tab
+    document.querySelectorAll('.pipeline-tab').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+
+    const container = document.getElementById('pipelineContent');
+    container.innerHTML = '<div class="text-muted text-center py-3"><div class="spinner-border spinner-border-sm"></div></div>';
+
+    try {
+        let query = status;
+        if (status === 'needs_metrics') query = 'published';
+
+        const resp = await fetch(`/api/editorial/pipeline?status=${query}`);
+        const data = await resp.json();
+        let posts = data.posts || [];
+
+        // Filter needs_metrics: published but no linkedin_metricas_em
+        if (status === 'needs_metrics') {
+            posts = posts.filter(p => !p.linkedin_metricas_em && p.data_publicado);
+        }
+
+        if (posts.length === 0) {
+            container.innerHTML = '<div class="text-muted text-center py-3">Nenhum post neste status</div>';
+            return;
+        }
+
+        container.innerHTML = posts.map(p => {
+            const title = p.article_title || p.titulo_adaptado || '(sem título)';
+            const tipo = p.tipo === 'hot_take' ? '🔥' : '📝';
+            const date = p.data_publicacao ? new Date(p.data_publicacao).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+
+            let actions = '';
+            if (status === 'draft') {
+                actions = `
+                    <button class="btn btn-sm btn-primary" onclick="approvePost(${p.id})">✓ Aprovar</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="openPostModal(${p.id})">✏️ Editar</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="archivePost(${p.id})">✗</button>`;
+            } else if (status === 'scheduled') {
+                actions = `
+                    <button class="btn btn-sm btn-primary" onclick="publishToLinkedIn(${p.id})" style="background:#0a66c2;">
+                        <i class="bi bi-linkedin"></i> Publicar
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="reschedulePost(${p.id})">📅 Reagendar</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="cancelPost(${p.id})">✗ Cancelar</button>`;
+            } else if (status === 'published' || status === 'needs_metrics') {
+                const hasMetrics = p.linkedin_metricas_em;
+                actions = hasMetrics
+                    ? `<span class="badge bg-success">✓ Métricas coletadas</span>`
+                    : `<button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar Métricas</button>`;
+            }
+
+            return `
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9;">
+                    <span style="font-size:1.2rem;">${tipo}</span>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-weight:600;font-size:0.85rem;cursor:pointer;" onclick="openPostModal(${p.id})">${title.substring(0,60)}${title.length>60?'...':''}</div>
+                        <div style="font-size:0.75rem;color:#64748b;">${date} · ${p.ai_categoria || p.tipo || ''}</div>
+                    </div>
+                    <div class="d-flex gap-1 flex-shrink-0">${actions}</div>
+                </div>`;
+        }).join('');
+    } catch (e) {
+        container.innerHTML = '<div class="text-danger text-center py-3">Erro ao carregar</div>';
+    }
+}
+
+async function approvePost(postId) {
+    try {
+        // Find next available slot
+        const resp = await fetch(`/api/editorial/${postId}/schedule`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({data_publicacao: null, auto_slot: true})
+        });
+        if (resp.ok) {
+            showToast && showToast('Post aprovado e agendado!', 'success');
+            loadPipeline('draft', document.querySelector('.pipeline-tab.active'));
+        }
+    } catch (e) { alert('Erro: ' + e.message); }
+}
+
+async function archivePost(postId) {
+    if (!confirm('Arquivar este post?')) return;
+    try {
+        await fetch(`/api/editorial/${postId}`, {method: 'PUT', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({status: 'archived'})});
+        loadPipeline('draft', document.querySelector('.pipeline-tab.active'));
+    } catch(e) {}
+}
+
+async function cancelPost(postId) {
+    if (!confirm('Cancelar agendamento?')) return;
+    try {
+        await fetch(`/api/editorial/${postId}`, {method: 'PUT', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({status: 'draft', data_publicacao: null})});
+        loadPipeline('scheduled', document.querySelector('.pipeline-tab.active'));
+    } catch(e) {}
+}
+
+async function reschedulePost(postId) {
+    const date = prompt('Nova data (YYYY-MM-DD HH:MM):');
+    if (!date) return;
+    try {
+        await fetch(`/api/editorial/${postId}/schedule`, {method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({data_publicacao: date})});
+        showToast && showToast('Reagendado!', 'success');
+        loadPipeline('scheduled', document.querySelector('.pipeline-tab.active'));
+    } catch(e) {}
+}
+
+async function openMetricsModal(postId) {
+    const impressoes = prompt('Impressões:');
+    if (impressoes === null) return;
+    const reacoes = prompt('Reações:') || '0';
+    const comentarios = prompt('Comentários:') || '0';
+    try {
+        await fetch(`/api/editorial/${postId}`, {method: 'PUT', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                linkedin_impressoes: parseInt(impressoes) || 0,
+                linkedin_reacoes: parseInt(reacoes) || 0,
+                linkedin_comentarios: parseInt(comentarios) || 0
+            })});
+        showToast && showToast('Métricas salvas!', 'success');
+        loadPipeline('needs_metrics', document.querySelector('.pipeline-tab.active'));
+    } catch(e) {}
+}
+
+// Load pipeline on page load
+loadPipeline('draft');
 </script>
 {% endblock %}

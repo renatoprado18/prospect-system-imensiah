@@ -16821,13 +16821,34 @@ async def api_editorial_schedule(post_id: int, request: Request):
     """Agenda post para publicacao"""
     data = await request.json()
     data_publicacao = data.get('data_publicacao')
-    if not data_publicacao:
-        raise HTTPException(status_code=400, detail="data_publicacao e obrigatoria")
+    auto_slot = data.get('auto_slot', False)
 
-    try:
-        dt = datetime.fromisoformat(data_publicacao.replace('Z', '+00:00'))
-    except:
-        raise HTTPException(status_code=400, detail="Formato de data invalido")
+    if auto_slot and not data_publicacao:
+        # Find next available weekday slot (9h or 12h)
+        now = datetime.now()
+        dt = None
+        for day_offset in range(1, 14):
+            d = now + timedelta(days=day_offset)
+            if d.weekday() < 5:
+                for hour in [9, 12]:
+                    candidate = d.replace(hour=hour, minute=0, second=0, microsecond=0)
+                    with get_db() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT id FROM editorial_posts WHERE status='scheduled' AND data_publicacao = %s", (candidate,))
+                        if not cursor.fetchone():
+                            dt = candidate
+                            break
+                if dt:
+                    break
+        if not dt:
+            dt = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0)
+    elif not data_publicacao:
+        raise HTTPException(status_code=400, detail="data_publicacao e obrigatoria")
+    else:
+        try:
+            dt = datetime.fromisoformat(data_publicacao.replace('Z', '+00:00'))
+        except:
+            raise HTTPException(status_code=400, detail="Formato de data invalido")
 
     post = schedule_post(
         post_id, dt,
@@ -16849,6 +16870,30 @@ async def api_editorial_publish(post_id: int, request: Request):
     if not post:
         raise HTTPException(status_code=404, detail="Post nao encontrado")
     return {"status": "success", "post": post}
+
+
+@app.get("/api/editorial/pipeline")
+async def api_editorial_pipeline(request: Request, status: str = "draft"):
+    """Get editorial posts by pipeline status."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
+                   tipo, canal, status, data_publicacao, data_publicado, ai_categoria,
+                   hot_take_id, linkedin_impressoes, linkedin_reacoes, linkedin_comentarios,
+                   linkedin_metricas_em, url_publicado
+            FROM editorial_posts
+            WHERE status = %s
+            ORDER BY data_publicacao DESC NULLS LAST, criado_em DESC
+            LIMIT 20
+        """, (status,))
+        posts = [dict(r) for r in cursor.fetchall()]
+    # Serialize datetimes
+    for p in posts:
+        for k in ('data_publicacao', 'data_publicado', 'linkedin_metricas_em', 'criado_em'):
+            if p.get(k) and hasattr(p[k], 'isoformat'):
+                p[k] = p[k].isoformat()
+    return {"posts": posts}
 
 
 @app.post("/api/editorial/auto-select-week")
