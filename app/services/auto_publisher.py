@@ -160,23 +160,50 @@ def schedule_selected_posts(selected: List[Dict], start_date: date = None) -> Di
             slot = slots[i]
 
             if post['source'] == 'hot_take':
-                cursor.execute("""
-                    UPDATE hot_takes SET status = 'scheduled', scheduled_for = %s
-                    WHERE id = %s
-                """, (slot, post['id']))
+                # Create/link editorial_post for unified pipeline
+                ht_id = post['id']
+                cursor.execute("SELECT editorial_post_id FROM hot_takes WHERE id = %s", (ht_id,))
+                ht_row = cursor.fetchone()
+                ep_id = ht_row['editorial_post_id'] if ht_row and ht_row.get('editorial_post_id') else None
+
+                if not ep_id:
+                    # Create editorial_post from hot_take
+                    cursor.execute("""
+                        INSERT INTO editorial_posts (article_title, article_url, conteudo_adaptado, hashtags,
+                            tipo, canal, status, data_publicacao, hot_take_id)
+                        VALUES (%s, %s, %s, %s, 'hot_take', 'linkedin', 'scheduled', %s, %s)
+                        RETURNING id
+                    """, (post.get('titulo', ''), post.get('news_link', ''),
+                          post.get('conteudo', ''), json.dumps(post.get('hashtags', [])),
+                          slot, ht_id))
+                    ep_id = cursor.fetchone()['id']
+                    cursor.execute("UPDATE hot_takes SET editorial_post_id = %s, status = 'scheduled', scheduled_for = %s WHERE id = %s",
+                                  (ep_id, slot, ht_id))
+                else:
+                    cursor.execute("UPDATE editorial_posts SET status = 'scheduled', data_publicacao = %s WHERE id = %s", (slot, ep_id))
+                    cursor.execute("UPDATE hot_takes SET status = 'scheduled', scheduled_for = %s WHERE id = %s", (slot, ht_id))
+
+                scheduled.append({
+                    'id': ep_id,
+                    'hot_take_id': ht_id,
+                    'source': post['source'],
+                    'titulo': post['titulo'],
+                    'scheduled_for': slot.isoformat(),
+                    'reason': post.get('reason', '')
+                })
             else:
                 cursor.execute("""
                     UPDATE editorial_posts SET status = 'scheduled', data_publicacao = %s
                     WHERE id = %s
                 """, (slot, post['id']))
 
-            scheduled.append({
-                'id': post['id'],
-                'source': post['source'],
-                'titulo': post['titulo'],
-                'scheduled_for': slot.isoformat(),
-                'reason': post.get('reason', '')
-            })
+                scheduled.append({
+                    'id': post['id'],
+                    'source': post['source'],
+                    'titulo': post['titulo'],
+                    'scheduled_for': slot.isoformat(),
+                    'reason': post.get('reason', '')
+                })
 
         conn.commit()
 
@@ -200,26 +227,27 @@ async def publish_due_posts() -> Dict:
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Hot-takes agendados cuja hora chegou
+        # Unified: ALL scheduled editorial_posts (includes hot_takes with editorial_post)
+        cursor.execute("""
+            SELECT ep.id, ep.conteudo_adaptado as conteudo, ep.article_url,
+                   ep.hashtags, ep.hot_take_id, ep.article_title
+            FROM editorial_posts ep
+            WHERE ep.status = 'scheduled' AND ep.data_publicacao <= %s
+            ORDER BY ep.data_publicacao ASC
+        """, (now,))
+        due_editorials = [dict(r) for r in cursor.fetchall()]
+
+        # Also check orphan hot_takes (scheduled but no editorial_post)
         cursor.execute("""
             SELECT id, linkedin_post as conteudo, news_link as article_url
             FROM hot_takes
             WHERE status = 'scheduled' AND scheduled_for <= %s
+              AND editorial_post_id IS NULL
             ORDER BY scheduled_for ASC
         """, (now,))
         due_hot_takes = [dict(r) for r in cursor.fetchall()]
 
-        # Editorial posts agendados cuja hora chegou
-        cursor.execute("""
-            SELECT id, conteudo_adaptado as conteudo, article_url,
-                   hashtags
-            FROM editorial_posts
-            WHERE status = 'scheduled' AND data_publicacao <= %s
-            ORDER BY data_publicacao ASC
-        """, (now,))
-        due_editorials = [dict(r) for r in cursor.fetchall()]
-
-    # Publish each
+    # Publish orphan hot_takes first
     for ht in due_hot_takes:
         text = ht['conteudo'] or ''
         if not text:
@@ -259,8 +287,18 @@ async def publish_due_posts() -> Dict:
         if result.get('success'):
             from services.editorial_calendar import mark_as_published
             mark_as_published(ep['id'], url_publicado=result.get('post_url', ''))
+
+            # Also update linked hot_take
+            if ep.get('hot_take_id'):
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("UPDATE hot_takes SET status = 'published', published_at = NOW(), linkedin_url = %s WHERE id = %s",
+                                  (result.get('post_url', ''), ep['hot_take_id']))
+                    conn.commit()
+
             results["published"] += 1
-            results["posts"].append({"id": ep['id'], "source": "editorial", "url": result.get('post_url')})
+            source = "hot_take" if ep.get('hot_take_id') else "editorial"
+            results["posts"].append({"id": ep['id'], "source": source, "url": result.get('post_url')})
         else:
             results["errors"] += 1
             logger.error(f"Failed to publish editorial {ep['id']}: {result.get('error')}")
