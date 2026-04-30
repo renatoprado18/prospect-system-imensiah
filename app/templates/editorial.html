@@ -1116,7 +1116,23 @@
 </div>
 {% endif %}
 
-<!-- Xlsx Metrics Upload -->
+<!-- Pipeline Editorial - PRINCIPAL -->
+<div class="posts-card" style="border-top: 3px solid #6366f1;">
+    <div class="posts-header">
+        <h2><i class="bi bi-kanban me-2" style="color: #6366f1;"></i>Pipeline Editorial</h2>
+    </div>
+    <div style="display: flex; gap: 4px; padding: 0 16px 12px; flex-wrap: wrap;">
+        <button class="btn btn-sm btn-outline-warning pipeline-tab active" onclick="loadPipeline('draft', this)">📝 Selecionados</button>
+        <button class="btn btn-sm btn-outline-primary pipeline-tab" onclick="loadPipeline('scheduled', this)">📅 Agendados</button>
+        <button class="btn btn-sm btn-outline-success pipeline-tab" onclick="loadPipeline('published', this)">✅ Publicados</button>
+        <button class="btn btn-sm btn-outline-secondary pipeline-tab" onclick="loadPipeline('needs_metrics', this)">📊 Métricas</button>
+    </div>
+    <div id="pipelineContent" style="padding: 0 16px 16px;">
+        <div class="text-muted text-center py-3">Carregando...</div>
+    </div>
+</div>
+
+<!-- Xlsx Metrics Upload - moved down -->
 <div class="posts-card" style="border-top: 4px solid #7c3aed; margin-top: 16px;">
     <div class="posts-header">
         <h2><i class="bi bi-file-earmark-spreadsheet me-2" style="color: #7c3aed;"></i>Importar Metricas (xlsx)</h2>
@@ -1136,22 +1152,6 @@
         <input type="file" id="xlsx-file-input" accept=".xlsx,.xls" style="display: none;" onchange="handleXlsxFile(this.files[0])">
     </div>
     <div id="xlsx-preview" style="display: none; padding: 0 16px 16px;"></div>
-</div>
-
-<!-- Pipeline Editorial -->
-<div class="posts-card" style="border-top: 3px solid #6366f1;">
-    <div class="posts-header">
-        <h2><i class="bi bi-kanban me-2" style="color: #6366f1;"></i>Pipeline Editorial</h2>
-    </div>
-    <div style="display: flex; gap: 4px; padding: 0 16px 12px; flex-wrap: wrap;">
-        <button class="btn btn-sm btn-outline-warning pipeline-tab active" onclick="loadPipeline('draft', this)">📝 Selecionados</button>
-        <button class="btn btn-sm btn-outline-primary pipeline-tab" onclick="loadPipeline('scheduled', this)">📅 Agendados</button>
-        <button class="btn btn-sm btn-outline-success pipeline-tab" onclick="loadPipeline('published', this)">✅ Publicados</button>
-        <button class="btn btn-sm btn-outline-secondary pipeline-tab" onclick="loadPipeline('needs_metrics', this)">📊 Métricas</button>
-    </div>
-    <div id="pipelineContent" style="padding: 0 16px 16px;">
-        <div class="text-muted text-center py-3">Carregando...</div>
-    </div>
 </div>
 
 <!-- Publicar Hoje - Prioridade máxima -->

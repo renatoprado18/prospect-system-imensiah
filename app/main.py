@@ -16778,6 +16778,29 @@ async def api_editorial_funnel():
     return get_editorial_funnel()
 
 
+@app.get("/api/editorial/pipeline")
+async def api_editorial_pipeline(request: Request, status: str = "draft"):
+    """Get editorial posts by pipeline status."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
+                   tipo, canal, status, data_publicacao, data_publicado, ai_categoria,
+                   hot_take_id, linkedin_impressoes, linkedin_reacoes, linkedin_comentarios,
+                   linkedin_metricas_em, url_publicado, criado_em
+            FROM editorial_posts
+            WHERE status = %s
+            ORDER BY data_publicacao DESC NULLS LAST, criado_em DESC
+            LIMIT 20
+        """, (status,))
+        posts = [dict(r) for r in cursor.fetchall()]
+    for p in posts:
+        for k in ('data_publicacao', 'data_publicado', 'linkedin_metricas_em', 'criado_em'):
+            if p.get(k) and hasattr(p[k], 'isoformat'):
+                p[k] = p[k].isoformat()
+    return {"posts": posts}
+
+
 @app.get("/api/editorial/{post_id}")
 async def api_editorial_get(post_id: int):
     """Retorna um post especifico"""
@@ -16870,30 +16893,6 @@ async def api_editorial_publish(post_id: int, request: Request):
     if not post:
         raise HTTPException(status_code=404, detail="Post nao encontrado")
     return {"status": "success", "post": post}
-
-
-@app.get("/api/editorial/pipeline")
-async def api_editorial_pipeline(request: Request, status: str = "draft"):
-    """Get editorial posts by pipeline status."""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
-                   tipo, canal, status, data_publicacao, data_publicado, ai_categoria,
-                   hot_take_id, linkedin_impressoes, linkedin_reacoes, linkedin_comentarios,
-                   linkedin_metricas_em, url_publicado
-            FROM editorial_posts
-            WHERE status = %s
-            ORDER BY data_publicacao DESC NULLS LAST, criado_em DESC
-            LIMIT 20
-        """, (status,))
-        posts = [dict(r) for r in cursor.fetchall()]
-    # Serialize datetimes
-    for p in posts:
-        for k in ('data_publicacao', 'data_publicado', 'linkedin_metricas_em', 'criado_em'):
-            if p.get(k) and hasattr(p[k], 'isoformat'):
-                p[k] = p[k].isoformat()
-    return {"posts": posts}
 
 
 @app.post("/api/editorial/auto-select-week")
