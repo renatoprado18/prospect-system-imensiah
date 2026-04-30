@@ -1122,10 +1122,9 @@
         <h2><i class="bi bi-kanban me-2" style="color: #6366f1;"></i>Pipeline Editorial</h2>
     </div>
     <div style="display: flex; gap: 4px; padding: 0 16px 12px; flex-wrap: wrap;">
-        <button class="btn btn-sm btn-outline-warning pipeline-tab active" onclick="loadPipeline('draft', this)">📝 Selecionados</button>
+        <button class="btn btn-sm btn-outline-warning pipeline-tab active" onclick="loadPipeline('draft', this)">📝 Para Aprovar</button>
         <button class="btn btn-sm btn-outline-primary pipeline-tab" onclick="loadPipeline('scheduled', this)">📅 Agendados</button>
-        <button class="btn btn-sm btn-outline-success pipeline-tab" onclick="loadPipeline('published', this)">✅ Publicados</button>
-        <button class="btn btn-sm btn-outline-secondary pipeline-tab" onclick="loadPipeline('needs_metrics', this)">📊 Métricas</button>
+        <button class="btn btn-sm btn-outline-success pipeline-tab" onclick="loadPipeline('pending_metrics', this)">📊 Coletar Métricas</button>
     </div>
     <div id="pipelineContent" style="padding: 0 16px 16px;">
         <div class="text-muted text-center py-3">Carregando...</div>
@@ -2688,7 +2687,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Pipeline Editorial
 async function loadPipeline(status, btn) {
-    // Update active tab
     document.querySelectorAll('.pipeline-tab').forEach(b => b.classList.remove('active'));
     if (btn) btn.classList.add('active');
 
@@ -2697,45 +2695,61 @@ async function loadPipeline(status, btn) {
 
     try {
         let query = status;
-        if (status === 'needs_metrics') query = 'published';
+        if (status === 'pending_metrics') query = 'published';
 
         const resp = await fetch(`/api/editorial/pipeline?status=${query}`);
         const data = await resp.json();
         let posts = data.posts || [];
 
-        // Filter needs_metrics: published but no linkedin_metricas_em
-        if (status === 'needs_metrics') {
-            posts = posts.filter(p => !p.linkedin_metricas_em && p.data_publicado);
+        // pending_metrics: published without metrics collected
+        if (status === 'pending_metrics') {
+            posts = posts.filter(p => !p.linkedin_metricas_em);
         }
 
         if (posts.length === 0) {
-            container.innerHTML = '<div class="text-muted text-center py-3">Nenhum post neste status</div>';
+            const msgs = {
+                'draft': 'Nenhum post para aprovar. Use "Auto-Selecionar" ou crie hot-takes.',
+                'scheduled': 'Nenhum post agendado. Aprove posts na aba "Para Aprovar".',
+                'pending_metrics': 'Todos os posts publicados já têm métricas coletadas! 🎉'
+            };
+            container.innerHTML = `<div class="text-muted text-center py-3">${msgs[status] || 'Vazio'}</div>`;
             return;
         }
 
-        container.innerHTML = posts.map(p => {
+        // Header for draft tab
+        let header = '';
+        if (status === 'draft') {
+            const withDate = posts.filter(p => p.data_publicacao);
+            if (withDate.length > 0) {
+                header = `<div style="background:#fef3c7;padding:8px 12px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+                    ⚡ <strong>${withDate.length} posts pré-selecionados para próxima semana</strong> — revise e aprove
+                    <button class="btn btn-sm btn-primary ms-2" onclick="approveAllDrafts()">✓ Aprovar Todos</button>
+                </div>`;
+            }
+        }
+
+        container.innerHTML = header + posts.map(p => {
             const title = p.article_title || p.titulo_adaptado || '(sem título)';
             const tipo = p.tipo === 'hot_take' ? '🔥' : '📝';
             const date = p.data_publicacao ? new Date(p.data_publicacao).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+            const postUrl = p.url_publicado || p.linkedin_post_url || '';
 
             let actions = '';
             if (status === 'draft') {
                 actions = `
                     <button class="btn btn-sm btn-primary" onclick="approvePost(${p.id})">✓ Aprovar</button>
-                    <button class="btn btn-sm btn-outline-secondary" onclick="openPostModal(${p.id})">✏️ Editar</button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="openPostModal(${p.id})">✏️</button>
                     <button class="btn btn-sm btn-outline-danger" onclick="archivePost(${p.id})">✗</button>`;
             } else if (status === 'scheduled') {
                 actions = `
-                    <button class="btn btn-sm btn-primary" onclick="publishToLinkedIn(${p.id})" style="background:#0a66c2;">
-                        <i class="bi bi-linkedin"></i> Publicar
-                    </button>
-                    <button class="btn btn-sm btn-outline-secondary" onclick="reschedulePost(${p.id})">📅 Reagendar</button>
-                    <button class="btn btn-sm btn-outline-danger" onclick="cancelPost(${p.id})">✗ Cancelar</button>`;
-            } else if (status === 'published' || status === 'needs_metrics') {
-                const hasMetrics = p.linkedin_metricas_em;
-                actions = hasMetrics
-                    ? `<span class="badge bg-success">✓ Métricas coletadas</span>`
-                    : `<button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar Métricas</button>`;
+                    <button class="btn btn-sm btn-primary" onclick="publishToLinkedIn(${p.id})" style="background:#0a66c2;"><i class="bi bi-linkedin"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="reschedulePost(${p.id})">📅</button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="cancelPost(${p.id})">✗</button>`;
+            } else if (status === 'pending_metrics') {
+                actions = postUrl
+                    ? `<a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-box-arrow-up-right"></i> Ver Post</a>
+                       <button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar</button>`
+                    : `<button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar</button>`;
             }
 
             return `
@@ -2743,7 +2757,7 @@ async function loadPipeline(status, btn) {
                     <span style="font-size:1.2rem;">${tipo}</span>
                     <div style="flex:1;min-width:0;">
                         <div style="font-weight:600;font-size:0.85rem;cursor:pointer;" onclick="openPostModal(${p.id})">${title.substring(0,60)}${title.length>60?'...':''}</div>
-                        <div style="font-size:0.75rem;color:#64748b;">${date} · ${p.ai_categoria || p.tipo || ''}</div>
+                        <div style="font-size:0.75rem;color:#64748b;">${date}${date ? ' · ' : ''}${p.ai_categoria || p.tipo || ''}</div>
                     </div>
                     <div class="d-flex gap-1 flex-shrink-0">${actions}</div>
                 </div>`;
@@ -2751,6 +2765,20 @@ async function loadPipeline(status, btn) {
     } catch (e) {
         container.innerHTML = '<div class="text-danger text-center py-3">Erro ao carregar</div>';
     }
+}
+
+async function approveAllDrafts() {
+    if (!confirm('Aprovar e agendar todos os posts selecionados?')) return;
+    try {
+        const resp = await fetch('/api/editorial/approve-week', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+        const data = await resp.json();
+        if (resp.ok) {
+            showToast && showToast(`${data.scheduled?.length || 0} posts agendados!`, 'success');
+            loadPipeline('scheduled', document.querySelector('.pipeline-tab:nth-child(2)'));
+        } else {
+            alert(data.detail || 'Erro');
+        }
+    } catch(e) { alert('Erro: ' + e.message); }
 }
 
 async function approvePost(postId) {
