@@ -30,6 +30,7 @@ TABLES=(
     "contacts"
     "projects"
     "project_notes"
+    "project_milestones"
     "editorial_posts"
     "hot_takes"
     "calendar_events"
