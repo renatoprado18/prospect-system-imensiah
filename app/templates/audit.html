@@ -1,0 +1,227 @@
+{% extends "rap_base.html" %}
+
+{% block title %}Auditoria — INTEL{% endblock %}
+{% block page_title %}Auditoria{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle">Histórico de writes do sistema (intel_bot, action_proposals, etc.)</p>{% endblock %}
+
+{% block extra_css %}
+<style>
+.audit-filters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    background: white;
+    padding: 16px;
+    border-radius: 12px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.audit-filters label { font-size: 0.8rem; color: var(--gray-500); display: block; margin-bottom: 4px; }
+.audit-filters select, .audit-filters input {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--gray-200);
+    border-radius: 8px; font-size: 0.9rem; background: white;
+}
+.audit-stats { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; font-size: 0.85rem; color: var(--gray-500); }
+.audit-list { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); overflow: hidden; }
+.audit-row {
+    display: grid;
+    grid-template-columns: 160px 1fr 140px 100px 80px;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--gray-100);
+    font-size: 0.88rem;
+    align-items: center;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.audit-row:hover { background: var(--gray-100); }
+.audit-row:last-child { border-bottom: none; }
+.audit-time { color: var(--gray-500); font-variant-numeric: tabular-nums; }
+.audit-action { font-weight: 600; color: var(--dark); }
+.audit-action.action-proposal { color: #6366f1; }
+.audit-action.intel_bot { color: #10b981; }
+.audit-entity { color: var(--gray-500); font-family: ui-monospace, monospace; font-size: 0.82rem; }
+.audit-actor { font-size: 0.78rem; padding: 2px 8px; border-radius: 999px; background: var(--gray-100); display: inline-block; }
+.audit-actor.user { background: #ddd6fe; color: #5b21b6; }
+.audit-actor.intel_bot { background: #d1fae5; color: #065f46; }
+.audit-actor.system { background: var(--gray-200); color: var(--gray-600); }
+.audit-id { color: var(--gray-400); font-size: 0.78rem; font-family: ui-monospace, monospace; }
+.audit-details {
+    grid-column: 1 / -1;
+    padding: 12px 16px;
+    margin-top: 8px;
+    background: #fafbff;
+    border-radius: 8px;
+    font-family: ui-monospace, 'SF Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--gray-600);
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: none;
+}
+.audit-row.expanded .audit-details { display: block; }
+.audit-empty { padding: 40px; text-align: center; color: var(--gray-500); }
+.audit-pagination { padding: 16px; display: flex; justify-content: space-between; align-items: center; }
+.audit-pagination button {
+    padding: 6px 14px; border: 1px solid var(--gray-200); background: white;
+    border-radius: 8px; cursor: pointer; font-size: 0.85rem;
+}
+.audit-pagination button:disabled { opacity: 0.4; cursor: default; }
+@media (max-width: 768px) {
+    .audit-row { grid-template-columns: 1fr; gap: 4px; padding: 12px; }
+    .audit-time { font-size: 0.78rem; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="audit-filters">
+    <div>
+        <label for="filter-action">Action</label>
+        <select id="filter-action"><option value="">Todas</option></select>
+    </div>
+    <div>
+        <label for="filter-entity-type">Entity</label>
+        <select id="filter-entity-type"><option value="">Todas</option></select>
+    </div>
+    <div>
+        <label for="filter-actor">Actor</label>
+        <select id="filter-actor"><option value="">Todos</option></select>
+    </div>
+    <div>
+        <label for="filter-since">Período</label>
+        <select id="filter-since">
+            <option value="">Todos</option>
+            <option value="1">Última hora</option>
+            <option value="24" selected>Últimas 24h</option>
+            <option value="168">Última semana</option>
+            <option value="720">Último mês</option>
+        </select>
+    </div>
+</div>
+
+<div class="audit-stats">
+    <span><strong id="audit-total">0</strong> eventos</span>
+    <span id="audit-loading" style="display: none;">Carregando…</span>
+</div>
+
+<div class="audit-list" id="audit-list">
+    <div class="audit-empty">Carregando…</div>
+</div>
+
+<div class="audit-pagination">
+    <button id="prev-btn" onclick="prevPage()" disabled>← Anterior</button>
+    <span id="page-info" style="color: var(--gray-500); font-size: 0.85rem;"></span>
+    <button id="next-btn" onclick="nextPage()" disabled>Próximo →</button>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const PAGE_SIZE = 50;
+let currentOffset = 0;
+let currentTotal = 0;
+
+function fmtTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const now = new Date();
+    const diffMs = now - d;
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return 'agora';
+    if (diffMin < 60) return `${diffMin}min atrás`;
+    const diffH = Math.floor(diffMin / 60);
+    if (diffH < 24) return `${diffH}h atrás`;
+    return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function actorClass(actor) {
+    if (actor === 'user') return 'user';
+    if (actor === 'intel_bot') return 'intel_bot';
+    return 'system';
+}
+
+function actionPrefix(action) {
+    const dot = action.indexOf('.');
+    return dot > 0 ? action.substring(0, dot) : action;
+}
+
+async function loadDistinct() {
+    const r = await fetch('/api/audit/distinct');
+    const d = await r.json();
+    const fillSelect = (id, items) => {
+        const sel = document.getElementById(id);
+        items.forEach(v => {
+            const o = document.createElement('option');
+            o.value = v; o.textContent = v;
+            sel.appendChild(o);
+        });
+    };
+    fillSelect('filter-action', d.actions || []);
+    fillSelect('filter-entity-type', d.entity_types || []);
+    fillSelect('filter-actor', d.actors || []);
+}
+
+async function load() {
+    document.getElementById('audit-loading').style.display = 'inline';
+    const params = new URLSearchParams();
+    const action = document.getElementById('filter-action').value;
+    const et = document.getElementById('filter-entity-type').value;
+    const actor = document.getElementById('filter-actor').value;
+    const since = document.getElementById('filter-since').value;
+    if (action) params.append('action', action);
+    if (et) params.append('entity_type', et);
+    if (actor) params.append('actor', actor);
+    if (since) params.append('since_hours', since);
+    params.append('limit', PAGE_SIZE);
+    params.append('offset', currentOffset);
+
+    const r = await fetch('/api/audit/recent?' + params);
+    const d = await r.json();
+    currentTotal = d.total || 0;
+    document.getElementById('audit-total').textContent = currentTotal.toLocaleString('pt-BR');
+
+    const list = document.getElementById('audit-list');
+    if (!d.items || d.items.length === 0) {
+        list.innerHTML = '<div class="audit-empty">Nenhum evento encontrado.</div>';
+    } else {
+        list.innerHTML = d.items.map(item => {
+            const detailsJson = JSON.stringify(item.details || {}, null, 2);
+            const entityStr = item.entity_type ? `${item.entity_type}/${item.entity_id || '—'}` : '';
+            return `
+                <div class="audit-row" onclick="this.classList.toggle('expanded')">
+                    <span class="audit-time" title="${item.criado_em}">${fmtTime(item.criado_em)}</span>
+                    <span class="audit-action ${actionPrefix(item.action)}">${item.action}</span>
+                    <span class="audit-entity">${entityStr}</span>
+                    <span><span class="audit-actor ${actorClass(item.actor)}">${item.actor || '—'}</span></span>
+                    <span class="audit-id">#${item.id}</span>
+                    <pre class="audit-details">${detailsJson}</pre>
+                </div>
+            `;
+        }).join('');
+    }
+
+    const start = currentOffset + 1;
+    const end = Math.min(currentOffset + PAGE_SIZE, currentTotal);
+    document.getElementById('page-info').textContent = currentTotal > 0 ? `${start}–${end} de ${currentTotal}` : '';
+    document.getElementById('prev-btn').disabled = currentOffset === 0;
+    document.getElementById('next-btn').disabled = currentOffset + PAGE_SIZE >= currentTotal;
+    document.getElementById('audit-loading').style.display = 'none';
+}
+
+function prevPage() {
+    currentOffset = Math.max(0, currentOffset - PAGE_SIZE);
+    load();
+}
+function nextPage() {
+    currentOffset += PAGE_SIZE;
+    load();
+}
+
+['filter-action', 'filter-entity-type', 'filter-actor', 'filter-since'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => { currentOffset = 0; load(); });
+});
+
+loadDistinct().then(load);
+</script>
+{% endblock %}
