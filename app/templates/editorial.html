@@ -1884,10 +1884,18 @@ async function openPostModal(postId) {
                     </h4>
                     <div class="form-group" style="margin-bottom: 12px;">
                         <label style="font-size: 0.8rem;">Link do Post no LinkedIn</label>
-                        <input type="text" class="form-control" id="edit-linkedin-url"
-                            placeholder="https://linkedin.com/feed/update/urn:li:activity:..."
-                            value="${post.linkedin_post_url || post.url_publicado || ''}"
-                            style="font-size: 0.85rem;">
+                        <div style="display: flex; gap: 6px;">
+                            <input type="text" class="form-control" id="edit-linkedin-url"
+                                placeholder="https://linkedin.com/feed/update/urn:li:activity:..."
+                                value="${post.linkedin_post_url || post.url_publicado || ''}"
+                                style="font-size: 0.85rem; flex: 1;">
+                            ${(post.linkedin_post_url || post.url_publicado) ? `
+                                <a href="${post.linkedin_post_url || post.url_publicado}" target="_blank" rel="noopener noreferrer"
+                                   style="display: inline-flex; align-items: center; padding: 0 12px; background: #0077b5; color: white; border-radius: 6px; text-decoration: none; font-size: 0.85rem;"
+                                   title="Abrir post no LinkedIn">
+                                    <i class="bi bi-box-arrow-up-right"></i>
+                                </a>` : ''}
+                        </div>
                     </div>
                     ${canAddMetrics || hasMetrics ? `
                         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
@@ -2429,10 +2437,12 @@ function parseLinkedInMetrics(rows) {
         impressoes: 0, reacoes: 0, comentarios: 0,
         compartilhamentos: 0, visitas_perfil: 0,
         seguidores: 0, salvamentos: 0, cliques: 0,
-        post_url: ''
+        post_url: '',
+        post_date: ''  // ISO YYYY-MM-DD extraida da row "Data da publicacao"
     };
 
     // LinkedIn xlsx has rows like "Impressões | 167" or cells with label/value pairs
+    const MONTHS_PT = {jan:1, fev:2, mar:3, abr:4, mai:5, jun:6, jul:7, ago:8, set:9, out:10, nov:11, dez:12};
     for (const row of rows) {
         if (!row || row.length === 0) continue;
         const cellText = String(row[0] || '').trim();
@@ -2442,6 +2452,21 @@ function parseLinkedInMetrics(rows) {
             const cellStr = String(cell || '');
             if (cellStr.includes('linkedin.com/feed/update') || cellStr.includes('linkedin.com/posts/')) {
                 metrics.post_url = cellStr.trim();
+            }
+        }
+
+        // "Data da publicacao | 7 de abr de 2026"
+        if (!metrics.post_date && cellText.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes('data da publicac')) {
+            const dateStr = String(row[1] || '').trim();
+            const m = dateStr.match(/(\d{1,2})\s+de\s+([a-zç]+)\s+de\s+(\d{4})/i);
+            if (m) {
+                const day = parseInt(m[1], 10);
+                const monKey = m[2].slice(0,3).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+                const month = MONTHS_PT[monKey];
+                const year = parseInt(m[3], 10);
+                if (month) {
+                    metrics.post_date = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                }
             }
         }
 
@@ -2579,12 +2604,13 @@ async function submitXlsxMetrics() {
                 body: JSON.stringify({...metrics, fonte: 'xlsx_upload'})
             });
         } else {
-            // Auto-match by URL
+            // Auto-match by URL ou data
             response = await fetch('/api/editorial/metrics/upload', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     post_url: metrics.post_url,
+                    post_date: metrics.post_date,
                     metrics: metrics
                 })
             });
@@ -2600,8 +2626,23 @@ async function submitXlsxMetrics() {
                 </div>
             `;
             setTimeout(() => location.reload(), 2000);
+        } else if (result.status === 'ambiguous' && Array.isArray(result.candidates)) {
+            // Mostrar candidatos como botoes de quick-pick
+            const select = document.getElementById('xlsx-post-select');
+            if (select) {
+                select.innerHTML = '<option value="">-- Selecionar post --</option>';
+                result.candidates.forEach(c => {
+                    const opt = document.createElement('option');
+                    opt.value = c.id;
+                    opt.textContent = `#${c.id} - ${(c.title || '(sem titulo)').substring(0, 60)}`;
+                    select.appendChild(opt);
+                });
+                select.style.borderColor = '#f59e0b';
+                select.focus();
+            }
+            alert(`${result.candidates.length} posts publicados nessa data. Selecione qual e o correto no dropdown e clique em Salvar Metricas novamente.`);
         } else if (result.status === 'not_found') {
-            alert(result.message || 'Post nao encontrado. Selecione manualmente.');
+            alert(result.message || 'Post nao encontrado. Selecione manualmente no dropdown.');
         } else {
             alert('Erro ao salvar: ' + (result.detail || 'Erro desconhecido'));
         }

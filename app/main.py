@@ -17260,13 +17260,14 @@ async def api_editorial_post_metrics(post_id: int, request: Request):
 
 @app.post("/api/editorial/metrics/upload")
 async def api_editorial_metrics_upload(request: Request):
-    """Accept parsed xlsx data and auto-match post by URL"""
+    """Accept parsed xlsx data and auto-match post by URL ou data de publicacao."""
     data = await request.json()
     post_url = data.get('post_url', '').strip()
+    post_date = data.get('post_date', '').strip()  # ISO YYYY-MM-DD vindo do xlsx
     metrics = data.get('metrics', {})
 
-    if not post_url and not data.get('post_id'):
-        raise HTTPException(status_code=400, detail="post_url ou post_id obrigatorio")
+    if not post_url and not data.get('post_id') and not post_date:
+        raise HTTPException(status_code=400, detail="post_url, post_id ou post_date obrigatorio")
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -17296,11 +17297,14 @@ async def api_editorial_metrics_upload(request: Request):
                     post_id = row['id']
 
         if not post_id and post_url:
-            # Extract numeric ID prefix (first 10 digits) from URN/activity ID
+            # Extract numeric ID prefix (first 10 digits) from URN/activity ID.
+            # Nota: LinkedIn usa share URN diferente do activity URN para o mesmo post,
+            # entao isto so funciona se acaso os dois URNs comecarem iguais — cai no
+            # fallback por data abaixo na maioria dos casos.
             import re
             digits = re.findall(r'(\d{10,})', post_url)
             for d in digits:
-                prefix = d[:10]  # First 10 digits are usually shared between share/activity URNs
+                prefix = d[:10]
                 cursor.execute("""
                     SELECT id FROM editorial_posts
                     WHERE (linkedin_post_url LIKE %s OR url_publicado LIKE %s)
@@ -17311,10 +17315,38 @@ async def api_editorial_metrics_upload(request: Request):
                     post_id = row['id']
                     break
 
+        # Fallback por data de publicacao (xlsx do LinkedIn Analytics traz "Data da publicacao")
+        # Janela: +/- 1 dia para tolerar timezone. Se exatamente 1 match, usa.
+        if not post_id and post_date:
+            try:
+                from datetime import datetime as _dt
+                d = _dt.strptime(post_date[:10], '%Y-%m-%d').date()
+                cursor.execute("""
+                    SELECT id, article_title FROM editorial_posts
+                    WHERE status = 'published'
+                      AND data_publicado::date BETWEEN (%s::date - 1) AND (%s::date + 1)
+                """, (d, d))
+                rows = cursor.fetchall()
+                if len(rows) == 1:
+                    post_id = rows[0]['id']
+                elif len(rows) > 1:
+                    return {
+                        "status": "ambiguous",
+                        "message": f"{len(rows)} posts publicados nessa data — selecione manualmente.",
+                        "candidates": [{"id": r['id'], "title": r.get('article_title', '')} for r in rows],
+                        "post_url": post_url,
+                    }
+            except (ValueError, TypeError):
+                pass
+
+        # Tambem aceita post_date sem post_url (ex: filename so com URN)
+        if not post_id and not post_url and not post_date:
+            return {"status": "not_found", "message": "Nenhuma chave de busca fornecida."}
+
         if not post_id:
             return {
                 "status": "not_found",
-                "message": "Nenhum post encontrado com essa URL. Selecione o post manualmente.",
+                "message": "Nenhum post encontrado pela URL ou data. Selecione manualmente.",
                 "post_url": post_url
             }
 
