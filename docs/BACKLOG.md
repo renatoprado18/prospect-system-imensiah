@@ -84,17 +84,30 @@
 - [x] Editorial metrics reminder (cron 11h SP): lembra de coletar métricas 48h após publicação
 - [x] Contatos que precisam de atenção enriquecidos: motivos, conversation starters (fatos pessoais, profissionais, relacionamento), tarefas pendentes, última memória
 
-### Infra
-- [x] Mobile responsividade + PWA
-- [x] Railway worker para transcrição de áudio
-- [x] Dashboard otimizado (cache, 2 colunas, stat cards)
-
----
-
-## Pendente — Média Prioridade
+### ConselhoOS Ata + RACI
+- [x] Ata generation via Railway worker (sem timeout, Claude com prompt detalhado)
+- [x] DOCX profissional com renderer markdown flexível (qualquer empresa)
+- [x] RACI matrix gerada por IA a partir de ata/transcrição
+- [x] RACI export como Google Sheet (pasta "RACI", sobrescreve anterior)
+- [x] RACI weekly report via WhatsApp grupo (cron segunda 8h)
+- [x] Captura de respostas do grupo para atualizar status RACI
+- [x] Grupo Conselho Vallen vinculado ao projeto #24
+- [x] Grupo Conselho Alba vinculado ao projeto #26
 
 ### Dashboard
-- [ ] Melhorar card "Quem Contatar Hoje" — filtrar contatos irrelevantes, priorizar por círculo e contexto real
+- [x] Melhorar card "Quem Contatar Hoje" — filtrar irrelevantes, priorizar por círculo, contexto real, conversation starters
+- [x] Filtrar rodas stale (>14 dias com comunicação posterior)
+- [x] Filtrar colaboradores diários (health 100% + contato recente)
+
+### Campaigns
+- [x] LinkedIn tasks com link direto do post (via LinkdAPI)
+- [x] Skip contacts sem LinkedIn em campanhas LinkedIn
+- [x] Batch enrichment de tarefas existentes
+
+### Infra
+- [x] Mobile responsividade + PWA
+- [x] Railway worker para transcrição de áudio + ata generation
+- [x] Dashboard otimizado (cache, 2 colunas, stat cards)
 
 ---
 

@@ -176,7 +176,33 @@
   - Detecta posts publicados ~48h atras sem metricas coletadas (linkedin_metricas_em IS NULL)
   - Envia lembrete via WhatsApp com lista de posts e instrucoes para coletar
 
-## 19. PWA & Mobile
+## 19. ConselhoOS Integration — Ata + RACI Flow
+- **Ata Generation**: ConselhoOS → Railway worker (no timeout) → Claude generates detailed ata (8-15K chars) → saves to ConselhoOS DB → notifies WhatsApp
+  - Fetches participants from ConselhoOS `pessoas` table for correct names/cargos
+  - Frontend shows animated spinner + auto-polls every 10s until ata appears
+  - "Regenerar" button to re-generate from transcription
+- **DOCX Generation**: ConselhoOS → INTEL `/api/ata/generate-docx` → python-docx professional template → Google Drive upload
+  - Flexible markdown-to-DOCX renderer: handles any section structure (not Vallen-specific)
+  - Markdown preprocessor converts `# ## ### **bold** | tables |` to DOCX elements
+- **RACI Matrix**: Generated from ata decisions/pendências using Claude
+  - Assigns R/A/C/I based on participant expertise and cargo
+  - Exported as Google Sheet to empresa "RACI" folder (overwrites previous version)
+  - `raciSheetDriveId` saved in reunião for email inclusion
+- **RACI Weekly Report**: `services/raci_weekly_report.py` — cron Monday 8h SP
+  - Sends formatted RACI status to empresa WhatsApp group
+  - Groups by status: atrasados (🔴), em andamento (🟡), pendentes (⏳), concluídos (✅)
+  - Captures responses ("3 concluído") from group → updates RACI status in ConselhoOS
+  - Confirmation sent to group
+- **Email Distribution**: Sends ata DOCX + RACI Sheet via Gmail
+  - Auto-exports RACI Sheet if missing when sending
+  - Recipients selected from empresa `pessoas`
+- **Campaign LinkedIn Tasks**: `campaign_executor.py`
+  - Fetches real LinkedIn posts via LinkdAPI `/api/v1/posts/all` before creating tasks
+  - Tasks include direct post URL + text preview
+  - Contacts without LinkedIn or without posts → enrollment paused
+  - Batch enrichment endpoint: `POST /api/v1/campaigns/enrich-linkedin-tasks`
+
+## 20. PWA & Mobile
 - **Manifest**: `/static/manifest.json` (standalone, portrait, theme #6366f1)
 - **Service Worker**: `/static/sw.js` - caches static assets (Bootstrap, icons, fonts) + network-first HTML pages with offline fallback
 - **iOS PWA meta tags**: apple-mobile-web-app-capable, apple-mobile-web-app-status-bar-style (black-translucent), apple-touch-icon
