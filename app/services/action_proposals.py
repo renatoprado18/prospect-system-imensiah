@@ -4,9 +4,12 @@ Action Proposals Service - Gestao de propostas de acao
 CRUD e gestao de propostas de acao geradas pelo RealtimeAnalyzer.
 """
 import json
+import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from database import get_db
+
+logger = logging.getLogger(__name__)
 
 
 class ActionProposalsService:
@@ -201,8 +204,69 @@ class ActionProposalsService:
                 return self._serialize_proposal(dict(row))
             return None
 
+    def auto_resolve_weekly_editorial(self) -> int:
+        """
+        Auto-resolve propostas 'weekly_editorial' cujos posts ja foram todos
+        agendados/publicados (status != 'draft' em editorial_posts) ou cujos
+        hot_takes referenciados ja sairam de 'draft'.
+
+        Retorna o numero de propostas resolvidas.
+        """
+        resolved = 0
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, action_params FROM action_proposals
+                WHERE action_type = 'weekly_editorial' AND status = 'pending'
+            """)
+            rows = cursor.fetchall()
+
+            for row in rows:
+                params = row.get('action_params') or {}
+                if isinstance(params, str):
+                    try:
+                        params = json.loads(params)
+                    except (json.JSONDecodeError, TypeError):
+                        params = {}
+                selected = params.get('selected', []) if isinstance(params, dict) else []
+                if not selected:
+                    continue
+
+                still_draft = 0
+                for s in selected:
+                    pid = s.get('id')
+                    src = s.get('source')
+                    if not pid:
+                        continue
+                    if src == 'hot_take':
+                        cursor.execute("SELECT status FROM hot_takes WHERE id = %s", (pid,))
+                    else:
+                        cursor.execute("SELECT status FROM editorial_posts WHERE id = %s", (pid,))
+                    r = cursor.fetchone()
+                    if r and r.get('status') == 'draft':
+                        still_draft += 1
+
+                if still_draft == 0:
+                    cursor.execute("""
+                        UPDATE action_proposals
+                        SET status = 'executed', executed_at = NOW(),
+                            execution_result = %s
+                        WHERE id = %s AND status = 'pending'
+                    """, (json.dumps({"auto_resolved": True, "reason": "all posts scheduled/published"}),
+                          row['id']))
+                    resolved += 1
+            if resolved:
+                conn.commit()
+        return resolved
+
     def get_pending_proposals(self, limit: int = 20) -> List[Dict]:
         """Lista propostas pendentes ordenadas por urgencia e data"""
+        # Resolve transparente: weekly_editorial cujos posts ja foram agendados
+        try:
+            self.auto_resolve_weekly_editorial()
+        except Exception as e:
+            logger.error(f"auto_resolve_weekly_editorial error: {e}")
+
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
