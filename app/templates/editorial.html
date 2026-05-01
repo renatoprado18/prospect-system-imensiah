@@ -44,38 +44,52 @@
     /* Stats Cards */
     .stats-row {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 16px;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
     }
 
     .stat-card {
         background: white;
-        border-radius: 12px;
-        padding: 20px;
+        border-radius: 10px;
+        padding: 12px 14px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 64px;
     }
 
     .stat-card .icon {
-        width: 40px;
-        height: 40px;
-        border-radius: 10px;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 1.25rem;
-        margin-bottom: 12px;
+        font-size: 1rem;
+        flex-shrink: 0;
     }
 
-    .stat-card .value {
-        font-size: 2rem;
-        font-weight: 700;
-        color: var(--dark);
-    }
+    .stat-card .body { flex: 1; min-width: 0; }
+    .stat-card .label { font-size: 0.7rem; color: var(--gray-500); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+    .stat-card .value { font-size: 1.05rem; font-weight: 600; color: var(--dark); line-height: 1.25; }
+    .stat-card .sub { font-size: 0.75rem; color: var(--gray-500); line-height: 1.3; }
+    .stat-card.ok .icon { background: rgba(16,185,129,0.1); color: #10b981; }
+    .stat-card.warn .icon { background: rgba(245,158,11,0.1); color: #f59e0b; }
+    .stat-card.neutral .icon { background: rgba(99,102,241,0.1); color: #6366f1; }
 
-    .stat-card .label {
-        font-size: 0.875rem;
-        color: var(--gray-500);
-    }
+    /* Tabela "Publicados" (sortable) */
+    .published-table { width: 100%; font-size: 0.78rem; border-collapse: collapse; }
+    .published-table th, .published-table td { padding: 8px 6px; text-align: left; border-bottom: 1px solid #f1f5f9; }
+    .published-table th { font-weight: 600; color: #475569; cursor: pointer; user-select: none; white-space: nowrap; background: #f8fafc; position: sticky; top: 0; z-index: 1; }
+    .published-table th:hover { background: #f1f5f9; }
+    .published-table th .arrow { color: #94a3b8; margin-left: 2px; }
+    .published-table th.active .arrow { color: #6366f1; }
+    .published-table tr:hover td { background: #fafbfc; }
+    .published-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .published-table .titulo { cursor: pointer; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .published-table .titulo:hover { color: #6366f1; text-decoration: underline; }
+    .published-table .id-badge { background: #e2e8f0; color: #64748b; font-size: 0.65rem; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
 
     /* Posts List */
     .posts-card {
@@ -929,10 +943,8 @@
 
     @media (max-width: 640px) {
         .stats-row {
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: 1fr;
         }
-        .stat-card { padding: 14px; }
-        .stat-card .value { font-size: 1.5rem; }
         .week-calendar {
             grid-template-columns: repeat(3, 1fr);
         }
@@ -946,34 +958,53 @@
 
 {% block content %}
 <!-- Nova estrutura: Layout focado em ações -->
+{% set pendencias_total = (summary.drafts_count or 0) + (summary.metricas_atrasadas or 0) %}
 <div class="stats-row">
-    <div class="stat-card">
-        <div class="icon" style="background: rgba(59, 130, 246, 0.1); color: #3b82f6;">
-            <i class="bi bi-clock"></i>
+    <!-- Card 1: Pendencias -->
+    <div class="stat-card {{ 'warn' if pendencias_total > 0 else 'ok' }}">
+        <div class="icon">
+            <i class="bi {{ 'bi-exclamation-triangle' if pendencias_total > 0 else 'bi-check-circle' }}"></i>
         </div>
-        <div class="value">{{ stats.scheduled or 0 }}</div>
-        <div class="label">Agendados</div>
+        <div class="body">
+            <div class="label">Pendencias</div>
+            {% if pendencias_total > 0 %}
+                <div class="value">{{ pendencias_total }}</div>
+                <div class="sub">
+                    {% if summary.drafts_count %}{{ summary.drafts_count }} rascunho{{ 's' if summary.drafts_count != 1 else '' }}{% endif %}
+                    {% if summary.drafts_count and summary.metricas_atrasadas %} · {% endif %}
+                    {% if summary.metricas_atrasadas %}{{ summary.metricas_atrasadas }} metrica{{ 's' if summary.metricas_atrasadas != 1 else '' }} atrasada{{ 's' if summary.metricas_atrasadas != 1 else '' }}{% endif %}
+                </div>
+            {% else %}
+                <div class="value">Em dia</div>
+                <div class="sub">Sem rascunhos · sem metricas atrasadas</div>
+            {% endif %}
+        </div>
     </div>
-    <div class="stat-card">
-        <div class="icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;">
-            <i class="bi bi-check-circle"></i>
+
+    <!-- Card 2: Proxima publicacao -->
+    <div class="stat-card neutral">
+        <div class="icon"><i class="bi bi-calendar-event"></i></div>
+        <div class="body">
+            <div class="label">Proxima publicacao</div>
+            {% if summary.next_pub %}
+                <div class="value">{{ summary.next_pub.data.strftime('%a %d/%m %H:%M') }}</div>
+                <div class="sub" title="{{ summary.next_pub.title }}">{{ summary.next_pub.title[:50] }}{% if summary.next_pub.title|length > 50 %}...{% endif %}</div>
+            {% else %}
+                <div class="value" style="color: var(--gray-500); font-size: 0.95rem;">Nada agendado</div>
+                <div class="sub">Aprove rascunhos pra agendar</div>
+            {% endif %}
         </div>
-        <div class="value">{{ stats.published or 0 }}</div>
-        <div class="label">Publicados</div>
     </div>
-    <div class="stat-card">
-        <div class="icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b;">
-            <i class="bi bi-fire"></i>
+
+    <!-- Card 3: Cadencia da semana -->
+    {% set week_ok = summary.week_total >= summary.meta_total %}
+    <div class="stat-card {{ 'ok' if week_ok else 'neutral' }}">
+        <div class="icon"><i class="bi bi-bar-chart"></i></div>
+        <div class="body">
+            <div class="label">Esta semana</div>
+            <div class="value">{{ summary.week_total }}/{{ summary.meta_total }} publicados</div>
+            <div class="sub">{{ summary.week_artigos }}/{{ summary.meta_artigos }} artigo · {{ summary.week_hot_takes }}/{{ summary.meta_hot_takes }} hot-takes</div>
         </div>
-        <div class="value">{{ pending_hot_takes|length if pending_hot_takes else 0 }}</div>
-        <div class="label">Hot Takes</div>
-    </div>
-    <div class="stat-card">
-        <div class="icon" style="background: rgba(107, 114, 128, 0.1); color: #6b7280;">
-            <i class="bi bi-archive"></i>
-        </div>
-        <div class="value">{{ stats.drafts or 0 }}</div>
-        <div class="label">Biblioteca</div>
     </div>
 </div>
 
@@ -2728,6 +2759,9 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Pipeline Editorial
+let publishedPostsCache = [];
+let publishedSort = { col: 'data_publicado', dir: 'desc' };
+
 async function loadPipeline(status, btn) {
     document.querySelectorAll('.pipeline-tab').forEach(b => b.classList.remove('active'));
     if (btn) btn.classList.add('active');
@@ -2759,6 +2793,13 @@ async function loadPipeline(status, btn) {
             return;
         }
 
+        // Aba "Publicados": tabela sortable
+        if (status === 'published') {
+            publishedPostsCache = posts;
+            renderPublishedTable();
+            return;
+        }
+
         // Header for draft tab
         let header = '';
         if (status === 'draft') {
@@ -2774,29 +2815,8 @@ async function loadPipeline(status, btn) {
         container.innerHTML = header + posts.map(p => {
             const title = p.article_title || p.titulo_adaptado || '(sem título)';
             const tipo = p.tipo === 'hot_take' ? '🔥' : '📝';
-            // Para "Publicados", usar data_publicado real; outros, data_publicacao planejada
-            const dateField = status === 'published' ? p.data_publicado : p.data_publicacao;
-            const date = dateField ? new Date(dateField).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+            const date = p.data_publicacao ? new Date(p.data_publicacao).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
             const postUrl = p.url_publicado || p.linkedin_post_url || '';
-
-            // Linha extra de metricas (apenas na aba "Publicados")
-            let metricsLine = '';
-            if (status === 'published') {
-                if (p.linkedin_metricas_em) {
-                    const imp = p.linkedin_impressoes || 0;
-                    const rea = p.linkedin_reacoes || 0;
-                    const com = p.linkedin_comentarios || 0;
-                    const eng = imp > 0 ? (((rea + com) / imp) * 100).toFixed(1) : '0';
-                    const coletadoEm = new Date(p.linkedin_metricas_em);
-                    const diasAtras = Math.floor((Date.now() - coletadoEm.getTime()) / (1000*60*60*24));
-                    const coletadoLabel = diasAtras === 0 ? 'hoje' : diasAtras === 1 ? 'há 1 dia' : `há ${diasAtras}d`;
-                    metricsLine = `<div style="font-size:0.7rem;color:#6366f1;margin-top:2px;">
-                        ${imp} 👁 · ${rea} ❤ · ${com} 💬 · ${eng}% eng · coletado ${coletadoLabel}
-                    </div>`;
-                } else {
-                    metricsLine = `<div style="font-size:0.7rem;color:#94a3b8;margin-top:2px;">sem métricas</div>`;
-                }
-            }
 
             let actions = '';
             if (status === 'draft') {
@@ -2814,14 +2834,6 @@ async function loadPipeline(status, btn) {
                     ? `<a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-box-arrow-up-right"></i> Ver Post</a>
                        <button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar</button>`
                     : `<button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar</button>`;
-            } else if (status === 'published') {
-                const linkBtn = postUrl
-                    ? `<a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-primary" title="Abrir no LinkedIn"><i class="bi bi-linkedin"></i></a>`
-                    : '';
-                const coletarBtn = !p.linkedin_metricas_em
-                    ? `<button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar</button>`
-                    : '';
-                actions = linkBtn + coletarBtn;
             }
 
             return `
@@ -2833,7 +2845,6 @@ async function loadPipeline(status, btn) {
                             <span style="font-weight:600;font-size:0.85rem;cursor:pointer;" onclick="openPostModal(${p.id})">${title.substring(0,60)}${title.length>60?'...':''}</span>
                         </div>
                         <div style="font-size:0.75rem;color:#64748b;">${date}${date ? ' · ' : ''}${p.ai_categoria || p.tipo || ''}</div>
-                        ${metricsLine}
                     </div>
                     <div class="d-flex gap-1 flex-shrink-0">${actions}</div>
                 </div>`;
@@ -2841,6 +2852,100 @@ async function loadPipeline(status, btn) {
     } catch (e) {
         container.innerHTML = '<div class="text-danger text-center py-3">Erro ao carregar</div>';
     }
+}
+
+function publishedSortValue(p, col) {
+    if (col === 'eng') {
+        const imp = p.linkedin_impressoes || 0;
+        return imp > 0 ? ((p.linkedin_reacoes || 0) + (p.linkedin_comentarios || 0)) / imp : -1;
+    }
+    if (col === 'titulo') return (p.article_title || p.titulo_adaptado || '').toLowerCase();
+    if (col === 'tipo') return p.tipo || '';
+    if (col === 'data_publicado' || col === 'linkedin_metricas_em') {
+        return p[col] ? new Date(p[col]).getTime() : 0;
+    }
+    return p[col] === null || p[col] === undefined ? -1 : p[col];
+}
+
+function sortPublished(col) {
+    if (publishedSort.col === col) {
+        publishedSort.dir = publishedSort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+        publishedSort.col = col;
+        publishedSort.dir = (col === 'titulo' || col === 'tipo') ? 'asc' : 'desc';
+    }
+    renderPublishedTable();
+}
+
+function renderPublishedTable() {
+    const container = document.getElementById('pipelineContent');
+    const posts = [...publishedPostsCache].sort((a, b) => {
+        const va = publishedSortValue(a, publishedSort.col);
+        const vb = publishedSortValue(b, publishedSort.col);
+        if (va < vb) return publishedSort.dir === 'asc' ? -1 : 1;
+        if (va > vb) return publishedSort.dir === 'asc' ? 1 : -1;
+        return 0;
+    });
+
+    const arrow = (col) => publishedSort.col === col
+        ? `<span class="arrow">${publishedSort.dir === 'asc' ? '▲' : '▼'}</span>`
+        : '<span class="arrow" style="opacity:0.25;">▼</span>';
+    const activeCls = (col) => publishedSort.col === col ? 'active' : '';
+
+    const rows = posts.map(p => {
+        const title = p.article_title || p.titulo_adaptado || '(sem título)';
+        const tipoEmoji = p.tipo === 'hot_take' ? '🔥' : '📝';
+        const date = p.data_publicado ? new Date(p.data_publicado).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
+        const postUrl = p.url_publicado || p.linkedin_post_url || '';
+        const imp = p.linkedin_impressoes || 0;
+        const rea = p.linkedin_reacoes || 0;
+        const com = p.linkedin_comentarios || 0;
+        const eng = imp > 0 ? (((rea + com) / imp) * 100).toFixed(1) + '%' : '—';
+        let coletado = '—';
+        if (p.linkedin_metricas_em) {
+            const dias = Math.floor((Date.now() - new Date(p.linkedin_metricas_em).getTime()) / 86400000);
+            coletado = dias === 0 ? 'hoje' : dias === 1 ? 'há 1d' : `há ${dias}d`;
+        }
+        const linkBtn = postUrl
+            ? `<a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2" title="Abrir no LinkedIn"><i class="bi bi-linkedin"></i></a>`
+            : '';
+        const coletarBtn = !p.linkedin_metricas_em
+            ? `<button class="btn btn-sm btn-warning py-0 px-2" onclick="openMetricsModal(${p.id})" title="Coletar metricas">📊</button>`
+            : '';
+        const titleClean = title.replace(/"/g, '&quot;');
+
+        return `
+            <tr>
+                <td><span class="id-badge">#${p.id}</span></td>
+                <td style="white-space:nowrap;">${date}</td>
+                <td>${tipoEmoji}</td>
+                <td class="titulo" onclick="openPostModal(${p.id})" title="${titleClean}">${title}</td>
+                <td class="num">${imp}</td>
+                <td class="num">${rea}</td>
+                <td class="num">${com}</td>
+                <td class="num">${eng}</td>
+                <td style="white-space:nowrap; color:${p.linkedin_metricas_em ? '#475569' : '#94a3b8'}">${coletado}</td>
+                <td style="white-space:nowrap;">${linkBtn} ${coletarBtn}</td>
+            </tr>`;
+    }).join('');
+
+    container.innerHTML = `
+        <div style="overflow-x:auto;">
+        <table class="published-table">
+            <thead><tr>
+                <th class="${activeCls('id')}" onclick="sortPublished('id')">#${arrow('id')}</th>
+                <th class="${activeCls('data_publicado')}" onclick="sortPublished('data_publicado')">Data${arrow('data_publicado')}</th>
+                <th class="${activeCls('tipo')}" onclick="sortPublished('tipo')">Tipo${arrow('tipo')}</th>
+                <th class="${activeCls('titulo')}" onclick="sortPublished('titulo')">Titulo${arrow('titulo')}</th>
+                <th class="num ${activeCls('linkedin_impressoes')}" onclick="sortPublished('linkedin_impressoes')">👁${arrow('linkedin_impressoes')}</th>
+                <th class="num ${activeCls('linkedin_reacoes')}" onclick="sortPublished('linkedin_reacoes')">❤${arrow('linkedin_reacoes')}</th>
+                <th class="num ${activeCls('linkedin_comentarios')}" onclick="sortPublished('linkedin_comentarios')">💬${arrow('linkedin_comentarios')}</th>
+                <th class="num ${activeCls('eng')}" onclick="sortPublished('eng')">Eng%${arrow('eng')}</th>
+                <th class="${activeCls('linkedin_metricas_em')}" onclick="sortPublished('linkedin_metricas_em')">Coletado${arrow('linkedin_metricas_em')}</th>
+                <th>Acoes</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>`;
 }
 
 async function approveAllDrafts() {

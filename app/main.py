@@ -18314,9 +18314,67 @@ async def editorial_page(request: Request):
     # Pending hot takes (drafts)
     pending_hot_takes = get_hot_takes(status='draft', limit=10)
 
+    # =================================================================
+    # Stat cards (3 compactos): pendencias, proxima publicacao, semana
+    # =================================================================
+    summary = {
+        'drafts_count': stats.get('drafts') or 0,
+        'metricas_atrasadas': 0,
+        'next_pub': None,
+        'week_artigos': 0,
+        'week_hot_takes': 0,
+        'week_total': 0,
+        'meta_artigos': 1,
+        'meta_hot_takes': 3,
+        'meta_total': 4,
+    }
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # Metricas atrasadas: publicado >48h, sem coleta
+        cursor.execute("""
+            SELECT COUNT(*) AS c FROM editorial_posts
+            WHERE status='published'
+              AND data_publicado < NOW() - INTERVAL '48 hours'
+              AND linkedin_metricas_em IS NULL
+        """)
+        summary['metricas_atrasadas'] = cursor.fetchone()['c']
+
+        # Proxima publicacao agendada
+        cursor.execute("""
+            SELECT id, article_title, data_publicacao
+            FROM editorial_posts
+            WHERE status='scheduled' AND data_publicacao >= NOW()
+            ORDER BY data_publicacao ASC
+            LIMIT 1
+        """)
+        nxt = cursor.fetchone()
+        if nxt:
+            summary['next_pub'] = {
+                'id': nxt['id'],
+                'title': nxt['article_title'] or '',
+                'data': nxt['data_publicacao'],
+            }
+
+        # Cadencia da semana (Seg-Dom): publicados por tipo
+        cursor.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE tipo = 'hot_take') AS hot_takes,
+                COUNT(*) FILTER (WHERE tipo != 'hot_take') AS artigos,
+                COUNT(*) AS total
+            FROM editorial_posts
+            WHERE status='published'
+              AND data_publicado >= %s
+              AND data_publicado < %s
+        """, (monday, monday + timedelta(days=7)))
+        wk = cursor.fetchone()
+        summary['week_hot_takes'] = wk['hot_takes'] or 0
+        summary['week_artigos'] = wk['artigos'] or 0
+        summary['week_total'] = wk['total'] or 0
+
     return templates.TemplateResponse("editorial.html", {
         "request": request,
         "stats": stats,
+        "summary": summary,
         "posts": posts,
         "projects": projects,
         "canais": EDITORIAL_CANAIS,
