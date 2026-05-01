@@ -1163,28 +1163,6 @@
     </div>
 </div>
 
-<!-- Xlsx Metrics Upload - moved down -->
-<div class="posts-card" style="border-top: 4px solid #7c3aed; margin-top: 16px;">
-    <div class="posts-header">
-        <h2><i class="bi bi-file-earmark-spreadsheet me-2" style="color: #7c3aed;"></i>Importar Metricas (xlsx)</h2>
-    </div>
-    <div id="xlsx-drop-zone" style="border: 2px dashed var(--gray-300); border-radius: 12px; padding: 24px; text-align: center; cursor: pointer; transition: all 0.2s; margin: 0 16px 16px;"
-         ondragover="event.preventDefault(); this.style.borderColor='#7c3aed'; this.style.background='#f5f3ff';"
-         ondragleave="this.style.borderColor='var(--gray-300)'; this.style.background='transparent';"
-         ondrop="handleXlsxDrop(event)"
-         onclick="document.getElementById('xlsx-file-input').click()">
-        <i class="bi bi-cloud-arrow-up" style="font-size: 2rem; color: #7c3aed;"></i>
-        <p style="margin: 8px 0 0; color: var(--gray-600); font-size: 0.85rem;">
-            Arraste o arquivo .xlsx do LinkedIn Analytics aqui
-        </p>
-        <p style="margin: 4px 0 0; color: var(--gray-400); font-size: 0.75rem;">
-            ou clique para selecionar
-        </p>
-        <input type="file" id="xlsx-file-input" accept=".xlsx,.xls" style="display: none;" onchange="handleXlsxFile(this.files[0])">
-    </div>
-    <div id="xlsx-preview" style="display: none; padding: 0 16px 16px;"></div>
-</div>
-
 <!-- Publicar Hoje - Prioridade máxima -->
 {% if today_posts %}
 <div class="posts-card" style="border-top: 4px solid #3b82f6;">
@@ -1963,6 +1941,22 @@ async function openPostModal(postId) {
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Importar xlsx do LinkedIn Analytics (autopreenche os campos acima) -->
+                        <div style="margin-top: 12px;">
+                            <div style="border: 1px dashed #c4b5fd; border-radius: 8px; padding: 10px 12px; cursor: pointer; background: #faf5ff; display: flex; align-items: center; gap: 8px; transition: background 0.15s;"
+                                 ondragover="event.preventDefault(); this.style.background='#f3e8ff';"
+                                 ondragleave="this.style.background='#faf5ff';"
+                                 ondrop="handleXlsxDropForPost(event, ${post.id})"
+                                 onclick="document.getElementById('xlsx-input-${post.id}').click()">
+                                <i class="bi bi-cloud-arrow-up" style="color: #7c3aed; font-size: 1rem;"></i>
+                                <span style="font-size: 0.78rem; color: #6b21a8;">
+                                    Arraste xlsx do LinkedIn Analytics — autopreenche e mantém histórico
+                                </span>
+                                <input type="file" id="xlsx-input-${post.id}" accept=".xlsx,.xls" style="display:none;" onchange="handleXlsxForPost(this.files[0], ${post.id})">
+                            </div>
+                            <div id="xlsx-confirm-${post.id}" style="display:none; margin-top: 8px;"></div>
+                        </div>
                     ` : ''}
                 </div>
             `;
@@ -2428,23 +2422,22 @@ document.querySelectorAll('.ed-modal').forEach(modal => {
     });
 });
 
-// ============== XLSX Metrics Upload ==============
+// ============== XLSX Metrics Upload (dentro do modal do post) ==============
 
-function handleXlsxDrop(event) {
+function handleXlsxDropForPost(event, postId) {
     event.preventDefault();
-    event.target.closest('#xlsx-drop-zone').style.borderColor = 'var(--gray-300)';
-    event.target.closest('#xlsx-drop-zone').style.background = 'transparent';
+    const zone = event.currentTarget;
+    if (zone) zone.style.background = '#faf5ff';
     const files = event.dataTransfer.files;
-    if (files.length > 0) handleXlsxFile(files[0]);
+    if (files.length > 0) handleXlsxForPost(files[0], postId);
 }
 
-function handleXlsxFile(file) {
+function handleXlsxForPost(file, postId) {
     if (!file) return;
     if (!file.name.match(/\.xlsx?$/i)) {
-        alert('Por favor, selecione um arquivo .xlsx');
+        alert('Selecione um arquivo .xlsx');
         return;
     }
-
     const reader = new FileReader();
     reader.onload = function(e) {
         try {
@@ -2452,16 +2445,64 @@ function handleXlsxFile(file) {
             const workbook = XLSX.read(data, {type: 'array'});
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             const rows = XLSX.utils.sheet_to_json(sheet, {header: 1});
-
-            // Parse LinkedIn analytics format
             const metrics = parseLinkedInMetrics(rows);
-            showXlsxPreview(metrics, file.name);
+
+            // Autopreencher campos do modal
+            const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+            set('edit-impressoes', metrics.impressoes);
+            set('edit-reacoes', metrics.reacoes);
+            set('edit-comentarios', metrics.comentarios);
+            set('edit-compartilhamentos', metrics.compartilhamentos);
+            set('edit-cliques', metrics.cliques);
+
+            // Confirmacao com botao "Registrar" (escreve em editorial_metrics_history)
+            window._xlsxPendingMetrics = metrics;
+            window._xlsxPendingFilename = file.name;
+            const div = document.getElementById(`xlsx-confirm-${postId}`);
+            if (div) {
+                div.style.display = 'block';
+                div.innerHTML = `
+                    <div style="background:#ecfdf5; border:1px solid #6ee7b7; border-radius:8px; padding:8px 12px; font-size:0.78rem; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+                        <span><i class="bi bi-check-circle" style="color:#059669;"></i> <strong>${file.name}</strong> — ${metrics.impressoes} 👁 · ${metrics.reacoes} ❤ · ${metrics.comentarios} 💬 · ${metrics.compartilhamentos} ↗</span>
+                        <button class="btn btn-sm btn-success py-0 px-2" onclick="submitXlsxToPost(${postId})" style="font-size:0.75rem;">
+                            <i class="bi bi-cloud-upload me-1"></i>Registrar (mantem historico)
+                        </button>
+                    </div>`;
+            }
         } catch (err) {
             console.error('Error parsing xlsx:', err);
             alert('Erro ao ler arquivo: ' + err.message);
         }
     };
     reader.readAsArrayBuffer(file);
+}
+
+async function submitXlsxToPost(postId) {
+    const m = window._xlsxPendingMetrics;
+    if (!m) return;
+    try {
+        const resp = await fetch(`/api/editorial/${postId}/metrics`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({...m, fonte: 'xlsx_upload'})
+        });
+        const result = await resp.json();
+        if (result.status === 'success') {
+            window._xlsxPendingMetrics = null;
+            const div = document.getElementById(`xlsx-confirm-${postId}`);
+            if (div) {
+                div.innerHTML = `<div style="background:#d1fae5; border:1px solid #6ee7b7; border-radius:8px; padding:8px 12px; font-size:0.78rem; color:#065f46;">
+                    <i class="bi bi-check-circle"></i> Metricas registradas (${result.dias_apos_publicacao || 0}d apos publicacao). Historico salvo.
+                </div>`;
+            }
+            // Refetch e re-renderiza pra refletir mudanca (linkedin_metricas_em + history)
+            setTimeout(() => openPostModal(postId), 800);
+        } else {
+            alert('Erro ao salvar: ' + (result.detail || 'desconhecido'));
+        }
+    } catch (e) {
+        alert('Erro: ' + e.message);
+    }
 }
 
 function parseLinkedInMetrics(rows) {
@@ -2539,148 +2580,6 @@ function parseLinkedInMetrics(rows) {
     }
 
     return metrics;
-}
-
-function showXlsxPreview(metrics, filename) {
-    const preview = document.getElementById('xlsx-preview');
-    preview.style.display = 'block';
-
-    preview.innerHTML = `
-        <div style="background: #f5f3ff; border-radius: 12px; padding: 16px; border: 1px solid #c4b5fd;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                <span style="font-size: 0.85rem; font-weight: 600; color: #5b21b6;">
-                    <i class="bi bi-file-earmark-check me-1"></i>${filename}
-                </span>
-                <button onclick="document.getElementById('xlsx-preview').style.display='none'" style="background:none;border:none;color:var(--gray-400);cursor:pointer;">&times;</button>
-            </div>
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;">
-                <div style="text-align: center; padding: 8px; background: white; border-radius: 8px;">
-                    <div style="font-size: 1.1rem; font-weight: 700; color: #2563eb;">${metrics.impressoes}</div>
-                    <div style="font-size: 0.7rem; color: var(--gray-500);">Impressoes</div>
-                </div>
-                <div style="text-align: center; padding: 8px; background: white; border-radius: 8px;">
-                    <div style="font-size: 1.1rem; font-weight: 700; color: #059669;">${metrics.reacoes}</div>
-                    <div style="font-size: 0.7rem; color: var(--gray-500);">Reacoes</div>
-                </div>
-                <div style="text-align: center; padding: 8px; background: white; border-radius: 8px;">
-                    <div style="font-size: 1.1rem; font-weight: 700; color: #d97706;">${metrics.comentarios}</div>
-                    <div style="font-size: 0.7rem; color: var(--gray-500);">Comentarios</div>
-                </div>
-                <div style="text-align: center; padding: 8px; background: white; border-radius: 8px;">
-                    <div style="font-size: 1.1rem; font-weight: 700; color: #7c3aed;">${metrics.compartilhamentos}</div>
-                    <div style="font-size: 0.7rem; color: var(--gray-500);">Compartilh.</div>
-                </div>
-            </div>
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;">
-                <div style="text-align: center; padding: 6px; background: white; border-radius: 8px;">
-                    <div style="font-size: 0.9rem; font-weight: 600;">${metrics.visitas_perfil}</div>
-                    <div style="font-size: 0.65rem; color: var(--gray-500);">Visitas Perfil</div>
-                </div>
-                <div style="text-align: center; padding: 6px; background: white; border-radius: 8px;">
-                    <div style="font-size: 0.9rem; font-weight: 600;">${metrics.seguidores}</div>
-                    <div style="font-size: 0.65rem; color: var(--gray-500);">Seguidores</div>
-                </div>
-                <div style="text-align: center; padding: 6px; background: white; border-radius: 8px;">
-                    <div style="font-size: 0.9rem; font-weight: 600;">${metrics.salvamentos}</div>
-                    <div style="font-size: 0.65rem; color: var(--gray-500);">Salvamentos</div>
-                </div>
-                <div style="text-align: center; padding: 6px; background: white; border-radius: 8px;">
-                    <div style="font-size: 0.9rem; font-weight: 600;">${metrics.cliques}</div>
-                    <div style="font-size: 0.65rem; color: var(--gray-500);">Cliques</div>
-                </div>
-            </div>
-            ${metrics.post_url ? `<div style="font-size: 0.75rem; color: var(--gray-500); margin-bottom: 8px;"><i class="bi bi-link-45deg"></i> ${metrics.post_url.substring(0, 60)}...</div>` : ''}
-            <div style="margin-bottom: 12px;">
-                <label style="font-size: 0.8rem; font-weight: 500; margin-bottom: 4px; display: block;">Associar ao post:</label>
-                <select id="xlsx-post-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 8px; font-size: 0.85rem;">
-                    <option value="">-- Auto-detectar por URL --</option>
-                </select>
-            </div>
-            <button onclick="submitXlsxMetrics()" style="width: 100%; padding: 10px; background: #7c3aed; color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer;">
-                <i class="bi bi-cloud-upload me-1"></i> Salvar Metricas
-            </button>
-        </div>
-    `;
-
-    // Store metrics for submission
-    window._xlsxMetrics = metrics;
-
-    // Load published posts for the dropdown
-    fetch('/api/editorial?status=published')
-        .then(r => r.json())
-        .then(data => {
-            const posts = data.posts || data || [];
-            const select = document.getElementById('xlsx-post-select');
-            posts.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = p.id;
-                opt.textContent = `#${p.id} - ${(p.article_title || '').substring(0, 50)}`;
-                select.appendChild(opt);
-            });
-        });
-}
-
-async function submitXlsxMetrics() {
-    const metrics = window._xlsxMetrics;
-    if (!metrics) return;
-
-    const selectedPostId = document.getElementById('xlsx-post-select')?.value;
-
-    try {
-        let response;
-        if (selectedPostId) {
-            // Direct save to specific post
-            response = await fetch(`/api/editorial/${selectedPostId}/metrics`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({...metrics, fonte: 'xlsx_upload'})
-            });
-        } else {
-            // Auto-match by URL ou data
-            response = await fetch('/api/editorial/metrics/upload', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    post_url: metrics.post_url,
-                    post_date: metrics.post_date,
-                    metrics: metrics
-                })
-            });
-        }
-
-        const result = await response.json();
-        if (result.status === 'success') {
-            document.getElementById('xlsx-preview').innerHTML = `
-                <div style="background: #d1fae5; border-radius: 12px; padding: 16px; text-align: center; border: 1px solid #6ee7b7;">
-                    <i class="bi bi-check-circle" style="font-size: 2rem; color: #059669;"></i>
-                    <p style="margin: 8px 0 0; color: #065f46; font-weight: 600;">Metricas salvas com sucesso!</p>
-                    <p style="margin: 4px 0 0; color: #047857; font-size: 0.8rem;">Post #${result.post_id} - ${result.dias_apos_publicacao || '?'} dias apos publicacao</p>
-                </div>
-            `;
-            setTimeout(() => location.reload(), 2000);
-        } else if (result.status === 'ambiguous' && Array.isArray(result.candidates)) {
-            // Mostrar candidatos como botoes de quick-pick
-            const select = document.getElementById('xlsx-post-select');
-            if (select) {
-                select.innerHTML = '<option value="">-- Selecionar post --</option>';
-                result.candidates.forEach(c => {
-                    const opt = document.createElement('option');
-                    opt.value = c.id;
-                    opt.textContent = `#${c.id} - ${(c.title || '(sem titulo)').substring(0, 60)}`;
-                    select.appendChild(opt);
-                });
-                select.style.borderColor = '#f59e0b';
-                select.focus();
-            }
-            alert(`${result.candidates.length} posts publicados nessa data. Selecione qual e o correto no dropdown e clique em Salvar Metricas novamente.`);
-        } else if (result.status === 'not_found') {
-            alert(result.message || 'Post nao encontrado. Selecione manualmente no dropdown.');
-        } else {
-            alert('Erro ao salvar: ' + (result.detail || 'Erro desconhecido'));
-        }
-    } catch (err) {
-        alert('Erro: ' + err.message);
-    }
 }
 
 // ============== 48h Comparison Table ==============
