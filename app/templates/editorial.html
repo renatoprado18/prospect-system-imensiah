@@ -2758,11 +2758,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// Pipeline Editorial
-let publishedPostsCache = [];
-let publishedSort = { col: 'data_publicado', dir: 'desc' };
+// Pipeline Editorial — todas as abas usam tabela sortable
+const PIPELINE_DEFAULT_SORT = {
+    draft:           { col: 'data_publicacao',     dir: 'desc' },  // proximo planejado primeiro? mais recente
+    scheduled:       { col: 'data_publicacao',     dir: 'asc'  },  // proximo agendado primeiro
+    pending_metrics: { col: 'data_publicado',      dir: 'asc'  },  // mais antigo (urgente) primeiro
+    published:       { col: 'data_publicado',      dir: 'desc' },  // mais recente primeiro
+};
+const pipelineCache = {};   // status -> array de posts
+const pipelineSort = {};    // status -> { col, dir }
+let currentPipelineStatus = 'draft';
 
 async function loadPipeline(status, btn) {
+    currentPipelineStatus = status;
     document.querySelectorAll('.pipeline-tab').forEach(b => b.classList.remove('active'));
     if (btn) btn.classList.add('active');
 
@@ -2770,14 +2778,11 @@ async function loadPipeline(status, btn) {
     container.innerHTML = '<div class="text-muted text-center py-3"><div class="spinner-border spinner-border-sm"></div></div>';
 
     try {
-        let query = status;
-        if (status === 'pending_metrics') query = 'published';
-
+        const query = status === 'pending_metrics' ? 'published' : status;
         const resp = await fetch(`/api/editorial/pipeline?status=${query}`);
         const data = await resp.json();
         let posts = data.posts || [];
 
-        // pending_metrics: published without metrics collected
         if (status === 'pending_metrics') {
             posts = posts.filter(p => !p.linkedin_metricas_em);
         }
@@ -2793,157 +2798,190 @@ async function loadPipeline(status, btn) {
             return;
         }
 
-        // Aba "Publicados": tabela sortable
-        if (status === 'published') {
-            publishedPostsCache = posts;
-            renderPublishedTable();
-            return;
-        }
-
-        // Header for draft tab
-        let header = '';
-        if (status === 'draft') {
-            const withDate = posts.filter(p => p.data_publicacao);
-            if (withDate.length > 0) {
-                header = `<div style="background:#fef3c7;padding:8px 12px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
-                    ⚡ <strong>${withDate.length} posts pré-selecionados para próxima semana</strong> — revise e aprove
-                    <button class="btn btn-sm btn-primary ms-2" onclick="approveAllDrafts()">✓ Aprovar Todos</button>
-                </div>`;
-            }
-        }
-
-        container.innerHTML = header + posts.map(p => {
-            const title = p.article_title || p.titulo_adaptado || '(sem título)';
-            const tipo = p.tipo === 'hot_take' ? '🔥' : '📝';
-            const date = p.data_publicacao ? new Date(p.data_publicacao).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-            const postUrl = p.url_publicado || p.linkedin_post_url || '';
-
-            let actions = '';
-            if (status === 'draft') {
-                actions = `
-                    <button class="btn btn-sm btn-primary" onclick="approvePost(${p.id})">✓ Aprovar</button>
-                    <button class="btn btn-sm btn-outline-secondary" onclick="openPostModal(${p.id})">✏️</button>
-                    <button class="btn btn-sm btn-outline-danger" onclick="archivePost(${p.id})">✗</button>`;
-            } else if (status === 'scheduled') {
-                actions = `
-                    <button class="btn btn-sm btn-primary" onclick="publishToLinkedIn(${p.id})" style="background:#0a66c2;"><i class="bi bi-linkedin"></i></button>
-                    <button class="btn btn-sm btn-outline-secondary" onclick="reschedulePost(${p.id})">📅</button>
-                    <button class="btn btn-sm btn-outline-danger" onclick="cancelPost(${p.id})">✗</button>`;
-            } else if (status === 'pending_metrics') {
-                actions = postUrl
-                    ? `<a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-box-arrow-up-right"></i> Ver Post</a>
-                       <button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar</button>`
-                    : `<button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar</button>`;
-            }
-
-            return `
-                <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9;">
-                    <span style="font-size:1.2rem;">${tipo}</span>
-                    <div style="flex:1;min-width:0;">
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <span style="background:#e2e8f0;color:#64748b;font-size:0.65rem;padding:1px 6px;border-radius:4px;font-weight:600;">#${p.id}</span>
-                            <span style="font-weight:600;font-size:0.85rem;cursor:pointer;" onclick="openPostModal(${p.id})">${title.substring(0,60)}${title.length>60?'...':''}</span>
-                        </div>
-                        <div style="font-size:0.75rem;color:#64748b;">${date}${date ? ' · ' : ''}${p.ai_categoria || p.tipo || ''}</div>
-                    </div>
-                    <div class="d-flex gap-1 flex-shrink-0">${actions}</div>
-                </div>`;
-        }).join('');
+        pipelineCache[status] = posts;
+        if (!pipelineSort[status]) pipelineSort[status] = {...PIPELINE_DEFAULT_SORT[status]};
+        renderPipelineTable(status);
     } catch (e) {
         container.innerHTML = '<div class="text-danger text-center py-3">Erro ao carregar</div>';
     }
 }
 
-function publishedSortValue(p, col) {
+function pipelineSortValue(p, col) {
     if (col === 'eng') {
         const imp = p.linkedin_impressoes || 0;
         return imp > 0 ? ((p.linkedin_reacoes || 0) + (p.linkedin_comentarios || 0)) / imp : -1;
     }
     if (col === 'titulo') return (p.article_title || p.titulo_adaptado || '').toLowerCase();
     if (col === 'tipo') return p.tipo || '';
-    if (col === 'data_publicado' || col === 'linkedin_metricas_em') {
+    if (col === 'ai_categoria') return (p.ai_categoria || '').toLowerCase();
+    if (col === 'idade') return p.data_publicado ? Date.now() - new Date(p.data_publicado).getTime() : -1;
+    if (['data_publicacao','data_publicado','linkedin_metricas_em','criado_em'].includes(col)) {
         return p[col] ? new Date(p[col]).getTime() : 0;
     }
     return p[col] === null || p[col] === undefined ? -1 : p[col];
 }
 
-function sortPublished(col) {
-    if (publishedSort.col === col) {
-        publishedSort.dir = publishedSort.dir === 'asc' ? 'desc' : 'asc';
+function sortPipeline(col) {
+    const status = currentPipelineStatus;
+    const cur = pipelineSort[status];
+    if (cur.col === col) {
+        cur.dir = cur.dir === 'asc' ? 'desc' : 'asc';
     } else {
-        publishedSort.col = col;
-        publishedSort.dir = (col === 'titulo' || col === 'tipo') ? 'asc' : 'desc';
+        cur.col = col;
+        cur.dir = (col === 'titulo' || col === 'tipo' || col === 'ai_categoria') ? 'asc' : 'desc';
     }
-    renderPublishedTable();
+    renderPipelineTable(status);
 }
 
-function renderPublishedTable() {
+// Schema de colunas por status. Cada coluna: {key, label, num?, sortable?}
+const PIPELINE_COLUMNS = {
+    draft: [
+        { key: 'id', label: '#' },
+        { key: 'data_publicacao', label: 'Data planejada' },
+        { key: 'tipo', label: 'Tipo' },
+        { key: 'titulo', label: 'Titulo' },
+        { key: 'ai_categoria', label: 'Categoria' },
+        { key: '_actions', label: 'Acoes', sortable: false },
+    ],
+    scheduled: [
+        { key: 'id', label: '#' },
+        { key: 'data_publicacao', label: 'Data agendada' },
+        { key: 'tipo', label: 'Tipo' },
+        { key: 'titulo', label: 'Titulo' },
+        { key: 'ai_categoria', label: 'Categoria' },
+        { key: '_actions', label: 'Acoes', sortable: false },
+    ],
+    pending_metrics: [
+        { key: 'id', label: '#' },
+        { key: 'data_publicado', label: 'Publicado' },
+        { key: 'tipo', label: 'Tipo' },
+        { key: 'titulo', label: 'Titulo' },
+        { key: 'idade', label: 'Idade' },
+        { key: '_actions', label: 'Acoes', sortable: false },
+    ],
+    published: [
+        { key: 'id', label: '#' },
+        { key: 'data_publicado', label: 'Data' },
+        { key: 'tipo', label: 'Tipo' },
+        { key: 'titulo', label: 'Titulo' },
+        { key: 'linkedin_impressoes', label: '👁', num: true },
+        { key: 'linkedin_reacoes', label: '❤', num: true },
+        { key: 'linkedin_comentarios', label: '💬', num: true },
+        { key: 'eng', label: 'Eng%', num: true },
+        { key: 'linkedin_metricas_em', label: 'Coletado' },
+        { key: '_actions', label: 'Acoes', sortable: false },
+    ],
+};
+
+function pipelineCellHtml(p, col, status) {
+    if (col === 'id') return `<span class="id-badge">#${p.id}</span>`;
+    if (col === 'data_publicacao' || col === 'data_publicado') {
+        const d = p[col];
+        return d ? `<span style="white-space:nowrap;">${new Date(d).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>` : '<span style="color:#94a3b8;">—</span>';
+    }
+    if (col === 'tipo') return p.tipo === 'hot_take' ? '🔥' : '📝';
+    if (col === 'titulo') {
+        const title = p.article_title || p.titulo_adaptado || '(sem título)';
+        const titleClean = title.replace(/"/g, '&quot;');
+        return `<span class="titulo" onclick="openPostModal(${p.id})" title="${titleClean}">${title}</span>`;
+    }
+    if (col === 'ai_categoria') return p.ai_categoria || '<span style="color:#94a3b8;">—</span>';
+    if (col === 'idade') {
+        if (!p.data_publicado) return '<span style="color:#94a3b8;">—</span>';
+        const horas = Math.floor((Date.now() - new Date(p.data_publicado).getTime()) / 3600000);
+        if (horas < 24) return `<span style="color:#f59e0b;">${horas}h</span>`;
+        const dias = Math.floor(horas / 24);
+        return `<span style="color:${dias > 3 ? '#dc2626' : '#475569'};">${dias}d</span>`;
+    }
+    if (col === 'linkedin_impressoes') return `<span class="num">${p.linkedin_impressoes || 0}</span>`;
+    if (col === 'linkedin_reacoes') return `<span class="num">${p.linkedin_reacoes || 0}</span>`;
+    if (col === 'linkedin_comentarios') return `<span class="num">${p.linkedin_comentarios || 0}</span>`;
+    if (col === 'eng') {
+        const imp = p.linkedin_impressoes || 0;
+        if (imp <= 0) return '<span style="color:#94a3b8;">—</span>';
+        return `<span class="num">${(((p.linkedin_reacoes || 0) + (p.linkedin_comentarios || 0)) / imp * 100).toFixed(1)}%</span>`;
+    }
+    if (col === 'linkedin_metricas_em') {
+        if (!p.linkedin_metricas_em) return '<span style="color:#94a3b8;">—</span>';
+        const dias = Math.floor((Date.now() - new Date(p.linkedin_metricas_em).getTime()) / 86400000);
+        const label = dias === 0 ? 'hoje' : dias === 1 ? 'há 1d' : `há ${dias}d`;
+        return `<span style="white-space:nowrap; color:#475569;">${label}</span>`;
+    }
+    if (col === '_actions') {
+        const postUrl = p.url_publicado || p.linkedin_post_url || '';
+        const linkBtn = postUrl ? `<a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2" title="Abrir no LinkedIn"><i class="bi bi-linkedin"></i></a>` : '';
+        if (status === 'draft') {
+            return `<div style="display:flex; gap:4px; white-space:nowrap;">
+                <button class="btn btn-sm btn-primary py-0 px-2" onclick="approvePost(${p.id})" title="Aprovar">✓</button>
+                <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="openPostModal(${p.id})" title="Editar">✏️</button>
+                <button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="archivePost(${p.id})" title="Arquivar">✗</button>
+            </div>`;
+        }
+        if (status === 'scheduled') {
+            return `<div style="display:flex; gap:4px; white-space:nowrap;">
+                <button class="btn btn-sm btn-primary py-0 px-2" onclick="publishToLinkedIn(${p.id})" style="background:#0a66c2;" title="Publicar"><i class="bi bi-linkedin"></i></button>
+                <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="reschedulePost(${p.id})" title="Reagendar">📅</button>
+                <button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="cancelPost(${p.id})" title="Cancelar">✗</button>
+            </div>`;
+        }
+        if (status === 'pending_metrics') {
+            return `<div style="display:flex; gap:4px; white-space:nowrap;">
+                ${linkBtn}
+                <button class="btn btn-sm btn-warning py-0 px-2" onclick="openMetricsModal(${p.id})" title="Coletar metricas">📊</button>
+            </div>`;
+        }
+        if (status === 'published') {
+            const coletarBtn = !p.linkedin_metricas_em ? `<button class="btn btn-sm btn-warning py-0 px-2" onclick="openMetricsModal(${p.id})" title="Coletar metricas">📊</button>` : '';
+            return `<div style="display:flex; gap:4px; white-space:nowrap;">${linkBtn} ${coletarBtn}</div>`;
+        }
+    }
+    return '';
+}
+
+function renderPipelineTable(status) {
     const container = document.getElementById('pipelineContent');
-    const posts = [...publishedPostsCache].sort((a, b) => {
-        const va = publishedSortValue(a, publishedSort.col);
-        const vb = publishedSortValue(b, publishedSort.col);
-        if (va < vb) return publishedSort.dir === 'asc' ? -1 : 1;
-        if (va > vb) return publishedSort.dir === 'asc' ? 1 : -1;
+    const cols = PIPELINE_COLUMNS[status] || PIPELINE_COLUMNS.published;
+    const sort = pipelineSort[status];
+    const posts = [...(pipelineCache[status] || [])].sort((a, b) => {
+        const va = pipelineSortValue(a, sort.col);
+        const vb = pipelineSortValue(b, sort.col);
+        if (va < vb) return sort.dir === 'asc' ? -1 : 1;
+        if (va > vb) return sort.dir === 'asc' ? 1 : -1;
         return 0;
     });
 
-    const arrow = (col) => publishedSort.col === col
-        ? `<span class="arrow">${publishedSort.dir === 'asc' ? '▲' : '▼'}</span>`
-        : '<span class="arrow" style="opacity:0.25;">▼</span>';
-    const activeCls = (col) => publishedSort.col === col ? 'active' : '';
-
-    const rows = posts.map(p => {
-        const title = p.article_title || p.titulo_adaptado || '(sem título)';
-        const tipoEmoji = p.tipo === 'hot_take' ? '🔥' : '📝';
-        const date = p.data_publicado ? new Date(p.data_publicado).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '—';
-        const postUrl = p.url_publicado || p.linkedin_post_url || '';
-        const imp = p.linkedin_impressoes || 0;
-        const rea = p.linkedin_reacoes || 0;
-        const com = p.linkedin_comentarios || 0;
-        const eng = imp > 0 ? (((rea + com) / imp) * 100).toFixed(1) + '%' : '—';
-        let coletado = '—';
-        if (p.linkedin_metricas_em) {
-            const dias = Math.floor((Date.now() - new Date(p.linkedin_metricas_em).getTime()) / 86400000);
-            coletado = dias === 0 ? 'hoje' : dias === 1 ? 'há 1d' : `há ${dias}d`;
+    // Banner pra draft com pre-selecao
+    let header = '';
+    if (status === 'draft') {
+        const withDate = posts.filter(p => p.data_publicacao);
+        if (withDate.length > 0) {
+            header = `<div style="background:#fef3c7;padding:8px 12px;border-radius:8px;margin-bottom:12px;font-size:0.85rem;">
+                ⚡ <strong>${withDate.length} posts pré-selecionados para próxima semana</strong> — revise e aprove
+                <button class="btn btn-sm btn-primary ms-2" onclick="approveAllDrafts()">✓ Aprovar Todos</button>
+            </div>`;
         }
-        const linkBtn = postUrl
-            ? `<a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2" title="Abrir no LinkedIn"><i class="bi bi-linkedin"></i></a>`
-            : '';
-        const coletarBtn = !p.linkedin_metricas_em
-            ? `<button class="btn btn-sm btn-warning py-0 px-2" onclick="openMetricsModal(${p.id})" title="Coletar metricas">📊</button>`
-            : '';
-        const titleClean = title.replace(/"/g, '&quot;');
+    }
 
-        return `
-            <tr>
-                <td><span class="id-badge">#${p.id}</span></td>
-                <td style="white-space:nowrap;">${date}</td>
-                <td>${tipoEmoji}</td>
-                <td class="titulo" onclick="openPostModal(${p.id})" title="${titleClean}">${title}</td>
-                <td class="num">${imp}</td>
-                <td class="num">${rea}</td>
-                <td class="num">${com}</td>
-                <td class="num">${eng}</td>
-                <td style="white-space:nowrap; color:${p.linkedin_metricas_em ? '#475569' : '#94a3b8'}">${coletado}</td>
-                <td style="white-space:nowrap;">${linkBtn} ${coletarBtn}</td>
-            </tr>`;
+    const arrow = (col) => sort.col === col
+        ? `<span class="arrow">${sort.dir === 'asc' ? '▲' : '▼'}</span>`
+        : '<span class="arrow" style="opacity:0.25;">▼</span>';
+
+    const ths = cols.map(c => {
+        const sortable = c.sortable !== false;
+        const cls = (c.num ? 'num ' : '') + (sort.col === c.key ? 'active' : '');
+        if (!sortable) return `<th class="${cls}">${c.label}</th>`;
+        return `<th class="${cls}" onclick="sortPipeline('${c.key}')">${c.label}${arrow(c.key)}</th>`;
     }).join('');
 
-    container.innerHTML = `
+    const rows = posts.map(p => {
+        const cells = cols.map(c => `<td${c.num ? ' class="num"' : ''}>${pipelineCellHtml(p, c.key, status)}</td>`).join('');
+        return `<tr>${cells}</tr>`;
+    }).join('');
+
+    container.innerHTML = `${header}
         <div style="overflow-x:auto;">
         <table class="published-table">
-            <thead><tr>
-                <th class="${activeCls('id')}" onclick="sortPublished('id')">#${arrow('id')}</th>
-                <th class="${activeCls('data_publicado')}" onclick="sortPublished('data_publicado')">Data${arrow('data_publicado')}</th>
-                <th class="${activeCls('tipo')}" onclick="sortPublished('tipo')">Tipo${arrow('tipo')}</th>
-                <th class="${activeCls('titulo')}" onclick="sortPublished('titulo')">Titulo${arrow('titulo')}</th>
-                <th class="num ${activeCls('linkedin_impressoes')}" onclick="sortPublished('linkedin_impressoes')">👁${arrow('linkedin_impressoes')}</th>
-                <th class="num ${activeCls('linkedin_reacoes')}" onclick="sortPublished('linkedin_reacoes')">❤${arrow('linkedin_reacoes')}</th>
-                <th class="num ${activeCls('linkedin_comentarios')}" onclick="sortPublished('linkedin_comentarios')">💬${arrow('linkedin_comentarios')}</th>
-                <th class="num ${activeCls('eng')}" onclick="sortPublished('eng')">Eng%${arrow('eng')}</th>
-                <th class="${activeCls('linkedin_metricas_em')}" onclick="sortPublished('linkedin_metricas_em')">Coletado${arrow('linkedin_metricas_em')}</th>
-                <th>Acoes</th>
-            </tr></thead>
+            <thead><tr>${ths}</tr></thead>
             <tbody>${rows}</tbody>
         </table></div>`;
 }
