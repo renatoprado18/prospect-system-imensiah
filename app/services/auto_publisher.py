@@ -68,6 +68,11 @@ async def select_weekly_posts(posts_per_week: int = 4) -> Dict:
     if not candidates:
         return {"error": "Nenhum post disponivel para agendar", "candidates": 0}
 
+    # Feedback loop: top/bottom posts reais para guiar selecao
+    from services.editorial_pdca import get_top_bottom_examples, format_examples_for_prompt
+    examples = get_top_bottom_examples(n=3)
+    examples_block = format_examples_for_prompt(examples)
+
     # Ask AI to select the best mix
     candidates_text = "\n".join([
         f"[{i+1}] ({c['source']}) {c['titulo']}\n    Preview: {c['conteudo_preview']}"
@@ -78,15 +83,16 @@ async def select_weekly_posts(posts_per_week: int = 4) -> Dict:
 executivo de tecnologia e governanca corporativa.
 
 Selecione os {posts_per_week} melhores posts para publicar esta semana.
-
+{examples_block}
 CANDIDATOS:
 {candidates_text}
 
 CRITERIOS:
+- Padroes dos posts top: provocacao + numeros especificos + tom direto + IA aplicada
+- Evitar padroes dos bottom: tom institucional, economia macro genérica, sem call-to-action
 - Diversidade de tema (nao repetir assuntos similares)
 - Relevancia para o perfil (IA, governanca, negocios, empreendedorismo)
 - Mix de formatos (hot-takes opinativos + reposts informativos)
-- Atualidade (preferir temas recentes)
 
 Responda APENAS com JSON:
 {{"selections": [

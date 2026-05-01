@@ -19692,6 +19692,21 @@ async def cron_daily_morning_briefing(request: Request):
             """)
             proposals_count = cursor.fetchone()["total"]
 
+            # 7. Cadencia editorial: alerta se passou metade da semana sem publicar
+            no_post_alert = None
+            weekday = now.weekday()  # 0=Mon ... 6=Sun
+            if weekday >= 3:  # Quinta-feira em diante
+                cursor.execute("""
+                    SELECT COUNT(*) as total FROM editorial_posts
+                    WHERE status = 'published'
+                      AND data_publicado >= date_trunc('week', CURRENT_DATE)
+                """)
+                week_published = cursor.fetchone()["total"]
+                if week_published == 0:
+                    no_post_alert = "ainda nao publicou esta semana"
+                elif weekday >= 4 and week_published < 2:
+                    no_post_alert = f"so {week_published} post(s) esta semana (meta: 4)"
+
         # Build message
         header = f"Bom dia, Renato!\n\n*Hoje, {date_str} ({dia_semana}):*"
 
@@ -19709,8 +19724,10 @@ async def cron_daily_morning_briefing(request: Request):
             )
             sections.append(f"📅 Reunioes:\n{event_lines}")
 
-        if editorial_today or needs_metrics:
+        if editorial_today or needs_metrics or no_post_alert:
             ed_parts = []
+            if no_post_alert:
+                ed_parts.append(f"  ⚠️ {no_post_alert}")
             for ep in editorial_today:
                 hora = ep['data_publicacao'].strftime('%Hh') if ep.get('data_publicacao') else ""
                 ed_parts.append(f"  • Post agendado: {ep['article_title']} ({hora})")
@@ -19758,63 +19775,110 @@ async def cron_daily_morning_briefing(request: Request):
 
 # ============== EDITORIAL METRICS REMINDER ==============
 
+async def _editorial_metrics_reminder_impl():
+    """
+    Lembra de coletar metricas em 4 pontos pos-publicacao: 6h, 24h, 72h, 7d.
+    Cada janela so dispara se ainda nao houver entrada em editorial_metrics_history
+    com 'dias_apos_publicacao' compativel (tolerancia de +/- alguns intervalos).
+
+    Janelas:
+      6h  -> 0 dias apos publicacao  (mesmo dia)
+      24h -> 1 dia apos
+      72h -> 3 dias apos
+      7d  -> 7 dias apos
+    """
+    from services.intel_bot import send_intel_notification
+
+    # Janela: (label, lower_hours, upper_hours, expected_days)
+    WINDOWS = [
+        ("6h",  4,  10,  0),
+        ("24h", 20, 30,  1),
+        ("72h", 66, 80,  3),
+        ("7d",  6 * 24, 8 * 24, 7),
+    ]
+
+    pending = []  # [(window_label, post_dict)]
+    with get_db() as conn:
+        cursor = conn.cursor()
+        for label, lo_h, hi_h, exp_days in WINDOWS:
+            cursor.execute("""
+                SELECT ep.id, ep.article_title, ep.data_publicado, ep.linkedin_post_url, ep.url_publicado
+                FROM editorial_posts ep
+                WHERE ep.status = 'published'
+                  AND ep.data_publicado BETWEEN (NOW() - (%s || ' hours')::interval)
+                                           AND (NOW() - (%s || ' hours')::interval)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM editorial_metrics_history h
+                      WHERE h.post_id = ep.id
+                        AND h.dias_apos_publicacao = %s
+                  )
+                ORDER BY ep.data_publicado
+            """, (hi_h, lo_h, exp_days))
+            for row in cursor.fetchall():
+                pending.append((label, dict(row)))
+
+    if not pending:
+        return {"status": "skipped", "reason": "no posts needing metrics"}
+
+    by_window = {}
+    for label, p in pending:
+        by_window.setdefault(label, []).append(p)
+
+    sections = []
+    for label in ("6h", "24h", "72h", "7d"):
+        if label not in by_window:
+            continue
+        lines = "\n".join(
+            f"  • \"{p['article_title'][:60]}\" ({p['data_publicado'].strftime('%d/%m %Hh')})"
+            for p in by_window[label]
+        )
+        sections.append(f"*{label}* ({len(by_window[label])}):\n{lines}")
+
+    msg = (
+        f"📊 Coleta de metricas pendente:\n\n"
+        + "\n\n".join(sections)
+        + "\n\nBaixe xlsx do LinkedIn ou atualize em /editorial."
+    )
+    if len(msg) > 700:
+        msg = msg[:697] + "..."
+
+    await send_intel_notification(msg)
+    return {
+        "status": "sent",
+        "windows": {k: len(v) for k, v in by_window.items()},
+        "posts_count": len(pending),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
 @app.get("/api/cron/editorial-metrics-reminder")
 async def cron_editorial_metrics_reminder(request: Request):
     """
-    Cron: Remind to collect editorial metrics for posts published ~48h ago.
-    Schedule: 0 14 * * * (14:00 UTC = 11:00 AM Sao Paulo)
+    Cron: Lembra de coletar metricas (4 janelas: 6h/24h/72h/7d).
+    Schedule: 0 14 * * * (11:00 AM Sao Paulo)
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
-
-    from services.intel_bot import send_intel_notification
-
     try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT article_title, data_publicado FROM editorial_posts
-                WHERE status = 'published'
-                  AND data_publicado BETWEEN (NOW() - INTERVAL '52 hours') AND (NOW() - INTERVAL '44 hours')
-                  AND linkedin_metricas_em IS NULL
-                ORDER BY data_publicado
-            """)
-            posts = [dict(r) for r in cursor.fetchall()]
-
-        if not posts:
-            return {
-                "job": "editorial-metrics-reminder",
-                "status": "skipped",
-                "reason": "no posts needing metrics",
-            }
-
-        post_lines = "\n".join(
-            f"• \"{p['article_title']}\" ({p['data_publicado'].strftime('%d/%m')})"
-            for p in posts
-        )
-
-        msg = (
-            f"📊 Hora de coletar metricas!\n\n"
-            f"{len(posts)} posts completaram 48h:\n"
-            f"{post_lines}\n\n"
-            f"Baixe o xlsx do LinkedIn e me envie, ou arraste no /editorial."
-        )
-
-        await send_intel_notification(msg)
-
-        return {
-            "job": "editorial-metrics-reminder",
-            "status": "sent",
-            "posts_count": len(posts),
-            "timestamp": datetime.now().isoformat(),
-        }
-
+        result = await _editorial_metrics_reminder_impl()
+        return {"job": "editorial-metrics-reminder", **result}
     except Exception as e:
-        return {
-            "job": "editorial-metrics-reminder",
-            "status": "error",
-            "error": str(e),
-        }
+        return {"job": "editorial-metrics-reminder", "status": "error", "error": str(e)}
+
+
+@app.get("/api/cron/editorial-metrics-reminder-evening")
+async def cron_editorial_metrics_reminder_evening(request: Request):
+    """
+    Cron: Roda a tarde para capturar a janela de 6h (posts publicados de manha).
+    Schedule: 0 23 * * * (20:00 Sao Paulo)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    try:
+        result = await _editorial_metrics_reminder_impl()
+        return {"job": "editorial-metrics-reminder-evening", **result}
+    except Exception as e:
+        return {"job": "editorial-metrics-reminder-evening", "status": "error", "error": str(e)}
 
 
 # Vercel handler

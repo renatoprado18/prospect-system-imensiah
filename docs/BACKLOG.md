@@ -38,6 +38,9 @@
 - [x] Clipping diário com IA + feedback learning
 - [x] Publicar direto no LinkedIn (botão azul) ou copiar+abrir (fallback)
 - [x] Auto-publisher: IA seleciona → usuário aprova → agenda → publica automaticamente
+- [x] Feedback loop: top/bottom posts (engagement rate real) injetados no prompt de seleção e briefing semanal
+- [x] Coleta de métricas em 4 pontos (6h/24h/72h/7d) com dedup via editorial_metrics_history
+- [x] Alerta de cadência: aviso no briefing matinal se sem post a partir de quinta-feira
 
 ### Projetos
 - [x] Edição de projetos (modal completo)

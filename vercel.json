@@ -58,6 +58,10 @@
       "schedule": "0 14 * * *"
     },
     {
+      "path": "/api/cron/editorial-metrics-reminder-evening",
+      "schedule": "0 23 * * *"
+    },
+    {
       "path": "/api/cron/pre-meeting-briefings",
       "schedule": "0 10 * * *"
     },

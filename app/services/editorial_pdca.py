@@ -64,6 +64,78 @@ def _classify_pillar(post: Dict) -> str:
     return "bastidores"
 
 
+def get_top_bottom_examples(n: int = 3, min_age_hours: int = 48) -> Dict:
+    """
+    Retorna os top N e bottom N posts publicados (com metricas coletadas)
+    para alimentar prompts de selecao/geracao de conteudo via feedback loop.
+
+    Engagement rate = (reacoes + comentarios + compartilhamentos) / impressoes.
+    Filtra posts com >= min_age_hours desde publicacao e impressoes > 0.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, article_title, conteudo_adaptado, ai_categoria, ai_gancho_linkedin,
+                   linkedin_impressoes, linkedin_reacoes, linkedin_comentarios,
+                   linkedin_compartilhamentos, linkedin_cliques, data_publicado,
+                   (COALESCE(linkedin_reacoes,0) + COALESCE(linkedin_comentarios,0)
+                    + COALESCE(linkedin_compartilhamentos,0))::float
+                    / NULLIF(linkedin_impressoes, 0) AS engagement_rate
+            FROM editorial_posts
+            WHERE status = 'published'
+              AND linkedin_metricas_em IS NOT NULL
+              AND COALESCE(linkedin_impressoes, 0) > 0
+              AND data_publicado <= (NOW() - (%s || ' hours')::interval)
+            ORDER BY engagement_rate DESC NULLS LAST
+        """, (min_age_hours,))
+        all_posts = [dict(p) for p in cursor.fetchall()]
+
+    if not all_posts:
+        return {"top": [], "bottom": [], "total": 0}
+
+    def _summarize(p: Dict) -> Dict:
+        rate = p.get("engagement_rate") or 0
+        return {
+            "id": p["id"],
+            "title": (p.get("article_title") or "")[:120],
+            "preview": (p.get("conteudo_adaptado") or "")[:280],
+            "gancho": (p.get("ai_gancho_linkedin") or "")[:120],
+            "categoria": p.get("ai_categoria") or "",
+            "impressoes": p.get("linkedin_impressoes") or 0,
+            "engajamento_total": (
+                (p.get("linkedin_reacoes") or 0)
+                + (p.get("linkedin_comentarios") or 0)
+                + (p.get("linkedin_compartilhamentos") or 0)
+            ),
+            "engagement_rate_pct": round(rate * 100, 2),
+        }
+
+    return {
+        "top": [_summarize(p) for p in all_posts[:n]],
+        "bottom": [_summarize(p) for p in all_posts[-n:][::-1]] if len(all_posts) > n else [],
+        "total": len(all_posts),
+    }
+
+
+def format_examples_for_prompt(examples: Dict) -> str:
+    """Formata top/bottom examples para injecao em prompts."""
+    if not examples or not examples.get("top"):
+        return ""
+
+    def _fmt(p: Dict) -> str:
+        return (
+            f"  - [{p['engagement_rate_pct']}% eng | {p['impressoes']} impr] "
+            f"\"{p['title']}\"\n    Gancho: {p['gancho']}\n    Trecho: {p['preview']}"
+        )
+
+    out = "\nEXEMPLOS DE POSTS QUE FUNCIONARAM (top):\n"
+    out += "\n".join(_fmt(p) for p in examples["top"])
+    if examples.get("bottom"):
+        out += "\n\nEXEMPLOS DE POSTS COM BAIXA PERFORMANCE (evitar este padrao):\n"
+        out += "\n".join(_fmt(p) for p in examples["bottom"])
+    return out + "\n"
+
+
 def get_last_week_performance() -> Dict:
     """Get editorial performance metrics from the last 7 days."""
     with get_db() as conn:
@@ -136,6 +208,8 @@ async def generate_weekly_briefing() -> Dict:
     Creates tasks and saves as project note.
     """
     performance = get_last_week_performance()
+    examples = get_top_bottom_examples(n=3)
+    examples_block = format_examples_for_prompt(examples)
 
     # Build prompt for Claude
     pillar_summary = ""
@@ -164,6 +238,7 @@ PERFORMANCE DA SEMANA ANTERIOR ({performance['period']}):
 
 POR PILAR:
 {pillar_summary}
+{examples_block}
 
 PILARES:
 1. NeoGovernanca - Atrai CEOs/conselheiros, gera clientes para ImenSIAH

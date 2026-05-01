@@ -74,10 +74,14 @@
 
 ## 8. Editorial Calendar (`/editorial`)
 - Pipeline: import → análise IA → adaptação → agendamento → publicação → métricas
-- 149 posts (7 publicados, 141 drafts)
+- 159 posts (10 publicados, 1 agendado, 148 drafts)
 - Análise IA: categoria, público, complexidade, score, gancho LinkedIn
 - Bulk schedule, import de artigos
-- **Doc detalhada**: `docs/FEATURE_EDITORIAL.md`
+- **Feedback loop IA**: `editorial_pdca.get_top_bottom_examples()` → top/bottom (engagement rate) injetados no prompt de `auto_publisher.select_weekly_posts` e `generate_weekly_briefing`
+- **Coleta de métricas em 4 pontos**: 6h, 24h, 72h, 7d via `editorial_metrics_history` (dedup por `dias_apos_publicacao`)
+  - Cron: `editorial-metrics-reminder` (11h SP) + `editorial-metrics-reminder-evening` (20h SP)
+- **Alerta cadência semanal**: a partir de quinta sem post → ⚠️ no daily-morning-briefing
+- **Doc detalhada**: `docs/FEATURE_EDITORIAL.md` + estratégia em `docs/EDITORIAL_STRATEGY.md`
 
 ## 9. Hot Takes (`/hot-takes`)
 - Gerar de URL, digest, publicar → `hot_takes.py`
