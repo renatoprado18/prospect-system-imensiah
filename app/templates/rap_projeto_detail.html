@@ -2031,22 +2031,43 @@
         document.getElementById('taskResponsavelSearch').value = task.contact_nome || '';
         document.getElementById('taskResponsavelResults').innerHTML = '';
 
-        // Extract URLs and show as clickable buttons
-        const linksContainer = document.getElementById('taskLinks');
-        const urls = (task.descricao || '').match(/https?:\/\/[^\s]+/g) || [];
-        if (urls.length > 0) {
-            linksContainer.innerHTML = urls.map(url => {
-                let label = 'Abrir link';
-                let icon = 'bi-box-arrow-up-right';
-                if (url.includes('linkedin.com')) { label = 'Abrir no LinkedIn'; icon = 'bi-linkedin'; }
-                else if (url.includes('drive.google.com')) { label = 'Abrir no Drive'; icon = 'bi-google'; }
-                return `<a href="${url}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:#6366f1;color:white;border-radius:8px;font-size:0.85rem;text-decoration:none;margin-right:6px"><i class="bi ${icon}"></i>${label}</a>`;
-            }).join('');
-        } else {
-            linksContainer.innerHTML = '';
-        }
+        renderTaskLinks(task.descricao || '');
 
         new bootstrap.Modal(document.getElementById('addTaskModal')).show();
+    }
+
+    function renderTaskLink(url) {
+        let label = 'Abrir link';
+        let icon = 'bi-box-arrow-up-right';
+        if (url.includes('linkedin.com')) { label = 'Abrir no LinkedIn'; icon = 'bi-linkedin'; }
+        else if (url.includes('drive.google.com')) { label = 'Abrir no Drive'; icon = 'bi-google'; }
+        return `<a href="${url}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:#6366f1;color:white;border-radius:8px;font-size:0.85rem;text-decoration:none;margin-right:6px"><i class="bi ${icon}"></i>${label}</a>`;
+    }
+
+    async function renderTaskLinks(descricao) {
+        const linksContainer = document.getElementById('taskLinks');
+        const urls = (descricao || '').match(/https?:\/\/[^\s]+/g) || [];
+
+        // Render direct URLs immediately
+        linksContainer.innerHTML = urls.map(renderTaskLink).join('');
+
+        // If description references a post_id but has no LinkedIn URL, fetch it
+        const postIdMatch = (descricao || '').match(/post_id=(\d+)/);
+        const hasLinkedInUrl = urls.some(u => u.includes('linkedin.com'));
+        if (postIdMatch && !hasLinkedInUrl) {
+            try {
+                const resp = await fetch(`/api/editorial/${postIdMatch[1]}`);
+                if (resp.ok) {
+                    const post = await resp.json();
+                    const url = post.linkedin_post_url || post.url_publicado;
+                    if (url) {
+                        linksContainer.insertAdjacentHTML('beforeend', renderTaskLink(url));
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to fetch post URL for task link', e);
+            }
+        }
     }
 
     async function saveTask() {
