@@ -352,8 +352,33 @@ def _tool_execute_conselhoos(sql: str) -> str:
         return json.dumps({"erro": f"Erro SQL ConselhoOS: {str(e)}", "query": sql_stripped})
 
 
+def _entity_type_for_action(action: str) -> str:
+    """Mapeia action para entity_type pra audit_log."""
+    if action in ("create_task", "complete_task"):
+        return "task"
+    if action in ("save_note", "save_memory"):
+        return "note" if action == "save_note" else "memory"
+    if action == "schedule_meeting":
+        return "meeting"
+    if action in ("update_contact", "enrich_contact"):
+        return "contact"
+    if action == "send_whatsapp":
+        return "message"
+    return "unknown"
+
+
 async def _tool_execute_action(action: str, params: Dict) -> str:
     """Execute a write action on the INTEL system."""
+    from services.audit_log import log as audit_log
+
+    audit_log(
+        f"intel_bot.{action}",
+        entity_type=_entity_type_for_action(action),
+        entity_id=params.get("contact_id") or params.get("project_id") or params.get("task_id"),
+        actor="intel_bot",
+        details={"params": params},
+    )
+
     try:
         if action == "create_task":
             titulo = params.get("titulo")

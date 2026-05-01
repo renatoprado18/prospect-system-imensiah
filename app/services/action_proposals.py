@@ -114,11 +114,34 @@ class ActionProposalsService:
 
             proposal = self.get_proposal(proposal_id)
 
+            # Audit log
+            self._audit("proposal_created", proposal_id, {
+                "action_type": action_type,
+                "contact_id": contact_id,
+                "urgency": urgency,
+                "title": proposal_data.get("title"),
+            })
+
             # Send push notification for new proposals
             if proposal:
                 self._send_push_notification(proposal)
 
             return proposal
+
+    def _audit(self, action: str, proposal_id: int, details: Optional[Dict] = None):
+        """Registra evento no audit_log. Falhas nao quebram a operacao."""
+        try:
+            from services.audit_log import log
+            log(
+                f"action_proposal.{action}",
+                entity_type="action_proposal",
+                entity_id=proposal_id,
+                actor="user" if action in ("accepted", "rejected", "executed", "dismissed") else "system",
+                details=details or {},
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"audit failed for proposal {proposal_id}: {e}")
 
     def _send_push_notification(self, proposal: Dict):
         """Send browser push notification for a new proposal."""
@@ -251,6 +274,7 @@ class ActionProposalsService:
                 return None
 
             conn.commit()
+            self._audit("accepted", proposal_id, {"option_id": option_id})
             return self.get_proposal(proposal_id)
 
     def reject_proposal(self, proposal_id: int, reason: str = None) -> Optional[Dict]:
@@ -285,6 +309,7 @@ class ActionProposalsService:
             # Record feedback for learning
             self._record_feedback(proposal_id, 'rejected')
 
+            self._audit("rejected", proposal_id, {"reason": reason})
             return self.get_proposal(proposal_id)
 
     def mark_executed(self, proposal_id: int, result: Dict = None, option_chosen: str = None) -> Optional[Dict]:
@@ -309,6 +334,7 @@ class ActionProposalsService:
             # Record feedback for learning
             self._record_feedback(proposal_id, 'accepted', option_chosen)
 
+            self._audit("executed", proposal_id, {"option_chosen": option_chosen, "result": result})
             return self.get_proposal(proposal_id)
 
     def dismiss_proposal(self, proposal_id: int) -> Optional[Dict]:
@@ -333,6 +359,7 @@ class ActionProposalsService:
             # Record feedback for learning (dismissed is different from rejected)
             self._record_feedback(proposal_id, 'dismissed')
 
+            self._audit("dismissed", proposal_id, {})
             return self.get_proposal(proposal_id)
 
     def expire_old_proposals(self) -> int:

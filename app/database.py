@@ -281,6 +281,22 @@ def init_db():
             )
         ''')
 
+        # Audit log: writes em todo o sistema (intel_bot, action_proposals, etc)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id SERIAL PRIMARY KEY,
+                action TEXT NOT NULL,
+                entity_type TEXT,
+                entity_id INTEGER,
+                actor TEXT DEFAULT 'system',
+                details JSONB DEFAULT '{}'::jsonb,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log (entity_type, entity_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log (action)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_log_criado_em ON audit_log (criado_em DESC)')
+
         # Interactions table (timeline de interações com prospects)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS interactions (
