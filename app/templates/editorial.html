@@ -642,177 +642,6 @@
         text-overflow: ellipsis;
     }
 
-    /* Week Calendar */
-    .week-calendar {
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 12px;
-    }
-
-    .week-day {
-        background: var(--gray-50);
-        border-radius: 12px;
-        padding: 12px;
-        min-height: 120px;
-    }
-
-    .week-day.today {
-        background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-        border: 2px solid #3b82f6;
-    }
-
-    .week-day.past {
-        opacity: 0.6;
-    }
-
-    .day-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 10px;
-        padding-bottom: 8px;
-        border-bottom: 1px solid var(--gray-200);
-    }
-
-    .day-name {
-        font-weight: 600;
-        font-size: 0.9rem;
-        color: var(--dark);
-    }
-
-    .day-num {
-        font-size: 0.85rem;
-        color: var(--gray-500);
-    }
-
-    .week-day.today .day-name,
-    .week-day.today .day-num {
-        color: #1e40af;
-    }
-
-    .day-posts {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-    }
-
-    .day-post {
-        background: white;
-        padding: 8px 10px;
-        border-radius: 8px;
-        font-size: 0.75rem;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        transition: all 0.2s;
-    }
-
-    .day-post:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-
-    .day-post.hot_take {
-        background: #fef3c7;
-        border-left: 3px solid #f59e0b;
-    }
-
-    .day-post i {
-        flex-shrink: 0;
-    }
-
-    .day-empty {
-        color: var(--gray-400);
-        font-size: 0.8rem;
-        text-align: center;
-        padding: 20px;
-    }
-
-    /* Calendar Post States */
-    .day-post.state-scheduled {
-        background: #eff6ff;
-        border-left: 3px solid #3b82f6;
-    }
-    .day-post.state-scheduled i { color: #3b82f6; }
-
-    .day-post.state-today_scheduled {
-        background: #fef3c7;
-        border-left: 3px solid #f59e0b;
-        animation: pulse-attention 2s infinite;
-    }
-    .day-post.state-today_scheduled i { color: #d97706; }
-
-    .day-post.state-overdue {
-        background: #fee2e2;
-        border-left: 3px solid #ef4444;
-    }
-    .day-post.state-overdue i { color: #dc2626; }
-
-    .day-post.state-published {
-        background: #f3e8ff;
-        border-left: 3px solid #8b5cf6;
-    }
-    .day-post.state-published i { color: #7c3aed; }
-
-    .day-post.state-needs_metrics {
-        background: #f3e8ff;
-        border-left: 3px solid #f97316;
-        position: relative;
-    }
-    .day-post.state-needs_metrics i { color: #7c3aed; }
-    .day-post.state-needs_metrics::after {
-        content: '📊';
-        position: absolute;
-        top: -6px;
-        right: -6px;
-        font-size: 12px;
-        background: #fff7ed;
-        border-radius: 50%;
-        padding: 2px;
-        border: 1px solid #f97316;
-    }
-
-    .day-post.state-complete {
-        background: #dcfce7;
-        border-left: 3px solid #22c55e;
-    }
-    .day-post.state-complete i { color: #16a34a; }
-
-    @keyframes pulse-attention {
-        0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
-        50% { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0); }
-    }
-
-    /* Calendar Alerts Banner */
-    .calendar-alerts {
-        display: flex;
-        gap: 12px;
-        margin-bottom: 16px;
-        flex-wrap: wrap;
-    }
-    .calendar-alert {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-size: 0.8rem;
-        font-weight: 500;
-    }
-    .calendar-alert.alert-overdue {
-        background: #fee2e2;
-        color: #dc2626;
-    }
-    .calendar-alert.alert-today {
-        background: #fef3c7;
-        color: #d97706;
-    }
-    .calendar-alert.alert-metrics {
-        background: #fff7ed;
-        color: #ea580c;
-    }
-
     /* Action Cards */
     .action-cards {
         display: grid;
@@ -825,14 +654,6 @@
         border-radius: 16px;
         padding: 20px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-    }
-
-    .today-card {
-        border-top: 4px solid #3b82f6;
-    }
-
-    .pending-card {
-        border-top: 4px solid #f59e0b;
     }
 
     .action-header {
@@ -925,10 +746,6 @@
         .stats-row {
             grid-template-columns: repeat(2, 1fr);
         }
-        .week-calendar {
-            grid-template-columns: repeat(5, 1fr);
-            gap: 8px;
-        }
     }
 
     @media (max-width: 768px) {
@@ -944,13 +761,6 @@
     @media (max-width: 640px) {
         .stats-row {
             grid-template-columns: 1fr;
-        }
-        .week-calendar {
-            grid-template-columns: repeat(3, 1fr);
-        }
-        .week-day:nth-child(4),
-        .week-day:nth-child(5) {
-            display: none;
         }
     }
 </style>
@@ -1163,101 +973,7 @@
     </div>
 </div>
 
-<!-- Publicar Hoje - Prioridade máxima -->
-{% if today_posts %}
-<div class="posts-card" style="border-top: 4px solid #3b82f6;">
-    <div class="posts-header">
-        <h2><i class="bi bi-lightning-charge me-2" style="color: #3b82f6;"></i>Publicar Hoje</h2>
-    </div>
-    <div class="posts-list">
-        {% for post in today_posts %}
-        <div class="post-item" style="cursor: pointer;">
-            <div class="post-canal {% if post.tipo == 'hot_take' %}both{% else %}linkedin{% endif %}">
-                {% if post.tipo == 'hot_take' %}<i class="bi bi-fire"></i>{% else %}<i class="bi bi-linkedin"></i>{% endif %}
-            </div>
-            <div class="post-info">
-                <div class="post-title">{{ post.article_title[:50] }}{% if post.article_title|length > 50 %}...{% endif %}</div>
-                <div class="post-meta">
-                    <span><i class="bi bi-clock"></i> {{ post.data_publicacao.strftime('%H:%M') if post.data_publicacao else '' }}</span>
-                    <span><i class="bi bi-tag"></i> {{ post.ai_categoria or 'LinkedIn' }}</span>
-                </div>
-            </div>
-            <div class="d-flex gap-1">
-                <button class="btn btn-sm btn-primary" onclick="publishToLinkedIn({{ post.id }})" style="background: #0a66c2;" title="Publicar direto no LinkedIn">
-                    <i class="bi bi-linkedin"></i>
-                </button>
-                <button class="btn btn-sm btn-outline-secondary" onclick="copyAndOpen({{ post.id }})" title="Copiar e abrir LinkedIn">
-                    <i class="bi bi-clipboard"></i>
-                </button>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-</div>
-{% endif %}
-
-<!-- This Week Calendar - Full Width -->
-<div class="posts-card">
-    <div class="posts-header">
-        <h2><i class="bi bi-calendar-week me-2"></i>Esta Semana</h2>
-    </div>
-    {% if calendar_alerts and (calendar_alerts.overdue > 0 or calendar_alerts.today > 0 or calendar_alerts.needs_metrics > 0) %}
-    <div class="calendar-alerts">
-        {% if calendar_alerts.overdue > 0 %}
-        <div class="calendar-alert alert-overdue">
-            <i class="bi bi-exclamation-triangle-fill"></i>
-            {{ calendar_alerts.overdue }} post{{ 's' if calendar_alerts.overdue > 1 else '' }} atrasado{{ 's' if calendar_alerts.overdue > 1 else '' }}
-        </div>
-        {% endif %}
-        {% if calendar_alerts.today > 0 %}
-        <div class="calendar-alert alert-today">
-            <i class="bi bi-clock-fill"></i>
-            {{ calendar_alerts.today }} post{{ 's' if calendar_alerts.today > 1 else '' }} para hoje
-        </div>
-        {% endif %}
-        {% if calendar_alerts.needs_metrics > 0 %}
-        <div class="calendar-alert alert-metrics">
-            <i class="bi bi-bar-chart-fill"></i>
-            {{ calendar_alerts.needs_metrics }} aguardando métricas
-        </div>
-        {% endif %}
-    </div>
-    {% endif %}
-    <div class="week-calendar">
-        {% for day in week_days %}
-        <div class="week-day {{ 'today' if day.is_today else '' }} {{ 'past' if day.is_past else '' }}">
-            <div class="day-header">
-                <span class="day-name">{{ day.day_name }}</span>
-                <span class="day-num">{{ day.day_num }}</span>
-            </div>
-            <div class="day-posts">
-                {% for post in day.posts %}
-                <div class="day-post {{ post.tipo }} state-{{ post.calendar_state or 'scheduled' }}" onclick="openPostModal({{ post.id }})" title="{{ post.article_title }}">
-                    {% if post.calendar_state == 'overdue' %}
-                    <i class="bi bi-exclamation-triangle-fill"></i>
-                    {% elif post.calendar_state == 'today_scheduled' %}
-                    <i class="bi bi-clock-fill"></i>
-                    {% elif post.calendar_state == 'complete' %}
-                    <i class="bi bi-check-circle-fill"></i>
-                    {% elif post.calendar_state == 'published' or post.calendar_state == 'needs_metrics' %}
-                    <i class="bi bi-check-lg"></i>
-                    {% elif post.tipo == 'hot_take' %}
-                    <i class="bi bi-fire"></i>
-                    {% else %}
-                    <i class="bi bi-calendar-check"></i>
-                    {% endif %}
-                    <span>{{ post.article_title[:18] }}{% if post.article_title|length > 18 %}...{% endif %}</span>
-                </div>
-                {% else %}
-                <div class="day-empty">-</div>
-                {% endfor %}
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-</div>
-
-<!-- Próximos Posts - Logo após Esta Semana -->
+<!-- Próximos Posts -->
 <div class="posts-card">
     <div class="posts-header">
         <h2><i class="bi bi-calendar-check me-2"></i>Próximos Posts</h2>
@@ -1290,47 +1006,8 @@
 
 <!-- Two Column Layout: Actions -->
 <div class="editorial-two-col">
-    <!-- Left Column: Hot Takes & Today -->
+    <!-- Left Column: Biblioteca -->
     <div class="editorial-left">
-        <!-- Para Revisar: Hot takes + editorial drafts prontos para aprovação -->
-        <div class="action-card pending-card">
-            <div class="action-header">
-                <h3><i class="bi bi-eye me-2"></i>Para Revisar</h3>
-                <a href="/hot-takes" class="btn btn-sm btn-outline-warning">Ver Hot Takes</a>
-            </div>
-            {% if pending_hot_takes %}
-            <div class="action-list">
-                {% for ht in pending_hot_takes[:5] %}
-                <div class="action-item">
-                    <div class="action-icon"><i class="bi bi-fire text-warning"></i></div>
-                    <div class="action-info">
-                        <div class="action-title">{{ ht.hook[:50] if ht.hook else ht.news_title[:50] if ht.news_title else 'Sem titulo' }}...</div>
-                        <div class="action-meta">{{ ht.created_at[:10] if ht.created_at else '' }}</div>
-                    </div>
-                    <div class="d-flex gap-1">
-                        <button class="btn btn-sm btn-outline-primary" onclick="quickApproveHotTake({{ ht.id }})" title="Aprovar e agendar">
-                            <i class="bi bi-check-lg"></i>
-                        </button>
-                        <a href="/hot-takes" class="btn btn-sm btn-outline-secondary" title="Editar">
-                            <i class="bi bi-pencil"></i>
-                        </a>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-            {% if pending_hot_takes|length > 5 %}
-            <div class="action-more">
-                <a href="/hot-takes">+ {{ pending_hot_takes|length - 5 }} mais</a>
-            </div>
-            {% endif %}
-            {% else %}
-            <div class="action-empty">
-                <i class="bi bi-check-circle text-success"></i>
-                <span>Nenhum conteúdo para revisar</span>
-            </div>
-            {% endif %}
-        </div>
-
         <!-- Link para Artigos -->
         <div class="action-card" style="background: linear-gradient(135deg, #dbeafe, #bfdbfe); border: 1px solid #3b82f6;">
             <div class="action-header">
@@ -2782,7 +2459,11 @@ function pipelineCellHtml(p, col, status) {
     if (col === 'titulo') {
         const title = p.article_title || p.titulo_adaptado || '(sem título)';
         const titleClean = title.replace(/"/g, '&quot;');
-        return `<span class="titulo" onclick="openPostModal(${p.id})" title="${titleClean}">${title}</span>`;
+        // Hot takes orfaos (no draft tab) abrem em /hot-takes; editorial_posts no modal
+        const onclick = p.tipo === 'hot_take'
+            ? `window.location='/hot-takes?id=${p.hot_take_id || p.id}'`
+            : `openPostModal(${p.id})`;
+        return `<span class="titulo" onclick="${onclick}" title="${titleClean}">${title}</span>`;
     }
     if (col === 'ai_categoria') return p.ai_categoria || '<span style="color:#94a3b8;">—</span>';
     if (col === 'idade') {
@@ -2810,6 +2491,14 @@ function pipelineCellHtml(p, col, status) {
         const postUrl = p.url_publicado || p.linkedin_post_url || '';
         const linkBtn = postUrl ? `<a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2" title="Abrir no LinkedIn"><i class="bi bi-linkedin"></i></a>` : '';
         if (status === 'draft') {
+            // Hot takes orfaos: aprovar via quickApproveHotTake, editar em /hot-takes
+            if (p.tipo === 'hot_take') {
+                const htId = p.hot_take_id || p.id;
+                return `<div style="display:flex; gap:4px; white-space:nowrap;">
+                    <button class="btn btn-sm btn-primary py-0 px-2" onclick="quickApproveHotTake(${htId})" title="Aprovar e agendar">✓</button>
+                    <a href="/hot-takes?id=${htId}" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Editar">✏️</a>
+                </div>`;
+            }
             return `<div style="display:flex; gap:4px; white-space:nowrap;">
                 <button class="btn btn-sm btn-primary py-0 px-2" onclick="approvePost(${p.id})" title="Aprovar">✓</button>
                 <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="openPostModal(${p.id})" title="Editar">✏️</button>

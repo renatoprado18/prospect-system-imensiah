@@ -16882,9 +16882,11 @@ async def api_editorial_funnel():
 
 @app.get("/api/editorial/pipeline")
 async def api_editorial_pipeline(request: Request, status: str = "draft"):
-    """Get editorial posts by pipeline status."""
-    # Scheduled: proximo primeiro (ASC). Published: mais recente primeiro (DESC, por data_publicado).
-    # Outros: data_publicacao DESC (planejada).
+    """Get editorial posts by pipeline status.
+
+    Para 'draft', faz UNION com hot_takes orfaos (sem editorial_post_id) —
+    asssim a aba "Para Aprovar" mostra ambos os tipos.
+    """
     if status == 'scheduled':
         order_clause = "data_publicacao ASC NULLS LAST, criado_em ASC"
     elif status == 'published':
@@ -16895,16 +16897,40 @@ async def api_editorial_pipeline(request: Request, status: str = "draft"):
 
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute(f"""
-            SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
-                   tipo, canal, status, data_publicacao, data_publicado, ai_categoria,
-                   hot_take_id, linkedin_impressoes, linkedin_reacoes, linkedin_comentarios,
-                   linkedin_metricas_em, url_publicado, linkedin_post_url, criado_em
-            FROM editorial_posts
-            WHERE status = %s
-            ORDER BY {order_clause}
-            LIMIT {limit}
-        """, (status,))
+        if status == 'draft':
+            # UNION editorial_posts drafts + hot_takes orfaos drafts
+            cursor.execute(f"""
+                SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
+                       tipo, canal, status, data_publicacao, data_publicado, ai_categoria,
+                       hot_take_id, linkedin_impressoes, linkedin_reacoes, linkedin_comentarios,
+                       linkedin_metricas_em, url_publicado, linkedin_post_url, criado_em
+                FROM editorial_posts
+                WHERE status = 'draft'
+                UNION ALL
+                SELECT id, news_title AS article_title, hook AS titulo_adaptado,
+                       linkedin_post AS conteudo_adaptado, news_link AS article_url,
+                       'hot_take' AS tipo, 'linkedin' AS canal, status,
+                       scheduled_for AS data_publicacao, published_at AS data_publicado,
+                       'Hot Take' AS ai_categoria, id AS hot_take_id,
+                       NULL::int AS linkedin_impressoes, NULL::int AS linkedin_reacoes, NULL::int AS linkedin_comentarios,
+                       NULL::timestamp AS linkedin_metricas_em, linkedin_url AS url_publicado, linkedin_url AS linkedin_post_url,
+                       created_at AS criado_em
+                FROM hot_takes
+                WHERE status = 'draft' AND editorial_post_id IS NULL
+                ORDER BY {order_clause}
+                LIMIT {limit}
+            """)
+        else:
+            cursor.execute(f"""
+                SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
+                       tipo, canal, status, data_publicacao, data_publicado, ai_categoria,
+                       hot_take_id, linkedin_impressoes, linkedin_reacoes, linkedin_comentarios,
+                       linkedin_metricas_em, url_publicado, linkedin_post_url, criado_em
+                FROM editorial_posts
+                WHERE status = %s
+                ORDER BY {order_clause}
+                LIMIT {limit}
+            """, (status,))
         posts = [dict(r) for r in cursor.fetchall()]
     for p in posts:
         for k in ('data_publicacao', 'data_publicado', 'linkedin_metricas_em', 'criado_em'):
@@ -18231,7 +18257,6 @@ async def api_artigo_schedule(artigo_id: int, request: Request):
 async def editorial_page(request: Request):
     """Pagina do calendario editorial - Hub unificado"""
     from datetime import timedelta
-    from services.hot_takes import get_hot_takes
 
     stats = get_editorial_stats()
     posts = get_editorial_posts(limit=50)
@@ -18249,76 +18274,15 @@ async def editorial_page(request: Request):
         cursor.execute("SELECT id, nome FROM projects WHERE status = 'ativo' ORDER BY nome")
         projects = [dict(p) for p in cursor.fetchall()]
 
-    # Calculate this week's dates (Mon-Fri)
     today = datetime.now()
-    # Find Monday of this week (at midnight to include morning posts)
     days_since_monday = today.weekday()
     monday = (today - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
-    sunday = monday + timedelta(days=6)
-
-    # Busca posts agendados/publicados da semana (Seg-Dom)
-    week_posts = get_editorial_posts(from_date=monday, to_date=sunday + timedelta(days=1))
-    # Filtra apenas scheduled e published
-    week_posts = [p for p in week_posts if p.get('status') in ['scheduled', 'published']]
-
-    # Calcula estado de cada post para visual do calendário
-    # Estados: scheduled, today_scheduled, overdue, published, needs_metrics, complete
-    alerts = {'overdue': 0, 'today': 0, 'needs_metrics': 0}
-    for p in week_posts:
-        pub_date = p.get('data_publicacao')
-        status = p.get('status')
-        has_metrics = p.get('linkedin_impressoes') and p.get('linkedin_impressoes') > 0
-        data_publicado = p.get('data_publicado')
-
-        if status == 'scheduled':
-            if pub_date and pub_date.date() < today.date():
-                p['calendar_state'] = 'overdue'
-                alerts['overdue'] += 1
-            elif pub_date and pub_date.date() == today.date():
-                p['calendar_state'] = 'today_scheduled'
-                alerts['today'] += 1
-            else:
-                p['calendar_state'] = 'scheduled'
-        elif status == 'published':
-            if has_metrics:
-                p['calendar_state'] = 'complete'
-            elif data_publicado:
-                hours_since = (datetime.now() - data_publicado).total_seconds() / 3600
-                if hours_since >= 48:
-                    p['calendar_state'] = 'needs_metrics'
-                    alerts['needs_metrics'] += 1
-                else:
-                    p['calendar_state'] = 'published'
-            else:
-                p['calendar_state'] = 'published'
-
-    week_days = []
-    for i in range(7):  # Mon to Sun
-        day = monday + timedelta(days=i)
-        day_posts = [p for p in week_posts if p.get('data_publicacao') and
-                     p['data_publicacao'].date() == day.date()]
-        week_days.append({
-            'date': day,
-            'day_name': ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'][i],
-            'day_num': day.day,
-            'is_today': day.date() == today.date(),
-            'is_past': day.date() < today.date(),
-            'posts': day_posts
-        })
-
-    # Today's posts
-    today_posts = [p for p in posts if p.get('data_publicacao') and
-                   p['data_publicacao'].date() == today.date() and
-                   p.get('status') in ['scheduled', 'ready']]
-
-    # Pending hot takes (drafts)
-    pending_hot_takes = get_hot_takes(status='draft', limit=10)
 
     # =================================================================
     # Stat cards (3 compactos): pendencias, proxima publicacao, semana
     # =================================================================
     summary = {
-        'drafts_count': stats.get('drafts') or 0,
+        'drafts_count': 0,  # editorial_posts drafts + hot_takes orphan drafts
         'metricas_atrasadas': 0,
         'next_pub': None,
         'week_artigos': 0,
@@ -18330,6 +18294,14 @@ async def editorial_page(request: Request):
     }
     with get_db() as conn:
         cursor = conn.cursor()
+        # Pendencias = drafts editorial_posts + hot_takes orfaos
+        cursor.execute("""
+            SELECT
+              (SELECT COUNT(*) FROM editorial_posts WHERE status='draft') +
+              (SELECT COUNT(*) FROM hot_takes WHERE status='draft' AND editorial_post_id IS NULL) AS c
+        """)
+        summary['drafts_count'] = cursor.fetchone()['c']
+
         # Metricas atrasadas: publicado >48h, sem coleta
         cursor.execute("""
             SELECT COUNT(*) AS c FROM editorial_posts
@@ -18381,10 +18353,6 @@ async def editorial_page(request: Request):
         "status_options": EDITORIAL_STATUS,
         "tipos": EDITORIAL_TIPOS,
         "today": today,
-        "week_days": week_days,
-        "today_posts": today_posts,
-        "pending_hot_takes": pending_hot_takes,
-        "calendar_alerts": alerts,
         "funnel": funnel,
     })
 
