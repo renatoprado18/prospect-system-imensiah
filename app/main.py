@@ -16883,17 +16883,27 @@ async def api_editorial_funnel():
 @app.get("/api/editorial/pipeline")
 async def api_editorial_pipeline(request: Request, status: str = "draft"):
     """Get editorial posts by pipeline status."""
+    # Scheduled: proximo primeiro (ASC). Published: mais recente primeiro (DESC, por data_publicado).
+    # Outros: data_publicacao DESC (planejada).
+    if status == 'scheduled':
+        order_clause = "data_publicacao ASC NULLS LAST, criado_em ASC"
+    elif status == 'published':
+        order_clause = "data_publicado DESC NULLS LAST, criado_em DESC"
+    else:
+        order_clause = "data_publicacao DESC NULLS LAST, criado_em DESC"
+    limit = 50 if status == 'published' else 20
+
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
                    tipo, canal, status, data_publicacao, data_publicado, ai_categoria,
                    hot_take_id, linkedin_impressoes, linkedin_reacoes, linkedin_comentarios,
-                   linkedin_metricas_em, url_publicado, criado_em
+                   linkedin_metricas_em, url_publicado, linkedin_post_url, criado_em
             FROM editorial_posts
             WHERE status = %s
-            ORDER BY data_publicacao DESC NULLS LAST, criado_em DESC
-            LIMIT 20
+            ORDER BY {order_clause}
+            LIMIT {limit}
         """, (status,))
         posts = [dict(r) for r in cursor.fetchall()]
     for p in posts:

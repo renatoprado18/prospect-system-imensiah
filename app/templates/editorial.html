@@ -1125,6 +1125,7 @@
         <button class="btn btn-sm btn-outline-warning pipeline-tab active" onclick="loadPipeline('draft', this)">📝 Para Aprovar</button>
         <button class="btn btn-sm btn-outline-primary pipeline-tab" onclick="loadPipeline('scheduled', this)">📅 Agendados</button>
         <button class="btn btn-sm btn-outline-success pipeline-tab" onclick="loadPipeline('pending_metrics', this)">📊 Coletar Métricas</button>
+        <button class="btn btn-sm btn-outline-secondary pipeline-tab" onclick="loadPipeline('published', this)">✅ Publicados</button>
     </div>
     <div id="pipelineContent" style="padding: 0 16px 16px;">
         <div class="text-muted text-center py-3">Carregando...</div>
@@ -2751,7 +2752,8 @@ async function loadPipeline(status, btn) {
             const msgs = {
                 'draft': 'Nenhum post para aprovar. Use "Auto-Selecionar" ou crie hot-takes.',
                 'scheduled': 'Nenhum post agendado. Aprove posts na aba "Para Aprovar".',
-                'pending_metrics': 'Todos os posts publicados já têm métricas coletadas! 🎉'
+                'pending_metrics': 'Todos os posts publicados já têm métricas coletadas! 🎉',
+                'published': 'Nenhum post publicado ainda.'
             };
             container.innerHTML = `<div class="text-muted text-center py-3">${msgs[status] || 'Vazio'}</div>`;
             return;
@@ -2772,8 +2774,29 @@ async function loadPipeline(status, btn) {
         container.innerHTML = header + posts.map(p => {
             const title = p.article_title || p.titulo_adaptado || '(sem título)';
             const tipo = p.tipo === 'hot_take' ? '🔥' : '📝';
-            const date = p.data_publicacao ? new Date(p.data_publicacao).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+            // Para "Publicados", usar data_publicado real; outros, data_publicacao planejada
+            const dateField = status === 'published' ? p.data_publicado : p.data_publicacao;
+            const date = dateField ? new Date(dateField).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
             const postUrl = p.url_publicado || p.linkedin_post_url || '';
+
+            // Linha extra de metricas (apenas na aba "Publicados")
+            let metricsLine = '';
+            if (status === 'published') {
+                if (p.linkedin_metricas_em) {
+                    const imp = p.linkedin_impressoes || 0;
+                    const rea = p.linkedin_reacoes || 0;
+                    const com = p.linkedin_comentarios || 0;
+                    const eng = imp > 0 ? (((rea + com) / imp) * 100).toFixed(1) : '0';
+                    const coletadoEm = new Date(p.linkedin_metricas_em);
+                    const diasAtras = Math.floor((Date.now() - coletadoEm.getTime()) / (1000*60*60*24));
+                    const coletadoLabel = diasAtras === 0 ? 'hoje' : diasAtras === 1 ? 'há 1 dia' : `há ${diasAtras}d`;
+                    metricsLine = `<div style="font-size:0.7rem;color:#6366f1;margin-top:2px;">
+                        ${imp} 👁 · ${rea} ❤ · ${com} 💬 · ${eng}% eng · coletado ${coletadoLabel}
+                    </div>`;
+                } else {
+                    metricsLine = `<div style="font-size:0.7rem;color:#94a3b8;margin-top:2px;">sem métricas</div>`;
+                }
+            }
 
             let actions = '';
             if (status === 'draft') {
@@ -2791,14 +2814,26 @@ async function loadPipeline(status, btn) {
                     ? `<a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-box-arrow-up-right"></i> Ver Post</a>
                        <button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar</button>`
                     : `<button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar</button>`;
+            } else if (status === 'published') {
+                const linkBtn = postUrl
+                    ? `<a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-primary" title="Abrir no LinkedIn"><i class="bi bi-linkedin"></i></a>`
+                    : '';
+                const coletarBtn = !p.linkedin_metricas_em
+                    ? `<button class="btn btn-sm btn-warning" onclick="openMetricsModal(${p.id})">📊 Coletar</button>`
+                    : '';
+                actions = linkBtn + coletarBtn;
             }
 
             return `
                 <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9;">
                     <span style="font-size:1.2rem;">${tipo}</span>
                     <div style="flex:1;min-width:0;">
-                        <div style="font-weight:600;font-size:0.85rem;cursor:pointer;" onclick="openPostModal(${p.id})">${title.substring(0,60)}${title.length>60?'...':''}</div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <span style="background:#e2e8f0;color:#64748b;font-size:0.65rem;padding:1px 6px;border-radius:4px;font-weight:600;">#${p.id}</span>
+                            <span style="font-weight:600;font-size:0.85rem;cursor:pointer;" onclick="openPostModal(${p.id})">${title.substring(0,60)}${title.length>60?'...':''}</span>
+                        </div>
                         <div style="font-size:0.75rem;color:#64748b;">${date}${date ? ' · ' : ''}${p.ai_categoria || p.tipo || ''}</div>
+                        ${metricsLine}
                     </div>
                     <div class="d-flex gap-1 flex-shrink-0">${actions}</div>
                 </div>`;
