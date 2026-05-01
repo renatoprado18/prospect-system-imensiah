@@ -49,7 +49,9 @@ else
     echo "🔄 Sincronização completa (--force ou primeira vez)"
 fi
 
-CURRENT_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+# UTC pra alinhar com atualizado_em (Neon armazena em UTC).
+# Bash em BRT criava janela falsa de 3h em todo push.
+CURRENT_TIME=$(date -u '+%Y-%m-%d %H:%M:%S')
 TOTAL_SYNCED=0
 TMP_DIR="/tmp/intel_sync_up"
 mkdir -p "$TMP_DIR"

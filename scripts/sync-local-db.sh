@@ -51,6 +51,13 @@ $PSQL -d $LOCAL_DB -f "$TMP_DIR/data.sql" -q 2>/dev/null
 CONTACTS=$($PSQL -d $LOCAL_DB -t -c "SELECT COUNT(*) FROM contacts")
 MESSAGES=$($PSQL -d $LOCAL_DB -t -c "SELECT COUNT(*) FROM messages")
 
+# Marcar .last_sync como NOW (UTC). Acabamos de copiar prod->local,
+# entao local = prod. Sem isso, o proximo push acha que TUDO mudou
+# e empurra de volta com risco de sobrescrever edicoes feitas no prod
+# enquanto local estava stale.
+LAST_SYNC_FILE="$(dirname "$0")/../.last_sync"
+date -u '+%Y-%m-%d %H:%M:%S' > "$LAST_SYNC_FILE"
+
 echo ""
 echo "✅ Sincronização completa!"
 echo "   Contatos: $CONTACTS"
