@@ -60,6 +60,7 @@
 - **Grupos WA vinculados** (mensagens incluídas na análise) → `project_whatsapp_groups`
 - **Download docs dos grupos** → Google Drive → `POST /api/projects/{id}/download-group-docs`
 - Link email no milestone (thread Gmail)
+- **Modal Editar Tarefa**: extrai URLs da descrição como botões clicáveis (LinkedIn/Drive). Quando descrição tem `post_id=N` mas não tem URL, busca via `GET /api/editorial/{post_id}` e adiciona botão "Abrir no LinkedIn" — útil pra tasks `editorial_metrics` antigas criadas antes de incluir URL na descrição (`renderTaskLinks` em `rap_projeto_detail.html`).
 
 ## 6. Veículos (`/veiculos`)
 - Dashboard com itens de manutenção e status
@@ -77,6 +78,9 @@
 - 159 posts (10 publicados, 1 agendado, 148 drafts)
 - Análise IA: categoria, público, complexidade, score, gancho LinkedIn
 - Bulk schedule, import de artigos
+- **Stat cards (3, compactos)**: Pendências (rascunhos + métricas atrasadas) · Próxima publicação · Esta semana (X/4 com meta 1 artigo + 3 hot-takes)
+- **Pipeline tabular**: 4 abas (Para Aprovar / Agendados / Coletar Métricas / Publicados) renderizadas como tabela sortable, click no header alterna asc/desc, cache local pra resort sem refetch. Schema de colunas por aba (categoria pra drafts/agendados; idade do post pra coletar; impressões/reações/comentários/eng% pra publicados). #ID badge em todos os cards/linhas pra bater com tarefas que referenciam `post_id=N`. Sort default por aba: agendados ASC (próximo primeiro), coletar métricas ASC (mais antigo = mais urgente), publicados DESC.
+- **Auto-complete de tasks de coleta**: quando xlsx upload é matched (URL ou data PT-BR "7 de abr de 2026"), task com `origem='editorial_metrics'` cuja descrição contém `post_id=N` é marcada `completed`.
 - **Feedback loop IA**: `editorial_pdca.get_top_bottom_examples()` → top/bottom (engagement rate) injetados no prompt de `auto_publisher.select_weekly_posts` e `generate_weekly_briefing`
 - **Coleta de métricas em 4 pontos**: 6h, 24h, 72h, 7d via `editorial_metrics_history` (dedup por `dias_apos_publicacao`)
   - Cron: `editorial-metrics-reminder` (11h SP) + `editorial-metrics-reminder-evening` (20h SP)
