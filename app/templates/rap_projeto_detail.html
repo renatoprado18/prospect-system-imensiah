@@ -2378,6 +2378,13 @@
                             <input type="radio" name="followupDays" value="7" ${suggestion.suggested_days === 7 ? 'checked' : ''}>
                             <span>Em 1 semana</span>
                         </div>
+                        <div class="followup-option" onclick="selectFollowupCustom(this)">
+                            <input type="radio" name="followupDays" value="custom">
+                            <span>Personalizado</span>
+                            <input type="date" id="followupCustomDate" class="form-control form-control-sm ms-2"
+                                   style="display:none; max-width: 180px; flex-shrink:0;"
+                                   onclick="event.stopPropagation()" onchange="onCustomDateChange()">
+                        </div>
                     </div>
                 `;
             } else {
@@ -2415,6 +2422,34 @@
         element.classList.add('selected');
         element.querySelector('input[type="radio"]').checked = true;
         pendingFollowup.selectedDays = days;
+        const dateInput = document.getElementById('followupCustomDate');
+        if (dateInput) dateInput.style.display = 'none';
+    }
+
+    function selectFollowupCustom(element) {
+        document.querySelectorAll('.followup-option').forEach(el => el.classList.remove('selected'));
+        element.classList.add('selected');
+        element.querySelector('input[type="radio"]').checked = true;
+        const dateInput = document.getElementById('followupCustomDate');
+        dateInput.style.display = 'inline-block';
+        // default min = amanhã
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const isoMin = tomorrow.toISOString().split('T')[0];
+        dateInput.min = isoMin;
+        if (!dateInput.value) dateInput.value = isoMin;
+        onCustomDateChange();
+        dateInput.focus();
+    }
+
+    function onCustomDateChange() {
+        const dateInput = document.getElementById('followupCustomDate');
+        if (!dateInput || !dateInput.value) return;
+        const target = new Date(dateInput.value + 'T00:00:00');
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const diffDays = Math.max(1, Math.round((target - today) / (1000 * 60 * 60 * 24)));
+        pendingFollowup.selectedDays = diffDays;
     }
 
     async function completeTaskOnly(taskId) {
@@ -2450,7 +2485,16 @@
 
         const title = document.getElementById('followupTitle')?.value || pendingFollowup.followup_title;
         const selectedRadio = document.querySelector('input[name="followupDays"]:checked');
-        const days = selectedRadio ? parseInt(selectedRadio.value) : (pendingFollowup.suggested_days || 3);
+        let days;
+        if (selectedRadio && selectedRadio.value === 'custom') {
+            days = pendingFollowup.selectedDays;
+            if (!days || days < 1) {
+                alert('Escolha uma data válida.');
+                return;
+            }
+        } else {
+            days = selectedRadio ? parseInt(selectedRadio.value) : (pendingFollowup.suggested_days || 3);
+        }
 
         try {
             const response = await fetch(`/api/tasks/${pendingFollowup.taskId}/complete-with-followup`, {
