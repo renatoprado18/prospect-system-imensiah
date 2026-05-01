@@ -173,6 +173,10 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # Static files
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+# Routers (modular endpoints)
+from routers.audit import router as audit_router
+app.include_router(audit_router)
+
 
 # Service Worker - must be served from root for full scope
 @app.get("/sw.js")
@@ -760,6 +764,104 @@ async def automations_page(request: Request):
         "request": request,
         "user": user
     })
+
+
+@app.get("/agente", response_class=HTMLResponse)
+async def agent_actions_page(request: Request):
+    """INTEL — Atividade do Agente (audit log de ações autônomas)."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_agent_actions.html", {
+        "request": request,
+        "user": user
+    })
+
+
+@app.get("/api/agent-actions")
+async def api_list_agent_actions(
+    request: Request,
+    period: str = "24h",
+    category: Optional[str] = None,
+    limit: int = 200,
+):
+    """Lista ações autônomas do agente com filtros."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    from services.agent_actions import list_actions
+    from datetime import timedelta as _td
+
+    now = datetime.now()
+    period_map = {
+        "24h": now - _td(hours=24),
+        "7d":  now - _td(days=7),
+        "30d": now - _td(days=30),
+        "all": None,
+    }
+    since = period_map.get(period, now - _td(hours=24))
+
+    actions = list_actions(since=since, category=category, status=None, limit=limit)
+
+    # Stats independentes do filtro de categoria
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) AS c FROM agent_actions WHERE status='done' AND criado_em::date = CURRENT_DATE")
+        today = cursor.fetchone()['c']
+        cursor.execute("SELECT COUNT(*) AS c FROM agent_actions WHERE status='done' AND criado_em >= NOW() - INTERVAL '24 hours'")
+        last_24h = cursor.fetchone()['c']
+        cursor.execute("SELECT COUNT(*) AS c FROM agent_actions WHERE status='done' AND criado_em >= NOW() - INTERVAL '7 days'")
+        last_7d = cursor.fetchone()['c']
+        cursor.execute("SELECT COUNT(*) AS c FROM agent_actions WHERE status='done'")
+        total = cursor.fetchone()['c']
+
+    # Serialize datetimes
+    for a in actions:
+        if a.get('criado_em'):
+            a['criado_em'] = a['criado_em'].isoformat()
+        if a.get('undone_at'):
+            a['undone_at'] = a['undone_at'].isoformat()
+
+    return {
+        "actions": actions,
+        "stats": {"today": today, "last_24h": last_24h, "last_7d": last_7d, "total": total},
+        "period": period,
+        "category": category,
+    }
+
+
+@app.post("/api/agent-actions/{action_id}/undo")
+async def api_undo_agent_action(action_id: int, request: Request):
+    """Executa o undo_hint de uma ação e marca como desfeita."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    from services.agent_actions import get_action, mark_undone
+
+    action = get_action(action_id)
+    if not action:
+        raise HTTPException(status_code=404, detail="Ação não encontrada")
+    if action['status'] != 'done':
+        return {"success": False, "error": f"Status atual: {action['status']}"}
+    if not action.get('undo_hint'):
+        return {"success": False, "error": "Esta ação não tem undo definido"}
+
+    # Sanity: undo_hint precisa ser UPDATE/DELETE simples
+    hint = action['undo_hint'].strip()
+    if not (hint.upper().startswith("UPDATE ") or hint.upper().startswith("DELETE ")):
+        return {"success": False, "error": "undo_hint inválido (apenas UPDATE/DELETE)"}
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(hint)
+            conn.commit()
+        mark_undone(action_id)
+        return {"success": True, "action_id": action_id}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @app.get("/calendario", response_class=HTMLResponse)
@@ -19738,6 +19840,14 @@ async def cron_daily_morning_briefing(request: Request):
         if proposals_count > 0:
             sections.append(f"💬 {proposals_count} propostas de acao pendentes")
 
+        # 8. Digest: ações autônomas das últimas 24h
+        from services.agent_actions import summarize_for_digest, format_digest_section
+        from datetime import timedelta as _td
+        agent_summary = summarize_for_digest(since=now - _td(hours=24), until=now)
+        agent_section = format_digest_section(agent_summary, header="Fiz por você (24h)")
+        if agent_section:
+            sections.append(agent_section)
+
         if not sections:
             return {
                 "job": "daily-morning-briefing",
@@ -19747,9 +19857,9 @@ async def cron_daily_morning_briefing(request: Request):
 
         msg = f"☀️ {header}\n\n" + "\n\n".join(sections)
 
-        # Truncate to ~500 chars max
-        if len(msg) > 500:
-            msg = msg[:497] + "..."
+        # Truncate to ~900 chars max (digest pode ser maior)
+        if len(msg) > 900:
+            msg = msg[:897] + "..."
 
         await send_intel_notification(msg)
 
@@ -19763,11 +19873,162 @@ async def cron_daily_morning_briefing(request: Request):
             "editorial": len(editorial_today),
             "needs_metrics": len(needs_metrics),
             "proposals": proposals_count,
+            "agent_actions_24h": agent_summary.get('total', 0),
         }
 
     except Exception as e:
         return {
             "job": "daily-morning-briefing",
+            "status": "error",
+            "error": str(e),
+        }
+
+
+@app.get("/api/cron/daily-evening-debriefing")
+async def cron_daily_evening_debriefing(request: Request):
+    """
+    Cron: Debriefing 19h SP (22:00 UTC).
+    Foco: pendências do dia + ações autônomas do dia + alertas para amanhã.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.intel_bot import send_intel_notification
+    from services.agent_actions import summarize_for_digest, format_digest_section
+
+    try:
+        now = datetime.now()
+        today_str = now.strftime("%d/%m")
+        sections: List[str] = []
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            # 1. Tarefas que venceram hoje sem conclusão
+            cursor.execute("""
+                SELECT titulo FROM tasks
+                WHERE status = 'pending' AND data_vencimento::date = CURRENT_DATE
+                ORDER BY prioridade ASC LIMIT 10
+            """)
+            today_overdue = [r['titulo'] for r in cursor.fetchall()]
+
+            # 2. Tarefas para amanhã
+            cursor.execute("""
+                SELECT titulo FROM tasks
+                WHERE status = 'pending' AND data_vencimento::date = CURRENT_DATE + INTERVAL '1 day'
+                ORDER BY prioridade ASC LIMIT 5
+            """)
+            tomorrow_tasks = [r['titulo'] for r in cursor.fetchall()]
+
+            # 3. Propostas pendentes (não respondidas)
+            cursor.execute("""
+                SELECT title, urgency FROM action_proposals
+                WHERE status = 'pending'
+                ORDER BY
+                    CASE urgency WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+                    criado_em DESC
+                LIMIT 5
+            """)
+            pending_proposals = cursor.fetchall()
+
+            # 4. Posts editorial aguardando aprovação
+            cursor.execute("""
+                SELECT article_title FROM editorial_posts
+                WHERE status IN ('draft', 'pending_approval', 'ready')
+                  AND (data_publicacao IS NULL OR data_publicacao::date >= CURRENT_DATE)
+                LIMIT 5
+            """)
+            posts_aprovar = [r['article_title'] for r in cursor.fetchall()]
+
+            # 5. Reuniões de amanhã
+            cursor.execute("""
+                SELECT summary, start_datetime FROM calendar_events
+                WHERE start_datetime::date = CURRENT_DATE + INTERVAL '1 day'
+                ORDER BY start_datetime LIMIT 5
+            """)
+            tomorrow_events = cursor.fetchall()
+
+            # 6. Posts publicados hoje precisando métrica em ~48h
+            cursor.execute("""
+                SELECT COUNT(*) AS total FROM editorial_posts
+                WHERE status = 'published' AND data_publicado::date = CURRENT_DATE
+            """)
+            posts_today = cursor.fetchone()['total']
+
+        # Header
+        header = f"🌙 *Boa noite, Renato!*\n*Debriefing {today_str}:*"
+
+        # Pendências do dia
+        if today_overdue:
+            lines = "\n".join(f"  • {t}" for t in today_overdue[:5])
+            extra = f"\n  • +{len(today_overdue) - 5} outras" if len(today_overdue) > 5 else ""
+            sections.append(f"⚠️ *{len(today_overdue)} tarefas venceram hoje:*\n{lines}{extra}")
+
+        if pending_proposals:
+            urgent_count = sum(1 for p in pending_proposals if p.get('urgency') in ('urgent', 'high'))
+            tag = " (🔥 urgentes)" if urgent_count else ""
+            lines = "\n".join(f"  • {p['title']}" for p in pending_proposals[:3])
+            sections.append(f"💬 *{len(pending_proposals)} propostas aguardando você{tag}:*\n{lines}")
+
+        if posts_aprovar:
+            lines = "\n".join(f"  • {t}" for t in posts_aprovar[:3])
+            sections.append(f"📝 *Editorial — {len(posts_aprovar)} posts esperando aprovação:*\n{lines}")
+
+        # Olhar para amanhã
+        amanha_parts = []
+        if tomorrow_tasks:
+            t_lines = "\n".join(f"  • {t}" for t in tomorrow_tasks[:3])
+            amanha_parts.append(f"  📌 {len(tomorrow_tasks)} tarefas:\n{t_lines}")
+        if tomorrow_events:
+            e_lines = "\n".join(
+                f"  • {e['summary']} ({e['start_datetime'].strftime('%H:%M')})"
+                for e in tomorrow_events[:3]
+            )
+            amanha_parts.append(f"  📅 {len(tomorrow_events)} reuniões:\n{e_lines}")
+        if amanha_parts:
+            sections.append("🌅 *Amanhã:*\n" + "\n\n".join(amanha_parts))
+
+        # Ações autônomas de hoje
+        start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        agent_summary = summarize_for_digest(since=start_of_day, until=now)
+        agent_section = format_digest_section(agent_summary, header="Fiz por você (hoje)")
+        if agent_section:
+            sections.append(agent_section)
+
+        # Posts hoje (lembrete sutil)
+        if posts_today:
+            sections.append(f"📊 {posts_today} post(s) publicado(s) hoje — métricas em ~48h")
+
+        if not sections:
+            return {
+                "job": "daily-evening-debriefing",
+                "status": "skipped",
+                "reason": "nothing to report",
+            }
+
+        msg = f"{header}\n\n" + "\n\n".join(sections)
+
+        # Truncate to ~1100 chars
+        if len(msg) > 1100:
+            msg = msg[:1097] + "..."
+
+        await send_intel_notification(msg)
+
+        return {
+            "job": "daily-evening-debriefing",
+            "status": "sent",
+            "timestamp": now.isoformat(),
+            "today_overdue": len(today_overdue),
+            "pending_proposals": len(pending_proposals),
+            "posts_aprovar": len(posts_aprovar),
+            "tomorrow_tasks": len(tomorrow_tasks),
+            "tomorrow_events": len(tomorrow_events),
+            "agent_actions_today": agent_summary.get('total', 0),
+        }
+
+    except Exception as e:
+        return {
+            "job": "daily-evening-debriefing",
             "status": "error",
             "error": str(e),
         }

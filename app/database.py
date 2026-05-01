@@ -1464,6 +1464,28 @@ def init_db():
             ON CONFLICT (setting_key) DO NOTHING
         ''', (json.dumps(default_intents),))
 
+        # Agent Actions - Audit log de ações autônomas do agente (digest/debriefing)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS agent_actions (
+                id SERIAL PRIMARY KEY,
+                action_type TEXT NOT NULL,
+                category TEXT NOT NULL,
+                title TEXT NOT NULL,
+                details TEXT,
+                scope_ref JSONB DEFAULT '{}'::jsonb,
+                source TEXT,
+                status TEXT DEFAULT 'done',
+                payload JSONB,
+                undo_hint TEXT,
+                undone_at TIMESTAMP,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_agent_actions_criado ON agent_actions (criado_em DESC)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_agent_actions_category ON agent_actions (category, criado_em DESC)')
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_actions_status ON agent_actions (status) WHERE status = 'done'")
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_agent_actions_action_type ON agent_actions (action_type, criado_em DESC)')
+
         # Background Jobs - Track long-running background tasks
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS background_jobs (

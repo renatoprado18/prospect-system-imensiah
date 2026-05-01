@@ -168,6 +168,19 @@ async def check_and_resolve_tasks(action_type: str, context: dict):
                     """, (task_id,))
                 conn.commit()
 
+            from services.agent_actions import log_action
+            for t in auto_completed:
+                log_action(
+                    action_type='task_resolved',
+                    category='tasks',
+                    title=f"Tarefa concluída: {t['titulo']}",
+                    details=f"Resolvida via {action_type}. {_action_description(action_type, context)}",
+                    scope_ref={'task_id': t['id'], 'contact_id': t.get('contact_id'), 'project_id': t.get('project_id')},
+                    source='task_auto_resolver',
+                    payload={'action_type': action_type, 'context': context},
+                    undo_hint=f"UPDATE tasks SET status='pending', data_conclusao=NULL WHERE id={t['id']}",
+                )
+
             # Notify Renato
             from services.intel_bot import send_intel_notification
             action_desc = _action_description(action_type, context)

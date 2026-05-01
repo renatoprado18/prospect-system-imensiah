@@ -338,6 +338,18 @@ async def _auto_update_email(
                     f"{old_email} -> {email}"
                 )
 
+                from services.agent_actions import log_action
+                log_action(
+                    action_type='contact_email_updated',
+                    category='contacts',
+                    title=f"Email atualizado: {contact['nome']} → {email}",
+                    details=f"Detectado em mensagem. Anterior: {old_email or '(vazio)'}",
+                    scope_ref={'contact_id': contact['id'], 'message_id': message_id},
+                    source='smart_message_processor',
+                    payload={'old_email': old_email, 'new_email': email},
+                    undo_hint=f"UPDATE contacts SET email={'NULL' if not old_email else repr(old_email)} WHERE id={contact['id']}",
+                )
+
                 notification_text = (
                     f"📧 Email atualizado: {contact['nome']} → {email}"
                 )

@@ -253,6 +253,8 @@ async def publish_due_posts() -> Dict:
         """, (now,))
         due_hot_takes = [dict(r) for r in cursor.fetchall()]
 
+    from services.agent_actions import log_action
+
     # Publish orphan hot_takes first
     for ht in due_hot_takes:
         text = ht['conteudo'] or ''
@@ -270,6 +272,15 @@ async def publish_due_posts() -> Dict:
                 conn.commit()
             results["published"] += 1
             results["posts"].append({"id": ht['id'], "source": "hot_take", "url": result.get('post_url')})
+            preview = (text or '').strip().split('\n')[0][:80]
+            log_action(
+                action_type='post_published',
+                category='editorial',
+                title=f"Post publicado no LinkedIn: {preview}",
+                scope_ref={'hot_take_id': ht['id'], 'linkedin_url': result.get('post_url')},
+                source='auto_publisher',
+                payload={'post_url': result.get('post_url')},
+            )
         else:
             results["errors"] += 1
             logger.error(f"Failed to publish hot_take {ht['id']}: {result.get('error')}")
@@ -305,6 +316,14 @@ async def publish_due_posts() -> Dict:
             results["published"] += 1
             source = "hot_take" if ep.get('hot_take_id') else "editorial"
             results["posts"].append({"id": ep['id'], "source": source, "url": result.get('post_url')})
+            log_action(
+                action_type='post_published',
+                category='editorial',
+                title=f"Post publicado no LinkedIn: {ep.get('article_title') or (text or '').strip().split(chr(10))[0][:80]}",
+                scope_ref={'editorial_post_id': ep['id'], 'hot_take_id': ep.get('hot_take_id'), 'linkedin_url': result.get('post_url')},
+                source='auto_publisher',
+                payload={'post_url': result.get('post_url')},
+            )
         else:
             results["errors"] += 1
             logger.error(f"Failed to publish editorial {ep['id']}: {result.get('error')}")
