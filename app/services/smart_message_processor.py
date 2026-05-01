@@ -77,6 +77,14 @@ async def process_message_intelligence(
     if not content or len(content.strip()) < 3:
         return
 
+    # Filtrar mensagens automaticas/sistema (portaria, bancos, OTP, erros tecnicos)
+    # Why: feedback 2026-04-25 — mensagens automaticas viraram "pedidos de indicacao" reais
+    from services.message_filters import is_automated_message
+    is_auto, reason = is_automated_message(content, contact_id)
+    if is_auto:
+        logger.info(f"Skipping smart processor for msg {message_id} (contact {contact_id}): {reason}")
+        return
+
     results = []
 
     try:

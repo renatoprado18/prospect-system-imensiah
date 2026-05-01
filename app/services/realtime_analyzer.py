@@ -212,6 +212,15 @@ class RealtimeAnalyzer:
         if len(message_text.strip()) < 10:
             return result
 
+        # Filtrar mensagens automaticas/sistema (portaria, OTP, erros, pingbacks)
+        # Why: feedback 2026-04-25 — mensagens de portaria viraram pedidos de indicacao
+        if message_direction == "incoming":
+            from services.message_filters import is_automated_message
+            is_auto, reason = is_automated_message(message_text, contact_id)
+            if is_auto:
+                print(f"[RealtimeAnalyzer] Skipping msg {message_id} contact {contact_id}: {reason}")
+                return result
+
         # Buscar contexto
         contact = self.get_contact_info(contact_id)
         calendar_events = self.get_calendar_context(contact_id)

@@ -376,8 +376,19 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
             if data_vencimento is None and prazo_dias is not None:
                 data_vencimento = (datetime.now() + timedelta(days=prazo_dias)).replace(hour=0, minute=0, second=0)
 
+            # Validar FKs antes do INSERT (Claude as vezes alucina IDs)
+            # Why: feedback 2026-04-25 — INSERT falhava com FK constraint
             with get_db() as conn:
                 cursor = conn.cursor()
+                if contact_id is not None:
+                    cursor.execute("SELECT 1 FROM contacts WHERE id = %s", (contact_id,))
+                    if not cursor.fetchone():
+                        return json.dumps({"erro": f"contact_id {contact_id} nao existe; busque o ID correto via query_intel"}, ensure_ascii=False)
+                if project_id is not None:
+                    cursor.execute("SELECT 1 FROM projects WHERE id = %s", (project_id,))
+                    if not cursor.fetchone():
+                        return json.dumps({"erro": f"project_id {project_id} nao existe; busque o ID correto via query_intel"}, ensure_ascii=False)
+
                 cursor.execute("""
                     INSERT INTO tasks (
                         titulo, descricao, project_id, contact_id,
@@ -462,6 +473,9 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
 
             with get_db() as conn:
                 cursor = conn.cursor()
+                cursor.execute("SELECT 1 FROM contacts WHERE id = %s", (contact_id,))
+                if not cursor.fetchone():
+                    return json.dumps({"erro": f"contact_id {contact_id} nao existe; busque o ID correto via query_intel"}, ensure_ascii=False)
                 cursor.execute("""
                     INSERT INTO contact_memories (contact_id, tipo, titulo, resumo, conteudo_completo, data_ocorrencia)
                     VALUES (%s, %s, %s, %s, %s, NOW())
