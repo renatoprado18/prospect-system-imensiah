@@ -50,6 +50,33 @@ class ActionProposalsService:
 
             contact_id = proposal_data.get('contact_id')
             action_type = proposal_data['action_type']
+            message_id = proposal_data.get('message_id')
+
+            # SKIP: se usuario ja respondeu APOS a mensagem que disparou a proposta, nao criar.
+            # Why: analyzer roda async — pode criar proposta minutos depois da resposta do usuario.
+            # How to apply: vale para tipos que pedem resposta ao contato.
+            if message_id and contact_id and action_type in (
+                'pending_response', 'urgent_alert', 'meeting_request',
+                'reschedule_event', 'cancel_event', 'introduction_request',
+                'financial_alert', 'opportunity_alert', 'follow_up'
+            ):
+                cursor.execute("""
+                    SELECT 1
+                    FROM messages out_msg
+                    JOIN conversations cv ON cv.id = out_msg.conversation_id
+                    WHERE cv.contact_id = %s
+                      AND out_msg.direcao = 'outgoing'
+                      AND out_msg.enviado_em > (
+                          SELECT enviado_em FROM messages WHERE id = %s
+                      )
+                    LIMIT 1
+                """, (contact_id, message_id))
+                if cursor.fetchone():
+                    logger.info(
+                        f"create_proposal: usuario ja respondeu apos msg {message_id} "
+                        f"(contato {contact_id}, tipo {action_type}) — proposta nao criada"
+                    )
+                    return None
 
             # DEDUP: se ja existe proposta pendente do mesmo tipo para esse contato nas ultimas 24h,
             # atualizar (com trigger mais recente) em vez de criar nova

@@ -12143,6 +12143,8 @@ async def get_action_proposals_list(
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
     # Auto-resolver ações onde usuario já respondeu (cleanup on read)
+    # Why: proposta pode ser criada DEPOIS da resposta (analyzer roda async).
+    # Compara outgoing.enviado_em com a trigger message (ap.message_id), nao com ap.criado_em.
     try:
         with get_db() as conn:
             cursor = conn.cursor()
@@ -12156,7 +12158,10 @@ async def get_action_proposals_list(
                       JOIN conversations cv ON cv.id = m.conversation_id
                       WHERE cv.contact_id = ap.contact_id
                         AND m.direcao = 'outgoing'
-                        AND m.enviado_em > ap.criado_em
+                        AND m.enviado_em > COALESCE(
+                            (SELECT trig.enviado_em FROM messages trig WHERE trig.id = ap.message_id),
+                            ap.criado_em
+                        )
                   )
             """)
             conn.commit()
