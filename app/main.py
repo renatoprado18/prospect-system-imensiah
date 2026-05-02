@@ -15571,10 +15571,19 @@ async def api_projects_with_attention():
 
 @app.get("/api/projects/with-attention/detailed")
 async def api_projects_with_attention_detailed():
-    """Pre-categorizado pra drill do dashboard: atencao + proximos. Espelha logica de categorizeProject() do /projetos."""
-    from datetime import date
+    """Pre-categorizado pra drill do dashboard: atencao + proximos. Espelha logica e ordenacao de /projetos.
+    Ordena por urgencia: dias_ate ASC, com marco (0) > tarefa (1) > prazo (2) como tie-breaker."""
+    from datetime import date, datetime as _dt
     projects = list_projects(include_completed=False, limit=200)
     hoje = date.today()
+
+    def project_diff_days(prev):
+        if isinstance(prev, str):
+            prev = _dt.strptime(prev[:10], '%Y-%m-%d').date()
+        elif hasattr(prev, 'date'):
+            prev = prev.date()
+        return (prev - hoje).days
+
     atencao, proximos = [], []
     for p in projects:
         if p.get('status') in ('concluido', 'pausado'):
@@ -15593,13 +15602,7 @@ async def api_projects_with_attention_detailed():
             elif d <= 7: bucket = 'proximos'
         if not bucket and p.get('data_previsao'):
             try:
-                from datetime import datetime as _dt
-                prev = p['data_previsao']
-                if isinstance(prev, str):
-                    prev = _dt.strptime(prev[:10], '%Y-%m-%d').date()
-                elif hasattr(prev, 'date'):
-                    prev = prev.date()
-                diff = (prev - hoje).days
+                diff = project_diff_days(p['data_previsao'])
                 if diff < 0: bucket = 'atencao'
                 elif diff <= 7: bucket = 'proximos'
             except Exception:
@@ -15608,6 +15611,26 @@ async def api_projects_with_attention_detailed():
             atencao.append(p)
         elif bucket == 'proximos':
             proximos.append(p)
+
+    def urgency_key(p):
+        candidates = []
+        if p.get('proximo_marco') and p['proximo_marco'].get('dias_ate') is not None:
+            candidates.append((p['proximo_marco']['dias_ate'], 0))
+        if p.get('proxima_tarefa') and p['proxima_tarefa'].get('dias_ate') is not None:
+            candidates.append((p['proxima_tarefa']['dias_ate'], 1))
+        if p.get('data_previsao'):
+            try:
+                candidates.append((project_diff_days(p['data_previsao']), 2))
+            except Exception:
+                pass
+        if not candidates:
+            return (9999, 9, p.get('prioridade') or 5, p.get('nome') or '')
+        candidates.sort(key=lambda c: (c[0], c[1]))
+        dias, tipo = candidates[0]
+        return (dias, tipo, p.get('prioridade') or 5, p.get('nome') or '')
+
+    atencao.sort(key=urgency_key)
+    proximos.sort(key=urgency_key)
     return {"atencao": atencao, "proximos": proximos}
 
 
