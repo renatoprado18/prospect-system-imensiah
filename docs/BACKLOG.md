@@ -123,6 +123,3 @@
 
 ### Integrações
 - [ ] Instagram suporte (carrossel, reels)
-
-### Infra
-- [ ] Logs de auditoria (quem fez o quê)
