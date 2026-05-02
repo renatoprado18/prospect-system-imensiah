@@ -7090,12 +7090,23 @@ async def cron_sync_contacts(request: Request):
                 db_connection=conn
             )
 
-            # If full sync is required (sync token expired), flag it
+            # If full sync is required (sync token expired), do it now as fallback —
+            # subsequent crons retomam incremental porque o full_sync grava sync_token novo.
             if stats.get("full_sync_required"):
+                full_stats = await sync_contacts_from_google(
+                    access_token=account["access_token"],
+                    refresh_token=account["refresh_token"],
+                    account_email=account["email"],
+                    db_connection=conn
+                )
+                changes = full_stats.get("imported", 0) + full_stats.get("updated", 0)
+                total_changes += changes
                 results.append({
                     "account": account["email"],
-                    "status": "full_sync_required",
-                    "message": "Sync token expired, full sync needed"
+                    "status": "full_sync_completed",
+                    "imported": full_stats.get("imported", 0),
+                    "updated": full_stats.get("updated", 0),
+                    "errors": full_stats.get("errors", 0)
                 })
             else:
                 changes = stats["imported"] + stats["updated"] + stats["deleted"]
