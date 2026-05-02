@@ -18531,6 +18531,243 @@ async def api_refresh_clipping():
     return _filter_clipping_by_interactions(result)
 
 
+# Acoes consideradas por cada status no archive (segue _CLIPPING_DEALT_ACTIONS).
+_CLIPPING_STATUS_ACTIONS = {
+    'liked': ('liked',),
+    'disliked': ('disliked',),
+    'shared': ('shared',),
+    'posted': ('posted', 'hot_take'),
+    'dismissed': ('dismissed',),
+}
+
+
+@app.get("/api/clipping/archive")
+@app.get("/api/news/clipping/archive")
+async def api_clipping_archive(
+    request: Request,
+    from_: str = Query(None, alias="from"),
+    to: str = Query(None),
+    categoria: str = None,
+    fonte: str = None,
+    status: str = None,
+    q: str = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """
+    Arquivo paginado do clipping diario.
+
+    Cruza news_clippings (JSONB) com news_interactions pra mostrar
+    historico filtravel: por data, categoria, fonte, status (unread/liked/...) e busca.
+    User_id hardcoded em 1 (segue padrao do resto do app).
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Default range: ultimos 7 dias
+    today = datetime.now().date()
+    try:
+        date_from = datetime.fromisoformat(from_).date() if from_ else (today - timedelta(days=7))
+    except Exception:
+        date_from = today - timedelta(days=7)
+    try:
+        date_to = datetime.fromisoformat(to).date() if to else today
+    except Exception:
+        date_to = today
+
+    if date_to < date_from:
+        date_from, date_to = date_to, date_from
+
+    # Sanitiza limit/offset
+    limit = max(1, min(int(limit or 50), 200))
+    offset = max(0, int(offset or 0))
+
+    user_id = 1
+
+    # Monta filtros dinamicos. Sempre opera sobre as colunas do CTE expanded.
+    where_parts = []
+    params: list = []
+
+    if categoria:
+        where_parts.append("LOWER(item->>'categoria') = LOWER(%s)")
+        params.append(categoria)
+    if fonte:
+        # Fonte pode vir do JSON (campo 'source' ou 'fonte') ou de news_items.
+        where_parts.append(
+            "(LOWER(COALESCE(item->>'source', item->>'fonte', '')) = LOWER(%s) "
+            "OR EXISTS (SELECT 1 FROM news_items ni2 WHERE ni2.id = (item->>'news_id')::int AND LOWER(ni2.source) = LOWER(%s)))"
+        )
+        params.extend([fonte, fonte])
+    if q:
+        where_parts.append("(item->>'titulo_resumido' ILIKE %s OR item->>'resumo' ILIKE %s)")
+        params.extend([f"%{q}%", f"%{q}%"])
+
+    # Filtro de status — depende das interacoes do user.
+    status_clause = ""
+    status_actions: tuple = ()
+    if status == 'unread':
+        status_clause = (
+            " AND NOT EXISTS (SELECT 1 FROM news_interactions ni3 "
+            "WHERE ni3.user_id = %s AND ni3.news_id = (item->>'news_id')::int "
+            "AND ni3.action = ANY(%s))"
+        )
+        params.extend([user_id, list(_CLIPPING_DEALT_ACTIONS)])
+    elif status in _CLIPPING_STATUS_ACTIONS:
+        status_actions = _CLIPPING_STATUS_ACTIONS[status]
+        status_clause = (
+            " AND EXISTS (SELECT 1 FROM news_interactions ni3 "
+            "WHERE ni3.user_id = %s AND ni3.news_id = (item->>'news_id')::int "
+            "AND ni3.action = ANY(%s))"
+        )
+        params.extend([user_id, list(status_actions)])
+
+    where_sql = (" AND " + " AND ".join(where_parts)) if where_parts else ""
+
+    # Count total (mesmo filtro, sem limit/offset)
+    count_sql = f"""
+        WITH expanded AS (
+          SELECT DATE(nc.gerado_em) AS data_clipping, item.value AS item, item.ordinality AS pos
+          FROM news_clippings nc
+          CROSS JOIN LATERAL jsonb_array_elements(
+            CASE jsonb_typeof(nc.conteudo) WHEN 'array' THEN nc.conteudo ELSE '[]'::jsonb END
+          ) WITH ORDINALITY AS item(value, ordinality)
+          WHERE DATE(nc.gerado_em) BETWEEN %s AND %s
+        )
+        SELECT COUNT(*) AS total
+        FROM expanded
+        WHERE (item->>'news_id') IS NOT NULL{where_sql}{status_clause}
+    """
+    count_params = [date_from, date_to] + params
+
+    # Page query — agrega user_actions de news_interactions
+    page_sql = f"""
+        WITH expanded AS (
+          SELECT DATE(nc.gerado_em) AS data_clipping, item.value AS item, item.ordinality AS pos
+          FROM news_clippings nc
+          CROSS JOIN LATERAL jsonb_array_elements(
+            CASE jsonb_typeof(nc.conteudo) WHEN 'array' THEN nc.conteudo ELSE '[]'::jsonb END
+          ) WITH ORDINALITY AS item(value, ordinality)
+          WHERE DATE(nc.gerado_em) BETWEEN %s AND %s
+        )
+        SELECT
+          (item->>'news_id')::int AS news_id,
+          item->>'titulo_resumido' AS titulo_resumido,
+          item->>'resumo' AS resumo,
+          item->>'link' AS link,
+          COALESCE(item->>'source', item->>'fonte') AS fonte,
+          item->>'categoria' AS categoria,
+          item->>'relevancia' AS relevancia,
+          item->>'sugestao_post' AS sugestao_post,
+          data_clipping,
+          pos,
+          COALESCE((
+            SELECT array_agg(DISTINCT ni.action)
+            FROM news_interactions ni
+            WHERE ni.user_id = %s AND ni.news_id = (item->>'news_id')::int
+          ), ARRAY[]::text[]) AS user_actions
+        FROM expanded
+        WHERE (item->>'news_id') IS NOT NULL{where_sql}{status_clause}
+        ORDER BY data_clipping DESC, pos ASC
+        LIMIT %s OFFSET %s
+    """
+    page_params = [date_from, date_to, user_id] + params + [limit, offset]
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(count_sql, count_params)
+            total = cursor.fetchone()['total']
+
+            cursor.execute(page_sql, page_params)
+            rows = [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Clipping archive error: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao consultar arquivo: {e}")
+
+    items = []
+    for r in rows:
+        # Serializa data_clipping pra ISO; user_actions pode vir como list ou None.
+        data_clip = r.get('data_clipping')
+        if hasattr(data_clip, 'isoformat'):
+            data_clip = data_clip.isoformat()
+        actions = r.get('user_actions') or []
+        items.append({
+            'news_id': r.get('news_id'),
+            'titulo_resumido': r.get('titulo_resumido') or '',
+            'resumo': r.get('resumo') or '',
+            'link': r.get('link') or '',
+            'fonte': r.get('fonte') or '',
+            'categoria': r.get('categoria') or '',
+            'relevancia': r.get('relevancia') or '',
+            'sugestao_post': r.get('sugestao_post') or '',
+            'data_clipping': data_clip,
+            'user_actions': list(actions),
+        })
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "filters_applied": {
+            "from": date_from.isoformat(),
+            "to": date_to.isoformat(),
+            "categoria": categoria or None,
+            "fonte": fonte or None,
+            "status": status or None,
+            "q": q or None,
+        },
+    }
+
+
+@app.get("/api/clipping/facets")
+async def api_clipping_facets(request: Request, days: int = 30):
+    """Retorna categorias e fontes distintas dos ultimos N dias pra popular dropdowns de filtro."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    days = max(1, min(int(days or 30), 180))
+    sql = """
+        WITH expanded AS (
+          SELECT item.value AS item
+          FROM news_clippings nc
+          CROSS JOIN LATERAL jsonb_array_elements(
+            CASE jsonb_typeof(nc.conteudo) WHEN 'array' THEN nc.conteudo ELSE '[]'::jsonb END
+          ) AS item(value)
+          WHERE nc.gerado_em > NOW() - (%s || ' days')::interval
+        )
+        SELECT
+          ARRAY(SELECT DISTINCT item->>'categoria' FROM expanded WHERE item->>'categoria' IS NOT NULL ORDER BY 1) AS categorias,
+          ARRAY(SELECT DISTINCT COALESCE(item->>'source', item->>'fonte') FROM expanded
+                WHERE COALESCE(item->>'source', item->>'fonte') IS NOT NULL ORDER BY 1) AS fontes
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, (str(days),))
+            row = cursor.fetchone() or {}
+            return {
+                "categorias": [c for c in (row.get('categorias') or []) if c],
+                "fontes": [f for f in (row.get('fontes') or []) if f],
+            }
+    except Exception as e:
+        logger.warning(f"Clipping facets error: {e}")
+        return {"categorias": [], "fontes": []}
+
+
+@app.get("/clipping", response_class=HTMLResponse)
+async def page_clipping(request: Request):
+    """Pagina dedicada do Clipping — filtros + historico completo."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("clipping.html", {
+        "request": request,
+        "user": user,
+    })
+
+
 @app.post("/api/news/to-post")
 async def api_news_to_post(request: Request):
     """Cria post editorial a partir de noticia do clipping, gerando texto e cruzando com artigos"""

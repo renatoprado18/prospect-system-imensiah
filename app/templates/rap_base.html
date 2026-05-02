@@ -841,17 +841,21 @@
                 <i class="bi bi-calendar3"></i>
                 <span>Editorial</span>
             </a>
+            <a href="/clipping" class="nav-item {% if '/clipping' in request.path %}active{% endif %}">
+                <i class="bi bi-newspaper"></i>
+                <span>Clipping</span>
+            </a>
+            <a href="/hot-takes" class="nav-item {% if '/hot-takes' in request.path %}active{% endif %}">
+                <i class="bi bi-fire"></i>
+                <span>Hot Takes</span>
+            </a>
             <a href="/artigos" class="nav-item {% if '/artigos' in request.path %}active{% endif %}">
                 <i class="bi bi-file-text"></i>
                 <span>Artigos</span>
             </a>
             <a href="/news" class="nav-item {% if '/news' in request.path %}active{% endif %}">
-                <i class="bi bi-newspaper"></i>
+                <i class="bi bi-collection"></i>
                 <span>News Hub</span>
-            </a>
-            <a href="/hot-takes" class="nav-item {% if '/hot-takes' in request.path %}active{% endif %}">
-                <i class="bi bi-fire"></i>
-                <span>Hot Takes</span>
             </a>
 
             <!-- Comunicacao -->

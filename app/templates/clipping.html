@@ -1,0 +1,717 @@
+{% extends "rap_base.html" %}
+{% block title %}Clipping - INTEL{% endblock %}
+{% block page_title %}Clipping{% endblock %}
+{% block page_subtitle %}<div class="page-subtitle">Noticias curadas diariamente por IA. Filtre, leia, decida.</div>{% endblock %}
+
+{% block extra_css %}
+<style>
+    .clip-filters {
+        background: white;
+        border-radius: 14px;
+        padding: 14px 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        margin-bottom: 16px;
+        display: grid;
+        grid-template-columns: repeat(6, 1fr) auto;
+        gap: 10px;
+        align-items: end;
+    }
+    .clip-filters .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .clip-filters label { font-size: 0.7rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+    .clip-filters input, .clip-filters select {
+        font-size: 0.85rem;
+        padding: 7px 10px;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+        background: #fff;
+        min-height: 38px;
+    }
+    .clip-filters input:focus, .clip-filters select:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+    }
+    .clip-filters .actions { display: flex; gap: 6px; }
+    .clip-filters .btn-apply {
+        background: var(--primary); color: #fff; border: none;
+        padding: 8px 14px; border-radius: 8px; font-weight: 600; font-size: 0.85rem;
+        cursor: pointer;
+    }
+    .clip-filters .btn-apply:hover { background: var(--primary-dark); }
+    .clip-filters .btn-clear {
+        background: #fff; color: #475569; border: 1px solid #e2e8f0;
+        padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; cursor: pointer;
+    }
+
+    @media (max-width: 1100px) {
+        .clip-filters { grid-template-columns: repeat(3, 1fr); }
+        .clip-filters .actions { grid-column: 1 / -1; justify-content: flex-end; }
+    }
+    @media (max-width: 600px) {
+        .clip-filters { grid-template-columns: 1fr 1fr; padding: 12px; }
+        .clip-filters .actions { grid-column: 1 / -1; }
+    }
+
+    .clip-meta-bar {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 12px; padding: 0 4px;
+        font-size: 0.82rem; color: #64748b;
+    }
+
+    .clip-list { display: flex; flex-direction: column; gap: 10px; }
+
+    .clip-card {
+        background: white;
+        border-radius: 14px;
+        padding: 16px 18px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        border: 1px solid transparent;
+        transition: all 0.15s;
+        display: flex; flex-direction: column; gap: 10px;
+    }
+    .clip-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); border-color: #e2e8f0; }
+    .clip-card.dimmed { opacity: 0.62; }
+    .clip-card.dimmed:hover { opacity: 1; }
+
+    .clip-card-head {
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        font-size: 0.72rem; color: #64748b;
+    }
+    .clip-rel-badge {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 2px 8px; border-radius: 999px; font-weight: 600; font-size: 0.7rem;
+        text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .clip-rel-badge.alta { background: rgba(239,68,68,0.1); color: #dc2626; }
+    .clip-rel-badge.media { background: rgba(245,158,11,0.12); color: #b45309; }
+    .clip-rel-badge.baixa { background: rgba(99,102,241,0.1); color: #4338ca; }
+
+    .clip-status-badge {
+        margin-left: auto;
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 2px 8px; border-radius: 999px; font-weight: 600; font-size: 0.7rem;
+    }
+    .clip-status-badge.liked { background: rgba(16,185,129,0.12); color: #047857; }
+    .clip-status-badge.disliked { background: rgba(239,68,68,0.12); color: #b91c1c; }
+    .clip-status-badge.shared { background: rgba(14,165,233,0.12); color: #0369a1; }
+    .clip-status-badge.posted { background: rgba(168,85,247,0.12); color: #7c3aed; }
+    .clip-status-badge.dismissed { background: rgba(100,116,139,0.12); color: #475569; }
+    .clip-status-badge.viewed { background: rgba(100,116,139,0.1); color: #64748b; }
+
+    .clip-title {
+        font-size: 1.05rem; font-weight: 600; color: #0f172a;
+        text-decoration: none; line-height: 1.35;
+    }
+    .clip-title:hover { color: var(--primary); }
+    .clip-resumo { color: #475569; font-size: 0.9rem; line-height: 1.45; }
+
+    .clip-sugestao {
+        background: linear-gradient(135deg, rgba(168,85,247,0.06), rgba(99,102,241,0.06));
+        border: 1px solid rgba(168,85,247,0.18);
+        padding: 10px 12px; border-radius: 10px;
+        font-size: 0.82rem; color: #581c87;
+        display: flex; gap: 8px; align-items: flex-start;
+    }
+    .clip-sugestao i { color: #a855f7; margin-top: 2px; }
+
+    .clip-actions {
+        display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+        padding-top: 8px; border-top: 1px solid #f1f5f9;
+    }
+    .clip-action {
+        background: #f8fafc; border: 1px solid #e2e8f0;
+        padding: 6px 10px; border-radius: 8px; cursor: pointer;
+        font-size: 0.78rem; color: #475569; font-weight: 500;
+        transition: all 0.15s;
+    }
+    .clip-action:hover { background: #fff; border-color: #cbd5e1; transform: translateY(-1px); }
+    .clip-action.like:hover { color: #047857; border-color: #34d399; }
+    .clip-action.dislike:hover { color: #b91c1c; border-color: #f87171; }
+    .clip-action.share:hover { color: #0369a1; border-color: #38bdf8; }
+    .clip-action.post:hover { color: #7c3aed; border-color: #c084fc; }
+    .clip-action.open { margin-left: auto; }
+
+    .clip-empty, .clip-loading {
+        text-align: center; padding: 60px 20px; color: #64748b;
+        background: white; border-radius: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .clip-empty i { font-size: 2.5rem; color: #cbd5e1; display: block; margin-bottom: 12px; }
+    .clip-empty .title { font-weight: 600; color: #475569; font-size: 1rem; margin-bottom: 4px; }
+
+    .clip-pagination {
+        display: flex; justify-content: center; align-items: center;
+        gap: 14px; margin-top: 18px; padding: 14px;
+        background: white; border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        font-size: 0.85rem; color: #475569;
+    }
+    .clip-pagination button {
+        background: #fff; border: 1px solid #e2e8f0; color: #475569;
+        padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem;
+    }
+    .clip-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .clip-pagination button:not(:disabled):hover { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+    /* Toast (versao standalone — base nao expoe showToast globalmente) */
+    .clip-toast {
+        position: fixed; bottom: 20px; right: 20px;
+        background: #0f172a; color: #fff; padding: 12px 18px;
+        border-radius: 10px; font-size: 0.85rem; z-index: 10000;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        opacity: 0; transform: translateY(10px); transition: all 0.2s;
+    }
+    .clip-toast.show { opacity: 1; transform: translateY(0); }
+    .clip-toast.success { background: #047857; }
+    .clip-toast.danger { background: #b91c1c; }
+    .clip-toast.info { background: #0369a1; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<form id="clipFiltersForm" class="clip-filters" onsubmit="event.preventDefault(); applyFilters();">
+    <div class="field">
+        <label for="filterFrom">De</label>
+        <input type="date" id="filterFrom">
+    </div>
+    <div class="field">
+        <label for="filterTo">Ate</label>
+        <input type="date" id="filterTo">
+    </div>
+    <div class="field">
+        <label for="filterCategoria">Categoria</label>
+        <select id="filterCategoria">
+            <option value="">Todas</option>
+        </select>
+    </div>
+    <div class="field">
+        <label for="filterFonte">Fonte</label>
+        <select id="filterFonte">
+            <option value="">Todas</option>
+        </select>
+    </div>
+    <div class="field">
+        <label for="filterStatus">Status</label>
+        <select id="filterStatus">
+            <option value="">Todos</option>
+            <option value="unread">Nao lidos</option>
+            <option value="liked">Curtidos</option>
+            <option value="disliked">Descartados</option>
+            <option value="shared">Encaminhados</option>
+            <option value="posted">Viraram post</option>
+            <option value="dismissed">Pulados</option>
+        </select>
+    </div>
+    <div class="field">
+        <label for="filterQ">Busca</label>
+        <input type="text" id="filterQ" placeholder="Titulo ou resumo...">
+    </div>
+    <div class="actions">
+        <button type="submit" class="btn-apply"><i class="bi bi-funnel"></i> Filtrar</button>
+        <button type="button" class="btn-clear" onclick="clearFilters()">Limpar</button>
+    </div>
+</form>
+
+<div class="clip-meta-bar">
+    <div id="clipMetaText">Carregando...</div>
+    <div>
+        <a href="/news" style="color:#6366f1;text-decoration:none;font-size:0.8rem;"><i class="bi bi-newspaper"></i> News Hub</a>
+    </div>
+</div>
+
+<div id="clipList" class="clip-list">
+    <div class="clip-loading"><i class="bi bi-hourglass-split"></i> Carregando clipping...</div>
+</div>
+
+<div id="clipPagination" class="clip-pagination" style="display:none;">
+    <button id="btnPrev" onclick="changePage(-1)"><i class="bi bi-chevron-left"></i> Anterior</button>
+    <span id="pageInfo">Pagina 1</span>
+    <button id="btnNext" onclick="changePage(1)">Proxima <i class="bi bi-chevron-right"></i></button>
+</div>
+
+{% endblock %}
+
+{% block modals %}
+<!-- Modal Share News (copiado do dashboard pra ficar standalone) -->
+<div id="shareNewsModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.92);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(4px);" onclick="if(event.target===this)closeShareNewsModal()">
+    <div style="background:#fff;border-radius:16px;width:90%;max-width:500px;max-height:90vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.5);border:2px solid #6366f1;">
+        <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
+            <h5 style="margin:0;font-size:1rem;"><i class="bi bi-share text-primary me-2"></i>Compartilhar com contato</h5>
+            <button onclick="closeShareNewsModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;">&times;</button>
+        </div>
+        <div style="padding:16px 20px;">
+            <div style="font-size:0.85rem;font-weight:600;margin-bottom:12px;" id="shareNewsTitle"></div>
+            <div style="font-size:0.75rem;color:#64748b;margin-bottom:8px;">Contatos sugeridos:</div>
+            <div id="shareNewsSuggestions" style="max-height:200px;overflow-y:auto;margin-bottom:12px;"></div>
+            <div style="margin-bottom:8px;">
+                <label style="font-size:0.75rem;font-weight:600;color:#475569;">Mensagem:</label>
+                <textarea id="shareNewsMessage" rows="4" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;resize:vertical;"></textarea>
+            </div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid #e2e8f0;display:flex;gap:8px;justify-content:flex-end;">
+            <button onclick="closeShareNewsModal()" style="padding:6px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;">Cancelar</button>
+            <button id="shareNewsSendBtn" onclick="sendShareNews()" style="display:none;padding:6px 16px;border:none;border-radius:8px;background:#22c55e;color:#fff;cursor:pointer;font-weight:600;">
+                <i class="bi bi-send me-1"></i>Enviar
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // ============== Toast standalone ==============
+    function showToast(message, type = 'info') {
+        const t = document.createElement('div');
+        t.className = `clip-toast ${type}`;
+        t.textContent = message;
+        document.body.appendChild(t);
+        requestAnimationFrame(() => t.classList.add('show'));
+        setTimeout(() => {
+            t.classList.remove('show');
+            setTimeout(() => t.remove(), 250);
+        }, 2800);
+    }
+
+    // ============== Estado ==============
+    const state = {
+        items: [],
+        total: 0,
+        limit: 25,
+        offset: 0,
+    };
+
+    // ============== Helpers de URL state ==============
+    function readFiltersFromURL() {
+        const p = new URLSearchParams(window.location.search);
+        document.getElementById('filterFrom').value = p.get('from') || '';
+        document.getElementById('filterTo').value = p.get('to') || '';
+        document.getElementById('filterCategoria').value = p.get('categoria') || '';
+        document.getElementById('filterFonte').value = p.get('fonte') || '';
+        document.getElementById('filterStatus').value = p.get('status') || '';
+        document.getElementById('filterQ').value = p.get('q') || '';
+        state.offset = parseInt(p.get('offset') || '0', 10) || 0;
+    }
+
+    function writeFiltersToURL() {
+        const p = new URLSearchParams();
+        const f = currentFilters();
+        Object.entries(f).forEach(([k, v]) => { if (v) p.set(k, v); });
+        if (state.offset) p.set('offset', state.offset);
+        const url = `${window.location.pathname}${p.toString() ? '?' + p.toString() : ''}`;
+        window.history.replaceState({}, '', url);
+    }
+
+    function currentFilters() {
+        return {
+            from: document.getElementById('filterFrom').value || '',
+            to: document.getElementById('filterTo').value || '',
+            categoria: document.getElementById('filterCategoria').value || '',
+            fonte: document.getElementById('filterFonte').value || '',
+            status: document.getElementById('filterStatus').value || '',
+            q: document.getElementById('filterQ').value.trim() || '',
+        };
+    }
+
+    // ============== Facets ==============
+    async function loadFacets() {
+        try {
+            const resp = await fetch('/api/clipping/facets?days=30');
+            const data = await resp.json();
+            const cat = document.getElementById('filterCategoria');
+            const currentCat = cat.value;
+            cat.innerHTML = '<option value="">Todas</option>' +
+                (data.categorias || []).map(c => `<option value="${c}">${c}</option>`).join('');
+            cat.value = currentCat;
+
+            const fonte = document.getElementById('filterFonte');
+            const currentFonte = fonte.value;
+            fonte.innerHTML = '<option value="">Todas</option>' +
+                (data.fontes || []).map(f => `<option value="${f}">${f}</option>`).join('');
+            fonte.value = currentFonte;
+        } catch (e) {
+            console.warn('Facets falhou:', e);
+        }
+    }
+
+    // ============== Carregar archive ==============
+    async function loadArchive() {
+        const f = currentFilters();
+        const params = new URLSearchParams();
+        Object.entries(f).forEach(([k, v]) => { if (v) params.set(k, v); });
+        params.set('limit', state.limit);
+        params.set('offset', state.offset);
+
+        const listEl = document.getElementById('clipList');
+        listEl.innerHTML = '<div class="clip-loading"><i class="bi bi-hourglass-split"></i> Carregando...</div>';
+
+        try {
+            const resp = await fetch(`/api/clipping/archive?${params.toString()}`);
+            if (!resp.ok) throw new Error('fail');
+            const data = await resp.json();
+            state.items = data.items || [];
+            state.total = data.total || 0;
+            render();
+        } catch (e) {
+            console.error(e);
+            listEl.innerHTML = '<div class="clip-empty"><i class="bi bi-exclamation-triangle"></i><div class="title">Erro ao carregar</div><div>Tente novamente em alguns segundos.</div></div>';
+            document.getElementById('clipMetaText').textContent = 'Erro';
+        }
+    }
+
+    function statusBadge(actions) {
+        // Prioridade: posted/hot_take > shared > liked > disliked > dismissed > viewed
+        if (actions.includes('posted') || actions.includes('hot_take'))
+            return '<span class="clip-status-badge posted"><i class="bi bi-pencil-square"></i> Virou post</span>';
+        if (actions.includes('shared'))
+            return '<span class="clip-status-badge shared"><i class="bi bi-send"></i> Encaminhado</span>';
+        if (actions.includes('liked'))
+            return '<span class="clip-status-badge liked"><i class="bi bi-hand-thumbs-up"></i> Curtido</span>';
+        if (actions.includes('disliked'))
+            return '<span class="clip-status-badge disliked"><i class="bi bi-hand-thumbs-down"></i> Descartado</span>';
+        if (actions.includes('dismissed'))
+            return '<span class="clip-status-badge dismissed"><i class="bi bi-skip-forward"></i> Pulado</span>';
+        if (actions.includes('viewed'))
+            return '<span class="clip-status-badge viewed"><i class="bi bi-eye"></i> Lido</span>';
+        return '';
+    }
+
+    function escapeHtml(s) {
+        return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function render() {
+        const listEl = document.getElementById('clipList');
+        const meta = document.getElementById('clipMetaText');
+        const pag = document.getElementById('clipPagination');
+
+        if (!state.items.length) {
+            listEl.innerHTML = `
+                <div class="clip-empty">
+                    <i class="bi bi-search"></i>
+                    <div class="title">Sem noticias com esses filtros</div>
+                    <div>Ajuste o range de datas, categoria ou status.</div>
+                </div>
+            `;
+            meta.textContent = '0 noticias';
+            pag.style.display = 'none';
+            return;
+        }
+
+        meta.textContent = `${state.total} noticia${state.total !== 1 ? 's' : ''} encontrada${state.total !== 1 ? 's' : ''} · mostrando ${state.offset + 1}-${Math.min(state.offset + state.items.length, state.total)}`;
+
+        listEl.innerHTML = state.items.map((it, idx) => {
+            const dealt = (it.user_actions || []).some(a =>
+                ['liked','disliked','shared','posted','hot_take','dismissed'].includes(a));
+            const rel = (it.relevancia || '').toLowerCase();
+            const relBadge = rel ? `<span class="clip-rel-badge ${rel}">${rel}</span>` : '';
+            const fonte = it.fonte ? `<span><i class="bi bi-rss"></i> ${escapeHtml(it.fonte)}</span>` : '';
+            const cat = it.categoria ? `<span><i class="bi bi-tag"></i> ${escapeHtml(it.categoria)}</span>` : '';
+            const data = it.data_clipping || '';
+            const sugestao = it.sugestao_post && it.sugestao_post !== 'null'
+                ? `<div class="clip-sugestao"><i class="bi bi-lightbulb"></i><div><strong>Angulo de post:</strong> ${escapeHtml(it.sugestao_post)}</div></div>` : '';
+            const titleLink = it.link
+                ? `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener" class="clip-title">${escapeHtml(it.titulo_resumido)}</a>`
+                : `<div class="clip-title">${escapeHtml(it.titulo_resumido)}</div>`;
+            const status = statusBadge(it.user_actions || []);
+
+            return `
+                <div class="clip-card ${dealt ? 'dimmed' : ''}" data-idx="${idx}" data-news-id="${it.news_id}">
+                    <div class="clip-card-head">
+                        ${relBadge}
+                        ${fonte}
+                        ${cat}
+                        <span><i class="bi bi-calendar3"></i> ${data}</span>
+                        ${status}
+                    </div>
+                    ${titleLink}
+                    ${it.resumo ? `<div class="clip-resumo">${escapeHtml(it.resumo)}</div>` : ''}
+                    ${sugestao}
+                    <div class="clip-actions">
+                        <button class="clip-action like" onclick="cardAction(${idx}, 'liked')" title="Curtir">
+                            <i class="bi bi-hand-thumbs-up"></i>
+                        </button>
+                        <button class="clip-action dislike" onclick="cardAction(${idx}, 'disliked')" title="Nao relevante">
+                            <i class="bi bi-hand-thumbs-down"></i>
+                        </button>
+                        <button class="clip-action share" onclick="cardShare(${idx})" title="Encaminhar">
+                            <i class="bi bi-send"></i> Encaminhar
+                        </button>
+                        <button class="clip-action post" onclick="cardMakePost(${idx})" title="Criar post LinkedIn">
+                            <i class="bi bi-pencil-square"></i> Post
+                        </button>
+                        ${it.link ? `<a class="clip-action open" href="${escapeHtml(it.link)}" target="_blank" rel="noopener" onclick="cardAction(${idx}, 'viewed', true)">
+                            <i class="bi bi-box-arrow-up-right"></i> Abrir
+                        </a>` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Paginacao
+        const hasMore = (state.offset + state.items.length) < state.total;
+        const hasPrev = state.offset > 0;
+        if (state.total > state.limit) {
+            pag.style.display = 'flex';
+            document.getElementById('btnPrev').disabled = !hasPrev;
+            document.getElementById('btnNext').disabled = !hasMore;
+            const pageNum = Math.floor(state.offset / state.limit) + 1;
+            const totalPages = Math.ceil(state.total / state.limit);
+            document.getElementById('pageInfo').textContent = `Pagina ${pageNum} de ${totalPages}`;
+        } else {
+            pag.style.display = 'none';
+        }
+    }
+
+    // ============== Acoes nos cards ==============
+    async function cardAction(idx, feedback, silent = false) {
+        const item = state.items[idx];
+        if (!item || !item.news_id) return;
+        try {
+            await fetch(`/api/news/${item.news_id}/feedback`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ feedback })
+            });
+            // Atualiza estado local pra refletir badge sem recarregar
+            if (!item.user_actions.includes(feedback)) item.user_actions.push(feedback);
+            if (!silent) {
+                showToast(feedbackLabel(feedback), feedback === 'liked' ? 'success' : 'info');
+            }
+            render();
+        } catch (e) {
+            if (!silent) showToast('Erro ao registrar', 'danger');
+        }
+    }
+
+    function feedbackLabel(f) {
+        return ({
+            liked: 'Curtido',
+            disliked: 'Marcado como nao relevante',
+            dismissed: 'Pulado',
+            shared: 'Marcado como encaminhado',
+            posted: 'Marcado como post',
+            viewed: 'Lido',
+        })[f] || 'Registrado';
+    }
+
+    async function cardMakePost(idx) {
+        const item = state.items[idx];
+        if (!item || !item.news_id) return;
+        const titulo = item.titulo_resumido || '';
+        const sugestao = item.sugestao_post || '';
+        try {
+            await fetch(`/api/news/${item.news_id}/feedback`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ feedback: 'hot_take' })
+            });
+            const resp = await fetch('/api/news/to-post', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ news_id: item.news_id, titulo, sugestao })
+            });
+            const data = await resp.json();
+            if (resp.ok) {
+                const postId = data.post && data.post.id;
+                showToast(`Post criado${postId ? ' — abrindo editor' : ''}`, 'success');
+                if (!item.user_actions.includes('hot_take')) item.user_actions.push('hot_take');
+                render();
+                if (postId) window.open(`/editorial?edit=${postId}`, '_blank');
+            } else {
+                showToast('Erro ao criar post', 'danger');
+            }
+        } catch (e) {
+            showToast('Erro ao criar post', 'danger');
+        }
+    }
+
+    // ============== Share modal (espelha rap_dashboard) ==============
+    let shareNewsData = {};
+    let cardShareIdx = null;
+
+    function cardShare(idx) {
+        const item = state.items[idx];
+        if (!item) return;
+        cardShareIdx = idx;
+        suggestShareNews(
+            item.titulo_resumido || '',
+            item.link || '',
+            item.categoria || ''
+        );
+    }
+
+    async function suggestShareNews(titulo, link, categoria) {
+        shareNewsData = { titulo, link, categoria };
+        const modal = document.getElementById('shareNewsModal');
+        modal.style.display = 'flex';
+        document.getElementById('shareNewsTitle').textContent = titulo;
+        document.getElementById('shareNewsSuggestions').innerHTML =
+            '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-primary"></div> Buscando contatos relevantes...</div>';
+        document.getElementById('shareNewsMessage').value = '';
+        document.getElementById('shareNewsSendBtn').style.display = 'none';
+
+        try {
+            const resp = await fetch(`/api/news/suggest-contacts?titulo=${encodeURIComponent(titulo)}&categoria=${encodeURIComponent(categoria)}`);
+            const data = await resp.json();
+            if (data.contacts && data.contacts.length > 0) {
+                document.getElementById('shareNewsSuggestions').innerHTML = data.contacts.map(c => `
+                    <div class="d-flex align-items-center gap-2 p-2 rounded mb-1" style="cursor:pointer; border:1px solid #e2e8f0;"
+                         onclick="selectShareContact(this, ${c.id}, '${(c.nome || '').replace(/'/g, "\\'")}', '${(c.phone || '').replace(/'/g, "\\'")}', '${(c.email || '').replace(/'/g, "\\'")}')">
+                        <div style="width:32px;height:32px;border-radius:50%;background:#e2e8f0;display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:600;">
+                            ${c.foto_url ? '<img src="' + c.foto_url + '" style="width:32px;height:32px;border-radius:50%;object-fit:cover;">' : (c.nome || 'X').split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase()}
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-weight:600;font-size:0.82rem;">${escapeHtml(c.nome || '')}</div>
+                            <div style="font-size:0.7rem;color:#64748b;">${c.cargo ? escapeHtml(c.cargo) + (c.empresa ? ' @ ' + escapeHtml(c.empresa) : '') : escapeHtml(c.empresa || '') || ('C' + c.circulo)} — ${escapeHtml(c.reason || '')}</div>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                document.getElementById('shareNewsSuggestions').innerHTML = '<p class="text-muted small">Nenhum contato sugerido.</p>';
+            }
+        } catch (e) {
+            document.getElementById('shareNewsSuggestions').innerHTML = '<p class="text-danger small">Erro ao buscar contatos</p>';
+        }
+    }
+
+    async function selectShareContact(el, contactId, nome, phone, email) {
+        document.querySelectorAll('#shareNewsSuggestions > div').forEach(d => {
+            d.style.borderColor = '#e2e8f0';
+            d.style.background = '';
+        });
+        el.style.borderColor = '#6366f1';
+        el.style.background = '#f0f4ff';
+
+        shareNewsData.contactId = contactId;
+        shareNewsData.contactName = nome;
+        shareNewsData.phone = phone;
+        shareNewsData.email = email;
+
+        const textarea = document.getElementById('shareNewsMessage');
+        textarea.value = 'Gerando mensagem personalizada...';
+        document.getElementById('shareNewsSendBtn').style.display = 'inline-block';
+
+        try {
+            const resp = await fetch('/api/share/generate-message', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    contact_id: contactId,
+                    title: shareNewsData.titulo,
+                    url: shareNewsData.link,
+                    type: 'post'
+                })
+            });
+            const data = await resp.json();
+            textarea.value = data.message || `Oi ${nome.split(' ')[0]}! Vi este conteudo e lembrei de voce:\n\n${shareNewsData.link}`;
+        } catch (e) {
+            textarea.value = `Oi ${nome.split(' ')[0]}! Vi este conteudo e lembrei de voce:\n\n${shareNewsData.link}`;
+        }
+    }
+
+    function closeShareNewsModal() {
+        document.getElementById('shareNewsModal').style.display = 'none';
+    }
+
+    async function sendShareNews() {
+        const msg = document.getElementById('shareNewsMessage').value;
+        if (!shareNewsData.contactId || !msg) return;
+        const channel = shareNewsData.phone ? 'whatsapp' : 'email';
+        let sent = false;
+
+        try {
+            if (channel === 'whatsapp' && shareNewsData.phone) {
+                const resp = await fetch('/api/whatsapp/send', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ phone: shareNewsData.phone, message: msg })
+                });
+                if (resp.ok) {
+                    showToast(`Enviado para ${shareNewsData.contactName} via WhatsApp!`, 'success');
+                    sent = true;
+                    closeShareNewsModal();
+                } else {
+                    showToast('Erro ao enviar WhatsApp', 'danger');
+                }
+            } else {
+                navigator.clipboard.writeText(msg);
+                showToast('Mensagem copiada! Cole no email/WhatsApp', 'info');
+                sent = true;
+                closeShareNewsModal();
+            }
+        } catch (e) {
+            navigator.clipboard.writeText(msg);
+            showToast('Mensagem copiada!', 'info');
+            sent = true;
+            closeShareNewsModal();
+        }
+
+        // Registra 'shared' no item de origem e atualiza badge
+        if (sent && cardShareIdx !== null) {
+            const item = state.items[cardShareIdx];
+            if (item && item.news_id) {
+                try {
+                    await fetch(`/api/news/${item.news_id}/feedback`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ feedback: 'shared' })
+                    });
+                    if (!item.user_actions.includes('shared')) item.user_actions.push('shared');
+                    render();
+                } catch (e) {}
+            }
+            cardShareIdx = null;
+        }
+    }
+
+    // ============== Filtros / paginacao ==============
+    function applyFilters() {
+        state.offset = 0;
+        writeFiltersToURL();
+        loadArchive();
+    }
+
+    function clearFilters() {
+        document.getElementById('filterFrom').value = '';
+        document.getElementById('filterTo').value = '';
+        document.getElementById('filterCategoria').value = '';
+        document.getElementById('filterFonte').value = '';
+        document.getElementById('filterStatus').value = '';
+        document.getElementById('filterQ').value = '';
+        state.offset = 0;
+        writeFiltersToURL();
+        loadArchive();
+    }
+
+    function changePage(delta) {
+        const newOffset = state.offset + delta * state.limit;
+        if (newOffset < 0 || newOffset >= state.total) return;
+        state.offset = newOffset;
+        writeFiltersToURL();
+        loadArchive();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // ============== Busca page-aware (header) ==============
+    window.pageSearch = {
+        placeholder: 'Buscar no clipping...',
+        endpoint: q => `/api/clipping/archive?q=${encodeURIComponent(q)}&limit=8`,
+        extract: data => data.items || [],
+        renderItem: it => ({
+            href: it.link || '#',
+            title: it.titulo_resumido || '(sem titulo)',
+            subtitle: `${it.fonte || ''}${it.categoria ? ' · ' + it.categoria : ''}`,
+            icon: 'bi-newspaper',
+        }),
+        fallbackUrl: q => `/clipping?q=${encodeURIComponent(q)}`,
+    };
+
+    // ============== Init ==============
+    document.addEventListener('DOMContentLoaded', () => {
+        readFiltersFromURL();
+        loadFacets();
+        loadArchive();
+    });
+</script>
+{% endblock %}
