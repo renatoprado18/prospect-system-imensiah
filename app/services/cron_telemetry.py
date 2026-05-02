@@ -70,6 +70,62 @@ def _safe_json(obj: Any) -> Optional[str]:
             return None
 
 
+def _has_embedded_errors(result: Any) -> tuple:
+    """
+    Detecta se um cron retornou HTTP 200 mas com falha embutida no payload.
+
+    Why: muitos crons capturam exceptions internamente e retornam um dict tipo
+    {"errors": 2604, "contacts_updated": 0} ou {"status": "error", "error": ...}
+    com HTTP 200. O decorator antes marcava como 'success' (so olhava se levantava
+    exception). Resultado: /api/admin/cron-health mostrava verde pra crons que
+    efetivamente falharam.
+
+    Retorna (has_errors: bool, summary: str). Heuristica conservadora — so marca
+    erro se houver evidencia clara no payload.
+    """
+    if not isinstance(result, dict):
+        return False, ""
+
+    # 1. errors: int > 0
+    err_field = result.get("errors")
+    if isinstance(err_field, int) and err_field > 0:
+        return True, f"{err_field} errors reported"
+    # 2. errors: lista nao-vazia
+    if isinstance(err_field, list) and err_field:
+        return True, f"{len(err_field)} errors reported"
+
+    # 3. status == 'error' no top-level
+    if result.get("status") == "error":
+        err_msg = result.get("error") or "status=error"
+        return True, str(err_msg)[:500]
+
+    # 4. campo error truthy (mas evita string vazia)
+    err_msg = result.get("error")
+    if err_msg and isinstance(err_msg, (str, dict, list)):
+        return True, str(err_msg)[:500]
+
+    # 5. results: lista de sub-resultados onde algum tem status=error ou error truthy
+    sub_results = result.get("results")
+    if isinstance(sub_results, list) and sub_results:
+        bad = [
+            r for r in sub_results
+            if isinstance(r, dict) and (
+                r.get("status") == "error" or
+                (r.get("error") and not isinstance(r.get("error"), bool))
+            )
+        ]
+        if bad:
+            # Resumo dos primeiros 3 sub-erros pra preservar contexto
+            details = []
+            for r in bad[:3]:
+                acc = r.get("account") or r.get("name") or r.get("id") or "?"
+                msg = str(r.get("error") or r.get("status") or "error")[:120]
+                details.append(f"{acc}: {msg}")
+            return True, f"{len(bad)}/{len(sub_results)} sub-errors: " + "; ".join(details)
+
+    return False, ""
+
+
 def _insert_run(path: str) -> Optional[int]:
     """Insere row inicial com status='running'. Retorna id ou None em caso de falha."""
     try:
@@ -156,11 +212,16 @@ def track_cron_run(handler):
         try:
             result = await handler(request, *args, **kwargs)
             duration_ms = int((time.time() - started) * 1000)
+            # Inspeciona o payload — crons que capturam exceptions internamente
+            # podem retornar HTTP 200 com erros embutidos. Marca como 'error' nesses
+            # casos pra que /api/admin/cron-health reflita o estado real.
+            has_err, err_summary = _has_embedded_errors(result)
             _finalize_run(
                 run_id,
-                status="success",
+                status=("error" if has_err else "success"),
                 duration_ms=duration_ms,
                 result=result,
+                error_message=(err_summary if has_err else None),
                 http_status=200,
             )
             return result
