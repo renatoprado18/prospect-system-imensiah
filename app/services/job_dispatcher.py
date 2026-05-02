@@ -86,7 +86,8 @@ async def enqueue_job(
         # Marca falha imediata pra ficar claro no banco
         try:
             with get_db() as conn:
-                conn.execute(
+                cur = conn.cursor()
+                cur.execute(
                     "UPDATE background_jobs SET status='error', error=%s, "
                     "completed_at=NOW() WHERE id=%s",
                     ("AUDIO_WORKER_URL not configured", job_id),
@@ -117,7 +118,8 @@ async def enqueue_job(
     # Marca como erro se nao dispatchou bem
     try:
         with get_db() as conn:
-            conn.execute(
+            cur = conn.cursor()
+            cur.execute(
                 "UPDATE background_jobs SET status='error', error=%s, completed_at=NOW() WHERE id=%s",
                 (error or "dispatch_failed", job_id),
             )
