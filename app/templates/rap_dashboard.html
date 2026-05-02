@@ -50,8 +50,8 @@
         /* Stats Cards - Compact */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 12px;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 10px;
             margin-bottom: 16px;
         }
 
@@ -2110,6 +2110,7 @@
         }
         .stat-breakdown .pill.danger { background: #fee2e2; color: #b91c1c; }
         .stat-breakdown .pill.warning { background: #fef3c7; color: #b45309; }
+        .stat-breakdown .pill.info { background: #dbeafe; color: #1d4ed8; }
         .stat-breakdown .pill.muted { opacity: 0.55; }
         .stat-breakdown .pill i { font-size: 0.7rem; }
 {% endblock %}
@@ -2230,6 +2231,14 @@
                 <div class="stat-content">
                     <div class="stat-value" id="statTasksOverdue">-</div>
                     <div class="stat-label">Tarefas Avulsas</div>
+                </div>
+            </div>
+            <div class="stat-card" style="cursor: pointer;" data-drill="editorial" onclick="openDrill('editorial')">
+                <div class="stat-icon" style="background: rgba(34, 197, 94, 0.1); color: #22c55e;"><i class="bi bi-megaphone"></i></div>
+                <div class="stat-content">
+                    <div class="stat-value" id="statEditorial">-</div>
+                    <div class="stat-label">Editorial</div>
+                    <div class="stat-breakdown" id="statEditorialBreakdown"></div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer;" data-drill="veiculos" onclick="openDrill('veiculos')">
@@ -2813,6 +2822,7 @@
 
                 // Briefings pendentes - buscar da API especifica
                 loadTasksOverdue();
+                loadEditorialActionItems();
 
                 // Action proposals (INTEL Proativo)
                 loadActionProposals();
@@ -3599,6 +3609,27 @@
                 }
             } catch (e) {
                 document.getElementById('statTasksOverdue').textContent = '0';
+            }
+        }
+
+        // Load editorial action items (drafts pra aprovar + posts pra coletar metricas)
+        async function loadEditorialActionItems() {
+            try {
+                const resp = await fetch('/api/editorial/action-items');
+                if (!resp.ok) throw new Error('fail');
+                const data = await resp.json();
+                const aprovarN = (data.para_aprovar || []).length;
+                const coletarN = (data.coletar_metricas || []).length;
+                document.getElementById('statEditorial').textContent = aprovarN + coletarN;
+                const breakdown = document.getElementById('statEditorialBreakdown');
+                if (breakdown) {
+                    breakdown.innerHTML = `
+                        <span class="pill ${aprovarN > 0 ? 'warning' : 'muted'}" title="Para aprovar"><i class="bi bi-pencil-square"></i> ${aprovarN}</span>
+                        <span class="pill ${coletarN > 0 ? 'info' : 'muted'}" title="Coletar métricas"><i class="bi bi-graph-up"></i> ${coletarN}</span>
+                    `;
+                }
+            } catch (e) {
+                document.getElementById('statEditorial').textContent = '-';
             }
         }
 
@@ -5089,6 +5120,71 @@
                     </div>`;
                 },
                 fullPage: '/tarefas-pendentes'
+            },
+            editorial: {
+                label: 'Editorial — Ações',
+                color: '#22c55e',
+                endpoint: () => '/api/editorial/action-items',
+                emptyIcon: 'bi-check-circle',
+                emptyText: 'Tudo em ordem no editorial',
+                extractCount: (d) => (d.para_aprovar || []).length + (d.coletar_metricas || []).length,
+                renderAll: (d) => {
+                    const aprovar = d.para_aprovar || [];
+                    const coletar = d.coletar_metricas || [];
+                    if (aprovar.length === 0 && coletar.length === 0) return '';
+                    const renderApprovar = (p) => {
+                        const tipo = p.tipo === 'hot_take' ? 'Hot Take' : (p.ai_categoria || 'Post');
+                        const titulo = p.titulo_adaptado || p.article_title || '(sem título)';
+                        const target = p.tipo === 'hot_take' ? `/hot-takes` : `/editorial?post=${p.id}`;
+                        return `<div class="drill-project-row type-negocio" onclick="window.location.href='${target}'">
+                            <div class="drill-project-info">
+                                <div class="drill-project-name">${escapeHtml(titulo)}</div>
+                                <div class="drill-project-empresa">${escapeHtml(tipo)}</div>
+                            </div>
+                            <div class="drill-project-urgency-info">
+                                <span class="drill-urgency-badge warning"><i class="bi bi-pencil-square"></i> Aprovar</span>
+                            </div>
+                        </div>`;
+                    };
+                    const renderColetar = (p) => {
+                        const titulo = p.titulo_adaptado || p.article_title || '(sem título)';
+                        const horas = Math.round(p.horas_publicado || 0);
+                        const url = p.linkedin_post_url || p.url_publicado || '';
+                        const target = url || `/editorial?post=${p.id}`;
+                        return `<div class="drill-project-row type-conselho" onclick="window.location.href='${target}'"${url ? ' target="_blank"' : ''}>
+                            <div class="drill-project-info">
+                                <div class="drill-project-name">${escapeHtml(titulo)}</div>
+                                <div class="drill-project-empresa">${horas}h publicado · ${escapeHtml(p.ai_categoria || '')}</div>
+                            </div>
+                            <div class="drill-project-urgency-info">
+                                <span class="drill-urgency-badge info"><i class="bi bi-graph-up"></i> Coletar métricas</span>
+                            </div>
+                        </div>`;
+                    };
+                    let html = '';
+                    if (aprovar.length > 0) {
+                        html += `<div class="drill-urgency-section">
+                            <div class="drill-urgency-header proximos">
+                                <i class="bi bi-pencil-square icon"></i>
+                                <span class="title">Para Aprovar</span>
+                                <span class="count">${aprovar.length}</span>
+                            </div>
+                            ${aprovar.map(renderApprovar).join('')}
+                        </div>`;
+                    }
+                    if (coletar.length > 0) {
+                        html += `<div class="drill-urgency-section">
+                            <div class="drill-urgency-header" style="background:linear-gradient(135deg,#3b82f6,#60a5fa);color:#fff;">
+                                <i class="bi bi-graph-up icon"></i>
+                                <span class="title">Coletar Métricas</span>
+                                <span class="count">${coletar.length}</span>
+                            </div>
+                            ${coletar.map(renderColetar).join('')}
+                        </div>`;
+                    }
+                    return html;
+                },
+                fullPage: '/editorial'
             },
             veiculos: {
                 label: 'Alertas Veículos',

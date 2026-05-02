@@ -17060,6 +17060,51 @@ async def api_editorial_pipeline(request: Request, status: str = "draft"):
     return {"posts": posts}
 
 
+@app.get("/api/editorial/action-items")
+async def api_editorial_action_items():
+    """Pre-categorizado pra drill do dashboard: para_aprovar (drafts editorial+hot_takes orfaos)
+    + coletar_metricas (publicados >=48h sem linkedin_metricas_em)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
+                   tipo, canal, status, data_publicacao, ai_categoria, hot_take_id,
+                   url_publicado, criado_em
+            FROM editorial_posts
+            WHERE status = 'draft'
+            UNION ALL
+            SELECT id, news_title AS article_title, hook AS titulo_adaptado,
+                   linkedin_post AS conteudo_adaptado, news_link AS article_url,
+                   'hot_take' AS tipo, 'linkedin' AS canal, status,
+                   scheduled_for AS data_publicacao, 'Hot Take' AS ai_categoria,
+                   id AS hot_take_id, linkedin_url AS url_publicado, created_at AS criado_em
+            FROM hot_takes
+            WHERE status = 'draft' AND editorial_post_id IS NULL
+            ORDER BY criado_em DESC
+            LIMIT 20
+        """)
+        para_aprovar = [dict(r) for r in cursor.fetchall()]
+        cursor.execute("""
+            SELECT id, article_title, titulo_adaptado, ai_categoria, data_publicado,
+                   url_publicado, linkedin_post_url, linkedin_impressoes, linkedin_reacoes,
+                   linkedin_comentarios,
+                   EXTRACT(EPOCH FROM (NOW() - data_publicado))/3600 AS horas_publicado
+            FROM editorial_posts
+            WHERE status = 'published'
+              AND data_publicado IS NOT NULL
+              AND data_publicado < NOW() - INTERVAL '48 hours'
+              AND linkedin_metricas_em IS NULL
+            ORDER BY data_publicado ASC
+            LIMIT 20
+        """)
+        coletar_metricas = [dict(r) for r in cursor.fetchall()]
+    for p in para_aprovar + coletar_metricas:
+        for k in ('data_publicacao', 'data_publicado', 'criado_em'):
+            if p.get(k) and hasattr(p[k], 'isoformat'):
+                p[k] = p[k].isoformat()
+    return {"para_aprovar": para_aprovar, "coletar_metricas": coletar_metricas}
+
+
 @app.get("/api/editorial/{post_id}")
 async def api_editorial_get(post_id: int):
     """Retorna um post especifico"""

@@ -123,3 +123,6 @@
 
 ### Integrações
 - [ ] Instagram suporte (carrossel, reels)
+
+### Refactoring
+- [ ] **Extrair `urgency_key` de Projetos pra service compartilhado**: hoje a lógica de ordenação por urgência (dias_ate ASC, marco→tarefa→prazo) vive duplicada em (a) `app/main.py:api_projects_with_attention_detailed` (Python) e (b) `app/templates/rap_projetos.html:urgencyKey` (JS). Mover pra `services/projects.py` como `sort_by_urgency()` e fazer `/api/projects` aceitar `?sort=urgency` — assim a página vira consumer puro sem lógica de ordenação no frontend. Não crítico, abrir quando virar dor.
