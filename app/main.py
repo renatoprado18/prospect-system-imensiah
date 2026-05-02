@@ -3536,6 +3536,196 @@ async def cron_status(user: dict = Depends(require_admin)):
     return out
 
 
+# ----- /api/admin/cron-health (consome cron_runs) -----
+
+def _parse_cron_to_minutes(schedule: str) -> Optional[int]:
+    """
+    Estimativa do intervalo (em minutos) entre execucoes de uma expressao cron 5-field.
+    Heuristica boa o suficiente pra detectar 'late':
+    - cron diario (qualquer h, dia/mes='*', dow='*')        → 1440 min
+    - cron horario (m=N, h='*')                              → 60 min
+    - cron a cada N minutos (m='*/N')                        → N min
+    - cron semanal (dow especifico)                          → 10080 min
+    - cron mensal (dia especifico)                           → 43200 min
+    - default fallback                                       → 1440 min (diario)
+    """
+    if not schedule:
+        return None
+    parts = schedule.strip().split()
+    if len(parts) != 5:
+        return None
+    minute, hour, dom, month, dow = parts
+
+    # */N nos minutos
+    if minute.startswith("*/"):
+        try:
+            n = int(minute[2:])
+            return n if n > 0 else None
+        except ValueError:
+            pass
+    # */N nas horas
+    if hour.startswith("*/"):
+        try:
+            n = int(hour[2:])
+            return n * 60 if n > 0 else None
+        except ValueError:
+            pass
+
+    # weekly (dow especifico, dia/mes any)
+    if dow not in ("*", "?") and dom in ("*", "?") and month in ("*", "?"):
+        return 7 * 24 * 60  # weekly
+    # monthly (dia especifico)
+    if dom not in ("*", "?") and dow in ("*", "?"):
+        return 30 * 24 * 60  # monthly approx
+    # horario (m especifico, h='*')
+    if hour == "*" and minute != "*":
+        return 60
+    # diario (h e m especificos, dom/dow='*')
+    if dom in ("*", "?") and dow in ("*", "?") and month in ("*", "?"):
+        return 24 * 60
+
+    return 24 * 60  # fallback
+
+
+def _describe_cron(schedule: str) -> str:
+    """Retorna descricao human-readable simples (pt-BR)."""
+    minutes = _parse_cron_to_minutes(schedule)
+    if minutes is None:
+        return schedule
+    parts = schedule.strip().split()
+    if len(parts) != 5:
+        return schedule
+    m, h, dom, mon, dow = parts
+    if minutes == 1440:
+        return f"diario {h.zfill(2)}:{m.zfill(2)} UTC"
+    if minutes == 60:
+        return f"a cada hora (min {m})"
+    if minutes >= 7 * 24 * 60:
+        dow_names = {"0": "dom", "1": "seg", "2": "ter", "3": "qua", "4": "qui", "5": "sex", "6": "sab", "7": "dom"}
+        return f"semanal ({dow_names.get(dow, dow)} {h.zfill(2)}:{m.zfill(2)} UTC)"
+    if minutes < 60:
+        return f"a cada {minutes}min"
+    if minutes < 1440:
+        return f"a cada {minutes // 60}h"
+    return schedule
+
+
+def _load_vercel_crons() -> List[Dict]:
+    """Le vercel.json e retorna lista de {path, schedule}. Ou hardcode em fallback."""
+    try:
+        vercel_path = os.path.join(BASE_DIR, "..", "vercel.json")
+        if os.path.exists(vercel_path):
+            with open(vercel_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data.get("crons", []) or []
+    except Exception:
+        pass
+    return []
+
+
+@app.get("/api/admin/cron-health")
+async def cron_health(user: dict = Depends(require_admin)):
+    """Saude consolidada dos crons — agrega cron_runs (ultimos 7 dias) com
+    schedules de vercel.json. Devolve por cron: ultimo run, contagem por
+    status na janela, expected runs, classificacao (healthy/late/failing/unknown).
+    """
+    crons = _load_vercel_crons()
+    now_utc = datetime.utcnow()
+
+    out_crons: List[Dict] = []
+    summary = {"healthy": 0, "late": 0, "failing": 0, "unknown": 0}
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        for c in crons:
+            path = c.get("path")
+            schedule = c.get("schedule") or ""
+            interval_min = _parse_cron_to_minutes(schedule) or 1440
+
+            # ultimo run
+            cursor.execute(
+                """
+                SELECT id, started_at, finished_at, duration_ms, status, rows_affected, error_message, http_status
+                FROM cron_runs
+                WHERE path = %s
+                ORDER BY started_at DESC
+                LIMIT 1
+                """,
+                (path,),
+            )
+            last_row = cursor.fetchone()
+            last_run = None
+            if last_row:
+                last_run = dict(last_row)
+                last_run["started_at"] = last_run["started_at"].isoformat() if last_run["started_at"] else None
+                last_run["finished_at"] = last_run["finished_at"].isoformat() if last_run["finished_at"] else None
+
+            # contagens 7d
+            cursor.execute(
+                """
+                SELECT status, COUNT(*) AS c
+                FROM cron_runs
+                WHERE path = %s AND started_at > NOW() - INTERVAL '7 days'
+                GROUP BY status
+                """,
+                (path,),
+            )
+            runs_7d = {"success": 0, "error": 0, "running": 0}
+            for r in cursor.fetchall():
+                runs_7d[r["status"]] = r["c"]
+
+            # expected runs em 7 dias (aproximado)
+            expected_7d = max(1, int((7 * 24 * 60) / interval_min))
+
+            # classificacao
+            health = "unknown"
+            # late: sem run recente alem de 1.5x intervalo
+            late_threshold_minutes = max(interval_min * 1.5, 90)  # min 90min pra cron horario
+            if last_run and last_row["started_at"]:
+                age_minutes = (now_utc - last_row["started_at"]).total_seconds() / 60.0
+            else:
+                age_minutes = None
+
+            if runs_7d["error"] > 0 and runs_7d["error"] >= runs_7d["success"]:
+                # mais erros que sucessos na janela → failing
+                health = "failing"
+            elif age_minutes is not None and age_minutes > late_threshold_minutes:
+                health = "late"
+            elif last_run and last_run["status"] == "success":
+                health = "healthy"
+            elif last_run and last_run["status"] == "error":
+                # ultimo run com erro mas houve sucessos antes → failing (recente)
+                health = "failing"
+            elif last_run is None:
+                # nunca rodou — pode ser que telemetria foi adicionada agora
+                health = "unknown"
+
+            summary[health] = summary.get(health, 0) + 1
+
+            out_crons.append({
+                "path": path,
+                "schedule": schedule,
+                "schedule_description": _describe_cron(schedule),
+                "interval_minutes": interval_min,
+                "last_run": last_run,
+                "last_run_age_minutes": int(age_minutes) if age_minutes is not None else None,
+                "runs_7d": runs_7d,
+                "expected_runs_7d": expected_7d,
+                "health": health,
+            })
+
+    # ordem: failing -> late -> unknown -> healthy
+    order = {"failing": 0, "late": 1, "unknown": 2, "healthy": 3}
+    out_crons.sort(key=lambda x: (order.get(x["health"], 99), x["path"]))
+
+    return {
+        "now_utc": now_utc.isoformat(),
+        "crons": out_crons,
+        "summary": summary,
+    }
+
+
 @app.get("/api/admin/linkdapi-debug")
 async def linkdapi_debug(user: dict = Depends(require_admin)):
     """Faz uma chamada direta na LinkdAPI pra debugar status/erros sem
