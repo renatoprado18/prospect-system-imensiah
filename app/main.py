@@ -19586,59 +19586,6 @@ async def api_registrar_manutencao(veiculo_id: int, request: Request):
     return manutencao
 
 
-# ============== OS EM EXECUCAO POR ITEM ==============
-
-@app.post("/api/veiculos/itens/{item_id}/iniciar-os")
-async def api_iniciar_os_item(item_id: int, request: Request):
-    """
-    Marca um item de manutencao vencido como "OS em execucao"
-    (usuario ja mandou pra oficina mas ainda nao concluiu).
-    Body opcional: { "observacao": "Mandei pra oficina X" }
-    """
-    from services.veiculos import iniciar_os_item
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    observacao = (body or {}).get('observacao')
-    result = iniciar_os_item(item_id, observacao=observacao)
-    if not result:
-        raise HTTPException(status_code=404, detail="Item nao encontrado")
-    # Invalida cache de alertas pra refletir na home
-    global _veiculos_alertas_cache
-    _veiculos_alertas_cache = {"data": None, "timestamp": None}
-    return {
-        "status": "ok",
-        "os_iniciada_em": result.get('os_iniciada_em'),
-        "os_observacao": result.get('os_observacao')
-    }
-
-
-@app.post("/api/veiculos/itens/{item_id}/concluir-os")
-async def api_concluir_os_item(item_id: int, request: Request):
-    """
-    Conclui a OS em execucao do item: limpa marcador, registra manutencao
-    e adia o proximo vencimento. Body opcional: { "proxima_em": "YYYY-MM-DD" }
-    """
-    from services.veiculos import concluir_os_item
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    proxima_em = (body or {}).get('proxima_em')
-    result = concluir_os_item(item_id, proxima_em=proxima_em)
-    if not result:
-        raise HTTPException(status_code=404, detail="Item nao encontrado")
-    global _veiculos_alertas_cache
-    _veiculos_alertas_cache = {"data": None, "timestamp": None}
-    return {
-        "status": "ok",
-        "novo_vencimento": result.get('novo_vencimento'),
-        "data_manutencao": result.get('data_manutencao'),
-        "km_manutencao": result.get('km_manutencao')
-    }
-
-
 @app.post("/api/veiculos/{veiculo_id}/revisao-completa")
 async def api_registrar_revisao_completa(veiculo_id: int, request: Request):
     """
@@ -19697,6 +19644,9 @@ async def api_criar_ordem(veiculo_id: int, request: Request):
     if os.get('error'):
         raise HTTPException(status_code=400, detail=os['error'])
 
+    # Nova OS pendente cobre itens — invalida cache pra refletir no statcard
+    global _veiculos_alertas_cache
+    _veiculos_alertas_cache = {"data": None, "timestamp": None}
     return os
 
 
@@ -19716,7 +19666,26 @@ async def api_finalizar_ordem(os_id: int, request: Request):
     resultado = finalizar_ordem_servico(os_id, data)
     if resultado.get('error'):
         raise HTTPException(status_code=400, detail=resultado['error'])
+    # Mudanca de status da OS afeta calculo de "vencidos_em_execucao" no statcard
+    global _veiculos_alertas_cache
+    _veiculos_alertas_cache = {"data": None, "timestamp": None}
     return resultado
+
+
+@app.post("/api/veiculos/ordens-servico/{os_id}/iniciar")
+async def api_iniciar_ordem(os_id: int):
+    """
+    Transiciona OS de 'pendente' pra 'em_andamento' (usuario levou pra oficina).
+    Mantem o item no statcard como "em OS" pra parar de gritar urgente.
+    """
+    from services.veiculos import iniciar_ordem_servico
+    resultado = iniciar_ordem_servico(os_id)
+    if resultado.get('error'):
+        raise HTTPException(status_code=400, detail=resultado['error'])
+    # Invalida cache de alertas pra refletir mudanca de status no dashboard
+    global _veiculos_alertas_cache
+    _veiculos_alertas_cache = {"data": None, "timestamp": None}
+    return {"status": "ok", "os": resultado}
 
 
 @app.delete("/api/ordens/{os_id}")
@@ -19726,6 +19695,9 @@ async def api_deletar_ordem(os_id: int):
     resultado = deletar_ordem_servico(os_id)
     if resultado.get('error'):
         raise HTTPException(status_code=400, detail=resultado['error'])
+    # Itens deixam de estar cobertos por OS — invalida cache do statcard
+    global _veiculos_alertas_cache
+    _veiculos_alertas_cache = {"data": None, "timestamp": None}
     return resultado
 
 

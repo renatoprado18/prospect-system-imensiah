@@ -320,6 +320,11 @@
         color: #fbbf24;
     }
 
+    .os-status.em_andamento {
+        background: rgba(99, 102, 241, 0.15);
+        color: #6366f1;
+    }
+
     .os-status.concluida {
         background: rgba(34, 197, 94, 0.15);
         color: #22c55e;
@@ -580,12 +585,19 @@
             <i class="bi bi-file-earmark-pdf"></i> Exportar PDF
         </button>
         {% if os.status == 'pendente' %}
+        <button class="btn btn-outline" style="color: #6366f1; border-color: #6366f1;" onclick="iniciarOS({{ os.id }}, '{{ os.numero }}', this)">
+            <i class="bi bi-play-circle"></i> Iniciar
+        </button>
         <button class="btn btn-outline" style="color: #6366f1; border-color: #6366f1;" onclick="openEditarModal()">
             <i class="bi bi-pencil"></i> Editar
         </button>
+        {% endif %}
+        {% if os.status in ['pendente', 'em_andamento'] %}
         <button class="btn btn-success" onclick="openFinalizarModal()">
             <i class="bi bi-check-circle"></i> Finalizar OS
         </button>
+        {% endif %}
+        {% if os.status == 'pendente' %}
         <button class="btn btn-outline" style="color: #ef4444; border-color: #ef4444;" onclick="deletarOS()">
             <i class="bi bi-trash"></i> Excluir
         </button>
@@ -610,6 +622,8 @@
                     <span class="os-status {{ os.status }}">
                         {% if os.status == 'pendente' %}
                         <i class="bi bi-hourglass-split"></i> Pendente
+                        {% elif os.status == 'em_andamento' %}
+                        <i class="bi bi-tools"></i> Em andamento
                         {% else %}
                         <i class="bi bi-check-circle"></i> Concluida
                         {% endif %}
@@ -1393,6 +1407,35 @@ async function salvarEdicao() {
 }
 
 // Click handler for editarModal is on the backdrop element itself via onclick
+
+// ==================== INICIAR OS (pendente -> em_andamento) ====================
+
+async function iniciarOS(osId, numero, btnElement) {
+    if (!confirm(`Marcar ${numero} como "em andamento" (levou pra oficina)?`)) return;
+    if (btnElement) {
+        btnElement.disabled = true;
+        btnElement.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+    }
+    try {
+        const resp = await fetch(`/api/veiculos/ordens-servico/${osId}/iniciar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'Falha ao iniciar OS');
+        }
+        showToast('OS marcada como em andamento', 'success');
+        setTimeout(() => location.reload(), 600);
+    } catch (e) {
+        console.error(e);
+        showToast(e.message || 'Erro ao iniciar OS', 'error');
+        if (btnElement) {
+            btnElement.disabled = false;
+            btnElement.innerHTML = '<i class="bi bi-play-circle"></i> Iniciar';
+        }
+    }
+}
 
 // ==================== DELETAR OS ====================
 

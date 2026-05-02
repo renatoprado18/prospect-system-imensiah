@@ -1915,17 +1915,18 @@ def init_db():
             ADD COLUMN IF NOT EXISTS notas_fabricante TEXT
         ''')
 
-        # OS em execucao por item (track quando o usuario ja mandou aquele item especifico
-        # pra oficina, mesmo que ainda nao tenha fechado a OS formal). Permite que o
-        # statcard "Alertas Veiculos" pare de gritar urgente se ja esta sendo cuidado.
+        # Cleanup: descartar colunas paralelas de "OS em execucao por item" criadas
+        # antes de unificar o conceito com a tabela formal veiculo_ordens_servico.
+        # Hoje a fonte de verdade pra "item esta em OS" e a OS formal (status pendente
+        # ou em_andamento) cruzada via JSONB com item_id.
         cursor.execute('''
             ALTER TABLE veiculo_itens_manutencao
-            ADD COLUMN IF NOT EXISTS os_iniciada_em TIMESTAMP NULL
+            DROP COLUMN IF EXISTS os_iniciada_em
         ''')
 
         cursor.execute('''
             ALTER TABLE veiculo_itens_manutencao
-            ADD COLUMN IF NOT EXISTS os_observacao TEXT NULL
+            DROP COLUMN IF EXISTS os_observacao
         ''')
 
         # Histórico de manutenções realizadas

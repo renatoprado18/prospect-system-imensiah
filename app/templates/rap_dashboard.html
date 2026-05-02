@@ -4617,47 +4617,9 @@
 
     <!-- ============== Drill-down Workbench (Fase 1) ============== -->
     <script>
-        // ============== Veiculos: OS em execucao (acoes inline no drill) ==============
-        // Usado pelo drill de Veiculos: marcar item como "ja mandei pra oficina" ou concluir.
-        async function veiculoCriarOS(itemId, btn) {
-            const observacao = prompt('Observacao opcional (oficina, telefone, etc):', '');
-            if (observacao === null) return; // cancelou
-            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i>'; }
-            try {
-                const resp = await fetch(`/api/veiculos/itens/${itemId}/iniciar-os`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ observacao: observacao || null })
-                });
-                if (!resp.ok) throw new Error('Falha ao criar OS');
-                // Refresh do drill + statcard
-                await loadMaintenanceAlerts();
-                if (currentDrill === 'veiculos') openDrill('veiculos');
-            } catch (e) {
-                console.error(e);
-                alert('Erro ao criar OS: ' + e.message);
-                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-tools"></i> Criar OS'; }
-            }
-        }
-
-        async function veiculoConcluirOS(itemId, btn) {
-            if (!confirm('Concluir OS? O item vai ser marcado como feito hoje e o proximo vencimento sera adiado conforme o intervalo.')) return;
-            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i>'; }
-            try {
-                const resp = await fetch(`/api/veiculos/itens/${itemId}/concluir-os`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({})
-                });
-                if (!resp.ok) throw new Error('Falha ao concluir OS');
-                await loadMaintenanceAlerts();
-                if (currentDrill === 'veiculos') openDrill('veiculos');
-            } catch (e) {
-                console.error(e);
-                alert('Erro ao concluir OS: ' + e.message);
-                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2-circle"></i> Concluir'; }
-            }
-        }
+        // Veiculos: a fonte unica de "item em OS" e a tabela veiculo_ordens_servico
+        // (status pendente ou em_andamento). O drill so exibe o badge — gerencia da
+        // OS (iniciar / finalizar) acontece em /veiculos/{id} pra evitar fluxo duplicado.
 
         const drillConfig = {
             reunioes: {
@@ -4888,13 +4850,14 @@
                 extract: (d) => [...(d.vencidos || []), ...(d.atencao || [])],
                 renderItem: (a) => {
                     const isVencido = a.status === 'vencido';
-                    const emOs = !!a.os_iniciada_em;
+                    // Fonte unica: a.os_id vem do JOIN com veiculo_ordens_servico (status pendente ou em_andamento)
+                    const emOs = !!a.os_id;
                     let badge;
                     if (emOs) {
-                        // Vencido mas ja em OS — visualmente menos urgente
-                        const dt = new Date(a.os_iniciada_em);
-                        const dtStr = dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-                        badge = `<span class="drill-badge" style="background:#e5e7eb;color:#374151;"><i class="bi bi-tools"></i> EM OS DESDE ${dtStr}</span>`;
+                        // Item ja esta numa OS ativa — visualmente menos urgente
+                        const numero = a.os_numero || 'OS';
+                        const statusLabel = a.os_status === 'em_andamento' ? 'em andamento' : 'pendente';
+                        badge = `<span class="drill-badge" style="background:#e5e7eb;color:#374151;" title="Status da OS"><i class="bi bi-tools"></i> EM ${escapeHtml(numero)} (${escapeHtml(statusLabel)})</span>`;
                     } else if (isVencido) {
                         badge = '<span class="drill-badge" style="background:#fee2e2;color:#b91c1c;">VENCIDO</span>';
                     } else {
@@ -4902,25 +4865,12 @@
                     }
                     const km = a.km_restante != null ? `${a.km_restante} km restantes` : '';
                     const meta = [a.veiculo, a.placa, km].filter(Boolean).join(' · ');
-                    // Acoes inline: criar OS (se vencido sem OS) ou concluir OS (se em OS)
-                    let acao = '';
-                    if (a.item_id) {
-                        if (emOs) {
-                            acao = `<button class="btn btn-sm btn-outline-success" style="margin-left:auto;font-size:0.72rem;padding:0.25rem 0.55rem;" onclick="event.stopPropagation(); veiculoConcluirOS(${a.item_id}, this)" title="Concluir OS"><i class="bi bi-check2-circle"></i> Concluir</button>`;
-                        } else if (isVencido) {
-                            acao = `<button class="btn btn-sm btn-outline-secondary" style="margin-left:auto;font-size:0.72rem;padding:0.25rem 0.55rem;" onclick="event.stopPropagation(); veiculoCriarOS(${a.item_id}, this)" title="Marcar como ja mandei pra oficina"><i class="bi bi-tools"></i> Criar OS</button>`;
-                        }
-                    }
-                    const obs = emOs && a.os_observacao
-                        ? `<div class="drill-item-meta" style="font-style:italic;opacity:0.8;">${escapeHtml(a.os_observacao)}</div>`
-                        : '';
+                    // Sem acoes inline: gerencia da OS (iniciar/finalizar) acontece em /veiculos/{id}
                     return `<div class="drill-item" onclick="window.location.href='/veiculos/${a.veiculo_id}'">
                         <div class="drill-item-content" style="flex:1;">
                             <div class="drill-item-title">${escapeHtml(a.item)} ${badge}</div>
                             <div class="drill-item-meta">${escapeHtml(meta)}</div>
-                            ${obs}
                         </div>
-                        ${acao}
                     </div>`;
                 },
                 fullPage: '/veiculos'

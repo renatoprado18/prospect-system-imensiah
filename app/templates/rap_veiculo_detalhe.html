@@ -302,35 +302,6 @@
         flex-wrap: wrap;
     }
 
-    .btn-item-os {
-        padding: 0.35rem 0.7rem;
-        border-radius: 6px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        border: 1px solid;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        background: transparent;
-        transition: all 0.15s;
-    }
-    .btn-item-os.criar {
-        color: #6b7280;
-        border-color: #cbd5e1;
-    }
-    .btn-item-os.criar:hover {
-        background: #f1f5f9;
-        color: #1e293b;
-    }
-    .btn-item-os.concluir {
-        color: #16a34a;
-        border-color: #86efac;
-    }
-    .btn-item-os.concluir:hover {
-        background: #f0fdf4;
-    }
-
     .item-header {
         display: flex;
         justify-content: space-between;
@@ -455,6 +426,7 @@
     }
 
     .os-badge.pendente { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+    .os-badge.em_andamento { background: rgba(99, 102, 241, 0.15); color: #6366f1; }
     .os-badge.concluida { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
 
     /* Actions Bar */
@@ -598,7 +570,7 @@
 
         <div class="itens-grid">
             {% for item in itens %}
-            <div class="item-card {{ item.status }}{% if item.os_iniciada_em %} em-os{% endif %}">
+            <div class="item-card {{ item.status }}{% if item.os_id %} em-os{% endif %}">
                 <div class="item-header">
                     <span class="item-nome">{{ item.item }}</span>
                     <span class="item-status {{ item.status }}">
@@ -609,11 +581,11 @@
                     </span>
                 </div>
 
-                {% if item.os_iniciada_em %}
+                {% if item.os_id %}
                 <div class="item-os-badge">
                     <i class="bi bi-tools"></i>
-                    Em OS desde {{ item.os_iniciada_em[:10] }}
-                    {% if item.os_observacao %}<span class="item-os-obs">— {{ item.os_observacao }}</span>{% endif %}
+                    Em <a href="/veiculos/{{ veiculo.id }}/os/{{ item.os_id }}" style="color:inherit;text-decoration:underline;">{{ item.os_numero }}</a>
+                    <span class="item-os-obs">— {{ 'em andamento' if item.os_status == 'em_andamento' else 'pendente' }}</span>
                 </div>
                 {% endif %}
 
@@ -654,15 +626,6 @@
 
                 <div class="item-footer">
                     <span class="item-tipo">{{ item.tipo_acao }}</span>
-                    {% if item.status == 'vencido' and not item.os_iniciada_em %}
-                    <button class="btn-item-os criar" onclick="abrirModalCriarOS({{ item.item_id }}, '{{ item.item|replace("'", "&#39;") }}')" title="Marcar como ja mandei pra oficina">
-                        <i class="bi bi-tools"></i> Criar OS
-                    </button>
-                    {% elif item.os_iniciada_em %}
-                    <button class="btn-item-os concluir" onclick="abrirModalConcluirOS({{ item.item_id }}, '{{ item.item|replace("'", "&#39;") }}')" title="Concluir OS em execucao">
-                        <i class="bi bi-check2-circle"></i> Concluir OS
-                    </button>
-                    {% endif %}
                 </div>
             </div>
             {% endfor %}
@@ -724,7 +687,15 @@
                 </p>
             </div>
             <div style="display: flex; gap: 0.75rem; align-items: center;">
-                <span class="os-badge {{ os.status }}">{{ os.status|capitalize }}</span>
+                <span class="os-badge {{ os.status }}">
+                    {% if os.status == 'em_andamento' %}Em andamento
+                    {% else %}{{ os.status|capitalize }}{% endif %}
+                </span>
+                {% if os.status == 'pendente' %}
+                <button class="btn btn-outline btn-sm" style="color: #6366f1; border-color: #6366f1;" onclick="iniciarOS({{ os.id }}, '{{ os.numero }}', this)" title="Marcar como levou pra oficina">
+                    <i class="bi bi-play-circle"></i> Iniciar
+                </button>
+                {% endif %}
                 <a href="/veiculos/{{ veiculo.id }}/os/{{ os.id }}" class="btn btn-outline btn-sm">
                     <i class="bi bi-eye"></i> Ver
                 </a>
@@ -1158,53 +1129,6 @@
             <button class="btn btn-outline" onclick="closeRegistrarModal()">Cancelar</button>
             <button class="btn btn-primary" onclick="salvarManutencao()">
                 <i class="bi bi-check-circle"></i> Salvar
-            </button>
-        </div>
-    </div>
-</div>
-
-<!-- Modal: Criar OS em execucao (item vencido vai pra oficina) -->
-<div id="criarOsItemModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.85);z-index:99999;align-items:center;justify-content:center;padding:1rem;">
-    <div style="background:#ffffff;border-radius:14px;width:100%;max-width:480px;box-shadow:0 25px 50px rgba(0,0,0,0.5);border:2px solid #cbd5e1;overflow:hidden;">
-        <div style="padding:1.1rem 1.4rem;background:#1e293b;color:#ffffff;border-bottom:2px solid #334155;">
-            <h3 style="margin:0;font-size:1.1rem;font-weight:700;"><i class="bi bi-tools"></i> Criar OS em execucao</h3>
-        </div>
-        <div style="padding:1.3rem 1.4rem;background:#ffffff;">
-            <p style="margin:0 0 1rem;color:#475569;font-size:0.9rem;line-height:1.5;">
-                Marcar <strong id="criarOsItemNome">este item</strong> como "ja mandei pra oficina".
-                Ele continua aparecendo como vencido, mas o dashboard nao vai mais gritar urgente.
-            </p>
-            <label style="display:block;font-size:0.8rem;font-weight:600;color:#334155;margin-bottom:0.4rem;text-transform:uppercase;">Observacao (opcional)</label>
-            <textarea id="criarOsItemObs" rows="3" placeholder="Ex: Oficina X, telefone 11 99999-9999" style="width:100%;padding:0.7rem;border:1px solid #cbd5e1;border-radius:8px;background:#ffffff;color:#1e293b;font-size:0.9rem;font-family:inherit;resize:vertical;"></textarea>
-        </div>
-        <div style="padding:1rem 1.4rem;background:#f1f5f9;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:0.6rem;">
-            <button onclick="fecharModalCriarOS()" style="padding:0.55rem 1.1rem;border:1px solid #94a3b8;background:#ffffff;color:#334155;border-radius:6px;cursor:pointer;font-weight:500;">Cancelar</button>
-            <button id="btnConfirmarCriarOs" onclick="confirmarCriarOS()" style="padding:0.55rem 1.1rem;border:none;background:#475569;color:#ffffff;border-radius:6px;cursor:pointer;font-weight:600;">
-                <i class="bi bi-tools"></i> Criar OS
-            </button>
-        </div>
-    </div>
-</div>
-
-<!-- Modal: Concluir OS em execucao (ajusta proxima data) -->
-<div id="concluirOsItemModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.85);z-index:99999;align-items:center;justify-content:center;padding:1rem;">
-    <div style="background:#ffffff;border-radius:14px;width:100%;max-width:480px;box-shadow:0 25px 50px rgba(0,0,0,0.5);border:2px solid #86efac;overflow:hidden;">
-        <div style="padding:1.1rem 1.4rem;background:#15803d;color:#ffffff;border-bottom:2px solid #166534;">
-            <h3 style="margin:0;font-size:1.1rem;font-weight:700;"><i class="bi bi-check2-circle"></i> Concluir OS</h3>
-        </div>
-        <div style="padding:1.3rem 1.4rem;background:#ffffff;">
-            <p style="margin:0 0 1rem;color:#475569;font-size:0.9rem;line-height:1.5;">
-                Concluir OS de <strong id="concluirOsItemNome">este item</strong>. Sera registrada
-                uma manutencao com data de hoje e o proximo vencimento sera adiado conforme o intervalo.
-            </p>
-            <label style="display:block;font-size:0.8rem;font-weight:600;color:#334155;margin-bottom:0.4rem;text-transform:uppercase;">Proxima manutencao (opcional)</label>
-            <input type="date" id="concluirOsItemProxima" style="width:100%;padding:0.7rem;border:1px solid #cbd5e1;border-radius:8px;background:#ffffff;color:#1e293b;font-size:0.9rem;">
-            <p style="margin:0.5rem 0 0;font-size:0.75rem;color:#64748b;">Deixe vazio pra usar o intervalo padrao do plano.</p>
-        </div>
-        <div style="padding:1rem 1.4rem;background:#f1f5f9;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:0.6rem;">
-            <button onclick="fecharModalConcluirOS()" style="padding:0.55rem 1.1rem;border:1px solid #94a3b8;background:#ffffff;color:#334155;border-radius:6px;cursor:pointer;font-weight:500;">Cancelar</button>
-            <button id="btnConfirmarConcluirOs" onclick="confirmarConcluirOS()" style="padding:0.55rem 1.1rem;border:none;background:#15803d;color:#ffffff;border-radius:6px;cursor:pointer;font-weight:600;">
-                <i class="bi bi-check2-circle"></i> Concluir
             </button>
         </div>
     </div>
@@ -1967,89 +1891,33 @@ async function deletarOS(osId, numero, btnElement) {
     }
 }
 
-// ============ OS em execucao por item ============
-let _osItemIdEmAcao = null;
-
-function abrirModalCriarOS(itemId, itemNome) {
-    _osItemIdEmAcao = itemId;
-    document.getElementById('criarOsItemNome').textContent = itemNome || 'este item';
-    document.getElementById('criarOsItemObs').value = '';
-    document.getElementById('criarOsItemModal').style.display = 'flex';
-}
-
-function fecharModalCriarOS() {
-    document.getElementById('criarOsItemModal').style.display = 'none';
-    _osItemIdEmAcao = null;
-}
-
-async function confirmarCriarOS() {
-    if (!_osItemIdEmAcao) return;
-    const obs = document.getElementById('criarOsItemObs').value.trim();
-    const btn = document.getElementById('btnConfirmarCriarOs');
-    btn.disabled = true;
-    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Salvando...';
+// ============ Iniciar OS (transicao pendente -> em_andamento) ============
+async function iniciarOS(osId, numero, btnElement) {
+    if (!confirm(`Marcar ${numero} como "em andamento" (levou pra oficina)?`)) return;
+    if (btnElement) {
+        btnElement.disabled = true;
+        btnElement.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+    }
     try {
-        const resp = await fetch(`/api/veiculos/itens/${_osItemIdEmAcao}/iniciar-os`, {
+        const resp = await fetch(`/api/veiculos/ordens-servico/${osId}/iniciar`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ observacao: obs || null })
+            headers: { 'Content-Type': 'application/json' }
         });
-        if (!resp.ok) throw new Error('Falha ao criar OS');
-        showToast('OS em execucao criada', 'success');
-        fecharModalCriarOS();
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'Falha ao iniciar OS');
+        }
+        showToast('OS marcada como em andamento', 'success');
         setTimeout(() => location.reload(), 600);
     } catch (e) {
         console.error(e);
-        showToast('Erro ao criar OS', 'error');
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-tools"></i> Criar OS';
+        showToast(e.message || 'Erro ao iniciar OS', 'error');
+        if (btnElement) {
+            btnElement.disabled = false;
+            btnElement.innerHTML = '<i class="bi bi-play-circle"></i> Iniciar';
+        }
     }
 }
-
-function abrirModalConcluirOS(itemId, itemNome) {
-    _osItemIdEmAcao = itemId;
-    document.getElementById('concluirOsItemNome').textContent = itemNome || 'este item';
-    document.getElementById('concluirOsItemProxima').value = '';
-    document.getElementById('concluirOsItemModal').style.display = 'flex';
-}
-
-function fecharModalConcluirOS() {
-    document.getElementById('concluirOsItemModal').style.display = 'none';
-    _osItemIdEmAcao = null;
-}
-
-async function confirmarConcluirOS() {
-    if (!_osItemIdEmAcao) return;
-    const proximaEm = document.getElementById('concluirOsItemProxima').value;
-    const btn = document.getElementById('btnConfirmarConcluirOs');
-    btn.disabled = true;
-    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Salvando...';
-    try {
-        const body = proximaEm ? { proxima_em: proximaEm } : {};
-        const resp = await fetch(`/api/veiculos/itens/${_osItemIdEmAcao}/concluir-os`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        if (!resp.ok) throw new Error('Falha ao concluir OS');
-        showToast('OS concluida', 'success');
-        fecharModalConcluirOS();
-        setTimeout(() => location.reload(), 600);
-    } catch (e) {
-        console.error(e);
-        showToast('Erro ao concluir OS', 'error');
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-check2-circle"></i> Concluir';
-    }
-}
-
-// Fecha modais OS no clique fora
-document.getElementById('criarOsItemModal').addEventListener('click', (e) => {
-    if (e.target.id === 'criarOsItemModal') fecharModalCriarOS();
-});
-document.getElementById('concluirOsItemModal').addEventListener('click', (e) => {
-    if (e.target.id === 'concluirOsItemModal') fecharModalConcluirOS();
-});
 </script>
 
 <style>
