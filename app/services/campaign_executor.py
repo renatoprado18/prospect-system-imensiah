@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 import json
 import logging
+import re
+import unicodedata
 
 logger = logging.getLogger(__name__)
 
@@ -238,8 +240,56 @@ class CampaignExecutor:
     # STEP HANDLERS
     # =========================================================================
 
-    def _fetch_recent_post(self, linkedin_url: str) -> Optional[Dict]:
-        """Fetch most recent LinkedIn post via LinkdAPI."""
+    # Stoplist de tokens de nome muito comuns/genericos. NAO inclui sobrenomes
+    # discriminantes (silva/santos/souza/etc). So tokens que aparecem em mta
+    # gente diferente — primeiros nomes ultra-comuns e particulas.
+    _NAME_STOPWORDS = {
+        "joao", "jose", "maria", "ana",
+        "neto", "junior", "jr", "filho",
+        "da", "de", "do", "das", "dos",
+        "sao", "sr", "dr",
+    }
+
+    @staticmethod
+    def _normalize_name(s: str) -> str:
+        """Lower + strip accents."""
+        if not s:
+            return ""
+        return unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode().lower()
+
+    def _name_tokens(self, s: str) -> List[str]:
+        """Tokeniza nome: normaliza, troca nao-alfanumerico por espaco, dropa
+        tokens curtos (<3) e tokens stoplist."""
+        norm = self._normalize_name(s)
+        norm = re.sub(r'[^a-z0-9]+', ' ', norm)
+        tokens = [t for t in norm.split() if len(t) >= 3 and t not in self._NAME_STOPWORDS]
+        return tokens
+
+    def _names_match(self, expected: str, actual: str) -> bool:
+        """Heuristica: nomes batem se interseccao dos tokens filtrados nao for
+        vazia. Pra nomes muito curtos (sem tokens uteis), cai pro raw equality.
+        """
+        if not expected or not actual:
+            return False
+
+        exp_tokens = set(self._name_tokens(expected))
+        act_tokens = set(self._name_tokens(actual))
+
+        if exp_tokens and act_tokens:
+            return bool(exp_tokens & act_tokens)
+
+        # Fallback: raw normalized equality (whitespace-collapsed)
+        exp_raw = ' '.join(self._normalize_name(expected).split())
+        act_raw = ' '.join(self._normalize_name(actual).split())
+        return bool(exp_raw) and exp_raw == act_raw
+
+    def _fetch_recent_post(self, linkedin_url: str, expected_name: Optional[str] = None) -> Optional[Dict]:
+        """Fetch most recent LinkedIn post via LinkdAPI.
+
+        Se expected_name for fornecido, valida que o nome no perfil retornado
+        bate com o esperado antes de buscar posts. Defesa contra contacts.linkedin
+        apontando pra perfil de outra pessoa (bug de sync do Google Contacts).
+        """
         import os
         import httpx
 
@@ -265,6 +315,18 @@ class CampaignExecutor:
                 data = resp.json()
                 urn = (data.get("data") or {}).get("urn")
                 if not urn:
+                    return None
+
+                # Name-match guard: se expected_name foi passado, valida que
+                # o perfil retornado pertence a essa pessoa.
+                first_name = (data.get("data") or {}).get("firstName") or ""
+                last_name = (data.get("data") or {}).get("lastName") or ""
+                actual_name = f"{first_name} {last_name}".strip()
+                if expected_name and actual_name and not self._names_match(expected_name, actual_name):
+                    logger.warning(
+                        f"Name mismatch on LinkedIn URL {linkedin_url}: "
+                        f"expected '{expected_name}', got '{actual_name}' — skipping post fetch"
+                    )
                     return None
 
                 # Step 2: Fetch recent posts
@@ -308,7 +370,7 @@ class CampaignExecutor:
             return {"skipped": True, "reason": "no_linkedin_url"}
 
         # Fetch actual recent post
-        post = self._fetch_recent_post(linkedin_url)
+        post = self._fetch_recent_post(linkedin_url, expected_name=enrollment.get('contact_nome'))
 
         if not post or not post.get("url"):
             # No posts found — pause enrollment, nothing to like
@@ -349,7 +411,7 @@ class CampaignExecutor:
             config = json.loads(config)
 
         # Fetch actual recent post
-        post = self._fetch_recent_post(linkedin_url)
+        post = self._fetch_recent_post(linkedin_url, expected_name=enrollment.get('contact_nome'))
 
         if not post or not post.get("url"):
             cursor.execute("""
