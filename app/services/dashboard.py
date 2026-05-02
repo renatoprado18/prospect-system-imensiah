@@ -32,11 +32,12 @@ def get_dashboard_stats() -> Dict:
         cursor = conn.cursor()
 
         # OTIMIZACAO: Todas as stats de contacts em uma unica query
+        # Snooze: contatos com snooze ativo nao contam em precisam_atencao
         cursor.execute("""
             SELECT
                 COUNT(*) as total_contatos,
                 COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 4) as circulos_ativos,
-                COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL) as precisam_atencao,
+                COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL AND NOT EXISTS (SELECT 1 FROM contact_snoozes s WHERE s.contact_id = contacts.id AND s.ate >= CURRENT_DATE)) as precisam_atencao,
                 COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL) as briefings_pendentes,
                 COUNT(*) FILTER (
                     WHERE aniversario IS NOT NULL
@@ -310,7 +311,7 @@ def get_full_dashboard() -> Dict:
                 SELECT
                     COUNT(*) as total_contatos,
                     COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 4) as circulos_ativos,
-                    COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL) as precisam_atencao
+                    COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL AND NOT EXISTS (SELECT 1 FROM contact_snoozes s WHERE s.contact_id = contacts.id AND s.ate >= CURRENT_DATE)) as precisam_atencao
                 FROM contacts
             ),
             -- Circulos resumo
@@ -495,7 +496,7 @@ def get_quick_stats() -> Dict:
             SELECT
                 COUNT(*) as total,
                 COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 4) as ativos,
-                COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL) as precisam_atencao,
+                COUNT(*) FILTER (WHERE COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL AND NOT EXISTS (SELECT 1 FROM contact_snoozes s WHERE s.contact_id = contacts.id AND s.ate >= CURRENT_DATE)) as precisam_atencao,
                 AVG(COALESCE(health_score, 50)) FILTER (WHERE COALESCE(circulo, 5) <= 4) as health_medio_ativos
             FROM contacts
         """)

@@ -4307,6 +4307,118 @@ async def contacts_needs_attention(limit: int = Query(30, le=100)):
         conn.close()
 
 
+# ============== Contact Snooze (adiar com motivo) ==============
+# MVP: usuario marca contato como "nao vou contatar agora porque X",
+# contato some de needs-attention/statcard ate a data 'ate'.
+
+class SnoozeRequest(BaseModel):
+    motivo: Optional[str] = None
+    dias: int = 7
+
+
+@app.post("/api/contacts/{contact_id}/snooze")
+async def snooze_contact(contact_id: int, payload: SnoozeRequest):
+    """Adiar contato por N dias com motivo opcional. Substitui snooze ativo se houver."""
+    dias = max(1, min(int(payload.dias or 7), 365))
+    motivo = (payload.motivo or "").strip() or None
+
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+        # Garante que contato existe
+        cursor.execute("SELECT id, nome FROM contacts WHERE id = %s", (contact_id,))
+        contact = cursor.fetchone()
+        if not contact:
+            raise HTTPException(status_code=404, detail="Contato nao encontrado")
+
+        # Substitui snooze ativo (se houver)
+        cursor.execute(
+            "DELETE FROM contact_snoozes WHERE contact_id = %s AND ate >= CURRENT_DATE",
+            (contact_id,)
+        )
+        cursor.execute(
+            """
+            INSERT INTO contact_snoozes (contact_id, motivo, ate)
+            VALUES (%s, %s, CURRENT_DATE + %s::int)
+            RETURNING ate
+            """,
+            (contact_id, motivo, dias)
+        )
+        row = cursor.fetchone()
+        ate = row["ate"]
+
+        # Registra no historico via contact_memories
+        try:
+            ate_str = ate.isoformat() if hasattr(ate, "isoformat") else str(ate)
+            titulo = f"Adiado ate {ate_str}"
+            resumo = f"Adiado ate {ate_str} - {motivo}" if motivo else f"Adiado ate {ate_str}"
+            cursor.execute(
+                """
+                INSERT INTO contact_memories (contact_id, tipo, titulo, resumo, conteudo_completo, data_ocorrencia)
+                VALUES (%s, %s, %s, %s, %s, NOW())
+                """,
+                (contact_id, "snooze", titulo, resumo, resumo)
+            )
+        except Exception as e:
+            logger.warning(f"snooze: falhou ao salvar em contact_memories: {e}")
+
+        conn.commit()
+
+    # Invalida cache do dashboard pra refletir o novo count
+    try:
+        global _dashboard_cache
+        _dashboard_cache = {"data": None, "timestamp": None}
+    except Exception:
+        pass
+
+    return {"status": "ok", "ate": ate.isoformat() if hasattr(ate, "isoformat") else str(ate)}
+
+
+@app.delete("/api/contacts/{contact_id}/snooze")
+async def unsnooze_contact(contact_id: int):
+    """Remove snooze ativo do contato."""
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM contact_snoozes WHERE contact_id = %s AND ate >= CURRENT_DATE",
+            (contact_id,)
+        )
+        conn.commit()
+
+    try:
+        global _dashboard_cache
+        _dashboard_cache = {"data": None, "timestamp": None}
+    except Exception:
+        pass
+
+    return {"status": "ok"}
+
+
+@app.get("/api/contacts/{contact_id}/snooze")
+async def get_contact_snooze(contact_id: int):
+    """Retorna snooze ativo do contato (pra UI)."""
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT motivo, ate FROM contact_snoozes
+            WHERE contact_id = %s AND ate >= CURRENT_DATE
+            ORDER BY ate DESC LIMIT 1
+            """,
+            (contact_id,)
+        )
+        row = cursor.fetchone()
+
+    if not row:
+        return {"snoozed": False, "motivo": None, "ate": None}
+
+    ate = row["ate"]
+    return {
+        "snoozed": True,
+        "motivo": row["motivo"],
+        "ate": ate.isoformat() if hasattr(ate, "isoformat") else str(ate)
+    }
+
+
 @app.get("/api/contacts/stats")
 async def contacts_stats():
     """Estatísticas dos contatos"""

@@ -2233,6 +2233,24 @@ def init_db():
             )
         ''')
 
+        # Snooze de contatos: usuario marca "nao vou contatar agora porque X",
+        # contato some da lista de "precisam atencao" ate a data 'ate'.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS contact_snoozes (
+                id SERIAL PRIMARY KEY,
+                contact_id INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+                motivo TEXT,
+                ate DATE NOT NULL,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_id INTEGER DEFAULT 1
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_contact_snoozes_active
+            ON contact_snoozes(contact_id, ate)
+            WHERE ate >= CURRENT_DATE
+        ''')
+
         # =====================================================================
         # Sincroniza sequences que podem ter ficado atras do MAX(id) real.
         # Idempotente — roda toda vez que init_db() executa.

@@ -1240,6 +1240,21 @@
             background: #3b82f6;
             color: white;
         }
+        .contact-today-actions .btn-snooze,
+        .btn-snooze {
+            background: var(--gray-200);
+            color: var(--gray-600);
+            border: none;
+            padding: 2px 6px;
+            font-size: 0.65rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .contact-today-actions .btn-snooze:hover,
+        .btn-snooze:hover {
+            background: #6366f1;
+            color: white;
+        }
 
         .contact-today-empty {
             text-align: center;
@@ -2404,17 +2419,10 @@
                     }
                 }
 
-                // Alertas - precisam atenção (usar stats, não alertas)
-                const totalAtencao = data.stats?.precisam_atencao || 0;
-                document.getElementById('statAtencao').textContent = totalAtencao;
-
-                // Sidebar badge for Circulos - show attention count
-                const sidebarBadge = document.getElementById('badgeAtencao');
-                if (sidebarBadge && totalAtencao > 0) {
-                    sidebarBadge.textContent = totalAtencao;
-                    sidebarBadge.style.background = '#f59e0b';
-                    sidebarBadge.style.display = 'inline';
-                }
+                // Alertas - precisam atenção
+                // statAtencao agora vem de loadContatosAtencao() — mesma fonte do drill
+                // (alinhamento count <-> drill, evita mismatch tipo "statcard 7 vs drill 30").
+                // Sidebar badge atualizada dentro de loadContatosAtencao tambem.
 
                 // Briefings pendentes - buscar da API especifica
                 loadTasksOverdue();
@@ -4325,8 +4333,36 @@
         const dateStr = new Date().toLocaleDateString('pt-BR', dateOpts);
         document.getElementById('currentDateText').textContent = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
 
+        // Fonte unica do count "Contatos c/ Atencao" — mesma fonte do drill.
+        // Antes vinha de data.stats.precisam_atencao (SQL count em get_full_dashboard)
+        // e o drill usava /api/contacts/needs-attention (com fatores extra). Resultado
+        // era mismatch: statcard "7" vs drill "30+". Agora ambos usam o mesmo endpoint.
+        async function loadContatosAtencao() {
+            try {
+                const resp = await fetch('/api/contacts/needs-attention?limit=200');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const total = (data.contacts || []).length;
+                const el = document.getElementById('statAtencao');
+                if (el) el.textContent = total;
+                const sidebarBadge = document.getElementById('badgeAtencao');
+                if (sidebarBadge) {
+                    if (total > 0) {
+                        sidebarBadge.textContent = total;
+                        sidebarBadge.style.background = '#f59e0b';
+                        sidebarBadge.style.display = 'inline';
+                    } else {
+                        sidebarBadge.style.display = 'none';
+                    }
+                }
+                if (typeof applyMutedState === 'function') applyMutedState();
+                if (typeof updateCleanSlateBanner === 'function') updateCleanSlateBanner();
+            } catch (e) {}
+        }
+
         loadAllData().then(() => {
             loadDashboardData();
+            loadContatosAtencao();
         });
 
         // Load secondary features after short delay (lower priority)
@@ -4595,7 +4631,7 @@
                 // (precisam_atencao em /api/v1/dashboard usa o mesmo criterio: circulo<=3 + health<50).
                 // Antes usava /api/v1/contact-suggestions que aplica filtros narrower (so quem contatar HOJE)
                 // — causava mismatch tipo "statcard 7 vs drill 2".
-                endpoint: () => '/api/contacts/needs-attention?limit=30',
+                endpoint: () => '/api/contacts/needs-attention?limit=200',
                 extract: (d) => d.contacts || [],
                 emptyIcon: 'bi-check-circle',
                 emptyText: 'Você está em dia com todos os contatos',
@@ -4942,6 +4978,9 @@
             const whatsappBtn = c.id ? `<button class="btn btn-whatsapp" onclick="event.stopPropagation(); openWhatsApp(${c.id})" title="Enviar WhatsApp"><i class="bi bi-whatsapp"></i></button>` : '';
             // markAsContacted aceita rodaId=null (vide implementacao) — esse endpoint nao expoe roda, sempre null
             const contactedBtn = c.id ? `<button class="btn btn-contacted" onclick="event.stopPropagation(); markAsContacted(${c.id}, null, this)" title="Já contatei"><i class="bi bi-person-check"></i></button>` : '';
+            // Adiar com motivo — some da lista por N dias
+            const nomeAttr = (c.nome || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            const snoozeBtn = c.id ? `<button class="btn btn-snooze" onclick="event.stopPropagation(); abrirModalSnooze(${c.id}, '${nomeAttr}')" title="Adiar"><i class="bi bi-moon"></i></button>` : '';
 
             return `
                 <div class="contact-today-item type-${visualType}" onclick="window.location.href='/contatos/${c.id}'">
@@ -4955,6 +4994,7 @@
                             <div class="contact-today-header-right">
                                 ${whatsappBtn}
                                 ${contactedBtn}
+                                ${snoozeBtn}
                                 <span class="contact-today-reason">${escapeHtml(reasonLabel.toUpperCase())}</span>
                             </div>
                         </div>
@@ -4962,6 +5002,57 @@
                     </div>
                 </div>
             `;
+        }
+
+        // ============== Snooze (Adiar contato) ==============
+        // MVP: usuario marca "nao vou contatar agora porque X" e contato some
+        // de needs-attention/statcard ate a data 'ate'.
+        function abrirModalSnooze(contactId, nome) {
+            const modal = document.getElementById('snoozeContactModal');
+            if (!modal) return;
+            document.getElementById('snoozeContactId').value = contactId;
+            document.getElementById('snoozeContactName').textContent = nome || 'Contato';
+            document.getElementById('snoozeMotivo').value = '';
+            document.getElementById('snoozeDias').value = '7';
+            modal.style.display = 'flex';
+        }
+
+        function fecharModalSnooze() {
+            const modal = document.getElementById('snoozeContactModal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function confirmarSnooze() {
+            const contactId = document.getElementById('snoozeContactId').value;
+            const motivo = document.getElementById('snoozeMotivo').value.trim();
+            const dias = parseInt(document.getElementById('snoozeDias').value, 10) || 7;
+            if (!contactId) return;
+
+            const btn = document.getElementById('snoozeConfirmBtn');
+            const oldText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Adiando...';
+
+            try {
+                const resp = await fetch(`/api/contacts/${contactId}/snooze`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ motivo: motivo || null, dias: dias })
+                });
+                if (!resp.ok) throw new Error('Falha ao adiar');
+                fecharModalSnooze();
+                if (typeof showToast === 'function') showToast(`Contato adiado por ${dias} dia(s)`, 'success');
+                // Recarrega drill e statcard pra refletir a remocao
+                if (typeof currentDrill !== 'undefined' && currentDrill === 'contatos') {
+                    currentDrill = null; // forca reabrir
+                    openDrill('contatos');
+                }
+                if (typeof loadContatosAtencao === 'function') loadContatosAtencao();
+            } catch (e) {
+                if (typeof showToast === 'function') showToast('Erro ao adiar contato', 'danger');
+                btn.disabled = false;
+                btn.textContent = oldText;
+            }
         }
 
         function closeDrill() {
@@ -5055,6 +5146,40 @@
                 <button onclick="closeShareNewsModal()" style="padding:6px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;">Cancelar</button>
                 <button id="shareNewsSendBtn" onclick="sendShareNews()" style="display:none;padding:6px 16px;border:none;border-radius:8px;background:#22c55e;color:#fff;cursor:pointer;font-weight:600;">
                     <i class="bi bi-send me-1"></i>Enviar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Adiar Contato (Snooze) -->
+    <!-- Inline styles pra evitar conflito com Bootstrap .modal-backdrop (vide CLAUDE.md gotchas) -->
+    <div id="snoozeContactModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.92);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(4px);" onclick="if(event.target===this)fecharModalSnooze()">
+        <div style="background:#fff;border-radius:16px;width:90%;max-width:440px;max-height:90vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.5);border:2px solid #6366f1;">
+            <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
+                <h5 style="margin:0;font-size:1rem;"><i class="bi bi-moon text-primary me-2"></i>Adiar contato</h5>
+                <button onclick="fecharModalSnooze()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;">&times;</button>
+            </div>
+            <div style="padding:16px 20px;">
+                <input type="hidden" id="snoozeContactId" value="">
+                <div style="font-size:0.9rem;font-weight:600;margin-bottom:12px;" id="snoozeContactName">Contato</div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:0.75rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Por que adiar? (opcional)</label>
+                    <textarea id="snoozeMotivo" rows="3" placeholder="Ex: viajando, esperando retorno dele, ja conversamos semana passada..." style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;resize:vertical;font-family:inherit;"></textarea>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <label style="font-size:0.75rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Voltar a aparecer em:</label>
+                    <select id="snoozeDias" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;background:#fff;">
+                        <option value="3">3 dias</option>
+                        <option value="7" selected>7 dias</option>
+                        <option value="14">14 dias</option>
+                        <option value="30">30 dias</option>
+                    </select>
+                </div>
+            </div>
+            <div style="padding:12px 20px;border-top:1px solid #e2e8f0;display:flex;gap:8px;justify-content:flex-end;">
+                <button onclick="fecharModalSnooze()" style="padding:6px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;">Cancelar</button>
+                <button id="snoozeConfirmBtn" onclick="confirmarSnooze()" style="padding:6px 16px;border:none;border-radius:8px;background:#6366f1;color:#fff;cursor:pointer;font-weight:600;">
+                    <i class="bi bi-moon me-1"></i>Adiar
                 </button>
             </div>
         </div>

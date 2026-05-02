@@ -1038,15 +1038,20 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
             conn.rollback()
 
         # === BUSCAR TODOS OS CONTATOS COM CIRCULO ===
+        # Filtra contatos snoozed (usuario marcou "adiar ate X dias")
         cursor.execute("""
-            SELECT id, nome, empresa, cargo, foto_url, contexto,
-                   circulo, circulo_pessoal, circulo_profissional,
-                   health_score, ultimo_contato, aniversario,
-                   frequencia_ideal_dias
-            FROM contacts
-            WHERE circulo IS NOT NULL
-              AND COALESCE(circulo, 5) <= 4
-            ORDER BY circulo ASC
+            SELECT c.id, c.nome, c.empresa, c.cargo, c.foto_url, c.contexto,
+                   c.circulo, c.circulo_pessoal, c.circulo_profissional,
+                   c.health_score, c.ultimo_contato, c.aniversario,
+                   c.frequencia_ideal_dias
+            FROM contacts c
+            WHERE c.circulo IS NOT NULL
+              AND COALESCE(c.circulo, 5) <= 4
+              AND NOT EXISTS (
+                  SELECT 1 FROM contact_snoozes s
+                  WHERE s.contact_id = c.id AND s.ate >= CURRENT_DATE
+              )
+            ORDER BY c.circulo ASC
         """)
 
         pessoal = []
