@@ -36,7 +36,7 @@
 - Projetos Ativos → `GET /api/projects/active-summary`
 - Alertas Veículos → `GET /api/veiculos/alertas`
 - Status API Claude (cache 1h) → `GET /api/ai/status`
-- **Removidos do dashboard (2026-05-02)**: widgets "Quem Contatar Hoje", "Agenda de Hoje", "Tarefas", "LinkedIn Hoje" e o card "Clipping" original. Cada um vive em pagina dedicada ou virou drill+statcard. Content Grid completo eliminado. "Conteudo da Semana" mantido como bloco solo apos workbench (planejamento, nao acao).
+- **Removidos do dashboard (2026-05-02)**: widgets "Quem Contatar Hoje", "Agenda de Hoje", "Tarefas", "LinkedIn Hoje", "Conteudo da Semana" e o card "Clipping" original. Cada um vive em pagina dedicada ou virou drill+statcard. Content Grid completo eliminado.
 
 ## 2. Contatos (`/contatos`)
 - Lista com busca, filtro letra/contexto, filter=needs_attention
