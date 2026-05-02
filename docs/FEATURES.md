@@ -26,22 +26,17 @@
   - Contatos → endpoint trocado pra `/api/v1/contact-suggestions?limit=15` (mesmo do widget "Quem Contatar Hoje"); render via `drillRenderContactSuggestion()` reusa classes `.contact-today-*` e funções `openWhatsApp(id)` / `markAsContacted(id, rodaId, btn)` já existentes
   - Tarefas / Veículos → mantidos como Fase 1+2
 - **`drillConfig` schema expandido**: além de `endpoint`/`extract`/`renderItem`/`fullPage`, agora suporta `renderAll(data)` (pra grouping/sectioning), `extractCount(data)` (pra contar quando `renderAll` substitui `extract`), `emptyIcon` e `emptyText` (custom por statcard). `openDrill` usa `renderAll` se definido, fallback pra `map(renderItem)`.
-- **Clipping do Dia** (notícias curadas por IA, 12 fontes RSS) → `GET /api/news/clipping`
-  - 👍👎 Feedback (sistema aprende) → `POST /api/news/{id}/feedback`
-  - 📝 Criar post LinkedIn (gera texto + cruza artigo) → `POST /api/news/to-post`
-  - 📤 Compartilhar com contato (msg personalizada por IA) → `POST /api/share/generate-message`
+- **Clipping do Dia — queue interativa** (1 noticia por vez, "drill" estilo cards): `GET /api/news/clipping` retorna noticias filtradas pelas que ainda nao foram tratadas hoje (campos `dealt_today` + `original_total`). Acoes na carta atual: 👍 Like / 👎 Dislike / ⏭ Pular / 📤 Encaminhar / 📝 Post. Cada acao registra interacao em `news_interactions` (action IN liked/disliked/dismissed/shared/hot_take/posted) via `POST /api/news/{id}/feedback` e avanca pra proxima. Filtro server-side em `_filter_clipping_by_interactions(payload, user_id)` — repopulacao acontece naturalmente no proximo ciclo do cron diario. Empty state: "Tudo lido por hoje 🌅 — novo clipping amanha". Sem botao de refresh manual no UI (endpoint `POST /api/news/clipping/refresh` mantido pra debug). State frontend: `clippingState = { items, summary, dealtToday, originalTotal }`.
 - LinkedIn Hoje (posts agendados + sugestão de draft) → `GET /api/editorial/dashboard-tasks`
 - **Busca global page-aware**: input no header (`#globalSearch`, atalho Cmd+K) adapta endpoint/placeholder/render por página via `window.pageSearch`. Default = contatos. Override em `extra_js`: `window.pageSearch = { placeholder, endpoint(q), extract(data), renderItem(p) → {href,title,subtitle,icon|avatar}, fallbackUrl(q) }`. Implementado: `/projetos` (busca em nome+descrição+empresa_relacionada).
 - **INTEL Chat (`/intel-chat`)**: interface web pra conversar com o mesmo cérebro do intel-bot do WhatsApp. Reutiliza `_build_system_prompt(mode='chat')`, `bot_conversations` (histórico unificado WA+web por phone=RENATO_PHONE), tools (query_intel, execute_action, etc). Mode 'chat' = persona de coach (sem emojis, sem ANOTADO!, sem tabela de DB como resposta, instrui tool-use pra topicos pessoais). Endpoint `POST /api/intel-chat`. UI estilo Claude — chat-empty + autoload + streaming-feel. Pensado pra conversas estratégicas (objetivos, reflexão) que precisam persistir.
 - **System memories** (`system_memories` table): memórias persistentes do coach NÃO atreladas a contato — decisões de vida, compromissos consigo, padrões observados, reflexões, sínteses diárias. Tools: `save_system_memory` (titulo, conteudo, tipo, tags) e `search_system_memories` (query). Memórias recentes + última síntese aparecem no `_build_snapshot_block` (system prompt) — bot SEMPRE entra na conversa lembrando.
 - **Síntese diária** (`/api/cron/daily-synthesis` @ 22h SP): cron noturno usa Claude pra ler `bot_conversations` das últimas 24h e gerar digest estruturado (temas, decisões, estados, compromissos, padrões, itens pra projeto/task, aberto pra próxima conversa). Salva em `system_memories` com tipo='sintese_diaria'. Próximo dia o bot entra com contexto completo do que foi conversado. Trigger manual: `POST /api/intel-chat/synthesize-now`. Migration `003_system_memories.sql`.
 - Ações Sugeridas (dedup, auto-resolve on reply) → `GET /api/action-proposals`
-- Quem Contatar Hoje → `GET /api/ai/at-risk`
-- Agenda de Hoje (exclui aniversários) → `GET /api/calendar/today`
-- Tarefas → `GET /api/tasks`
 - Projetos Ativos → `GET /api/projects/active-summary`
 - Alertas Veículos → `GET /api/veiculos/alertas`
 - Status API Claude (cache 1h) → `GET /api/ai/status`
+- **Removidos do dashboard (2026-05-02)**: widgets "Quem Contatar Hoje", "Agenda de Hoje" e "Tarefas" — duplicavam paginas dedicadas (`/contatos?filter=needs_attention`, `/calendario`, `/tarefas-pendentes`). "Quem Contatar Hoje" continua acessivel via drill do statcard Contatos (mesma UI compartilha CSS `.contact-today-*`).
 
 ## 2. Contatos (`/contatos`)
 - Lista com busca, filtro letra/contexto, filter=needs_attention

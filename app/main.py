@@ -18267,15 +18267,55 @@ async def api_news_feed(request: Request):
 
 _clipping_cache = {"data": None, "date": None}
 
+# Acoes que tiram a noticia da fila do dia (queue UX).
+# 'viewed' nao filtra — so contam decisoes explicitas do usuario.
+_CLIPPING_DEALT_ACTIONS = ('liked', 'disliked', 'shared', 'hot_take', 'dismissed', 'posted')
+
+
+def _filter_clipping_by_interactions(payload: dict, user_id: int = 1) -> dict:
+    """Remove items que o user ja interagiu hoje (queue UX)."""
+    items = payload.get("clipping") or []
+    news_ids = [it.get("news_id") for it in items if it.get("news_id")]
+    if not news_ids:
+        return payload
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT DISTINCT news_id FROM news_interactions
+            WHERE user_id = %s
+              AND DATE(created_at) = CURRENT_DATE
+              AND action = ANY(%s)
+            """,
+            (user_id, list(_CLIPPING_DEALT_ACTIONS)),
+        )
+        dealt = {row["news_id"] for row in cursor.fetchall()}
+
+    if not dealt:
+        out = dict(payload)
+        out["dealt_today"] = 0
+        out["original_total"] = len(items)
+        return out
+
+    filtered = [it for it in items if it.get("news_id") not in dealt]
+    out = dict(payload)
+    out["clipping"] = filtered
+    out["dealt_today"] = len(dealt)
+    out["original_total"] = len(items)
+    return out
+
+
 @app.get("/api/news/clipping")
 async def api_daily_clipping():
-    """Gera ou retorna clipping diario (cache in-memory)"""
+    """Gera ou retorna clipping diario (cache in-memory) e filtra ja-tratados de hoje."""
     from services.news_hub import generate_daily_clipping
 
     global _clipping_cache
     today = datetime.now().date()
+
     if _clipping_cache["data"] and _clipping_cache["date"] == today:
-        return _clipping_cache["data"]
+        return _filter_clipping_by_interactions(_clipping_cache["data"])
 
     # Verificar se ja tem clipping de hoje
     with get_db() as conn:
@@ -18302,19 +18342,22 @@ async def api_daily_clipping():
             "cached": True
         }
         _clipping_cache = {"data": result, "date": today}
-        return result
+        return _filter_clipping_by_interactions(result)
 
     # Gerar novo
     result = await generate_daily_clipping(limit=10)
     _clipping_cache = {"data": result, "date": today}
-    return result
+    return _filter_clipping_by_interactions(result)
 
 
 @app.post("/api/news/clipping/refresh")
 async def api_refresh_clipping():
-    """Forca geracao de novo clipping (mesmo se ja existe hoje)"""
+    """Forca geracao de novo clipping (uso admin/debug — UI nao chama mais)."""
     from services.news_hub import generate_daily_clipping
-    return await generate_daily_clipping(limit=10)
+    global _clipping_cache
+    result = await generate_daily_clipping(limit=10)
+    _clipping_cache = {"data": result, "date": datetime.now().date()}
+    return _filter_clipping_by_interactions(result)
 
 
 @app.post("/api/news/to-post")

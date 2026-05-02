@@ -129,6 +129,10 @@
             grid-template-columns: 1.2fr 1fr;
             gap: 16px;
         }
+        /* Asymmetric variant: Clipping (left) dominates, sidebar stack (right) */
+        .content-grid.content-grid-asym {
+            grid-template-columns: 2fr 1fr;
+        }
         .content-grid > div {
             min-width: 0;
             overflow: hidden;
@@ -597,6 +601,31 @@
             .stats-grid { grid-template-columns: 1fr 1fr; gap: 6px; }
             .page-header h1 { font-size: 1.2rem; }
         }
+
+        /* Clipping queue action buttons */
+        .clip-action {
+            border: 1px solid #e2e8f0;
+            background: #fff;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #334155;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .clip-action:hover { background: #f8fafc; transform: translateY(-1px); }
+        .clip-action:active { transform: translateY(0); }
+        .clip-action-like { border-color: #86efac; }
+        .clip-action-like:hover { background: #f0fdf4; border-color: #22c55e; }
+        .clip-action-dislike { border-color: #fecaca; }
+        .clip-action-dislike:hover { background: #fef2f2; border-color: #ef4444; }
+        .clip-action-share { border-color: #bae6fd; }
+        .clip-action-share:hover { background: #f0f9ff; border-color: #0ea5e9; }
+        .clip-action-post { border-color: #ddd6fe; color: #6d28d9; }
+        .clip-action-post:hover { background: #f5f3ff; border-color: #8b5cf6; }
+        .clip-action-skip { border-color: #e2e8f0; color: #64748b; }
+        .clip-action-skip:hover { background: #f8fafc; }
 
         /* Maintenance Alerts Widget */
         .maintenance-alerts-card {
@@ -2309,74 +2338,24 @@
             </div>
         </div>
 
-        <!-- Content Grid -->
-        <div class="content-grid">
-            <!-- Left Column -->
+        <!-- Content Grid (assimetrico: Clipping wide left, LinkedIn + Conteudo stack right) -->
+        <div class="content-grid content-grid-asym">
+            <!-- Left Column (wide) -->
             <div>
-                <!-- Quem Contatar Hoje (movido da coluna direita - widget mais acionável) -->
-                <div class="card contact-today-card mb-4">
-                    <div class="contact-today-header">
-                        <h2><i class="bi bi-person-check"></i> Quem Contatar Hoje</h2>
-                        <span class="contact-today-count" id="contactTodayCount">0</span>
-                    </div>
-                    <div class="contact-today-list" id="contactTodayList">
-                        <div class="text-center py-3">
-                            <div class="spinner-border spinner-border-sm text-primary"></div>
-                            <span class="ms-2 text-muted">Analisando prioridades...</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Clipping do Dia -->
+                <!-- Clipping do Dia (queue interativa - 1 por vez) -->
                 <div class="card mb-4" id="clippingCard" style="display:none;">
                     <div class="card-header" style="background: linear-gradient(135deg, #f59e0b, #d97706); color: white; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center;">
                         <h2 style="margin:0; font-size: 1rem;"><i class="bi bi-newspaper me-2"></i>Clipping do Dia</h2>
-                        <button class="btn btn-sm" style="background: rgba(255,255,255,0.2); color: white; border: none;" onclick="refreshClipping()">
-                            <i class="bi bi-arrow-clockwise"></i>
-                        </button>
+                        <span id="clippingProgress" style="font-size: 0.75rem; opacity: 0.95;"></span>
                     </div>
                     <div class="card-body p-0" id="clippingBody">
                         <div class="text-center py-3"><div class="spinner-border spinner-border-sm text-warning"></div></div>
                     </div>
                 </div>
-
             </div>
 
-            <!-- Right Column -->
+            <!-- Right Column (narrow) -->
             <div>
-                <!-- Agenda de Hoje -->
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h2 class="card-title"><i class="bi bi-calendar-event me-2"></i>Agenda de Hoje</h2>
-                        <a href="/calendario" class="btn btn-sm btn-outline-secondary">Ver tudo</a>
-                    </div>
-                    <div class="card-body" id="todayAgenda">
-                        <div class="loading">
-                            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-                            <span class="ms-2 text-muted">Carregando agenda...</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Tarefas -->
-                <div class="card mb-4">
-                    <div class="card-header">
-                        <h2 class="card-title"><i class="bi bi-check2-square me-2"></i>Tarefas</h2>
-                        <div class="d-flex gap-2">
-                            <button onclick="syncTasks()" class="btn btn-sm btn-outline-primary" title="Sincronizar com Google Tasks">
-                                <i class="bi bi-arrow-repeat" id="syncTasksIcon"></i>
-                            </button>
-                            <a href="/tarefas" class="btn btn-sm btn-outline-secondary">Ver todas</a>
-                        </div>
-                    </div>
-                    <div class="card-body" id="tasksList">
-                        <div class="loading">
-                            <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
-                            <span class="ms-2 text-muted">Carregando tarefas...</span>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- LinkedIn Hoje -->
                 <div class="card linkedin-tasks-card mb-4">
                     <div class="card-header">
@@ -2930,138 +2909,6 @@
         }
 
         // ============== Agenda Functions ==============
-        async function loadTodayAgenda() {
-            const container = document.getElementById('todayAgenda');
-            try {
-                // Usar dados do cache
-                await loadAllData();
-                const data = dataCache.calendar || [];
-                const events = Array.isArray(data) ? data : (data.events || []);
-
-                if (!events || events.length === 0) {
-                    container.innerHTML = `
-                        <div class="empty-state">
-                            <i class="bi bi-calendar-check"></i>
-                            <p>Nenhum compromisso para hoje</p>
-                        </div>
-                    `;
-                    return;
-                }
-
-                // Filtrar aniversarios (ja aparecem em "Quem Contatar Hoje")
-                const filteredEvents = events.filter(e => {
-                    const titulo = (e.title || e.summary || '').toLowerCase();
-                    return !(titulo.includes('aniversario') || titulo.includes('aniversário') || titulo.includes('birthday'));
-                });
-
-                if (filteredEvents.length === 0) {
-                    container.innerHTML = `
-                        <div class="empty-state">
-                            <i class="bi bi-calendar-check"></i>
-                            <p>Nenhum compromisso para hoje</p>
-                        </div>
-                    `;
-                    return;
-                }
-
-                let html = '';
-                filteredEvents.slice(0, 5).forEach(event => {
-                    const time = event.time || event.start_time || '';
-                    html += `
-                        <div class="agenda-item">
-                            <div class="agenda-time">${time}</div>
-                            <div class="agenda-content">
-                                <div class="agenda-title">${event.title || event.summary || 'Evento'}</div>
-                                <div class="agenda-meta">
-                                    ${event.location ? `<i class="bi bi-geo-alt"></i> ${event.location}` : ''}
-                                    ${event.contact_name ? `<i class="bi bi-person"></i> ${event.contact_name}` : ''}
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                });
-                container.innerHTML = html;
-            } catch (error) {
-                // Fallback - show empty state gracefully
-                container.innerHTML = `
-                    <div class="empty-state">
-                        <i class="bi bi-calendar-x"></i>
-                        <p>Nenhum compromisso para hoje</p>
-                    </div>
-                `;
-            }
-        }
-
-        // ============== Tasks Functions ==============
-        async function loadTasks() {
-            const container = document.getElementById('tasksList');
-            try {
-                // Tentar Google Tasks primeiro, fallback para tarefas locais
-                let tasks = [];
-                try {
-                    const response = await fetch('/api/tasks?limit=10&status=pending');
-                    if (response.ok) {
-                        const data = await response.json();
-                        tasks = data.tasks || data || [];
-                    }
-                } catch(e) {}
-
-                // Fallback: buscar tarefas de projetos (banco local)
-                if (tasks.length === 0) {
-                    try {
-                        const resp2 = await fetch('/api/projects/all-tasks?status=pending&limit=10');
-                        if (resp2.ok) {
-                            const data2 = await resp2.json();
-                            tasks = data2.tasks || data2 || [];
-                        }
-                    } catch(e) {}
-                }
-
-                if (!tasks || tasks.length === 0) {
-                    container.innerHTML = `
-                        <div class="empty-state">
-                            <i class="bi bi-check-circle"></i>
-                            <p>Nenhuma tarefa pendente</p>
-                        </div>
-                    `;
-                    return;
-                }
-
-                let html = '';
-                tasks.slice(0, 10).forEach(task => {
-                    const isCompleted = task.status === 'completed' || task.completed;
-                    const title = task.titulo || task.title || task.description || 'Tarefa';
-                    const dueDate = task.data_vencimento || task.due_date || task.due;
-                    const isRaci = task.origem === 'conselhoos_raci' || task.conselhoos_raci_id != null;
-                    const raciBadge = isRaci ? '<span style="display:inline-block;background:#6366f1;color:#fff;font-size:0.6rem;font-weight:700;letter-spacing:0.5px;padding:1px 5px;border-radius:4px;margin-left:5px;vertical-align:middle;" title="Item RACI monitorado via grupo WhatsApp">RACI</span>' : '';
-                    html += `
-                        <div class="task-item ${isCompleted ? 'completed' : ''}" data-task-id="${task.id}" onclick="showTaskDetail(${task.id})">
-                            <div class="task-checkbox ${isCompleted ? 'completed' : ''}" onclick="event.stopPropagation(); toggleTask(${task.id}, ${!isCompleted})">
-                                ${isCompleted ? '<i class="bi bi-check"></i>' : ''}
-                            </div>
-                            <div class="task-content">
-                                <div class="task-title" title="${title}">${title}${raciBadge}</div>
-                                <div class="task-meta">
-                                    ${dueDate ? `<i class="bi bi-clock me-1"></i>${formatDate(dueDate)}` : ''}
-                                    ${task.contact_name ? ` · <i class="bi bi-person"></i> ${task.contact_name}` : ''}
-                                    ${task.project_name ? ` · <i class="bi bi-folder"></i> ${task.project_name}` : ''}
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                });
-                container.innerHTML = html;
-            } catch (error) {
-                // Fallback - show empty state gracefully
-                container.innerHTML = `
-                    <div class="empty-state">
-                        <i class="bi bi-list-check"></i>
-                        <p>Nenhuma tarefa pendente</p>
-                    </div>
-                `;
-            }
-        }
-
         function linkify(text) {
             if (!text) return '';
             return text.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="color:#6366f1;text-decoration:underline;word-break:break-all">$1</a>');
@@ -3126,8 +2973,6 @@
                 if (completed) {
                     await checkFollowUpSuggestion(taskId);
                 }
-
-                loadTasks(); // Reload
             } catch (error) {
                 console.error('Error toggling task:', error);
             }
@@ -3207,7 +3052,6 @@
 
                 if (response.ok) {
                     closeTaskModal();
-                    loadTasks();
                     // Show success toast
                     showToast('Follow-up criado com sucesso!', 'success');
                 } else {
@@ -3229,39 +3073,6 @@
                 toast.classList.remove('show');
                 setTimeout(() => toast.remove(), 300);
             }, 3000);
-        }
-
-        async function syncTasks() {
-            const icon = document.getElementById('syncTasksIcon');
-            const container = document.getElementById('tasksList');
-
-            // Animate icon
-            icon.classList.add('spin');
-
-            try {
-                const response = await fetch('/api/tasks/sync', { method: 'POST' });
-                const result = await response.json();
-
-                if (result.error) {
-                    console.error('Sync error:', result.error);
-                    alert('Erro ao sincronizar: ' + result.error);
-                } else {
-                    console.log('Sync result:', result);
-                    // Show success notification
-                    const pushed = result.push?.pushed || 0;
-                    const pulled = (result.pull?.created || 0) + (result.pull?.updated || 0);
-                    if (pushed > 0 || pulled > 0) {
-                        alert(`Sincronizado! Enviadas: ${pushed}, Recebidas: ${pulled}`);
-                    }
-                    // Reload tasks
-                    loadTasks();
-                }
-            } catch (error) {
-                console.error('Error syncing tasks:', error);
-                alert('Erro ao sincronizar tarefas');
-            } finally {
-                icon.classList.remove('spin');
-            }
         }
 
         function formatDate(dateStr) {
@@ -3379,151 +3190,205 @@
         }
 
         // ============== Clipping do Dia ==============
+        // ============== Clipping do Dia: queue interativa (1 por vez) ==============
+        // Estado in-memory; recarrega no proximo /api/news/clipping (cron diario repopula).
+        const clippingState = { items: [], summary: '', dealtToday: 0, originalTotal: 0 };
+
         async function loadClipping() {
             const card = document.getElementById('clippingCard');
-            const body = document.getElementById('clippingBody');
             try {
                 const resp = await fetch('/api/news/clipping');
                 if (!resp.ok) return;
                 const data = await resp.json();
 
-                const items = data.clipping || [];
-                if (items.length === 0) return;
+                clippingState.items = data.clipping || [];
+                clippingState.summary = data.resumo_dia || '';
+                clippingState.dealtToday = data.dealt_today || 0;
+                clippingState.originalTotal = data.original_total || (clippingState.items.length + clippingState.dealtToday);
 
-                card.style.display = 'block';
-
-                let html = '';
-                if (data.resumo_dia) {
-                    html += `<div style="padding: 10px 14px; background: #fffbeb; font-size: 0.8rem; color: #92400e; border-bottom: 1px solid #fde68a;">
-                        <i class="bi bi-lightbulb me-1"></i>${data.resumo_dia}
-                    </div>`;
+                // Mostrar card mesmo se vazio (empty state e' parte da UX)
+                if (clippingState.originalTotal > 0) {
+                    card.style.display = 'block';
                 }
-
-                html += '<div style="max-height: 400px; overflow-y: auto;">';
-                items.forEach(item => {
-                    const relevClass = item.relevancia === 'alta' ? 'border-start border-3 border-warning' : '';
-                    html += `
-                        <div class="d-flex align-items-start gap-2 px-3 py-2 ${relevClass}" id="clipping-item-${item.news_id || i}" style="border-bottom: 1px solid #f1f5f9; font-size: 0.82rem; transition: opacity 0.3s;">
-                            <div style="flex:1; min-width: 0;">
-                                <a href="${item.link || '#'}" target="_blank" style="font-weight: 600; color: var(--text-primary); text-decoration: none; display: block;">
-                                    ${item.titulo_resumido || item.title || '?'}
-                                </a>
-                                <div style="color: var(--text-secondary); font-size: 0.75rem; margin-top: 2px;">
-                                    ${item.resumo || ''}
-                                </div>
-                                ${item.sugestao_post ? `<div style="font-size: 0.7rem; color: #8b5cf6; margin-top: 3px;"><i class="bi bi-lightning me-1"></i>${item.sugestao_post}</div>` : ''}
-                            </div>
-                            <div class="d-flex flex-column gap-1 flex-shrink-0" id="news-actions-${item.news_id || 0}">
-                                ${item.news_id ? `
-                                <div class="d-flex gap-1">
-                                    <button class="btn btn-sm p-0" onclick="feedbackNews(this, ${item.news_id}, 'liked')" title="Relevante">👍</button>
-                                    <button class="btn btn-sm p-0" onclick="feedbackNews(this, ${item.news_id}, 'disliked')" title="Irrelevante">👎</button>
-                                    <button class="btn btn-sm p-0" onclick="newsToPost(${item.news_id}, '${(item.titulo_resumido || '').replace(/'/g, "\\'")}', '${(item.sugestao_post || '').replace(/'/g, "\\'")}')" title="Criar post LinkedIn" style="font-size: 0.75rem;">📝</button>
-                                    <button class="btn btn-sm p-0" onclick="dismissClippingItem(${item.news_id || i})" title="Marcar como lido" style="font-size: 0.75rem;">✓</button>
-                                    <button class="btn btn-sm p-0" onclick="suggestShareNews('${(item.titulo_resumido || '').replace(/'/g, "\\'")}', '${(item.link || '').replace(/'/g, "\\'")}', '${(item.categoria || '').replace(/'/g, "\\'")}')" title="Enviar para contato" style="font-size: 0.75rem;">📤</button>
-                                </div>
-                                ` : ''}
-                            </div>
-                        </div>`;
-                });
-                html += '</div>';
-
-                if (data.total_collected) {
-                    html += `<div style="padding: 6px 14px; font-size: 0.7rem; color: var(--text-secondary); text-align: center;">
-                        ${data.total_sources || ''} fontes · ${data.total_collected} noticias analisadas
-                    </div>`;
-                }
-
-                body.innerHTML = html;
+                renderClipping();
             } catch (e) {
                 console.log('Clipping not available:', e);
             }
         }
 
-        async function refreshClipping() {
+        function renderClipping() {
             const body = document.getElementById('clippingBody');
-            body.innerHTML = '<div class="text-center py-3"><div class="spinner-border spinner-border-sm text-warning"></div> Atualizando...</div>';
-            try {
-                const resp = await fetch('/api/news/clipping/refresh', { method: 'POST' });
-                const data = await resp.json();
-                loadClipping();
-            } catch (e) {
-                body.innerHTML = '<div class="text-center py-2 text-danger">Erro ao atualizar</div>';
+            const progress = document.getElementById('clippingProgress');
+            const item = clippingState.items[0]; // sempre mostra o primeiro nao-tratado
+
+            if (!item) {
+                progress.textContent = clippingState.originalTotal > 0
+                    ? `${clippingState.dealtToday}/${clippingState.originalTotal}` : '';
+                body.innerHTML = `
+                    <div style="padding: 40px 20px; text-align: center;">
+                        <div style="font-size: 2.4rem; margin-bottom: 8px;">🌅</div>
+                        <div style="font-weight: 600; color: var(--text-primary); font-size: 0.95rem;">Tudo lido por hoje</div>
+                        <div style="color: var(--text-secondary); font-size: 0.8rem; margin-top: 4px;">
+                            ${clippingState.originalTotal > 0
+                                ? `${clippingState.dealtToday} noticia${clippingState.dealtToday !== 1 ? 's' : ''} processada${clippingState.dealtToday !== 1 ? 's' : ''} · novo clipping amanha`
+                                : 'Nenhuma noticia coletada hoje'}
+                        </div>
+                    </div>
+                `;
+                return;
             }
+
+            const total = clippingState.originalTotal;
+            const done = clippingState.dealtToday;
+            const remaining = clippingState.items.length;
+            const current = total - remaining + 1;
+            progress.textContent = `${current}/${total}`;
+
+            const escAttr = (s) => (s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            const escapeText = (s) => (s || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+            const headerStrip = clippingState.summary
+                ? `<div style="padding: 10px 16px; background: #fffbeb; font-size: 0.78rem; color: #92400e; border-bottom: 1px solid #fde68a;">
+                       <i class="bi bi-lightbulb me-1"></i>${escapeText(clippingState.summary)}
+                   </div>`
+                : '';
+
+            const relevBadge = item.relevancia === 'alta'
+                ? '<span style="display:inline-block;background:#fef3c7;color:#92400e;font-size:0.65rem;font-weight:700;letter-spacing:0.5px;padding:2px 6px;border-radius:4px;">ALTA</span>'
+                : '';
+            const meta = [item.fonte, item.categoria].filter(Boolean).join(' · ');
+
+            const sugestao = item.sugestao_post ? `
+                <div style="background: #f5f3ff; border-left: 3px solid #8b5cf6; padding: 10px 12px; border-radius: 6px; margin-top: 12px; font-size: 0.82rem; color: #5b21b6;">
+                    <div style="font-weight: 600; font-size: 0.7rem; color: #8b5cf6; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">
+                        <i class="bi bi-lightning-fill me-1"></i>Sugestao de post
+                    </div>
+                    ${escapeText(item.sugestao_post)}
+                </div>` : '';
+
+            const linkBtn = item.link ? `
+                <a href="${escAttr(item.link)}" target="_blank" rel="noopener"
+                   style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:6px;background:#f1f5f9;color:#334155;text-decoration:none;font-size:0.78rem;font-weight:500;">
+                    <i class="bi bi-box-arrow-up-right"></i>Abrir
+                </a>` : '';
+
+            const titulo = escapeText(item.titulo_resumido || item.title || 'Sem titulo');
+            const resumo = escapeText(item.resumo || '');
+
+            body.innerHTML = `
+                ${headerStrip}
+                <div style="padding: 16px 18px;">
+                    <div style="display:flex;align-items:center;gap:8px;font-size:0.7rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">
+                        ${relevBadge}<span>${escapeText(meta)}</span>
+                    </div>
+                    <h3 style="font-size:1.05rem;font-weight:700;color:var(--text-primary);line-height:1.35;margin:0 0 8px 0;">${titulo}</h3>
+                    <div style="color:var(--text-secondary);font-size:0.85rem;line-height:1.5;">${resumo}</div>
+                    ${sugestao}
+
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;align-items:center;">
+                        ${linkBtn}
+                        <div style="flex:1;"></div>
+                        <button class="clip-action clip-action-dislike" title="Nao relevante (👎)"
+                                onclick="clippingAction('disliked')">👎</button>
+                        <button class="clip-action clip-action-skip" title="Pular (sem feedback)"
+                                onclick="clippingAction('dismissed')">⏭ Pular</button>
+                        <button class="clip-action clip-action-share" title="Encaminhar pra contato"
+                                onclick="clippingShare()">📤 Encaminhar</button>
+                        <button class="clip-action clip-action-post" title="Criar post LinkedIn"
+                                onclick="clippingMakePost()">📝 Post</button>
+                        <button class="clip-action clip-action-like" title="Relevante (👍)"
+                                onclick="clippingAction('liked')">👍</button>
+                    </div>
+                </div>
+                ${total > 0 ? `<div style="border-top: 1px solid #f1f5f9; padding: 6px 14px; font-size: 0.7rem; color: var(--text-secondary); text-align: center;">
+                    ${done} processada${done !== 1 ? 's' : ''} · ${remaining} restante${remaining !== 1 ? 's' : ''}
+                </div>` : ''}
+            `;
         }
 
-        function dismissClippingItem(id) {
-            const el = document.getElementById('clipping-item-' + id);
-            if (el) {
-                el.style.opacity = '0.2';
-                el.style.maxHeight = '0';
-                el.style.overflow = 'hidden';
-                el.style.padding = '0';
-                el.style.margin = '0';
-                setTimeout(() => el.remove(), 300);
+        async function clippingAction(feedback) {
+            const item = clippingState.items[0];
+            if (!item || !item.news_id) {
+                clippingAdvance();
+                return;
             }
-        }
-
-        async function feedbackNews(btn, newsId, feedback) {
             try {
-                await fetch(`/api/news/${newsId}/feedback`, {
+                await fetch(`/api/news/${item.news_id}/feedback`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ feedback })
                 });
-                // Visual feedback só no botão clicado
-                btn.style.opacity = '1';
-                if (feedback === 'liked') {
-                    btn.textContent = '✅';
-                    btn.disabled = true;
-                    // Desabilitar o dislike mas manter o criar post
-                    btn.nextElementSibling?.remove(); // remove 👎
-                } else {
-                    btn.textContent = '❌';
-                    btn.disabled = true;
-                    btn.previousElementSibling?.remove(); // remove 👍
-                }
-            } catch (e) {}
+            } catch (e) {
+                console.warn('Feedback POST falhou', e);
+            }
+            clippingAdvance();
         }
 
-        async function newsToPost(newsId, titulo, sugestao) {
-            // Prevenir clique duplo
-            const container = document.getElementById('news-actions-' + newsId);
-            if (container && container.dataset.creating) return;
-            if (container) container.dataset.creating = 'true';
+        function clippingAdvance() {
+            clippingState.items.shift();
+            clippingState.dealtToday += 1;
+            renderClipping();
+        }
 
+        async function clippingMakePost() {
+            const item = clippingState.items[0];
+            if (!item || !item.news_id) return;
+            const newsId = item.news_id;
+            const titulo = item.titulo_resumido || item.title || '';
+            const sugestao = item.sugestao_post || '';
             try {
-                // Registrar como hot_take no feedback
                 await fetch(`/api/news/${newsId}/feedback`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ feedback: 'hot_take' })
                 });
-
-                // Criar post via endpoint que gera texto + cruza com artigos
                 const resp = await fetch('/api/news/to-post', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        news_id: newsId,
-                        titulo: titulo,
-                        sugestao: sugestao
-                    })
+                    body: JSON.stringify({ news_id: newsId, titulo, sugestao })
                 });
                 const data = await resp.json();
-
                 if (resp.ok) {
                     const postId = data.post?.id;
-                    showToast('Post criado! Clique para editar', 'success');
-                    const container = document.getElementById('news-actions-' + newsId);
-                    if (container) {
-                        container.innerHTML = `<a href="/editorial${postId ? '?edit=' + postId : ''}" style="font-size:0.7rem; color:#8b5cf6;">📝 Editar post</a>`;
+                    showToast(`Post criado${postId ? ' — abrindo editor' : ''}`, 'success');
+                    if (postId) {
+                        window.open(`/editorial?edit=${postId}`, '_blank');
                     }
                 } else {
                     showToast('Erro ao criar post', 'danger');
                 }
             } catch (e) {
                 showToast('Erro ao criar post', 'danger');
+            }
+            clippingAdvance();
+        }
+
+        function clippingShare() {
+            const item = clippingState.items[0];
+            if (!item) return;
+            // Reusa o modal de share existente; advance acontece quando user
+            // realmente envia (sendShareNews registra 'shared' via _onShareSent).
+            clippingShareCurrentNewsId = item.news_id || null;
+            suggestShareNews(
+                item.titulo_resumido || item.title || '',
+                item.link || '',
+                item.categoria || ''
+            );
+        }
+
+        // Hook chamado por sendShareNews quando o envio termina
+        let clippingShareCurrentNewsId = null;
+        async function _onClippingShareSent() {
+            if (clippingShareCurrentNewsId) {
+                try {
+                    await fetch(`/api/news/${clippingShareCurrentNewsId}/feedback`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ feedback: 'shared' })
+                    });
+                } catch (e) {}
+                clippingShareCurrentNewsId = null;
+                clippingAdvance();
             }
         }
 
@@ -3613,6 +3478,7 @@
             if (!shareNewsData.contactId || !msg) return;
 
             const channel = shareNewsData.phone ? 'whatsapp' : 'email';
+            let sent = false;
 
             try {
                 if (channel === 'whatsapp' && shareNewsData.phone) {
@@ -3623,6 +3489,7 @@
                     });
                     if (resp.ok) {
                         showToast(`Enviado para ${shareNewsData.contactName} via WhatsApp!`, 'success');
+                        sent = true;
                         closeShareNewsModal();
                     } else {
                         showToast('Erro ao enviar WhatsApp', 'danger');
@@ -3631,12 +3498,19 @@
                     // Copiar para clipboard como fallback
                     navigator.clipboard.writeText(msg);
                     showToast('Mensagem copiada! Cole no email/WhatsApp', 'info');
+                    sent = true;
                     closeShareNewsModal();
                 }
             } catch (e) {
                 navigator.clipboard.writeText(msg);
                 showToast('Mensagem copiada!', 'info');
+                sent = true;
                 closeShareNewsModal();
+            }
+
+            // Se veio do clipping queue, registra 'shared' e avanca
+            if (sent && typeof _onClippingShareSent === 'function') {
+                _onClippingShareSent();
             }
         }
 
@@ -4594,174 +4468,6 @@
             }
         }
 
-        // ============== Quem Contatar Hoje ==============
-        async function loadContactToday() {
-            const container = document.getElementById('contactTodayList');
-            const countBadge = document.getElementById('contactTodayCount');
-
-            try {
-                // Usar nova API de sugestoes com rodas
-                const response = await fetch('/api/v1/contact-suggestions?limit=6');
-                if (!response.ok) throw new Error('Failed to fetch suggestions');
-
-                const data = await response.json();
-                const suggestions = data.suggestions || [];
-
-                countBadge.textContent = suggestions.length;
-
-                if (suggestions.length === 0) {
-                    container.innerHTML = `
-                        <div class="contact-today-empty">
-                            <i class="bi bi-check-circle"></i>
-                            <p class="mb-0">Parabens! Voce esta em dia com todos os contatos.</p>
-                        </div>
-                    `;
-                    return;
-                }
-
-                container.innerHTML = suggestions.map(s => {
-                    const c = s.contact;
-                    const roda = s.roda;
-                    const initials = (c.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
-                    const circuloBadge = c.circulo ? `<span class="circulo-mini c${c.circulo}">C${c.circulo}</span>` : '';
-
-                    // Determinar tipo visual baseado no reason
-                    let visualType = 'attention';
-                    let reasonIcon = 'bi-arrow-right-circle';
-
-                    if (s.reason === 'birthday') {
-                        visualType = 'birthday';
-                        reasonIcon = 'bi-cake2';
-                    } else if (s.reason === 'roda_promessa') {
-                        visualType = 'promessa';
-                        reasonIcon = 'bi-hand-index';
-                    } else if (s.reason === 'roda_favor_recebido') {
-                        visualType = 'favor_recebido';
-                        reasonIcon = 'bi-gift';
-                    } else if (s.reason === 'roda_proximo_passo') {
-                        visualType = 'proximo_passo';
-                        reasonIcon = 'bi-calendar-check';
-                    } else if (s.reason === 'roda_topico') {
-                        visualType = 'topico';
-                        reasonIcon = 'bi-chat-dots';
-                    } else if (s.reason === 'low_health') {
-                        visualType = 'low_health';
-                        reasonIcon = 'bi-heart-pulse';
-                    }
-
-                    // Labels por tipo
-                    const typeLabels = {
-                        'birthday': 'Aniversario',
-                        'promessa': 'Promessa',
-                        'favor_recebido': 'Retribuir',
-                        'proximo_passo': 'Agendado',
-                        'topico': 'Retomar',
-                        'low_health': 'Atencao',
-                        'attention': 'Atencao'
-                    };
-
-                    // Mostrar conteudo da roda se existir (only when reason_label is generic)
-                    const rodaContent = (roda && s.reason_label.length < 30) ? `
-                        <div class="contact-today-roda">
-                            ${roda.conteudo}
-                        </div>
-                    ` : '';
-
-                    // Mostrar context facts (conversation starters)
-                    const facts = s.context_facts || [];
-                    const factsSection = facts.length > 0 ? `
-                        <div class="contact-today-facts">
-                            ${facts.slice(0, 2).map(f => `<span class="fact-chip"><i class="bi bi-chat-quote"></i> ${f.fato.length > 60 ? f.fato.substring(0, 60) + '...' : f.fato}</span>`).join('')}
-                        </div>
-                    ` : '';
-
-                    // Mostrar sugestao de conteudo se existir (compacto)
-                    const content = s.content_suggestion;
-                    const contentSection = content ? `
-                        <div class="contact-today-content" onclick="event.preventDefault(); event.stopPropagation(); copyContentLink('${content.url}')" title="Clique para copiar link">
-                            <div class="contact-today-content-label">
-                                <i class="bi bi-lightbulb"></i> Artigo
-                            </div>
-                            <div class="contact-today-content-title">${content.title}</div>
-                        </div>
-                    ` : '';
-
-                    // Mostrar business match se existir (até 2 talking points)
-                    const biz = s.business_match;
-                    const businessSection = biz ? `
-                        <div class="contact-today-business">
-                            <div class="contact-today-business-label">
-                                <i class="bi bi-briefcase"></i> <strong>${biz.negocio.nome}</strong>
-                            </div>
-                            <div class="contact-today-business-points">
-                                ${biz.talking_points.slice(0, 2).map(tp => `<div class="business-point">• ${tp}</div>`).join('')}
-                            </div>
-                        </div>
-                    ` : '';
-
-                    // Botoes de acao
-                    const whatsappBtn = c.id ? `
-                        <button class="btn btn-whatsapp" onclick="event.preventDefault(); event.stopPropagation(); openWhatsApp(${c.id})" title="Enviar WhatsApp">
-                            <i class="bi bi-whatsapp"></i>
-                        </button>
-                    ` : '';
-
-                    // Botao "Ja contatei" - sempre disponivel
-                    const contactedBtn = c.id ? `
-                        <button class="btn btn-contacted" onclick="event.preventDefault(); event.stopPropagation(); markAsContacted(${c.id}, ${roda ? roda.id : 'null'}, this)" title="Já contatei">
-                            <i class="bi bi-person-check"></i>
-                        </button>
-                    ` : '';
-
-                    const doneBtn = roda ? `
-                        <button class="btn btn-done" onclick="event.preventDefault(); event.stopPropagation(); markRodaDone(${roda.id}, this)" title="Marcar roda como feita">
-                            <i class="bi bi-check-lg"></i>
-                        </button>
-                    ` : '';
-
-                    return `
-                        <a href="/contatos/${c.id}" class="contact-today-item">
-                            <div class="contact-today-avatar ${visualType}">${initials}</div>
-                            <div class="contact-today-info">
-                                <div class="contact-today-header">
-                                    <div class="contact-today-name">
-                                        ${circuloBadge} ${c.nome}
-                                    </div>
-                                    <div class="contact-today-header-right">
-                                        <div class="contact-today-actions">
-                                            ${whatsappBtn}
-                                            ${contactedBtn}
-                                            ${doneBtn}
-                                        </div>
-                                        <span class="contact-today-badge ${visualType}">
-                                            ${typeLabels[visualType] || 'Atencao'}
-                                        </span>
-                                    </div>
-                                </div>
-                                <div class="contact-today-reason">
-                                    <i class="bi ${reasonIcon}"></i>
-                                    ${s.reason_label}
-                                </div>
-                                ${rodaContent}
-                                ${factsSection}
-                                ${businessSection}
-                                ${contentSection}
-                            </div>
-                        </a>
-                    `;
-                }).join('');
-
-            } catch (error) {
-                console.error('Error loading contact today:', error);
-                container.innerHTML = `
-                    <div class="contact-today-empty">
-                        <i class="bi bi-info-circle"></i>
-                        <p class="mb-0">Nao foi possivel carregar as prioridades</p>
-                    </div>
-                `;
-            }
-        }
-
         // Abrir WhatsApp para contato
         async function openWhatsApp(contactId) {
             try {
@@ -4833,32 +4539,7 @@
             }
         }
 
-        // Marcar roda como feita
-        async function markRodaDone(rodaId, btn) {
-            try {
-                btn.disabled = true;
-                btn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
-
-                const response = await fetch(`/api/v1/rodas/${rodaId}/complete`, { method: 'POST' });
-                if (response.ok) {
-                    btn.innerHTML = '<i class="bi bi-check-circle-fill"></i>';
-                    btn.classList.add('btn-success');
-                    btn.classList.remove('btn-done');
-
-                    // Recarregar lista apos 1s
-                    setTimeout(() => loadContactToday(), 1000);
-                } else {
-                    btn.innerHTML = '<i class="bi bi-x-lg"></i>';
-                    btn.disabled = false;
-                }
-            } catch (e) {
-                console.error('Error marking roda done:', e);
-                btn.innerHTML = '<i class="bi bi-x-lg"></i>';
-                btn.disabled = false;
-            }
-        }
-
-        // Marcar contato como "ja contatei" (manual)
+        // Marcar contato como "ja contatei" (usado pelo drill de Contatos)
         async function markAsContacted(contactId, rodaId, btn) {
             try {
                 btn.disabled = true;
@@ -4876,9 +4557,6 @@
                     btn.innerHTML = '<i class="bi bi-check-circle-fill"></i>';
                     btn.classList.add('btn-success');
                     btn.classList.remove('btn-contacted');
-
-                    // Recarregar lista apos 1s
-                    setTimeout(() => loadContactToday(), 1000);
                 } else {
                     btn.innerHTML = '<i class="bi bi-x-lg"></i>';
                     btn.disabled = false;
@@ -5030,8 +4708,6 @@
 
         loadAllData().then(() => {
             loadDashboardData();
-            loadContactToday();
-            loadTodayAgenda();
             loadLinkedInTasks();
             loadEditorialMetrics();
         });
@@ -5039,7 +4715,6 @@
         // Load secondary features after short delay (lower priority)
         setTimeout(() => {
             loadMaintenanceAlerts();
-            loadTasks();
             checkAIStatus();
             loadClipping();
             loadCronHealth();
@@ -5514,7 +5189,7 @@
             return null;
         }
 
-        // Render contact suggestion (espelha loadContactToday's per-item render)
+        // Render contact suggestion para o drill (reusa CSS .contact-today-*)
         function drillRenderContactSuggestion(s) {
             const c = s.contact;
             const roda = s.roda;
