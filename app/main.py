@@ -3481,6 +3481,36 @@ class BulkImportData(BaseModel):
 class BulkNameUpdate(BaseModel):
     updates: List[dict]  # [{email: str, nome: str, empresa: str}]
 
+@app.get("/api/admin/cron-status")
+async def cron_status(user: dict = Depends(require_admin)):
+    """Retorna evidencias indiretas de execucao recente dos crons —
+    util pra diagnosticar se o Vercel scheduler esta rodando."""
+    out = {"now_utc": datetime.utcnow().isoformat()}
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # health-recalc: atualizado_em em contacts com circulo<=4
+        cursor.execute("""
+            SELECT MAX(atualizado_em) AS last, COUNT(*) FILTER (WHERE atualizado_em > NOW() - INTERVAL '6 hours') AS recent
+            FROM contacts WHERE COALESCE(circulo, 5) <= 4
+        """)
+        r = cursor.fetchone()
+        out["health_recalc"] = {"last_update": r["last"].isoformat() if r["last"] else None,
+                                 "updated_last_6h": r["recent"]}
+        # daily-sync: project notes ou interactions criadas pelo sync
+        cursor.execute("SELECT MAX(criado_em) AS last FROM audit_log WHERE action ILIKE 'cron:%' OR action ILIKE '%sync%'")
+        r = cursor.fetchone()
+        out["last_audit_log_cron"] = r["last"].isoformat() if r and r["last"] else None
+        # health_predictions table (created by health prediction cron)
+        cursor.execute("SELECT MAX(data_previsao) AS last FROM health_predictions")
+        r = cursor.fetchone()
+        out["health_predictions_last"] = r["last"].isoformat() if r and r["last"] else None
+        # weekly editorial briefing — editorial_metrics_history
+        cursor.execute("SELECT MAX(coletado_em) AS last FROM editorial_metrics_history")
+        r = cursor.fetchone()
+        out["editorial_metrics_last"] = r["last"].isoformat() if r and r["last"] else None
+    return out
+
+
 @app.get("/api/admin/linkdapi-debug")
 async def linkdapi_debug(user: dict = Depends(require_admin)):
     """Faz uma chamada direta na LinkdAPI pra debugar status/erros sem
