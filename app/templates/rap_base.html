@@ -239,26 +239,29 @@
             body.sidebar-collapsed .nav-item {
                 justify-content: center;
                 padding: 12px 0;
-                position: relative;
             }
             body.sidebar-collapsed .nav-item i { margin: 0; }
-            /* Tooltip on hover when collapsed */
-            body.sidebar-collapsed .nav-item:hover::after {
-                content: attr(data-label);
-                position: absolute;
-                left: calc(100% + 6px);
-                top: 50%;
-                transform: translateY(-50%);
-                background: var(--dark);
-                color: #fff;
-                padding: 5px 10px;
-                border-radius: 6px;
-                white-space: nowrap;
-                z-index: 200;
-                font-size: 0.78rem;
-                pointer-events: none;
-                box-shadow: 0 4px 10px rgba(0,0,0,0.25);
-            }
+            /* Esconde icone secundario do ConselhoOS (external link) */
+            body.sidebar-collapsed .nav-item i.bi-box-arrow-up-right { display: none; }
+        }
+        /* Tooltip flutuante (usado no modo colapsado, via JS) */
+        #sidebarTooltip {
+            position: fixed;
+            background: var(--dark, #0f172a);
+            color: #fff;
+            padding: 5px 10px;
+            border-radius: 6px;
+            font-size: 0.78rem;
+            z-index: 9999;
+            pointer-events: none;
+            transform: translateY(-50%);
+            opacity: 0;
+            transition: opacity 0.1s;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+            white-space: nowrap;
+        }
+        #sidebarTooltip.show { opacity: 1; }
+        @media (min-width: 769px) {
             /* Substitui nav-section por divisor sutil */
             body.sidebar-collapsed .nav-section {
                 display: block;
@@ -983,10 +986,33 @@
             const icon = document.getElementById('sidebarCollapseIcon');
             if (icon) icon.className = next ? 'bi bi-chevron-right' : 'bi bi-chevron-left';
         }
-        // Tooltip data-label: copia o texto do span pra atributo do nav-item
+        // Tooltip flutuante (modo colapsado): cria 1 div fixo, posiciona no hover
+        let __sidebarTooltipEl = null;
+        function __getSidebarTooltip() {
+            if (!__sidebarTooltipEl) {
+                __sidebarTooltipEl = document.createElement('div');
+                __sidebarTooltipEl.id = 'sidebarTooltip';
+                document.body.appendChild(__sidebarTooltipEl);
+            }
+            return __sidebarTooltipEl;
+        }
         document.querySelectorAll('.sidebar .nav-item').forEach(item => {
             const span = item.querySelector('span');
-            if (span) item.setAttribute('data-label', span.textContent.trim());
+            const label = span ? span.textContent.trim() : '';
+            if (!label) return;
+            item.setAttribute('data-label', label);
+            item.addEventListener('mouseenter', () => {
+                if (!document.body.classList.contains('sidebar-collapsed')) return;
+                const tip = __getSidebarTooltip();
+                const rect = item.getBoundingClientRect();
+                tip.textContent = label;
+                tip.style.top = (rect.top + rect.height / 2) + 'px';
+                tip.style.left = (rect.right + 8) + 'px';
+                tip.classList.add('show');
+            });
+            item.addEventListener('mouseleave', () => {
+                if (__sidebarTooltipEl) __sidebarTooltipEl.classList.remove('show');
+            });
         });
         applySidebarCollapsedFromStorage();
 
