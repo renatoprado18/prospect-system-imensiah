@@ -1959,6 +1959,43 @@
             padding: 40px 16px;
             color: var(--text-secondary, #64748b);
         }
+        /* Quick actions inline (Fase 2) */
+        .drill-item-actions {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        .drill-action-btn {
+            background: #fff;
+            border: 1px solid var(--border-color, #e2e8f0);
+            color: #475569;
+            width: 30px; height: 30px;
+            border-radius: 6px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 0.85rem;
+            text-decoration: none;
+            transition: all 0.15s;
+        }
+        .drill-action-btn:hover {
+            background: var(--drill-color, #6366f1);
+            color: #fff;
+            border-color: var(--drill-color, #6366f1);
+            transform: scale(1.05);
+        }
+        .drill-action-btn.done {
+            background: #22c55e;
+            color: #fff;
+            border-color: #22c55e;
+        }
+        .drill-item.completing {
+            opacity: 0.4;
+            pointer-events: none;
+            transition: opacity 0.4s;
+        }
         @media (max-width: 768px) {
             #workbench { display: none !important; }
             .stat-card.drill-active::after { display: none; }
@@ -4813,12 +4850,18 @@
                         : 'dia todo';
                     const title = e.summary || e.title || '(sem título)';
                     const contact = e.contact_name || '';
+                    const actions = e.contact_id
+                        ? `<div class="drill-item-actions" onclick="event.stopPropagation()">
+                             <a href="/contatos/${e.contact_id}" class="drill-action-btn" title="Briefing do contato"><i class="bi bi-file-text"></i></a>
+                           </div>`
+                        : '';
                     return `<div class="drill-item" onclick="window.location.href='/calendario'">
                         <div class="drill-item-time">${escapeHtml(time)}</div>
                         <div class="drill-item-content">
                             <div class="drill-item-title">${escapeHtml(title)}</div>
                             ${contact ? `<div class="drill-item-meta">${escapeHtml(contact)}</div>` : ''}
                         </div>
+                        ${actions}
                     </div>`;
                 },
                 fullPage: '/calendario'
@@ -4855,11 +4898,16 @@
                     const motivo = c.motivo_principal || (c.fatores && c.fatores[0]) || '';
                     const health = c.health_score != null ? `health ${c.health_score}` : '';
                     const meta = [motivo, health].filter(Boolean).join(' · ');
+                    const actions = `<div class="drill-item-actions" onclick="event.stopPropagation()">
+                        <a href="/whatsapp" class="drill-action-btn" title="Abrir WhatsApp"><i class="bi bi-whatsapp"></i></a>
+                        <a href="/contatos/${c.id}" class="drill-action-btn" title="Abrir contato"><i class="bi bi-file-text"></i></a>
+                    </div>`;
                     return `<div class="drill-item" onclick="window.location.href='/contatos/${c.id}'">
                         <div class="drill-item-content">
                             <div class="drill-item-title">${escapeHtml(c.nome)}</div>
                             ${meta ? `<div class="drill-item-meta">${escapeHtml(meta)}</div>` : ''}
                         </div>
+                        ${actions}
                     </div>`;
                 },
                 fullPage: '/contatos?filter=needs_attention'
@@ -4874,11 +4922,15 @@
                     const badge = isRaci ? '<span class="drill-badge" style="background:#6366f1;color:#fff;">RACI</span>' : '';
                     const date = t.data_vencimento ? new Date(t.data_vencimento).toLocaleDateString('pt-BR', {day:'2-digit', month:'short'}) : '';
                     const isOverdue = t.data_vencimento && t.data_vencimento.split('T')[0] < new Date().toISOString().split('T')[0];
-                    return `<div class="drill-item" onclick="window.location.href='/tarefas-pendentes'">
+                    const actions = `<div class="drill-item-actions" onclick="event.stopPropagation()">
+                        <button class="drill-action-btn" onclick="completeDrillTask(${t.id}, this)" title="Concluir"><i class="bi bi-check-lg"></i></button>
+                    </div>`;
+                    return `<div class="drill-item" id="drill-task-${t.id}" onclick="window.location.href='/tarefas-pendentes'">
                         <div class="drill-item-content">
                             <div class="drill-item-title">${escapeHtml(t.titulo)} ${badge}</div>
                             ${date ? `<div class="drill-item-meta" style="${isOverdue ? 'color:#ef4444;font-weight:600;' : ''}">${escapeHtml(date)}</div>` : ''}
                         </div>
+                        ${actions}
                     </div>`;
                 },
                 fullPage: '/tarefas-pendentes'
@@ -4972,6 +5024,43 @@
                 c.style.removeProperty('--drill-color');
             });
             document.getElementById('workbench').style.display = 'none';
+        }
+
+        // Quick action: concluir tarefa inline (Fase 2)
+        async function completeDrillTask(taskId, btn) {
+            const item = document.getElementById('drill-task-' + taskId);
+            if (!item) return;
+            item.classList.add('completing');
+            btn.classList.add('done');
+            btn.innerHTML = '<i class="bi bi-check-lg"></i>';
+            try {
+                const resp = await fetch(`/api/projects/tasks/${taskId}`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({status: 'completed'})
+                });
+                if (!resp.ok) throw new Error('fail');
+                setTimeout(() => {
+                    item.remove();
+                    // Decrementa o contador do statcard
+                    const statEl = document.getElementById('statTasksOverdue');
+                    if (statEl) {
+                        const n = parseInt(statEl.textContent, 10);
+                        if (!isNaN(n) && n > 0) statEl.textContent = (n - 1);
+                    }
+                    // Se drill ficou vazio, mostra empty-state
+                    const remaining = document.querySelectorAll('#drillPanel .drill-item').length;
+                    if (remaining === 0) {
+                        const itemsEl = document.querySelector('#drillPanel .drill-items');
+                        if (itemsEl) itemsEl.innerHTML = '<div class="drill-empty"><i class="bi bi-check-circle text-success" style="font-size:2rem;"></i><div class="mt-2">Nada por aqui</div></div>';
+                    }
+                }, 400);
+            } catch (e) {
+                item.classList.remove('completing');
+                btn.classList.remove('done');
+                btn.innerHTML = '<i class="bi bi-check-lg"></i>';
+                if (typeof showToast === 'function') showToast('Erro ao concluir tarefa', 'danger');
+            }
         }
 
         document.addEventListener('DOMContentLoaded', () => {
