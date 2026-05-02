@@ -1732,13 +1732,15 @@ def _parse_gmail_headers(message: dict) -> dict:
     return headers
 
 
-async def _refresh_gmail_token_full(account: dict) -> str | None:
-    """Refresh access token from refresh_token. Returns access token or None."""
+async def _refresh_gmail_token_full(account: dict) -> tuple[str | None, str | None]:
+    """Refresh access token from refresh_token. Returns (token, error_reason)."""
     refresh_token = account.get("refresh_token")
     if not refresh_token:
-        return None
+        return None, "no_refresh_token"
     client_id = (os.getenv("GOOGLE_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("GOOGLE_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        return None, "missing_google_client_env"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
@@ -1751,12 +1753,13 @@ async def _refresh_gmail_token_full(account: dict) -> str | None:
                 },
             )
         if resp.status_code != 200:
-            logger.error(f"Gmail token refresh failed: {resp.status_code} {resp.text[:200]}")
-            return None
-        return resp.json().get("access_token")
+            err = f"http_{resp.status_code}: {resp.text[:120]}"
+            logger.error(f"Gmail token refresh failed: {err}")
+            return None, err
+        return resp.json().get("access_token"), None
     except Exception as e:
         logger.error(f"Gmail token refresh exception: {e}")
-        return None
+        return None, f"exception: {str(e)[:120]}"
 
 
 async def _count_messages_for_email(access_token: str, email: str, months_back: int) -> dict:
@@ -1841,7 +1844,8 @@ async def _run_gmail_sync(job_id: int, months_back: int = 1):
     import asyncio as _aio
 
     logger.info(f"[GmailSync job={job_id}] starting (months_back={months_back})")
-    stats = {"imported": 0, "updated": 0, "errors": 0, "processed": 0, "accounts": 0}
+    stats = {"imported": 0, "updated": 0, "errors": 0, "processed": 0, "accounts": 0,
+             "error_samples": []}
 
     try:
         with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
@@ -1880,10 +1884,13 @@ async def _run_gmail_sync(job_id: int, months_back: int = 1):
 
         for account in accounts:
             account_email = account.get("email", "")
-            access_token = await _refresh_gmail_token_full(account)
+            access_token, refresh_err = await _refresh_gmail_token_full(account)
             if not access_token:
                 stats["errors"] += 1
-                logger.warning(f"[GmailSync job={job_id}] No token for {account_email}")
+                sample = f"{account_email}: {refresh_err}"
+                if len(stats["error_samples"]) < 5:
+                    stats["error_samples"].append(sample)
+                logger.warning(f"[GmailSync job={job_id}] No token for {account_email}: {refresh_err}")
                 continue
 
             for contact in contacts:
@@ -1908,7 +1915,7 @@ async def _run_gmail_sync(job_id: int, months_back: int = 1):
                     )
 
                     if result.get("error") == "token_expired":
-                        access_token = await _refresh_gmail_token_full(account)
+                        access_token, _ = await _refresh_gmail_token_full(account)
                         if not access_token:
                             break
                     if result.get("updated"):
