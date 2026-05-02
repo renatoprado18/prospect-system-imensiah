@@ -2035,8 +2035,8 @@
         .drill-urgency-header.atencao { background: linear-gradient(135deg, #dc2626, #ef4444); color: #fff; }
         .drill-urgency-header.proximos { background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #78350f; }
         .drill-project-row {
-            display: flex; align-items: center; gap: 10px;
-            padding: 8px 12px; background: #fff;
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 10px; background: #fff;
             border-radius: 6px; margin-bottom: 4px;
             cursor: pointer; transition: all 0.15s;
             border-left: 3px solid var(--gray-200, #e2e8f0);
@@ -2047,17 +2047,29 @@
         .drill-project-row.type-pessoal { border-left-color: #16a34a; }
         .drill-project-row.type-patrimonio { border-left-color: #d97706; }
         .drill-project-row.type-conselho { border-left-color: #9333ea; }
-        .drill-project-info { flex: 1; min-width: 0; }
+        .drill-project-info {
+            flex: 1 1 35%;
+            min-width: 130px;
+            max-width: 35%;
+        }
         .drill-project-name {
             font-weight: 600; margin: 0;
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .drill-project-empresa { font-size: 0.72rem; color: var(--gray-500); }
-        .drill-project-urgency-info { display: flex; align-items: center; gap: 6px; }
+        .drill-project-urgency-info {
+            display: flex; align-items: center; gap: 6px;
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+        }
         .drill-urgency-badge {
             display: inline-flex; align-items: center; gap: 3px;
             padding: 2px 6px; border-radius: 4px;
-            font-size: 0.7rem; font-weight: 500; white-space: nowrap;
+            font-size: 0.7rem; font-weight: 500;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            max-width: 200px;
+            flex-shrink: 1;
         }
         .drill-urgency-badge.danger { background: #fee2e2; color: #dc2626; }
         .drill-urgency-badge.warning { background: #fef3c7; color: #d97706; }
@@ -2066,8 +2078,10 @@
             font-size: 0.72rem; color: var(--gray-600);
             background: var(--gray-100, #f1f5f9);
             padding: 2px 6px; border-radius: 4px;
-            max-width: 220px; white-space: nowrap;
-            overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            flex: 1 1 auto;
+            min-width: 0;
+            max-width: 220px;
         }
         .drill-project-stats {
             display: flex; gap: 8px;
