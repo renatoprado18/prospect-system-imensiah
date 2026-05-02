@@ -1674,6 +1674,348 @@ async def _send_response(phone: str, message: str):
         logger.error(f"Failed to send response: {e}")
 
 
+# ============== GMAIL SYNC JOB ==============
+# Migrated from Vercel cron (services/gmail_sync.py) — was timing out at 300s
+# because of O(N×M) loop over 3.5k contacts × 2 accounts × 3 emails.
+
+GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1"
+
+
+async def _gmail_list_messages(access_token: str, query: str, max_results: int = 100) -> dict:
+    """List Gmail messages via REST API."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"{GMAIL_API_BASE}/users/me/messages",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"q": query, "maxResults": max_results, "includeSpamTrash": False},
+        )
+        if resp.status_code == 401:
+            return {"error": "token_expired"}
+        if resp.status_code != 200:
+            return {"error": resp.text[:200]}
+        return resp.json()
+
+
+async def _gmail_get_message_metadata(access_token: str, message_id: str) -> dict:
+    """Fetch single message metadata."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            f"{GMAIL_API_BASE}/users/me/messages/{message_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"format": "metadata"},
+        )
+        if resp.status_code == 401:
+            return {"error": "token_expired"}
+        if resp.status_code != 200:
+            return {"error": resp.text[:200]}
+        return resp.json()
+
+
+def _parse_gmail_date(date_str: str):
+    """Parse RFC 2822 Gmail date header to datetime."""
+    if not date_str:
+        return None
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(date_str)
+    except Exception:
+        return None
+
+
+def _parse_gmail_headers(message: dict) -> dict:
+    """Extract from/to/date headers from message payload."""
+    headers = {}
+    for h in message.get("payload", {}).get("headers", []):
+        name = (h.get("name") or "").lower()
+        if name in ("from", "to", "cc", "bcc", "subject", "date", "message-id"):
+            headers[name] = h.get("value", "")
+    return headers
+
+
+async def _refresh_gmail_token_full(account: dict) -> str | None:
+    """Refresh access token from refresh_token. Returns access token or None."""
+    refresh_token = account.get("refresh_token")
+    if not refresh_token:
+        return None
+    client_id = (os.getenv("GOOGLE_CLIENT_ID") or "").strip()
+    client_secret = (os.getenv("GOOGLE_CLIENT_SECRET") or "").strip()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "refresh_token": refresh_token,
+                    "grant_type": "refresh_token",
+                },
+            )
+        if resp.status_code != 200:
+            logger.error(f"Gmail token refresh failed: {resp.status_code} {resp.text[:200]}")
+            return None
+        return resp.json().get("access_token")
+    except Exception as e:
+        logger.error(f"Gmail token refresh exception: {e}")
+        return None
+
+
+async def _count_messages_for_email(access_token: str, email: str, months_back: int) -> dict:
+    """Returns {count, latest_date, error?}."""
+    query = f"(from:{email} OR to:{email})"
+    if months_back:
+        date_after = (datetime.now() - timedelta(days=months_back * 30)).strftime("%Y/%m/%d")
+        query += f" after:{date_after}"
+
+    response = await _gmail_list_messages(access_token, query, max_results=100)
+    if "error" in response:
+        return {"count": 0, "latest_date": None, "error": response["error"]}
+
+    messages = response.get("messages", []) or []
+    result = {"count": len(messages), "latest_date": None}
+
+    if messages:
+        msg_detail = await _gmail_get_message_metadata(access_token, messages[0]["id"])
+        if "error" not in msg_detail:
+            headers = _parse_gmail_headers(msg_detail)
+            date_str = headers.get("date", "")
+            if date_str:
+                result["latest_date"] = _parse_gmail_date(date_str)
+    return result
+
+
+async def _sync_contact_emails_worker(
+    contact_id: int, email: str, access_token: str, months_back: int
+) -> dict:
+    """Sync one contact's emails. Updates contacts.total_interacoes/ultimo_contato."""
+    res = {"success": False, "count": 0, "updated": False}
+    try:
+        msg_result = await _count_messages_for_email(access_token, email, months_back)
+        if msg_result.get("error") == "token_expired":
+            return {"success": False, "error": "token_expired"}
+        res["count"] = msg_result["count"]
+        if msg_result["count"] <= 0:
+            res["success"] = True
+            return res
+
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT total_interacoes, ultimo_contato FROM contacts WHERE id = %s",
+                (contact_id,),
+            )
+            current = cursor.fetchone()
+            if not current:
+                return res
+
+            current_interactions = current.get("total_interacoes") or 0
+            current_ultimo = current.get("ultimo_contato")
+            new_interactions = max(current_interactions, msg_result["count"])
+            new_ultimo = msg_result["latest_date"]
+
+            if current_ultimo and msg_result["latest_date"]:
+                try:
+                    cur_naive = current_ultimo.replace(tzinfo=None) if current_ultimo.tzinfo else current_ultimo
+                    lat_naive = msg_result["latest_date"].replace(tzinfo=None) if msg_result["latest_date"].tzinfo else msg_result["latest_date"]
+                    new_ultimo = msg_result["latest_date"] if lat_naive > cur_naive else current_ultimo
+                except Exception:
+                    new_ultimo = msg_result["latest_date"] or current_ultimo
+            elif current_ultimo:
+                new_ultimo = current_ultimo
+
+            cursor.execute(
+                "UPDATE contacts SET total_interacoes = %s, ultimo_contato = %s WHERE id = %s",
+                (new_interactions, new_ultimo, contact_id),
+            )
+            conn.commit()
+            res["updated"] = True
+
+        res["success"] = True
+    except Exception as e:
+        logger.error(f"sync_contact {contact_id} error: {e}")
+        res["error"] = str(e)
+    return res
+
+
+async def _run_gmail_sync(job_id: int, months_back: int = 1):
+    """Process gmail sync job. Updates background_jobs row with progress."""
+    import asyncio as _aio
+
+    logger.info(f"[GmailSync job={job_id}] starting (months_back={months_back})")
+    stats = {"imported": 0, "updated": 0, "errors": 0, "processed": 0, "accounts": 0}
+
+    try:
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE background_jobs SET status='running', started_at=NOW() WHERE id = %s",
+                (job_id,),
+            )
+            conn.commit()
+
+            cursor.execute("SELECT * FROM google_accounts WHERE conectado = TRUE")
+            accounts = cursor.fetchall()
+            cursor.execute(
+                "SELECT id, nome, emails FROM contacts "
+                "WHERE emails IS NOT NULL AND emails::text != '[]' ORDER BY id"
+            )
+            contacts = cursor.fetchall()
+
+            cursor.execute(
+                "UPDATE background_jobs SET total_items = %s WHERE id = %s",
+                (len(contacts) * len(accounts), job_id),
+            )
+            conn.commit()
+
+        if not accounts:
+            with psycopg.connect(DATABASE_URL) as conn:
+                conn.execute(
+                    "UPDATE background_jobs SET status='error', error=%s, completed_at=NOW() WHERE id=%s",
+                    ("Nenhuma conta Gmail conectada", job_id),
+                )
+                conn.commit()
+            return
+
+        stats["accounts"] = len(accounts)
+        total_processed = 0
+
+        for account in accounts:
+            account_email = account.get("email", "")
+            access_token = await _refresh_gmail_token_full(account)
+            if not access_token:
+                stats["errors"] += 1
+                logger.warning(f"[GmailSync job={job_id}] No token for {account_email}")
+                continue
+
+            for contact in contacts:
+                contact_id = contact["id"]
+                emails_data = contact.get("emails")
+                email_list = []
+                if isinstance(emails_data, str):
+                    try:
+                        email_list = json.loads(emails_data)
+                    except Exception:
+                        email_list = [{"email": emails_data}]
+                elif isinstance(emails_data, list):
+                    email_list = emails_data
+
+                for email_obj in email_list[:3]:
+                    email = email_obj.get("email", "") if isinstance(email_obj, dict) else str(email_obj)
+                    if not email or email == account_email:
+                        continue
+
+                    result = await _sync_contact_emails_worker(
+                        contact_id, email.lower(), access_token, months_back
+                    )
+
+                    if result.get("error") == "token_expired":
+                        access_token = await _refresh_gmail_token_full(account)
+                        if not access_token:
+                            break
+                    if result.get("updated"):
+                        stats["updated"] += 1
+                    if result.get("error") and result.get("error") != "token_expired":
+                        stats["errors"] += 1
+
+                    await _aio.sleep(0.1)  # rate limit
+
+                stats["processed"] += 1
+                total_processed += 1
+
+                # Checkpoint every 50 contacts
+                if total_processed % 50 == 0:
+                    try:
+                        with psycopg.connect(DATABASE_URL) as conn:
+                            conn.execute(
+                                "UPDATE background_jobs SET processed_items=%s, success_count=%s, "
+                                "failed_count=%s, result=%s WHERE id=%s",
+                                (total_processed, stats["updated"], stats["errors"],
+                                 json.dumps(stats), job_id),
+                            )
+                            conn.commit()
+                    except Exception as ce:
+                        logger.warning(f"[GmailSync job={job_id}] checkpoint failed: {ce}")
+
+            # Update last_sync timestamp on account
+            try:
+                with psycopg.connect(DATABASE_URL) as conn:
+                    conn.execute(
+                        "UPDATE google_accounts SET ultima_sync = CURRENT_TIMESTAMP WHERE id = %s",
+                        (account["id"],),
+                    )
+                    conn.commit()
+            except Exception as ue:
+                logger.warning(f"[GmailSync job={job_id}] account ts update failed: {ue}")
+
+        with psycopg.connect(DATABASE_URL) as conn:
+            conn.execute(
+                "UPDATE background_jobs SET status='completed', processed_items=%s, "
+                "success_count=%s, failed_count=%s, result=%s, completed_at=NOW() WHERE id=%s",
+                (total_processed, stats["updated"], stats["errors"], json.dumps(stats), job_id),
+            )
+            conn.commit()
+        logger.info(f"[GmailSync job={job_id}] completed: {stats}")
+
+    except Exception as e:
+        logger.exception(f"[GmailSync job={job_id}] fatal error")
+        try:
+            with psycopg.connect(DATABASE_URL) as conn:
+                conn.execute(
+                    "UPDATE background_jobs SET status='error', error=%s, "
+                    "result=%s, completed_at=NOW() WHERE id=%s",
+                    (str(e)[:500], json.dumps(stats), job_id),
+                )
+                conn.commit()
+        except Exception:
+            pass
+
+
+@app.post("/sync-gmail")
+async def sync_gmail(request: Request, background_tasks: BackgroundTasks):
+    """
+    Receive gmail-sync job from Vercel cron.
+    Validates secret + idempotency, then runs in background.
+    """
+    data = await request.json()
+    if data.get("secret") != WORKER_SECRET:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    job_id = data.get("job_id")
+    months_back = int(data.get("months_back", 1))
+
+    if not job_id:
+        return JSONResponse(status_code=400, content={"error": "job_id required"})
+
+    # Idempotency: bail if another non-stale gmail_sync job is already running
+    try:
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id FROM background_jobs "
+                "WHERE job_type = 'gmail_sync' AND status = 'running' "
+                "AND started_at > NOW() - INTERVAL '1 hour' AND id <> %s LIMIT 1",
+                (job_id,),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                logger.warning(f"[GmailSync] aborting job {job_id}: job {existing['id']} already running")
+                cursor.execute(
+                    "UPDATE background_jobs SET status='skipped', "
+                    "error=%s, completed_at=NOW() WHERE id=%s",
+                    (f"another job ({existing['id']}) already running", job_id),
+                )
+                conn.commit()
+                return JSONResponse(
+                    status_code=202,
+                    content={"status": "skipped", "reason": "already_running",
+                             "running_job_id": existing["id"]},
+                )
+    except Exception as e:
+        logger.error(f"[GmailSync] idempotency check failed: {e}")
+
+    background_tasks.add_task(_run_gmail_sync, job_id, months_back)
+    return JSONResponse(status_code=202, content={"status": "accepted", "job_id": job_id})
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8001))
