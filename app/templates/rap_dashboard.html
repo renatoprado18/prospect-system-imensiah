@@ -2014,6 +2014,67 @@
             #workbench { display: none !important; }
             .stat-card.drill-active::after { display: none; }
         }
+
+        /* ===== Drill rich rendering (Fase 4) ===== */
+        /* Project sections (espelha /projetos) */
+        .drill-urgency-section { margin-bottom: 14px; padding: 0 12px; }
+        .drill-urgency-section:first-child { padding-top: 12px; }
+        .drill-urgency-section:last-child { padding-bottom: 12px; }
+        .drill-urgency-header {
+            display: flex; align-items: center; gap: 10px;
+            padding: 8px 12px; border-radius: 8px; margin-bottom: 8px;
+            font-weight: 600; font-size: 0.85rem;
+        }
+        .drill-urgency-header .icon { font-size: 1rem; }
+        .drill-urgency-header .title { flex: 1; }
+        .drill-urgency-header .count {
+            font-weight: 700; font-size: 0.78rem;
+            padding: 2px 8px; border-radius: 10px;
+            background: rgba(255,255,255,0.3);
+        }
+        .drill-urgency-header.atencao { background: linear-gradient(135deg, #dc2626, #ef4444); color: #fff; }
+        .drill-urgency-header.proximos { background: linear-gradient(135deg, #f59e0b, #fbbf24); color: #78350f; }
+        .drill-project-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 8px 12px; background: #fff;
+            border-radius: 6px; margin-bottom: 4px;
+            cursor: pointer; transition: all 0.15s;
+            border-left: 3px solid var(--gray-200, #e2e8f0);
+            font-size: 0.85rem;
+        }
+        .drill-project-row:hover { background: var(--gray-50, #f8fafc); }
+        .drill-project-row.type-negocio { border-left-color: #2563eb; }
+        .drill-project-row.type-pessoal { border-left-color: #16a34a; }
+        .drill-project-row.type-patrimonio { border-left-color: #d97706; }
+        .drill-project-row.type-conselho { border-left-color: #9333ea; }
+        .drill-project-info { flex: 1; min-width: 0; }
+        .drill-project-name {
+            font-weight: 600; margin: 0;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .drill-project-empresa { font-size: 0.72rem; color: var(--gray-500); }
+        .drill-project-urgency-info { display: flex; align-items: center; gap: 6px; }
+        .drill-urgency-badge {
+            display: inline-flex; align-items: center; gap: 3px;
+            padding: 2px 6px; border-radius: 4px;
+            font-size: 0.7rem; font-weight: 500; white-space: nowrap;
+        }
+        .drill-urgency-badge.danger { background: #fee2e2; color: #dc2626; }
+        .drill-urgency-badge.warning { background: #fef3c7; color: #d97706; }
+        .drill-urgency-badge.info { background: #dbeafe; color: #2563eb; }
+        .drill-pending-task {
+            font-size: 0.72rem; color: var(--gray-600);
+            background: var(--gray-100, #f1f5f9);
+            padding: 2px 6px; border-radius: 4px;
+            max-width: 220px; white-space: nowrap;
+            overflow: hidden; text-overflow: ellipsis;
+        }
+        .drill-project-stats {
+            display: flex; gap: 8px;
+            font-size: 0.72rem; color: var(--gray-500);
+            flex-shrink: 0;
+        }
+        .drill-project-stats span { display: inline-flex; align-items: center; gap: 2px; }
 {% endblock %}
 
 {% block content %}
@@ -2648,12 +2709,13 @@
                 }).length;
                 document.getElementById('statReunioes').textContent = reunioesCount;
 
-                // Projetos com atencao (overdue + milestone proximo + parado >14d) — alinhado com drill-down
+                // Projetos com atencao (mesmo endpoint do drill — atencao + proximos)
                 try {
-                    const projResp = await fetch('/api/projects/with-attention');
+                    const projResp = await fetch('/api/projects/with-attention/detailed');
                     if (projResp.ok) {
                         const projData = await projResp.json();
-                        document.getElementById('statProjectsAction').textContent = (projData.projects || []).length;
+                        const total = (projData.atencao || []).length + (projData.proximos || []).length;
+                        document.getElementById('statProjectsAction').textContent = total;
                     }
                 } catch(e) { document.getElementById('statProjectsAction').textContent = '-'; }
 
@@ -4857,7 +4919,7 @@
     <script>
         const drillConfig = {
             reunioes: {
-                label: 'Reuniões Hoje',
+                label: 'Agenda de Hoje',
                 color: '#6366f1',
                 endpoint: () => '/api/calendar/today',
                 extract: (d) => {
@@ -4868,25 +4930,28 @@
                             && !t.startsWith('[foco]') && !t.includes('cama') && !t.includes('dormir');
                     });
                 },
+                emptyIcon: 'bi-calendar-check',
+                emptyText: 'Nenhum compromisso para hoje',
                 renderItem: (e) => {
-                    const start = e.start_datetime || (e.start && (e.start.dateTime || e.start.date)) || '';
-                    const time = start && start.includes('T')
-                        ? new Date(start).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})
-                        : 'dia todo';
+                    const start = e.start_datetime || (e.start && (e.start.dateTime || e.start.date)) || e.time || e.start_time || '';
+                    let time = '';
+                    if (typeof start === 'string' && start.includes('T')) {
+                        time = new Date(start).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+                    } else if (start) {
+                        time = String(start);
+                    }
                     const title = e.summary || e.title || '(sem título)';
+                    const location = e.location || '';
                     const contact = e.contact_name || '';
-                    const actions = e.contact_id
-                        ? `<div class="drill-item-actions" onclick="event.stopPropagation()">
-                             <a href="/contatos/${e.contact_id}" class="drill-action-btn" title="Briefing do contato"><i class="bi bi-file-text"></i></a>
-                           </div>`
-                        : '';
-                    return `<div class="drill-item" onclick="window.location.href='/calendario'">
-                        <div class="drill-item-time">${escapeHtml(time)}</div>
-                        <div class="drill-item-content">
-                            <div class="drill-item-title">${escapeHtml(title)}</div>
-                            ${contact ? `<div class="drill-item-meta">${escapeHtml(contact)}</div>` : ''}
+                    const meta = [];
+                    if (location) meta.push(`<i class="bi bi-geo-alt"></i> ${escapeHtml(location)}`);
+                    if (contact) meta.push(`<i class="bi bi-person"></i> ${escapeHtml(contact)}`);
+                    return `<div class="agenda-item" style="cursor:pointer;" onclick="window.location.href='${e.contact_id ? '/contatos/' + e.contact_id : '/calendario'}'">
+                        <div class="agenda-time">${escapeHtml(time)}</div>
+                        <div class="agenda-content">
+                            <div class="agenda-title">${escapeHtml(title)}</div>
+                            ${meta.length ? `<div class="agenda-meta">${meta.join(' · ')}</div>` : ''}
                         </div>
-                        ${actions}
                     </div>`;
                 },
                 fullPage: '/calendario'
@@ -4894,47 +4959,66 @@
             projetos: {
                 label: 'Projetos c/ Atenção',
                 color: '#8b5cf6',
-                endpoint: () => '/api/projects/with-attention',
-                extract: (d) => d.projects || [],
-                renderItem: (p) => {
-                    const motivosLabels = { overdue: 'overdue', milestone_proximo: 'marco próximo', parado: 'parado' };
-                    const motivos = (p.motivos || []).map(m =>
-                        `<span class="drill-badge" style="background:#ede9fe;color:#6d28d9;">${motivosLabels[m] || m}</span>`
-                    ).join('');
-                    const meta = [];
-                    if (p.tasks_overdue) meta.push(`${p.tasks_overdue} task${p.tasks_overdue > 1 ? 's' : ''} vencida${p.tasks_overdue > 1 ? 's' : ''}`);
-                    if (p.proximo_marco) meta.push(`marco ${new Date(p.proximo_marco).toLocaleDateString('pt-BR', {day:'2-digit', month:'short'})}`);
-                    if (p.dias_sem_atualizacao && p.dias_sem_atualizacao > 14) meta.push(`${p.dias_sem_atualizacao}d sem update`);
-                    return `<div class="drill-item" onclick="window.location.href='/projetos/${p.id}'">
-                        <div class="drill-item-content">
-                            <div class="drill-item-title">${escapeHtml(p.nome)} ${motivos}</div>
-                            ${meta.length ? `<div class="drill-item-meta">${escapeHtml(meta.join(' · '))}</div>` : ''}
-                        </div>
-                    </div>`;
+                endpoint: () => '/api/projects/with-attention/detailed',
+                emptyIcon: 'bi-check-circle',
+                emptyText: 'Nenhum projeto precisa de atenção',
+                extractCount: (d) => (d.atencao || []).length + (d.proximos || []).length,
+                renderAll: (d) => {
+                    const atencao = d.atencao || [];
+                    const proximos = d.proximos || [];
+                    if (atencao.length === 0 && proximos.length === 0) return '';
+                    const renderRow = (p) => {
+                        const tipo = p.tipo || 'negocio';
+                        const urgency = drillProjectUrgencyInfo(p);
+                        const urgencyHtml = urgency ? `<span class="drill-urgency-badge ${urgency.badge}"><i class="bi ${urgency.icon}"></i> ${escapeHtml(urgency.text)}</span>` : '';
+                        const pendingHtml = (p.proxima_tarefa && p.proxima_tarefa.titulo)
+                            ? `<div class="drill-pending-task" title="${escapeHtml(p.proxima_tarefa.titulo)}"><i class="bi bi-arrow-right"></i> ${escapeHtml(p.proxima_tarefa.titulo)}</div>`
+                            : '';
+                        return `<div class="drill-project-row type-${tipo}" onclick="window.location.href='/projetos/${p.id}'">
+                            <div class="drill-project-info">
+                                <div class="drill-project-name">${escapeHtml(p.nome)}</div>
+                                ${p.empresa_relacionada ? `<div class="drill-project-empresa">${escapeHtml(p.empresa_relacionada)}</div>` : ''}
+                            </div>
+                            <div class="drill-project-urgency-info">${urgencyHtml}${pendingHtml}</div>
+                            <div class="drill-project-stats">
+                                <span title="Tarefas pendentes"><i class="bi bi-check2-square"></i> ${p.tasks_pendentes || 0}</span>
+                                <span title="Marcos pendentes"><i class="bi bi-flag"></i> ${p.marcos_pendentes || 0}</span>
+                            </div>
+                        </div>`;
+                    };
+                    let html = '';
+                    if (atencao.length > 0) {
+                        html += `<div class="drill-urgency-section">
+                            <div class="drill-urgency-header atencao">
+                                <i class="bi bi-exclamation-triangle-fill icon"></i>
+                                <span class="title">Precisa de Atenção</span>
+                                <span class="count">${atencao.length}</span>
+                            </div>
+                            ${atencao.map(renderRow).join('')}
+                        </div>`;
+                    }
+                    if (proximos.length > 0) {
+                        html += `<div class="drill-urgency-section">
+                            <div class="drill-urgency-header proximos">
+                                <i class="bi bi-clock-history icon"></i>
+                                <span class="title">Próximos 7 Dias</span>
+                                <span class="count">${proximos.length}</span>
+                            </div>
+                            ${proximos.map(renderRow).join('')}
+                        </div>`;
+                    }
+                    return html;
                 },
                 fullPage: '/projetos'
             },
             contatos: {
-                label: 'Contatos c/ Atenção',
+                label: 'Quem Contatar Hoje',
                 color: '#f59e0b',
-                endpoint: () => '/api/contacts/needs-attention?limit=30',
-                extract: (d) => d.contacts || [],
-                renderItem: (c) => {
-                    const motivo = c.motivo_principal || (c.fatores && c.fatores[0]) || '';
-                    const health = c.health_score != null ? `health ${c.health_score}` : '';
-                    const meta = [motivo, health].filter(Boolean).join(' · ');
-                    const actions = `<div class="drill-item-actions" onclick="event.stopPropagation()">
-                        <a href="/whatsapp" class="drill-action-btn" title="Abrir WhatsApp"><i class="bi bi-whatsapp"></i></a>
-                        <a href="/contatos/${c.id}" class="drill-action-btn" title="Abrir contato"><i class="bi bi-file-text"></i></a>
-                    </div>`;
-                    return `<div class="drill-item" onclick="window.location.href='/contatos/${c.id}'">
-                        <div class="drill-item-content">
-                            <div class="drill-item-title">${escapeHtml(c.nome)}</div>
-                            ${meta ? `<div class="drill-item-meta">${escapeHtml(meta)}</div>` : ''}
-                        </div>
-                        ${actions}
-                    </div>`;
-                },
+                endpoint: () => '/api/v1/contact-suggestions?limit=15',
+                extract: (d) => d.suggestions || [],
+                emptyIcon: 'bi-check-circle',
+                emptyText: 'Você está em dia com todos os contatos',
+                renderItem: (s) => drillRenderContactSuggestion(s),
                 fullPage: '/contatos?filter=needs_attention'
             },
             tarefas: {
@@ -5026,10 +5110,21 @@
             fetch(cfg.endpoint())
                 .then(r => r.ok ? r.json() : Promise.reject(r.status))
                 .then(d => {
-                    const items = cfg.extract(d) || [];
                     const itemsEl = drill.querySelector('.drill-items');
+                    // renderAll: render custom (e.g. grouped). count via extractCount.
+                    if (typeof cfg.renderAll === 'function') {
+                        const total = typeof cfg.extractCount === 'function' ? cfg.extractCount(d) : 0;
+                        if (total === 0) {
+                            itemsEl.innerHTML = drillEmptyHtml(cfg);
+                        } else {
+                            itemsEl.innerHTML = cfg.renderAll(d);
+                        }
+                        return;
+                    }
+                    // renderItem: map sobre lista
+                    const items = (cfg.extract ? cfg.extract(d) : []) || [];
                     if (items.length === 0) {
-                        itemsEl.innerHTML = '<div class="drill-empty"><i class="bi bi-check-circle text-success" style="font-size:2rem;"></i><div class="mt-2">Nada por aqui</div></div>';
+                        itemsEl.innerHTML = drillEmptyHtml(cfg);
                     } else {
                         itemsEl.innerHTML = items.map(cfg.renderItem).join('');
                     }
@@ -5037,6 +5132,80 @@
                 .catch(() => {
                     drill.querySelector('.drill-items').innerHTML = '<div class="drill-empty text-danger">Erro ao carregar</div>';
                 });
+        }
+
+        function drillEmptyHtml(cfg) {
+            const icon = cfg.emptyIcon || 'bi-check-circle';
+            const text = cfg.emptyText || 'Nada por aqui';
+            return `<div class="drill-empty"><i class="bi ${icon} text-success" style="font-size:2.4rem;"></i><div class="mt-2">${escapeHtml(text)}</div></div>`;
+        }
+
+        // Project urgency badge logic — espelha getUrgencyInfo() do /projetos
+        function drillProjectUrgencyInfo(p) {
+            if ((p.tasks_vencidas || 0) > 0) {
+                const n = p.tasks_vencidas;
+                return { badge: 'danger', icon: 'bi-exclamation-circle', text: `${n} tarefa${n > 1 ? 's' : ''} vencida${n > 1 ? 's' : ''}` };
+            }
+            if (p.proximo_marco && p.proximo_marco.dias_ate < 0) {
+                return { badge: 'danger', icon: 'bi-flag-fill', text: `Marco atrasado: ${p.proximo_marco.titulo}` };
+            }
+            if (p.proximo_marco && p.proximo_marco.dias_ate <= 7) {
+                const d = p.proximo_marco.dias_ate;
+                return { badge: d <= 3 ? 'danger' : 'warning', icon: 'bi-flag', text: `Marco em ${d === 0 ? 'hoje' : d + 'd'}: ${p.proximo_marco.titulo}` };
+            }
+            if (p.proxima_tarefa && p.proxima_tarefa.dias_ate !== undefined && p.proxima_tarefa.dias_ate <= 7) {
+                const d = p.proxima_tarefa.dias_ate;
+                return { badge: d < 0 ? 'danger' : (d <= 3 ? 'warning' : 'info'), icon: 'bi-check2-square', text: d < 0 ? 'Tarefa atrasada' : `Tarefa em ${d === 0 ? 'hoje' : d + 'd'}` };
+            }
+            if (p.data_previsao) {
+                const prev = new Date(p.data_previsao);
+                const hoje = new Date(); hoje.setHours(0,0,0,0);
+                const diff = Math.ceil((prev - hoje) / 86400000);
+                if (diff <= 7) {
+                    return { badge: diff < 0 ? 'danger' : (diff <= 3 ? 'warning' : 'info'), icon: 'bi-calendar', text: diff < 0 ? 'Projeto atrasado' : `Prazo em ${diff === 0 ? 'hoje' : diff + 'd'}` };
+                }
+            }
+            return null;
+        }
+
+        // Render contact suggestion (espelha loadContactToday's per-item render)
+        function drillRenderContactSuggestion(s) {
+            const c = s.contact;
+            const roda = s.roda;
+            const initials = (c.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+            const circuloBadge = c.circulo ? `<span class="circulo-mini c${c.circulo}">C${c.circulo}</span>` : '';
+            let visualType = 'attention';
+            if (s.reason === 'birthday') visualType = 'birthday';
+            else if (s.reason === 'roda_promessa') visualType = 'promessa';
+            else if (s.reason === 'roda_favor_recebido') visualType = 'favor_recebido';
+            else if (s.reason === 'roda_proximo_passo') visualType = 'proximo_passo';
+            else if (s.reason === 'roda_topico') visualType = 'topico';
+            else if (s.reason === 'low_health') visualType = 'low_health';
+            const typeLabels = { birthday: 'Aniversário', promessa: 'Promessa', favor_recebido: 'Retribuir', proximo_passo: 'Agendado', topico: 'Retomar', low_health: 'Atenção', attention: 'Atenção' };
+            const reasonLabel = s.reason_label || typeLabels[visualType] || '';
+            const rodaContent = (roda && reasonLabel.length < 30)
+                ? `<div class="contact-today-roda">${escapeHtml(roda.conteudo)}</div>` : '';
+            const whatsappBtn = c.id ? `<button class="btn btn-whatsapp" onclick="event.stopPropagation(); openWhatsApp(${c.id})" title="Enviar WhatsApp"><i class="bi bi-whatsapp"></i></button>` : '';
+            const contactedBtn = c.id ? `<button class="btn btn-contacted" onclick="event.stopPropagation(); markAsContacted(${c.id}, ${roda ? roda.id : 'null'}, this)" title="Já contatei"><i class="bi bi-person-check"></i></button>` : '';
+            return `
+                <div class="contact-today-item type-${visualType}" onclick="window.location.href='/contatos/${c.id}'">
+                    <div class="contact-today-avatar ${visualType}">${initials}</div>
+                    <div class="contact-today-info">
+                        <div class="contact-today-header">
+                            <div>
+                                <span class="contact-today-name">${escapeHtml(c.nome)}</span>
+                                ${circuloBadge}
+                            </div>
+                            <div class="contact-today-header-right">
+                                ${whatsappBtn}
+                                ${contactedBtn}
+                                <span class="contact-today-reason">${escapeHtml(reasonLabel.toUpperCase())}</span>
+                            </div>
+                        </div>
+                        ${rodaContent}
+                    </div>
+                </div>
+            `;
         }
 
         function closeDrill() {

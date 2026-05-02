@@ -18,6 +18,13 @@
   - Reuniões: `[📋]` quando evento tem `contact_id` (abre página do contato)
   - Projetos / Veículos: sem ação extra — row click já basta (Smart Update / Adiar precisariam de modal, ficam pra futuro)
 - **`/api/projects/with-attention`** (NOVO): lista projetos ativos com motivos `overdue` (task pendente vencida), `milestone_proximo` (≤7d), `parado` (sem update >14d). Substitui `/api/projects/overdue-count` no statcard pra count e drill ficarem alinhados.
+- **`/api/projects/with-attention/detailed`** (NOVO, Fase 4): pré-categoriza ativos em `{atencao: [], proximos: []}` espelhando lógica de `categorizeProject()` da página `/projetos`. Cada projeto vem com shape completo do `list_projects` (tasks_pendentes, tasks_vencidas, marcos_pendentes, proximo_marco, proxima_tarefa) pra render rico. Statcard "Projetos c/ Atenção" agora conta deste endpoint pra alinhar com o drill.
+- **Drill rendering rico (Fase 4)**:
+  - Reuniões → estilo "Agenda de Hoje" (`.agenda-item`/`.agenda-time`/`.agenda-content`/`.agenda-meta`); empty-state grande com `bi-calendar-check` "Nenhum compromisso para hoje"
+  - Projetos → seções coloridas "Precisa de Atenção" (vermelho) + "Próximos 7 Dias" (laranja), cards com border-left por tipo, badges de urgência, próxima tarefa, contadores de tasks/marcos. Lógica de categorização e badge no backend (`/with-attention/detailed`) + JS `drillProjectUrgencyInfo()`. Drop "Em dia"/"Pausados" — só mostra o que precisa de ação.
+  - Contatos → endpoint trocado pra `/api/v1/contact-suggestions?limit=15` (mesmo do widget "Quem Contatar Hoje"); render via `drillRenderContactSuggestion()` reusa classes `.contact-today-*` e funções `openWhatsApp(id)` / `markAsContacted(id, rodaId, btn)` já existentes
+  - Tarefas / Veículos → mantidos como Fase 1+2
+- **`drillConfig` schema expandido**: além de `endpoint`/`extract`/`renderItem`/`fullPage`, agora suporta `renderAll(data)` (pra grouping/sectioning), `extractCount(data)` (pra contar quando `renderAll` substitui `extract`), `emptyIcon` e `emptyText` (custom por statcard). `openDrill` usa `renderAll` se definido, fallback pra `map(renderItem)`.
 - **Clipping do Dia** (notícias curadas por IA, 12 fontes RSS) → `GET /api/news/clipping`
   - 👍👎 Feedback (sistema aprende) → `POST /api/news/{id}/feedback`
   - 📝 Criar post LinkedIn (gera texto + cruza artigo) → `POST /api/news/to-post`
