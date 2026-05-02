@@ -4,6 +4,7 @@ Handles bot message processing, audio transcription, and image analysis.
 Runs on Railway with no timeout limit.
 """
 import os
+import sys
 import json
 import logging
 import httpx
@@ -1882,6 +1883,22 @@ async def _run_gmail_sync(job_id: int, months_back: int = 1):
         stats["accounts"] = len(accounts)
         total_processed = 0
 
+        # Heartbeat task: atualiza last_progress a cada 15s pra detectar
+        # se o worker morreu silenciosamente (Railway restart, OOM, etc).
+        # Tambem loga memoria pra debug.
+        async def _heartbeat():
+            import resource
+            while True:
+                try:
+                    mem_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                    mem_mb = mem_kb / 1024 if sys.platform == "linux" else mem_kb / (1024*1024)
+                    logger.info(f"[GmailSync job={job_id}] heartbeat: processed={total_processed} mem_mb={mem_mb:.1f}")
+                except Exception:
+                    pass
+                await _aio.sleep(15)
+
+        heartbeat_task = _aio.create_task(_heartbeat())
+
         for account in accounts:
             account_email = account.get("email", "")
             access_token, refresh_err = await _refresh_gmail_token_full(account)
@@ -1953,6 +1970,7 @@ async def _run_gmail_sync(job_id: int, months_back: int = 1):
             except Exception as ue:
                 logger.warning(f"[GmailSync job={job_id}] account ts update failed: {ue}")
 
+        heartbeat_task.cancel()
         with psycopg.connect(DATABASE_URL) as conn:
             conn.execute(
                 "UPDATE background_jobs SET status='completed', processed_items=%s, "
@@ -1963,6 +1981,10 @@ async def _run_gmail_sync(job_id: int, months_back: int = 1):
         logger.info(f"[GmailSync job={job_id}] completed: {stats}")
 
     except Exception as e:
+        try:
+            heartbeat_task.cancel()
+        except Exception:
+            pass
         logger.exception(f"[GmailSync job={job_id}] fatal error")
         try:
             with psycopg.connect(DATABASE_URL) as conn:
