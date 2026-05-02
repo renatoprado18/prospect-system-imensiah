@@ -25,11 +25,38 @@
 .task-title { font-weight: 600; font-size: 0.9rem; }
 .task-meta { font-size: 0.75rem; color: var(--text-secondary, #64748b); }
 .task-overdue { color: #ef4444; font-weight: 600; }
+.task-raci-badge {
+    display: inline-block;
+    background: #6366f1;
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+.task-filter-bar {
+    display: flex; gap: 6px; padding: 10px 16px;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    background: var(--bg-secondary, #f8fafc);
+}
+.task-filter-btn {
+    padding: 4px 12px; border-radius: 6px; border: 1px solid #cbd5e1;
+    background: #fff; cursor: pointer; font-size: 0.8rem; color: #475569;
+}
+.task-filter-btn.active { background: #6366f1; color: #fff; border-color: #6366f1; }
 .empty-state { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
 {% endblock %}
 
 {% block content %}
 <div class="card">
+    <div class="task-filter-bar">
+        <button class="task-filter-btn active" data-filter="direct" onclick="setFilter('direct')">Diretas</button>
+        <button class="task-filter-btn" data-filter="raci" onclick="setFilter('raci')">RACI</button>
+        <button class="task-filter-btn" data-filter="all" onclick="setFilter('all')">Todas</button>
+    </div>
     <div class="card-body p-0" id="tasksList">
         <div class="text-center py-4"><div class="spinner-border spinner-border-sm"></div></div>
     </div>
@@ -38,35 +65,60 @@
 
 {% block extra_js %}
 <script>
+    let allTasks = [];
+    let currentFilter = 'direct';
+
+    function isRaci(t) {
+        return t.origem === 'conselhoos_raci' || t.conselhoos_raci_id != null;
+    }
+
+    function setFilter(filter) {
+        currentFilter = filter;
+        document.querySelectorAll('.task-filter-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.filter === filter);
+        });
+        renderTasks();
+    }
+
+    function renderTasks() {
+        const container = document.getElementById('tasksList');
+        let tasks = allTasks;
+        if (currentFilter === 'direct') tasks = tasks.filter(t => !isRaci(t));
+        else if (currentFilter === 'raci') tasks = tasks.filter(isRaci);
+
+        if (tasks.length === 0) {
+            const msg = currentFilter === 'raci' ? 'Nenhuma tarefa RACI pendente' : 'Nenhuma tarefa avulsa pendente';
+            container.innerHTML = `<div class="empty-state"><i class="bi bi-check-circle text-success" style="font-size:3rem;"></i><p class="mt-2">${msg}</p></div>`;
+            return;
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+        container.innerHTML = tasks.map(t => {
+            const isOverdue = t.data_vencimento && t.data_vencimento.split('T')[0] < today;
+            const dateStr = t.data_vencimento ? new Date(t.data_vencimento).toLocaleDateString('pt-BR', {day: '2-digit', month: 'short'}) : '';
+            const resp = t.responsavel || '';
+            const raciBadge = isRaci(t) ? '<span class="task-raci-badge" title="Item RACI monitorado via grupo WhatsApp">RACI</span>' : '';
+            return `
+                <div class="task-item" id="task-${t.id}">
+                    <div class="task-checkbox" onclick="completeTask(${t.id})"></div>
+                    <div style="flex:1;">
+                        <div class="task-title">${t.titulo}${raciBadge}</div>
+                        <div class="task-meta">
+                            ${dateStr ? `<span class="${isOverdue ? 'task-overdue' : ''}"><i class="bi bi-clock me-1"></i>${dateStr}</span>` : ''}
+                            ${resp ? `<span class="ms-2"><i class="bi bi-person me-1"></i>${resp}</span>` : ''}
+                        </div>
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
     async function loadTasks() {
         const container = document.getElementById('tasksList');
         try {
             const resp = await fetch('/api/projects/all-tasks?status=pending&limit=50');
             const data = await resp.json();
-            const tasks = (data.tasks || []).filter(t => !t.project_name);
-
-            if (tasks.length === 0) {
-                container.innerHTML = '<div class="empty-state"><i class="bi bi-check-circle text-success" style="font-size:3rem;"></i><p class="mt-2">Nenhuma tarefa avulsa pendente</p></div>';
-                return;
-            }
-
-            const today = new Date().toISOString().split('T')[0];
-            container.innerHTML = tasks.map(t => {
-                const isOverdue = t.data_vencimento && t.data_vencimento.split('T')[0] < today;
-                const dateStr = t.data_vencimento ? new Date(t.data_vencimento).toLocaleDateString('pt-BR', {day: '2-digit', month: 'short'}) : '';
-                const resp = t.responsavel || '';
-                return `
-                    <div class="task-item" id="task-${t.id}">
-                        <div class="task-checkbox" onclick="completeTask(${t.id})"></div>
-                        <div style="flex:1;">
-                            <div class="task-title">${t.titulo}</div>
-                            <div class="task-meta">
-                                ${dateStr ? `<span class="${isOverdue ? 'task-overdue' : ''}"><i class="bi bi-clock me-1"></i>${dateStr}</span>` : ''}
-                                ${resp ? `<span class="ms-2"><i class="bi bi-person me-1"></i>${resp}</span>` : ''}
-                            </div>
-                        </div>
-                    </div>`;
-            }).join('');
+            allTasks = (data.tasks || []).filter(t => !t.project_name);
+            renderTasks();
         } catch (e) {
             container.innerHTML = '<div class="empty-state text-danger">Erro ao carregar tarefas</div>';
         }

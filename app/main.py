@@ -15492,6 +15492,7 @@ async def api_all_project_tasks(status: str = "pending", limit: int = 10):
         cursor = conn.cursor()
         cursor.execute("""
             SELECT t.id, t.titulo, t.descricao, t.status, t.data_vencimento, t.prioridade,
+                   t.origem, t.conselhoos_raci_id,
                    p.nome as project_name, c.nome as responsavel
             FROM tasks t
             LEFT JOIN projects p ON p.id = t.project_id

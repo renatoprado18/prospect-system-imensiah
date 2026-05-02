@@ -56,6 +56,8 @@
 - Backlog de tarefas avulsas (sem projeto vinculado) → `rap_tarefas_avulsas.html`
 - Lista filtra `tasks` com `status='pending'` e `project_id IS NULL` via `GET /api/projects/all-tasks?status=pending`
 - Atalho rápido no menu lateral (antes de Projetos)
+- **Filtro RACI vs Diretas** (toggle: Diretas | RACI | Todas, default Diretas) — separa fluxos: tarefas RACI são responsabilidades de terceiros monitoradas via grupo WA (`origem='conselhoos_raci'` ou `conselhoos_raci_id IS NOT NULL`), tarefas diretas são ações do Renato
+- **Badge RACI** (pill roxo `#6366f1`) renderizado ao lado do título em todas as listas de tarefas: `/tarefas-pendentes`, dashboard (widget tasksList) e detalhe de projeto (`renderTaskRow` em `rap_projeto_detail.html`)
 
 ## 6. Projetos (`/projetos`)
 - CRUD com milestones, tarefas, notas, membros, documentos

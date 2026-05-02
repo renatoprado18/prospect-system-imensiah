@@ -2699,13 +2699,15 @@
                     const isCompleted = task.status === 'completed' || task.completed;
                     const title = task.titulo || task.title || task.description || 'Tarefa';
                     const dueDate = task.data_vencimento || task.due_date || task.due;
+                    const isRaci = task.origem === 'conselhoos_raci' || task.conselhoos_raci_id != null;
+                    const raciBadge = isRaci ? '<span style="display:inline-block;background:#6366f1;color:#fff;font-size:0.6rem;font-weight:700;letter-spacing:0.5px;padding:1px 5px;border-radius:4px;margin-left:5px;vertical-align:middle;" title="Item RACI monitorado via grupo WhatsApp">RACI</span>' : '';
                     html += `
                         <div class="task-item ${isCompleted ? 'completed' : ''}" data-task-id="${task.id}" onclick="showTaskDetail(${task.id})">
                             <div class="task-checkbox ${isCompleted ? 'completed' : ''}" onclick="event.stopPropagation(); toggleTask(${task.id}, ${!isCompleted})">
                                 ${isCompleted ? '<i class="bi bi-check"></i>' : ''}
                             </div>
                             <div class="task-content">
-                                <div class="task-title" title="${title}">${title}</div>
+                                <div class="task-title" title="${title}">${title}${raciBadge}</div>
                                 <div class="task-meta">
                                     ${dueDate ? `<i class="bi bi-clock me-1"></i>${formatDate(dueDate)}` : ''}
                                     ${task.contact_name ? ` · <i class="bi bi-person"></i> ${task.contact_name}` : ''}

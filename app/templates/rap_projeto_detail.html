@@ -1537,12 +1537,14 @@
                 dateHtml = `<small class="${cls}"><i class="bi ${icon} me-1"></i>${formatDate(t.data_vencimento)}</small>`;
             }
             const contactName = t.contact_nome ? t.contact_nome.split(' ').slice(0,2).join(' ') : '';
+            const isRaci = t.origem === 'conselhoos_raci' || t.conselhoos_raci_id != null;
+            const raciBadge = isRaci ? '<span style="display:inline-block;background:#6366f1;color:#fff;font-size:0.6rem;font-weight:700;letter-spacing:0.5px;padding:1px 5px;border-radius:4px;margin-left:5px;vertical-align:middle;" title="Item RACI monitorado via grupo WhatsApp">RACI</span>' : '';
             return `
                 <div class="task-row" data-task-id="${t.id}" style="display: grid; grid-template-columns: 22px 1fr 90px 90px 40px; align-items: center; gap: 6px; padding: 7px 2px;">
                     <input type="checkbox" class="form-check-input" style="margin:0;" ${isCompleted ? 'checked' : ''}
                         onchange="toggleTask(${t.id}, this.checked)">
                     <div style="cursor: pointer; overflow: hidden; text-overflow: ellipsis;" onclick="editTask(${t.id})">
-                        <span class="${isCompleted ? 'text-decoration-line-through text-muted' : ''}" style="font-size: 0.85rem;">${t.titulo}</span>
+                        <span class="${isCompleted ? 'text-decoration-line-through text-muted' : ''}" style="font-size: 0.85rem;">${t.titulo}</span>${raciBadge}
                     </div>
                     <div style="text-align: right;">${dateHtml}</div>
                     <div style="text-align: right; font-size: 0.75rem; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${contactName}</div>
