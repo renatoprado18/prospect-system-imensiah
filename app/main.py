@@ -3481,6 +3481,83 @@ class BulkImportData(BaseModel):
 class BulkNameUpdate(BaseModel):
     updates: List[dict]  # [{email: str, nome: str, empresa: str}]
 
+@app.post("/api/admin/refetch-linkedin-post-tasks")
+async def refetch_linkedin_post_tasks(
+    dry_run: bool = True,
+    user: dict = Depends(require_admin)
+):
+    """One-shot: re-fetches LinkedIn posts for legacy "Curtir post" tasks
+    that have no post URL in the description, and either updates them with
+    the current post URL or deletes them when no post is available.
+
+    Use dry_run=false to actually apply changes.
+    """
+    import time
+    from services.campaign_executor import CampaignExecutor
+
+    executor = CampaignExecutor()
+    summary = {
+        "dry_run": dry_run,
+        "checked": 0,
+        "updated": 0,
+        "deleted": 0,
+        "skipped_no_url": 0,
+        "errors": [],
+    }
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT t.id, t.titulo, c.nome AS contact_nome, c.linkedin
+            FROM tasks t
+            LEFT JOIN contacts c ON c.id = t.contact_id
+            WHERE t.titulo ILIKE 'LinkedIn: Curtir post%%'
+              AND t.status = 'pending'
+              AND (t.descricao IS NULL
+                   OR t.descricao !~ 'linkedin\\.com/posts|linkedin\\.com/feed/update')
+        """)
+        rows = [dict(r) for r in cursor.fetchall()]
+
+        for r in rows:
+            summary["checked"] += 1
+            linkedin_url = r.get("linkedin")
+            if not linkedin_url:
+                summary["skipped_no_url"] += 1
+                continue
+            try:
+                post = executor._fetch_recent_post(linkedin_url)
+            except Exception as e:
+                summary["errors"].append(f"task {r['id']}: {e}")
+                continue
+
+            if post and post.get("url"):
+                if not dry_run:
+                    post_preview = post["text"][:100] + ("..." if len(post["text"]) > 100 else "")
+                    new_descricao = (
+                        f"Curta este post de {r['contact_nome']}:\n\n"
+                        f'"{post_preview}"\n\n'
+                        f"Abrir post: {post['url']}\n\n"
+                        f"Dica: Depois de curtir, prepare um comentario relevante para a proxima etapa."
+                    )
+                    cursor.execute(
+                        "UPDATE tasks SET descricao = %s, atualizado_em = NOW() WHERE id = %s",
+                        (new_descricao, r["id"]),
+                    )
+                summary["updated"] += 1
+            else:
+                if not dry_run:
+                    cursor.execute("DELETE FROM tasks WHERE id = %s", (r["id"],))
+                summary["deleted"] += 1
+
+            # Rate limit safety: ~3 calls/sec
+            time.sleep(0.3)
+
+        if not dry_run:
+            conn.commit()
+
+    return summary
+
+
 @app.post("/api/admin/update-names")
 async def update_prospect_names(data: BulkNameUpdate):
     """
