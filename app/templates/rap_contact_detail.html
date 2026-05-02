@@ -79,6 +79,132 @@
             color: white;
         }
 
+        /* Attention Context Block (rich triggers) */
+        .attention-block {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .attention-snooze-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #1e293b;
+            color: #cbd5e1;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 500;
+            align-self: flex-start;
+        }
+        .attention-snooze-pill button {
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            border: none;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 0.72rem;
+            cursor: pointer;
+        }
+        .attention-snooze-pill button:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        .attention-trigger-card {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            border-left: 4px solid #3b82f6;
+            border-radius: 10px;
+            padding: 10px 14px;
+            transition: box-shadow 0.15s, transform 0.1s;
+        }
+        .attention-trigger-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+        }
+        .attention-trigger-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 1.05rem;
+            flex-shrink: 0;
+        }
+        .attention-trigger-body {
+            flex: 1;
+            min-width: 0;
+        }
+        .attention-trigger-label {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            margin-bottom: 2px;
+        }
+        .attention-trigger-content {
+            font-size: 0.92rem;
+            color: #0f172a;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .attention-trigger-action {
+            flex-shrink: 0;
+        }
+        .attention-trigger-action button {
+            border: none;
+            background: #f1f5f9;
+            color: #0f172a;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: 500;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.15s;
+        }
+        .attention-trigger-action button:hover {
+            background: #e2e8f0;
+        }
+        .attention-trigger-action button.primary {
+            background: var(--primary, #6366f1);
+            color: #fff;
+        }
+        .attention-trigger-action button.primary:hover {
+            background: var(--primary-dark, #4f46e5);
+        }
+        .attention-empty {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #ecfdf5;
+            border: 1px solid #a7f3d0;
+            color: #047857;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 0.88rem;
+        }
+        @media (max-width: 768px) {
+            .attention-trigger-card {
+                flex-wrap: wrap;
+            }
+            .attention-trigger-action {
+                width: 100%;
+            }
+            .attention-trigger-action button {
+                width: 100%;
+                justify-content: center;
+                min-height: 40px;
+            }
+        }
+
         /* Summary Card (Resumo IA destaque) */
         .summary-highlight {
             background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
@@ -2322,8 +2448,8 @@
                     </div>
                 </div>
 
-                <!-- INTEL Status Bar (Compact) -->
-                <div class="intel-status-bar" id="intelPanel">
+                <!-- INTEL Status Bar (Compact) - fallback / sem triggers -->
+                <div class="intel-status-bar" id="intelPanel" style="display:none;">
                     <div class="intel-status-icon">
                         <i class="bi bi-cpu"></i>
                     </div>
@@ -2341,6 +2467,9 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- Attention Context Block (rich triggers) -->
+                <div id="attentionContextBlock" style="margin-bottom:12px;"></div>
 
                 <!-- Tabs Navigation -->
                 <div class="contact-tabs">
@@ -6766,16 +6895,10 @@
         let intelCalendarData = null;
 
         async function loadIntelInsight() {
-            const panel = document.getElementById('intelPanel');
-            if (!panel) return;
+            // Carrega o novo Attention Context Block (com triggers ricos)
+            loadAttentionContext();
 
-            // Show loading, hide content
-            const loadingDiv = document.getElementById('intelLoading');
-            const contentDiv = document.getElementById('intelContent');
-            if (loadingDiv) loadingDiv.style.display = 'flex';
-            if (contentDiv) contentDiv.style.display = 'none';
-
-            // Fetch only messages first (fast) - calendar is slow (external API)
+            // Mantem fetch de messages pro intelMessagesData (usado em outras telas)
             try {
                 const messagesRes = await fetch(`/api/contacts/${contactId}/messages?limit=10`);
                 if (messagesRes.ok) {
@@ -6783,16 +6906,184 @@
                     intelMessagesData = data.messages || [];
                 }
             } catch (e) {
-                console.log('Could not fetch messages for insight:', e);
                 intelMessagesData = [];
             }
-
-            // Render insight without calendar first (fast)
             intelCalendarData = [];
-            renderIntelInsight();
+        }
 
-            // Calendar will be fetched by loadContactMeetingsCompact() which shares the data
-            // via fetchCalendarOnce() - no duplicate API calls
+        // ============ ATTENTION CONTEXT BLOCK ============
+
+        async function loadAttentionContext() {
+            const block = document.getElementById('attentionContextBlock');
+            if (!block) return;
+
+            block.innerHTML = '<div style="color:#94a3b8;font-size:0.85rem;padding:8px 4px;"><i class="bi bi-hourglass-split"></i> Analisando contexto...</div>';
+
+            try {
+                const res = await fetch(`/api/contacts/${contactId}/attention-context`);
+                if (!res.ok) throw new Error('fetch failed');
+                const data = await res.json();
+                renderAttentionContext(data);
+            } catch (e) {
+                console.error('Error loading attention context:', e);
+                block.innerHTML = '';
+            }
+        }
+
+        function renderAttentionContext(data) {
+            const block = document.getElementById('attentionContextBlock');
+            if (!block) return;
+
+            const triggers = data.triggers || [];
+            const parts = [];
+
+            // Snooze pill (sempre primeiro)
+            if (data.snoozed) {
+                let ateStr = data.snoozed_until || '';
+                try {
+                    const d = new Date(data.snoozed_until + 'T00:00:00');
+                    ateStr = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                } catch {}
+                parts.push(`
+                    <div class="attention-snooze-pill">
+                        <i class="bi bi-moon-stars"></i>
+                        <span>Adiado ate ${ateStr}${data.snoozed_reason ? ' (' + escapeHtmlAttention(data.snoozed_reason) + ')' : ''}</span>
+                        <button onclick="reactivateContact()" title="Reativar agora">Reativar</button>
+                    </div>
+                `);
+            }
+
+            if (triggers.length === 0) {
+                if (!data.snoozed) {
+                    parts.push(`
+                        <div class="attention-empty">
+                            <i class="bi bi-check-circle-fill"></i>
+                            <span>Nenhuma pendencia ativa neste contato</span>
+                        </div>
+                    `);
+                }
+            } else {
+                parts.push('<div class="attention-block">');
+                triggers.forEach(t => {
+                    parts.push(renderTriggerCard(t));
+                });
+                parts.push('</div>');
+            }
+
+            block.innerHTML = parts.join('');
+        }
+
+        function renderTriggerCard(trigger) {
+            const icon = trigger.icon || 'bi-info-circle';
+            const color = trigger.color || '#3b82f6';
+            const label = escapeHtmlAttention(trigger.label || '');
+            const content = trigger.content ? escapeHtmlAttention(trigger.content) : '';
+            const action = trigger.action || {};
+
+            const actionLabel = getActionLabel(action.type);
+            const actionAttrs = JSON.stringify(action).replace(/"/g, '&quot;');
+
+            return `
+                <div class="attention-trigger-card" style="border-left-color:${color};">
+                    <div class="attention-trigger-icon" style="background:${color};">
+                        <i class="bi ${icon}"></i>
+                    </div>
+                    <div class="attention-trigger-body">
+                        <div class="attention-trigger-label">${label}</div>
+                        ${content ? `<div class="attention-trigger-content">${content}</div>` : ''}
+                    </div>
+                    <div class="attention-trigger-action">
+                        <button class="primary" onclick='executeAttentionAction(${actionAttrs})'>
+                            <i class="bi bi-arrow-right"></i> ${actionLabel}
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function getActionLabel(type) {
+            switch (type) {
+                case 'open_task': return 'Abrir tarefa';
+                case 'open_whatsapp': return 'Responder';
+                case 'send_birthday_msg': return 'Felicitar';
+                case 'open_project': return 'Ver projeto';
+                default: return 'Ver';
+            }
+        }
+
+        function executeAttentionAction(action) {
+            if (!action || !action.type) return;
+            switch (action.type) {
+                case 'open_task':
+                    // tasksContainer fica no tab Resumo
+                    if (typeof switchTab === 'function') {
+                        switchTab('resumo');
+                    }
+                    setTimeout(() => {
+                        const el = document.getElementById('tasksContainer');
+                        if (el) {
+                            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            el.style.transition = 'box-shadow 0.3s';
+                            el.style.boxShadow = '0 0 0 3px rgba(99,102,241,0.4)';
+                            setTimeout(() => { el.style.boxShadow = ''; }, 1500);
+                        }
+                    }, 150);
+                    break;
+                case 'open_whatsapp':
+                    if (typeof openWhatsApp === 'function') {
+                        openWhatsApp();
+                    } else {
+                        window.location.href = '/whatsapp?contact=' + contactId;
+                    }
+                    break;
+                case 'send_birthday_msg':
+                    if (typeof openWhatsApp === 'function') {
+                        openWhatsApp();
+                    } else {
+                        showQuickToast('Em breve: mensagem de aniversario');
+                    }
+                    break;
+                case 'open_project':
+                    if (action.project_id) {
+                        window.location.href = '/projetos/' + action.project_id;
+                    }
+                    break;
+                default:
+                    console.log('Unknown attention action:', action);
+            }
+        }
+
+        async function reactivateContact() {
+            if (!confirm('Reativar este contato (cancelar adiamento)?')) return;
+            try {
+                const res = await fetch(`/api/contacts/${contactId}/snooze`, { method: 'DELETE' });
+                if (res.ok) {
+                    showQuickToast('Contato reativado');
+                    loadAttentionContext();
+                } else {
+                    showQuickToast('Erro ao reativar');
+                }
+            } catch (e) {
+                showQuickToast('Erro ao reativar');
+            }
+        }
+
+        function showQuickToast(msg) {
+            const toast = document.createElement('div');
+            toast.textContent = msg;
+            toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#0f172a;color:white;padding:10px 16px;border-radius:8px;z-index:9999;font-size:0.88rem;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2500);
+        }
+
+        function escapeHtmlAttention(s) {
+            if (s == null) return '';
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
         }
 
         function renderIntelInsight() {

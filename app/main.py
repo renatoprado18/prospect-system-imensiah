@@ -16693,6 +16693,269 @@ async def api_contact_messages(contact_id: int, limit: int = 5):
         return {"messages": []}
 
 
+@app.get("/api/contacts/{contact_id}/attention-context")
+async def api_contact_attention_context(contact_id: int):
+    """
+    Retorna TODOS os triggers ativos do contato com conteudo concreto.
+    Usado pelo banner "Atencao" da pagina de detalhe do contato.
+
+    Triggers cobertos:
+      - task: tarefas pendentes (vencidas tem prioridade)
+      - message: ultima msg incoming sem resposta nos ultimos 14d
+      - birthday: aniversario nos proximos 7d
+      - project: projetos ativos linkados ao contato
+    """
+    from datetime import date, datetime, timedelta
+
+    triggers = []
+    snoozed_info = {"snoozed": False, "ate": None, "motivo": None}
+
+    try:
+        with get_pg_db() as conn:
+            cursor = conn.cursor()
+            hoje = date.today()
+
+            # --- Snooze ---
+            try:
+                cursor.execute(
+                    """
+                    SELECT motivo, ate FROM contact_snoozes
+                    WHERE contact_id = %s AND ate >= CURRENT_DATE
+                    ORDER BY ate DESC LIMIT 1
+                    """,
+                    (contact_id,),
+                )
+                srow = cursor.fetchone()
+                if srow:
+                    ate = srow["ate"]
+                    snoozed_info = {
+                        "snoozed": True,
+                        "ate": ate.isoformat() if hasattr(ate, "isoformat") else str(ate),
+                        "motivo": srow["motivo"],
+                    }
+            except Exception as e:
+                logger.warning(f"attention-context snooze err: {e}")
+                conn.rollback()
+
+            # --- TASKS pendentes (vencidas primeiro) ---
+            try:
+                cursor.execute(
+                    """
+                    SELECT id, titulo, data_vencimento, prioridade, project_id
+                    FROM tasks
+                    WHERE contact_id = %s AND status = 'pending'
+                    ORDER BY
+                        CASE WHEN data_vencimento IS NULL THEN 1 ELSE 0 END,
+                        data_vencimento ASC,
+                        prioridade ASC
+                    LIMIT 5
+                    """,
+                    (contact_id,),
+                )
+                for trow in cursor.fetchall():
+                    venc = trow["data_vencimento"]
+                    venc_date = None
+                    dias = None
+                    if venc:
+                        try:
+                            venc_date = venc.date() if hasattr(venc, "date") else venc
+                            dias = (venc_date - hoje).days
+                        except Exception:
+                            pass
+
+                    if dias is None:
+                        label = "Tarefa pendente"
+                        color = "#64748b"
+                    elif dias < 0:
+                        label = f"Tarefa vencida ha {abs(dias)} dia{'s' if abs(dias) != 1 else ''}"
+                        color = "#ef4444"
+                    elif dias == 0:
+                        label = "Tarefa vence hoje"
+                        color = "#f59e0b"
+                    elif dias <= 3:
+                        label = f"Tarefa vence em {dias} dia{'s' if dias != 1 else ''}"
+                        color = "#f59e0b"
+                    else:
+                        label = f"Tarefa em {dias} dias"
+                        color = "#3b82f6"
+
+                    triggers.append({
+                        "tipo": "task",
+                        "label": label,
+                        "icon": "bi-check2-square",
+                        "color": color,
+                        "content": trow["titulo"] or "(sem titulo)",
+                        "due": venc_date.isoformat() if venc_date else None,
+                        "action": {"type": "open_task", "task_id": trow["id"]},
+                        "_sort": (0 if (dias is not None and dias < 0) else 1, dias if dias is not None else 9999),
+                    })
+            except Exception as e:
+                logger.warning(f"attention-context tasks err: {e}")
+                conn.rollback()
+
+            # --- MESSAGE: ultima incoming sem outgoing depois (ate 14d) ---
+            try:
+                cursor.execute(
+                    """
+                    SELECT m.id, m.conteudo, m.enviado_em, c.canal
+                    FROM messages m
+                    JOIN conversations c ON c.id = m.conversation_id
+                    WHERE m.contact_id = %s
+                      AND m.direcao = 'incoming'
+                      AND m.enviado_em > NOW() - INTERVAL '14 days'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM messages m2
+                          WHERE m2.conversation_id = m.conversation_id
+                            AND m2.direcao = 'outgoing'
+                            AND m2.enviado_em > m.enviado_em
+                      )
+                    ORDER BY m.enviado_em DESC
+                    LIMIT 1
+                    """,
+                    (contact_id,),
+                )
+                mrow = cursor.fetchone()
+                if mrow:
+                    enviado = mrow["enviado_em"]
+                    dias = None
+                    try:
+                        if enviado:
+                            agora = datetime.now(enviado.tzinfo) if enviado.tzinfo else datetime.now()
+                            dias = (agora - enviado).days
+                    except Exception:
+                        pass
+
+                    if dias is None or dias <= 0:
+                        label = "Mensagem recebida hoje"
+                        color = "#3b82f6"
+                    elif dias == 1:
+                        label = "Mensagem sem resposta ha 1 dia"
+                        color = "#f59e0b"
+                    elif dias <= 3:
+                        label = f"Mensagem sem resposta ha {dias} dias"
+                        color = "#f59e0b"
+                    elif dias <= 7:
+                        label = f"Mensagem sem resposta ha {dias} dias"
+                        color = "#ef4444"
+                    else:
+                        label = f"Conversa parada ha {dias} dias"
+                        color = "#ef4444"
+
+                    snippet = (mrow["conteudo"] or "").strip().replace("\n", " ")
+                    if len(snippet) > 120:
+                        snippet = snippet[:117] + "..."
+
+                    triggers.append({
+                        "tipo": "message",
+                        "label": label,
+                        "icon": "bi-chat-dots",
+                        "color": color,
+                        "content": snippet or "(sem conteudo)",
+                        "canal": mrow.get("canal"),
+                        "action": {"type": "open_whatsapp"},
+                        "_sort": (0 if (dias is not None and dias > 3) else 2, dias or 0),
+                    })
+            except Exception as e:
+                logger.warning(f"attention-context messages err: {e}")
+                conn.rollback()
+
+            # --- BIRTHDAY (proximos 7d ou hoje) ---
+            try:
+                cursor.execute(
+                    "SELECT aniversario FROM contacts WHERE id = %s",
+                    (contact_id,),
+                )
+                crow = cursor.fetchone()
+                if crow and crow["aniversario"]:
+                    ani = crow["aniversario"]
+                    try:
+                        # calcular proximo aniversario (este ano ou proximo)
+                        try:
+                            prox = ani.replace(year=hoje.year)
+                        except ValueError:
+                            # 29/fev em ano nao bissexto
+                            prox = ani.replace(year=hoje.year, day=28)
+                        if prox < hoje:
+                            try:
+                                prox = ani.replace(year=hoje.year + 1)
+                            except ValueError:
+                                prox = ani.replace(year=hoje.year + 1, day=28)
+                        dias_ani = (prox - hoje).days
+
+                        if dias_ani == 0:
+                            label = "Aniversario HOJE"
+                            color = "#8b5cf6"
+                            triggers.append({
+                                "tipo": "birthday",
+                                "label": label,
+                                "icon": "bi-gift",
+                                "color": color,
+                                "content": f"Felicitar agora ({prox.strftime('%d/%m')})",
+                                "action": {"type": "send_birthday_msg"},
+                                "_sort": (0, -1),
+                            })
+                        elif dias_ani <= 7:
+                            triggers.append({
+                                "tipo": "birthday",
+                                "label": f"Aniversario em {dias_ani} dia{'s' if dias_ani != 1 else ''}",
+                                "icon": "bi-gift",
+                                "color": "#8b5cf6",
+                                "content": f"Data: {prox.strftime('%d/%m')}",
+                                "action": {"type": "send_birthday_msg"},
+                                "_sort": (1, dias_ani),
+                            })
+                    except Exception as e:
+                        logger.warning(f"attention-context birthday calc err: {e}")
+            except Exception as e:
+                logger.warning(f"attention-context birthday err: {e}")
+                conn.rollback()
+
+            # --- PROJECTS ativos ---
+            try:
+                cursor.execute(
+                    """
+                    SELECT DISTINCT p.id, p.nome, p.status,
+                           (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status = 'pending') as tasks_pendentes
+                    FROM projects p
+                    LEFT JOIN project_members pm ON pm.project_id = p.id
+                    WHERE (p.owner_contact_id = %s OR pm.contact_id = %s)
+                      AND p.status = 'ativo'
+                    LIMIT 3
+                    """,
+                    (contact_id, contact_id),
+                )
+                for prow in cursor.fetchall():
+                    tasks_p = prow.get("tasks_pendentes") or 0
+                    content = f"{tasks_p} task(s) pendente(s)" if tasks_p else "Sem tasks pendentes"
+                    triggers.append({
+                        "tipo": "project",
+                        "label": f"Projeto ativo: {prow['nome']}",
+                        "icon": "bi-folder",
+                        "color": "#3b82f6",
+                        "content": content,
+                        "action": {"type": "open_project", "project_id": prow["id"]},
+                        "_sort": (3, 0),
+                    })
+            except Exception as e:
+                logger.warning(f"attention-context projects err: {e}")
+                conn.rollback()
+
+        # Ordenar: vencido/urgente primeiro
+        triggers.sort(key=lambda t: t.get("_sort", (9, 9)))
+        for t in triggers:
+            t.pop("_sort", None)
+
+        return {
+            "triggers": triggers,
+            "snoozed": snoozed_info["snoozed"],
+            "snoozed_until": snoozed_info["ate"],
+            "snoozed_reason": snoozed_info["motivo"],
+        }
+    except Exception as e:
+        logger.error(f"attention-context fatal err contact={contact_id}: {e}")
+        return {"triggers": [], "snoozed": False, "snoozed_until": None, "snoozed_reason": None}
+
+
 @app.get("/api/projects/available")
 async def api_available_projects():
     """Retorna lista de projetos ativos para selecao."""
