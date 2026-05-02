@@ -931,11 +931,122 @@ def _save_msg(phone: str, role: str, content: str):
         pass
 
 
+def _build_snapshot_block() -> str:
+    """Snapshot situacional do INTEL — bot entra na conversa sabendo do estado atual.
+
+    Why: P2 Inteligencia Real — bot reativo demais sem contexto. Reduz tool calls
+    obvias e elimina performance theater ("aguarde, vou buscar...").
+    """
+    sections = []
+    try:
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT t.id, t.titulo, t.data_vencimento::date AS due, p.nome AS projeto
+            FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
+            WHERE t.status = 'pending' AND t.data_vencimento IS NOT NULL
+              AND t.data_vencimento::date <= CURRENT_DATE
+            ORDER BY t.data_vencimento ASC, t.prioridade ASC
+            LIMIT 5
+        """)
+        tasks = cursor.fetchall()
+        if tasks:
+            lines = []
+            for t in tasks:
+                proj = f" — {t['projeto']}" if t['projeto'] else ""
+                lines.append(f"  - [{t['id']}] {t['titulo'][:70]} (venc {t['due']}){proj}")
+            sections.append("**Tarefas urgentes (<=hoje):**\n" + "\n".join(lines))
+
+        cursor.execute("""
+            SELECT id, summary, start_datetime
+            FROM calendar_events
+            WHERE start_datetime::date = CURRENT_DATE
+              AND end_datetime >= NOW()
+            ORDER BY start_datetime ASC
+            LIMIT 5
+        """)
+        events = cursor.fetchall()
+        if events:
+            lines = [f"  - {e['start_datetime'].strftime('%H:%M')} {e['summary'][:70]}" for e in events]
+            sections.append("**Agenda restante hoje:**\n" + "\n".join(lines))
+        else:
+            sections.append("**Agenda restante hoje:** vazio")
+
+        cursor.execute("""
+            SELECT id, nome, circulo, health_score, ultimo_contato::date AS ultimo
+            FROM contacts
+            WHERE circulo <= 2
+              AND health_score IS NOT NULL
+              AND health_score < 50
+            ORDER BY health_score ASC, ultimo_contato ASC NULLS FIRST
+            LIMIT 5
+        """)
+        cooling = cursor.fetchall()
+        if cooling:
+            lines = []
+            for c in cooling:
+                health = c['health_score'] if c['health_score'] is not None else 0
+                ult = c['ultimo'] or 'nunca'
+                lines.append(f"  - [{c['id']}] {c['nome']} (C{c['circulo']}, health {health}, ult {ult})")
+            sections.append("**Contatos esfriando (C1-C2):**\n" + "\n".join(lines))
+
+        cursor.execute("""
+            SELECT
+                (SELECT COUNT(*) FROM editorial_posts WHERE status = 'scheduled') AS scheduled,
+                (SELECT COUNT(*) FROM editorial_posts WHERE status = 'draft') AS drafts,
+                (SELECT COUNT(*) FROM hot_takes WHERE status = 'draft') AS hot_drafts,
+                (SELECT data_publicacao FROM editorial_posts WHERE status = 'scheduled' ORDER BY data_publicacao ASC LIMIT 1) AS proximo
+        """)
+        ed = cursor.fetchone()
+        if ed and (ed['scheduled'] or ed['drafts'] or ed['hot_drafts']):
+            line = f"**Editorial:** {ed['scheduled']} agendados, {ed['drafts']} drafts, {ed['hot_drafts']} hot takes"
+            if ed['proximo']:
+                line += f" — proximo: {ed['proximo'].strftime('%d/%m %H:%M')}"
+            sections.append(line)
+
+        cursor.execute("""
+            SELECT id, title, urgency
+            FROM action_proposals
+            WHERE status = 'pending'
+              AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY CASE urgency WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, criado_em DESC
+            LIMIT 3
+        """)
+        props = cursor.fetchall()
+        if props:
+            lines = [f"  - [{p['id']}] {p['title'][:80]} ({p['urgency']})" for p in props]
+            sections.append(f"**Propostas pendentes ({len(props)}):**\n" + "\n".join(lines))
+
+        cursor.execute("""
+            SELECT COUNT(*) AS total
+            FROM email_triage
+            WHERE status = 'pending' AND needs_attention = true
+        """)
+        row = cursor.fetchone()
+        email_pending = row['total'] if row else 0
+        if email_pending:
+            sections.append(f"**Emails pendentes:** {email_pending}")
+
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error building snapshot block: {e}")
+        return ""
+
+    if not sections:
+        return ""
+
+    return "## SITUACAO ATUAL (snapshot — voce JA SABE disso, NAO precisa de tool call pra coisas obvias)\n\n" + "\n\n".join(sections) + "\n\n"
+
+
 async def _run_bot(phone: str, message: str, message_id: str) -> str:
     """Full bot processing with tool_use loop. Runs on Railway (no timeout)."""
     now = datetime.now()
+    snapshot = _build_snapshot_block()
 
     system_prompt = f"""Voce e o INTEL Bot, assistente pessoal de Renato Almeida Prado (executivo, tecnologia e governanca).
+
+{snapshot}
 
 TABELAS INTEL (nomes reais, use EXATAMENTE estes nomes):
 - contacts: id, nome, empresa, cargo, circulo, health_score, telefones, emails, linkedin, ultimo_contato, resumo_ai
@@ -974,6 +1085,8 @@ EXEMPLOS SQL:
 REGRAS:
 - NUNCA invente informacoes. Consulte antes de afirmar.
 - NUNCA diga "Intel indisponivel". Se query falhar, tente de novo com SQL corrigido.
+- NUNCA narre o processo: NADA de "buscando...", "aguarde um momento", "deixa eu verificar", "vou consultar". Se precisa de tool, chame e responda DIRETO com o resultado. Se ja tem no snapshot acima, responda ja com a info.
+- Se a pergunta e sobre algo que ja esta no snapshot (tarefas hoje, agenda hoje, propostas, contatos esfriando, editorial), responda DIRETO sem tool call.
 - Quando pedir para CRIAR no ConselhoOS, use execute_conselhoos com INSERT.
 - Responda em portugues, conciso (WhatsApp). Use *negrito* para destaques.
 - Data atual: {now.strftime('%Y-%m-%d %H:%M')}
