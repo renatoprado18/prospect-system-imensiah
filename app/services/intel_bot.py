@@ -983,8 +983,180 @@ def _build_messages_from_history(history: List[Dict]) -> List[Dict]:
 
 # ==================== SYSTEM PROMPT ====================
 
-def _build_system_prompt() -> str:
-    """Build the rich system prompt with CRM context."""
+def _build_personal_relationships_block() -> str:
+    """Pulls key personal relationships from DB so the chat-mode bot knows
+    who is who without being asked. Used in chat mode only."""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT nome, relationship_context, aniversario
+                FROM contacts
+                WHERE contexto = 'personal'
+                  AND relationship_context IS NOT NULL
+                  AND relationship_context <> ''
+                  AND (
+                      relationship_context ILIKE '%filh%'
+                      OR relationship_context ILIKE '%esposa%'
+                      OR relationship_context ILIKE '%marido%'
+                      OR relationship_context ILIKE '%namorad%'
+                      OR relationship_context ILIKE '%parceir%'
+                      OR relationship_context ILIKE '%companheir%'
+                      OR relationship_context ILIKE '%noiv%'
+                      OR relationship_context ILIKE '%pai%'
+                      OR relationship_context ILIKE '%mãe%'
+                      OR relationship_context ILIKE '%mae%'
+                      OR relationship_context ILIKE '%irm%'
+                      OR relationship_context ILIKE '%afilhad%'
+                      OR relationship_context ILIKE '%sogr%'
+                      OR relationship_context ILIKE '%sobrinh%'
+                      OR relationship_context ILIKE '%cunhad%'
+                      OR relationship_context ILIKE '%madrasta%'
+                      OR relationship_context ILIKE '%padrasto%'
+                      OR relationship_context ILIKE '%enteado%'
+                  )
+                ORDER BY
+                  CASE
+                    WHEN relationship_context ILIKE '%filh%' THEN 1
+                    WHEN relationship_context ILIKE '%pai%' OR relationship_context ILIKE '%mãe%' OR relationship_context ILIKE '%mae%' OR relationship_context ILIKE '%madrasta%' OR relationship_context ILIKE '%padrasto%' THEN 2
+                    WHEN relationship_context ILIKE '%namorad%' OR relationship_context ILIKE '%parceir%' OR relationship_context ILIKE '%companheir%' OR relationship_context ILIKE '%noiv%' OR (relationship_context ILIKE '%esposa%' AND relationship_context NOT ILIKE '%ex-esposa%' AND relationship_context NOT ILIKE '%ex esposa%') OR (relationship_context ILIKE '%marido%' AND relationship_context NOT ILIKE '%ex-marido%') THEN 3
+                    WHEN relationship_context ILIKE '%ex-esposa%' OR relationship_context ILIKE '%ex esposa%' OR relationship_context ILIKE '%ex-marido%' THEN 4
+                    WHEN relationship_context ILIKE '%irm%' THEN 5
+                    WHEN relationship_context ILIKE '%afilhad%' THEN 6
+                    WHEN relationship_context ILIKE '%sogr%' OR relationship_context ILIKE '%cunhad%' THEN 7
+                    WHEN relationship_context ILIKE '%sobrinh%' THEN 8
+                    ELSE 9
+                  END,
+                  nome
+                LIMIT 60
+            """)
+            rows = cursor.fetchall()
+        if not rows:
+            return ""
+        lines = ["## QUEM É QUEM NA VIDA DO RENATO (você sabe disso, use sem perguntar):"]
+        for r in rows:
+            line = f"- {r['nome']} — {r['relationship_context']}"
+            if r.get('aniversario'):
+                line += f" (nasc {r['aniversario']})"
+            lines.append(line)
+        return "\n".join(lines)
+    except Exception as e:
+        logger.error(f"Error building relationships block: {e}")
+        return ""
+
+
+def _build_snapshot_block() -> str:
+    """Snapshot situacional para o bot entrar na conversa sabendo de tudo.
+
+    Why: P2 do projeto Inteligencia Real — bot reativo demais sem contexto vivo.
+    How to apply: injetado no system prompt antes do schema. Bot usa pra responder
+    com substancia sem precisar de tools obvias.
+    """
+    sections = []
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT t.id, t.titulo, t.data_vencimento::date AS due, p.nome AS projeto
+                FROM tasks t LEFT JOIN projects p ON p.id = t.project_id
+                WHERE t.status = 'pending' AND t.data_vencimento IS NOT NULL
+                  AND t.data_vencimento::date <= CURRENT_DATE
+                ORDER BY t.data_vencimento ASC, t.prioridade ASC
+                LIMIT 5
+            """)
+            tasks = cursor.fetchall()
+            if tasks:
+                lines = []
+                for t in tasks:
+                    proj = f" — {t['projeto']}" if t['projeto'] else ""
+                    lines.append(f"  - [{t['id']}] {t['titulo'][:70]} (venc {t['due']}){proj}")
+                sections.append("**Tarefas urgentes (<=hoje):**\n" + "\n".join(lines))
+
+            cursor.execute("""
+                SELECT id, summary, start_datetime
+                FROM calendar_events
+                WHERE start_datetime::date = CURRENT_DATE
+                  AND end_datetime >= NOW()
+                ORDER BY start_datetime ASC
+                LIMIT 5
+            """)
+            events = cursor.fetchall()
+            if events:
+                lines = [f"  - {e['start_datetime'].strftime('%H:%M')} {e['summary'][:70]}" for e in events]
+                sections.append("**Agenda restante hoje:**\n" + "\n".join(lines))
+
+            cursor.execute("""
+                SELECT id, nome, circulo, health_score, ultimo_contato::date AS ultimo
+                FROM contacts
+                WHERE circulo <= 2
+                  AND health_score IS NOT NULL
+                  AND health_score < 50
+                ORDER BY health_score ASC, ultimo_contato ASC NULLS FIRST
+                LIMIT 5
+            """)
+            cooling = cursor.fetchall()
+            if cooling:
+                lines = []
+                for c in cooling:
+                    health = c['health_score'] if c['health_score'] is not None else 0
+                    ult = c['ultimo'] or 'nunca'
+                    lines.append(f"  - [{c['id']}] {c['nome']} (C{c['circulo']}, health {health}, ult {ult})")
+                sections.append("**Contatos esfriando (C1-C2):**\n" + "\n".join(lines))
+
+            cursor.execute("""
+                SELECT
+                    (SELECT COUNT(*) FROM editorial_posts WHERE status = 'scheduled') AS scheduled,
+                    (SELECT COUNT(*) FROM editorial_posts WHERE status = 'draft') AS drafts,
+                    (SELECT COUNT(*) FROM hot_takes WHERE status = 'draft') AS hot_drafts,
+                    (SELECT data_publicacao FROM editorial_posts WHERE status = 'scheduled' ORDER BY data_publicacao ASC LIMIT 1) AS proximo
+            """)
+            ed = cursor.fetchone()
+            if ed and (ed['scheduled'] or ed['drafts'] or ed['hot_drafts']):
+                line = f"**Editorial:** {ed['scheduled']} agendados, {ed['drafts']} drafts, {ed['hot_drafts']} hot takes"
+                if ed['proximo']:
+                    line += f" — proximo: {ed['proximo'].strftime('%d/%m %H:%M')}"
+                sections.append(line)
+
+            cursor.execute("""
+                SELECT id, title, urgency
+                FROM action_proposals
+                WHERE status = 'pending'
+                  AND (expires_at IS NULL OR expires_at > NOW())
+                ORDER BY CASE urgency WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, criado_em DESC
+                LIMIT 3
+            """)
+            props = cursor.fetchall()
+            if props:
+                lines = [f"  - [{p['id']}] {p['title'][:80]} ({p['urgency']})" for p in props]
+                sections.append(f"**Propostas pendentes ({len(props)}):**\n" + "\n".join(lines))
+
+            cursor.execute("""
+                SELECT COUNT(*) AS total
+                FROM email_triage
+                WHERE status = 'pending' AND needs_attention = true
+            """)
+            row = cursor.fetchone()
+            email_pending = row['total'] if row else 0
+            if email_pending:
+                sections.append(f"**Emails pendentes:** {email_pending}")
+
+    except Exception as e:
+        logger.error(f"Error building snapshot block: {e}")
+        return ""
+
+    if not sections:
+        return ""
+
+    return "## SITUACAO ATUAL (snapshot — voce ja sabe disso, nao precisa consultar)\n\n" + "\n\n".join(sections) + "\n"
+
+
+def _build_system_prompt(mode: str = "whatsapp") -> str:
+    """Build the rich system prompt with CRM context.
+
+    mode='whatsapp' (default) — operational bot persona, terse, action-oriented
+    mode='chat'              — coach persona for /intel-chat, reflective, listens first
+    """
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d %A %H:%M")
 
@@ -1013,7 +1185,70 @@ def _build_system_prompt() -> str:
     except Exception as e:
         logger.error(f"Error building system prompt context: {e}")
 
-    return f"""Voce e o INTEL Bot, assistente pessoal de Renato Prado no WhatsApp.
+    # Mode-specific persona header
+    if mode == "chat":
+        relationships_block = _build_personal_relationships_block()
+        persona_header = f"""Você é o INTEL — voz de coach do Renato no chat web.
+Você NÃO é um assistente operacional. Não é uma planilha. Não é um help desk.
+Você é a presença que escuta primeiro, pergunta antes de agir, devolve sentido — não dados.
+
+PERSONA / VOZ:
+- Calma, presente, sem pressa. Sem entusiasmo performático.
+- Português brasileiro natural. Trata Renato por "você".
+- Curta quando dá pra ser. Longa só quando há substância real.
+- Texto corrido > tabelas e listas. Estrutura SÓ quando ela ajuda mesmo.
+
+NUNCA (regras duras):
+- Emojis. Em hipótese alguma. Nem um.
+- "Perfeito!", "Achei!", "Vou registrar!", "Pode falar livremente!" — palavras de operador.
+- Tabela de "campos no banco" como resposta. O banco é seu cérebro, não seu output.
+- Cadastrar dado sem Renato pedir explicito ou sem ser claro que ajuda.
+- Apresentar resultado de query como se fosse a resposta. A query informa você; a resposta é sua leitura.
+- Negrito/markdown como decoração. Use raríssimo, só pra destacar uma palavra crítica.
+
+SEMPRE:
+- Quando o assunto é família, relacionamento, vida pessoal: você JÁ SABE quem é quem
+  (ver bloco abaixo). Use sem se gabar do conhecimento, sem perguntar "qual é o nome dela?"
+  quando o nome está implícito pelo contexto.
+- Antes de responder algo importante, consulte em paralelo: memórias do contato, mensagens
+  recentes, projetos relacionados — pra falar com substância. Mas a saída não é o relatório.
+- Reconheça peso quando há peso. Separação após 25 anos não se cataloga, se acolhe.
+- Devolva pergunta antes de oferecer solução. Coach pergunta mais do que afirma.
+- Confronte contradições com cuidado: "há um tempo você falou X, e a semana parece estar Y.
+  Quer reavaliar a prioridade ou só descomprimir?"
+
+EXEMPLO DE COMO RESPONDER (pegue o tom, não copie literalmente):
+
+Renato: "Família: separei da minha ex-esposa em 02/01/2026, depois de 25 anos. Hoje vivo com
+Emma que conheci ano passado. O que você sabe sobre isso?"
+
+RUIM (NÃO FAÇA): "ACHEI EMMA SAKAMOTO! [tabela] Não tenho registro formal da separação.
+Vamos registrar agora! Diga o nome da ex-esposa! 📝🚀"
+
+BOM: "25 anos é um peso real. E entrar num capítulo novo com Emma logo em seguida tem peso
+próprio também. Vejo Daniela ainda nos contatos, e com Emma você tem tido troca bem
+frequente nos últimos meses. Como Renato Jr e Manuela estão recebendo essa transição?
+E você — está vivendo o começo com Emma com entusiasmo, cautela, ou uma mistura?"
+
+(Note: o bom sabe que ex-esposa é Daniela, sabe que filhos são Renato Jr e Manuela, sabe
+quem é Emma. Não pergunta o que já tem. Acolhe o peso. Devolve pergunta. Não propõe
+cadastrar nada de cara.)
+
+REGISTRO PROATIVO (raro):
+- Em conversa longa, se algo claramente importa pra história longa, você pode SUGERIR:
+  "Quer que eu guarde isso como memória? Daqui 6 meses pode ser bom revisitar." NUNCA
+  registre sem perguntar. NUNCA insista.
+
+CONTEXTO ATUAL:
+- Data/hora: {today_str}
+- Projetos ativos:
+{projects_str}
+- Tarefas vencidas: {overdue_count}
+
+{relationships_block}
+"""
+    else:
+        persona_header = f"""Voce e o INTEL Bot, assistente pessoal de Renato Prado no WhatsApp.
 Voce tem acesso TOTAL ao sistema INTEL via SQL e acoes. Pode consultar QUALQUER dado e executar QUALQUER acao.
 
 SOBRE RENATO:
@@ -1025,8 +1260,11 @@ CONTEXTO ATUAL:
 - Data/hora: {today_str}
 - Projetos ativos:
 {projects_str}
-- Tarefas vencidas: {overdue_count}
+- Tarefas vencidas: {overdue_count}"""
 
+    today_iso = now.strftime('%Y-%m-%d')
+    snapshot_block = _build_snapshot_block()
+    return persona_header + "\n\n" + snapshot_block + f"""
 ## SCHEMA DO BANCO (tabelas principais para query_intel):
 
 contacts: id, nome, apelido, empresa, cargo, emails (jsonb), telefones (jsonb), linkedin, linkedin_url, linkedin_headline, linkedin_about, linkedin_experience, linkedin_skills, linkedin_location, circulo (C1-C5), health_score, ultimo_contato, resumo_ai, relationship_context, manual_notes, foto_url, company_website, contexto, total_interacoes, criado_em, atualizado_em
@@ -1104,13 +1342,13 @@ REGRAS ADICIONAIS:
 - NUNCA diga que alguem curtiu, comentou ou fez algo a menos que tenha EVIDENCIA no banco de dados.
 - Quando Renato mencionar "meu post", consulte editorial_posts para pegar o link (url_publicado ou linkedin_post_url) e inclua na mensagem.
 - Responda SEMPRE em portugues
-- Seja conciso e direto (sao mensagens WhatsApp)
+- Mode whatsapp: seja conciso e direto. Mode chat: siga as regras de persona acima (sem decoração, mas comprimento livre quando há substância)
 - Use query_intel para consultar QUALQUER dado — SEMPRE consulte antes de afirmar
 - Use execute_action para criar/modificar dados
 - Use draft_message para rascunhos personalizados (ele tambem segue estas regras)
 - Use project_chat para perguntas sobre projetos especificos (busque o ID antes)
-- Para datas relativas, use {now.strftime('%Y-%m-%d')} como referencia
-- Formate respostas com *negrito* para destaques (WhatsApp markdown)
+- Para datas relativas, use {today_iso} como referencia
+- Formate respostas com *negrito* para destaques (WhatsApp markdown — em mode chat, evite negrito decorativo)
 - Voce pode fazer multiplas queries em sequencia para responder perguntas complexas
 - Se nao souber algo, diga e sugira como ajudar
 
@@ -1131,10 +1369,13 @@ FEEDBACK DO SISTEMA:
 
 # ==================== MAIN HANDLER ====================
 
-async def handle_bot_message(phone: str, message: str, message_id: str) -> str:
+async def handle_bot_message(phone: str, message: str, message_id: str, mode: str = "whatsapp") -> str:
     """
     Main entry point for bot messages from intel-bot instance.
     Uses Claude tool_use for dynamic function calling with conversation memory.
+
+    mode='whatsapp' (default) — operational/transactional persona for WA bot
+    mode='chat'              — coach persona for /intel-chat web UI
     """
     # 1. Verify sender is Renato
     if not _is_renato(phone):
@@ -1173,8 +1414,8 @@ async def handle_bot_message(phone: str, message: str, message_id: str) -> str:
     if not messages or messages[-1].get("role") != "user":
         messages.append({"role": "user", "content": message})
 
-    # 5. Build system prompt
-    system_prompt = _build_system_prompt()
+    # 5. Build system prompt (mode controls persona: whatsapp vs chat coach)
+    system_prompt = _build_system_prompt(mode=mode)
 
     # 6. Call Claude with tool_use in a loop
     if not ANTHROPIC_API_KEY:
@@ -1296,13 +1537,14 @@ async def handle_bot_message(phone: str, message: str, message_id: str) -> str:
 async def handle_chat_message(message: str) -> str:
     """
     Web chat entry point. Reuses the same brain as the WhatsApp bot —
-    same system prompt, same memory (bot_conversations), same tools.
+    same memory (bot_conversations), same tools — mas com persona de COACH
+    (mode='chat' no system prompt, ver _build_system_prompt).
 
     Single-user app: hardcodes RENATO_PHONE so WA + web share thread.
     """
     import uuid
     message_id = f"web-{uuid.uuid4().hex[:12]}"
-    return await handle_bot_message(RENATO_PHONE, message, message_id)
+    return await handle_bot_message(RENATO_PHONE, message, message_id, mode="chat")
 
 
 def get_chat_history(limit: int = 50) -> List[Dict]:
