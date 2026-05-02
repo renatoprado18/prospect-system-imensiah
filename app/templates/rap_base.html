@@ -33,6 +33,7 @@
             --gray-500: #64748b;
             --gray-600: #475569;
             --sidebar-width: 260px;
+            --sidebar-width-collapsed: 64px;
         }
 
         * { box-sizing: border-box; }
@@ -57,7 +58,33 @@
             z-index: 100;
             display: flex;
             flex-direction: column;
+            transition: width 0.18s ease;
         }
+        .sidebar-collapse-btn {
+            position: absolute;
+            top: 50%;
+            right: -12px;
+            transform: translateY(-50%);
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: var(--primary);
+            color: #fff;
+            border: 2px solid #fff;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            z-index: 101;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            padding: 0;
+            line-height: 1;
+        }
+        @media (min-width: 769px) {
+            .sidebar-collapse-btn { display: flex; }
+        }
+        .sidebar-collapse-btn:hover { background: var(--secondary); }
 
         .sidebar-header {
             padding: 24px;
@@ -194,6 +221,56 @@
             margin-left: var(--sidebar-width);
             padding: 24px 32px;
             min-height: 100vh;
+            transition: margin-left 0.18s ease;
+        }
+
+        /* Collapsed sidebar (desktop only) */
+        @media (min-width: 769px) {
+            body.sidebar-collapsed .sidebar { width: var(--sidebar-width-collapsed); }
+            body.sidebar-collapsed .main-content { margin-left: var(--sidebar-width-collapsed); }
+            body.sidebar-collapsed .sidebar-header { padding: 18px 0; justify-content: center; }
+            body.sidebar-collapsed .sidebar-logo span,
+            body.sidebar-collapsed .nav-item span,
+            body.sidebar-collapsed .nav-item .badge,
+            body.sidebar-collapsed .nav-section,
+            body.sidebar-collapsed .user-info > .user-meta,
+            body.sidebar-collapsed .btn-global-sync { display: none; }
+            body.sidebar-collapsed .sidebar-logo { gap: 0; }
+            body.sidebar-collapsed .nav-item {
+                justify-content: center;
+                padding: 12px 0;
+                position: relative;
+            }
+            body.sidebar-collapsed .nav-item i { margin: 0; }
+            /* Tooltip on hover when collapsed */
+            body.sidebar-collapsed .nav-item:hover::after {
+                content: attr(data-label);
+                position: absolute;
+                left: calc(100% + 6px);
+                top: 50%;
+                transform: translateY(-50%);
+                background: var(--dark);
+                color: #fff;
+                padding: 5px 10px;
+                border-radius: 6px;
+                white-space: nowrap;
+                z-index: 200;
+                font-size: 0.78rem;
+                pointer-events: none;
+                box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+            }
+            /* Substitui nav-section por divisor sutil */
+            body.sidebar-collapsed .nav-section {
+                display: block;
+                padding: 0;
+                margin: 8px 12px;
+                height: 1px;
+                background: rgba(255,255,255,0.08);
+                font-size: 0;
+                color: transparent;
+            }
+            body.sidebar-collapsed .sidebar-footer { padding: 14px 0; }
+            body.sidebar-collapsed .user-info { justify-content: center; }
         }
 
         /* Header */
@@ -666,6 +743,10 @@
     </style>
 </head>
 <body>
+    <script>
+        // Apply sidebar collapsed state ASAP (before render) to avoid flash
+        try { if (localStorage.getItem('intel.sidebar.collapsed') === '1') document.body.classList.add('sidebar-collapsed'); } catch(e) {}
+    </script>
     <!-- Mobile Toggle -->
     <button class="sidebar-toggle" onclick="toggleMobileSidebar()">
         <i class="bi bi-list"></i>
@@ -674,6 +755,9 @@
 
     <!-- Sidebar -->
     <aside class="sidebar">
+        <button class="sidebar-collapse-btn" onclick="toggleSidebarCollapsed()" id="sidebarCollapseBtn" title="Colapsar/expandir menu">
+            <i class="bi bi-chevron-left" id="sidebarCollapseIcon"></i>
+        </button>
         <div class="sidebar-header">
             <a href="/" class="sidebar-logo">
                 <div class="icon">
@@ -829,7 +913,7 @@
         <div class="sidebar-footer">
             <div class="user-info">
                 <div class="user-avatar">{{ user.nome[0] if user and user.nome else 'U' }}</div>
-                <div>
+                <div class="user-meta">
                     <div class="user-name">{{ user.nome if user else 'Usuario' }}</div>
                     <div class="user-role">{{ user.role if user and user.role else 'Admin' }}</div>
                 </div>
@@ -882,6 +966,29 @@
                 }
             });
         });
+
+        // Sidebar Collapse (desktop)
+        function applySidebarCollapsedFromStorage() {
+            try {
+                const collapsed = localStorage.getItem('intel.sidebar.collapsed') === '1';
+                document.body.classList.toggle('sidebar-collapsed', collapsed);
+                const icon = document.getElementById('sidebarCollapseIcon');
+                if (icon) icon.className = collapsed ? 'bi bi-chevron-right' : 'bi bi-chevron-left';
+            } catch(e) {}
+        }
+        function toggleSidebarCollapsed() {
+            const next = !document.body.classList.contains('sidebar-collapsed');
+            document.body.classList.toggle('sidebar-collapsed', next);
+            try { localStorage.setItem('intel.sidebar.collapsed', next ? '1' : '0'); } catch(e) {}
+            const icon = document.getElementById('sidebarCollapseIcon');
+            if (icon) icon.className = next ? 'bi bi-chevron-right' : 'bi bi-chevron-left';
+        }
+        // Tooltip data-label: copia o texto do span pra atributo do nav-item
+        document.querySelectorAll('.sidebar .nav-item').forEach(item => {
+            const span = item.querySelector('span');
+            if (span) item.setAttribute('data-label', span.textContent.trim());
+        });
+        applySidebarCollapsedFromStorage();
 
         // Global Sync - refresh all data
         async function globalSync() {
