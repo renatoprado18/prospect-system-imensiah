@@ -147,47 +147,45 @@ class CalendarSyncService:
 
         attendees_json = json.dumps(google_event.get("attendees", []))
 
-        if existing:
-            cursor.execute("""
-                UPDATE calendar_events SET
-                    summary = %s, description = %s, location = %s,
-                    start_datetime = %s, end_datetime = %s, all_day = %s,
-                    attendees = %s, status = %s, conference_url = %s,
-                    conference_type = %s, etag = %s, last_synced_at = NOW(),
-                    atualizado_em = NOW()
-                WHERE google_event_id = %s
-            """, (
-                google_event.get("summary", "Sem titulo"),
-                google_event.get("description"),
-                google_event.get("location"),
-                start_dt, end_dt, all_day,
-                attendees_json,
-                google_event.get("status", "confirmed"),
-                conference_url,
-                conference_type,
-                google_event.get("etag"),
-                event_id
-            ))
-            return True
-        else:
-            cursor.execute("""
-                INSERT INTO calendar_events
-                (google_event_id, summary, description, location, start_datetime, end_datetime,
-                 all_day, attendees, status, conference_url, conference_type, etag, source, last_synced_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'google', NOW())
-            """, (
-                event_id,
-                google_event.get("summary", "Sem titulo"),
-                google_event.get("description"),
-                google_event.get("location"),
-                start_dt, end_dt, all_day,
-                attendees_json,
-                google_event.get("status", "confirmed"),
-                conference_url,
-                conference_type,
-                google_event.get("etag")
-            ))
-            return False
+        # Upsert atomico via ON CONFLICT (google_event_id).
+        # Antes era SELECT-then-INSERT-or-UPDATE — vulneravel a:
+        # 1. Race entre SELECT e INSERT (insert duplicado)
+        # 2. SERIAL sequence dessincronizada (id auto-gerado ja existia,
+        #    -> calendar_events_pkey duplicate em prod 02/05/2026)
+        # ON CONFLICT (google_event_id) DO UPDATE evita ambos: nao geramos
+        # novo id pra row ja existente.
+        cursor.execute("""
+            INSERT INTO calendar_events
+            (google_event_id, summary, description, location, start_datetime, end_datetime,
+             all_day, attendees, status, conference_url, conference_type, etag, source, last_synced_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'google', NOW())
+            ON CONFLICT (google_event_id) DO UPDATE SET
+                summary = EXCLUDED.summary,
+                description = EXCLUDED.description,
+                location = EXCLUDED.location,
+                start_datetime = EXCLUDED.start_datetime,
+                end_datetime = EXCLUDED.end_datetime,
+                all_day = EXCLUDED.all_day,
+                attendees = EXCLUDED.attendees,
+                status = EXCLUDED.status,
+                conference_url = EXCLUDED.conference_url,
+                conference_type = EXCLUDED.conference_type,
+                etag = EXCLUDED.etag,
+                last_synced_at = NOW(),
+                atualizado_em = NOW()
+        """, (
+            event_id,
+            google_event.get("summary", "Sem titulo"),
+            google_event.get("description"),
+            google_event.get("location"),
+            start_dt, end_dt, all_day,
+            attendees_json,
+            google_event.get("status", "confirmed"),
+            conference_url,
+            conference_type,
+            google_event.get("etag")
+        ))
+        return bool(existing)
 
     async def push_local_event(self, event_id: int) -> Dict:
         """Envia evento local para o Google Calendar"""
