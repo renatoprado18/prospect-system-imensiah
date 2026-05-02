@@ -149,11 +149,14 @@ def list_projects(
                     'dias_ate': dias_ate
                 }
 
-            # Get next task
+            # Get next task — excludes monitoria (RACIs assigned to others) so a project
+            # doesn't get categorized as "atencao" because of someone else's overdue RACI.
             cursor.execute("""
                 SELECT titulo, data_vencimento
                 FROM tasks
                 WHERE project_id = %s AND status = 'pending'
+                  AND (origem IS DISTINCT FROM 'conselhoos_raci'
+                       OR contact_id = (SELECT contact_id FROM users WHERE id = 1))
                 ORDER BY
                     CASE WHEN data_vencimento IS NULL THEN 1 ELSE 0 END,
                     data_vencimento ASC
@@ -263,9 +266,10 @@ def get_project_briefing_context(project_id: int) -> Optional[Dict]:
             return None
         project = dict(project)
 
-        # Tasks with status
+        # Tasks with status — include contact_id + origem so the briefing can flag monitoria
         cursor.execute("""
             SELECT t.titulo, t.status, t.data_vencimento, t.prioridade, t.descricao,
+                   t.contact_id, t.origem,
                    c.nome as responsavel
             FROM tasks t
             LEFT JOIN contacts c ON c.id = t.contact_id
@@ -273,6 +277,11 @@ def get_project_briefing_context(project_id: int) -> Optional[Dict]:
             ORDER BY t.data_vencimento NULLS LAST
         """, (project_id,))
         tasks = [dict(r) for r in cursor.fetchall()]
+
+        # Owner contact_id (admin user) — used to split tasks into "minhas" vs monitoria
+        cursor.execute("SELECT contact_id FROM users WHERE id = 1")
+        owner_row = cursor.fetchone()
+        owner_contact_id = owner_row['contact_id'] if owner_row else None
 
         # Members
         cursor.execute("""
@@ -349,6 +358,7 @@ def get_project_briefing_context(project_id: int) -> Optional[Dict]:
         return {
             'project': project,
             'tasks': tasks,
+            'owner_contact_id': owner_contact_id,
             'members': members,
             'recent_messages': recent_messages,
             'notes': notes,

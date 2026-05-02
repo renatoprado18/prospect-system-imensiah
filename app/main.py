@@ -15569,6 +15569,48 @@ async def api_projects_with_attention():
         return {"projects": projects}
 
 
+@app.get("/api/projects/with-attention/detailed")
+async def api_projects_with_attention_detailed():
+    """Pre-categorizado pra drill do dashboard: atencao + proximos. Espelha logica de categorizeProject() do /projetos."""
+    from datetime import date
+    projects = list_projects(include_completed=False, limit=200)
+    hoje = date.today()
+    atencao, proximos = [], []
+    for p in projects:
+        if p.get('status') in ('concluido', 'pausado'):
+            continue
+        bucket = None
+        if (p.get('tasks_vencidas') or 0) > 0:
+            bucket = 'atencao'
+        if not bucket and p.get('proximo_marco'):
+            d = p['proximo_marco'].get('dias_ate')
+            if d is not None:
+                if d < 0: bucket = 'atencao'
+                elif d <= 7: bucket = 'proximos'
+        if not bucket and p.get('proxima_tarefa') and p['proxima_tarefa'].get('dias_ate') is not None:
+            d = p['proxima_tarefa']['dias_ate']
+            if d < 0: bucket = 'atencao'
+            elif d <= 7: bucket = 'proximos'
+        if not bucket and p.get('data_previsao'):
+            try:
+                from datetime import datetime as _dt
+                prev = p['data_previsao']
+                if isinstance(prev, str):
+                    prev = _dt.strptime(prev[:10], '%Y-%m-%d').date()
+                elif hasattr(prev, 'date'):
+                    prev = prev.date()
+                diff = (prev - hoje).days
+                if diff < 0: bucket = 'atencao'
+                elif diff <= 7: bucket = 'proximos'
+            except Exception:
+                pass
+        if bucket == 'atencao':
+            atencao.append(p)
+        elif bucket == 'proximos':
+            proximos.append(p)
+    return {"atencao": atencao, "proximos": proximos}
+
+
 @app.get("/api/projects/{project_id}")
 async def api_get_project(project_id: int):
     """Retorna projeto com todos os detalhes."""
@@ -15594,21 +15636,31 @@ async def api_project_briefing(request: Request, project_id: int):
 
     today = datetime.now().strftime("%Y-%m-%d (%A)")
 
-    # Build context for Claude
-    tasks_text = ""
+    # Split tasks into "minhas" (R = Renato) vs "monitoria" (RACI de terceiros, acompanhamento via WhatsApp)
+    owner_contact_id = ctx.get('owner_contact_id')
+    minhas_text = ""
+    monitoria_text = ""
     overdue = []
     upcoming = []
     for t in ctx['tasks']:
         status_emoji = "pending" if t['status'] == 'pending' else t['status']
         prazo = str(t['data_vencimento'].date()) if t.get('data_vencimento') else "sem prazo"
         resp = t.get('responsavel') or 'sem responsavel'
-        line = f"- [{status_emoji}] {t['titulo']} | prazo: {prazo} | resp: {resp}"
-        tasks_text += line + "\n"
-        if t.get('data_vencimento') and t['status'] == 'pending':
-            if t['data_vencimento'].date() < datetime.now().date():
-                overdue.append(t)
-            elif (t['data_vencimento'].date() - datetime.now().date()).days <= 7:
-                upcoming.append(t)
+        line = f"- [{status_emoji}] {t['titulo']} | prazo: {prazo} | resp: {resp}\n"
+        is_monitoria = (
+            t.get('origem') == 'conselhoos_raci'
+            and owner_contact_id is not None
+            and t.get('contact_id') != owner_contact_id
+        )
+        if is_monitoria:
+            monitoria_text += line
+        else:
+            minhas_text += line
+            if t.get('data_vencimento') and t['status'] == 'pending':
+                if t['data_vencimento'].date() < datetime.now().date():
+                    overdue.append(t)
+                elif (t['data_vencimento'].date() - datetime.now().date()).days <= 7:
+                    upcoming.append(t)
 
     members_text = "\n".join(
         f"- {m['nome']} (papel: {m.get('papel') or '-'})"
@@ -15662,8 +15714,11 @@ Previsao: {ctx['project'].get('data_previsao') or 'sem previsao'}
 MEMBROS:
 {members_text}
 
-TAREFAS:
-{tasks_text or '(nenhuma tarefa)'}
+TAREFAS DO RENATO (Renato e o R - Responsavel direto):
+{minhas_text or '(nenhuma)'}
+
+TAREFAS DE MONITORIA (RACI de terceiros - Renato so acompanha via grupo WhatsApp, NAO sao alertas):
+{monitoria_text or '(nenhuma)'}
 
 MARCOS:
 {milestones_text or '(nenhum marco)'}
@@ -15687,6 +15742,7 @@ MEMORIAS/REGISTROS DE LIGACOES DOS MEMBROS:
 - NAO diga que uma mensagem "parece incompleta" a menos que ela termine abruptamente no meio de uma frase.
 - Se Renato respondeu uma mensagem recebida, a conversa esta em andamento, nao pendente.
 - Converta datas relativas mencionadas para datas absolutas (ex: "primeira semana de maio" = 2026-05-05).
+- TAREFAS DE MONITORIA NAO geram alertas individuais. Sao RACIs de outros membros do conselho — Renato apenas acompanha via grupo WhatsApp. Se houver muitas vencidas, mencione UMA vez algo como "X RACIs de terceiros vencidas — cobrar status no grupo WhatsApp" e pronto. Os alertas e proximas_acoes devem focar nas TAREFAS DO RENATO.
 
 Retorne um JSON valido com este formato (SEM markdown, SEM ```):
 
