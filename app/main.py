@@ -20613,7 +20613,8 @@ async def cron_pulse():
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT
-                    (SELECT MAX(ultimo_calculo_circulo) FROM contacts) AS last_health_calc,
+                    -- Cron health-recalc faz UPDATE atualizado_em em contacts circulo<=4 (nao mexe em ultimo_calculo_circulo)
+                    (SELECT MAX(atualizado_em) FROM contacts WHERE COALESCE(circulo, 5) <= 4) AS last_health_calc,
                     (SELECT MAX(last_incremental_sync) FROM calendar_sync_state) AS last_calendar_sync,
                     (SELECT COUNT(*) FROM agent_actions WHERE criado_em > NOW() - INTERVAL '4 hours') AS agent_actions_4h,
                     (SELECT COUNT(*) FROM audit_log WHERE criado_em > NOW() - INTERVAL '4 hours') AS audit_log_4h,
