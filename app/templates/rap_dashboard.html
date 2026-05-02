@@ -2075,6 +2075,29 @@
             flex-shrink: 0;
         }
         .drill-project-stats span { display: inline-flex; align-items: center; gap: 2px; }
+        /* Statcard breakdown pills (Fase 4 polish) */
+        .stat-breakdown {
+            display: flex;
+            gap: 4px;
+            margin-top: 4px;
+            flex-wrap: wrap;
+        }
+        .stat-breakdown .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            padding: 1px 6px;
+            border-radius: 8px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            background: var(--gray-100, #f1f5f9);
+            color: var(--gray-500, #64748b);
+            line-height: 1.4;
+        }
+        .stat-breakdown .pill.danger { background: #fee2e2; color: #b91c1c; }
+        .stat-breakdown .pill.warning { background: #fef3c7; color: #b45309; }
+        .stat-breakdown .pill.muted { opacity: 0.55; }
+        .stat-breakdown .pill i { font-size: 0.7rem; }
 {% endblock %}
 
 {% block content %}
@@ -2178,6 +2201,7 @@
                 <div class="stat-content">
                     <div class="stat-value" id="statProjectsAction">-</div>
                     <div class="stat-label">Projetos c/ Atenção</div>
+                    <div class="stat-breakdown" id="statProjectsBreakdown"></div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer; border-left: 3px solid var(--warning);" data-drill="contatos" onclick="openDrill('contatos')">
@@ -2714,8 +2738,16 @@
                     const projResp = await fetch('/api/projects/with-attention/detailed');
                     if (projResp.ok) {
                         const projData = await projResp.json();
-                        const total = (projData.atencao || []).length + (projData.proximos || []).length;
-                        document.getElementById('statProjectsAction').textContent = total;
+                        const atencaoN = (projData.atencao || []).length;
+                        const proximosN = (projData.proximos || []).length;
+                        document.getElementById('statProjectsAction').textContent = atencaoN + proximosN;
+                        const breakdown = document.getElementById('statProjectsBreakdown');
+                        if (breakdown) {
+                            breakdown.innerHTML = `
+                                <span class="pill ${atencaoN > 0 ? 'danger' : 'muted'}" title="Precisa de atenção (vencidos)"><i class="bi bi-exclamation-triangle-fill"></i> ${atencaoN}</span>
+                                <span class="pill ${proximosN > 0 ? 'warning' : 'muted'}" title="Próximos 7 dias"><i class="bi bi-clock-history"></i> ${proximosN}</span>
+                            `;
+                        }
                     }
                 } catch(e) { document.getElementById('statProjectsAction').textContent = '-'; }
 
