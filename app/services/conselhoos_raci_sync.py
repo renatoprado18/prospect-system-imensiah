@@ -29,6 +29,68 @@ class ConselhoOSRaciSyncService:
 
     def __init__(self):
         self.conselhoos_url = os.getenv("CONSELHOOS_DATABASE_URL")
+        self._owner_cache = None
+
+    def _get_owner(self) -> Optional[Dict[str, Any]]:
+        """
+        Load the admin user (id=1) with their linked contact_id and name.
+        Used to flag tasks where Renato is the R (responsavel) — those become
+        "minhas tarefas" instead of monitoria.
+        """
+        if self._owner_cache is not None:
+            return self._owner_cache or None
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT u.id AS user_id, u.contact_id, c.nome AS contact_nome
+                FROM users u
+                LEFT JOIN contacts c ON c.id = u.contact_id
+                WHERE u.id = 1 AND u.contact_id IS NOT NULL
+            """)
+            row = cursor.fetchone()
+            self._owner_cache = dict(row) if row else {}
+        return self._owner_cache or None
+
+    @staticmethod
+    def _split_responsaveis(text: str) -> List[str]:
+        """Split a responsavel string ('Amadeo, Verid.' or 'Thalita e Amadeo') into tokens."""
+        if not text or text == "N/A":
+            return []
+        # Replace ' e ' with ',' for unified split, then strip
+        normalized = text.replace(" e ", ",").replace(" E ", ",")
+        return [t.strip() for t in normalized.split(",") if t.strip()]
+
+    @staticmethod
+    def _name_matches(token: str, full_name: str) -> bool:
+        """
+        Case-insensitive primeiro-nome match.
+        'Renato' matches 'Renato de Faria e Almeida Prado' but not 'Renata Comin'.
+        """
+        if not token or not full_name:
+            return False
+        token_first = token.strip().lower().split()[0]
+        full_first = full_name.strip().lower().split()[0]
+        return token_first == full_first
+
+    def _resolve_r_contact(self, responsavel_r: str, empresa_id: str) -> Optional[int]:
+        """
+        Pick the contact_id for a RACI task's R field.
+        - If the admin user (Renato) is among the Rs, return user.contact_id.
+        - Else return first R that matches an existing contact (current behavior).
+        """
+        owner = self._get_owner()
+        tokens = self._split_responsaveis(responsavel_r or "")
+
+        if owner and owner.get("contact_nome"):
+            for tok in tokens:
+                if self._name_matches(tok, owner["contact_nome"]):
+                    return owner["contact_id"]
+
+        for tok in tokens:
+            cid = self._find_contact_by_name(tok, empresa_id=empresa_id)
+            if cid:
+                return cid
+        return None
 
     def _get_conselhoos_conn(self):
         """Get connection to ConselhoOS database."""
@@ -256,12 +318,12 @@ class ConselhoOSRaciSyncService:
 
                         project_id = empresas_seen[emp_nome]
 
-                        # Find contact matching responsavel_r (uses ConselhoOS pessoas first)
-                        responsavel = raci.get("responsavel_r", "")
-                        # Handle multiple responsaveis (take first)
-                        if "," in str(responsavel):
-                            responsavel = responsavel.split(",")[0].strip()
-                        contact_id = self._find_contact_by_name(responsavel, empresa_id=raci.get("empresa_id"))
+                        # Resolve R contact: prefer admin user (Renato) when he's among the Rs,
+                        # else fall back to first matched R. This drives "minha tarefa" vs monitoria.
+                        contact_id = self._resolve_r_contact(
+                            raci.get("responsavel_r", ""),
+                            raci.get("empresa_id"),
+                        )
 
                         # Build task title and description
                         area = raci.get("area", "Geral")

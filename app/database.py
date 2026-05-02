@@ -183,6 +183,12 @@ def init_db():
             ON CONFLICT (email) DO NOTHING
         ''')
 
+        # Link users to their own contact record (used to flag "minhas tarefas" vs monitoria RACI)
+        cursor.execute('''
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL
+        ''')
+
         # Prospects table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS prospects (

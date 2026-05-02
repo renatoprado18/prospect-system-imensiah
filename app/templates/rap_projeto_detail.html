@@ -659,6 +659,7 @@
 
 <script>
     const projectId = {{ project_id }};
+    const currentUserContactId = {{ user_contact_id|default('null', true) }};
     let project = null;
     let selectedContactId = null;
 
@@ -1528,8 +1529,10 @@
                 const due = new Date(t.data_vencimento);
                 due.setHours(0, 0, 0, 0);
                 const diff = Math.ceil((due - today) / 86400000);
+                const isRaciTmp = t.origem === 'conselhoos_raci' || t.conselhoos_raci_id != null;
+                const isMonitoriaTmp = isRaciTmp && currentUserContactId != null && t.contact_id !== currentUserContactId;
                 let cls = 'text-muted', icon = 'bi-calendar';
-                if (!isCompleted) {
+                if (!isCompleted && !isMonitoriaTmp) {
                     if (diff < 0) { cls = 'text-danger fw-semibold'; icon = 'bi-exclamation-circle-fill'; }
                     else if (diff === 0) { cls = 'text-warning fw-semibold'; icon = 'bi-clock-fill'; }
                     else if (diff <= 3) { cls = 'text-warning'; }
@@ -1538,7 +1541,13 @@
             }
             const contactName = t.contact_nome ? t.contact_nome.split(' ').slice(0,2).join(' ') : '';
             const isRaci = t.origem === 'conselhoos_raci' || t.conselhoos_raci_id != null;
-            const raciBadge = isRaci ? '<span style="display:inline-block;background:#6366f1;color:#fff;font-size:0.6rem;font-weight:700;letter-spacing:0.5px;padding:1px 5px;border-radius:4px;margin-left:5px;vertical-align:middle;" title="Item RACI monitorado via grupo WhatsApp">RACI</span>' : '';
+            const isMonitoria = isRaci && currentUserContactId != null && t.contact_id !== currentUserContactId;
+            let raciBadge = '';
+            if (isMonitoria) {
+                raciBadge = '<span style="display:inline-block;background:#94a3b8;color:#fff;font-size:0.6rem;font-weight:700;letter-spacing:0.5px;padding:1px 5px;border-radius:4px;margin-left:5px;vertical-align:middle;" title="Tarefa de outro responsavel — voce monitora via grupo WhatsApp"><i class="bi bi-eye"></i> MONITORIA</span>';
+            } else if (isRaci) {
+                raciBadge = '<span style="display:inline-block;background:#6366f1;color:#fff;font-size:0.6rem;font-weight:700;letter-spacing:0.5px;padding:1px 5px;border-radius:4px;margin-left:5px;vertical-align:middle;" title="Item RACI sob sua responsabilidade">RACI</span>';
+            }
             return `
                 <div class="task-row" data-task-id="${t.id}" style="display: grid; grid-template-columns: 22px 1fr 90px 90px 40px; align-items: center; gap: 6px; padding: 7px 2px;">
                     <input type="checkbox" class="form-check-input" style="margin:0;" ${isCompleted ? 'checked' : ''}

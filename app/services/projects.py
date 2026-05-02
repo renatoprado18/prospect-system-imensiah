@@ -76,12 +76,18 @@ def list_projects(
     with get_db() as conn:
         cursor = conn.cursor()
 
+        # tasks_vencidas: counts only "minhas" overdue tasks (mine = contact_id matches admin user's contact_id,
+        # OR the task isn't a RACI item). RACIs assigned to other people are monitoria — they show in the
+        # project but don't trigger the "Precisa de atencao" badge.
         query = """
             SELECT p.*,
                    (SELECT COUNT(*) FROM project_members WHERE project_id = p.id) as total_membros,
                    (SELECT COUNT(*) FROM tasks WHERE project_id = p.id AND status = 'pending') as tasks_pendentes,
-                   (SELECT COUNT(*) FROM tasks WHERE project_id = p.id AND status = 'pending'
-                        AND data_vencimento IS NOT NULL AND data_vencimento < CURRENT_DATE) as tasks_vencidas,
+                   (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status = 'pending'
+                        AND t.data_vencimento IS NOT NULL AND t.data_vencimento < CURRENT_DATE
+                        AND (t.origem IS DISTINCT FROM 'conselhoos_raci'
+                             OR t.contact_id = (SELECT contact_id FROM users WHERE id = 1))
+                   ) as tasks_vencidas,
                    (SELECT COUNT(*) FROM project_milestones WHERE project_id = p.id AND status = 'pendente') as marcos_pendentes
             FROM projects p
             WHERE 1=1

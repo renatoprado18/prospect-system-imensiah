@@ -905,9 +905,18 @@ async def projeto_detail_page(request: Request, project_id: int):
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/login", status_code=302)
+    # Look up user's contact_id so the UI can flag "minha tarefa" vs monitoria RACI
+    user_contact_id = None
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT contact_id FROM users WHERE email = %s", (user.get("email"),))
+        row = cursor.fetchone()
+        if row:
+            user_contact_id = row["contact_id"]
     return templates.TemplateResponse("rap_projeto_detail.html", {
         "request": request,
-        "project_id": project_id
+        "project_id": project_id,
+        "user_contact_id": user_contact_id,
     })
 
 
@@ -15507,7 +15516,8 @@ async def api_all_project_tasks(status: str = "pending", limit: int = 10):
 
 @app.get("/api/projects/overdue-count")
 async def api_projects_overdue_count():
-    """Conta projetos com tarefas vencidas (consistente com /projetos)"""
+    """Conta projetos com tarefas vencidas (consistente com /projetos).
+    RACIs onde Renato nao e o R sao monitoria e nao contam aqui."""
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -15517,6 +15527,8 @@ async def api_projects_overdue_count():
             WHERE t.status = 'pending'
               AND t.data_vencimento::date < CURRENT_DATE
               AND p.status = 'ativo'
+              AND (t.origem IS DISTINCT FROM 'conselhoos_raci'
+                   OR t.contact_id = (SELECT contact_id FROM users WHERE id = 1))
         """)
         return {"count": cursor.fetchone()['count']}
 
@@ -15532,7 +15544,10 @@ async def api_projects_with_attention():
                     p.id, p.nome, p.tipo, p.cor, p.icone, p.atualizado_em,
                     (SELECT COUNT(*) FROM tasks t
                        WHERE t.project_id = p.id AND t.status = 'pending'
-                         AND t.data_vencimento::date < CURRENT_DATE) AS tasks_overdue,
+                         AND t.data_vencimento::date < CURRENT_DATE
+                         AND (t.origem IS DISTINCT FROM 'conselhoos_raci'
+                              OR t.contact_id = (SELECT contact_id FROM users WHERE id = 1))
+                    ) AS tasks_overdue,
                     (SELECT MIN(data_prevista) FROM project_milestones m
                        WHERE m.project_id = p.id AND m.status = 'pendente'
                          AND m.data_prevista::date <= CURRENT_DATE + INTERVAL '7 days') AS proximo_marco,
