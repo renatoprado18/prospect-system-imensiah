@@ -116,6 +116,7 @@ from services.briefing_context import (
 from services.linkedin_enrichment import get_linkedin_enrichment_service
 from services.search import get_search_service
 from services.rodas_service import get_rodas_service, RODA_TYPES
+from services.cron_telemetry import track_cron_run
 from auth import (
     get_current_user, require_auth, require_admin, require_operador,
     google_login, google_callback, logout, ALLOWED_USERS, SECRET_KEY
@@ -6840,6 +6841,7 @@ async def api_search_drive(q: str, folder_id: str = None):
 
 
 @app.get("/api/cron/sync-contacts")
+@track_cron_run
 async def cron_sync_contacts(request: Request):
     """
     Cron endpoint for incremental contact sync.
@@ -6932,6 +6934,7 @@ def verify_cron_auth(request: Request) -> bool:
 
 
 @app.get("/api/cron/daily-sync")
+@track_cron_run
 async def cron_daily_sync(request: Request):
     """
     Cron: Sincronizacao diaria completa (5h da manha).
@@ -7166,6 +7169,7 @@ async def cron_daily_sync(request: Request):
 
 
 @app.get("/api/cron/sync-calendar")
+@track_cron_run
 async def cron_sync_calendar(request: Request):
     """
     Cron: Sincroniza eventos do Google Calendar.
@@ -7207,6 +7211,7 @@ async def cron_sync_calendar(request: Request):
 
 
 @app.get("/api/cron/sync-tasks")
+@track_cron_run
 async def cron_sync_tasks(request: Request):
     """
     Cron: Sincronizacao bidirecional de tarefas com Google Tasks.
@@ -7237,6 +7242,7 @@ async def cron_sync_tasks(request: Request):
 
 
 @app.get("/api/cron/daily-ai")
+@track_cron_run
 async def cron_daily_ai(request: Request):
     """
     Cron: Executa geracao diaria de sugestoes AI.
@@ -7269,6 +7275,7 @@ async def cron_daily_ai(request: Request):
 
 
 @app.get("/api/cron/health-recalc")
+@track_cron_run
 async def cron_health_recalc(request: Request):
     """
     Cron: Recalcula health scores de todos os contatos.
@@ -7320,6 +7327,7 @@ async def cron_health_recalc(request: Request):
 
 
 @app.get("/api/cron/cleanup")
+@track_cron_run
 async def cron_cleanup(request: Request):
     """
     Cron: Limpeza de dados expirados.
@@ -7380,6 +7388,7 @@ async def cron_cleanup(request: Request):
 
 
 @app.get("/api/cron/sync-gmail")
+@track_cron_run
 async def cron_sync_gmail(request: Request):
     """
     Cron: Sincroniza emails do Gmail.
@@ -7408,6 +7417,7 @@ async def cron_sync_gmail(request: Request):
 
 
 @app.get("/api/cron/sync-whatsapp")
+@track_cron_run
 async def cron_sync_whatsapp(request: Request):
     """
     Cron: Sincroniza mensagens do WhatsApp.
@@ -7435,6 +7445,7 @@ async def cron_sync_whatsapp(request: Request):
 
 
 @app.get("/api/cron/weekly-digest")
+@track_cron_run
 async def cron_weekly_digest(request: Request):
     """
     Cron: Gera digest semanal.
@@ -7485,6 +7496,7 @@ async def cron_weekly_digest(request: Request):
 
 
 @app.get("/api/cron/sync-whatsapp-history")
+@track_cron_run
 async def cron_sync_whatsapp_history(request: Request):
     """
     Cron: Sync WhatsApp message history from Evolution API for contacts
@@ -7650,6 +7662,7 @@ async def cron_sync_whatsapp_history(request: Request):
 # ============== Google Drive Cron & Webhooks ==============
 
 @app.get("/api/cron/index-drive-documents")
+@track_cron_run
 async def cron_index_drive_documents(request: Request):
     """
     Cron: Re-index Google Drive folders for all projects that have a linked folder.
@@ -10520,6 +10533,7 @@ async def manual_sync_raci(request: Request):
 
 
 @app.get("/api/cron/sync-conselhoos-raci")
+@track_cron_run
 async def cron_sync_conselhoos_raci(request: Request):
     """
     Cron: Daily bidirectional sync ConselhoOS RACI <-> INTEL Tasks.
@@ -10536,6 +10550,7 @@ async def cron_sync_conselhoos_raci(request: Request):
 
 
 @app.get("/api/cron/raci-weekly-report")
+@track_cron_run
 async def cron_raci_weekly_report(request: Request):
     """Cron: Weekly RACI status report to WhatsApp groups. Monday 8h SP."""
     if not verify_cron_auth(request):
@@ -10589,6 +10604,7 @@ async def conselhoos_pre_meeting_briefing(request: Request):
 
 
 @app.get("/api/cron/conselhoos-briefing-tomorrow")
+@track_cron_run
 async def cron_conselhoos_briefing_tomorrow(request: Request):
     """
     Cron: Auto-generate briefings for reunioes happening tomorrow.
@@ -10602,6 +10618,7 @@ async def cron_conselhoos_briefing_tomorrow(request: Request):
 
 
 @app.get("/api/cron/pre-meeting-briefings")
+@track_cron_run
 async def cron_pre_meeting_briefings(request: Request):
     """
     Cron: Send WhatsApp briefings 1h before meetings.
@@ -10616,6 +10633,7 @@ async def cron_pre_meeting_briefings(request: Request):
 
 
 @app.get("/api/cron/group-digest")
+@track_cron_run
 async def cron_group_digest(request: Request):
     """
     Cron: Daily digest of WhatsApp group messages.
@@ -10631,6 +10649,7 @@ async def cron_group_digest(request: Request):
 
 
 @app.get("/api/cron/email-digest")
+@track_cron_run
 async def cron_email_digest(request: Request):
     """
     Cron: Daily digest of emails received.
@@ -17595,6 +17614,7 @@ async def api_project_editorial(project_id: int):
 # ============== EDITORIAL PDCA ==============
 
 @app.get("/api/cron/editorial-weekly-briefing")
+@track_cron_run
 async def cron_editorial_weekly_briefing(request: Request):
     """
     Cron: Gera briefing editorial semanal.
@@ -20191,6 +20211,7 @@ async def send_ata_email(req: AtaSendEmailRequest):
 # ============== DAILY MORNING BRIEFING ==============
 
 @app.get("/api/cron/daily-morning-briefing")
+@track_cron_run
 async def cron_daily_morning_briefing(request: Request):
     """
     Cron: Daily morning briefing via WhatsApp.
@@ -20352,6 +20373,7 @@ async def cron_daily_morning_briefing(request: Request):
 
 
 @app.get("/api/cron/daily-evening-debriefing")
+@track_cron_run
 async def cron_daily_evening_debriefing(request: Request):
     """
     Cron: Debriefing 19h SP (22:00 UTC).
@@ -20580,6 +20602,7 @@ async def _editorial_metrics_reminder_impl():
 
 
 @app.get("/api/cron/editorial-metrics-reminder")
+@track_cron_run
 async def cron_editorial_metrics_reminder(request: Request):
     """
     Cron: Lembra de coletar metricas (4 janelas: 6h/24h/72h/7d).
@@ -20595,6 +20618,7 @@ async def cron_editorial_metrics_reminder(request: Request):
 
 
 @app.get("/api/cron/editorial-metrics-reminder-evening")
+@track_cron_run
 async def cron_editorial_metrics_reminder_evening(request: Request):
     """
     Cron: Roda a tarde para capturar a janela de 6h (posts publicados de manha).
@@ -20610,6 +20634,7 @@ async def cron_editorial_metrics_reminder_evening(request: Request):
 
 
 @app.get("/api/cron/daily-synthesis")
+@track_cron_run
 async def cron_daily_synthesis(request: Request):
     """
     Cron: Sintese noturna das conversas com o INTEL coach.

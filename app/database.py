@@ -313,6 +313,26 @@ def init_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log (action)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_log_criado_em ON audit_log (criado_em DESC)')
 
+        # Cron runs: telemetria padrao-ouro pra cada execucao de cron job
+        # Each row representa uma invocacao de /api/cron/* — start, end, status, payload de retorno.
+        # Usado por /api/admin/cron-health pra dashboard de saude dos crons.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cron_runs (
+                id SERIAL PRIMARY KEY,
+                path TEXT NOT NULL,
+                started_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                finished_at TIMESTAMP,
+                duration_ms INTEGER,
+                status TEXT NOT NULL DEFAULT 'running',
+                rows_affected INTEGER,
+                result_json JSONB,
+                error_message TEXT,
+                http_status INTEGER
+            )
+        ''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cron_runs_path_started ON cron_runs (path, started_at DESC)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_cron_runs_status ON cron_runs (status)')
+
         # Interactions table (timeline de interações com prospects)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS interactions (
