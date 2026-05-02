@@ -113,9 +113,76 @@
     const expandedTaskIds = new Set();
     let undoTimer = null;
     let undoTaskCache = null;
+    // Cache de dados LinkedIn por taskId: {loading, data, error}
+    const linkedinDataCache = {};
 
     function isRaci(t) {
         return t.origem === 'conselhoos_raci' || t.conselhoos_raci_id != null;
+    }
+
+    function isLinkedInTask(t) {
+        return t && t.titulo && (
+            t.titulo.startsWith('LinkedIn: Curtir post') ||
+            t.titulo.startsWith('LinkedIn: Comentar post')
+        );
+    }
+
+    async function fetchLinkedInData(taskId) {
+        linkedinDataCache[taskId] = {loading: true};
+        renderTasks();
+        try {
+            const resp = await fetch(`/api/tasks/${taskId}/linkedin`);
+            if (resp.status === 404) {
+                linkedinDataCache[taskId] = {loading: false, error: 'not_found'};
+            } else if (!resp.ok) {
+                linkedinDataCache[taskId] = {loading: false, error: 'fetch_error'};
+            } else {
+                const data = await resp.json();
+                linkedinDataCache[taskId] = {loading: false, data};
+            }
+        } catch (e) {
+            linkedinDataCache[taskId] = {loading: false, error: 'network_error'};
+        }
+        renderTasks();
+    }
+
+    function renderEngagements(eng) {
+        if (!eng || typeof eng !== 'object') return '';
+        const likes = eng.numLikes ?? eng.likes ?? eng.reactions ?? null;
+        const comments = eng.numComments ?? eng.comments ?? null;
+        const shares = eng.numShares ?? eng.shares ?? eng.reposts ?? null;
+        const parts = [];
+        if (likes != null) parts.push(`👍 ${likes}`);
+        if (comments != null) parts.push(`💬 ${comments}`);
+        if (shares != null) parts.push(`🔁 ${shares}`);
+        return parts.join(' · ');
+    }
+
+    function renderLinkedInDetail(task) {
+        const cache = linkedinDataCache[task.id];
+        if (!cache || cache.loading) {
+            return `<div class="task-detail"><i class="bi bi-arrow-clockwise me-1"></i>Carregando post...</div>`;
+        }
+        if (cache.error === 'not_found') {
+            // Sidecar ainda nao populada — fallback pro descricao legado
+            return `<div class="task-detail">${linkify(task.descricao || '')}<div class="text-muted mt-2" style="font-size:0.78rem;"><i class="bi bi-info-circle me-1"></i>Texto completo do post nao foi capturado pra essa task. Abra o link pra ler no LinkedIn.</div></div>`;
+        }
+        if (cache.error) {
+            return `<div class="task-detail text-danger">Erro carregando post (${cache.error}). <a href="#" onclick="event.preventDefault(); fetchLinkedInData(${task.id})">tentar de novo</a></div>`;
+        }
+        const d = cache.data;
+        const eng = renderEngagements(d.post_engagements);
+        const postedAt = d.post_posted_at || '';
+        const meta = [postedAt, eng].filter(Boolean).join(' · ');
+        const postUrl = d.post_url || '';
+        const escapedText = (d.post_text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const textWithLinks = escapedText.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+        return `
+            <div class="task-detail linkedin-post-detail">
+                ${meta ? `<div class="text-muted mb-2" style="font-size:0.78rem;">${meta}</div>` : ''}
+                <div class="linkedin-post-text" style="white-space:pre-wrap;">${textWithLinks}</div>
+                ${postUrl ? `<div class="mt-2"><a href="${postUrl}" target="_blank" rel="noopener" class="task-action-btn"><i class="bi bi-linkedin"></i> Abrir no LinkedIn</a></div>` : ''}
+            </div>`;
     }
 
     function extractFirstUrl(text) {
@@ -143,8 +210,16 @@
     }
 
     function toggleDetail(taskId) {
-        if (expandedTaskIds.has(taskId)) expandedTaskIds.delete(taskId);
-        else expandedTaskIds.add(taskId);
+        if (expandedTaskIds.has(taskId)) {
+            expandedTaskIds.delete(taskId);
+        } else {
+            expandedTaskIds.add(taskId);
+            const task = allTasks.find(t => t.id === taskId);
+            if (task && isLinkedInTask(task) && !linkedinDataCache[taskId]) {
+                fetchLinkedInData(taskId);
+                return; // fetchLinkedInData triggers renderTasks itself
+            }
+        }
         renderTasks();
     }
 
@@ -175,9 +250,14 @@
                 ? `<a href="${url}" target="_blank" rel="noopener" class="task-action-btn" onclick="event.stopPropagation()"><i class="bi bi-linkedin"></i> Abrir post</a>`
                 : '';
             const expanded = expandedTaskIds.has(t.id);
-            const detailHtml = expanded && t.descricao
-                ? `<div class="task-detail">${linkify(t.descricao)}</div>`
-                : '';
+            let detailHtml = '';
+            if (expanded) {
+                if (isLinkedInTask(t)) {
+                    detailHtml = renderLinkedInDetail(t);
+                } else if (t.descricao) {
+                    detailHtml = `<div class="task-detail">${linkify(t.descricao)}</div>`;
+                }
+            }
             return `
                 <div class="task-item" id="task-${t.id}">
                     <div class="task-checkbox" onclick="event.stopPropagation(); completeTask(${t.id})"></div>

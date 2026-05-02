@@ -3901,6 +3901,98 @@ async def refetch_linkedin_post_tasks(
     return summary
 
 
+@app.post("/api/admin/backfill-linkedin-task-data")
+async def backfill_linkedin_task_data(
+    dry_run: bool = True,
+    limit: int = 20,
+    user: dict = Depends(require_admin),
+):
+    """Popula linkedin_task_data (sidecar) pra tasks pendentes de Curtir/Comentar
+    LinkedIn que ainda nao tem row sidecar. Refaz fetch via LinkdAPI (com name
+    guard) e salva post completo.
+
+    Idempotente — usa NOT EXISTS na sidecar pra evitar re-trabalho.
+    """
+    import time
+    from services.campaign_executor import CampaignExecutor
+
+    executor = CampaignExecutor()
+    summary = {
+        "dry_run": dry_run,
+        "linkdapi_key_set": bool(os.getenv("LINKDAPI_KEY")),
+        "checked": 0,
+        "filled": 0,
+        "skipped_no_contact_url": 0,
+        "skipped_no_post": 0,
+        "errors": [],
+    }
+    if not summary["linkdapi_key_set"]:
+        summary["errors"].append("LINKDAPI_KEY env var nao setada")
+        return summary
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT t.id AS task_id, t.titulo, c.nome AS contact_nome, c.linkedin
+            FROM tasks t
+            LEFT JOIN contacts c ON c.id = t.contact_id
+            WHERE (t.titulo ILIKE 'LinkedIn: Curtir post%%'
+                   OR t.titulo ILIKE 'LinkedIn: Comentar post%%')
+              AND t.status = 'pending'
+              AND NOT EXISTS (
+                  SELECT 1 FROM linkedin_task_data ltd WHERE ltd.task_id = t.id
+              )
+            ORDER BY t.id
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = [dict(r) for r in cursor.fetchall()]
+
+        for r in rows:
+            summary["checked"] += 1
+            if not r.get("linkedin"):
+                summary["skipped_no_contact_url"] += 1
+                continue
+            try:
+                post = executor._fetch_recent_post(
+                    r["linkedin"], expected_name=r.get("contact_nome")
+                )
+            except Exception as e:
+                summary["errors"].append(f"task {r['task_id']}: {e}")
+                continue
+
+            if not post or not post.get("url"):
+                summary["skipped_no_post"] += 1
+                time.sleep(0.35)
+                continue
+
+            if not dry_run:
+                executor._save_linkedin_task_data(cursor, r["task_id"], post)
+            summary["filled"] += 1
+            time.sleep(0.35)
+
+        if not dry_run:
+            conn.commit()
+
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS remaining
+            FROM tasks t
+            WHERE (t.titulo ILIKE 'LinkedIn: Curtir post%%'
+                   OR t.titulo ILIKE 'LinkedIn: Comentar post%%')
+              AND t.status = 'pending'
+              AND NOT EXISTS (
+                  SELECT 1 FROM linkedin_task_data ltd WHERE ltd.task_id = t.id
+              )
+            """
+        )
+        summary["remaining_after"] = cursor.fetchone()["remaining"]
+
+    return summary
+
+
 @app.post("/api/admin/update-names")
 async def update_prospect_names(data: BulkNameUpdate):
     """
@@ -11369,6 +11461,37 @@ async def suggest_task_followup(request: Request, task_id: int):
     result = await context_service.suggest_followup(task_id)
 
     return result
+
+
+@app.get("/api/tasks/{task_id}/linkedin")
+async def get_task_linkedin_data(request: Request, task_id: int):
+    """
+    Devolve dados do post LinkedIn associado a uma task de Curtir/Comentar.
+    Sidecar table linkedin_task_data, populada pelo campaign_executor (ou
+    pelo backfill admin pra tasks legadas).
+
+    404 se a task não tiver dados de post (ainda não rodou backfill, ou
+    é task que não é de LinkedIn).
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT task_id, post_url, post_text, post_posted_at, post_engagements,
+                   ai_verdict, ai_rationale, ai_angle, ai_ran_at, fetched_at
+            FROM linkedin_task_data
+            WHERE task_id = %s
+            """,
+            (task_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Sem dados de post LinkedIn pra essa task")
+        return dict(row)
 
 
 @app.post("/api/tasks/{task_id}/complete-with-followup")

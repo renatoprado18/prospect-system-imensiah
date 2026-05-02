@@ -283,6 +283,30 @@ class CampaignExecutor:
         act_raw = ' '.join(self._normalize_name(actual).split())
         return bool(exp_raw) and exp_raw == act_raw
 
+    def _save_linkedin_task_data(self, cursor, task_id: int, post: Dict) -> None:
+        """Persiste post completo na sidecar linkedin_task_data pra UI render
+        full-text + futuro AI assess. Upsert idempotente por task_id."""
+        cursor.execute(
+            """
+            INSERT INTO linkedin_task_data
+                (task_id, post_url, post_text, post_posted_at, post_engagements)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (task_id) DO UPDATE SET
+                post_url = EXCLUDED.post_url,
+                post_text = EXCLUDED.post_text,
+                post_posted_at = EXCLUDED.post_posted_at,
+                post_engagements = EXCLUDED.post_engagements,
+                fetched_at = NOW()
+            """,
+            (
+                task_id,
+                post.get("url"),
+                post.get("text") or "",
+                post.get("posted_at"),
+                json.dumps(post.get("engagements")) if post.get("engagements") is not None else None,
+            ),
+        )
+
     def _fetch_recent_post(self, linkedin_url: str, expected_name: Optional[str] = None) -> Optional[Dict]:
         """Fetch most recent LinkedIn post via LinkdAPI.
 
@@ -350,7 +374,7 @@ class CampaignExecutor:
                         continue
                     return {
                         "url": post.get("url"),
-                        "text": text[:200],
+                        "text": text,
                         "posted_at": post.get("postedAt"),
                         "engagements": post.get("engagements"),
                     }
@@ -397,6 +421,7 @@ class CampaignExecutor:
 💡 Dica: Depois de curtir, prepare um comentário relevante para a próxima etapa.""",
             prioridade=5
         )
+        self._save_linkedin_task_data(cursor, task_id, post)
         return {"task_created": True, "task_id": task_id, "post_url": post["url"]}
 
     def _handle_linkedin_comment(self, cursor, enrollment: Dict) -> Dict:
@@ -440,6 +465,7 @@ class CampaignExecutor:
 ⚠️ Evite comentários genéricos como "Ótimo post!" """,
             prioridade=6
         )
+        self._save_linkedin_task_data(cursor, task_id, post)
         return {"task_created": True, "task_id": task_id, "post_url": post["url"]}
 
     def _handle_linkedin_message(self, cursor, enrollment: Dict) -> Dict:
