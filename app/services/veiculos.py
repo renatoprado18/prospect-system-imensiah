@@ -57,6 +57,8 @@ def get_alertas_manutencao() -> Dict:
         'atencao': [],
         'total_vencidos': 0,
         'total_atencao': 0,
+        'vencidos_em_execucao': 0,
+        'vencidos_pendentes': 0,
         'veiculos': []
     }
 
@@ -78,24 +80,30 @@ def get_alertas_manutencao() -> Dict:
         for item in dashboard.get('itens_vencidos', []):
             alertas['vencidos'].append({
                 'veiculo_id': veiculo['id'],
+                'item_id': item.get('item_id'),
                 'veiculo': veiculo_info['apelido'],
                 'placa': veiculo['placa'],
                 'item': item['item'],
                 'categoria': item['categoria'],
                 'km_restante': item.get('km_restante'),
-                'status': 'vencido'
+                'status': 'vencido',
+                'os_iniciada_em': item.get('os_iniciada_em'),
+                'os_observacao': item.get('os_observacao')
             })
 
         # Adiciona itens em atencao
         for item in dashboard.get('itens_atencao', []):
             alertas['atencao'].append({
                 'veiculo_id': veiculo['id'],
+                'item_id': item.get('item_id'),
                 'veiculo': veiculo_info['apelido'],
                 'placa': veiculo['placa'],
                 'item': item['item'],
                 'categoria': item['categoria'],
                 'km_restante': item.get('km_restante'),
-                'status': 'atencao'
+                'status': 'atencao',
+                'os_iniciada_em': item.get('os_iniciada_em'),
+                'os_observacao': item.get('os_observacao')
             })
 
         if veiculo_info['vencidos'] > 0 or veiculo_info['atencao'] > 0:
@@ -103,9 +111,12 @@ def get_alertas_manutencao() -> Dict:
 
     alertas['total_vencidos'] = len(alertas['vencidos'])
     alertas['total_atencao'] = len(alertas['atencao'])
+    # Conta vencidos que ja estao em OS em execucao vs ainda pendentes (sem OS)
+    alertas['vencidos_em_execucao'] = sum(1 for v in alertas['vencidos'] if v.get('os_iniciada_em'))
+    alertas['vencidos_pendentes'] = alertas['total_vencidos'] - alertas['vencidos_em_execucao']
 
-    # Ordena por urgencia (vencidos primeiro, depois por km_restante)
-    alertas['vencidos'].sort(key=lambda x: x.get('km_restante') or 0)
+    # Ordena por urgencia: pendentes (sem OS) primeiro, depois em execucao, depois por km_restante
+    alertas['vencidos'].sort(key=lambda x: (1 if x.get('os_iniciada_em') else 0, x.get('km_restante') or 0))
     alertas['atencao'].sort(key=lambda x: x.get('km_restante') or 0)
 
     return alertas
@@ -1107,6 +1118,113 @@ def registrar_manutencao(veiculo_id: int, dados: Dict) -> Dict:
         return manutencao
 
 
+# ==================== OS EM EXECUCAO (por item) ====================
+
+def iniciar_os_item(item_id: int, observacao: Optional[str] = None) -> Optional[Dict]:
+    """
+    Marca um item de manutencao como "OS em execucao" (usuario ja mandou pra oficina).
+    Item continua vencido, mas o dashboard pode mute-lo no statcard porque ja esta sendo cuidado.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE veiculo_itens_manutencao
+            SET os_iniciada_em = NOW(), os_observacao = %s
+            WHERE id = %s
+            RETURNING id, os_iniciada_em, os_observacao
+        """, (observacao, item_id))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        conn.commit()
+        result = dict(row)
+        if result.get('os_iniciada_em') and not isinstance(result['os_iniciada_em'], str):
+            result['os_iniciada_em'] = result['os_iniciada_em'].isoformat()
+        return result
+
+
+def concluir_os_item(item_id: int, proxima_em: Optional[str] = None) -> Optional[Dict]:
+    """
+    Conclui a OS em execucao do item. Limpa os campos de OS e registra uma manutencao
+    (data = hoje, km = km_atual do veiculo) pra que o calculo de "proximo vencimento"
+    avance — ou aceita data customizada via proxima_em (formato YYYY-MM-DD: nesse caso
+    a manutencao e registrada com data ajustada pra que proxima_data seja exatamente essa).
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # Busca o item pra saber veiculo e intervalo
+        cursor.execute("SELECT id, veiculo_id, intervalo_meses FROM veiculo_itens_manutencao WHERE id = %s", (item_id,))
+        item = cursor.fetchone()
+        if not item:
+            return None
+        item = dict(item)
+        veiculo_id = item['veiculo_id']
+        intervalo_meses = item.get('intervalo_meses')
+
+        # KM atual do veiculo
+        cursor.execute("SELECT km_atual FROM veiculos WHERE id = %s", (veiculo_id,))
+        v_row = cursor.fetchone()
+        km_atual = (dict(v_row).get('km_atual') if v_row else 0) or 0
+
+        # Calcula data de manutencao: se proxima_em foi passado, ajustamos a data_manutencao
+        # pra (proxima_em - intervalo_meses) — assim o calcular_status_item vai derivar
+        # proxima_data = proxima_em. Sem proxima_em, usa hoje (default = +intervalo_meses).
+        hoje = date.today()
+        if proxima_em:
+            try:
+                proxima_dt = datetime.strptime(proxima_em, '%Y-%m-%d').date()
+                if intervalo_meses:
+                    data_manutencao = proxima_dt - relativedelta(months=intervalo_meses)
+                else:
+                    # Sem intervalo de meses, usa proxima_em como base e fixa hoje
+                    data_manutencao = hoje
+            except (ValueError, TypeError):
+                data_manutencao = hoje
+        else:
+            data_manutencao = hoje
+
+        # Registra a manutencao (mesma forma do registrar_manutencao)
+        cursor.execute("""
+            INSERT INTO veiculo_manutencoes (
+                veiculo_id, item_id, data_manutencao, km_manutencao,
+                tipo_acao, descricao, observacoes
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, data_manutencao, km_manutencao
+        """, (
+            veiculo_id,
+            item_id,
+            data_manutencao,
+            km_atual,
+            'substituir',
+            'Conclusao de OS em execucao',
+            'Registro automatico ao concluir OS em execucao'
+        ))
+        manutencao = dict(cursor.fetchone())
+
+        # Limpa OS em execucao do item
+        cursor.execute("""
+            UPDATE veiculo_itens_manutencao
+            SET os_iniciada_em = NULL, os_observacao = NULL
+            WHERE id = %s
+        """, (item_id,))
+
+        conn.commit()
+
+        # Calcula novo vencimento pra retornar
+        novo_vencimento = None
+        if intervalo_meses:
+            novo_vencimento = (data_manutencao + relativedelta(months=intervalo_meses)).isoformat()
+
+        return {
+            'item_id': item_id,
+            'manutencao_id': manutencao.get('id'),
+            'data_manutencao': data_manutencao.isoformat(),
+            'km_manutencao': km_atual,
+            'novo_vencimento': novo_vencimento
+        }
+
+
 # ==================== STATUS E CALCULOS ====================
 
 def get_item_manutencao(item_id: int) -> Optional[Dict]:
@@ -1172,6 +1290,14 @@ def calcular_status_item(item: Dict, ultima_manutencao: Optional[Dict], km_atual
     if vencido_por_km or vencido_por_tempo:
         status = 'vencido'
 
+    # OS em execucao: quando o usuario marcou que ja mandou pra oficina
+    os_iniciada_em = item.get('os_iniciada_em')
+    if os_iniciada_em is not None and not isinstance(os_iniciada_em, str):
+        try:
+            os_iniciada_em = os_iniciada_em.isoformat()
+        except Exception:
+            os_iniciada_em = str(os_iniciada_em)
+
     return {
         'item_id': item.get('id'),
         'item': item.get('item'),
@@ -1188,7 +1314,9 @@ def calcular_status_item(item: Dict, ultima_manutencao: Optional[Dict], km_atual
         'intervalo_meses': intervalo_meses,
         'vencido_por_km': vencido_por_km,
         'vencido_por_tempo': vencido_por_tempo,
-        'notas_fabricante': item.get('notas_fabricante')
+        'notas_fabricante': item.get('notas_fabricante'),
+        'os_iniciada_em': os_iniciada_em,
+        'os_observacao': item.get('os_observacao')
     }
 
 

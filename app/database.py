@@ -1915,6 +1915,19 @@ def init_db():
             ADD COLUMN IF NOT EXISTS notas_fabricante TEXT
         ''')
 
+        # OS em execucao por item (track quando o usuario ja mandou aquele item especifico
+        # pra oficina, mesmo que ainda nao tenha fechado a OS formal). Permite que o
+        # statcard "Alertas Veiculos" pare de gritar urgente se ja esta sendo cuidado.
+        cursor.execute('''
+            ALTER TABLE veiculo_itens_manutencao
+            ADD COLUMN IF NOT EXISTS os_iniciada_em TIMESTAMP NULL
+        ''')
+
+        cursor.execute('''
+            ALTER TABLE veiculo_itens_manutencao
+            ADD COLUMN IF NOT EXISTS os_observacao TEXT NULL
+        ''')
+
         # Histórico de manutenções realizadas
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS veiculo_manutencoes (

@@ -2230,7 +2230,10 @@
         };
 
         // ============== Statcard muted state + clean slate banner ==============
-        // Inbox de acoes: count=0 vira muted; todos=0 mostra banner celebratorio.
+        // Inbox de acoes: count=0 (ou sem itens vencidos) vira muted; todos idle mostra banner.
+        // Cache pra overrides terem acesso ao payload bruto (preenchido pelos loaders).
+        window._statcardData = window._statcardData || { projects: null, editorial: null, veiculos: null };
+
         function _statcardCount(id) {
             const el = document.getElementById(id);
             if (!el) return null;
@@ -2242,6 +2245,57 @@
             return isNaN(n) ? null : n;
         }
 
+        // Overrides: retornam true (idle), false (ativo) ou null (sem dados ainda — usa fallback count).
+        // Idle = nao tem nada vencido, mesmo que tenha itens "proximos" ou drafts sem prazo.
+        const _statcardIdleOverrides = {
+            statProjectsAction: () => {
+                const d = window._statcardData.projects;
+                if (!d) return null;
+                // "atencao" no backend ja eh "tem algo vencido" (tasks_vencidas>0 ou marco/tarefa/previsao com dias_ate<0).
+                // "proximos" = upcoming <=7 dias, NAO vencido — entao idle se atencao=0.
+                return (d.atencao || []).length === 0;
+            },
+            statEditorial: () => {
+                const d = window._statcardData.editorial;
+                if (!d) return null;
+                // coletar_metricas: por definicao sao posts publicados ha 48h+ sem metricas — todos vencidos.
+                const coletarN = (d.coletar_metricas || []).length;
+                if (coletarN > 0) return false;
+                // para_aprovar: drafts sao "vencidos" se tem data_publicacao planejada no passado.
+                // (data_publicacao no shape eh o slot agendado pra editorial_posts; scheduled_for pra hot_takes.)
+                const today = new Date().toISOString().split('T')[0];
+                const draftsVencidos = (d.para_aprovar || []).filter(p => {
+                    if (!p.data_publicacao) return false;
+                    return String(p.data_publicacao).split('T')[0] < today;
+                }).length;
+                return draftsVencidos === 0;
+            },
+            statVeiculos: () => {
+                // Idle quando todos os vencidos ja estao em OS em execucao
+                // (usuario marcou "ja mandei pra oficina"). Nao precisa de acao.
+                const d = window._statcardData.veiculos;
+                if (!d) return null;
+                // Sem nada vencido E sem atencao = idle (igual fallback de count zero)
+                if ((d.total_vencidos || 0) === 0 && (d.total_atencao || 0) === 0) return true;
+                // Tem vencidos: idle SO se todos estao em OS em execucao (vencidos_pendentes=0)
+                if ((d.total_vencidos || 0) > 0 && (d.vencidos_pendentes || 0) === 0) return true;
+                return false;
+            },
+        };
+
+        function _statcardIdle(id) {
+            // Retorna true se o card deve ficar muted.
+            const override = _statcardIdleOverrides[id];
+            if (override) {
+                const r = override();
+                if (r !== null) return r;
+                // sem dados ainda — cai pro fallback de count
+            }
+            const n = _statcardCount(id);
+            if (n === null) return null; // ainda carregando
+            return n === 0;
+        }
+
         function applyMutedState() {
             const stats = ['statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos'];
             stats.forEach(id => {
@@ -2249,9 +2303,10 @@
                 if (!valEl) return;
                 const card = valEl.closest('.stat-card');
                 if (!card) return;
-                const n = _statcardCount(id);
-                if (n === 0) card.classList.add('muted');
-                else card.classList.remove('muted');
+                const idle = _statcardIdle(id);
+                if (idle === true) card.classList.add('muted');
+                else if (idle === false) card.classList.remove('muted');
+                // idle === null (carregando) = nao mexe
             });
         }
 
@@ -2259,14 +2314,14 @@
             const banner = document.getElementById('cleanSlateBanner');
             if (!banner) return;
             const stats = ['statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos'];
-            // Mostra so se TODOS estao em 0 (nao "-" ainda carregando)
-            let allZero = true;
+            // Mostra so se TODOS estao idle (nao "-" ainda carregando, nao algo ativo).
+            let allIdle = true;
             for (const id of stats) {
-                const n = _statcardCount(id);
-                if (n === null) { allZero = false; break; } // ainda carregando
-                if (n > 0) { allZero = false; break; }
+                const idle = _statcardIdle(id);
+                if (idle === null) { allIdle = false; break; } // ainda carregando
+                if (idle === false) { allIdle = false; break; }
             }
-            banner.style.display = allZero ? 'block' : 'none';
+            banner.style.display = allIdle ? 'block' : 'none';
         }
 
         // Load all critical data in parallel once
@@ -2432,6 +2487,8 @@
                     const projResp = await fetch('/api/projects/with-attention/detailed');
                     if (projResp.ok) {
                         const projData = await projResp.json();
+                        // cache pro override de muted state (idle se atencao=0)
+                        window._statcardData.projects = projData;
                         const atencaoN = (projData.atencao || []).length;
                         const proximosN = (projData.proximos || []).length;
                         document.getElementById('statProjectsAction').textContent = atencaoN + proximosN;
@@ -3219,6 +3276,8 @@
                 const resp = await fetch('/api/editorial/action-items');
                 if (!resp.ok) throw new Error('fail');
                 const data = await resp.json();
+                // cache pro override de muted state (idle se nada vencido)
+                window._statcardData.editorial = data;
                 const aprovarN = (data.para_aprovar || []).length;
                 const coletarN = (data.coletar_metricas || []).length;
                 document.getElementById('statEditorial').textContent = aprovarN + coletarN;
@@ -4322,21 +4381,32 @@
                 }
 
                 const data = await response.json();
+                // Salva pra override de idle (vencidos_pendentes vs vencidos_em_execucao)
+                window._statcardData.veiculos = data;
                 const vencidosN = data.total_vencidos || 0;
                 const atencaoN = data.total_atencao || 0;
+                const emExecucaoN = data.vencidos_em_execucao || 0;
+                const pendentesN = data.vencidos_pendentes || 0;
                 const totalAlertas = vencidosN + atencaoN;
 
                 if (totalAlertas > 0) {
                     statEl.textContent = totalAlertas;
-                    statEl.style.color = '#ef4444';
+                    // Cor: vermelho so se ainda tem vencido pendente (sem OS); senao neutro
+                    statEl.style.color = pendentesN > 0 ? '#ef4444' : '';
                 } else {
                     statEl.textContent = '✓';
                     statEl.style.color = '#22c55e';
                 }
                 const breakdown = document.getElementById('statVeiculosBreakdown');
                 if (breakdown) {
+                    // Pill de vencidos: danger se tem pendente, muted se todos em OS
+                    const vencidoClass = pendentesN > 0 ? 'danger' : 'muted';
+                    const osPill = emExecucaoN > 0
+                        ? `<span class="pill muted" title="Em OS na oficina"><i class="bi bi-tools"></i> ${emExecucaoN}</span>`
+                        : '';
                     breakdown.innerHTML = `
-                        <span class="pill ${vencidosN > 0 ? 'danger' : 'muted'}" title="Vencidos"><i class="bi bi-exclamation-triangle-fill"></i> ${vencidosN}</span>
+                        <span class="pill ${vencidoClass}" title="Vencidos${emExecucaoN > 0 ? ' ('+pendentesN+' pendentes)' : ''}"><i class="bi bi-exclamation-triangle-fill"></i> ${vencidosN}</span>
+                        ${osPill}
                         <span class="pill ${atencaoN > 0 ? 'warning' : 'muted'}" title="Em atenção"><i class="bi bi-clock-history"></i> ${atencaoN}</span>
                     `;
                 }
@@ -4547,6 +4617,48 @@
 
     <!-- ============== Drill-down Workbench (Fase 1) ============== -->
     <script>
+        // ============== Veiculos: OS em execucao (acoes inline no drill) ==============
+        // Usado pelo drill de Veiculos: marcar item como "ja mandei pra oficina" ou concluir.
+        async function veiculoCriarOS(itemId, btn) {
+            const observacao = prompt('Observacao opcional (oficina, telefone, etc):', '');
+            if (observacao === null) return; // cancelou
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i>'; }
+            try {
+                const resp = await fetch(`/api/veiculos/itens/${itemId}/iniciar-os`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ observacao: observacao || null })
+                });
+                if (!resp.ok) throw new Error('Falha ao criar OS');
+                // Refresh do drill + statcard
+                await loadMaintenanceAlerts();
+                if (currentDrill === 'veiculos') openDrill('veiculos');
+            } catch (e) {
+                console.error(e);
+                alert('Erro ao criar OS: ' + e.message);
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-tools"></i> Criar OS'; }
+            }
+        }
+
+        async function veiculoConcluirOS(itemId, btn) {
+            if (!confirm('Concluir OS? O item vai ser marcado como feito hoje e o proximo vencimento sera adiado conforme o intervalo.')) return;
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i>'; }
+            try {
+                const resp = await fetch(`/api/veiculos/itens/${itemId}/concluir-os`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                if (!resp.ok) throw new Error('Falha ao concluir OS');
+                await loadMaintenanceAlerts();
+                if (currentDrill === 'veiculos') openDrill('veiculos');
+            } catch (e) {
+                console.error(e);
+                alert('Erro ao concluir OS: ' + e.message);
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2-circle"></i> Concluir'; }
+            }
+        }
+
         const drillConfig = {
             reunioes: {
                 label: 'Agenda de Hoje',
@@ -4647,13 +4759,17 @@
                 fullPage: '/projetos'
             },
             contatos: {
-                label: 'Quem Contatar Hoje',
+                label: 'Contatos c/ Atenção',
                 color: '#f59e0b',
-                endpoint: () => '/api/v1/contact-suggestions?limit=15',
-                extract: (d) => d.suggestions || [],
+                // Usar /api/contacts/needs-attention pra alinhar com o count do statcard
+                // (precisam_atencao em /api/v1/dashboard usa o mesmo criterio: circulo<=3 + health<50).
+                // Antes usava /api/v1/contact-suggestions que aplica filtros narrower (so quem contatar HOJE)
+                // — causava mismatch tipo "statcard 7 vs drill 2".
+                endpoint: () => '/api/contacts/needs-attention?limit=30',
+                extract: (d) => d.contacts || [],
                 emptyIcon: 'bi-check-circle',
                 emptyText: 'Você está em dia com todos os contatos',
-                renderItem: (s) => drillRenderContactSuggestion(s),
+                renderItem: (c) => drillRenderNeedsAttentionContact(c),
                 fullPage: '/contatos?filter=needs_attention'
             },
             tarefas: {
@@ -4772,16 +4888,39 @@
                 extract: (d) => [...(d.vencidos || []), ...(d.atencao || [])],
                 renderItem: (a) => {
                     const isVencido = a.status === 'vencido';
-                    const badge = isVencido
-                        ? '<span class="drill-badge" style="background:#fee2e2;color:#b91c1c;">VENCIDO</span>'
-                        : '<span class="drill-badge" style="background:#fef3c7;color:#b45309;">ATENÇÃO</span>';
+                    const emOs = !!a.os_iniciada_em;
+                    let badge;
+                    if (emOs) {
+                        // Vencido mas ja em OS — visualmente menos urgente
+                        const dt = new Date(a.os_iniciada_em);
+                        const dtStr = dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                        badge = `<span class="drill-badge" style="background:#e5e7eb;color:#374151;"><i class="bi bi-tools"></i> EM OS DESDE ${dtStr}</span>`;
+                    } else if (isVencido) {
+                        badge = '<span class="drill-badge" style="background:#fee2e2;color:#b91c1c;">VENCIDO</span>';
+                    } else {
+                        badge = '<span class="drill-badge" style="background:#fef3c7;color:#b45309;">ATENÇÃO</span>';
+                    }
                     const km = a.km_restante != null ? `${a.km_restante} km restantes` : '';
                     const meta = [a.veiculo, a.placa, km].filter(Boolean).join(' · ');
+                    // Acoes inline: criar OS (se vencido sem OS) ou concluir OS (se em OS)
+                    let acao = '';
+                    if (a.item_id) {
+                        if (emOs) {
+                            acao = `<button class="btn btn-sm btn-outline-success" style="margin-left:auto;font-size:0.72rem;padding:0.25rem 0.55rem;" onclick="event.stopPropagation(); veiculoConcluirOS(${a.item_id}, this)" title="Concluir OS"><i class="bi bi-check2-circle"></i> Concluir</button>`;
+                        } else if (isVencido) {
+                            acao = `<button class="btn btn-sm btn-outline-secondary" style="margin-left:auto;font-size:0.72rem;padding:0.25rem 0.55rem;" onclick="event.stopPropagation(); veiculoCriarOS(${a.item_id}, this)" title="Marcar como ja mandei pra oficina"><i class="bi bi-tools"></i> Criar OS</button>`;
+                        }
+                    }
+                    const obs = emOs && a.os_observacao
+                        ? `<div class="drill-item-meta" style="font-style:italic;opacity:0.8;">${escapeHtml(a.os_observacao)}</div>`
+                        : '';
                     return `<div class="drill-item" onclick="window.location.href='/veiculos/${a.veiculo_id}'">
-                        <div class="drill-item-content">
+                        <div class="drill-item-content" style="flex:1;">
                             <div class="drill-item-title">${escapeHtml(a.item)} ${badge}</div>
                             <div class="drill-item-meta">${escapeHtml(meta)}</div>
+                            ${obs}
                         </div>
+                        ${acao}
                     </div>`;
                 },
                 fullPage: '/veiculos'
@@ -4928,6 +5067,70 @@
                             </div>
                         </div>
                         ${rodaContent}
+                    </div>
+                </div>
+            `;
+        }
+
+        // Render contato vindo de /api/contacts/needs-attention.
+        // Shape: { id, nome, empresa, cargo, foto_url, circulo, health_score, dias_sem_contato,
+        //          fatores: [{tipo, descricao, ...}], badge, category, priority_score, ... }
+        // Reusa o estilo .contact-today-* do drillRenderContactSuggestion pra manter consistencia visual.
+        function drillRenderNeedsAttentionContact(c) {
+            const initials = (c.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+            const circuloBadge = c.circulo ? `<span class="circulo-mini c${c.circulo}">C${c.circulo}</span>` : '';
+
+            // Mapeia categoria/badge da API pra um visualType compativel com o CSS .contact-today-item.type-*
+            // category vem como 'urgent' | 'important' | 'attention' (vide get_prioridades_por_contexto)
+            let visualType = 'attention';
+            const cat = (c.category || c.badge || '').toLowerCase();
+            if (cat === 'urgent') visualType = 'promessa';
+            else if (cat === 'important') visualType = 'proximo_passo';
+            else if (cat === 'attention') visualType = 'attention';
+
+            // Reason label: prefere primeiro fator (mais informativo) com fallback pra dias sem contato
+            let reasonLabel = '';
+            if (Array.isArray(c.fatores) && c.fatores.length > 0) {
+                const f0 = c.fatores[0];
+                reasonLabel = f0.descricao || f0.tipo || '';
+            }
+            if (!reasonLabel) {
+                if (c.dias_sem_contato != null) {
+                    reasonLabel = `${c.dias_sem_contato}d sem contato`;
+                } else if (c.health_score != null) {
+                    reasonLabel = `Health ${c.health_score}%`;
+                } else {
+                    reasonLabel = 'Atenção';
+                }
+            }
+            // Truncar pra nao quebrar layout
+            if (reasonLabel.length > 40) reasonLabel = reasonLabel.slice(0, 38) + '…';
+
+            // Linha secundaria: empresa/cargo se houver
+            const empresaInfo = c.empresa || c.cargo
+                ? `<div class="contact-today-roda">${escapeHtml([c.empresa, c.cargo].filter(Boolean).join(' · '))}</div>`
+                : '';
+
+            const whatsappBtn = c.id ? `<button class="btn btn-whatsapp" onclick="event.stopPropagation(); openWhatsApp(${c.id})" title="Enviar WhatsApp"><i class="bi bi-whatsapp"></i></button>` : '';
+            // markAsContacted aceita rodaId=null (vide implementacao) — esse endpoint nao expoe roda, sempre null
+            const contactedBtn = c.id ? `<button class="btn btn-contacted" onclick="event.stopPropagation(); markAsContacted(${c.id}, null, this)" title="Já contatei"><i class="bi bi-person-check"></i></button>` : '';
+
+            return `
+                <div class="contact-today-item type-${visualType}" onclick="window.location.href='/contatos/${c.id}'">
+                    <div class="contact-today-avatar ${visualType}">${initials}</div>
+                    <div class="contact-today-info">
+                        <div class="contact-today-header">
+                            <div>
+                                <span class="contact-today-name">${escapeHtml(c.nome)}</span>
+                                ${circuloBadge}
+                            </div>
+                            <div class="contact-today-header-right">
+                                ${whatsappBtn}
+                                ${contactedBtn}
+                                <span class="contact-today-reason">${escapeHtml(reasonLabel.toUpperCase())}</span>
+                            </div>
+                        </div>
+                        ${empresaInfo}
                     </div>
                 </div>
             `;
