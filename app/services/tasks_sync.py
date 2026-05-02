@@ -137,12 +137,16 @@ class TasksSyncService:
             """)
             pending = cursor.fetchall()
 
-        results = {"pushed": 0, "errors": 0}
+        results = {"pushed": 0, "errors": 0, "error_samples": []}
 
         for row in pending:
             result = await self.push_task_to_google(row["id"])
             if "error" in result:
                 results["errors"] += 1
+                err_str = str(result.get("error"))[:200]
+                logger.warning(f"push fail task_id={row['id']}: {err_str}")
+                if len(results["error_samples"]) < 5:
+                    results["error_samples"].append({"task_id": row["id"], "error": err_str})
             else:
                 results["pushed"] += 1
 
