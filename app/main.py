@@ -3488,6 +3488,27 @@ class BulkImportData(BaseModel):
 class BulkNameUpdate(BaseModel):
     updates: List[dict]  # [{email: str, nome: str, empresa: str}]
 
+
+@app.post("/api/admin/clear-google-sync-token")
+async def clear_google_sync_token(
+    email: str,
+    user: dict = Depends(require_admin)
+):
+    """Limpa sync_token do Google pra forcar sync completo no proximo cron.
+    Util quando token expirou (Google retorna FAILED_PRECONDITION)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE google_accounts SET sync_token = NULL WHERE email = %s RETURNING id",
+            (email,)
+        )
+        row = cursor.fetchone()
+        conn.commit()
+    if not row:
+        return {"status": "not_found", "email": email}
+    return {"status": "cleared", "email": email, "account_id": row["id"]}
+
+
 @app.get("/api/admin/system-feedback")
 async def system_feedback_list(
     status: str = "pending",
