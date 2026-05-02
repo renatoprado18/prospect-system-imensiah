@@ -983,68 +983,6 @@ def _build_messages_from_history(history: List[Dict]) -> List[Dict]:
 
 # ==================== SYSTEM PROMPT ====================
 
-def _build_personal_relationships_block() -> str:
-    """Pulls key personal relationships from DB so the chat-mode bot knows
-    who is who without being asked. Used in chat mode only."""
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT nome, relationship_context, aniversario
-                FROM contacts
-                WHERE contexto = 'personal'
-                  AND relationship_context IS NOT NULL
-                  AND relationship_context <> ''
-                  AND (
-                      relationship_context ILIKE '%filh%'
-                      OR relationship_context ILIKE '%esposa%'
-                      OR relationship_context ILIKE '%marido%'
-                      OR relationship_context ILIKE '%namorad%'
-                      OR relationship_context ILIKE '%parceir%'
-                      OR relationship_context ILIKE '%companheir%'
-                      OR relationship_context ILIKE '%noiv%'
-                      OR relationship_context ILIKE '%pai%'
-                      OR relationship_context ILIKE '%mãe%'
-                      OR relationship_context ILIKE '%mae%'
-                      OR relationship_context ILIKE '%irm%'
-                      OR relationship_context ILIKE '%afilhad%'
-                      OR relationship_context ILIKE '%sogr%'
-                      OR relationship_context ILIKE '%sobrinh%'
-                      OR relationship_context ILIKE '%cunhad%'
-                      OR relationship_context ILIKE '%madrasta%'
-                      OR relationship_context ILIKE '%padrasto%'
-                      OR relationship_context ILIKE '%enteado%'
-                  )
-                ORDER BY
-                  CASE
-                    WHEN relationship_context ILIKE '%filh%' THEN 1
-                    WHEN relationship_context ILIKE '%pai%' OR relationship_context ILIKE '%mãe%' OR relationship_context ILIKE '%mae%' OR relationship_context ILIKE '%madrasta%' OR relationship_context ILIKE '%padrasto%' THEN 2
-                    WHEN relationship_context ILIKE '%namorad%' OR relationship_context ILIKE '%parceir%' OR relationship_context ILIKE '%companheir%' OR relationship_context ILIKE '%noiv%' OR (relationship_context ILIKE '%esposa%' AND relationship_context NOT ILIKE '%ex-esposa%' AND relationship_context NOT ILIKE '%ex esposa%') OR (relationship_context ILIKE '%marido%' AND relationship_context NOT ILIKE '%ex-marido%') THEN 3
-                    WHEN relationship_context ILIKE '%ex-esposa%' OR relationship_context ILIKE '%ex esposa%' OR relationship_context ILIKE '%ex-marido%' THEN 4
-                    WHEN relationship_context ILIKE '%irm%' THEN 5
-                    WHEN relationship_context ILIKE '%afilhad%' THEN 6
-                    WHEN relationship_context ILIKE '%sogr%' OR relationship_context ILIKE '%cunhad%' THEN 7
-                    WHEN relationship_context ILIKE '%sobrinh%' THEN 8
-                    ELSE 9
-                  END,
-                  nome
-                LIMIT 60
-            """)
-            rows = cursor.fetchall()
-        if not rows:
-            return ""
-        lines = ["## QUEM É QUEM NA VIDA DO RENATO (você sabe disso, use sem perguntar):"]
-        for r in rows:
-            line = f"- {r['nome']} — {r['relationship_context']}"
-            if r.get('aniversario'):
-                line += f" (nasc {r['aniversario']})"
-            lines.append(line)
-        return "\n".join(lines)
-    except Exception as e:
-        logger.error(f"Error building relationships block: {e}")
-        return ""
-
-
 def _build_snapshot_block() -> str:
     """Snapshot situacional para o bot entrar na conversa sabendo de tudo.
 
@@ -1187,7 +1125,6 @@ def _build_system_prompt(mode: str = "whatsapp") -> str:
 
     # Mode-specific persona header
     if mode == "chat":
-        relationships_block = _build_personal_relationships_block()
         persona_header = f"""Você é o INTEL — voz de coach do Renato no chat web.
 Você NÃO é um assistente operacional. Não é uma planilha. Não é um help desk.
 Você é a presença que escuta primeiro, pergunta antes de agir, devolve sentido — não dados.
@@ -1207,11 +1144,16 @@ NUNCA (regras duras):
 - Negrito/markdown como decoração. Use raríssimo, só pra destacar uma palavra crítica.
 
 SEMPRE:
-- Quando o assunto é família, relacionamento, vida pessoal: você JÁ SABE quem é quem
-  (ver bloco abaixo). Use sem se gabar do conhecimento, sem perguntar "qual é o nome dela?"
-  quando o nome está implícito pelo contexto.
-- Antes de responder algo importante, consulte em paralelo: memórias do contato, mensagens
-  recentes, projetos relacionados — pra falar com substância. Mas a saída não é o relatório.
+- Quando o assunto é família/relacionamento/vida pessoal, ANTES de responder, USE query_intel
+  pra buscar quem é quem. Você tem o banco — use. Padrões úteis:
+    * Por nome explícito: WHERE nome ILIKE '%nome%'
+    * Por papel familiar: WHERE relationship_context ILIKE '%ex-esposa%' (ou filh, namorad, irm,
+      afilhad, sogr, sobrinh, cunhad, etc.)
+    * Por interação recente: JOIN messages/conversations pra ver com quem ele tem trocado mais
+    * Por memórias: contact_memories pra buscar fatos importantes ditos antes
+  NUNCA diga "não tenho registro" sem ter buscado. Faça MULTIPLAS queries em paralelo se preciso.
+- A saída NÃO é o relatório da query. A query informa VOCÊ; a resposta é sua leitura disso.
+  Use o nome correto da pessoa sem se gabar de ter encontrado.
 - Reconheça peso quando há peso. Separação após 25 anos não se cataloga, se acolhe.
 - Devolva pergunta antes de oferecer solução. Coach pergunta mais do que afirma.
 - Confronte contradições com cuidado: "há um tempo você falou X, e a semana parece estar Y.
@@ -1244,8 +1186,6 @@ CONTEXTO ATUAL:
 - Projetos ativos:
 {projects_str}
 - Tarefas vencidas: {overdue_count}
-
-{relationships_block}
 """
     else:
         persona_header = f"""Voce e o INTEL Bot, assistente pessoal de Renato Prado no WhatsApp.
