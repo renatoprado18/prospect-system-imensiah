@@ -9,6 +9,8 @@
 ## 1. Dashboard (`/`)
 - Morning Briefing (saudação + resumo do dia) → `dashboard.py`
 - Stat Cards (contatos, círculos, atenção, briefings) → `GET /api/v1/dashboard`
+- **Drill-down Workbench (Fase 1)**: clicar em qualquer um dos 5 statcards (Reuniões / Projetos c/ Atenção / Contatos c/ Atenção / Tarefas Avulsas / Alertas Veículos) abre painel abaixo dos cards listando os itens por trás do número. Card ativo ganha borda colorida + seta apontando pro painel. Click 2x no mesmo card fecha (toggle). Estado persiste em `localStorage['intel.dashboard.lastDrill']` — refresh reabre último card visitado. Pattern `drillConfig` (dict por statcard com `endpoint`, `extract`, `renderItem`, `fullPage`) — adicionar statcard novo = adicionar 1 entrada. Mobile: workbench oculto (Fase 4 traz FAB + bottom sheet).
+- **`/api/projects/with-attention`** (NOVO): lista projetos ativos com motivos `overdue` (task pendente vencida), `milestone_proximo` (≤7d), `parado` (sem update >14d). Substitui `/api/projects/overdue-count` no statcard pra count e drill ficarem alinhados.
 - **Clipping do Dia** (notícias curadas por IA, 12 fontes RSS) → `GET /api/news/clipping`
   - 👍👎 Feedback (sistema aprende) → `POST /api/news/{id}/feedback`
   - 📝 Criar post LinkedIn (gera texto + cruza artigo) → `POST /api/news/to-post`

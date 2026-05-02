@@ -15521,6 +15521,39 @@ async def api_projects_overdue_count():
         return {"count": cursor.fetchone()['count']}
 
 
+@app.get("/api/projects/with-attention")
+async def api_projects_with_attention():
+    """Lista projetos ativos que precisam de atencao: tasks vencidas, milestones proximos (<=7d) ou sem update ha >14d."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            WITH proj_signals AS (
+                SELECT
+                    p.id, p.nome, p.tipo, p.cor, p.icone, p.atualizado_em,
+                    (SELECT COUNT(*) FROM tasks t
+                       WHERE t.project_id = p.id AND t.status = 'pending'
+                         AND t.data_vencimento::date < CURRENT_DATE) AS tasks_overdue,
+                    (SELECT MIN(data_prevista) FROM project_milestones m
+                       WHERE m.project_id = p.id AND m.status = 'pendente'
+                         AND m.data_prevista::date <= CURRENT_DATE + INTERVAL '7 days') AS proximo_marco,
+                    (CURRENT_DATE - p.atualizado_em::date)::int AS dias_sem_atualizacao
+                FROM projects p
+                WHERE p.status = 'ativo'
+            )
+            SELECT *,
+                ARRAY_REMOVE(ARRAY[
+                    CASE WHEN tasks_overdue > 0 THEN 'overdue' END,
+                    CASE WHEN proximo_marco IS NOT NULL THEN 'milestone_proximo' END,
+                    CASE WHEN dias_sem_atualizacao > 14 THEN 'parado' END
+                ], NULL) AS motivos
+            FROM proj_signals
+            WHERE tasks_overdue > 0 OR proximo_marco IS NOT NULL OR dias_sem_atualizacao > 14
+            ORDER BY tasks_overdue DESC, proximo_marco ASC NULLS LAST, dias_sem_atualizacao DESC
+        """)
+        projects = [dict(r) for r in cursor.fetchall()]
+        return {"projects": projects}
+
+
 @app.get("/api/projects/{project_id}")
 async def api_get_project(project_id: int):
     """Retorna projeto com todos os detalhes."""

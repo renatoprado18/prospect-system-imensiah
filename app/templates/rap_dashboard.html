@@ -1858,6 +1858,111 @@
             justify-content: flex-end;
             gap: 12px;
         }
+
+        /* ===== Drill-down Workbench (Fase 1) ===== */
+        .stat-card.drill-active {
+            border: 2px solid var(--drill-color, #6366f1) !important;
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.18);
+            position: relative;
+        }
+        .stat-card.drill-active::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0; height: 0;
+            border-left: 9px solid transparent;
+            border-right: 9px solid transparent;
+            border-top: 9px solid var(--drill-color, #6366f1);
+            z-index: 2;
+        }
+        #workbench {
+            margin-top: 18px;
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid var(--border-color, #e2e8f0);
+            overflow: hidden;
+        }
+        .drill-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color, #e2e8f0);
+            background: var(--bg-secondary, #f8fafc);
+        }
+        .drill-header h3 {
+            margin: 0;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+        .drill-header-actions { display: flex; align-items: center; gap: 12px; }
+        .drill-fullpage-link {
+            font-size: 0.85rem;
+            color: var(--drill-color, #6366f1);
+            text-decoration: none;
+            font-weight: 600;
+        }
+        .drill-fullpage-link:hover { text-decoration: underline; }
+        .drill-close {
+            background: none; border: none;
+            font-size: 1.4rem; line-height: 1;
+            color: #64748b; cursor: pointer;
+            padding: 0 4px;
+        }
+        .drill-close:hover { color: #ef4444; }
+        .drill-items { max-height: 420px; overflow-y: auto; }
+        .drill-item {
+            display: flex;
+            gap: 12px;
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border-color, #e2e8f0);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .drill-item:hover { background: var(--bg-secondary, #f8fafc); }
+        .drill-item:last-child { border-bottom: none; }
+        .drill-item-time {
+            font-weight: 700;
+            font-size: 0.85rem;
+            color: var(--drill-color, #6366f1);
+            min-width: 50px;
+        }
+        .drill-item-content { flex: 1; min-width: 0; }
+        .drill-item-title {
+            font-weight: 600;
+            font-size: 0.9rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .drill-item-meta {
+            font-size: 0.75rem;
+            color: var(--text-secondary, #64748b);
+            margin-top: 2px;
+        }
+        .drill-badge {
+            display: inline-block;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            background: #e0e7ff;
+            color: #4338ca;
+            margin-left: 4px;
+            vertical-align: middle;
+        }
+        .drill-empty {
+            text-align: center;
+            padding: 40px 16px;
+            color: var(--text-secondary, #64748b);
+        }
+        @media (max-width: 768px) {
+            #workbench { display: none !important; }
+            .stat-card.drill-active::after { display: none; }
+        }
 {% endblock %}
 
 {% block content %}
@@ -1947,43 +2052,48 @@
             </div>
         </div>
 
-        <!-- Stats - Compact clickable cards -->
+        <!-- Stats - Compact clickable cards (drill-down workbench abaixo) -->
         <div class="stats-grid">
-            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/calendario'">
+            <div class="stat-card" style="cursor: pointer;" data-drill="reunioes" onclick="openDrill('reunioes')">
                 <div class="stat-icon" style="background: rgba(99, 102, 241, 0.1); color: #6366f1;"><i class="bi bi-calendar-event"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statReunioes">-</div>
                     <div class="stat-label">Reuniões Hoje</div>
                 </div>
             </div>
-            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/projetos'">
+            <div class="stat-card" style="cursor: pointer;" data-drill="projetos" onclick="openDrill('projetos')">
                 <div class="stat-icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;"><i class="bi bi-folder2-open"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statProjectsAction">-</div>
                     <div class="stat-label">Projetos c/ Atenção</div>
                 </div>
             </div>
-            <div class="stat-card" style="cursor: pointer; border-left: 3px solid var(--warning);" onclick="window.location.href='/contatos?filter=needs_attention'">
+            <div class="stat-card" style="cursor: pointer; border-left: 3px solid var(--warning);" data-drill="contatos" onclick="openDrill('contatos')">
                 <div class="stat-icon" style="background: rgba(245, 158, 11, 0.1); color: var(--warning);"><i class="bi bi-exclamation-triangle"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statAtencao">-</div>
                     <div class="stat-label">Contatos c/ Atenção</div>
                 </div>
             </div>
-            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/tarefas-pendentes'">
+            <div class="stat-card" style="cursor: pointer;" data-drill="tarefas" onclick="openDrill('tarefas')">
                 <div class="stat-icon" style="background: rgba(239, 68, 68, 0.1); color: #ef4444;"><i class="bi bi-exclamation-circle"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statTasksOverdue">-</div>
                     <div class="stat-label">Tarefas Avulsas</div>
                 </div>
             </div>
-            <div class="stat-card" style="cursor: pointer;" onclick="window.location.href='/veiculos'">
+            <div class="stat-card" style="cursor: pointer;" data-drill="veiculos" onclick="openDrill('veiculos')">
                 <div class="stat-icon" style="background: rgba(107, 114, 128, 0.1); color: #6b7280;"><i class="bi bi-car-front"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statVeiculos">-</div>
                     <div class="stat-label">Alertas Veículos</div>
                 </div>
             </div>
+        </div>
+
+        <!-- Drill-down workbench (Fase 1: drill-only, sem chat ainda) -->
+        <div id="workbench" style="display: none;">
+            <div id="drillPanel"></div>
         </div>
 
         <!-- Content Grid -->
@@ -2476,12 +2586,12 @@
                 }).length;
                 document.getElementById('statReunioes').textContent = reunioesCount;
 
-                // Projetos com ação
+                // Projetos com atencao (overdue + milestone proximo + parado >14d) — alinhado com drill-down
                 try {
-                    const projResp = await fetch('/api/projects/overdue-count');
+                    const projResp = await fetch('/api/projects/with-attention');
                     if (projResp.ok) {
-                        const projCount = await projResp.json();
-                        document.getElementById('statProjectsAction').textContent = projCount.count || 0;
+                        const projData = await projResp.json();
+                        document.getElementById('statProjectsAction').textContent = (projData.projects || []).length;
                     }
                 } catch(e) { document.getElementById('statProjectsAction').textContent = '-'; }
 
@@ -4679,6 +4789,199 @@
             document.getElementById('taskDetailModal').classList.remove('show');
             document.getElementById('suggestionModal').classList.remove('show');
         }
+    </script>
+
+    <!-- ============== Drill-down Workbench (Fase 1) ============== -->
+    <script>
+        const drillConfig = {
+            reunioes: {
+                label: 'Reuniões Hoje',
+                color: '#6366f1',
+                endpoint: () => '/api/calendar/today',
+                extract: (d) => {
+                    const events = Array.isArray(d) ? d : (d.events || []);
+                    return events.filter(e => {
+                        const t = (e.summary || e.title || '').toLowerCase();
+                        return !t.includes('aniversario') && !t.includes('aniversário') && !t.includes('birthday')
+                            && !t.startsWith('[foco]') && !t.includes('cama') && !t.includes('dormir');
+                    });
+                },
+                renderItem: (e) => {
+                    const start = e.start_datetime || (e.start && (e.start.dateTime || e.start.date)) || '';
+                    const time = start && start.includes('T')
+                        ? new Date(start).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})
+                        : 'dia todo';
+                    const title = e.summary || e.title || '(sem título)';
+                    const contact = e.contact_name || '';
+                    return `<div class="drill-item" onclick="window.location.href='/calendario'">
+                        <div class="drill-item-time">${escapeHtml(time)}</div>
+                        <div class="drill-item-content">
+                            <div class="drill-item-title">${escapeHtml(title)}</div>
+                            ${contact ? `<div class="drill-item-meta">${escapeHtml(contact)}</div>` : ''}
+                        </div>
+                    </div>`;
+                },
+                fullPage: '/calendario'
+            },
+            projetos: {
+                label: 'Projetos c/ Atenção',
+                color: '#8b5cf6',
+                endpoint: () => '/api/projects/with-attention',
+                extract: (d) => d.projects || [],
+                renderItem: (p) => {
+                    const motivosLabels = { overdue: 'overdue', milestone_proximo: 'marco próximo', parado: 'parado' };
+                    const motivos = (p.motivos || []).map(m =>
+                        `<span class="drill-badge" style="background:#ede9fe;color:#6d28d9;">${motivosLabels[m] || m}</span>`
+                    ).join('');
+                    const meta = [];
+                    if (p.tasks_overdue) meta.push(`${p.tasks_overdue} task${p.tasks_overdue > 1 ? 's' : ''} vencida${p.tasks_overdue > 1 ? 's' : ''}`);
+                    if (p.proximo_marco) meta.push(`marco ${new Date(p.proximo_marco).toLocaleDateString('pt-BR', {day:'2-digit', month:'short'})}`);
+                    if (p.dias_sem_atualizacao && p.dias_sem_atualizacao > 14) meta.push(`${p.dias_sem_atualizacao}d sem update`);
+                    return `<div class="drill-item" onclick="window.location.href='/projetos/${p.id}'">
+                        <div class="drill-item-content">
+                            <div class="drill-item-title">${escapeHtml(p.nome)} ${motivos}</div>
+                            ${meta.length ? `<div class="drill-item-meta">${escapeHtml(meta.join(' · '))}</div>` : ''}
+                        </div>
+                    </div>`;
+                },
+                fullPage: '/projetos'
+            },
+            contatos: {
+                label: 'Contatos c/ Atenção',
+                color: '#f59e0b',
+                endpoint: () => '/api/contacts/needs-attention?limit=30',
+                extract: (d) => d.contacts || [],
+                renderItem: (c) => {
+                    const motivo = c.motivo_principal || (c.fatores && c.fatores[0]) || '';
+                    const health = c.health_score != null ? `health ${c.health_score}` : '';
+                    const meta = [motivo, health].filter(Boolean).join(' · ');
+                    return `<div class="drill-item" onclick="window.location.href='/contatos/${c.id}'">
+                        <div class="drill-item-content">
+                            <div class="drill-item-title">${escapeHtml(c.nome)}</div>
+                            ${meta ? `<div class="drill-item-meta">${escapeHtml(meta)}</div>` : ''}
+                        </div>
+                    </div>`;
+                },
+                fullPage: '/contatos?filter=needs_attention'
+            },
+            tarefas: {
+                label: 'Tarefas Avulsas',
+                color: '#ef4444',
+                endpoint: () => '/api/projects/all-tasks?status=pending&limit=200',
+                extract: (d) => (d.tasks || []).filter(t => !t.project_name),
+                renderItem: (t) => {
+                    const isRaci = t.origem === 'conselhoos_raci' || t.conselhoos_raci_id != null;
+                    const badge = isRaci ? '<span class="drill-badge" style="background:#6366f1;color:#fff;">RACI</span>' : '';
+                    const date = t.data_vencimento ? new Date(t.data_vencimento).toLocaleDateString('pt-BR', {day:'2-digit', month:'short'}) : '';
+                    const isOverdue = t.data_vencimento && t.data_vencimento.split('T')[0] < new Date().toISOString().split('T')[0];
+                    return `<div class="drill-item" onclick="window.location.href='/tarefas-pendentes'">
+                        <div class="drill-item-content">
+                            <div class="drill-item-title">${escapeHtml(t.titulo)} ${badge}</div>
+                            ${date ? `<div class="drill-item-meta" style="${isOverdue ? 'color:#ef4444;font-weight:600;' : ''}">${escapeHtml(date)}</div>` : ''}
+                        </div>
+                    </div>`;
+                },
+                fullPage: '/tarefas-pendentes'
+            },
+            veiculos: {
+                label: 'Alertas Veículos',
+                color: '#6b7280',
+                endpoint: () => '/api/veiculos/alertas',
+                extract: (d) => [...(d.vencidos || []), ...(d.atencao || [])],
+                renderItem: (a) => {
+                    const isVencido = a.status === 'vencido';
+                    const badge = isVencido
+                        ? '<span class="drill-badge" style="background:#fee2e2;color:#b91c1c;">VENCIDO</span>'
+                        : '<span class="drill-badge" style="background:#fef3c7;color:#b45309;">ATENÇÃO</span>';
+                    const km = a.km_restante != null ? `${a.km_restante} km restantes` : '';
+                    const meta = [a.veiculo, a.placa, km].filter(Boolean).join(' · ');
+                    return `<div class="drill-item" onclick="window.location.href='/veiculos/${a.veiculo_id}'">
+                        <div class="drill-item-content">
+                            <div class="drill-item-title">${escapeHtml(a.item)} ${badge}</div>
+                            <div class="drill-item-meta">${escapeHtml(meta)}</div>
+                        </div>
+                    </div>`;
+                },
+                fullPage: '/veiculos'
+            }
+        };
+
+        function escapeHtml(s) {
+            if (s == null) return '';
+            return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        let currentDrill = null;
+
+        function openDrill(key) {
+            if (currentDrill === key) {
+                closeDrill();
+                return;
+            }
+            const cfg = drillConfig[key];
+            if (!cfg) return;
+            currentDrill = key;
+            try { localStorage.setItem('intel.dashboard.lastDrill', key); } catch(e) {}
+
+            document.querySelectorAll('.stat-card').forEach(c => {
+                c.classList.remove('drill-active');
+                c.style.removeProperty('--drill-color');
+            });
+            const card = document.querySelector(`[data-drill="${key}"]`);
+            if (card) {
+                card.classList.add('drill-active');
+                card.style.setProperty('--drill-color', cfg.color);
+            }
+
+            const wb = document.getElementById('workbench');
+            const drill = document.getElementById('drillPanel');
+            wb.style.display = 'block';
+            drill.style.setProperty('--drill-color', cfg.color);
+            drill.innerHTML = `
+                <div class="drill-header" style="--drill-color: ${cfg.color};">
+                    <h3 style="color: ${cfg.color};">${escapeHtml(cfg.label)}</h3>
+                    <div class="drill-header-actions">
+                        <a href="${cfg.fullPage}" class="drill-fullpage-link" style="color: ${cfg.color};">Ver tudo →</a>
+                        <button class="drill-close" onclick="closeDrill()" title="Fechar (ou clique no card de novo)">×</button>
+                    </div>
+                </div>
+                <div class="drill-items"><div class="text-center py-3"><div class="spinner-border spinner-border-sm" style="color: ${cfg.color};"></div></div></div>
+            `;
+
+            fetch(cfg.endpoint())
+                .then(r => r.ok ? r.json() : Promise.reject(r.status))
+                .then(d => {
+                    const items = cfg.extract(d) || [];
+                    const itemsEl = drill.querySelector('.drill-items');
+                    if (items.length === 0) {
+                        itemsEl.innerHTML = '<div class="drill-empty"><i class="bi bi-check-circle text-success" style="font-size:2rem;"></i><div class="mt-2">Nada por aqui</div></div>';
+                    } else {
+                        itemsEl.innerHTML = items.map(cfg.renderItem).join('');
+                    }
+                })
+                .catch(() => {
+                    drill.querySelector('.drill-items').innerHTML = '<div class="drill-empty text-danger">Erro ao carregar</div>';
+                });
+        }
+
+        function closeDrill() {
+            currentDrill = null;
+            try { localStorage.removeItem('intel.dashboard.lastDrill'); } catch(e) {}
+            document.querySelectorAll('.stat-card').forEach(c => {
+                c.classList.remove('drill-active');
+                c.style.removeProperty('--drill-color');
+            });
+            document.getElementById('workbench').style.display = 'none';
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                const last = localStorage.getItem('intel.dashboard.lastDrill');
+                if (last && drillConfig[last]) {
+                    setTimeout(() => openDrill(last), 400);
+                }
+            } catch(e) {}
+        });
     </script>
 
     <!-- Modal Share News -->
