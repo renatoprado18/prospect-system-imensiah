@@ -130,6 +130,7 @@
 ## 12. Comunicação
 - **WhatsApp**: send, receive, sync, webhook, import .txt, grupos → Evolution API
 - **Gmail**: sync, send, threading → Google API
+  - **Sync via Railway worker** (02/05): `services/gmail_sync.py:sync_all_contacts` migrado pro worker. Vercel matava em 300s pq loop e O(N x M) (3.5k contatos x 2 contas x 3 emails x 2 calls Gmail API + sleep 0.1 = piso ~2100s). `/api/cron/sync-gmail` e `step_gmail` agora chamam `services/job_dispatcher.enqueue_job` que cria registro em `background_jobs` (status queued) e dispara POST fire-and-forget pra `{AUDIO_WORKER_URL}/sync-gmail`. Worker (Railway) faz idempotencia (skip se ja tem job running < 1h), processa async com checkpoint a cada 50 contatos, atualiza status pra completed/error. `GET /api/jobs/{id}` pra inspecionar.
 - **Inbox unificado**: `/inbox`
 - **Smart Follow-Up**: detecta emails sem resposta, cria FUP automático → `smart_fup.py`
 - **Action Proposals**: dedup por contato+tipo, auto-resolve on reply, expire >7d

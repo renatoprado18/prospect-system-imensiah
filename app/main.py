@@ -7351,8 +7351,16 @@ async def cron_daily_sync(request: Request):
     # ==================== FASE 2: Comunicacao (paralelo) ====================
 
     async def step_gmail():
-        from services.gmail_sync import get_gmail_sync_service
-        return await get_gmail_sync_service().sync_all_contacts(months_back=1)
+        # Migrado pro Railway worker (sync_all_contacts era O(N x M) e estourava
+        # 300s no Vercel). Aqui so enfileira fire-and-forget — o worker processa
+        # async e atualiza background_jobs.
+        from services.job_dispatcher import enqueue_job
+        job_id, dispatched, error = await enqueue_job(
+            job_type="gmail_sync",
+            payload={"months_back": 1},
+            dispatch_path="/sync-gmail",
+        )
+        return {"queued": True, "job_id": job_id, "dispatched": dispatched, "error": error}
 
     async def step_whatsapp():
         from services.whatsapp_sync import get_whatsapp_sync_service
@@ -7712,29 +7720,33 @@ async def cron_cleanup(request: Request):
 @track_cron_run
 async def cron_sync_gmail(request: Request):
     """
-    Cron: Sincroniza emails do Gmail.
-    Schedule: 0 10 * * * (10h diario)
+    Cron: Enfileira gmail sync no Railway worker.
 
-    Sincroniza emails recentes (ultimos 7 dias) de todos os contatos.
+    Why: o sync e O(N x M) (3.5k contatos x 2 contas Google x 3 emails =
+    ~21k chamadas Gmail API + sleep(0.1) entre cada = piso ~2100s, e Vercel
+    mata em 300s). Migrado pra Railway worker via /sync-gmail. Este endpoint
+    so cria o registro em background_jobs e dispara fire-and-forget.
+
+    Nao esta em vercel.json — so roda via daily-sync (5h UTC).
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
 
-    from services.gmail_sync import get_gmail_sync_service
+    from services.job_dispatcher import enqueue_job
 
-    try:
-        service = get_gmail_sync_service()
-        # Sync ultimos 7 dias para cron diario
-        result = await service.sync_all_contacts(months_back=1)
-
-        return {
-            "job": "sync-gmail",
-            "timestamp": datetime.now().isoformat(),
-            "status": "success",
-            "result": result
-        }
-    except Exception as e:
-        return {"job": "sync-gmail", "status": "error", "error": str(e)}
+    job_id, dispatched, error = await enqueue_job(
+        job_type="gmail_sync",
+        payload={"months_back": 1},
+        dispatch_path="/sync-gmail",
+    )
+    return {
+        "job": "sync-gmail",
+        "timestamp": datetime.now().isoformat(),
+        "queued": True,
+        "job_id": job_id,
+        "dispatched": dispatched,
+        "error": error,
+    }
 
 
 @app.get("/api/jobs/{job_id}")

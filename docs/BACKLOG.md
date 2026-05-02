@@ -111,6 +111,7 @@
 - [x] Mobile responsividade + PWA
 - [x] Railway worker para transcrição de áudio + ata generation
 - [x] Dashboard otimizado (cache, 2 colunas, stat cards)
+- [x] Gmail sync migrado pro Railway worker (sem timeout 300s do Vercel) — endpoint /sync-gmail no worker, job_dispatcher service, GET /api/jobs/{id}
 
 ---
 
