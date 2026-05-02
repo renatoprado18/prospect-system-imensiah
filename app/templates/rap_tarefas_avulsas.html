@@ -1,8 +1,8 @@
 {% extends "rap_base.html" %}
 
-{% block title %}Tarefas Avulsas - INTEL{% endblock %}
-{% block page_title %}Tarefas Avulsas{% endblock %}
-{% block page_subtitle %}<p class="page-subtitle">Tarefas não vinculadas a projetos</p>{% endblock %}
+{% block title %}Tarefas - INTEL{% endblock %}
+{% block page_title %}Tarefas{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle">Backlog: tarefas diretas (avulsas) + RACI monitoradas</p>{% endblock %}
 
 {% block extra_css %}
 .task-item {
@@ -83,11 +83,14 @@
     function renderTasks() {
         const container = document.getElementById('tasksList');
         let tasks = allTasks;
-        if (currentFilter === 'direct') tasks = tasks.filter(t => !isRaci(t));
+        if (currentFilter === 'direct') tasks = tasks.filter(t => !isRaci(t) && !t.project_name);
         else if (currentFilter === 'raci') tasks = tasks.filter(isRaci);
+        else tasks = tasks.filter(t => isRaci(t) || !t.project_name);
 
         if (tasks.length === 0) {
-            const msg = currentFilter === 'raci' ? 'Nenhuma tarefa RACI pendente' : 'Nenhuma tarefa avulsa pendente';
+            const msg = currentFilter === 'raci' ? 'Nenhuma tarefa RACI pendente'
+                      : currentFilter === 'direct' ? 'Nenhuma tarefa direta pendente'
+                      : 'Nenhuma tarefa pendente';
             container.innerHTML = `<div class="empty-state"><i class="bi bi-check-circle text-success" style="font-size:3rem;"></i><p class="mt-2">${msg}</p></div>`;
             return;
         }
@@ -115,9 +118,9 @@
     async function loadTasks() {
         const container = document.getElementById('tasksList');
         try {
-            const resp = await fetch('/api/projects/all-tasks?status=pending&limit=50');
+            const resp = await fetch('/api/projects/all-tasks?status=pending&limit=200');
             const data = await resp.json();
-            allTasks = (data.tasks || []).filter(t => !t.project_name);
+            allTasks = data.tasks || [];
             renderTasks();
         } catch (e) {
             container.innerHTML = '<div class="empty-state text-danger">Erro ao carregar tarefas</div>';
