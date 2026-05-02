@@ -19,11 +19,11 @@ from database import get_db
 logger = logging.getLogger(__name__)
 
 # LinkdAPI Configuration (preferred)
-LINKDAPI_KEY = os.getenv("LINKDAPI_KEY")
+LINKDAPI_KEY = (os.getenv("LINKDAPI_KEY") or "").strip() or None
 LINKDAPI_BASE_URL = "https://linkdapi.com"
 
 # RapidAPI Configuration (fallback)
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
+RAPIDAPI_KEY = (os.getenv("RAPIDAPI_KEY") or "").strip() or None
 RAPIDAPI_HOST = "fresh-linkedin-profile-data.p.rapidapi.com"
 RAPIDAPI_BASE_URL = f"https://{RAPIDAPI_HOST}"
 

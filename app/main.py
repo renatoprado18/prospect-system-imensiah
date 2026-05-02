@@ -3486,7 +3486,7 @@ async def linkdapi_debug(user: dict = Depends(require_admin)):
     """Faz uma chamada direta na LinkdAPI pra debugar status/erros sem
     o silenciamento do _fetch_recent_post."""
     import httpx as _httpx
-    api_key = os.getenv("LINKDAPI_KEY", "")
+    api_key = (os.getenv("LINKDAPI_KEY") or "").strip()
     if not api_key:
         return {"error": "LINKDAPI_KEY nao setada"}
 
@@ -19452,7 +19452,7 @@ async def api_enrich_linkedin_tasks(limit: int = 20):
     conn = get_db()
     cursor = conn.cursor()
 
-    api_key = os.getenv("LINKDAPI_KEY")
+    api_key = (os.getenv("LINKDAPI_KEY") or "").strip()
     if not api_key:
         conn.close()
         raise HTTPException(400, "LINKDAPI_KEY not configured")

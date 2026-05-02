@@ -243,7 +243,7 @@ class CampaignExecutor:
         import os
         import httpx
 
-        api_key = os.getenv("LINKDAPI_KEY")
+        api_key = (os.getenv("LINKDAPI_KEY") or "").strip()
         if not api_key:
             return None
 
