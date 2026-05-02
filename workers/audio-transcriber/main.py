@@ -1992,7 +1992,11 @@ async def sync_gmail(request: Request, background_tasks: BackgroundTasks):
     if not job_id:
         return JSONResponse(status_code=400, content={"error": "job_id required"})
 
-    # Idempotency: bail if another non-stale gmail_sync job is already running
+    # Idempotency: bail if (a) another non-stale gmail_sync job is running,
+    # OR (b) THIS job_id was already picked up (claimed status='running').
+    # Why (b): observed em prod que mesmo POST chega duplicado (LB retry, etc).
+    # Sem isso 2 tasks paralelas escrevem na mesma row e o progresso oscila.
+    # Solucao: claim atomico via UPDATE WHERE status='queued' RETURNING.
     try:
         with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
             cursor = conn.cursor()
@@ -2015,6 +2019,23 @@ async def sync_gmail(request: Request, background_tasks: BackgroundTasks):
                     status_code=202,
                     content={"status": "skipped", "reason": "already_running",
                              "running_job_id": existing["id"]},
+                )
+
+            # Claim this job atomically: only proceed if status=queued (not yet picked up).
+            # Idempotente contra POSTs duplicados pro mesmo job_id.
+            cursor.execute(
+                "UPDATE background_jobs SET status='running', started_at=NOW() "
+                "WHERE id=%s AND status='queued' RETURNING id",
+                (job_id,),
+            )
+            claimed = cursor.fetchone()
+            conn.commit()
+            if not claimed:
+                logger.warning(f"[GmailSync] job {job_id} ja foi reclamado (POST duplicado?)")
+                return JSONResponse(
+                    status_code=202,
+                    content={"status": "skipped", "reason": "already_claimed",
+                             "job_id": job_id},
                 )
     except Exception as e:
         logger.error(f"[GmailSync] idempotency check failed: {e}")
