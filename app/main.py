@@ -7525,8 +7525,8 @@ async def cron_cleanup(request: Request):
 
     Limpa:
     - Sugestoes AI expiradas
-    - Notificacoes antigas (> 30 dias)
-    - Tokens expirados
+    - Action proposals antigas (>7 dias)
+    - Predicoes de health antigas (>90 dias)
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
@@ -7535,7 +7535,6 @@ async def cron_cleanup(request: Request):
 
     stats = {
         "suggestions_deleted": 0,
-        "notifications_deleted": 0,
         "old_predictions_deleted": 0
     }
 
@@ -7550,20 +7549,12 @@ async def cron_cleanup(request: Request):
     except Exception as e:
         stats["proposals_expired"] = f"error: {e}"
 
-    # 2. Cleanup notificacoes antigas
+    # 2. Cleanup predicoes antigas
     with get_db() as conn:
         cursor = conn.cursor()
-
-        cursor.execute("""
-            DELETE FROM sse_notifications
-            WHERE criado_em < NOW() - INTERVAL '30 days'
-        """)
-        stats["notifications_deleted"] = cursor.rowcount
-
-        # 3. Cleanup predicoes antigas
         cursor.execute("""
             DELETE FROM health_predictions
-            WHERE data_predicao < NOW() - INTERVAL '90 days'
+            WHERE data_previsao < NOW() - INTERVAL '90 days'
         """)
         stats["old_predictions_deleted"] = cursor.rowcount
 
