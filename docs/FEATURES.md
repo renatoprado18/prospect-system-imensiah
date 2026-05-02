@@ -52,7 +52,12 @@
 - Health médio, quem precisa atenção
 - Sync manual via botão
 
-## 5. Projetos (`/projetos`)
+## 5. Tarefas (`/tarefas-pendentes`)
+- Backlog de tarefas avulsas (sem projeto vinculado) → `rap_tarefas_avulsas.html`
+- Lista filtra `tasks` com `status='pending'` e `project_id IS NULL` via `GET /api/projects/all-tasks?status=pending`
+- Atalho rápido no menu lateral (antes de Projetos)
+
+## 6. Projetos (`/projetos`)
 - CRUD com milestones, tarefas, notas, membros, documentos
 - **Smart Update** (IA analisa msgs → sugere completar tarefas/criar novas) → `project_smart_update.py`
   - Memória de pareceres anteriores (contexto persistente)
@@ -66,7 +71,7 @@
 - Link email no milestone (thread Gmail)
 - **Modal Editar Tarefa**: extrai URLs da descrição como botões clicáveis (LinkedIn/Drive). Quando descrição tem `post_id=N` mas não tem URL, busca via `GET /api/editorial/{post_id}` e adiciona botão "Abrir no LinkedIn" — útil pra tasks `editorial_metrics` antigas criadas antes de incluir URL na descrição (`renderTaskLinks` em `rap_projeto_detail.html`).
 
-## 6. Veículos (`/veiculos`)
+## 7. Veículos (`/veiculos`)
 - Dashboard com itens de manutenção e status
 - **Upload NF via foto** (compressão client-side + OCR Claude Vision + Google Drive) → `POST /api/veiculos/{id}/upload-os`
 - Criar/finalizar OS → `veiculos.py`
@@ -74,10 +79,10 @@
 - Timeline de manutenções
 - Alertas de itens vencidos/atenção
 
-## 7. Oficinas (`/oficinas`)
+## 8. Oficinas (`/oficinas`)
 - CRUD com especialidades, serviços, contato → `oficinas.py`
 
-## 8. Editorial Calendar (`/editorial`)
+## 9. Editorial Calendar (`/editorial`)
 - Pipeline: import → análise IA → adaptação → agendamento → publicação → métricas
 - 159 posts (10 publicados, 1 agendado, 148 drafts)
 - Análise IA: categoria, público, complexidade, score, gancho LinkedIn
@@ -93,35 +98,35 @@
 - **Alerta cadência semanal**: a partir de quinta sem post → ⚠️ no daily-morning-briefing
 - **Doc detalhada**: `docs/FEATURE_EDITORIAL.md` + estratégia em `docs/EDITORIAL_STRATEGY.md`
 
-## 9. Hot Takes (`/hot-takes`)
+## 10. Hot Takes (`/hot-takes`)
 - Gerar de URL, digest, publicar → `hot_takes.py`
 
-## 10. News Hub
+## 11. News Hub
 - 12 fontes RSS gratuitas (Google News, Valor, Exame, MIT Tech Review, etc.)
 - Clipping diário com IA (Haiku, ~$0.01/dia)
 - Feedback 👍👎 com aprendizado de preferências
 - Sugerir contatos para compartilhar notícia
 - Criar post LinkedIn a partir de notícia
 
-## 11. Comunicação
+## 12. Comunicação
 - **WhatsApp**: send, receive, sync, webhook, import .txt, grupos → Evolution API
 - **Gmail**: sync, send, threading → Google API
 - **Inbox unificado**: `/inbox`
 - **Smart Follow-Up**: detecta emails sem resposta, cria FUP automático → `smart_fup.py`
 - **Action Proposals**: dedup por contato+tipo, auto-resolve on reply, expire >7d
 
-## 12. Calendário (`/calendario`)
+## 13. Calendário (`/calendario`)
 - Sync Google Calendar bidirecional
 - Eventos de hoje no dashboard (exclui aniversários)
 
-## 13. Briefings (`/briefings`)
+## 14. Briefings (`/briefings`)
 - Contatos que precisam briefing (C1-3, health<50, com interações)
 - Geração com Claude (contexto: fatos, mensagens, tasks)
 
-## 14. Campanhas (`/campanhas`)
+## 15. Campanhas (`/campanhas`)
 - CRUD com steps, executor automático no cron
 
-## 15. Integrações
+## 16. Integrações
 | Integração | Uso | Config |
 |------------|-----|--------|
 | Google (Calendar, Contacts, Drive, Tasks, Gmail) | Sync bidirecional | OAuth scopes |
@@ -131,7 +136,7 @@
 | Fathom | Import reuniões | FATHOM_API_KEY |
 | ConselhoOS | Sync dados conselhos | CONSELHOOS_DATABASE_URL |
 
-## 16. Cron Jobs (vercel.json)
+## 17. Cron Jobs (vercel.json)
 | Horário | Job | Steps |
 |---------|-----|-------|
 | 5h diário | daily-sync | Health, Contacts, Calendar, Tasks, Gmail, PaymentCycle, WA, SmartFUP, AI, Campaigns, AutoEnrich, GroupDocs, Avatars, Clipping, SocialGroupsCache (13 steps) |
@@ -140,7 +145,7 @@
 | 8h segunda | weekly-digest | Digest semanal |
 | 4h domingo | cleanup | Expirar propostas, limpar notificações |
 
-## 17. Intel Bot (WhatsApp conversacional via intel-bot)
+## 18. Intel Bot (WhatsApp conversacional via intel-bot)
 - Bot WhatsApp dedicado na instancia "intel-bot" (numero 5511915020192)
 - Acesso exclusivo do Renato (+5511984153337)
 - **Arquitetura**: Claude tool_use com 4 meta-tools — acesso TOTAL ao INTEL + ConselhoOS
@@ -173,7 +178,7 @@
   - Notifica Renato via intel-bot para cada proposta criada (formato conversacional)
   - Chamado automaticamente em `analyze_message_in_background` (evolution_api.py)
 
-## 18. Intelligence Automations
+## 19. Intelligence Automations
 - **Task Auto-Resolver**: `services/task_auto_resolver.py` - auto-completa tarefas pendentes quando acoes correspondentes sao executadas
   - email_sent: match com tarefas "enviar ata", "mandar email" + empresa/contato
   - whatsapp_sent: match com tarefas "mensagem para X", "follow-up X", "cobrar X"
@@ -190,7 +195,7 @@
   - Detecta posts publicados ~48h atras sem metricas coletadas (linkedin_metricas_em IS NULL)
   - Envia lembrete via WhatsApp com lista de posts e instrucoes para coletar
 
-## 19. ConselhoOS Integration — Ata + RACI Flow
+## 20. ConselhoOS Integration — Ata + RACI Flow
 - **Ata Generation**: ConselhoOS → Railway worker (no timeout) → Claude generates detailed ata (8-15K chars) → saves to ConselhoOS DB → notifies WhatsApp
   - Fetches participants from ConselhoOS `pessoas` table for correct names/cargos
   - Frontend shows animated spinner + auto-polls every 10s until ata appears
@@ -216,7 +221,7 @@
   - Contacts without LinkedIn or without posts → enrollment paused
   - Batch enrichment endpoint: `POST /api/v1/campaigns/enrich-linkedin-tasks`
 
-## 20. PWA & Mobile
+## 21. PWA & Mobile
 - **Manifest**: `/static/manifest.json` (standalone, portrait, theme #6366f1)
 - **Service Worker**: `/static/sw.js` - caches static assets (Bootstrap, icons, fonts) + network-first HTML pages with offline fallback
 - **iOS PWA meta tags**: apple-mobile-web-app-capable, apple-mobile-web-app-status-bar-style (black-translucent), apple-touch-icon

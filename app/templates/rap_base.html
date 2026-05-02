@@ -727,6 +727,10 @@
 
             <!-- Gestao -->
             <div class="nav-section">Gestao</div>
+            <a href="/tarefas-pendentes" class="nav-item {% if '/tarefas-pendentes' in request.path %}active{% endif %}">
+                <i class="bi bi-check2-square"></i>
+                <span>Tarefas</span>
+            </a>
             <a href="/projetos" class="nav-item {% if '/projetos' in request.path %}active{% endif %}">
                 <i class="bi bi-folder"></i>
                 <span>Projetos</span>
