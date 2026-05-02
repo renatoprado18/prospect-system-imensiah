@@ -2124,7 +2124,7 @@
                 <div class="stat-icon" style="background: rgba(239, 68, 68, 0.1); color: #ef4444;"><i class="bi bi-exclamation-circle"></i></div>
                 <div class="stat-content">
                     <div class="stat-value" id="statTasksOverdue">-</div>
-                    <div class="stat-label">Tarefas Avulsas</div>
+                    <div class="stat-label">Tarefas Vencidas</div>
                     <div class="stat-breakdown" id="statTasksBreakdown"></div>
                 </div>
             </div>
@@ -3255,7 +3255,8 @@
                 const today = new Date().toISOString().split('T')[0];
                 const vencidasN = avulsas.filter(t => t.data_vencimento && t.data_vencimento.split('T')[0] < today).length;
                 const futurasN = avulsas.length - vencidasN;
-                document.getElementById('statTasksOverdue').textContent = avulsas.length;
+                // Statcard mostra apenas vencidas (acoes urgentes); 0 vencidas = idle
+                document.getElementById('statTasksOverdue').textContent = vencidasN;
                 const breakdown = document.getElementById('statTasksBreakdown');
                 if (breakdown) {
                     breakdown.innerHTML = `
@@ -4735,10 +4736,20 @@
                 fullPage: '/contatos?filter=needs_attention'
             },
             tarefas: {
-                label: 'Tarefas Avulsas',
+                label: 'Tarefas Vencidas',
                 color: '#ef4444',
                 endpoint: () => '/api/projects/all-tasks?status=pending&limit=200',
-                extract: (d) => (d.tasks || []).filter(t => !t.project_name),
+                emptyIcon: 'bi-check2-circle',
+                emptyText: 'Nenhuma tarefa vencida',
+                // So vencidas (data_vencimento no passado). Futuras nao aparecem aqui — vao em /tarefas-pendentes
+                extract: (d) => {
+                    const today = new Date().toISOString().split('T')[0];
+                    return (d.tasks || []).filter(t =>
+                        !t.project_name &&
+                        t.data_vencimento &&
+                        t.data_vencimento.split('T')[0] < today
+                    );
+                },
                 renderItem: (t) => {
                     const isRaci = t.origem === 'conselhoos_raci' || t.conselhoos_raci_id != null;
                     const badge = isRaci ? '<span class="drill-badge" style="background:#6366f1;color:#fff;">RACI</span>' : '';
