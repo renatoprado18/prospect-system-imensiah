@@ -3481,6 +3481,60 @@ class BulkImportData(BaseModel):
 class BulkNameUpdate(BaseModel):
     updates: List[dict]  # [{email: str, nome: str, empresa: str}]
 
+@app.get("/api/admin/linkdapi-debug")
+async def linkdapi_debug(user: dict = Depends(require_admin)):
+    """Faz uma chamada direta na LinkdAPI pra debugar status/erros sem
+    o silenciamento do _fetch_recent_post."""
+    import httpx as _httpx
+    api_key = os.getenv("LINKDAPI_KEY", "")
+    if not api_key:
+        return {"error": "LINKDAPI_KEY nao setada"}
+
+    # Pick first legacy task's contact
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT c.nome, c.linkedin
+            FROM tasks t LEFT JOIN contacts c ON c.id = t.contact_id
+            WHERE t.titulo ILIKE 'LinkedIn: Curtir post%%' AND t.status = 'pending'
+              AND c.linkedin IS NOT NULL LIMIT 1
+        """)
+        row = cursor.fetchone()
+        if not row:
+            return {"error": "no test contact"}
+        linkedin_url = row["linkedin"]
+        nome = row["nome"]
+
+    username = linkedin_url.rstrip('/').split('/in/')[-1].split('/')[0].split('?')[0]
+    result = {"contact": nome, "linkedin_url": linkedin_url, "username": username,
+              "api_key_prefix": api_key[:8] + "..."}
+
+    try:
+        with _httpx.Client(timeout=15.0) as client:
+            resp1 = client.get(
+                "https://linkdapi.com/api/v1/profile/full",
+                headers={"X-linkdapi-apikey": api_key},
+                params={"username": username}
+            )
+            result["profile_status"] = resp1.status_code
+            result["profile_body"] = resp1.text[:500]
+            if resp1.status_code == 200:
+                data = resp1.json()
+                urn = (data.get("data") or {}).get("urn")
+                result["urn"] = urn
+                if urn:
+                    resp2 = client.get(
+                        "https://linkdapi.com/api/v1/posts/all",
+                        headers={"X-linkdapi-apikey": api_key},
+                        params={"urn": urn}
+                    )
+                    result["posts_status"] = resp2.status_code
+                    result["posts_body"] = resp2.text[:500]
+    except Exception as e:
+        result["exception"] = str(e)
+    return result
+
+
 @app.post("/api/admin/refetch-linkedin-post-tasks")
 async def refetch_linkedin_post_tasks(
     dry_run: bool = True,
