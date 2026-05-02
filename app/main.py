@@ -6635,20 +6635,7 @@ async def cron_sync_contacts(request: Request):
     Called by Vercel Cron every 30 minutes.
     Uses sync tokens for efficient delta sync.
     """
-    # Verify cron authorization (Vercel sets this header)
-    auth_header = request.headers.get("authorization", "")
-    cron_secret = os.getenv("CRON_SECRET", "")
-
-    # In production, Vercel Cron sets Authorization header
-    # For local testing, allow without auth
-    is_vercel_cron = request.headers.get("x-vercel-cron") == "true"
-    is_authorized = (
-        is_vercel_cron or
-        auth_header == f"Bearer {cron_secret}" or
-        os.getenv("VERCEL_ENV") != "production"
-    )
-
-    if not is_authorized and cron_secret:
+    if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
 
     conn = get_db()
@@ -6715,14 +6702,20 @@ async def cron_sync_contacts(request: Request):
 # Configurados em vercel.json
 
 def verify_cron_auth(request: Request) -> bool:
-    """Verifica autorizacao de cron job"""
+    """Verifica autorizacao de cron job.
+
+    Why: header `x-vercel-cron: true` nao e documentado. Vercel autentica via
+    User-Agent 'vercel-cron/1.0' ou Authorization Bearer CRON_SECRET (quando
+    a env var existe). Antes confiavamos so no x-vercel-cron e crons davam
+    401 silencioso em prod (caso 2026-05-02 — agent_actions vazio por dias).
+    """
     auth_header = request.headers.get("authorization", "")
     cron_secret = os.getenv("CRON_SECRET", "")
-    is_vercel_cron = request.headers.get("x-vercel-cron") == "true"
+    user_agent = request.headers.get("user-agent", "")
 
     return (
-        is_vercel_cron or
-        auth_header == f"Bearer {cron_secret}" or
+        user_agent.startswith("vercel-cron/") or
+        (bool(cron_secret) and auth_header == f"Bearer {cron_secret}") or
         os.getenv("VERCEL_ENV") != "production"
     )
 
@@ -6959,12 +6952,6 @@ async def cron_daily_sync(request: Request):
 
 
 # Individual cron endpoints (kept for manual triggering)
-
-    return (
-        is_vercel_cron or
-        auth_header == f"Bearer {cron_secret}" or
-        os.getenv("VERCEL_ENV") != "production"
-    )
 
 
 @app.get("/api/cron/sync-calendar")
