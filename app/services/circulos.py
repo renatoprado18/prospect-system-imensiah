@@ -1091,15 +1091,16 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
                 except (ValueError, AttributeError):
                     pass
 
-            # 2. Tarefa pendente (+80, +100 se vencida)
+            # 2. Tarefa pendente — so vencida vira fator (acao imediata).
+            # Tarefa futura ainda boosta priority_score (ordena melhor) mas nao
+            # entra como trigger standalone — bate com principio "inbox de acoes".
             tarefa_info = tarefas_por_contato.get(contact_id)
             if tarefa_info:
                 if tarefa_info["vencida"]:
                     priority_score += 100
                     fatores.append({"tipo": "task", "label": "Tarefa vencida"})
                 else:
-                    priority_score += 80
-                    fatores.append({"tipo": "task", "label": f"{tarefa_info['count']} tarefa(s)"})
+                    priority_score += 80  # boost only, no factor
 
             # 3. Projeto ativo (+60)
             projeto_count = projetos_por_contato.get(contact_id, 0)
