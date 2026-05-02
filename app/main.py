@@ -7737,6 +7737,18 @@ async def cron_sync_gmail(request: Request):
         return {"job": "sync-gmail", "status": "error", "error": str(e)}
 
 
+@app.get("/api/jobs/{job_id}")
+async def get_background_job(job_id: int):
+    """Retorna status de um background_job. Usado pra acompanhar
+    progresso de jobs disparados ao Railway worker (sync-gmail, etc)."""
+    from services.job_dispatcher import get_job_status
+
+    job = get_job_status(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job nao encontrado")
+    return job
+
+
 @app.get("/api/cron/sync-whatsapp")
 @track_cron_run
 async def cron_sync_whatsapp(request: Request):
