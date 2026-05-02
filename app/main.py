@@ -20221,6 +20221,30 @@ async def cron_daily_synthesis(request: Request):
         return {"job": "daily-synthesis", "status": "error", "error": str(e)}
 
 
+@app.get("/api/cron/pulse")
+async def cron_pulse():
+    """Read-only pulse de saude dos crons. Sem auth — so retorna timestamps,
+    nada sensivel. Usado por agente externo (claude.ai routines) pra validar
+    que crons da Vercel estao disparando."""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    (SELECT MAX(ultimo_calculo_circulo) FROM contacts) AS last_health_calc,
+                    (SELECT MAX(last_incremental_sync) FROM calendar_sync_state) AS last_calendar_sync,
+                    (SELECT COUNT(*) FROM agent_actions WHERE criado_em > NOW() - INTERVAL '4 hours') AS agent_actions_4h,
+                    (SELECT COUNT(*) FROM audit_log WHERE criado_em > NOW() - INTERVAL '4 hours') AS audit_log_4h,
+                    (SELECT MAX(data_publicado) FROM editorial_posts WHERE status = 'published') AS last_editorial_publish
+            """)
+            row = cursor.fetchone()
+            result = {k: (v.isoformat() if hasattr(v, 'isoformat') else v) for k, v in dict(row).items()}
+            result["server_now"] = datetime.now().isoformat()
+            return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/api/intel-chat/synthesize-now")
 async def api_intel_chat_synthesize_now(request: Request):
     """Manual trigger: roda sintese das ultimas 24h imediatamente.
