@@ -3481,6 +3481,30 @@ class BulkImportData(BaseModel):
 class BulkNameUpdate(BaseModel):
     updates: List[dict]  # [{email: str, nome: str, empresa: str}]
 
+@app.get("/api/admin/system-feedback")
+async def system_feedback_list(
+    status: str = "pending",
+    limit: int = 20,
+    user: dict = Depends(require_admin)
+):
+    """Lista feedbacks reportados pelo usuario via INTEL bot.
+    Default: pendentes nao resolvidos."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, tipo, conteudo, status, criado_em
+            FROM system_feedback
+            WHERE status = %s
+            ORDER BY criado_em DESC
+            LIMIT %s
+        """, (status, limit))
+        rows = [dict(r) for r in cursor.fetchall()]
+        for r in rows:
+            if r.get("criado_em"):
+                r["criado_em"] = r["criado_em"].isoformat()
+    return {"count": len(rows), "feedbacks": rows}
+
+
 @app.get("/api/admin/cron-status")
 async def cron_status(user: dict = Depends(require_admin)):
     """Retorna evidencias indiretas de execucao recente dos crons —
