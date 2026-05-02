@@ -320,6 +320,21 @@ def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:
                 conn.commit()
                 conn.close()
 
+                # Audit log (P3): RACI status mudou por regex em msg WA — quero rastro.
+                try:
+                    from services.agent_actions import log_action
+                    log_action(
+                        action_type='raci_status_updated',
+                        category='conselho',
+                        title=f"RACI: '{(target['acao'] or '')[:60]}' → {new_status}",
+                        scope_ref={'raci_item_id': str(target['id']), 'empresa_id': str(empresa_id)},
+                        source='raci_weekly_report.parse_raci_update',
+                        payload={'old_status': target['status'], 'new_status': new_status, 'item_num': item_num, 'notes': notes},
+                        undo_hint=f"UPDATE raci_itens SET status='{target['status']}' WHERE id='{target['id']}'::uuid;",
+                    )
+                except Exception as e:
+                    logger.warning(f"audit log failed for raci_update: {e}")
+
                 return {
                     'item_id': target['id'],
                     'acao': target['acao'],

@@ -156,6 +156,28 @@ class CampaignExecutor:
             result
         )
 
+        # Audit log (P3): step executado sem aprovação do usuario.
+        # Skip handlers que sao pura espera/check (nao mudam estado)
+        if step_type not in ('wait', 'check_response') and not result.get('skipped'):
+            try:
+                from services.agent_actions import log_action
+                log_action(
+                    action_type='campaign_step_executed',
+                    category='whatsapp' if step_type == 'whatsapp_message' else 'email' if step_type == 'email' else 'contacts',
+                    title=f"Campanha '{enrollment.get('campaign_nome', '?')}': step '{step_type}' p/ {enrollment.get('contact_nome', '?')}",
+                    scope_ref={
+                        'enrollment_id': enrollment['enrollment_id'],
+                        'step_id': enrollment['step_id'],
+                        'contact_id': enrollment.get('contact_id'),
+                        'task_id': result.get('task_id'),
+                    },
+                    source='campaign_executor.process_pending_steps',
+                    payload={'step_type': step_type, 'result': {k: v for k, v in result.items() if k != 'mensagem'}},
+                    undo_hint=f"DELETE FROM tasks WHERE id={result.get('task_id')};" if result.get('task_id') else None,
+                )
+            except Exception as e:
+                logger.warning(f"audit log failed for campaign step: {e}")
+
         # Avançar para próximo step
         self._advance_to_next_step(cursor, enrollment)
 

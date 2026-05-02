@@ -461,6 +461,43 @@ def _db_query(url: str, sql: str, write: bool = False) -> str:
         return json.dumps({"erro": str(e)})
 
 
+def _audit_log(
+    action_type: str,
+    category: str,
+    title: str,
+    scope_ref: dict = None,
+    payload: dict = None,
+    undo_hint: str = None,
+) -> None:
+    """Inline P3 audit log para acoes do bot worker.
+
+    Why: bot worker nao importa de app/services/ — codigo duplicado
+    intencional. Sem isso, _execute_intel_action e _manage_email
+    fazem mudancas de estado (Gmail, INTEL DB) sem trilha.
+    """
+    if not DATABASE_URL:
+        return
+    try:
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO agent_actions
+                (action_type, category, title, scope_ref, source, payload, undo_hint)
+            VALUES (%s, %s, %s, %s, 'intel_bot.worker', %s, %s)
+        """, (
+            action_type,
+            category,
+            title,
+            json.dumps(scope_ref or {}),
+            json.dumps(payload) if payload else None,
+            undo_hint,
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"audit_log failed ({action_type}): {e}")
+
+
 async def _execute_intel_action(action: str, params: dict) -> str:
     """Execute an INTEL CRM action."""
     if not DATABASE_URL:
@@ -502,6 +539,11 @@ async def _execute_intel_action(action: str, params: dict) -> str:
             tid = cursor.fetchone()["id"]
             conn.commit()
             conn.close()
+            _audit_log('task_created_by_bot', 'tasks',
+                       f"Tarefa criada via bot: {params.get('titulo', '')[:80]}",
+                       scope_ref={'task_id': tid, 'project_id': project_id, 'contact_id': contact_id},
+                       payload={'prazo_dias': params.get('prazo_dias')},
+                       undo_hint=f"DELETE FROM tasks WHERE id={tid};")
             return f"Tarefa #{tid} criada: {params.get('titulo')}"
 
         elif action == "complete_task":
@@ -510,6 +552,11 @@ async def _execute_intel_action(action: str, params: dict) -> str:
             r = cursor.fetchone()
             conn.commit()
             conn.close()
+            if r:
+                _audit_log('task_completed_by_bot', 'tasks',
+                           f"Tarefa concluida via bot: {r['titulo'][:80]}",
+                           scope_ref={'task_id': params['task_id']},
+                           undo_hint=f"UPDATE tasks SET status='pending', data_conclusao=NULL WHERE id={params['task_id']};")
             return f"Tarefa concluida: {r['titulo']}" if r else "Tarefa nao encontrada"
 
         elif action == "save_note":
@@ -518,6 +565,10 @@ async def _execute_intel_action(action: str, params: dict) -> str:
             nid = cursor.fetchone()["id"]
             conn.commit()
             conn.close()
+            _audit_log('note_saved_by_bot', 'system',
+                       f"Nota em projeto: {params.get('titulo', '')[:80]}",
+                       scope_ref={'note_id': nid, 'project_id': params.get('project_id')},
+                       undo_hint=f"DELETE FROM project_notes WHERE id={nid};")
             return f"Nota #{nid} salva"
 
         elif action == "save_memory":
@@ -526,6 +577,10 @@ async def _execute_intel_action(action: str, params: dict) -> str:
             mid = cursor.fetchone()["id"]
             conn.commit()
             conn.close()
+            _audit_log('memory_saved_by_bot', 'contacts',
+                       f"Memoria de contato: {params.get('titulo', '')[:80]}",
+                       scope_ref={'memory_id': mid, 'contact_id': params['contact_id']},
+                       undo_hint=f"DELETE FROM contact_memories WHERE id={mid};")
             return f"Memoria #{mid} salva"
 
         elif action == "save_feedback":
@@ -534,6 +589,10 @@ async def _execute_intel_action(action: str, params: dict) -> str:
             fid = cursor.fetchone()["id"]
             conn.commit()
             conn.close()
+            _audit_log('feedback_saved_by_bot', 'system',
+                       f"Feedback {params.get('tipo', 'feedback')}: {(params.get('conteudo', ''))[:80]}",
+                       scope_ref={'feedback_id': fid},
+                       undo_hint=f"DELETE FROM system_feedback WHERE id={fid};")
             return f"Feedback #{fid} registrado"
 
         elif action == "save_article":
@@ -746,6 +805,14 @@ async def _manage_email(action: str, params: dict) -> str:
                         if resp.status_code == 204:
                             total_archived += len(non_urgent_ids)
                             details.append(f"{email}: {len(non_urgent_ids)} arquivados")
+                            _audit_log(
+                                action_type='gmail_archived_non_urgent',
+                                category='email',
+                                title=f"Gmail: {len(non_urgent_ids)} emails nao-urgentes arquivados em {email}",
+                                scope_ref={'account': acct, 'email': email},
+                                payload={'message_ids': non_urgent_ids[:50]},
+                                undo_hint=f"Gmail batchModify addLabelIds=['INBOX'] no token de {email} para os {len(non_urgent_ids)} ids em payload.message_ids",
+                            )
                         else:
                             details.append(f"{email}: erro ao arquivar ({resp.status_code})")
                 else:
@@ -779,6 +846,14 @@ async def _manage_email(action: str, params: dict) -> str:
                             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                             json={"ids": ids, "removeLabelIds": ["INBOX"]})
                         total_archived += len(ids)
+                        _audit_log(
+                            action_type='gmail_archived_by_subject',
+                            category='email',
+                            title=f"Gmail: {len(ids)} emails arquivados por subject '{subject_filter[:40]}' em {email}",
+                            scope_ref={'account': acct, 'email': email},
+                            payload={'subject_filter': subject_filter, 'message_ids': ids[:50]},
+                            undo_hint=f"Gmail batchModify addLabelIds=['INBOX'] no token de {email} para os {len(ids)} ids em payload.message_ids",
+                        )
             except Exception:
                 pass
 

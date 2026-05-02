@@ -300,6 +300,22 @@ async def check_payment_replies(access_token: str) -> Dict:
                         results["cycles_created"] += 1
 
                     results["completed"] += 1
+
+                    # Audit log (P3 gap critico — fechamento financeiro silencioso era invisivel)
+                    try:
+                        from services.agent_actions import log_action
+                        log_action(
+                            action_type='payment_cycle_completed',
+                            category='email',
+                            title=f"Ciclo financeiro fechado: {milestone['titulo']} ({config.get('contact_name', 'contato')})",
+                            scope_ref={'project_id': project['id'], 'milestone_id': milestone['id'], 'next_milestone_id': created.get('id') if created else None},
+                            source='payment_cycle.check_payment_replies',
+                            payload={'thread_id': milestone['email_thread_id'], 'next_cycle_created': bool(created)},
+                            undo_hint=f"UPDATE project_milestones SET status='pendente', data_conclusao=NULL WHERE id={milestone['id']};",
+                        )
+                    except Exception as e:
+                        logger.warning(f"audit log failed for payment_cycle: {e}")
+
                     logger.info(f"Payment cycle completed: {milestone['titulo']} (project {project['id']})")
 
             except Exception as e:
