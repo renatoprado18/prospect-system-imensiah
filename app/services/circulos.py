@@ -1112,15 +1112,16 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
                 priority_score += 50
                 fatores.append({"tipo": "message", "label": "Responder msg"})
 
-            # 5. Tempo sem contato (fallback, +20)
+            # 5. Tempo sem contato — boost de prioridade pra contatos JA com fator,
+            # mas NAO conta como fator standalone (passive timeout != trigger acionavel).
+            # Antes: virava fator 'time' quando sem outros — gerava 130+ contatos sem motivo claro.
             dias_sem_contato = calcular_dias_sem_contato(contact.get("ultimo_contato"))
             contact["dias_sem_contato"] = dias_sem_contato
             frequencia_ideal = contact.get("frequencia_ideal_dias") or circulo_cfg.get("frequencia_dias", 30)
 
             if dias_sem_contato and dias_sem_contato > frequencia_ideal:
                 priority_score += 20
-                if not fatores:  # Só mostra se não tem outro fator
-                    fatores.append({"tipo": "time", "label": f"{dias_sem_contato}d sem contato"})
+                # Nao adiciona como fator — so boosta priority_score de quem ja tem trigger
 
             contact["priority_score"] = round(priority_score, 1)
             contact["fatores"] = fatores

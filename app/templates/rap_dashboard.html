@@ -1111,6 +1111,21 @@
         .circulo-mini.c4 { background: #8b5cf6; color: white; }
         .circulo-mini.c5 { background: #6b7280; color: white; }
 
+        /* Health pill — small numeric badge colorida por faixa */
+        .health-pill {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 700;
+            color: white;
+            line-height: 1.2;
+        }
+        .health-pill.h-low { background: #ef4444; }
+        .health-pill.h-med { background: #f59e0b; }
+        .health-pill.h-high { background: #22c55e; }
+
         /* Avatar colors by type */
         .contact-today-avatar.urgent {
             background: linear-gradient(135deg, #ef4444, #dc2626);
@@ -4953,23 +4968,22 @@
             else if (cat === 'important') visualType = 'proximo_passo';
             else if (cat === 'attention') visualType = 'attention';
 
-            // Reason label: prefere primeiro fator (mais informativo) com fallback pra dias sem contato
+            // Reason: usa label do fator (ex: "Tarefa vencida", "Aniversario!", "Responder msg")
+            // NAO usa f.tipo (vira "TASK", "BIRTHDAY" — sem contexto util)
             let reasonLabel = '';
             if (Array.isArray(c.fatores) && c.fatores.length > 0) {
-                const f0 = c.fatores[0];
-                reasonLabel = f0.descricao || f0.tipo || '';
+                reasonLabel = c.fatores[0].label || c.fatores[0].descricao || c.fatores[0].tipo || '';
             }
-            if (!reasonLabel) {
-                if (c.dias_sem_contato != null) {
-                    reasonLabel = `${c.dias_sem_contato}d sem contato`;
-                } else if (c.health_score != null) {
-                    reasonLabel = `Health ${c.health_score}%`;
-                } else {
-                    reasonLabel = 'Atenção';
-                }
-            }
-            // Truncar pra nao quebrar layout
+            if (!reasonLabel) reasonLabel = 'Atencao';
             if (reasonLabel.length > 40) reasonLabel = reasonLabel.slice(0, 38) + '…';
+
+            // Health pill: vermelho <40, amarelo 40-70, verde >70
+            const h = c.health_score;
+            let healthPill = '';
+            if (typeof h === 'number') {
+                const cls = h < 40 ? 'h-low' : (h < 70 ? 'h-med' : 'h-high');
+                healthPill = `<span class="health-pill ${cls}" title="Health score">${h}</span>`;
+            }
 
             // Linha secundaria: empresa/cargo se houver
             const empresaInfo = c.empresa || c.cargo
@@ -4991,12 +5005,13 @@
                             <div>
                                 <span class="contact-today-name">${escapeHtml(c.nome)}</span>
                                 ${circuloBadge}
+                                ${healthPill}
                             </div>
                             <div class="contact-today-header-right">
                                 ${whatsappBtn}
                                 ${contactedBtn}
                                 ${snoozeBtn}
-                                <span class="contact-today-reason">${escapeHtml(reasonLabel.toUpperCase())}</span>
+                                <span class="contact-today-reason">${escapeHtml(reasonLabel)}</span>
                             </div>
                         </div>
                         ${empresaInfo}
