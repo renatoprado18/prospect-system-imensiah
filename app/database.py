@@ -189,6 +189,16 @@ def init_db():
             ADD COLUMN IF NOT EXISTS contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL
         ''')
 
+        # Auto-link each user to its own contact via matching email (idempotent).
+        # Only updates rows where contact_id is still NULL, so manual overrides are preserved.
+        cursor.execute('''
+            UPDATE users u
+            SET contact_id = c.id
+            FROM contacts c
+            WHERE u.contact_id IS NULL
+              AND c.emails @> jsonb_build_array(jsonb_build_object('email', u.email))
+        ''')
+
         # Prospects table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS prospects (
