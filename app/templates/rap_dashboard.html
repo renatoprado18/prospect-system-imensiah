@@ -2248,6 +2248,7 @@
                 <div class="stat-content">
                     <div class="stat-value" id="statTasksOverdue">-</div>
                     <div class="stat-label">Tarefas Avulsas</div>
+                    <div class="stat-breakdown" id="statTasksBreakdown"></div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer;" data-drill="editorial" onclick="openDrill('editorial')">
@@ -2263,6 +2264,7 @@
                 <div class="stat-content">
                     <div class="stat-value" id="statVeiculos">-</div>
                     <div class="stat-label">Alertas Veículos</div>
+                    <div class="stat-breakdown" id="statVeiculosBreakdown"></div>
                 </div>
             </div>
         </div>
@@ -3614,18 +3616,26 @@
             }
         }
 
-        // Load tarefas vencidas count
+        // Load tarefas avulsas com breakdown vencidas vs futuras
         async function loadTasksOverdue() {
             try {
-                const resp = await fetch('/api/tasks/standalone-pending');
-                if (resp.ok) {
-                    const data = await resp.json();
-                    document.getElementById('statTasksOverdue').textContent = data.count || 0;
-                } else {
-                    document.getElementById('statTasksOverdue').textContent = '0';
+                const resp = await fetch('/api/projects/all-tasks?status=pending&limit=200');
+                if (!resp.ok) throw new Error('fail');
+                const data = await resp.json();
+                const avulsas = (data.tasks || []).filter(t => !t.project_name);
+                const today = new Date().toISOString().split('T')[0];
+                const vencidasN = avulsas.filter(t => t.data_vencimento && t.data_vencimento.split('T')[0] < today).length;
+                const futurasN = avulsas.length - vencidasN;
+                document.getElementById('statTasksOverdue').textContent = avulsas.length;
+                const breakdown = document.getElementById('statTasksBreakdown');
+                if (breakdown) {
+                    breakdown.innerHTML = `
+                        <span class="pill ${vencidasN > 0 ? 'danger' : 'muted'}" title="Vencidas"><i class="bi bi-exclamation-circle"></i> ${vencidasN}</span>
+                        <span class="pill ${futurasN > 0 ? 'info' : 'muted'}" title="Futuras / sem prazo"><i class="bi bi-clock"></i> ${futurasN}</span>
+                    `;
                 }
             } catch (e) {
-                document.getElementById('statTasksOverdue').textContent = '0';
+                document.getElementById('statTasksOverdue').textContent = '-';
             }
         }
 
@@ -4932,7 +4942,9 @@
                 }
 
                 const data = await response.json();
-                const totalAlertas = data.total_vencidos + data.total_atencao;
+                const vencidosN = data.total_vencidos || 0;
+                const atencaoN = data.total_atencao || 0;
+                const totalAlertas = vencidosN + atencaoN;
 
                 if (totalAlertas > 0) {
                     statEl.textContent = totalAlertas;
@@ -4940,6 +4952,13 @@
                 } else {
                     statEl.textContent = '✓';
                     statEl.style.color = '#22c55e';
+                }
+                const breakdown = document.getElementById('statVeiculosBreakdown');
+                if (breakdown) {
+                    breakdown.innerHTML = `
+                        <span class="pill ${vencidosN > 0 ? 'danger' : 'muted'}" title="Vencidos"><i class="bi bi-exclamation-triangle-fill"></i> ${vencidosN}</span>
+                        <span class="pill ${atencaoN > 0 ? 'warning' : 'muted'}" title="Em atenção"><i class="bi bi-clock-history"></i> ${atencaoN}</span>
+                    `;
                 }
                 return;
                 countBadge.textContent = `${totalAlertas} alerta${totalAlertas > 1 ? 's' : ''}`;
