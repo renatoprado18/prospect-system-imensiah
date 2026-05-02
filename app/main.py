@@ -3498,12 +3498,16 @@ async def refetch_linkedin_post_tasks(
     executor = CampaignExecutor()
     summary = {
         "dry_run": dry_run,
+        "linkdapi_key_set": bool(os.getenv("LINKDAPI_KEY")),
         "checked": 0,
         "updated": 0,
         "deleted": 0,
         "skipped_no_url": 0,
         "errors": [],
     }
+    if not summary["linkdapi_key_set"]:
+        summary["errors"].append("LINKDAPI_KEY env var nao setada — abortando para nao deletar 70 tasks por engano")
+        return summary
 
     with get_db() as conn:
         cursor = conn.cursor()
