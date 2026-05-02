@@ -12,7 +12,25 @@ import httpx
 import logging
 import asyncio
 from datetime import datetime, timedelta, date
+from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional, Any
+
+SP_TZ = ZoneInfo("America/Sao_Paulo")
+DIAS_PT = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"]
+
+
+def _now_sp() -> datetime:
+    return datetime.now(SP_TZ)
+
+
+def _format_sp_datetime(dt: datetime = None) -> str:
+    if dt is None:
+        dt = _now_sp()
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=SP_TZ)
+    else:
+        dt = dt.astimezone(SP_TZ)
+    return f"{dt.strftime('%Y-%m-%d')} {DIAS_PT[dt.weekday()]} {dt.strftime('%H:%M')}"
 
 from database import get_db
 
@@ -399,7 +417,7 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 except Exception:
                     pass
             if data_vencimento is None and prazo_dias is not None:
-                data_vencimento = (datetime.now() + timedelta(days=prazo_dias)).replace(hour=0, minute=0, second=0)
+                data_vencimento = (_now_sp() + timedelta(days=prazo_dias)).replace(hour=0, minute=0, second=0, tzinfo=None)
 
             # Validar FKs antes do INSERT (Claude as vezes alucina IDs)
             # Why: feedback 2026-04-25 — INSERT falhava com FK constraint
@@ -1083,6 +1101,29 @@ def _build_snapshot_block() -> str:
         logger.error(f"Error building snapshot block: {e}")
         return ""
 
+    # System memories: latest synthesis + recent saved memories
+    try:
+        from services.system_memory import get_latest_synthesis, list_recent_memories
+
+        synth = get_latest_synthesis()
+        if synth:
+            sections.append(
+                f"**Última síntese ({synth['referencia_inicio']} → {synth['referencia_fim']}):**\n"
+                + synth["conteudo"]
+            )
+
+        recent = list_recent_memories(limit=8, exclude_synthesis=True)
+        if recent:
+            lines = []
+            for m in recent:
+                d = m["criado_em"].strftime("%d/%m") if m.get("criado_em") else ""
+                tipo_tag = f"[{m['tipo']}]" if m.get("tipo") else ""
+                titulo = m["titulo"][:80]
+                lines.append(f"  - {d} {tipo_tag} {titulo}")
+            sections.append("**Memórias recentes (você lembra disso):**\n" + "\n".join(lines))
+    except Exception as e:
+        logger.error(f"Error loading system memories for snapshot: {e}")
+
     if not sections:
         return ""
 
@@ -1095,8 +1136,8 @@ def _build_system_prompt(mode: str = "whatsapp") -> str:
     mode='whatsapp' (default) — operational bot persona, terse, action-oriented
     mode='chat'              — coach persona for /intel-chat, reflective, listens first
     """
-    now = datetime.now()
-    today_str = now.strftime("%Y-%m-%d %A %H:%M")
+    now = _now_sp()
+    today_str = f"{_format_sp_datetime(now)} (fuso America/Sao_Paulo, sempre)"
 
     # Get active projects summary
     projects_str = ""

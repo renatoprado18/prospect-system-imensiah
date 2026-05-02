@@ -10,6 +10,24 @@ import httpx
 import psycopg
 from psycopg.rows import dict_row
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+SP_TZ = ZoneInfo("America/Sao_Paulo")
+DIAS_PT = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"]
+
+
+def _now_sp():
+    return datetime.now(SP_TZ)
+
+
+def _format_sp_datetime(dt: datetime = None) -> str:
+    if dt is None:
+        dt = _now_sp()
+    elif dt.tzinfo is None:
+        dt = dt.replace(tzinfo=SP_TZ)
+    else:
+        dt = dt.astimezone(SP_TZ)
+    return f"{dt.strftime('%Y-%m-%d')} {DIAS_PT[dt.weekday()]} {dt.strftime('%H:%M')}"
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 
@@ -460,7 +478,7 @@ async def _execute_intel_action(action: str, params: dict) -> str:
                 except Exception:
                     dv = None
             if not dv and params.get("prazo_dias"):
-                dv = datetime.now() + timedelta(days=params["prazo_dias"])
+                dv = (_now_sp() + timedelta(days=params["prazo_dias"])).replace(tzinfo=None)
 
             # Validate foreign keys
             contact_id = params.get("contact_id")
@@ -1041,7 +1059,7 @@ def _build_snapshot_block() -> str:
 
 async def _run_bot(phone: str, message: str, message_id: str) -> str:
     """Full bot processing with tool_use loop. Runs on Railway (no timeout)."""
-    now = datetime.now()
+    now = _now_sp()
     snapshot = _build_snapshot_block()
 
     system_prompt = f"""Voce e o INTEL Bot, assistente pessoal de Renato Almeida Prado (executivo, tecnologia e governanca).
@@ -1089,7 +1107,7 @@ REGRAS:
 - Se a pergunta e sobre algo que ja esta no snapshot (tarefas hoje, agenda hoje, propostas, contatos esfriando, editorial), responda DIRETO sem tool call.
 - Quando pedir para CRIAR no ConselhoOS, use execute_conselhoos com INSERT.
 - Responda em portugues, conciso (WhatsApp). Use *negrito* para destaques.
-- Data atual: {now.strftime('%Y-%m-%d %H:%M')}
+- Data atual: {_format_sp_datetime(now)} (fuso America/Sao_Paulo, sempre)
 - Para "segunda", "2a feira" = proximo dia util. Calcule a data.
 - Audios transcritos: "[Audio transcrito] texto"
 - Imagens analisadas: "[Imagem analisada] descricao"
