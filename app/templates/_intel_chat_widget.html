@@ -12,14 +12,15 @@
             <textarea
                 class="intel-chat-widget__textarea"
                 id="intelChat-input"
-                placeholder="Mensagem... (Shift+Enter pra nova linha, Enter pra enviar)"
-                rows="1"></textarea>
+                placeholder="Mensagem..."
+                rows="1"
+                title="Enter envia · Shift+Enter quebra linha"></textarea>
             <button class="intel-chat-widget__send" id="intelChat-send" title="Enviar">
                 <i class="bi bi-send-fill"></i>
             </button>
         </div>
         <div class="intel-chat-widget__hint">
-            Histórico compartilhado com o intel-bot do WhatsApp · Enter envia · Shift+Enter quebra linha
+            Mesmo histórico do intel-bot WhatsApp · Enter envia
         </div>
     </div>
 </div>
@@ -36,10 +37,10 @@
     .intel-chat-widget__messages {
         flex: 1;
         overflow-y: auto;
-        padding: 20px 8px;
+        padding: 12px 6px;
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 8px;
     }
     .intel-chat-widget__empty {
         margin: auto;
@@ -57,40 +58,41 @@
 
     .intel-chat-widget__msg {
         display: flex;
-        gap: 12px;
+        gap: 8px;
         max-width: 100%;
     }
     .intel-chat-widget__msg-avatar {
         flex-shrink: 0;
-        width: 30px; height: 30px;
+        width: 22px; height: 22px;
         border-radius: 50%;
         display: flex; align-items: center; justify-content: center;
-        font-size: 0.75rem; font-weight: 600;
+        font-size: 0.62rem; font-weight: 700;
         color: white;
+        margin-top: 2px;
     }
     .intel-chat-widget__msg.user .intel-chat-widget__msg-avatar { background: #6366f1; }
     .intel-chat-widget__msg.assistant .intel-chat-widget__msg-avatar { background: linear-gradient(135deg, #10b981, #059669); }
     .intel-chat-widget__msg-body {
         flex: 1;
         min-width: 0;
-        padding: 10px 14px;
-        border-radius: 12px;
-        font-size: 0.9rem;
-        line-height: 1.55;
+        padding: 7px 11px;
+        border-radius: 10px;
+        font-size: 0.88rem;
+        line-height: 1.45;
         white-space: pre-wrap;
         word-wrap: break-word;
     }
     .intel-chat-widget__msg.user .intel-chat-widget__msg-body { background: #eef2ff; color: #1e1b4b; }
     .intel-chat-widget__msg.assistant .intel-chat-widget__msg-body { background: #f8fafc; color: var(--dark); border: 1px solid var(--gray-200); }
     .intel-chat-widget__msg-time {
-        font-size: 0.65rem;
+        font-size: 0.6rem;
         color: var(--gray-400);
-        margin-top: 4px;
+        margin-top: 1px;
     }
 
     .intel-chat-widget__input-area {
         border-top: 1px solid var(--gray-200);
-        padding: 14px 8px 8px;
+        padding: 10px 6px 6px;
         background: white;
     }
     .intel-chat-widget__input-row {
