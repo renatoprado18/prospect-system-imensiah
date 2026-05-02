@@ -2133,10 +2133,34 @@
 {% endblock %}
 
 {% block content %}
-        <!-- Data atual -->
+        <!-- Data atual + cron health pill -->
         <div id="currentDateBar" style="font-size: 0.85rem; color: var(--gray-500); margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
             <i class="bi bi-calendar3"></i>
             <span id="currentDateText"></span>
+            <span style="flex: 1;"></span>
+            <button id="cronHealthPill" type="button" onclick="openCronHealthModal()" title="Saude dos cron jobs"
+                style="display:none; background:#dcfce7; color:#15803d; border:1px solid #86efac; border-radius:999px; padding:3px 10px; font-size:0.78rem; font-weight:600; cursor:pointer; transition:all 0.15s;">
+                <i class="bi bi-check-circle-fill" style="font-size:0.85em;"></i>
+                <span id="cronHealthLabel">Crons OK</span>
+            </button>
+        </div>
+
+        <!-- Cron Health Modal -->
+        <div id="cronHealthModal" style="display:none; position:fixed; inset:0; z-index:9999; background:rgba(15,23,42,0.55); align-items:flex-start; justify-content:center; padding:60px 16px 16px;">
+            <div style="background:#fff; border-radius:14px; max-width:760px; width:100%; max-height:85vh; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 20px 50px rgba(0,0,0,0.3);">
+                <div style="padding:16px 20px; border-bottom:1px solid #e5e7eb; display:flex; align-items:center; justify-content:space-between;">
+                    <div>
+                        <h5 style="margin:0; font-size:1.05rem; font-weight:700; color:#0f172a;">
+                            <i class="bi bi-activity me-1"></i> Saude dos Cron Jobs
+                        </h5>
+                        <small id="cronHealthSubtitle" style="color:#64748b;">Carregando...</small>
+                    </div>
+                    <button type="button" onclick="closeCronHealthModal()" style="background:none; border:none; font-size:1.4rem; color:#64748b; cursor:pointer; padding:0 4px;">&times;</button>
+                </div>
+                <div id="cronHealthBody" style="overflow-y:auto; padding:12px 16px;">
+                    <div style="text-align:center; color:#94a3b8; padding:30px;"><i class="bi bi-hourglass-split"></i> carregando...</div>
+                </div>
+            </div>
         </div>
 
         <!-- Action Proposals Widget (INTEL Proativo) -->
@@ -5018,7 +5042,146 @@
             loadTasks();
             checkAIStatus();
             loadClipping();
+            loadCronHealth();
         }, 300);
+
+        // Refresh cron health a cada 5min
+        setInterval(loadCronHealth, 5 * 60 * 1000);
+    </script>
+
+    <!-- ============== Cron Health Pill + Modal ============== -->
+    <script>
+        let _cronHealthCache = null;
+
+        async function loadCronHealth() {
+            try {
+                const res = await fetch('/api/admin/cron-health', { credentials: 'same-origin' });
+                if (!res.ok) {
+                    // Nao-admin ou nao autenticado — esconde pill silenciosamente
+                    return;
+                }
+                const data = await res.json();
+                _cronHealthCache = data;
+                renderCronHealthPill(data);
+            } catch (err) {
+                console.warn('cron-health load failed:', err);
+            }
+        }
+
+        function renderCronHealthPill(data) {
+            const pill = document.getElementById('cronHealthPill');
+            const label = document.getElementById('cronHealthLabel');
+            if (!pill || !label || !data) return;
+
+            const s = data.summary || {};
+            const failing = s.failing || 0;
+            const late = s.late || 0;
+
+            pill.style.display = 'inline-flex';
+            pill.style.alignItems = 'center';
+            pill.style.gap = '5px';
+
+            if (failing > 0) {
+                pill.style.background = '#fee2e2';
+                pill.style.color = '#b91c1c';
+                pill.style.borderColor = '#fecaca';
+                pill.innerHTML = '<i class="bi bi-exclamation-octagon-fill" style="font-size:0.85em;"></i> <span id="cronHealthLabel">' + failing + ' cron' + (failing > 1 ? 's' : '') + ' com erro</span>';
+            } else if (late > 0) {
+                pill.style.background = '#fef3c7';
+                pill.style.color = '#b45309';
+                pill.style.borderColor = '#fde68a';
+                pill.innerHTML = '<i class="bi bi-clock-history" style="font-size:0.85em;"></i> <span id="cronHealthLabel">' + late + ' cron' + (late > 1 ? 's' : '') + ' em atraso</span>';
+            } else {
+                pill.style.background = '#dcfce7';
+                pill.style.color = '#15803d';
+                pill.style.borderColor = '#86efac';
+                pill.innerHTML = '<i class="bi bi-check-circle-fill" style="font-size:0.85em;"></i> <span id="cronHealthLabel">Crons OK</span>';
+            }
+        }
+
+        function openCronHealthModal() {
+            const modal = document.getElementById('cronHealthModal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            renderCronHealthModalBody(_cronHealthCache);
+            // refresh em background pra dados frescos
+            loadCronHealth().then(() => renderCronHealthModalBody(_cronHealthCache));
+        }
+
+        function closeCronHealthModal() {
+            const modal = document.getElementById('cronHealthModal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        function renderCronHealthModalBody(data) {
+            const body = document.getElementById('cronHealthBody');
+            const sub = document.getElementById('cronHealthSubtitle');
+            if (!body) return;
+            if (!data) {
+                body.innerHTML = '<div style="text-align:center; color:#94a3b8; padding:30px;">sem dados</div>';
+                return;
+            }
+            const s = data.summary || {};
+            if (sub) {
+                sub.textContent = (s.healthy || 0) + ' OK · ' + (s.late || 0) + ' atrasados · '
+                    + (s.failing || 0) + ' com erro · ' + (s.unknown || 0) + ' sem dados';
+            }
+            const colorByHealth = {
+                healthy: '#22c55e', late: '#f59e0b', failing: '#ef4444', unknown: '#94a3b8'
+            };
+            const iconByHealth = {
+                healthy: 'bi-check-circle-fill', late: 'bi-clock-history',
+                failing: 'bi-exclamation-octagon-fill', unknown: 'bi-question-circle'
+            };
+            const labelByHealth = {
+                healthy: 'OK', late: 'atrasado', failing: 'erro', unknown: 'sem dados'
+            };
+
+            const rows = (data.crons || []).map(c => {
+                const lr = c.last_run;
+                const lastWhen = lr && lr.started_at
+                    ? new Date(lr.started_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+                    : '—';
+                const lastDur = lr && lr.duration_ms != null ? (lr.duration_ms + 'ms') : '';
+                const rows7 = c.runs_7d || {};
+                const rowsAffected = lr && lr.rows_affected != null ? (' · ' + lr.rows_affected + ' rows') : '';
+                const errLine = (lr && lr.status === 'error' && lr.error_message)
+                    ? '<div style="color:#b91c1c; font-size:0.72rem; margin-top:3px; font-family:monospace; white-space:pre-wrap; max-height:60px; overflow:auto;">' + escapeHtml(lr.error_message.slice(0, 300)) + '</div>'
+                    : '';
+                return `
+                    <div style="display:flex; align-items:flex-start; gap:10px; padding:10px 6px; border-bottom:1px solid #f1f5f9;">
+                        <i class="bi ${iconByHealth[c.health]}" style="color:${colorByHealth[c.health]}; font-size:1rem; margin-top:2px;"></i>
+                        <div style="flex:1; min-width:0;">
+                            <div style="display:flex; gap:8px; align-items:baseline; flex-wrap:wrap;">
+                                <span style="font-weight:600; color:#0f172a; font-size:0.86rem;">${escapeHtml(c.path)}</span>
+                                <span style="font-size:0.72rem; color:#94a3b8;">${escapeHtml(c.schedule_description || c.schedule || '')}</span>
+                            </div>
+                            <div style="font-size:0.74rem; color:#64748b; margin-top:2px;">
+                                Ultimo: <strong>${escapeHtml(lastWhen)}</strong> · ${lr ? lr.status : 'nunca rodou'} ${lastDur ? '· ' + lastDur : ''}${rowsAffected}
+                            </div>
+                            <div style="font-size:0.7rem; color:#94a3b8; margin-top:1px;">
+                                7d: ${rows7.success || 0} ok · ${rows7.error || 0} erro · esperados ~${c.expected_runs_7d || '?'}
+                            </div>
+                            ${errLine}
+                        </div>
+                        <span style="font-size:0.7rem; color:${colorByHealth[c.health]}; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">${labelByHealth[c.health]}</span>
+                    </div>
+                `;
+            }).join('');
+
+            body.innerHTML = rows || '<div style="padding:20px; text-align:center; color:#94a3b8;">nenhum cron configurado</div>';
+        }
+
+        function escapeHtml(str) {
+            return String(str || '').replace(/[&<>"']/g, m => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[m]);
+        }
+
+        // Fechar modal por click fora
+        document.getElementById('cronHealthModal')?.addEventListener('click', (e) => {
+            if (e.target.id === 'cronHealthModal') closeCronHealthModal();
+        });
     </script>
 <script>
         function closeAllModals() {
