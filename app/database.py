@@ -2219,6 +2219,30 @@ def init_db():
             )
         ''')
 
+        # =====================================================================
+        # Sincroniza sequences que podem ter ficado atras do MAX(id) real.
+        # Idempotente — roda toda vez que init_db() executa.
+        #
+        # Why: inserts manuais (seeds, scripts, INSERT explicito com id=...)
+        # nao avancam a SERIAL sequence. Resultado: proximo INSERT auto-gera
+        # um id ja existente -> "duplicate key value violates unique constraint".
+        # Aconteceu hoje em sync-conselhoos-raci (tasks_pkey id=357) e
+        # sync-calendar (calendar_events_pkey id=2).
+        # =====================================================================
+        for seq_name, table_name in [
+            ('tasks_id_seq', 'tasks'),
+            ('contacts_id_seq', 'contacts'),
+            ('projects_id_seq', 'projects'),
+            ('calendar_events_id_seq', 'calendar_events'),
+        ]:
+            try:
+                cursor.execute(
+                    f"SELECT setval('{seq_name}', GREATEST((SELECT COALESCE(MAX(id), 0) FROM {table_name}), 1))"
+                )
+            except Exception as _e:
+                # Tabela/sequence pode nao existir em ambientes recem-iniciados — ignora
+                print(f"setval {seq_name} skipped: {_e}")
+
         conn.commit()
         print("Database initialized successfully")
         return True
