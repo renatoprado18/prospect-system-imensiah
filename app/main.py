@@ -15441,11 +15441,12 @@ async def api_list_projects(
     status: str = None,
     limit: int = 50,
     offset: int = 0,
-    include_completed: bool = False
+    include_completed: bool = False,
+    search: str = None
 ):
     """Lista projetos com filtros opcionais e dados de urgencia."""
     return {
-        "projects": list_projects(tipo=tipo, status=status, limit=limit, offset=offset, include_completed=include_completed),
+        "projects": list_projects(tipo=tipo, status=status, limit=limit, offset=offset, include_completed=include_completed, search=search),
         "types": PROJECT_TYPES,
         "statuses": PROJECT_STATUS
     }

@@ -67,7 +67,8 @@ def list_projects(
     status: str = None,
     limit: int = 50,
     offset: int = 0,
-    include_completed: bool = False
+    include_completed: bool = False,
+    search: str = None
 ) -> List[Dict]:
     """Lista projetos com filtros opcionais e dados de urgencia."""
     from datetime import date
@@ -97,6 +98,11 @@ def list_projects(
         elif not include_completed:
             # By default exclude completed
             query += " AND p.status != 'concluido'"
+
+        if search:
+            query += " AND (p.nome ILIKE %s OR p.descricao ILIKE %s OR p.empresa_relacionada ILIKE %s)"
+            like = f"%{search}%"
+            params.extend([like, like, like])
 
         query += " ORDER BY p.prioridade ASC, p.criado_em DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])

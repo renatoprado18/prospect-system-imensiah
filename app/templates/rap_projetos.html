@@ -478,6 +478,20 @@
 
 {% block extra_js %}
 <script>
+    // Page-aware search: aqui buscamos projetos
+    window.pageSearch = {
+        placeholder: 'Buscar projetos... (Cmd+K)',
+        endpoint: q => `/api/projects?search=${encodeURIComponent(q)}&include_completed=true&limit=8`,
+        extract: data => data.projects || [],
+        renderItem: p => ({
+            href: `/projetos/${p.id}`,
+            title: p.nome || '',
+            subtitle: p.empresa_relacionada || (p.tipo_info && p.tipo_info.label) || p.tipo || '',
+            icon: 'bi-folder'
+        }),
+        fallbackUrl: q => `/projetos?search=${encodeURIComponent(q)}`,
+    };
+
     let projects = [];
     let filterType = null;
     let collapsedSections = { 'em-dia': false, 'pausados': true, 'concluidos': true };

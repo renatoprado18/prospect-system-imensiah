@@ -14,6 +14,7 @@
   - 📝 Criar post LinkedIn (gera texto + cruza artigo) → `POST /api/news/to-post`
   - 📤 Compartilhar com contato (msg personalizada por IA) → `POST /api/share/generate-message`
 - LinkedIn Hoje (posts agendados + sugestão de draft) → `GET /api/editorial/dashboard-tasks`
+- **Busca global page-aware**: input no header (`#globalSearch`, atalho Cmd+K) adapta endpoint/placeholder/render por página via `window.pageSearch`. Default = contatos. Override em `extra_js`: `window.pageSearch = { placeholder, endpoint(q), extract(data), renderItem(p) → {href,title,subtitle,icon|avatar}, fallbackUrl(q) }`. Implementado: `/projetos` (busca em nome+descrição+empresa_relacionada).
 - Ações Sugeridas (dedup, auto-resolve on reply) → `GET /api/action-proposals`
 - Quem Contatar Hoje → `GET /api/ai/at-risk`
 - Agenda de Hoje (exclui aniversários) → `GET /api/calendar/today`

@@ -837,10 +837,10 @@
                 {% block page_subtitle %}{% endblock %}
             </div>
             <div class="header-actions">
-                <!-- Global Search -->
+                <!-- Global Search (page-aware via window.pageSearch) -->
                 <div class="search-box">
                     <i class="bi bi-search"></i>
-                    <input type="text" placeholder="Buscar contatos... (Cmd+K)" id="globalSearch" autocomplete="off">
+                    <input type="text" placeholder="Buscar... (Cmd+K)" id="globalSearch" autocomplete="off">
                     <div class="search-results" id="searchResults">
                         <div class="search-hint">
                             <span>Digite para buscar</span>
@@ -923,7 +923,27 @@
             }
         }
 
-        // Global Search
+        // Global Search — page-aware via window.pageSearch (default: contatos)
+        // Cada pagina pode override antes do DOMContentLoaded:
+        //   window.pageSearch = {
+        //     placeholder: 'Buscar projetos...',
+        //     endpoint: q => `/api/projects?search=${encodeURIComponent(q)}&limit=8`,
+        //     extract:  data => data.projects || [],
+        //     renderItem: p => ({ href: `/projetos/${p.id}`, title: p.nome, subtitle: p.empresa_relacionada || '' }),
+        //     fallbackUrl: q => `/projetos?search=${encodeURIComponent(q)}`,
+        //   };
+        const DEFAULT_PAGE_SEARCH = {
+            placeholder: 'Buscar contatos... (Cmd+K)',
+            endpoint: q => `/api/contacts?search=${encodeURIComponent(q)}&limit=8`,
+            extract: data => data.contacts || [],
+            renderItem: c => {
+                const initials = (c.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+                return { href: `/contatos/${c.id}`, title: c.nome || '', subtitle: c.empresa || c.cargo || '', avatar: initials };
+            },
+            fallbackUrl: q => `/contatos?search=${encodeURIComponent(q)}`,
+        };
+        const pageSearchConfig = () => window.pageSearch || DEFAULT_PAGE_SEARCH;
+
         let searchTimeout = null;
         let searchResults = [];
         let selectedIndex = -1;
@@ -931,16 +951,24 @@
         const searchInput = document.getElementById('globalSearch');
         const searchResultsEl = document.getElementById('searchResults');
 
+        // Aplica placeholder da pagina (extra_js de cada pagina seta
+        // window.pageSearch antes do DOMContentLoaded).
+        document.addEventListener('DOMContentLoaded', () => {
+            if (searchInput && window.pageSearch && window.pageSearch.placeholder) {
+                searchInput.placeholder = window.pageSearch.placeholder;
+            }
+        });
+
         async function performSearch(query) {
             if (!query || query.length < 2) {
                 hideSearchResults();
                 return;
             }
-
+            const cfg = pageSearchConfig();
             try {
-                const response = await fetch(`/api/contacts?search=${encodeURIComponent(query)}&limit=8`);
+                const response = await fetch(cfg.endpoint(query));
                 const data = await response.json();
-                searchResults = data.contacts || [];
+                searchResults = cfg.extract(data);
                 renderSearchResults(query);
             } catch (error) {
                 searchResultsEl.innerHTML = '<div class="search-empty">Erro ao buscar</div>';
@@ -960,15 +988,19 @@
                 return;
             }
 
+            const cfg = pageSearchConfig();
             let html = '';
-            searchResults.forEach((contact, idx) => {
-                const initials = (contact.nome || 'XX').split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+            searchResults.forEach((item, idx) => {
+                const r = cfg.renderItem(item);
+                const avatarHtml = r.avatar
+                    ? `<div class="search-result-avatar">${r.avatar}</div>`
+                    : `<div class="search-result-avatar"><i class="bi ${r.icon || 'bi-circle'}"></i></div>`;
                 html += `
-                    <a href="/contatos/${contact.id}" class="search-result-item ${idx === selectedIndex ? 'selected' : ''}" data-index="${idx}">
-                        <div class="search-result-avatar">${initials}</div>
+                    <a href="${r.href}" class="search-result-item ${idx === selectedIndex ? 'selected' : ''}" data-index="${idx}">
+                        ${avatarHtml}
                         <div class="search-result-info">
-                            <div class="search-result-name">${contact.nome || ''}</div>
-                            <div class="search-result-detail">${contact.empresa || contact.cargo || ''}</div>
+                            <div class="search-result-name">${r.title || ''}</div>
+                            <div class="search-result-detail">${r.subtitle || ''}</div>
                         </div>
                     </a>
                 `;
@@ -1005,10 +1037,12 @@
                     renderSearchResults(searchInput.value);
                 } else if (e.key === 'Enter') {
                     e.preventDefault();
+                    const cfg = pageSearchConfig();
                     if (selectedIndex >= 0 && searchResults[selectedIndex]) {
-                        window.location.href = `/contatos/${searchResults[selectedIndex].id}`;
+                        const r = cfg.renderItem(searchResults[selectedIndex]);
+                        window.location.href = r.href;
                     } else if (searchInput.value) {
-                        window.location.href = `/contatos?search=${encodeURIComponent(searchInput.value)}`;
+                        window.location.href = cfg.fallbackUrl(searchInput.value);
                     }
                 } else if (e.key === 'Escape') {
                     hideSearchResults();
