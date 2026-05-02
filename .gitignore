@@ -36,3 +36,9 @@ Thumbs.db
 .vercel
 .env*.local
 .last_sync
+
+# Claude Code project state (per-session, not source)
+.claude/
+
+# Generated reports (one-shot script outputs)
+reports/

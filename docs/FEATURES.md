@@ -74,6 +74,8 @@
   - `Todas` → `isRaci(t) || !t.project_name` (Diretas + RACI)
   - Detecção RACI: `origem='conselhoos_raci'` ou `conselhoos_raci_id IS NOT NULL`
 - **Badge RACI** (pill roxo `#6366f1`) renderizado ao lado do título em todas as listas de tarefas: `/tarefas-pendentes`, dashboard (widget tasksList) e detalhe de projeto (`renderTaskRow` em `rap_projeto_detail.html`)
+- **Expand inline** (toggle ao clicar na task): mostra `descricao` linkificada. Tasks LinkedIn (`LinkedIn: Curtir post...` / `LinkedIn: Comentar post...`) renderizam texto completo do post + posted_at + engagements (`👍 N · 💬 M · 🔁 K`) + botão "Abrir no LinkedIn", buscado via `GET /api/tasks/{id}/linkedin` (sidecar `linkedin_task_data`). Fallback gracioso quando sidecar não foi populada.
+- **LinkedIn task data** (sidecar `linkedin_task_data`): cacheia post completo capturado pelo `campaign_executor` ao criar tasks de Curtir/Comentar (post_url, post_text, posted_at, engagements). Defesa contra `contacts.linkedin` apontando pra perfil errado: `_fetch_recent_post` valida `firstName+lastName` retornado pela LinkdAPI vs `contact.nome` via heurística de tokens; mismatch → log warning e skip. Backfill admin: `POST /api/admin/backfill-linkedin-task-data?dry_run=false&limit=100` (idempotente via NOT EXISTS). Migration `004_linkedin_task_data.sql`. Campos `ai_*` reservados pra Fase 2 (botão "💡 Vale comentar?").
 
 ## 6. Projetos (`/projetos`)
 - CRUD com milestones, tarefas, notas, membros, documentos
