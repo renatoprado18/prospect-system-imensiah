@@ -41,6 +41,10 @@ echo "🗑️  Recriando banco local..."
 $DROPDB $LOCAL_DB 2>/dev/null || true
 $CREATEDB $LOCAL_DB
 
+# Forca timezone UTC (Neon e UTC; sem isso, sync-to-remote compara
+# atualizado_em em BRT contra last_sync em UTC e pula edicoes).
+$PSQL -d $LOCAL_DB -c "ALTER DATABASE $LOCAL_DB SET timezone = 'UTC';" -q 2>/dev/null
+
 echo "📤 Importando schema..."
 $PSQL -d $LOCAL_DB -f "$TMP_DIR/schema.sql" -q 2>/dev/null
 
