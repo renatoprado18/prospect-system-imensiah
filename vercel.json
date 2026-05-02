@@ -80,6 +80,10 @@
     {
       "path": "/api/cron/raci-weekly-report",
       "schedule": "0 11 * * 1"
+    },
+    {
+      "path": "/api/cron/daily-synthesis",
+      "schedule": "0 1 * * *"
     }
   ]
 }

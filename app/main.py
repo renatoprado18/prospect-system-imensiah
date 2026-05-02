@@ -20216,6 +20216,32 @@ async def cron_editorial_metrics_reminder_evening(request: Request):
         return {"job": "editorial-metrics-reminder-evening", "status": "error", "error": str(e)}
 
 
+@app.get("/api/cron/daily-synthesis")
+async def cron_daily_synthesis(request: Request):
+    """
+    Cron: Sintese noturna das conversas com o INTEL coach.
+    Le bot_conversations das ultimas 24h, gera digest estruturado via Claude,
+    salva em system_memories. No dia seguinte o bot ja entra com contexto.
+    Schedule: 0 1 * * * (22:00 Sao Paulo)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    try:
+        from services.daily_synthesis import run_daily_synthesis
+        result = await run_daily_synthesis(hours=24)
+        return {"job": "daily-synthesis", **result}
+    except Exception as e:
+        return {"job": "daily-synthesis", "status": "error", "error": str(e)}
+
+
+@app.post("/api/intel-chat/synthesize-now")
+async def api_intel_chat_synthesize_now(request: Request):
+    """Manual trigger: roda sintese das ultimas 24h imediatamente.
+    Pra testar sem esperar o cron noturno."""
+    from services.daily_synthesis import run_daily_synthesis
+    return await run_daily_synthesis(hours=24)
+
+
 # ==================== INTEL CHAT (web interface for the bot brain) ====================
 
 @app.get("/intel-chat", response_class=HTMLResponse)

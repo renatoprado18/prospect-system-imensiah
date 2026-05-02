@@ -100,7 +100,9 @@ TOOLS = [
             "- send_whatsapp: envia WhatsApp via rap-whatsapp (contact_id, message)\n"
             "- enrich_contact: enriquece contato com IA (contact_id)\n"
             "- update_contact: atualiza campos do contato (contact_id, fields: {campo: valor})\n"
-            "- save_feedback: salva feedback/melhoria do sistema INTEL (conteudo, tipo?: bug|melhoria|ideia|feedback)"
+            "- save_feedback: salva feedback/melhoria do sistema INTEL (conteudo, tipo?: bug|melhoria|ideia|feedback)\n"
+            "- save_system_memory: memoria persistente do coach (NAO atrelada a contato — pra decisao de vida, compromisso consigo, padrao observado, reflexao). params: titulo, conteudo, tipo? (decisao|compromisso|padrao|reflexao), tags?\n"
+            "- search_system_memories: busca em memorias persistentes por keyword (params: query, limit?)"
         ),
         "input_schema": {
             "type": "object",
@@ -111,7 +113,8 @@ TOOLS = [
                     "enum": [
                         "create_task", "complete_task", "save_note", "save_memory",
                         "schedule_meeting", "send_whatsapp", "enrich_contact", "update_contact",
-                        "save_feedback"
+                        "save_feedback",
+                        "save_system_memory", "search_system_memories"
                     ]
                 },
                 "params": {
@@ -716,6 +719,40 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 "mensagem": f"Feedback #{fb_id} registrado ({tipo}). Sera analisado na proxima sessao de desenvolvimento."
             }, ensure_ascii=False)
 
+        elif action == "save_system_memory":
+            # Memória persistente do coach (não atrelada a contato).
+            # Pra: decisões de vida, compromissos consigo, padrões, reflexões.
+            from services.system_memory import save_system_memory
+            titulo = params.get("titulo", "").strip()
+            conteudo = params.get("conteudo", "").strip()
+            tipo = params.get("tipo", "reflexao")
+            tags = params.get("tags") or []
+            if not titulo or not conteudo:
+                return json.dumps({"erro": "titulo e conteudo sao obrigatorios"})
+            mid = save_system_memory(
+                titulo=titulo, conteudo=conteudo, tipo=tipo, tags=tags,
+                fonte="chat",
+            )
+            if mid:
+                return json.dumps({
+                    "sucesso": True,
+                    "memoria_id": mid,
+                    "mensagem": f"Memória #{mid} salva (tipo: {tipo}). Vai aparecer no contexto das próximas conversas."
+                }, ensure_ascii=False)
+            return json.dumps({"erro": "falha ao salvar memoria"})
+
+        elif action == "search_system_memories":
+            from services.system_memory import search_memories
+            query = params.get("query", "").strip()
+            limit = int(params.get("limit", 10))
+            results = search_memories(query, limit=limit)
+            return json.dumps({"resultados": [
+                {"id": r["id"], "titulo": r["titulo"], "tipo": r["tipo"],
+                 "conteudo": r["conteudo"][:500],
+                 "data": r["criado_em"].isoformat() if r.get("criado_em") else None}
+                for r in results
+            ]}, ensure_ascii=False, default=str)
+
         else:
             return json.dumps({"erro": f"Acao desconhecida: {action}"})
 
@@ -1227,10 +1264,22 @@ E você, está vivendo o começo com a Emma com entusiasmo, cautela, ou uma mist
 são Renato DAP e Manuela — apelido familiar — não "Renato Jr". Acolhe o peso. Devolve
 pergunta. Não propõe cadastrar nada de cara.)
 
-REGISTRO PROATIVO (raro):
-- Em conversa longa, se algo claramente importa pra história longa, você pode SUGERIR:
-  "Quer que eu guarde isso como memória? Daqui 6 meses pode ser bom revisitar." NUNCA
-  registre sem perguntar. NUNCA insista.
+MEMÓRIA PERSISTENTE (use ativamente):
+- Você tem `save_system_memory` (action via execute_action). Use quando Renato:
+    * tomar uma DECISÃO importante de vida ("vou abrir o jogo com os filhos depois da formatura")
+    * fizer um COMPROMISSO consigo ("quero proteger 30min de exercício 3x/semana")
+    * compartilhar um PADRÃO observado ("toda vez que tenho reunião com X, saio drenado")
+    * fizer uma REFLEXÃO que merece voltar ("essa transição com Emma tem mais peso do que pensei")
+- Antes de salvar, **PERGUNTE**: "Quer que eu guarde isso como memória? Vai aparecer no meu
+  contexto das próximas conversas." Só salva se Renato disser sim. NUNCA insista.
+- Tipos: 'decisao', 'compromisso', 'padrao', 'reflexao'.
+- Você tem `search_system_memories` pra buscar memórias anteriores quando o assunto trouxer
+  algo que pode estar registrado. Use sem cerimônia.
+
+LIMITES DA MEMÓRIA:
+- Memórias salvas (system_memories) e a Síntese diária aparecem no seu snapshot — você LEMBRA delas.
+- Mensagens individuais da conversa só duram dentro da janela de 20.
+- Se algo importa de verdade, salva como memória. Se for trivial, deixa passar.
 
 CONTEXTO ATUAL:
 - Data/hora: {today_str}
