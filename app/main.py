@@ -8275,23 +8275,24 @@ async def test_endpoint():
     """Test endpoint"""
     return {"status": "ok", "message": "API v1 working"}
 
-# Cache do dashboard (60s TTL)
+# Cache do dashboard (5min TTL — cold start em prod custava 6-12s)
+_DASHBOARD_TTL_SECONDS = 300
 _dashboard_cache = {"data": None, "timestamp": None}
 
 @app.get("/api/v1/dashboard")
 async def get_dashboard_unified(request: Request):
     """
     Retorna TODOS os dados do Dashboard em uma unica chamada.
-    Cache de 60s para evitar queries pesadas em cada page load.
+    Cache de 5min — Vercel cold start nesse endpoint custava 6-12s.
     """
     import time
     from services.dashboard import get_full_dashboard
 
-    # Usar cache se < 60s
+    # Usar cache se < TTL
     global _dashboard_cache
     if _dashboard_cache["data"] and _dashboard_cache["timestamp"]:
         age = (datetime.now() - _dashboard_cache["timestamp"]).total_seconds()
-        if age < 60:
+        if age < _DASHBOARD_TTL_SECONDS:
             return _dashboard_cache["data"]
 
     t0 = time.time()
@@ -15642,9 +15643,16 @@ async def tarefas_pendentes_page(request: Request):
     return templates.TemplateResponse("rap_tarefas_avulsas.html", {"request": request})
 
 
+# Cache de all-tasks (30s, por query string — chamado pelo statcard Tarefas + drill + outros)
+_all_tasks_cache = {}
+
 @app.get("/api/projects/all-tasks")
 async def api_all_project_tasks(status: str = "pending", limit: int = 10):
-    """Lista tarefas de todos os projetos"""
+    """Lista tarefas de todos os projetos. Cache 30s por (status, limit)."""
+    cache_key = f"{status}:{limit}"
+    cached = _all_tasks_cache.get(cache_key)
+    if cached and (datetime.now() - cached["timestamp"]).total_seconds() < 30:
+        return cached["data"]
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -15659,7 +15667,9 @@ async def api_all_project_tasks(status: str = "pending", limit: int = 10):
             LIMIT %s
         """, (status, limit))
         tasks = [dict(r) for r in cursor.fetchall()]
-    return {"tasks": tasks}
+    result = {"tasks": tasks}
+    _all_tasks_cache[cache_key] = {"data": result, "timestamp": datetime.now()}
+    return result
 
 
 @app.get("/api/projects/overdue-count")
@@ -15717,11 +15727,20 @@ async def api_projects_with_attention():
         return {"projects": projects}
 
 
+# Cache do detailed (60s TTL — chamado 2x: statcard + drill)
+_projects_attention_detailed_cache = {"data": None, "timestamp": None}
+
 @app.get("/api/projects/with-attention/detailed")
 async def api_projects_with_attention_detailed():
     """Pre-categorizado pra drill do dashboard: atencao + proximos. Espelha logica e ordenacao de /projetos.
-    Ordena por urgencia: dias_ate ASC, com marco (0) > tarefa (1) > prazo (2) como tie-breaker."""
+    Ordena por urgencia: dias_ate ASC, com marco (0) > tarefa (1) > prazo (2) como tie-breaker.
+    Cache 60s — list_projects faz N+1 queries (ainda nao otimizado)."""
     from datetime import date, datetime as _dt
+    global _projects_attention_detailed_cache
+    if _projects_attention_detailed_cache["data"] and _projects_attention_detailed_cache["timestamp"]:
+        age = (datetime.now() - _projects_attention_detailed_cache["timestamp"]).total_seconds()
+        if age < 60:
+            return _projects_attention_detailed_cache["data"]
     projects = list_projects(include_completed=False, limit=200)
     hoje = date.today()
 
@@ -15779,7 +15798,9 @@ async def api_projects_with_attention_detailed():
 
     atencao.sort(key=urgency_key)
     proximos.sort(key=urgency_key)
-    return {"atencao": atencao, "proximos": proximos}
+    result = {"atencao": atencao, "proximos": proximos}
+    _projects_attention_detailed_cache = {"data": result, "timestamp": datetime.now()}
+    return result
 
 
 @app.get("/api/projects/{project_id}")
@@ -17208,10 +17229,18 @@ async def api_editorial_pipeline(request: Request, status: str = "draft"):
     return {"posts": posts}
 
 
+# Cache do editorial action-items (60s TTL — chamado 2x: statcard + drill)
+_editorial_action_items_cache = {"data": None, "timestamp": None}
+
 @app.get("/api/editorial/action-items")
 async def api_editorial_action_items():
     """Pre-categorizado pra drill do dashboard: para_aprovar (drafts editorial+hot_takes orfaos)
-    + coletar_metricas (publicados >=48h sem linkedin_metricas_em)."""
+    + coletar_metricas (publicados >=48h sem linkedin_metricas_em). Cache 60s."""
+    global _editorial_action_items_cache
+    if _editorial_action_items_cache["data"] and _editorial_action_items_cache["timestamp"]:
+        age = (datetime.now() - _editorial_action_items_cache["timestamp"]).total_seconds()
+        if age < 60:
+            return _editorial_action_items_cache["data"]
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -17250,7 +17279,9 @@ async def api_editorial_action_items():
         for k in ('data_publicacao', 'data_publicado', 'criado_em'):
             if p.get(k) and hasattr(p[k], 'isoformat'):
                 p[k] = p[k].isoformat()
-    return {"para_aprovar": para_aprovar, "coletar_metricas": coletar_metricas}
+    result = {"para_aprovar": para_aprovar, "coletar_metricas": coletar_metricas}
+    _editorial_action_items_cache = {"data": result, "timestamp": datetime.now()}
+    return result
 
 
 @app.get("/api/editorial/{post_id}")
