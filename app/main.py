@@ -4179,7 +4179,7 @@ async def list_contacts(
 
 
 @app.get("/api/contacts/needs-attention")
-async def contacts_needs_attention(limit: int = Query(30, le=100)):
+async def contacts_needs_attention(limit: int = Query(30, le=500)):
     """Contatos que precisam de atenção com motivos e contexto para conversa"""
     from services.circulos import get_prioridades_por_contexto
     conn = get_db()

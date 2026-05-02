@@ -4373,8 +4373,9 @@
             loadCronHealth();
         }, 300);
 
-        // Refresh cron health a cada 5min
-        setInterval(loadCronHealth, 5 * 60 * 1000);
+        // Refresh cron health a cada 5min — wrap em arrow pq loadCronHealth
+        // e definida em outro <script> block (parseado depois deste)
+        setInterval(() => loadCronHealth(), 5 * 60 * 1000);
     </script>
 
     <!-- ============== Cron Health Pill + Modal ============== -->
