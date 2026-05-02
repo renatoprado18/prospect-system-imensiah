@@ -1291,6 +1291,43 @@ async def handle_bot_message(phone: str, message: str, message_id: str) -> str:
     return final_text
 
 
+# ==================== WEB CHAT WRAPPER ====================
+
+async def handle_chat_message(message: str) -> str:
+    """
+    Web chat entry point. Reuses the same brain as the WhatsApp bot —
+    same system prompt, same memory (bot_conversations), same tools.
+
+    Single-user app: hardcodes RENATO_PHONE so WA + web share thread.
+    """
+    import uuid
+    message_id = f"web-{uuid.uuid4().hex[:12]}"
+    return await handle_bot_message(RENATO_PHONE, message, message_id)
+
+
+def get_chat_history(limit: int = 50) -> List[Dict]:
+    """Return last N messages as dicts for the web UI to render."""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, role, content, created_at
+                FROM bot_conversations
+                WHERE phone = %s
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (RENATO_PHONE, limit))
+            rows = [dict(r) for r in cursor.fetchall()]
+        rows.reverse()
+        for r in rows:
+            if r.get("created_at") and hasattr(r["created_at"], "isoformat"):
+                r["created_at"] = r["created_at"].isoformat()
+        return rows
+    except Exception as e:
+        logger.error(f"get_chat_history error: {e}")
+        return []
+
+
 # ==================== NOTIFICATION HELPER ====================
 
 async def send_intel_notification(text: str, phone: str = RENATO_PHONE) -> bool:

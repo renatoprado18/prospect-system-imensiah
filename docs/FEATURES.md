@@ -15,6 +15,7 @@
   - 📤 Compartilhar com contato (msg personalizada por IA) → `POST /api/share/generate-message`
 - LinkedIn Hoje (posts agendados + sugestão de draft) → `GET /api/editorial/dashboard-tasks`
 - **Busca global page-aware**: input no header (`#globalSearch`, atalho Cmd+K) adapta endpoint/placeholder/render por página via `window.pageSearch`. Default = contatos. Override em `extra_js`: `window.pageSearch = { placeholder, endpoint(q), extract(data), renderItem(p) → {href,title,subtitle,icon|avatar}, fallbackUrl(q) }`. Implementado: `/projetos` (busca em nome+descrição+empresa_relacionada).
+- **INTEL Chat (`/intel-chat`)**: interface web pra conversar com o mesmo cérebro do intel-bot do WhatsApp. Reutiliza `_build_system_prompt`, `bot_conversations` (histórico unificado WA+web por phone=RENATO_PHONE), tools (query_intel, execute_action, etc). Endpoint `POST /api/intel-chat` chama `handle_chat_message` (wrapper de `handle_bot_message` sem auth de phone). UI em `intel_chat.html` — chat estilo Claude, autoload de histórico, autoexpand textarea, Enter envia. Pensado pra conversas estratégicas (objetivos, reflexão, planejamento) que precisam persistir longitudinalmente.
 - Ações Sugeridas (dedup, auto-resolve on reply) → `GET /api/action-proposals`
 - Quem Contatar Hoje → `GET /api/ai/at-risk`
 - Agenda de Hoje (exclui aniversários) → `GET /api/calendar/today`

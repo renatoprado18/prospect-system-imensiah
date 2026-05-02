@@ -20216,5 +20216,39 @@ async def cron_editorial_metrics_reminder_evening(request: Request):
         return {"job": "editorial-metrics-reminder-evening", "status": "error", "error": str(e)}
 
 
+# ==================== INTEL CHAT (web interface for the bot brain) ====================
+
+@app.get("/intel-chat", response_class=HTMLResponse)
+async def intel_chat_page(request: Request):
+    """Pagina de chat com o INTEL — mesmo cerebro do bot WA, interface web."""
+    return templates.TemplateResponse("intel_chat.html", {"request": request})
+
+
+@app.get("/api/intel-chat/history")
+async def api_intel_chat_history(limit: int = 50):
+    """Retorna historico recente da conversa unificada (WA + web)."""
+    from services.intel_bot import get_chat_history
+    return {"messages": get_chat_history(limit=limit)}
+
+
+@app.post("/api/intel-chat")
+async def api_intel_chat_send(request: Request):
+    """Envia mensagem do chat web pro INTEL bot, retorna resposta."""
+    from services.intel_bot import handle_chat_message, get_chat_history
+    data = await request.json()
+    message = (data.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message obrigatorio")
+
+    response_text = await handle_chat_message(message)
+
+    # Retorna as ultimas 2 mensagens (a do user que acabou de mandar + a resposta)
+    recent = get_chat_history(limit=2)
+    return {
+        "response": response_text or "(sem resposta)",
+        "messages": recent,
+    }
+
+
 # Vercel handler
 app_handler = app
