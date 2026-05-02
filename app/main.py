@@ -17,7 +17,13 @@ import os
 import sys
 import json
 import asyncio
+import logging
 import httpx
+
+# Logger global do modulo. Antes era usado em varios sites sem ser definido,
+# o que causaria NameError em paths de erro. Definir aqui resolve.
+logger = logging.getLogger("prospect_system.main")
+
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
@@ -7492,6 +7498,10 @@ async def cron_health_recalc(request: Request):
 
         for contact in contacts:
             try:
+                # Savepoint isola falha por-contato — sem ele, qualquer exception
+                # quebra a transaction inteira (psycopg2 "current transaction is aborted")
+                # e TODOS os UPDATEs subsequentes falham (loop inteiro vira no-op).
+                cursor.execute("SAVEPOINT sp_contact")
                 contact_dict = dict(contact)
                 health = calcular_health_score(contact_dict, contact["circulo"])
 
@@ -7500,10 +7510,16 @@ async def cron_health_recalc(request: Request):
                     SET health_score = %s, atualizado_em = NOW()
                     WHERE id = %s
                 """, (health, contact["id"]))
+                cursor.execute("RELEASE SAVEPOINT sp_contact")
                 updated += 1
 
             except Exception as e:
+                try:
+                    cursor.execute("ROLLBACK TO SAVEPOINT sp_contact")
+                except Exception:
+                    pass
                 errors += 1
+                logger.warning(f"health calc failed for contact {contact['id']}: {e}")
 
         conn.commit()
 
