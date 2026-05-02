@@ -2245,10 +2245,11 @@ def init_db():
                 user_id INTEGER DEFAULT 1
             )
         ''')
+        # Indice nao-parcial — CURRENT_DATE nao e IMMUTABLE em postgres,
+        # nao pode ser usado em predicado de indice parcial.
         cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_contact_snoozes_active
+            CREATE INDEX IF NOT EXISTS idx_contact_snoozes_lookup
             ON contact_snoozes(contact_id, ate)
-            WHERE ate >= CURRENT_DATE
         ''')
 
         # =====================================================================
