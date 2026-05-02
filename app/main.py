@@ -3538,6 +3538,7 @@ async def linkdapi_debug(user: dict = Depends(require_admin)):
 @app.post("/api/admin/refetch-linkedin-post-tasks")
 async def refetch_linkedin_post_tasks(
     dry_run: bool = True,
+    limit: int = 20,
     user: dict = Depends(require_admin)
 ):
     """One-shot: re-fetches LinkedIn posts for legacy "Curtir post" tasks
@@ -3573,7 +3574,9 @@ async def refetch_linkedin_post_tasks(
               AND t.status = 'pending'
               AND (t.descricao IS NULL
                    OR t.descricao !~ 'linkedin\\.com/posts|linkedin\\.com/feed/update')
-        """)
+            ORDER BY t.id
+            LIMIT %s
+        """, (limit,))
         rows = [dict(r) for r in cursor.fetchall()]
 
         for r in rows:
@@ -3612,6 +3615,16 @@ async def refetch_linkedin_post_tasks(
 
         if not dry_run:
             conn.commit()
+
+        # Count remaining legacy tasks after this batch
+        cursor.execute("""
+            SELECT COUNT(*) AS c FROM tasks t
+            WHERE t.titulo ILIKE 'LinkedIn: Curtir post%%'
+              AND t.status = 'pending'
+              AND (t.descricao IS NULL
+                   OR t.descricao !~ 'linkedin\\.com/posts|linkedin\\.com/feed/update')
+        """)
+        summary["remaining_after"] = cursor.fetchone()["c"]
 
     return summary
 
