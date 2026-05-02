@@ -1,0 +1,339 @@
+{# INTEL Chat reusable widget. Include with {% include '_intel_chat_widget.html' %} and call IntelChat.init('#intelChatRoot'). One instance per page (IDs are global). #}
+<div class="intel-chat-widget" id="intelChatRoot">
+    <div class="intel-chat-widget__messages" id="intelChat-messages">
+        <div class="intel-chat-widget__empty" id="intelChat-empty">
+            <h3>INTEL — chat com o sistema</h3>
+            <p>Mesmo cérebro do bot do WhatsApp, mas com espaço pra pensar mais longo. Histórico unificado: o que você conversa aqui aparece lá, e vice-versa.</p>
+            <p class="intel-chat-widget__hint-line">Pergunte qualquer coisa sobre seus contatos, projetos, tarefas, métricas. Ou abra um diálogo estratégico.</p>
+        </div>
+    </div>
+    <div class="intel-chat-widget__input-area">
+        <div class="intel-chat-widget__input-row">
+            <textarea
+                class="intel-chat-widget__textarea"
+                id="intelChat-input"
+                placeholder="Mensagem... (Shift+Enter pra nova linha, Enter pra enviar)"
+                rows="1"></textarea>
+            <button class="intel-chat-widget__send" id="intelChat-send" title="Enviar">
+                <i class="bi bi-send-fill"></i>
+            </button>
+        </div>
+        <div class="intel-chat-widget__hint">
+            Histórico compartilhado com o intel-bot do WhatsApp · Enter envia · Shift+Enter quebra linha
+        </div>
+    </div>
+</div>
+
+<style>
+    .intel-chat-widget {
+        display: flex;
+        flex-direction: column;
+        height: var(--intel-chat-height, calc(100vh - 100px));
+        max-width: var(--intel-chat-max-width, 880px);
+        margin: 0 auto;
+        background: #fff;
+    }
+    .intel-chat-widget__messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+    .intel-chat-widget__empty {
+        margin: auto;
+        text-align: center;
+        color: var(--gray-500);
+        max-width: 560px;
+        padding: 32px;
+    }
+    .intel-chat-widget__empty h3 { font-size: 1.1rem; color: var(--gray-700); margin-bottom: 8px; }
+    .intel-chat-widget__empty p { font-size: 0.9rem; line-height: 1.5; }
+    .intel-chat-widget__empty .intel-chat-widget__hint-line {
+        margin-top: 16px; font-size: 0.8rem; color: var(--gray-400);
+        font-style: italic;
+    }
+
+    .intel-chat-widget__msg {
+        display: flex;
+        gap: 12px;
+        max-width: 100%;
+    }
+    .intel-chat-widget__msg-avatar {
+        flex-shrink: 0;
+        width: 30px; height: 30px;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 0.75rem; font-weight: 600;
+        color: white;
+    }
+    .intel-chat-widget__msg.user .intel-chat-widget__msg-avatar { background: #6366f1; }
+    .intel-chat-widget__msg.assistant .intel-chat-widget__msg-avatar { background: linear-gradient(135deg, #10b981, #059669); }
+    .intel-chat-widget__msg-body {
+        flex: 1;
+        min-width: 0;
+        padding: 10px 14px;
+        border-radius: 12px;
+        font-size: 0.9rem;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+    .intel-chat-widget__msg.user .intel-chat-widget__msg-body { background: #eef2ff; color: #1e1b4b; }
+    .intel-chat-widget__msg.assistant .intel-chat-widget__msg-body { background: #f8fafc; color: var(--dark); border: 1px solid var(--gray-200); }
+    .intel-chat-widget__msg-time {
+        font-size: 0.65rem;
+        color: var(--gray-400);
+        margin-top: 4px;
+    }
+
+    .intel-chat-widget__input-area {
+        border-top: 1px solid var(--gray-200);
+        padding: 14px 8px 8px;
+        background: white;
+    }
+    .intel-chat-widget__input-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+    }
+    .intel-chat-widget__textarea {
+        flex: 1;
+        min-height: 44px;
+        max-height: 200px;
+        padding: 10px 14px;
+        border: 1px solid var(--gray-300);
+        border-radius: 10px;
+        font-size: 0.9rem;
+        font-family: inherit;
+        resize: none;
+        outline: none;
+        transition: border-color 0.15s;
+    }
+    .intel-chat-widget__textarea:focus { border-color: #6366f1; }
+    .intel-chat-widget__send {
+        flex-shrink: 0;
+        background: #6366f1;
+        color: white;
+        border: none;
+        border-radius: 10px;
+        width: 44px;
+        height: 44px;
+        cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1rem;
+        transition: background 0.15s;
+    }
+    .intel-chat-widget__send:hover { background: #4f46e5; }
+    .intel-chat-widget__send:disabled { background: var(--gray-300); cursor: not-allowed; }
+    .intel-chat-widget__hint {
+        margin-top: 6px;
+        font-size: 0.7rem;
+        color: var(--gray-400);
+        padding: 0 4px;
+    }
+    .intel-chat-widget__loading {
+        display: flex;
+        gap: 4px;
+        padding: 8px 0;
+    }
+    .intel-chat-widget__loading span {
+        width: 6px; height: 6px;
+        border-radius: 50%;
+        background: #94a3b8;
+        animation: intelChatPulse 1.4s infinite ease-in-out;
+    }
+    .intel-chat-widget__loading span:nth-child(2) { animation-delay: 0.2s; }
+    .intel-chat-widget__loading span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes intelChatPulse {
+        0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+        40% { opacity: 1; transform: scale(1); }
+    }
+</style>
+
+<script>
+(function() {
+    if (window.IntelChat) return;
+
+    const state = { rootSel: null, root: null, messagesEl: null, emptyEl: null, inputEl: null, sendBtn: null, loaded: false };
+
+    function $(sel) { return state.root ? state.root.querySelector(sel) : null; }
+
+    function fmtTime(iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function escapeHtmlLocal(s) {
+        return (s || '').replace(/[&<>"']/g, c => ({
+            '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        })[c]);
+    }
+
+    function renderMessage(msg) {
+        const role = msg.role || 'user';
+        if (role === 'system') return '';
+        const initials = role === 'user' ? 'R' : 'IN';
+        return `
+            <div class="intel-chat-widget__msg ${role}">
+                <div class="intel-chat-widget__msg-avatar">${initials}</div>
+                <div style="flex:1; min-width:0;">
+                    <div class="intel-chat-widget__msg-body">${escapeHtmlLocal(msg.content || '')}</div>
+                    <div class="intel-chat-widget__msg-time">${fmtTime(msg.created_at)}</div>
+                </div>
+            </div>`;
+    }
+
+    function appendMessage(msg) {
+        if (state.emptyEl) state.emptyEl.style.display = 'none';
+        const div = document.createElement('div');
+        div.innerHTML = renderMessage(msg);
+        if (div.firstElementChild) {
+            state.messagesEl.appendChild(div.firstElementChild);
+        }
+        scrollToBottom();
+    }
+
+    function scrollToBottom() {
+        requestAnimationFrame(() => {
+            state.messagesEl.scrollTop = state.messagesEl.scrollHeight;
+        });
+    }
+
+    function showLoading() {
+        const id = 'intelChat-loading';
+        if (document.getElementById(id)) return;
+        const div = document.createElement('div');
+        div.className = 'intel-chat-widget__msg assistant';
+        div.id = id;
+        div.innerHTML = `
+            <div class="intel-chat-widget__msg-avatar">IN</div>
+            <div style="flex:1;">
+                <div class="intel-chat-widget__msg-body">
+                    <div class="intel-chat-widget__loading"><span></span><span></span><span></span></div>
+                </div>
+            </div>`;
+        state.messagesEl.appendChild(div);
+        scrollToBottom();
+    }
+
+    function hideLoading() {
+        const el = document.getElementById('intelChat-loading');
+        if (el) el.remove();
+    }
+
+    async function loadHistory() {
+        if (state.loaded) return;
+        state.loaded = true;
+        try {
+            const r = await fetch('/api/intel-chat/history?limit=50');
+            const data = await r.json();
+            const msgs = data.messages || [];
+            if (msgs.length > 0) {
+                if (state.emptyEl) state.emptyEl.style.display = 'none';
+                msgs.forEach(m => appendMessage(m));
+            }
+        } catch (e) {
+            console.error('intel-chat history error', e);
+        }
+    }
+
+    async function sendMessage() {
+        const text = state.inputEl.value.trim();
+        if (!text) return;
+
+        state.sendBtn.disabled = true;
+        state.inputEl.disabled = true;
+
+        appendMessage({
+            role: 'user',
+            content: text,
+            created_at: new Date().toISOString()
+        });
+        state.inputEl.value = '';
+        autoResize();
+        showLoading();
+
+        try {
+            const r = await fetch('/api/intel-chat', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ message: text })
+            });
+            hideLoading();
+            if (!r.ok) {
+                const err = await r.json().catch(() => ({}));
+                appendMessage({
+                    role: 'assistant',
+                    content: `[erro] ${err.detail || r.status}`,
+                    created_at: new Date().toISOString()
+                });
+            } else {
+                const data = await r.json();
+                appendMessage({
+                    role: 'assistant',
+                    content: data.response || '(sem resposta)',
+                    created_at: new Date().toISOString()
+                });
+            }
+        } catch (e) {
+            hideLoading();
+            appendMessage({
+                role: 'assistant',
+                content: `[erro de rede] ${e.message}`,
+                created_at: new Date().toISOString()
+            });
+        } finally {
+            state.sendBtn.disabled = false;
+            state.inputEl.disabled = false;
+            state.inputEl.focus();
+        }
+    }
+
+    function autoResize() {
+        state.inputEl.style.height = 'auto';
+        state.inputEl.style.height = Math.min(state.inputEl.scrollHeight, 200) + 'px';
+    }
+
+    function init(rootSelector, opts) {
+        opts = opts || {};
+        const root = document.querySelector(rootSelector);
+        if (!root) { console.warn('IntelChat.init: root not found', rootSelector); return; }
+        if (state.root === root) return;
+        state.rootSel = rootSelector;
+        state.root = root;
+        state.messagesEl = $('#intelChat-messages');
+        state.emptyEl = $('#intelChat-empty');
+        state.inputEl = $('#intelChat-input');
+        state.sendBtn = $('#intelChat-send');
+        if (!state.messagesEl || !state.inputEl || !state.sendBtn) return;
+
+        state.sendBtn.addEventListener('click', sendMessage);
+        state.inputEl.addEventListener('input', autoResize);
+        state.inputEl.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        loadHistory();
+        if (opts.autofocus !== false) state.inputEl.focus();
+    }
+
+    function focus() {
+        if (state.inputEl) state.inputEl.focus();
+    }
+
+    function reset() {
+        if (!state.messagesEl) return;
+        state.messagesEl.querySelectorAll('.intel-chat-widget__msg').forEach(el => el.remove());
+        if (state.emptyEl) state.emptyEl.style.display = '';
+        state.loaded = false;
+    }
+
+    window.IntelChat = { init, focus, reset };
+})();
+</script>

@@ -1879,10 +1879,24 @@
         }
         #workbench {
             margin-top: 18px;
+            display: grid;
+            grid-template-columns: 1fr 0.55fr;
+            gap: 16px;
+            align-items: start;
+        }
+        #drillPanel {
             background: #fff;
             border-radius: 8px;
             border: 1px solid var(--border-color, #e2e8f0);
             overflow: hidden;
+        }
+        #intelChatPane {
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid var(--border-color, #e2e8f0);
+            overflow: hidden;
+            --intel-chat-height: 520px;
+            --intel-chat-max-width: 100%;
         }
         .drill-header {
             display: flex;
@@ -2128,9 +2142,20 @@
             </div>
         </div>
 
-        <!-- Drill-down workbench (Fase 1: drill-only, sem chat ainda) -->
-        <div id="workbench" style="display: none;">
-            <div id="drillPanel"></div>
+        <!-- Drill-down workbench (Fase 3: drill + chat lateral) -->
+        <div id="workbench">
+            <div id="drillPanel">
+                <div class="drill-header" style="--drill-color: #94a3b8;">
+                    <h3 style="color: #64748b;">Workbench</h3>
+                </div>
+                <div class="drill-empty">
+                    <i class="bi bi-arrow-up-circle text-muted" style="font-size:2rem;"></i>
+                    <div class="mt-2">Clique em um statcard pra abrir o drill</div>
+                </div>
+            </div>
+            <div id="intelChatPane">
+                {% include '_intel_chat_widget.html' %}
+            </div>
         </div>
 
         <!-- Content Grid -->
@@ -4985,9 +5010,7 @@
                 card.style.setProperty('--drill-color', cfg.color);
             }
 
-            const wb = document.getElementById('workbench');
             const drill = document.getElementById('drillPanel');
-            wb.style.display = 'block';
             drill.style.setProperty('--drill-color', cfg.color);
             drill.innerHTML = `
                 <div class="drill-header" style="--drill-color: ${cfg.color};">
@@ -5023,7 +5046,16 @@
                 c.classList.remove('drill-active');
                 c.style.removeProperty('--drill-color');
             });
-            document.getElementById('workbench').style.display = 'none';
+            const drill = document.getElementById('drillPanel');
+            drill.style.removeProperty('--drill-color');
+            drill.innerHTML = `
+                <div class="drill-header" style="--drill-color: #94a3b8;">
+                    <h3 style="color: #64748b;">Workbench</h3>
+                </div>
+                <div class="drill-empty">
+                    <i class="bi bi-arrow-up-circle text-muted" style="font-size:2rem;"></i>
+                    <div class="mt-2">Clique em um statcard pra abrir o drill</div>
+                </div>`;
         }
 
         // Quick action: concluir tarefa inline (Fase 2)
@@ -5064,6 +5096,9 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            if (window.IntelChat) {
+                IntelChat.init('#intelChatRoot', { autofocus: false });
+            }
             try {
                 const last = localStorage.getItem('intel.dashboard.lastDrill');
                 if (last && drillConfig[last]) {
