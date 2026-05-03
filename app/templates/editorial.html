@@ -1559,6 +1559,9 @@ async function openPostModal(postId) {
         const response = await fetch(`/api/editorial/${postId}`);
         const post = await response.json();
 
+        // Disponibiliza activity URN pra xlsx handler validar match por filename
+        window._currentPostActivityUrn = post.linkedin_activity_urn || '';
+
         // Use AI gancho if no custom content
         const conteudo = post.conteudo_adaptado || post.ai_gancho_linkedin || '';
 
@@ -1631,6 +1634,20 @@ async function openPostModal(postId) {
                                     <i class="bi bi-box-arrow-up-right"></i>
                                 </a>` : ''}
                         </div>
+                        ${post.linkedin_activity_urn ? `
+                            <div style="margin-top: 8px;">
+                                <label style="font-size: 0.75rem; color: var(--text-secondary, #64748b);">Analytics LinkedIn (impressoes, demographics, etc)</label>
+                                <div>
+                                    <a href="https://www.linkedin.com/analytics/post-summary/${post.linkedin_activity_urn}/"
+                                       target="_blank" rel="noopener"
+                                       style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:#0a66c2;color:white;text-decoration:none;border-radius:6px;font-size:0.85rem;font-weight:500;margin-top:4px;">
+                                        Ver Analytics no LinkedIn
+                                    </a>
+                                </div>
+                            </div>` : `
+                            <div style="margin-top: 8px; font-size: 0.75rem; color: var(--text-secondary, #64748b); font-style: italic;">
+                                URN ainda nao coletado. Aguarde proximo cron auto-collect (1x/dia) ou clique em "Forcar coleta agora".
+                            </div>`}
                     </div>
                     ${canAddMetrics || hasMetrics ? `
                         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
@@ -2163,6 +2180,25 @@ function handleXlsxForPost(file, postId) {
         alert('Selecione um arquivo .xlsx');
         return;
     }
+
+    // Tenta extrair URN do filename: PostAnalytics_<Nome>_<digitos>(N).xlsx
+    // ex: PostAnalytics_RenatoFaria_7453551393254076416(1).xlsx
+    const urnMatch = file.name.match(/_(\d{15,25})(?:\(\d+\))?\.xlsx?$/i);
+    const xlsxUrn = urnMatch ? urnMatch[1] : null;
+
+    // Valida match contra URN salvo no post (se houver)
+    const storedUrn = (window._currentPostActivityUrn || '').trim();
+    if (xlsxUrn && storedUrn) {
+        const storedDigits = storedUrn.replace(/\D/g, '');
+        if (storedDigits && xlsxUrn !== storedDigits) {
+            const ok = confirm(
+                `Atencao: o URN do arquivo (${xlsxUrn}) nao bate com o URN deste post (${storedDigits}).\n\n` +
+                `Voce pode estar fazendo upload do xlsx errado. Continuar mesmo assim?`
+            );
+            if (!ok) return;
+        }
+    }
+
     const reader = new FileReader();
     reader.onload = function(e) {
         try {

@@ -130,6 +130,38 @@ def _match_post(
     return None
 
 
+def _persist_activity_urn(post_id: int, matched_post: Dict) -> None:
+    """Salva activity URN no editorial_posts se ainda nao tiver (ou diferente).
+
+    Idempotente — so faz UPDATE se URN mudou. Roda dentro de transacao propria
+    pra nao acoplar ao loop principal de coleta (falha aqui nao quebra metricas).
+    """
+    urn = (matched_post.get("urn") or "").strip()
+    if not urn:
+        return
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT linkedin_activity_urn FROM editorial_posts WHERE id = %s",
+                (post_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return
+            current = (dict(row).get("linkedin_activity_urn") or "").strip()
+            if current == urn:
+                return
+            cursor.execute(
+                "UPDATE editorial_posts SET linkedin_activity_urn = %s WHERE id = %s",
+                (urn, post_id),
+            )
+            conn.commit()
+            logger.info(f"URN persistido pra post {post_id}: {urn} (era {current or 'NULL'})")
+    except Exception as e:
+        logger.warning(f"Falha ao persistir URN pra post {post_id}: {e}")
+
+
 def _extract_metrics(post: Dict) -> Dict[str, int]:
     """Extrai contagens do dict de post da LinkdAPI.
 
@@ -293,6 +325,8 @@ async def collect_metrics_for_due_windows() -> Dict:
                     "url": post_url,
                 })
                 continue
+            # Persiste URN da LinkdAPI (idempotente — so escreve se mudou)
+            _persist_activity_urn(post["id"], matched)
             metrics = _extract_metrics(matched)
 
         for janela in due:
@@ -400,6 +434,8 @@ async def collect_metrics_for_post(post_id: int) -> Dict:
             "posts_in_api": len(posts_lookup),
         }
 
+    # Persiste URN no DB pra alimentar o link "Ver Analytics" e match xlsx
+    _persist_activity_urn(post["id"], matched)
     metrics = _extract_metrics(matched)
     return {
         "success": True,

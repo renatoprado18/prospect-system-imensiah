@@ -1689,7 +1689,15 @@ def init_db():
             ADD COLUMN IF NOT EXISTS linkedin_compartilhamentos INTEGER DEFAULT 0,
             ADD COLUMN IF NOT EXISTS linkedin_cliques INTEGER DEFAULT 0,
             ADD COLUMN IF NOT EXISTS linkedin_metricas_em TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS linkedin_activity_urn TEXT,
             ADD COLUMN IF NOT EXISTS hot_take_id INTEGER
+        ''')
+
+        # Index pra lookup rapido por activity URN (xlsx upload, dedup)
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_posts_activity_urn
+            ON editorial_posts(linkedin_activity_urn)
+            WHERE linkedin_activity_urn IS NOT NULL
         ''')
 
         # Approval workflow columns: pending_approval -> scheduled -> published
