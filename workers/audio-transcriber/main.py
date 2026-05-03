@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="INTEL Worker")
 
 # Marker pra confirmar versao do codigo deployado (atualiza ao mudar logica chunked)
-WORKER_BUILD = "gmail-sync-chunked-v5-inprocess-continuation"
+WORKER_BUILD = "gmail-sync-chunked-v6-task-reference-fix"
 logger.info(f"INTEL Worker started — build={WORKER_BUILD}")
 
 
@@ -1920,16 +1920,21 @@ async def _gmail_sync_finish(job_id: int, status: str, result: dict, processed_i
         conn.commit()
 
 
+# Global registry de tasks em vooo pra impedir GC prematuro.
+# Per Python docs: "Save a reference to the result of asyncio.create_task,
+# to avoid a task disappearing mid-execution."
+_GMAIL_SYNC_TASKS: set = set()
+
+
 async def _gmail_sync_dispatch_continuation(job_id: int, months_back: int):
     """Spawna proximo chunk no mesmo event loop via asyncio.create_task.
 
-    Why in-process: HTTP self-dispatch (anterior) era frequentemente perdido
-    apos 4-5 chunks (Railway proxy/network/etc.) — chunks paravam de executar
-    sem erro nos logs. asyncio.create_task no mesmo loop e mais confiavel:
-    se o processo morrer, perde-se tudo, mas o cursor ja salvo permite
-    proximo dispatch (manual ou cron) retomar do checkpoint.
+    Why in-process: HTTP self-dispatch (V3-V4) era frequentemente perdido
+    apos 4-5 chunks. asyncio.create_task no mesmo loop e mais confiavel.
 
-    Pequeno delay (asyncio.sleep) pra liberar o loop e evitar saturar.
+    CRITICAL: precisa manter referencia da task em set global, senao
+    o GC do Python mata a task antes de terminar (V5 sem referencia
+    parou no chunk 2 — tasks foram coletadas).
     """
     import asyncio as _aio
     try:
@@ -1937,10 +1942,15 @@ async def _gmail_sync_dispatch_continuation(job_id: int, months_back: int):
             await _aio.sleep(0.5)
             try:
                 await _run_gmail_sync_chunk(job_id, months_back)
-            except Exception as e:
+            except Exception:
                 logger.exception(f"[GmailSync job={job_id}] in-process continuation failed")
-        _aio.create_task(_later())
-        logger.info(f"[GmailSync job={job_id}] continuation scheduled (in-process)")
+
+        task = _aio.create_task(_later())
+        _GMAIL_SYNC_TASKS.add(task)
+        # Remove a referencia quando terminar (limpa o set)
+        task.add_done_callback(_GMAIL_SYNC_TASKS.discard)
+        logger.info(f"[GmailSync job={job_id}] continuation scheduled "
+                    f"(in-process, queue_size={len(_GMAIL_SYNC_TASKS)})")
     except Exception as e:
         logger.warning(f"[GmailSync job={job_id}] dispatch_continuation FAILED: {e}")
 
