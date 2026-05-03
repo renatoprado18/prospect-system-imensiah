@@ -4480,17 +4480,28 @@
 
             const s = data.summary || {};
             const failing = s.failing || 0;
+            const stuck = s.stuck || 0;
             const late = s.late || 0;
 
             pill.style.display = 'inline-flex';
             pill.style.alignItems = 'center';
             pill.style.gap = '5px';
 
-            if (failing > 0) {
+            // failing + stuck contam como problemas vermelhos
+            const problems = failing + stuck;
+            if (problems > 0) {
                 pill.style.background = '#fee2e2';
                 pill.style.color = '#b91c1c';
                 pill.style.borderColor = '#fecaca';
-                pill.innerHTML = '<i class="bi bi-exclamation-octagon-fill" style="font-size:0.85em;"></i> <span id="cronHealthLabel">' + failing + ' cron' + (failing > 1 ? 's' : '') + ' com erro</span>';
+                let txt;
+                if (failing > 0 && stuck > 0) {
+                    txt = failing + ' erro' + (failing > 1 ? 's' : '') + ' · ' + stuck + ' travado' + (stuck > 1 ? 's' : '');
+                } else if (stuck > 0) {
+                    txt = stuck + ' cron' + (stuck > 1 ? 's' : '') + ' travado' + (stuck > 1 ? 's' : '');
+                } else {
+                    txt = failing + ' cron' + (failing > 1 ? 's' : '') + ' com erro';
+                }
+                pill.innerHTML = '<i class="bi bi-exclamation-octagon-fill" style="font-size:0.85em;"></i> <span id="cronHealthLabel">' + txt + '</span>';
             } else if (late > 0) {
                 pill.style.background = '#fef3c7';
                 pill.style.color = '#b45309';
@@ -4529,17 +4540,21 @@
             const s = data.summary || {};
             if (sub) {
                 sub.textContent = (s.healthy || 0) + ' OK · ' + (s.late || 0) + ' atrasados · '
-                    + (s.failing || 0) + ' com erro · ' + (s.unknown || 0) + ' sem dados';
+                    + (s.failing || 0) + ' com erro · ' + (s.stuck || 0) + ' travados · '
+                    + (s.unknown || 0) + ' sem dados';
             }
             const colorByHealth = {
-                healthy: '#22c55e', late: '#f59e0b', failing: '#ef4444', unknown: '#94a3b8'
+                healthy: '#22c55e', late: '#f59e0b', failing: '#ef4444',
+                stuck: '#dc2626', unknown: '#94a3b8'
             };
             const iconByHealth = {
                 healthy: 'bi-check-circle-fill', late: 'bi-clock-history',
-                failing: 'bi-exclamation-octagon-fill', unknown: 'bi-question-circle'
+                failing: 'bi-exclamation-octagon-fill',
+                stuck: 'bi-hourglass-split', unknown: 'bi-question-circle'
             };
             const labelByHealth = {
-                healthy: 'OK', late: 'atrasado', failing: 'erro', unknown: 'sem dados'
+                healthy: 'OK', late: 'atrasado', failing: 'erro',
+                stuck: 'travado', unknown: 'sem dados'
             };
 
             const rows = (data.crons || []).map(c => {

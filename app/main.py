@@ -3660,7 +3660,7 @@ async def cron_health(user: dict = Depends(require_admin)):
     now_utc = datetime.utcnow()
 
     out_crons: List[Dict] = []
-    summary = {"healthy": 0, "late": 0, "failing": 0, "unknown": 0}
+    summary = {"healthy": 0, "late": 0, "failing": 0, "stuck": 0, "unknown": 0}
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -3714,7 +3714,17 @@ async def cron_health(user: dict = Depends(require_admin)):
             else:
                 age_minutes = None
 
-            if runs_7d["error"] > 0 and runs_7d["error"] >= runs_7d["success"]:
+            # stuck: ultimo run em 'running' ha tempo suficiente pra ja ter terminado
+            # (Vercel SIGKILL no timeout 300s — _finalize_run nunca executa, fica orfao)
+            stuck_threshold_minutes = min(interval_min * 1.2, 120)  # max 2h
+            if (
+                last_run
+                and last_run.get("status") == "running"
+                and age_minutes is not None
+                and age_minutes > stuck_threshold_minutes
+            ):
+                health = "stuck"
+            elif runs_7d["error"] > 0 and runs_7d["error"] >= runs_7d["success"]:
                 # mais erros que sucessos na janela → failing
                 health = "failing"
             elif age_minutes is not None and age_minutes > late_threshold_minutes:
@@ -3742,8 +3752,8 @@ async def cron_health(user: dict = Depends(require_admin)):
                 "health": health,
             })
 
-    # ordem: failing -> late -> unknown -> healthy
-    order = {"failing": 0, "late": 1, "unknown": 2, "healthy": 3}
+    # ordem: failing -> stuck -> late -> unknown -> healthy
+    order = {"failing": 0, "stuck": 1, "late": 2, "unknown": 3, "healthy": 4}
     out_crons.sort(key=lambda x: (order.get(x["health"], 99), x["path"]))
 
     return {
@@ -7633,6 +7643,31 @@ async def cron_daily_sync(request: Request):
         result["proposals_created"] = proposals_created
         return result
 
+    async def step_cron_cleanup_stuck():
+        """Marca como 'timeout' qualquer cron_run em 'running' ha mais de 2h.
+        Why: Vercel SIGKILLa funcoes no timeout de 300s — _finalize_run do
+        decorator @track_cron_run nunca executa, deixando registros orfaos
+        em 'running' pra sempre. Este step limpa esses zumbis.
+        """
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE cron_runs
+                SET status='timeout',
+                    error_message='presumed timeout (Vercel SIGKILL — finalize never ran)',
+                    finished_at=NOW(),
+                    duration_ms=EXTRACT(EPOCH FROM (NOW() - started_at))*1000
+                WHERE status='running'
+                  AND started_at < NOW() - INTERVAL '2 hours'
+                  AND finished_at IS NULL
+                RETURNING id, path
+                """
+            )
+            rows = cursor.fetchall()
+            conn.commit()
+            return {"cleaned": len(rows), "paths": [r['path'] for r in rows]}
+
     async def step_classify_messages():
         """Classifica mensagens incoming dos ultimos 7 dias ainda nao classificadas.
 
@@ -7694,6 +7729,7 @@ async def cron_daily_sync(request: Request):
         run_step("linkedin_enrichment", step_linkedin_enrichment),
         run_step("auto_publish", step_auto_publish),
         run_step("classify_messages", step_classify_messages),
+        run_step("cron_cleanup_stuck", step_cron_cleanup_stuck),
     )
 
     results["completed_at"] = datetime.now().isoformat()
