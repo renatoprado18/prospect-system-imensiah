@@ -37,6 +37,15 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="INTEL Worker")
 
+# Marker pra confirmar versao do codigo deployado (atualiza ao mudar logica chunked)
+WORKER_BUILD = "gmail-sync-chunked-v2-optimistic-373ee19"
+logger.info(f"INTEL Worker started — build={WORKER_BUILD}")
+
+
+@app.get("/version")
+async def version():
+    return {"build": WORKER_BUILD}
+
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
