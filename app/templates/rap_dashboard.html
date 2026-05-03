@@ -4971,8 +4971,9 @@
                         // Mini curve: 5 quadradinhos coloridos por status.
                         // Tooltip resume todos os status pro hover.
                         const sparkline = renderJanelasMiniCurve(p);
-                        // Click abre modal de input de metricas (nao mais navega pro post)
-                        return `<div class="drill-project-row type-conselho" onclick="openMetricsInputModal(${p.id}, 'drill')" style="cursor:pointer;">
+                        // Click navega pra /editorial?post=ID — abre modal completo do post
+                        // (link pro LinkedIn, metricas atuais editaveis, upload xlsx)
+                        return `<div class="drill-project-row type-conselho" onclick="openColetarMetricas(${p.id})" style="cursor:pointer;">
                             <div class="drill-project-info">
                                 <div class="drill-project-name">${escapeHtml(titulo)}</div>
                                 <div class="drill-project-empresa">${horas}h publicado · ${escapeHtml(p.ai_categoria || '')}</div>
@@ -5583,187 +5584,12 @@
             return `<svg width="${totalW}" height="${H}" viewBox="0 0 ${totalW} ${H}" style="vertical-align:middle;"><title>${tooltip}</title>${bars}</svg>`;
         }
 
-        // ============== Modal de input de metricas (editorial) ==============
-        // Abre modal com campos pra registrar snapshot de metricas pra um post.
-        // origem: 'drill' | 'editorial' — determina o refresh apos salvar.
-        let _metricsModalContext = { postId: null, origem: null, faltantes: [] };
-
-        async function openMetricsInputModal(postId, origem) {
-            _metricsModalContext = { postId, origem: origem || 'drill', faltantes: [] };
-            const modal = document.getElementById('metricsInputModal');
-            if (!modal) return;
-            // Reset campos
-            ['mim-impressoes','mim-reacoes','mim-comentarios','mim-compartilhamentos','mim-salvamentos'].forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.value = '';
-            });
-            document.getElementById('mim-title').textContent = 'Carregando...';
-            document.getElementById('mim-janela-info').textContent = '';
-            document.getElementById('mim-janela').innerHTML = '';
-            // Reset bloco timeline (criado dinamicamente no fetch)
-            const tl = document.getElementById('mim-timeline');
-            if (tl) tl.innerHTML = '';
-            // Carrega timeline em paralelo (nao-bloqueante)
-            loadMetricsModalTimeline(postId);
-            modal.style.display = 'flex';
-
-            try {
-                const resp = await fetch(`/api/editorial/posts/${postId}/metrics-snapshot`);
-                if (!resp.ok) throw new Error('fail');
-                const data = await resp.json();
-                const post = data.post || {};
-                const faltantes = Array.isArray(data.janelas_faltantes) ? data.janelas_faltantes : [];
-                _metricsModalContext.faltantes = faltantes;
-                document.getElementById('mim-title').textContent = post.titulo_adaptado || post.article_title || `Post #${postId}`;
-
-                // Popula select de janela: faltantes primeiro (ordenadas, asc — mais antiga = "default")
-                // + opcoes 0/1/3/7d sempre disponiveis pra refresh manual
-                const allJanelas = [0, 1, 3, 7];
-                const sel = document.getElementById('mim-janela');
-                sel.innerHTML = '';
-                allJanelas.forEach(d => {
-                    const opt = document.createElement('option');
-                    opt.value = String(d);
-                    const label = `${d}d apos publicacao`;
-                    opt.textContent = faltantes.includes(d) ? `${label} (faltante)` : label;
-                    sel.appendChild(opt);
-                });
-                // Default: primeira janela faltante (mais antiga); senao, 0
-                const defaultJanela = faltantes.length > 0 ? faltantes[0] : 0;
-                sel.value = String(defaultJanela);
-                document.getElementById('mim-janela-info').textContent = faltantes.length
-                    ? `Faltam: ${faltantes.map(d => d + 'd').join(', ')}`
-                    : 'Todas janelas ja coletadas — voce pode atualizar uma existente.';
-
-                // Pre-popula com ultimo snapshot dessa janela
-                await metricsModalLoadLastSnapshot(postId, defaultJanela);
-                // Listener pra recarregar quando trocar janela
-                sel.onchange = () => metricsModalLoadLastSnapshot(postId, parseInt(sel.value, 10));
-            } catch (e) {
-                document.getElementById('mim-title').textContent = `Post #${postId}`;
-                document.getElementById('mim-janela-info').textContent = 'Erro ao carregar dados.';
-            }
-        }
-
-        async function metricsModalLoadLastSnapshot(postId, dias) {
-            try {
-                const resp = await fetch(`/api/editorial/posts/${postId}/metrics-snapshot?dias_apos_publicacao=${dias}`);
-                if (!resp.ok) return;
-                const data = await resp.json();
-                const ultimo = data.ultimo_snapshot;
-                const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v != null ? v : ''); };
-                if (ultimo) {
-                    set('mim-impressoes', ultimo.impressoes);
-                    set('mim-reacoes', ultimo.reacoes);
-                    set('mim-comentarios', ultimo.comentarios);
-                    set('mim-compartilhamentos', ultimo.compartilhamentos);
-                    set('mim-salvamentos', ultimo.salvamentos);
-                } else {
-                    ['mim-impressoes','mim-reacoes','mim-comentarios','mim-compartilhamentos','mim-salvamentos'].forEach(id => set(id, ''));
-                }
-            } catch(e) {}
-        }
-
-        function closeMetricsInputModal() {
-            const modal = document.getElementById('metricsInputModal');
-            if (modal) modal.style.display = 'none';
-            _metricsModalContext = { postId: null, origem: null, faltantes: [] };
-        }
-
-        // Carrega timeline + actions pendentes + insight para o modal.
-        // Renderiza em #mim-timeline (slot dentro do modal).
-        async function loadMetricsModalTimeline(postId) {
-            const slot = document.getElementById('mim-timeline');
-            if (!slot) return;
-            slot.innerHTML = '<div style="font-size:0.7rem;color:#94a3b8;">Carregando timeline...</div>';
-            try {
-                const resp = await fetch(`/api/editorial/posts/${postId}/timeline`);
-                if (!resp.ok) { slot.innerHTML = ''; return; }
-                const data = await resp.json();
-                const snaps = data.snapshots || [];
-                const janelas = ['1h','6h','24h','72h','168h'];
-                const byJ = {};
-                snaps.forEach(s => { if (s.janela) byJ[s.janela] = s; });
-                // Curve: barras escaladas pela soma de eng (reacoes+coments+shares)
-                const maxEng = Math.max(1, ...snaps.map(s => (s.reacoes||0)+(s.comentarios||0)+(s.compartilhamentos||0)));
-                const W = 30, H = 50;
-                const bars = janelas.map((j, i) => {
-                    const s = byJ[j];
-                    const eng = s ? (s.reacoes||0)+(s.comentarios||0)+(s.compartilhamentos||0) : 0;
-                    const h = s ? Math.max(2, Math.round((eng/maxEng) * H)) : 2;
-                    const fill = s ? '#3b82f6' : '#e2e8f0';
-                    const x = i * (W + 6);
-                    const y = H - h;
-                    return `<g>
-                        <rect x="${x}" y="${y}" width="${W}" height="${h}" fill="${fill}" rx="2"/>
-                        <text x="${x + W/2}" y="${H + 12}" font-size="9" fill="#64748b" text-anchor="middle">${j}</text>
-                        ${s ? `<text x="${x + W/2}" y="${y - 2}" font-size="9" fill="#0f172a" text-anchor="middle" font-weight="600">${eng}</text>` : ''}
-                    </g>`;
-                }).join('');
-                const totalW = janelas.length * (W + 6) - 6;
-                const insight = data.insight ? `<div style="font-size:0.78rem;font-weight:600;color:#0f172a;margin-top:6px;">${escapeHtml(data.insight)}</div>` : '';
-                const meta = data.janela_meta;
-                const acoes = data.actions_pendentes || [];
-                const acoesHtml = acoes.length ? `
-                    <div style="margin-top:8px;padding:8px 10px;background:#f1f5f9;border-radius:8px;">
-                        <div style="font-size:0.7rem;font-weight:600;color:#475569;margin-bottom:4px;">Acoes recomendadas (${meta ? escapeHtml(meta.label) : ''}):</div>
-                        ${acoes.map(a => `<div style="font-size:0.75rem;color:#0f172a;${a.urgent ? 'font-weight:600;color:#dc2626;' : ''}">• ${escapeHtml(a.label)}</div>`).join('')}
-                    </div>` : '';
-                slot.innerHTML = `
-                    <div style="margin-bottom:8px;">
-                        <div style="font-size:0.7rem;color:#64748b;margin-bottom:4px;">Timeline (engajamento por janela):</div>
-                        <svg width="${totalW}" height="${H + 16}" viewBox="0 0 ${totalW} ${H + 16}">${bars}</svg>
-                        ${insight}
-                    </div>
-                    ${acoesHtml}
-                `;
-            } catch(e) {
-                slot.innerHTML = '';
-            }
-        }
-
-        async function saveMetricsInputModal() {
-            const ctx = _metricsModalContext;
-            if (!ctx.postId) return;
-            const dias = parseInt(document.getElementById('mim-janela').value, 10);
-            const body = {
-                dias_apos_publicacao: dias,
-                impressoes: parseInt(document.getElementById('mim-impressoes').value, 10) || 0,
-                reacoes: parseInt(document.getElementById('mim-reacoes').value, 10) || 0,
-                comentarios: parseInt(document.getElementById('mim-comentarios').value, 10) || 0,
-                compartilhamentos: parseInt(document.getElementById('mim-compartilhamentos').value, 10) || 0,
-                salvamentos: parseInt(document.getElementById('mim-salvamentos').value, 10) || 0,
-                fonte: 'manual_modal',
-            };
-            const btn = document.getElementById('mim-save-btn');
-            if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
-            try {
-                const resp = await fetch(`/api/editorial/posts/${ctx.postId}/metrics-snapshot`, {
-                    method: 'POST',
-                    headers: {'Content-Type':'application/json'},
-                    body: JSON.stringify(body),
-                });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({}));
-                    alert('Erro ao salvar: ' + (err.detail || resp.status));
-                    return;
-                }
-                closeMetricsInputModal();
-                // Refresh: drill re-fetcha action-items
-                if (ctx.origem === 'drill') {
-                    if (typeof loadEditorialActionItems === 'function') loadEditorialActionItems();
-                    // re-render do drill se aberto
-                    if (currentDrill === 'editorial') {
-                        const k = currentDrill;
-                        currentDrill = null; // forca reabertura
-                        openDrill(k);
-                    }
-                }
-            } catch(e) {
-                alert('Erro: ' + e.message);
-            } finally {
-                if (btn) { btn.disabled = false; btn.textContent = 'Salvar'; }
-            }
+        // ============== Coletar metricas (drill editorial) ==============
+        // Click em "Coletar Metricas" no drill navega pra /editorial?post=ID,
+        // que abre o modal completo de edicao do post (link LinkedIn, metricas
+        // atuais editaveis, upload de xlsx). UX unificada com a pagina /editorial.
+        function openColetarMetricas(postId) {
+            window.location.href = `/editorial?post=${postId}`;
         }
     </script>
 
@@ -5826,50 +5652,4 @@
         </div>
     </div>
 
-    <!-- Modal Input Metricas Editorial -->
-    <!-- Inline styles pra evitar conflito com Bootstrap .modal-backdrop (vide CLAUDE.md gotchas) -->
-    <div id="metricsInputModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.92);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(4px);" onclick="if(event.target===this)closeMetricsInputModal()">
-        <div style="background:#fff;border-radius:16px;width:90%;max-width:480px;max-height:90vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.5);border:2px solid #3b82f6;">
-            <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
-                <h5 style="margin:0;font-size:1rem;"><i class="bi bi-graph-up text-primary me-2"></i>Registrar metricas</h5>
-                <button onclick="closeMetricsInputModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;">&times;</button>
-            </div>
-            <div style="padding:16px 20px;">
-                <div id="mim-title" style="font-size:0.9rem;font-weight:600;margin-bottom:6px;color:#0f172a;">—</div>
-                <div id="mim-janela-info" style="font-size:0.72rem;color:#64748b;margin-bottom:12px;"></div>
-                <!-- Timeline + acoes recomendadas (renderizado por loadMetricsModalTimeline) -->
-                <div id="mim-timeline" style="margin-bottom:12px;"></div>
-                <div style="margin-bottom:12px;">
-                    <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Janela (dias apos publicacao)</label>
-                    <select id="mim-janela" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;background:#fff;"></select>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                    <div>
-                        <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Impressoes</label>
-                        <input id="mim-impressoes" type="number" min="0" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;">
-                    </div>
-                    <div>
-                        <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Reacoes</label>
-                        <input id="mim-reacoes" type="number" min="0" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;">
-                    </div>
-                    <div>
-                        <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Comentarios</label>
-                        <input id="mim-comentarios" type="number" min="0" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;">
-                    </div>
-                    <div>
-                        <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Compartilhamentos</label>
-                        <input id="mim-compartilhamentos" type="number" min="0" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;">
-                    </div>
-                    <div>
-                        <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Salvamentos</label>
-                        <input id="mim-salvamentos" type="number" min="0" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;">
-                    </div>
-                </div>
-            </div>
-            <div style="padding:12px 20px;border-top:1px solid #e2e8f0;display:flex;gap:8px;justify-content:flex-end;">
-                <button onclick="closeMetricsInputModal()" style="padding:6px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;">Cancelar</button>
-                <button id="mim-save-btn" onclick="saveMetricsInputModal()" style="padding:6px 16px;border:none;border-radius:8px;background:#3b82f6;color:#fff;cursor:pointer;font-weight:600;">Salvar</button>
-            </div>
-        </div>
-    </div>
 {% endblock %}

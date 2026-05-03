@@ -2373,12 +2373,17 @@ async function loadComparison48h() {
 // Load comparison on page load
 document.addEventListener('DOMContentLoaded', loadComparison48h);
 
-// Auto-open post editor from URL param (?edit=ID)
+// Auto-open post editor from URL param (?edit=ID ou ?post=ID)
+// ?post=ID e usado pelo drill do dashboard (Coletar Metricas) — abre modal completo
+// com link, metricas atuais editaveis e upload de xlsx.
 document.addEventListener('DOMContentLoaded', () => {
     const urlParams = new URLSearchParams(window.location.search);
-    const editId = urlParams.get('edit');
+    const editId = urlParams.get('edit') || urlParams.get('post');
     if (editId) {
+        // Delay 500ms da tempo do loadPipeline carregar dados do post
         setTimeout(() => openPostModal(parseInt(editId)), 500);
+        // Limpa URL pra modal nao reabrir em refresh
+        window.history.replaceState({}, '', '/editorial');
     }
 });
 
