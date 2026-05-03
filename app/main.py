@@ -4031,6 +4031,39 @@ async def cron_runs_trigger(
     return {"status": "triggered", "path": target_path, "url": target_url}
 
 
+@app.get("/api/admin/cron-auth-debug")
+async def cron_auth_debug(user: dict = Depends(require_admin)):
+    """Diagnostica estado do CRON_SECRET no Vercel sem expor o valor.
+    Usuario compara first4/last4 + length com o secret no GitHub Actions."""
+    raw = os.getenv("CRON_SECRET", "")
+    stripped = raw.strip()
+
+    def fingerprint(s: str) -> Dict:
+        if not s:
+            return {"present": False, "length": 0, "first4": "", "last4": "", "sha256_first8": ""}
+        import hashlib
+        return {
+            "present": True,
+            "length": len(s),
+            "first4": s[:4],
+            "last4": s[-4:],
+            "sha256_first8": hashlib.sha256(s.encode("utf-8")).hexdigest()[:8],
+        }
+
+    return {
+        "vercel_env": os.getenv("VERCEL_ENV", "unknown"),
+        "commit_sha": (os.getenv("VERCEL_GIT_COMMIT_SHA", "") or "")[:8],
+        "raw": fingerprint(raw),
+        "stripped": fingerprint(stripped),
+        "has_trailing_whitespace": raw != stripped,
+        "hint": (
+            "Compare first4/last4/sha256_first8 com o secret no GitHub. "
+            "Se diferentes, secrets nao estao alinhados. "
+            "Se iguais e ainda da 401, o deploy pode estar com env antigo — force redeploy SEM cache."
+        ),
+    }
+
+
 @app.get("/api/admin/linkdapi-debug")
 async def linkdapi_debug(user: dict = Depends(require_admin)):
     """Faz uma chamada direta na LinkdAPI pra debugar status/erros sem
