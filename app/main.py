@@ -3810,8 +3810,11 @@ async def cron_health(user: dict = Depends(require_admin)):
             last_run = None
             if last_row:
                 last_run = dict(last_row)
-                last_run["started_at"] = last_run["started_at"].isoformat() if last_run["started_at"] else None
-                last_run["finished_at"] = last_run["finished_at"].isoformat() if last_run["finished_at"] else None
+                # appendar 'Z' pra JS (`new Date(...)`) interpretar como UTC e
+                # converter pro fuso local. Sem isso, `toLocaleString('pt-BR')`
+                # mostra UTC como se fosse BRT (off by 3h).
+                last_run["started_at"] = (last_run["started_at"].isoformat() + "Z") if last_run["started_at"] else None
+                last_run["finished_at"] = (last_run["finished_at"].isoformat() + "Z") if last_run["finished_at"] else None
 
             # contagens 7d
             cursor.execute(
@@ -3870,12 +3873,12 @@ async def cron_health(user: dict = Depends(require_admin)):
             elif error_streak >= 2:
                 # 2+ falhas consecutivas recentes → sinal forte de problema
                 health = "failing"
-            elif runs_7d["error"] > 0 and runs_7d["error"] >= runs_7d["success"]:
-                # fallback: mais erros que sucessos na janela
-                health = "failing"
             elif age_minutes is not None and age_minutes > late_threshold_minutes:
                 health = "late"
             elif last_run and last_run["status"] == "success":
+                # ultimo run OK — recuperou. Historico 7d nao penaliza mais (era
+                # ruim porque cron que acabou de voltar continuava como failing
+                # so porque tinha erros antigos na janela).
                 health = "healthy"
             elif last_run and last_run["status"] == "error":
                 # 1 erro isolado e ultimo → marca como failing pra nao mascarar
