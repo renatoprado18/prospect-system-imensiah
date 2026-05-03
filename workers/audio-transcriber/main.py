@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="INTEL Worker")
 
 # Marker pra confirmar versao do codigo deployado (atualiza ao mudar logica chunked)
-WORKER_BUILD = "gmail-sync-chunked-v2-optimistic-373ee19"
+WORKER_BUILD = "gmail-sync-chunked-v3-self-url-fix"
 logger.info(f"INTEL Worker started — build={WORKER_BUILD}")
 
 
@@ -1917,20 +1917,30 @@ async def _gmail_sync_dispatch_continuation(job_id: int, months_back: int):
     Why: cada invocacao processa CHUNK_SIZE contatos e termina (HTTP request curto).
     Isso evita Railway matar o worker por idle, mantem memoria controlada,
     e cria um checkpoint natural por chunk.
+
+    Resolucao da self-URL (em ordem de preferencia):
+    1. RAILWAY_PUBLIC_DOMAIN (Railway-injected) — https://<domain>
+    2. AUDIO_WORKER_URL (definida pelo usuario no Vercel)
+    3. http://localhost:$PORT (worker chama a si mesmo via PORT)
     """
-    self_url = (os.getenv("AUDIO_WORKER_URL") or os.getenv("WORKER_URL") or "").strip()
-    if not self_url:
-        # Fallback: localhost
-        self_url = "http://localhost:8080"
+    railway_domain = (os.getenv("RAILWAY_PUBLIC_DOMAIN") or "").strip()
+    if railway_domain:
+        self_url = f"https://{railway_domain}"
+    else:
+        self_url = (os.getenv("AUDIO_WORKER_URL") or os.getenv("WORKER_URL") or "").strip()
+        if not self_url:
+            port = os.getenv("PORT", "8080").strip()
+            self_url = f"http://localhost:{port}"
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            await client.post(
+            resp = await client.post(
                 f"{self_url}/sync-gmail",
                 json={"job_id": job_id, "months_back": months_back,
                       "secret": WORKER_SECRET, "continuation": True},
             )
+            logger.info(f"[GmailSync job={job_id}] continuation dispatched -> {self_url} status={resp.status_code}")
     except Exception as e:
-        logger.warning(f"[GmailSync job={job_id}] dispatch_continuation: {e}")
+        logger.warning(f"[GmailSync job={job_id}] dispatch_continuation FAILED to {self_url}: {e}")
 
 
 async def _run_gmail_sync_chunk(job_id: int, months_back: int = 1):
