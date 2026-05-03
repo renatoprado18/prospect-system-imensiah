@@ -4524,12 +4524,22 @@
                 pill.style.color = '#b91c1c';
                 pill.style.borderColor = '#fecaca';
                 let txt;
-                if (failing > 0 && stuck > 0) {
+                if (failing === 1 && stuck === 0) {
+                    // mostra qual job + streak pra usuario nao precisar abrir modal
+                    const c = (data.crons || []).find(x => x.health === 'failing');
+                    if (c) {
+                        const shortName = (c.path || '').replace(/^\/api\/cron\//, '');
+                        const streak = c.error_streak || 0;
+                        txt = streak >= 2 ? (shortName + ' ' + streak + 'x') : (shortName + ' falhou');
+                    } else {
+                        txt = '1 cron com erro';
+                    }
+                } else if (failing > 0 && stuck > 0) {
                     txt = failing + ' erro' + (failing > 1 ? 's' : '') + ' · ' + stuck + ' travado' + (stuck > 1 ? 's' : '');
                 } else if (stuck > 0) {
                     txt = stuck + ' cron' + (stuck > 1 ? 's' : '') + ' travado' + (stuck > 1 ? 's' : '');
                 } else {
-                    txt = failing + ' cron' + (failing > 1 ? 's' : '') + ' com erro';
+                    txt = failing + ' crons falhando';
                 }
                 pill.innerHTML = '<i class="bi bi-exclamation-octagon-fill" style="font-size:0.85em;"></i> <span id="cronHealthLabel">' + txt + '</span>';
             } else if (atrasado > 0 || late > 0) {
@@ -4698,6 +4708,13 @@
                 const expectedTodayBadge = c.expected_today
                     ? '<span style="background:#fef3c7; color:#b45309; padding:1px 6px; border-radius:8px; font-size:0.65rem; font-weight:600; margin-left:4px;">esperado hoje</span>'
                     : '';
+                const sourceLabel = c.source === 'github' ? 'GitHub' : 'Vercel';
+                const sourceBg = c.source === 'github' ? '#ede9fe' : '#e0e7ff';
+                const sourceFg = c.source === 'github' ? '#6d28d9' : '#3730a3';
+                const sourceBadge = '<span style="background:' + sourceBg + '; color:' + sourceFg + '; padding:1px 6px; border-radius:8px; font-size:0.65rem; font-weight:600; margin-left:4px;">' + sourceLabel + '</span>';
+                const streakBadge = (c.error_streak && c.error_streak >= 2)
+                    ? '<span style="background:#fee2e2; color:#b91c1c; padding:1px 6px; border-radius:8px; font-size:0.65rem; font-weight:700; margin-left:4px;" title="erros consecutivos">' + c.error_streak + 'x falhas</span>'
+                    : '';
                 const stuckBtn = c.health === 'stuck'
                     ? `<button type="button" onclick="clearStuckCrons('${escapeHtml(c.path)}')" style="${_cronCssBtn('clean')}" title="Limpar este cron travado">
                         <i class="bi bi-eraser-fill"></i>
@@ -4714,7 +4731,9 @@
                             <div style="display:flex; gap:8px; align-items:baseline; flex-wrap:wrap;">
                                 <span style="font-weight:600; color:#0f172a; font-size:0.86rem;">${safePath}</span>
                                 <span style="font-size:0.72rem; color:#94a3b8;">${escapeHtml(c.schedule_description || c.schedule || '')}</span>
+                                ${sourceBadge}
                                 ${expectedTodayBadge}
+                                ${streakBadge}
                             </div>
                             <div style="font-size:0.74rem; color:#64748b; margin-top:2px;">
                                 Ultimo: <strong>${escapeHtml(lastWhen)}</strong> · ${lr ? lr.status : 'nunca rodou'} ${lastDur ? '· ' + lastDur : ''}${rowsAffected}

@@ -3607,6 +3607,14 @@ def _parse_cron_to_minutes(schedule: str) -> Optional[int]:
     # horario (m especifico, h='*')
     if hour == "*" and minute != "*":
         return 60
+    # lista de horas no campo hour (ex: "12,15") -> N execucoes/dia
+    if "," in hour and dom in ("*", "?") and dow in ("*", "?") and month in ("*", "?"):
+        try:
+            n = len([h for h in hour.split(",") if h.strip()])
+            if n > 0:
+                return max(1, (24 * 60) // n)
+        except ValueError:
+            pass
     # diario (h e m especificos, dom/dow='*')
     if dom in ("*", "?") and dow in ("*", "?") and month in ("*", "?"):
         return 24 * 60
@@ -3623,6 +3631,8 @@ def _describe_cron(schedule: str) -> str:
     if len(parts) != 5:
         return schedule
     m, h, dom, mon, dow = parts
+    if "," in h:
+        return f"diario {h}:{m.zfill(2)} UTC"
     if minutes == 1440:
         return f"diario {h.zfill(2)}:{m.zfill(2)} UTC"
     if minutes == 60:
@@ -3638,16 +3648,75 @@ def _describe_cron(schedule: str) -> str:
 
 
 def _load_vercel_crons() -> List[Dict]:
-    """Le vercel.json e retorna lista de {path, schedule}. Ou hardcode em fallback."""
+    """Le vercel.json e retorna lista de {path, schedule, source}."""
     try:
         vercel_path = os.path.join(BASE_DIR, "..", "vercel.json")
         if os.path.exists(vercel_path):
             with open(vercel_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return data.get("crons", []) or []
+            crons = data.get("crons", []) or []
+            return [{"path": c.get("path"), "schedule": c.get("schedule"), "source": "vercel"} for c in crons]
     except Exception:
         pass
     return []
+
+
+def _load_github_crons() -> List[Dict]:
+    """Parseia .github/workflows/cron-*.yml e retorna lista de {path, schedule, source: 'github'}.
+
+    Cada workflow pode declarar varias entries em on.schedule (cada uma 1 cron line)
+    e geralmente bate em 1 endpoint /api/cron/<x>. (cron_expr, path) → 1 entry.
+    """
+    out: List[Dict] = []
+    try:
+        import yaml  # pyyaml
+        import re
+        wf_dir = os.path.join(BASE_DIR, "..", ".github", "workflows")
+        if not os.path.isdir(wf_dir):
+            return out
+        endpoint_re = re.compile(r"/api/cron/[A-Za-z0-9_\-]+")
+        for fname in sorted(os.listdir(wf_dir)):
+            if not fname.startswith("cron-") or not (fname.endswith(".yml") or fname.endswith(".yaml")):
+                continue
+            try:
+                with open(os.path.join(wf_dir, fname), "r", encoding="utf-8") as f:
+                    wf = yaml.safe_load(f) or {}
+            except Exception:
+                continue
+            # `on` pode virar bool True por causa do YAML 1.1 (yes/on/true) — pyyaml resolve
+            # como string 'on' normalmente, mas defendemos com .get fallback
+            on_block = wf.get("on") or wf.get(True) or {}
+            schedules = []
+            if isinstance(on_block, dict):
+                sched = on_block.get("schedule") or []
+                if isinstance(sched, list):
+                    for entry in sched:
+                        if isinstance(entry, dict) and entry.get("cron"):
+                            schedules.append(str(entry["cron"]).strip())
+            if not schedules:
+                continue
+            paths_found: List[str] = []
+            for job in (wf.get("jobs") or {}).values():
+                if not isinstance(job, dict):
+                    continue
+                for step in (job.get("steps") or []):
+                    run_block = (step or {}).get("run") or ""
+                    for m in endpoint_re.finditer(str(run_block)):
+                        if m.group(0) not in paths_found:
+                            paths_found.append(m.group(0))
+            if not paths_found:
+                continue
+            for path in paths_found:
+                for sched in schedules:
+                    out.append({"path": path, "schedule": sched, "source": "github"})
+    except Exception as e:
+        logging.warning(f"_load_github_crons failed: {e}")
+    return out
+
+
+def _load_all_crons() -> List[Dict]:
+    """Combina crons do vercel.json + GitHub Actions. Cada entry tem `source`."""
+    return _load_vercel_crons() + _load_github_crons()
 
 
 def _expected_today(schedule: str, now_utc: datetime, last_run_started: Optional[datetime]) -> bool:
@@ -3711,7 +3780,7 @@ async def cron_health(user: dict = Depends(require_admin)):
     schedules de vercel.json. Devolve por cron: ultimo run, contagem por
     status na janela, expected runs, classificacao (healthy/late/failing/unknown/atrasado).
     """
-    crons = _load_vercel_crons()
+    crons = _load_all_crons()
     now_utc = datetime.utcnow()
 
     out_crons: List[Dict] = []
@@ -3723,6 +3792,7 @@ async def cron_health(user: dict = Depends(require_admin)):
         for c in crons:
             path = c.get("path")
             schedule = c.get("schedule") or ""
+            source = c.get("source") or "vercel"
             interval_min = _parse_cron_to_minutes(schedule) or 1440
 
             # ultimo run
@@ -3757,6 +3827,24 @@ async def cron_health(user: dict = Depends(require_admin)):
             for r in cursor.fetchall():
                 runs_7d[r["status"]] = r["c"]
 
+            # streak de erros consecutivos a partir do mais recente (top-down até primeiro success)
+            cursor.execute(
+                """
+                SELECT status
+                FROM cron_runs
+                WHERE path = %s
+                ORDER BY started_at DESC
+                LIMIT 10
+                """,
+                (path,),
+            )
+            error_streak = 0
+            for r in cursor.fetchall():
+                if r["status"] == "error":
+                    error_streak += 1
+                else:
+                    break
+
             # expected runs em 7 dias (aproximado)
             expected_7d = max(1, int((7 * 24 * 60) / interval_min))
 
@@ -3779,15 +3867,18 @@ async def cron_health(user: dict = Depends(require_admin)):
                 and age_minutes > stuck_threshold_minutes
             ):
                 health = "stuck"
+            elif error_streak >= 2:
+                # 2+ falhas consecutivas recentes → sinal forte de problema
+                health = "failing"
             elif runs_7d["error"] > 0 and runs_7d["error"] >= runs_7d["success"]:
-                # mais erros que sucessos na janela → failing
+                # fallback: mais erros que sucessos na janela
                 health = "failing"
             elif age_minutes is not None and age_minutes > late_threshold_minutes:
                 health = "late"
             elif last_run and last_run["status"] == "success":
                 health = "healthy"
             elif last_run and last_run["status"] == "error":
-                # ultimo run com erro mas houve sucessos antes → failing (recente)
+                # 1 erro isolado e ultimo → marca como failing pra nao mascarar
                 health = "failing"
             elif last_run is None:
                 # nunca rodou — pode ser que telemetria foi adicionada agora
@@ -3808,9 +3899,11 @@ async def cron_health(user: dict = Depends(require_admin)):
                 "schedule": schedule,
                 "schedule_description": _describe_cron(schedule),
                 "interval_minutes": interval_min,
+                "source": source,
                 "last_run": last_run,
                 "last_run_age_minutes": int(age_minutes) if age_minutes is not None else None,
                 "runs_7d": runs_7d,
+                "error_streak": error_streak,
                 "expected_runs_7d": expected_7d,
                 "expected_today": expected_today,
                 "health": health,
@@ -3909,10 +4002,10 @@ async def cron_runs_trigger(
         )
     _cron_trigger_last[target_path] = now
 
-    # valida que o path existe em vercel.json (defesa contra path arbitrario)
-    known_paths = {c.get("path") for c in _load_vercel_crons()}
+    # valida que o path existe (defesa contra path arbitrario)
+    known_paths = {c.get("path") for c in _load_all_crons()}
     if target_path not in known_paths:
-        raise HTTPException(status_code=404, detail="cron path nao encontrado em vercel.json")
+        raise HTTPException(status_code=404, detail="cron path nao encontrado em vercel.json nem em .github/workflows/")
 
     base_url = os.getenv("BASE_URL", "https://intel.almeida-prado.com")
     cron_secret = os.getenv("CRON_SECRET", "")
