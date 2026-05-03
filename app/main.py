@@ -3774,6 +3774,19 @@ def _expected_today(schedule: str, now_utc: datetime, last_run_started: Optional
     return True
 
 
+def _next_run_at(schedule: str, now_utc: datetime) -> Optional[str]:
+    # croniter aceita formato cron padrao 5-field. Falha em sintaxes raras
+    # (ex: "@every 5m") — UI esconde se None.
+    if not schedule:
+        return None
+    try:
+        from croniter import croniter
+        nxt = croniter(schedule, now_utc).get_next(datetime)
+        return nxt.isoformat() + "Z"
+    except Exception:
+        return None
+
+
 @app.get("/api/admin/cron-health")
 async def cron_health(user: dict = Depends(require_admin)):
     """Saude consolidada dos crons — agrega cron_runs (ultimos 7 dias) com
@@ -3905,6 +3918,7 @@ async def cron_health(user: dict = Depends(require_admin)):
                 "source": source,
                 "last_run": last_run,
                 "last_run_age_minutes": int(age_minutes) if age_minutes is not None else None,
+                "next_run_at": _next_run_at(schedule, now_utc),
                 "runs_7d": runs_7d,
                 "error_streak": error_streak,
                 "expected_runs_7d": expected_7d,

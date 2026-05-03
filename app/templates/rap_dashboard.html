@@ -4759,6 +4759,9 @@
                             <div style="font-size:0.74rem; color:#64748b; margin-top:2px;">
                                 Ultimo: <strong>${escapeHtml(lastWhen)}</strong> · ${lr ? lr.status : 'nunca rodou'} ${lastDur ? '· ' + lastDur : ''}${rowsAffected}
                             </div>
+                            ${c.next_run_at ? `<div style="font-size:0.74rem; color:#94a3b8; margin-top:1px;">
+                                Proximo: ${escapeHtml(new Date(c.next_run_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }))} BRT
+                            </div>` : ''}
                             <div style="font-size:0.7rem; color:#94a3b8; margin-top:1px;">
                                 7d: ${rows7.success || 0} ok · ${rows7.error || 0} erro · esperados ~${c.expected_runs_7d || '?'}
                             </div>

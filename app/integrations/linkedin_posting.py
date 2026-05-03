@@ -189,6 +189,9 @@ async def publish_post(text: str, article_url: str = None) -> Dict:
             }
         }
 
+    # LinkedIn-Version: YYYYMM. LinkedIn deprecia versoes ~12 meses depois;
+    # bumpar a cada ~6 meses pra ficar com folga. 2026-05-03: "202401"
+    # estourou HTTP 426 NONEXISTENT_VERSION e travou todas as publicacoes.
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(
             LINKEDIN_POSTS_URL,
@@ -196,7 +199,7 @@ async def publish_post(text: str, article_url: str = None) -> Dict:
                 "Authorization": f"Bearer {access_token}",
                 "Content-Type": "application/json",
                 "X-Restli-Protocol-Version": "2.0.0",
-                "LinkedIn-Version": "202401",
+                "LinkedIn-Version": "202604",
             },
             json=post_body,
         )
