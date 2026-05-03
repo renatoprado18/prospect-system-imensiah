@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="INTEL Worker")
 
 # Marker pra confirmar versao do codigo deployado (atualiza ao mudar logica chunked)
-WORKER_BUILD = "gmail-sync-chunked-v6-task-reference-fix"
+WORKER_BUILD = "gmail-sync-chunked-v7-internal-loop"
 logger.info(f"INTEL Worker started — build={WORKER_BUILD}")
 
 
@@ -1920,39 +1920,12 @@ async def _gmail_sync_finish(job_id: int, status: str, result: dict, processed_i
         conn.commit()
 
 
-# Global registry de tasks em vooo pra impedir GC prematuro.
-# Per Python docs: "Save a reference to the result of asyncio.create_task,
-# to avoid a task disappearing mid-execution."
-_GMAIL_SYNC_TASKS: set = set()
-
-
+# V7: chunks rodam num LOOP dentro da mesma BackgroundTask.
+# Sem HTTP self-dispatch, sem asyncio.create_task novo.
+# Cursor salvo por chunk garante que crashes sao recuperaveis.
 async def _gmail_sync_dispatch_continuation(job_id: int, months_back: int):
-    """Spawna proximo chunk no mesmo event loop via asyncio.create_task.
-
-    Why in-process: HTTP self-dispatch (V3-V4) era frequentemente perdido
-    apos 4-5 chunks. asyncio.create_task no mesmo loop e mais confiavel.
-
-    CRITICAL: precisa manter referencia da task em set global, senao
-    o GC do Python mata a task antes de terminar (V5 sem referencia
-    parou no chunk 2 — tasks foram coletadas).
-    """
-    import asyncio as _aio
-    try:
-        async def _later():
-            await _aio.sleep(0.5)
-            try:
-                await _run_gmail_sync_chunk(job_id, months_back)
-            except Exception:
-                logger.exception(f"[GmailSync job={job_id}] in-process continuation failed")
-
-        task = _aio.create_task(_later())
-        _GMAIL_SYNC_TASKS.add(task)
-        # Remove a referencia quando terminar (limpa o set)
-        task.add_done_callback(_GMAIL_SYNC_TASKS.discard)
-        logger.info(f"[GmailSync job={job_id}] continuation scheduled "
-                    f"(in-process, queue_size={len(_GMAIL_SYNC_TASKS)})")
-    except Exception as e:
-        logger.warning(f"[GmailSync job={job_id}] dispatch_continuation FAILED: {e}")
+    """No-op em V7. O loop em _run_gmail_sync_loop cuida do proximo chunk."""
+    pass
 
 
 async def _run_gmail_sync_chunk(job_id: int, months_back: int = 1):
@@ -2130,8 +2103,46 @@ async def _run_gmail_sync_chunk(job_id: int, months_back: int = 1):
             pass
 
 
+async def _run_gmail_sync_loop(job_id: int, months_back: int = 1):
+    """Roda chunks em loop ate o job estar completo ou crashar.
+
+    Why: V5/V6 (asyncio.create_task) e V3/V4 (HTTP self-dispatch) ambos
+    paravam a chain depois de 1-5 chunks. Loop in-process dentro da
+    mesma BackgroundTask elimina toda transicao entre chunks — chunks
+    rodam em sequencia, com pequeno yield entre eles.
+
+    Cursor salvo por chunk garante recuperacao se Railway matar o processo.
+    """
+    import asyncio as _aio
+    max_iters = 50  # safety limit (50 chunks × 300 = 15k contatos, mais que suficiente)
+    for i in range(max_iters):
+        try:
+            await _run_gmail_sync_chunk(job_id, months_back)
+        except Exception:
+            logger.exception(f"[GmailSync job={job_id}] chunk iter {i} crashed")
+            break
+
+        # Check if job finalized
+        try:
+            with psycopg.connect(DATABASE_URL) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT status FROM background_jobs WHERE id=%s", (job_id,))
+                row = cur.fetchone()
+                current_status = row[0] if row else None
+        except Exception:
+            current_status = None
+
+        if current_status in ("completed", "error", "skipped"):
+            logger.info(f"[GmailSync job={job_id}] loop done (status={current_status}, iters={i+1})")
+            return
+
+        await _aio.sleep(0.1)  # yield to event loop
+
+    logger.warning(f"[GmailSync job={job_id}] loop hit max_iters={max_iters}")
+
+
 # Backward-compat alias (codigo antigo pode chamar pelo nome antigo)
-_run_gmail_sync = _run_gmail_sync_chunk
+_run_gmail_sync = _run_gmail_sync_loop
 
 
 @app.post("/sync-gmail")
@@ -2199,7 +2210,10 @@ async def sync_gmail(request: Request, background_tasks: BackgroundTasks):
         except Exception as e:
             logger.error(f"[GmailSync] idempotency check failed: {e}")
 
-    background_tasks.add_task(_run_gmail_sync_chunk, job_id, months_back)
+    # V7: loop interno processa todos os chunks. Continuation flag agora é
+    # ignorada (toda chamada apos claim sucesso roda o loop ate o fim).
+    # Se Railway matar o processo, cursor salvo permite retomar via novo dispatch.
+    background_tasks.add_task(_run_gmail_sync_loop, job_id, months_back)
     return JSONResponse(status_code=202,
                         content={"status": "accepted", "job_id": job_id,
                                  "continuation": is_continuation})
