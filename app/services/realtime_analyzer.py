@@ -46,6 +46,51 @@ INTENT_TYPES = [
 ]
 
 
+# Markers tipicos de mensagens geradas pelo proprio INTEL bot.
+# Usado pra detectar mensagens que retornaram pelo webhook como "incoming".
+_BOT_ORIGIN_MARKERS = re.compile(
+    r'(bom\s+dia,?\s+renato|hoje,?\s+\d{1,2}/\d{1,2}|tarefas?\s+vencidas|'
+    r'briefing\s+(diario|di[áa]rio)|\[intel\]|sou\s+o\s+intel|seu\s+assistente\s+intel)',
+    re.IGNORECASE
+)
+
+
+def _is_bot_origin_contact(contact_id: Optional[int], message_text: str) -> bool:
+    """
+    Decide se uma mensagem 'incoming' veio do proprio intel-bot (loop).
+
+    Estrategia:
+    1. Se contato tem o numero do bot (INTEL_BOT_NUMBER) nos telefones, sim.
+    2. Se o texto bate com markers tipicos de output do bot (briefing matinal etc), sim.
+    """
+    if not message_text:
+        return False
+    bot_number = os.getenv("INTEL_BOT_NUMBER", "5511915020192")
+    bot_clean = ''.join(filter(str.isdigit, bot_number))[-10:]
+
+    # 1. Lookup pelo telefone do contato
+    if contact_id and bot_clean:
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT telefones::text FROM contacts WHERE id = %s
+                """, (contact_id,))
+                row = cursor.fetchone()
+                if row and row.get('telefones'):
+                    digits = ''.join(filter(str.isdigit, row['telefones'] or ''))
+                    if bot_clean in digits:
+                        return True
+        except Exception:
+            pass
+
+    # 2. Markers no texto (defesa em profundidade)
+    if _BOT_ORIGIN_MARKERS.search(message_text):
+        return True
+
+    return False
+
+
 class RealtimeAnalyzer:
     """Analisa mensagens em tempo real e detecta intencoes/acoes."""
 
@@ -210,6 +255,14 @@ class RealtimeAnalyzer:
 
         # Mensagens muito curtas geralmente nao precisam de analise
         if len(message_text.strip()) < 10:
+            return result
+
+        # Filtro anti-loop: descartar mensagens originadas do proprio intel-bot.
+        # Why: bot envia briefing e o webhook secundario chega como "incoming" do
+        # contato dono do numero do bot. Sem esse guard, o sistema cria propostas
+        # do proprio output do bot (ex: "Bom dia, Renato! Hoje, 03/05...").
+        if _is_bot_origin_contact(contact_id, message_text):
+            print(f"[RealtimeAnalyzer] Skipping msg {message_id} contact {contact_id}: bot-origin guard")
             return result
 
         # Filtrar mensagens automaticas/sistema (portaria, OTP, erros, pingbacks)

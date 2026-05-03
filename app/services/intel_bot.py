@@ -1195,7 +1195,7 @@ def _build_system_prompt(mode: str = "whatsapp") -> str:
             cursor.execute("""
                 SELECT COUNT(*) as total FROM tasks
                 WHERE status = 'pending' AND data_vencimento IS NOT NULL
-                AND data_vencimento < CURRENT_DATE
+                AND data_vencimento < NOW()
             """)
             overdue_count = cursor.fetchone()["total"]
     except Exception as e:

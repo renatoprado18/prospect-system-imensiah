@@ -4,12 +4,22 @@ Action Proposals Service - Gestao de propostas de acao
 CRUD e gestao de propostas de acao geradas pelo RealtimeAnalyzer.
 """
 import json
+import re
 import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from database import get_db
 
 logger = logging.getLogger(__name__)
+
+
+# Anti-loop: regex que detecta texto tipico do briefing diario do INTEL bot.
+# Se titulo OU descricao bater, descartamos a proposta — provavel loop bot->webhook.
+_BRIEFING_LOOP_REGEX = re.compile(
+    r'(bom\s+dia,?\s+renato|hoje,?\s+\d{1,2}/\d{1,2}|tarefas?\s+vencidas|'
+    r'briefing\s+(diario|di[áa]rio))',
+    re.IGNORECASE
+)
 
 
 class ActionProposalsService:
@@ -38,6 +48,20 @@ class ActionProposalsService:
         Returns:
             Proposta criada com ID
         """
+        # Guard anti-loop: rejeita proposta cujo titulo ou descricao parece
+        # output do proprio bot (briefing diario). Defesa em profundidade —
+        # filtros principais ficam em evolution_api e analyzers.
+        title_text = proposal_data.get('title') or ''
+        desc_text = proposal_data.get('description') or ''
+        trigger_text = proposal_data.get('trigger_text') or ''
+        for src in (title_text, desc_text, trigger_text):
+            if src and _BRIEFING_LOOP_REGEX.search(src):
+                logger.warning(
+                    f"create_proposal: descartando proposta — texto parece briefing do bot "
+                    f"(tipo={proposal_data.get('action_type')}, contact={proposal_data.get('contact_id')})"
+                )
+                return None
+
         with get_db() as conn:
             cursor = conn.cursor()
 

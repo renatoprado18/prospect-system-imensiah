@@ -3206,11 +3206,12 @@
                     return;
                 }
 
-                // Agrupar por contato - mostrar apenas a mais recente por contato,
-                // mas guardar a contagem total
+                // Agrupar por contato + action_type — evita "+3" misturando
+                // propostas nao-relacionadas (ex: meeting_request + opportunity_alert)
                 const grouped = {};
                 proposals.forEach(p => {
-                    const key = p.contact_id || `no-contact-${p.id}`;
+                    const contactKey = p.contact_id || `no-contact-${p.id}`;
+                    const key = `${contactKey}::${p.action_type || 'unknown'}`;
                     if (!grouped[key]) {
                         grouped[key] = { main: p, count: 0, extras: [] };
                     }
@@ -3245,14 +3246,55 @@
             }
         }
 
+        // Regex defensiva: detecta texto que parece briefing diario do bot
+        // (loop bot->webhook). Se bater, mostramos aviso na UI.
+        const BRIEFING_LOOP_RE = /(bom\s+dia.*hoje.*\d{1,2}\/\d{1,2}|tarefas?\s+vencidas|briefing\s+di[áa]rio)/i;
+
+        function escapeHtml(s) {
+            if (s === null || s === undefined) return '';
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function truncate(s, n) {
+            if (!s) return '';
+            const str = String(s);
+            return str.length > n ? str.slice(0, n).trimEnd() + '...' : str;
+        }
+
         function renderProposalCard(proposal, groupCount = 1) {
             const isUrgent = proposal.urgency === 'high';
             const icon = getProposalIcon(proposal.action_type);
             const timeAgo = formatTimeAgo(proposal.criado_em);
 
-            // Badge com qtd de propostas extras do mesmo contato
+            // Badge com qtd de propostas extras do mesmo contato + tipo
             const extraBadge = groupCount > 1
-                ? `<span class="badge bg-secondary ms-2" title="${groupCount} mensagens pendentes deste contato">+${groupCount - 1}</span>`
+                ? `<span class="badge bg-secondary ms-2" title="${groupCount} propostas similares deste contato">+${groupCount - 1}</span>`
+                : '';
+
+            // Detecta texto de briefing — provavel falso positivo do loop
+            const looksLikeBriefing = BRIEFING_LOOP_RE.test(proposal.title || '') ||
+                                       BRIEFING_LOOP_RE.test(proposal.description || '');
+            const warningHtml = looksLikeBriefing
+                ? `<div class="alert alert-warning py-1 px-2 mb-2" style="font-size: 0.75rem;">
+                       <i class="bi bi-exclamation-triangle"></i>
+                       Pode ser falso positivo do briefing.
+                       <button class="btn btn-sm btn-link p-0 ms-1" style="font-size: 0.75rem;" onclick="dismissAndBlock(${proposal.id})">Ignorar e nao sugerir mais</button>
+                   </div>`
+                : '';
+
+            // Source visivel ("De WhatsApp #324") — message_id e contact opcional
+            const sourceParts = [];
+            if (proposal.message_id) sourceParts.push(`WhatsApp #${proposal.message_id}`);
+            if (proposal.contact_name) sourceParts.push(escapeHtml(proposal.contact_name));
+            const sourceHtml = sourceParts.length > 0
+                ? `<small class="text-muted d-block mt-1" style="font-size: 0.7rem;">
+                       <i class="bi bi-link-45deg"></i> De ${sourceParts.join(' • ')}
+                   </small>`
                 : '';
 
             // Render options as buttons
@@ -3274,21 +3316,40 @@
                 return `<button class="btn btn-sm ${btnClass}" onclick="executeProposal(${proposal.id}, '${opt.id}')">${opt.label}</button>`;
             }).join('');
 
+            const safeTitle = escapeHtml(proposal.title || '');
+            const safeDesc = escapeHtml(truncate(proposal.description || '', 200));
+
             return `
                 <div class="proposal-card ${isUrgent ? 'urgent' : ''}">
                     <div class="proposal-icon">
                         <i class="bi ${icon}"></i>
                     </div>
                     <div class="proposal-content">
-                        <h6>${proposal.title}${extraBadge}</h6>
-                        <p>${proposal.description || ''}</p>
+                        <h6>${safeTitle}${extraBadge}</h6>
+                        ${warningHtml}
+                        <p>${safeDesc}</p>
                         <div class="proposal-actions">
                             ${optionsHtml}
                         </div>
+                        ${sourceHtml}
                     </div>
                     <div class="proposal-time">${timeAgo}</div>
                 </div>
             `;
+        }
+
+        // Dismiss + tenta marcar tipo+contato como bloqueado pra nao re-sugerir.
+        // Reusa endpoint /dismiss; se backend nao tiver bloqueio persistente,
+        // pelo menos remove a proposta atual e refresca cache.
+        async function dismissAndBlock(proposalId) {
+            try {
+                await fetch(`/api/action-proposals/${proposalId}/dismiss?block=true`, {method: 'POST'});
+                showToast('Proposta ignorada. Nao sera sugerida novamente.', 'success');
+                loadActionProposals();
+            } catch (e) {
+                console.error('dismissAndBlock error:', e);
+                showToast('Erro ao bloquear proposta', 'error');
+            }
         }
 
         function getProposalIcon(actionType) {

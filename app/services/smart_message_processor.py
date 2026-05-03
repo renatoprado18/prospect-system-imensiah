@@ -51,6 +51,36 @@ EMAIL_REQUEST_KEYWORDS = ['email', 'e-mail', 'contato', 'endereço', 'endereco',
 # Emails a ignorar (assinaturas, dominios comuns em footers)
 IGNORE_EMAIL_DOMAINS = ['example.com', 'teste.com', 'test.com']
 
+# Markers de mensagens geradas pelo proprio intel-bot (anti-loop).
+_BOT_ORIGIN_MARKERS = re.compile(
+    r'(bom\s+dia,?\s+renato|hoje,?\s+\d{1,2}/\d{1,2}|tarefas?\s+vencidas|'
+    r'briefing\s+(diario|di[áa]rio)|\[intel\]|sou\s+o\s+intel|seu\s+assistente\s+intel)',
+    re.IGNORECASE
+)
+
+
+def _is_bot_origin(contact_id: Optional[int], content: str) -> bool:
+    """Detecta msg que retornou do proprio bot. Vide realtime_analyzer._is_bot_origin_contact."""
+    if not content:
+        return False
+    bot_number = os.getenv("INTEL_BOT_NUMBER", "5511915020192")
+    bot_clean = ''.join(filter(str.isdigit, bot_number))[-10:]
+    if contact_id and bot_clean:
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT telefones::text FROM contacts WHERE id = %s", (contact_id,))
+                row = cursor.fetchone()
+                if row and row.get('telefones'):
+                    digits = ''.join(filter(str.isdigit, row['telefones'] or ''))
+                    if bot_clean in digits:
+                        return True
+        except Exception:
+            pass
+    if _BOT_ORIGIN_MARKERS.search(content):
+        return True
+    return False
+
 
 # ==================== MAIN ENTRY POINT ====================
 
@@ -75,6 +105,12 @@ async def process_message_intelligence(
     if contact_id == OWNER_CONTACT_ID:
         return
     if not content or len(content.strip()) < 3:
+        return
+
+    # Filtro anti-loop: mensagens originadas do proprio intel-bot
+    # (briefings, notificacoes) que voltam pela webhook como incoming.
+    if _is_bot_origin(contact_id, content):
+        logger.info(f"Skipping smart processor for msg {message_id} (contact {contact_id}): bot-origin guard")
         return
 
     # Filtrar mensagens automaticas/sistema (portaria, bancos, OTP, erros tecnicos)

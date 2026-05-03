@@ -16244,7 +16244,7 @@ async def api_projects_overdue_count():
             FROM tasks t
             JOIN projects p ON p.id = t.project_id
             WHERE t.status = 'pending'
-              AND t.data_vencimento::date < CURRENT_DATE
+              AND t.data_vencimento < NOW()
               AND p.status = 'ativo'
               AND (t.origem IS DISTINCT FROM 'conselhoos_raci'
                    OR t.contact_id = (SELECT contact_id FROM users WHERE id = 1))
@@ -16263,7 +16263,7 @@ async def api_projects_with_attention():
                     p.id, p.nome, p.tipo, p.cor, p.icone, p.atualizado_em,
                     (SELECT COUNT(*) FROM tasks t
                        WHERE t.project_id = p.id AND t.status = 'pending'
-                         AND t.data_vencimento::date < CURRENT_DATE
+                         AND t.data_vencimento < NOW()
                          AND (t.origem IS DISTINCT FROM 'conselhoos_raci'
                               OR t.contact_id = (SELECT contact_id FROM users WHERE id = 1))
                     ) AS tasks_overdue,
@@ -18059,7 +18059,8 @@ _editorial_action_items_cache = {"data": None, "timestamp": None}
 @app.get("/api/editorial/action-items")
 async def api_editorial_action_items():
     """Pre-categorizado pra drill do dashboard: para_aprovar (drafts editorial+hot_takes orfaos)
-    + coletar_metricas (publicados >=48h sem linkedin_metricas_em). Cache 60s."""
+    + coletar_metricas (publicados >=2d com alguma janela 0/1/3/7d ainda nao coletada
+    em editorial_metrics_history — alinhado com cron de metricas). Cache 60s."""
     global _editorial_action_items_cache
     if _editorial_action_items_cache["data"] and _editorial_action_items_cache["timestamp"]:
         age = (datetime.now() - _editorial_action_items_cache["timestamp"]).total_seconds()
@@ -18085,17 +18086,40 @@ async def api_editorial_action_items():
             LIMIT 20
         """)
         para_aprovar = [dict(r) for r in cursor.fetchall()]
+        # Pendente = post publicado ha >=2d com pelo menos uma janela esperada (0/1/3/7d)
+        # ainda nao registrada em editorial_metrics_history. Sem upper bound — se passou
+        # da janela e nao coletou, continua pendente. Alinha com cron de metricas.
         cursor.execute("""
-            SELECT id, article_title, titulo_adaptado, ai_categoria, data_publicado,
-                   url_publicado, linkedin_post_url, linkedin_impressoes, linkedin_reacoes,
-                   linkedin_comentarios,
-                   EXTRACT(EPOCH FROM (NOW() - data_publicado))/3600 AS horas_publicado
-            FROM editorial_posts
-            WHERE status = 'published'
-              AND data_publicado IS NOT NULL
-              AND data_publicado < NOW() - INTERVAL '48 hours'
-              AND linkedin_metricas_em IS NULL
-            ORDER BY data_publicado ASC
+            WITH expected AS (
+                SELECT ep.id,
+                       FLOOR(EXTRACT(EPOCH FROM (NOW() - ep.data_publicado)) / 86400)::int AS dias_desde_pub,
+                       ARRAY(
+                           SELECT d FROM (VALUES (0),(1),(3),(7)) AS v(d)
+                           WHERE d <= FLOOR(EXTRACT(EPOCH FROM (NOW() - ep.data_publicado)) / 86400)::int
+                       ) AS janelas_esperadas
+                FROM editorial_posts ep
+                WHERE ep.status = 'published'
+                  AND ep.data_publicado IS NOT NULL
+                  AND ep.data_publicado < NOW() - INTERVAL '2 days'
+            ),
+            coletadas AS (
+                SELECT post_id, ARRAY_AGG(DISTINCT dias_apos_publicacao) AS janelas_coletadas
+                FROM editorial_metrics_history
+                WHERE dias_apos_publicacao IS NOT NULL
+                GROUP BY post_id
+            )
+            SELECT ep.id, ep.article_title, ep.titulo_adaptado, ep.ai_categoria, ep.data_publicado,
+                   ep.url_publicado, ep.linkedin_post_url, ep.linkedin_impressoes, ep.linkedin_reacoes,
+                   ep.linkedin_comentarios,
+                   EXTRACT(EPOCH FROM (NOW() - ep.data_publicado))/3600 AS horas_publicado
+            FROM editorial_posts ep
+            JOIN expected e ON e.id = ep.id
+            LEFT JOIN coletadas c ON c.post_id = ep.id
+            WHERE EXISTS (
+                SELECT 1 FROM unnest(e.janelas_esperadas) AS j(d)
+                WHERE NOT (j.d = ANY(COALESCE(c.janelas_coletadas, ARRAY[]::int[])))
+            )
+            ORDER BY ep.data_publicado ASC
             LIMIT 20
         """)
         coletar_metricas = [dict(r) for r in cursor.fetchall()]
@@ -21290,9 +21314,12 @@ async def cron_daily_morning_briefing(request: Request):
             cursor = conn.cursor()
 
             # 1. Overdue tasks
+            # Strict timestamp comparison: a task with vencimento today at 09:00
+            # only counts as overdue once the clock passes 09:00. Aligns with the
+            # /dashboard "Tarefas Vencidas" statcard semantics.
             cursor.execute("""
                 SELECT COUNT(*) as total FROM tasks
-                WHERE status = 'pending' AND data_vencimento < CURRENT_DATE
+                WHERE status = 'pending' AND data_vencimento < NOW()
             """)
             overdue_count = cursor.fetchone()["total"]
 

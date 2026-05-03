@@ -84,7 +84,7 @@ def list_projects(
                    (SELECT COUNT(*) FROM project_members WHERE project_id = p.id) as total_membros,
                    (SELECT COUNT(*) FROM tasks WHERE project_id = p.id AND status = 'pending') as tasks_pendentes,
                    (SELECT COUNT(*) FROM tasks t WHERE t.project_id = p.id AND t.status = 'pending'
-                        AND t.data_vencimento IS NOT NULL AND t.data_vencimento < CURRENT_DATE
+                        AND t.data_vencimento IS NOT NULL AND t.data_vencimento < NOW()
                         AND (t.origem IS DISTINCT FROM 'conselhoos_raci'
                              OR t.contact_id = (SELECT contact_id FROM users WHERE id = 1))
                    ) as tasks_vencidas,

@@ -287,7 +287,9 @@ def _collect_intel_project_data(empresa_nome: str) -> Dict:
 
             project_id = project['id']
 
-            # Overdue tasks
+            # Overdue tasks (strict timestamp — uma tarefa com vencimento hoje
+            # 09:00 so vira "atrasada" depois das 09:00; alinhado com o statcard
+            # do dashboard).
             cursor.execute("""
                 SELECT t.titulo, t.descricao, t.data_vencimento, t.prioridade,
                        c.nome as contact_nome
@@ -295,7 +297,7 @@ def _collect_intel_project_data(empresa_nome: str) -> Dict:
                 LEFT JOIN contacts c ON c.id = t.contact_id
                 WHERE t.project_id = %s
                   AND t.status NOT IN ('completed', 'cancelled')
-                  AND t.data_vencimento < CURRENT_DATE
+                  AND t.data_vencimento < NOW()
                 ORDER BY t.data_vencimento ASC
                 LIMIT 10
             """, (project_id,))

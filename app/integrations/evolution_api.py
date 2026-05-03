@@ -16,6 +16,27 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
+def _is_bot_phone(phone: str) -> bool:
+    """
+    Verifica se o telefone pertence ao proprio intel-bot.
+    Evita loop: bot envia briefing -> webhook chega -> sistema interpreta como msg do contato.
+    """
+    if not phone:
+        return False
+    bot_number = os.getenv("INTEL_BOT_NUMBER", "5511915020192")
+    bot_clean = ''.join(filter(str.isdigit, bot_number))
+    phone_clean = ''.join(filter(str.isdigit, phone))
+    if not bot_clean or not phone_clean:
+        return False
+    if phone_clean == bot_clean:
+        return True
+    # Match por sufixo (ultimos 10 digitos cobre celulares com/sem DDI)
+    if len(bot_clean) >= 10 and len(phone_clean) >= 10:
+        if phone_clean[-10:] == bot_clean[-10:]:
+            return True
+    return False
+
+
 class EvolutionAPIClient:
     """Cliente para Evolution API v2"""
 
@@ -535,6 +556,15 @@ async def process_incoming_message(data: Dict) -> Dict:
         else:
             logger.warning(f"Cannot resolve phone from JID: {remote_jid} alt: {remote_jid_alt}")
             return {"processed": False, "reason": "unresolvable_jid"}
+
+    # Filtro anti-loop: descartar mensagens originadas do proprio intel-bot.
+    # Why: bot envia briefing/notificacao via intel-bot instance -> webhook na rap-whatsapp
+    # com fromMe=False (Renato recebeu de bot). Sem esse filtro, o sistema interpreta
+    # o output do bot como mensagem incoming de "contato bot" e cria propostas/eventos
+    # do proprio texto do briefing.
+    if _is_bot_phone(phone):
+        logger.info(f"Skipping bot-origin message from {phone} (anti-loop guard)")
+        return {"processed": False, "reason": "bot_origin_skipped", "phone": phone}
 
     # Extrair conteúdo
     content = ""

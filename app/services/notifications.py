@@ -218,12 +218,12 @@ class NotificationService:
             """)
             counts["needs_response"] = cursor.fetchone()["count"]
 
-            # Tarefas vencidas
+            # Tarefas vencidas (strict timestamp — alinhado com statcard do dashboard)
             cursor.execute("""
                 SELECT COUNT(*) as count FROM tasks
                 WHERE status = 'pending'
                 AND data_vencimento IS NOT NULL
-                AND DATE(data_vencimento) <= CURRENT_DATE
+                AND data_vencimento < NOW()
             """)
             counts["tasks_due"] = cursor.fetchone()["count"]
 
