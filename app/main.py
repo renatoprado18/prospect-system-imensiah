@@ -7672,8 +7672,9 @@ def verify_cron_auth(request: Request) -> bool:
     a env var existe). Antes confiavamos so no x-vercel-cron e crons davam
     401 silencioso em prod (caso 2026-05-02 — agent_actions vazio por dias).
     """
-    auth_header = request.headers.get("authorization", "")
-    cron_secret = os.getenv("CRON_SECRET", "")
+    auth_header = request.headers.get("authorization", "").strip()
+    # strip(): Vercel pode adicionar \n no final de env vars colados pela UI
+    cron_secret = os.getenv("CRON_SECRET", "").strip()
     user_agent = request.headers.get("user-agent", "")
 
     return (
