@@ -1857,18 +1857,35 @@ async def _gmail_sync_load_state(job_id: int) -> tuple[dict, int]:
     return (row.get("result") or {}), int(row.get("total_items") or 0)
 
 
-async def _gmail_sync_save_state(job_id: int, result: dict, processed_items: int):
-    """Persiste cursor + stats no background_jobs.result + processed_items."""
+async def _gmail_sync_save_state(job_id: int, result: dict, processed_items: int) -> bool:
+    """Persiste cursor + stats com optimistic concurrency check.
+
+    Why: continuation POSTs podem chegar duplicados (LB retry, Railway proxy etc).
+    Sem essa checagem, dois chunks podem rodar em paralelo: ambos load state com
+    processed=N, ambos processam 300 contatos, ambos escrevem N+300 com stats
+    distintos (cada um conta seu proprio processamento). Result: progresso
+    'flutua' e a row fica corrompida.
+
+    Solucao: so escreve se processed_items_NEW > processed_items_OLD. Chunk
+    perdedor retorna False e abortao continuation — quem venceu vai dispatchar.
+    """
     stats = result.get("stats") or {}
     with psycopg.connect(DATABASE_URL) as conn:
         cur = conn.cursor()
         cur.execute(
             "UPDATE background_jobs SET processed_items=%s, success_count=%s, "
-            "failed_count=%s, result=%s WHERE id=%s",
+            "failed_count=%s, result=%s "
+            "WHERE id=%s AND processed_items < %s "
+            "RETURNING id",
             (processed_items, stats.get("updated", 0), stats.get("errors", 0),
-             json.dumps(result), job_id),
+             json.dumps(result), job_id, processed_items),
         )
+        won = cur.fetchone() is not None
         conn.commit()
+    if not won:
+        logger.warning(f"[GmailSync job={job_id}] save_state perdeu race "
+                       f"(quis={processed_items}, mas DB ja avancou) — abort chunk")
+    return won
 
 
 async def _gmail_sync_finish(job_id: int, status: str, result: dict, processed_items: int, error: str | None = None):
@@ -1987,9 +2004,10 @@ async def _run_gmail_sync_chunk(job_id: int, months_back: int = 1):
             last_contact_id = 0
             cursor_state.update({"accounts_done": accounts_done,
                                  "current_account_id": None, "last_contact_id": 0})
-            await _gmail_sync_save_state(job_id, {"stats": stats, "cursor": cursor_state},
-                                          stats.get("processed", 0))
-            await _gmail_sync_dispatch_continuation(job_id, months_back)
+            won = await _gmail_sync_save_state(job_id, {"stats": stats, "cursor": cursor_state},
+                                                stats.get("processed", 0))
+            if won:
+                await _gmail_sync_dispatch_continuation(job_id, months_back)
             return
 
         # Load chunk of contacts
@@ -2017,9 +2035,10 @@ async def _run_gmail_sync_chunk(job_id: int, months_back: int = 1):
             last_contact_id = 0
             cursor_state.update({"accounts_done": accounts_done,
                                  "current_account_id": None, "last_contact_id": 0})
-            await _gmail_sync_save_state(job_id, {"stats": stats, "cursor": cursor_state},
-                                          stats.get("processed", 0))
-            await _gmail_sync_dispatch_continuation(job_id, months_back)
+            won = await _gmail_sync_save_state(job_id, {"stats": stats, "cursor": cursor_state},
+                                                stats.get("processed", 0))
+            if won:
+                await _gmail_sync_dispatch_continuation(job_id, months_back)
             return
 
         # Process this chunk
@@ -2054,15 +2073,16 @@ async def _run_gmail_sync_chunk(job_id: int, months_back: int = 1):
             stats["processed"] += 1
             last_contact_id = contact_id
 
-        # Save state and dispatch next chunk
+        # Save state and dispatch next chunk (so se ganhar o race)
         cursor_state.update({"accounts_done": accounts_done,
                              "current_account_id": current_account_id,
                              "last_contact_id": last_contact_id})
-        await _gmail_sync_save_state(job_id, {"stats": stats, "cursor": cursor_state},
-                                      stats.get("processed", 0))
+        won = await _gmail_sync_save_state(job_id, {"stats": stats, "cursor": cursor_state},
+                                            stats.get("processed", 0))
         logger.info(f"[GmailSync job={job_id}] chunk done: processed={stats['processed']}/{total_items} "
-                    f"updated={stats['updated']} errors={stats['errors']}")
-        await _gmail_sync_dispatch_continuation(job_id, months_back)
+                    f"updated={stats['updated']} errors={stats['errors']} won={won}")
+        if won:
+            await _gmail_sync_dispatch_continuation(job_id, months_back)
 
     except Exception as e:
         logger.exception(f"[GmailSync job={job_id}] chunk error")
