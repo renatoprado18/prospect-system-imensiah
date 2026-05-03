@@ -84,14 +84,6 @@
     {
       "path": "/api/cron/daily-synthesis",
       "schedule": "0 1 * * *"
-    },
-    {
-      "path": "/api/cron/auto-publish-linkedin",
-      "schedule": "5 12 * * *"
-    },
-    {
-      "path": "/api/cron/auto-collect-linkedin-metrics",
-      "schedule": "0 13 * * *"
     }
   ]
 }

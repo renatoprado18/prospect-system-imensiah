@@ -1,0 +1,24 @@
+name: Cron — Auto Publish LinkedIn
+
+# Why GitHub Actions: Vercel Hobby caps at 1 cron/day per path. We need 2x/day
+# (slots 9h e 12h BRT) pra cobrir auto-publish dos posts editoriais.
+
+on:
+  schedule:
+    # 12:05 UTC = 9h05 BRT — slot 9h
+    # 15:05 UTC = 12h05 BRT — slot 12h
+    - cron: '5 12,15 * * *'
+  workflow_dispatch:  # botao manual em Actions tab
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit auto-publish-linkedin endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/auto-publish-linkedin")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)

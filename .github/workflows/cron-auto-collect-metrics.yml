@@ -1,0 +1,22 @@
+name: Cron — Auto Collect LinkedIn Metrics
+
+# Why GitHub Actions: precisa rodar hourly pra capturar janelas 1h/6h pos-publicacao.
+# Vercel Hobby nao suporta cron sub-daily.
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # hourly (top of hour, UTC)
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit auto-collect-linkedin-metrics endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/auto-collect-linkedin-metrics")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)
