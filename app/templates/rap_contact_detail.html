@@ -6983,6 +6983,21 @@
             const actionLabel = getActionLabel(action.type);
             const actionAttrs = JSON.stringify(action).replace(/"/g, '&quot;');
 
+            // Trigger 'message' tem botao extra "Nao precisa resposta" pra
+            // marcar como resolvido sem responder (overrride manual).
+            let extraBtn = '';
+            if (trigger.tipo === 'message' && trigger.message_id) {
+                const mid = trigger.message_id;
+                const stbl = trigger.source_table || 'messages';
+                extraBtn = `
+                    <button class="secondary" style="margin-left:6px;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;"
+                            onclick="markMessageNoReply(${mid}, '${stbl}')"
+                            title="Marcar como nao precisa resposta">
+                        <i class="bi bi-check2"></i> Nao precisa resposta
+                    </button>
+                `;
+            }
+
             return `
                 <div class="attention-trigger-card" style="border-left-color:${color};">
                     <div class="attention-trigger-icon" style="background:${color};">
@@ -6996,9 +7011,33 @@
                         <button class="primary" onclick='executeAttentionAction(${actionAttrs})'>
                             <i class="bi bi-arrow-right"></i> ${actionLabel}
                         </button>
+                        ${extraBtn}
                     </div>
                 </div>
             `;
+        }
+
+        async function markMessageNoReply(messageId, sourceTable) {
+            try {
+                const res = await fetch(`/api/messages/${messageId}/classify`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        requires_reply: false,
+                        source_table: sourceTable || 'messages',
+                        reasoning: 'manual_user_override'
+                    })
+                });
+                if (res.ok) {
+                    showQuickToast('Marcado como nao precisa resposta');
+                    loadAttentionContext();
+                } else {
+                    showQuickToast('Erro ao classificar');
+                }
+            } catch (e) {
+                console.error('markMessageNoReply err:', e);
+                showQuickToast('Erro ao classificar');
+            }
         }
 
         function getActionLabel(type) {

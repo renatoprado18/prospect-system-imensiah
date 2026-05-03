@@ -4419,6 +4419,43 @@ async def get_contact_snooze(contact_id: int):
     }
 
 
+# ============== Message Classification (precisa resposta?) ==============
+# Usado pra eliminar falsos positivos do trigger "Responder msg" no statcard
+# de Atencao. Override manual via UI tem precedencia sobre rule/LLM.
+
+class MessageClassifyRequest(BaseModel):
+    requires_reply: bool
+    source_table: str = "messages"
+    reasoning: Optional[str] = None
+
+
+@app.post("/api/messages/{message_id}/classify")
+async def classify_message_manual(message_id: int, payload: MessageClassifyRequest):
+    """Override manual: usuario marca mensagem como precisa/nao precisa resposta.
+
+    Sobrescreve qualquer classificacao previa (rule ou LLM). Usado no botao
+    "✓ Nao precisa resposta" no card trigger 'message' do attention-context.
+    """
+    from services.message_classifier import manual_override
+    try:
+        result = manual_override(
+            message_id=message_id,
+            source_table=payload.source_table,
+            requires_reply=payload.requires_reply,
+            reasoning=payload.reasoning or "",
+        )
+        # Invalida dashboard cache pra contato voltar/sair de "atencao" no proximo load
+        try:
+            global _dashboard_cache
+            _dashboard_cache = {"data": None, "timestamp": None}
+        except Exception:
+            pass
+        return {"status": "ok", **result}
+    except Exception as e:
+        logger.error(f"classify_message_manual err msg={message_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao classificar: {e}")
+
+
 @app.get("/api/contacts/stats")
 async def contacts_stats():
     """Estatísticas dos contatos"""
@@ -7587,6 +7624,55 @@ async def cron_daily_sync(request: Request):
         result["proposals_created"] = proposals_created
         return result
 
+    async def step_classify_messages():
+        """Classifica mensagens incoming dos ultimos 7 dias ainda nao classificadas.
+
+        Pula mensagens ja classificadas (rule/LLM/manual). Usa pipeline hibrido
+        (rule -> LLM Haiku). LIMIT 200 por execucao pra cap de tempo/custo no cron.
+        """
+        from services.message_classifier import classify
+        processed = {"rule": 0, "llm": 0, "errors": 0, "skipped": 0}
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT m.id, m.conteudo, c.nome AS sender_name
+                    FROM messages m
+                    JOIN contacts c ON c.id = m.contact_id
+                    LEFT JOIN message_classifications mc
+                        ON mc.message_id = m.id AND mc.source_table = 'messages'
+                    WHERE m.direcao = 'incoming'
+                      AND m.enviado_em > NOW() - INTERVAL '7 days'
+                      AND mc.message_id IS NULL
+                      AND m.conteudo IS NOT NULL
+                      AND length(trim(m.conteudo)) > 0
+                    ORDER BY m.enviado_em DESC
+                    LIMIT 200
+                    """
+                )
+                rows = [dict(r) for r in cursor.fetchall()]
+            for row in rows:
+                try:
+                    res = await classify(
+                        message_id=row["id"],
+                        source_table="messages",
+                        text=row["conteudo"] or "",
+                        sender_name=row.get("sender_name") or "",
+                    )
+                    if res.get("cached"):
+                        processed["skipped"] += 1
+                    elif res.get("method") == "rule":
+                        processed["rule"] += 1
+                    elif res.get("method") == "llm":
+                        processed["llm"] += 1
+                except Exception as e:
+                    processed["errors"] += 1
+                    logger.warning(f"classify msg={row['id']} err: {e}")
+        except Exception as e:
+            logger.error(f"step_classify_messages fatal: {e}")
+        return processed
+
     await _aio.gather(
         run_step("daily_ai", step_ai),
         run_step("campaigns", step_campaigns),
@@ -7598,6 +7684,7 @@ async def cron_daily_sync(request: Request):
         run_step("group_messages_sync", step_group_messages),
         run_step("linkedin_enrichment", step_linkedin_enrichment),
         run_step("auto_publish", step_auto_publish),
+        run_step("classify_messages", step_classify_messages),
     )
 
     results["completed_at"] = datetime.now().isoformat()
@@ -16794,15 +16881,19 @@ async def api_contact_attention_context(contact_id: int):
                 conn.rollback()
 
             # --- MESSAGE: ultima incoming sem outgoing depois (ate 14d) ---
+            # Filtra mensagens marcadas (rule/LLM/manual) como nao precisam resposta.
             try:
                 cursor.execute(
                     """
                     SELECT m.id, m.conteudo, m.enviado_em, c.canal
                     FROM messages m
                     JOIN conversations c ON c.id = m.conversation_id
+                    LEFT JOIN message_classifications mc
+                        ON mc.message_id = m.id AND mc.source_table = 'messages'
                     WHERE m.contact_id = %s
                       AND m.direcao = 'incoming'
                       AND m.enviado_em > NOW() - INTERVAL '14 days'
+                      AND (mc.requires_reply IS NULL OR mc.requires_reply = TRUE)
                       AND NOT EXISTS (
                           SELECT 1 FROM messages m2
                           WHERE m2.conversation_id = m.conversation_id
@@ -16852,6 +16943,8 @@ async def api_contact_attention_context(contact_id: int):
                         "color": color,
                         "content": snippet or "(sem conteudo)",
                         "canal": mrow.get("canal"),
+                        "message_id": mrow["id"],
+                        "source_table": "messages",
                         "action": {"type": "open_whatsapp"},
                         "_sort": (0 if (dias is not None and dias > 3) else 2, dias or 0),
                     })

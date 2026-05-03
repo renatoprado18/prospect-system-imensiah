@@ -667,6 +667,22 @@ def recalcular_circulos_dual(contact_id: int, force: bool = False) -> Dict:
 
         contact = dict(row)
 
+        # Self-heal: se ultimo_contato NULL mas existem mensagens, backfill com MAX(enviado_em).
+        # Cobre casos onde merge/dedup/edicao manual zerou o campo.
+        if not contact.get("ultimo_contato"):
+            cursor.execute(
+                "SELECT MAX(enviado_em) AS ultima FROM messages WHERE contact_id = %s",
+                (contact_id,)
+            )
+            mrow = cursor.fetchone()
+            ultima_msg = mrow["ultima"] if mrow else None
+            if ultima_msg:
+                cursor.execute(
+                    "UPDATE contacts SET ultimo_contato = %s WHERE id = %s",
+                    (ultima_msg, contact_id)
+                )
+                contact["ultimo_contato"] = ultima_msg
+
         # Calcular circulos
         circulo_pessoal, razoes_pessoal = calcular_circulo_pessoal(contact)
         circulo_prof, razoes_prof = calcular_circulo_profissional(contact)
@@ -762,6 +778,21 @@ def recalcular_circulo_contato(contact_id: int, force: bool = False) -> Dict:
             return {"error": "Contato nao encontrado", "contact_id": contact_id}
 
         contact = dict(row)
+
+        # Self-heal: backfill ultimo_contato a partir de messages se NULL (merges/edicoes podem zerar)
+        if not contact.get("ultimo_contato"):
+            cursor.execute(
+                "SELECT MAX(enviado_em) AS ultima FROM messages WHERE contact_id = %s",
+                (contact_id,)
+            )
+            mrow = cursor.fetchone()
+            ultima_msg = mrow["ultima"] if mrow else None
+            if ultima_msg:
+                cursor.execute(
+                    "UPDATE contacts SET ultimo_contato = %s WHERE id = %s",
+                    (ultima_msg, contact_id)
+                )
+                contact["ultimo_contato"] = ultima_msg
 
         # Verificar se e manual e nao estamos forcando
         if contact.get("circulo_manual") and not force:
@@ -1017,14 +1048,20 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
             conn.rollback()
 
         # === BUSCAR MENSAGENS NAO RESPONDIDAS (ultimos 7 dias) ===
+        # Filtra mensagens classificadas como "nao precisa resposta" (rule/LLM/manual).
+        # Mensagens NAO classificadas continuam contando (conservador — defaultam
+        # como "talvez precisa", classificador roda async no daily-sync).
         mensagens_pendentes = set()
         try:
             cursor.execute("""
                 SELECT DISTINCT c.contact_id
                 FROM conversations c
                 JOIN messages m ON m.conversation_id = c.id
+                LEFT JOIN message_classifications mc
+                    ON mc.message_id = m.id AND mc.source_table = 'messages'
                 WHERE m.direcao = 'incoming'
                   AND m.enviado_em > NOW() - INTERVAL '7 days'
+                  AND (mc.requires_reply IS NULL OR mc.requires_reply = TRUE)
                   AND NOT EXISTS (
                       SELECT 1 FROM messages m2
                       WHERE m2.conversation_id = c.id

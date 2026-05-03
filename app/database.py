@@ -2252,6 +2252,32 @@ def init_db():
             ON contact_snoozes(contact_id, ate)
         ''')
 
+        # Classificacao de mensagens "precisa resposta?".
+        # Cache de classificacao hibrida (rule + LLM Haiku) usada pelo statcard
+        # "Contatos c/ Atencao" pra eliminar falsos positivos tipo
+        # "Obrigada 🙏" / "ok" / "coloquei na agenda" do trigger Responder msg.
+        # Chave composta (message_id + source_table) suporta varias tabelas
+        # de mensagens: 'messages' (whatsapp), 'gmail_messages' futuro, etc.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS message_classifications (
+                message_id INTEGER NOT NULL,
+                source_table TEXT NOT NULL,
+                requires_reply BOOLEAN NOT NULL,
+                reasoning TEXT,
+                method TEXT NOT NULL,
+                classified_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (message_id, source_table)
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_msg_class_message
+            ON message_classifications(message_id, source_table)
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_msg_class_requires_reply
+            ON message_classifications(requires_reply)
+        ''')
+
         # =====================================================================
         # Sincroniza sequences que podem ter ficado atras do MAX(id) real.
         # Idempotente — roda toda vez que init_db() executa.
