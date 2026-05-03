@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="INTEL Worker")
 
 # Marker pra confirmar versao do codigo deployado (atualiza ao mudar logica chunked)
-WORKER_BUILD = "gmail-sync-chunked-v3-self-url-fix"
+WORKER_BUILD = "gmail-sync-chunked-v4-account-transition-fix"
 logger.info(f"INTEL Worker started — build={WORKER_BUILD}")
 
 
@@ -1866,32 +1866,41 @@ async def _gmail_sync_load_state(job_id: int) -> tuple[dict, int]:
     return (row.get("result") or {}), int(row.get("total_items") or 0)
 
 
-async def _gmail_sync_save_state(job_id: int, result: dict, processed_items: int) -> bool:
-    """Persiste cursor + stats com optimistic concurrency check.
+async def _gmail_sync_save_state(job_id: int, result: dict, processed_items: int,
+                                  force: bool = False) -> bool:
+    """Persiste cursor + stats. Default = optimistic concurrency check.
 
-    Why: continuation POSTs podem chegar duplicados (LB retry, Railway proxy etc).
-    Sem essa checagem, dois chunks podem rodar em paralelo: ambos load state com
-    processed=N, ambos processam 300 contatos, ambos escrevem N+300 com stats
-    distintos (cada um conta seu proprio processamento). Result: progresso
-    'flutua' e a row fica corrompida.
+    Why optimistic check: continuation POSTs podem chegar duplicados (LB retry).
+    Sem checagem, dois chunks rodam em paralelo: ambos load proc=N, ambos
+    escrevem N+300 — flutuacao na row.
 
-    Solucao: so escreve se processed_items_NEW > processed_items_OLD. Chunk
-    perdedor retorna False e abortao continuation — quem venceu vai dispatchar.
+    force=True: usado em transicoes de conta, quando processed_items NAO
+    avanca (so o cursor muda — e.g., conta 1 esgotada, current_account=None).
+    Sem force, transicao falharia (N < N = false) e worker ficava preso.
+    Transicoes sao idempotentes (mesmo cursor final), ent two writes are safe.
     """
     stats = result.get("stats") or {}
     with psycopg.connect(DATABASE_URL) as conn:
         cur = conn.cursor()
-        cur.execute(
-            "UPDATE background_jobs SET processed_items=%s, success_count=%s, "
-            "failed_count=%s, result=%s "
-            "WHERE id=%s AND processed_items < %s "
-            "RETURNING id",
-            (processed_items, stats.get("updated", 0), stats.get("errors", 0),
-             json.dumps(result), job_id, processed_items),
-        )
+        if force:
+            cur.execute(
+                "UPDATE background_jobs SET processed_items=%s, success_count=%s, "
+                "failed_count=%s, result=%s WHERE id=%s RETURNING id",
+                (processed_items, stats.get("updated", 0), stats.get("errors", 0),
+                 json.dumps(result), job_id),
+            )
+        else:
+            cur.execute(
+                "UPDATE background_jobs SET processed_items=%s, success_count=%s, "
+                "failed_count=%s, result=%s "
+                "WHERE id=%s AND processed_items < %s "
+                "RETURNING id",
+                (processed_items, stats.get("updated", 0), stats.get("errors", 0),
+                 json.dumps(result), job_id, processed_items),
+            )
         won = cur.fetchone() is not None
         conn.commit()
-    if not won:
+    if not won and not force:
         logger.warning(f"[GmailSync job={job_id}] save_state perdeu race "
                        f"(quis={processed_items}, mas DB ja avancou) — abort chunk")
     return won
@@ -2023,10 +2032,10 @@ async def _run_gmail_sync_chunk(job_id: int, months_back: int = 1):
             last_contact_id = 0
             cursor_state.update({"accounts_done": accounts_done,
                                  "current_account_id": None, "last_contact_id": 0})
-            won = await _gmail_sync_save_state(job_id, {"stats": stats, "cursor": cursor_state},
-                                                stats.get("processed", 0))
-            if won:
-                await _gmail_sync_dispatch_continuation(job_id, months_back)
+            # force=True: transicao de conta nao avanca processed_items, so cursor
+            await _gmail_sync_save_state(job_id, {"stats": stats, "cursor": cursor_state},
+                                          stats.get("processed", 0), force=True)
+            await _gmail_sync_dispatch_continuation(job_id, months_back)
             return
 
         # Load chunk of contacts
@@ -2054,10 +2063,10 @@ async def _run_gmail_sync_chunk(job_id: int, months_back: int = 1):
             last_contact_id = 0
             cursor_state.update({"accounts_done": accounts_done,
                                  "current_account_id": None, "last_contact_id": 0})
-            won = await _gmail_sync_save_state(job_id, {"stats": stats, "cursor": cursor_state},
-                                                stats.get("processed", 0))
-            if won:
-                await _gmail_sync_dispatch_continuation(job_id, months_back)
+            # force=True: account exhausted nao avanca processed_items, so cursor
+            await _gmail_sync_save_state(job_id, {"stats": stats, "cursor": cursor_state},
+                                          stats.get("processed", 0), force=True)
+            await _gmail_sync_dispatch_continuation(job_id, months_back)
             return
 
         # Process this chunk
