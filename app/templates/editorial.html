@@ -1278,6 +1278,51 @@
         </div>
     </div>
 </div>
+
+<!-- Modal Input Metricas (registrar snapshot por janela) -->
+<!-- Inline styles pra evitar conflito com Bootstrap .modal-backdrop -->
+<div id="metricsInputModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.92);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(4px);" onclick="if(event.target===this)closeMetricsInputModal()">
+    <div style="background:#fff;border-radius:16px;width:90%;max-width:480px;max-height:90vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.5);border:2px solid #3b82f6;">
+        <div style="padding:16px 20px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
+            <h5 style="margin:0;font-size:1rem;"><i class="bi bi-graph-up text-primary me-2"></i>Registrar metricas</h5>
+            <button onclick="closeMetricsInputModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;">&times;</button>
+        </div>
+        <div style="padding:16px 20px;">
+            <div id="mim-title" style="font-size:0.9rem;font-weight:600;margin-bottom:6px;color:#0f172a;">—</div>
+            <div id="mim-janela-info" style="font-size:0.72rem;color:#64748b;margin-bottom:12px;"></div>
+            <div style="margin-bottom:12px;">
+                <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Janela (dias apos publicacao)</label>
+                <select id="mim-janela" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;background:#fff;"></select>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div>
+                    <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Impressoes</label>
+                    <input id="mim-impressoes" type="number" min="0" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;">
+                </div>
+                <div>
+                    <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Reacoes</label>
+                    <input id="mim-reacoes" type="number" min="0" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;">
+                </div>
+                <div>
+                    <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Comentarios</label>
+                    <input id="mim-comentarios" type="number" min="0" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;">
+                </div>
+                <div>
+                    <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Compartilhamentos</label>
+                    <input id="mim-compartilhamentos" type="number" min="0" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;">
+                </div>
+                <div>
+                    <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Salvamentos</label>
+                    <input id="mim-salvamentos" type="number" min="0" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;">
+                </div>
+            </div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid #e2e8f0;display:flex;gap:8px;justify-content:flex-end;">
+            <button onclick="closeMetricsInputModal()" style="padding:6px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;">Cancelar</button>
+            <button id="mim-save-btn" onclick="saveMetricsInputModal()" style="padding:6px 16px;border:none;border-radius:8px;background:#3b82f6;color:#fff;cursor:pointer;font-weight:600;">Salvar</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -2354,20 +2399,27 @@ async function loadPipeline(status, btn) {
     container.innerHTML = '<div class="text-muted text-center py-3"><div class="spinner-border spinner-border-sm"></div></div>';
 
     try {
-        const query = status === 'pending_metrics' ? 'published' : status;
-        const resp = await fetch(`/api/editorial/pipeline?status=${query}`);
-        const data = await resp.json();
-        let posts = data.posts || [];
-
+        let posts = [];
         if (status === 'pending_metrics') {
-            posts = posts.filter(p => !p.linkedin_metricas_em);
+            // Usa logica de janelas (mesma do drill do dashboard): posts publicados >=2d
+            // com pelo menos uma janela 0/1/3/7d ainda nao registrada em editorial_metrics_history.
+            const resp = await fetch('/api/editorial/action-items');
+            const data = await resp.json();
+            posts = (data.coletar_metricas || []).map(p => ({
+                ...p,
+                tipo: p.tipo || 'editorial',  // garante campo pra renderizacao
+            }));
+        } else {
+            const resp = await fetch(`/api/editorial/pipeline?status=${status}`);
+            const data = await resp.json();
+            posts = data.posts || [];
         }
 
         if (posts.length === 0) {
             const msgs = {
                 'draft': 'Nenhum post para aprovar. Use "Auto-Selecionar" ou crie hot-takes.',
                 'scheduled': 'Nenhum post agendado. Aprove posts na aba "Para Aprovar".',
-                'pending_metrics': 'Todos os posts publicados já têm métricas coletadas! 🎉',
+                'pending_metrics': 'Todas as janelas (0d/1d/3d/7d) coletadas pra todos os posts! 🎉',
                 'published': 'Nenhum post publicado ainda.'
             };
             container.innerHTML = `<div class="text-muted text-center py-3">${msgs[status] || 'Vazio'}</div>`;
@@ -2513,13 +2565,18 @@ function pipelineCellHtml(p, col, status) {
             </div>`;
         }
         if (status === 'pending_metrics') {
-            return `<div style="display:flex; gap:4px; white-space:nowrap;">
+            const faltantes = Array.isArray(p.janelas_faltantes) ? p.janelas_faltantes : [];
+            const badge = faltantes.length
+                ? `<span style="background:#fef3c7;color:#92400e;font-size:0.65rem;padding:2px 6px;border-radius:8px;font-weight:600;white-space:nowrap;">Falta ${faltantes.map(d => d + 'd').join(', ')}</span>`
+                : '';
+            return `<div style="display:flex; gap:4px; align-items:center; white-space:nowrap;">
+                ${badge}
                 ${linkBtn}
-                <button class="btn btn-sm btn-warning py-0 px-2" onclick="openMetricsModal(${p.id})" title="Coletar metricas">📊</button>
+                <button class="btn btn-sm btn-warning py-0 px-2" onclick="openMetricsInputModal(${p.id}, 'editorial')" title="Registrar metricas">📊</button>
             </div>`;
         }
         if (status === 'published') {
-            const coletarBtn = !p.linkedin_metricas_em ? `<button class="btn btn-sm btn-warning py-0 px-2" onclick="openMetricsModal(${p.id})" title="Coletar metricas">📊</button>` : '';
+            const coletarBtn = !p.linkedin_metricas_em ? `<button class="btn btn-sm btn-warning py-0 px-2" onclick="openMetricsInputModal(${p.id}, 'editorial')" title="Registrar metricas">📊</button>` : '';
             return `<div style="display:flex; gap:4px; white-space:nowrap;">${linkBtn} ${coletarBtn}</div>`;
         }
     }
@@ -2633,20 +2690,117 @@ async function reschedulePost(postId) {
 }
 
 async function openMetricsModal(postId) {
-    const impressoes = prompt('Impressões:');
-    if (impressoes === null) return;
-    const reacoes = prompt('Reações:') || '0';
-    const comentarios = prompt('Comentários:') || '0';
+    // Compat: redireciona pro modal novo (input rico com janelas)
+    return openMetricsInputModal(postId, 'editorial');
+}
+
+// ============== Modal de input de metricas (snapshot por janela) ==============
+let _metricsModalContext = { postId: null, origem: null, faltantes: [] };
+
+async function openMetricsInputModal(postId, origem) {
+    _metricsModalContext = { postId, origem: origem || 'editorial', faltantes: [] };
+    const modal = document.getElementById('metricsInputModal');
+    if (!modal) return;
+    ['mim-impressoes','mim-reacoes','mim-comentarios','mim-compartilhamentos','mim-salvamentos'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    document.getElementById('mim-title').textContent = 'Carregando...';
+    document.getElementById('mim-janela-info').textContent = '';
+    document.getElementById('mim-janela').innerHTML = '';
+    modal.style.display = 'flex';
+
     try {
-        await fetch(`/api/editorial/${postId}`, {method: 'PUT', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({
-                linkedin_impressoes: parseInt(impressoes) || 0,
-                linkedin_reacoes: parseInt(reacoes) || 0,
-                linkedin_comentarios: parseInt(comentarios) || 0
-            })});
-        showToast && showToast('Métricas salvas!', 'success');
-        loadPipeline('needs_metrics', document.querySelector('.pipeline-tab.active'));
+        const resp = await fetch(`/api/editorial/posts/${postId}/metrics-snapshot`);
+        if (!resp.ok) throw new Error('fail');
+        const data = await resp.json();
+        const post = data.post || {};
+        const faltantes = Array.isArray(data.janelas_faltantes) ? data.janelas_faltantes : [];
+        _metricsModalContext.faltantes = faltantes;
+        document.getElementById('mim-title').textContent = post.titulo_adaptado || post.article_title || `Post #${postId}`;
+        const allJanelas = [0, 1, 3, 7];
+        const sel = document.getElementById('mim-janela');
+        sel.innerHTML = '';
+        allJanelas.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = String(d);
+            const label = `${d}d apos publicacao`;
+            opt.textContent = faltantes.includes(d) ? `${label} (faltante)` : label;
+            sel.appendChild(opt);
+        });
+        const defaultJanela = faltantes.length > 0 ? faltantes[0] : 0;
+        sel.value = String(defaultJanela);
+        document.getElementById('mim-janela-info').textContent = faltantes.length
+            ? `Faltam: ${faltantes.map(d => d + 'd').join(', ')}`
+            : 'Todas janelas ja coletadas — voce pode atualizar uma existente.';
+        await metricsModalLoadLastSnapshot(postId, defaultJanela);
+        sel.onchange = () => metricsModalLoadLastSnapshot(postId, parseInt(sel.value, 10));
+    } catch (e) {
+        document.getElementById('mim-title').textContent = `Post #${postId}`;
+        document.getElementById('mim-janela-info').textContent = 'Erro ao carregar dados.';
+    }
+}
+
+async function metricsModalLoadLastSnapshot(postId, dias) {
+    try {
+        const resp = await fetch(`/api/editorial/posts/${postId}/metrics-snapshot?dias_apos_publicacao=${dias}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const ultimo = data.ultimo_snapshot;
+        const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v != null ? v : ''); };
+        if (ultimo) {
+            set('mim-impressoes', ultimo.impressoes);
+            set('mim-reacoes', ultimo.reacoes);
+            set('mim-comentarios', ultimo.comentarios);
+            set('mim-compartilhamentos', ultimo.compartilhamentos);
+            set('mim-salvamentos', ultimo.salvamentos);
+        } else {
+            ['mim-impressoes','mim-reacoes','mim-comentarios','mim-compartilhamentos','mim-salvamentos'].forEach(id => set(id, ''));
+        }
     } catch(e) {}
+}
+
+function closeMetricsInputModal() {
+    const modal = document.getElementById('metricsInputModal');
+    if (modal) modal.style.display = 'none';
+    _metricsModalContext = { postId: null, origem: null, faltantes: [] };
+}
+
+async function saveMetricsInputModal() {
+    const ctx = _metricsModalContext;
+    if (!ctx.postId) return;
+    const dias = parseInt(document.getElementById('mim-janela').value, 10);
+    const body = {
+        dias_apos_publicacao: dias,
+        impressoes: parseInt(document.getElementById('mim-impressoes').value, 10) || 0,
+        reacoes: parseInt(document.getElementById('mim-reacoes').value, 10) || 0,
+        comentarios: parseInt(document.getElementById('mim-comentarios').value, 10) || 0,
+        compartilhamentos: parseInt(document.getElementById('mim-compartilhamentos').value, 10) || 0,
+        salvamentos: parseInt(document.getElementById('mim-salvamentos').value, 10) || 0,
+        fonte: 'manual_modal',
+    };
+    const btn = document.getElementById('mim-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+    try {
+        const resp = await fetch(`/api/editorial/posts/${ctx.postId}/metrics-snapshot`, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(body),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            alert('Erro ao salvar: ' + (err.detail || resp.status));
+            return;
+        }
+        if (typeof showToast === 'function') showToast('Metricas registradas!', 'success');
+        closeMetricsInputModal();
+        // Refresh: re-carrega tab atual da pipeline
+        loadPipeline(currentPipelineStatus, document.querySelector('.pipeline-tab.active'));
+    } catch(e) {
+        alert('Erro: ' + e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Salvar'; }
+    }
 }
 
 // Load pipeline on page load

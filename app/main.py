@@ -18068,20 +18068,14 @@ async def api_editorial_action_items():
             return _editorial_action_items_cache["data"]
     with get_db() as conn:
         cursor = conn.cursor()
+        # Apenas editorial_posts drafts (selecionados/curados). Hot_takes orfaos sao
+        # estoque bruto da IA — vivem em /hot-takes, nao aparecem como acao pendente.
         cursor.execute("""
             SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
                    tipo, canal, status, data_publicacao, ai_categoria, hot_take_id,
                    url_publicado, criado_em
             FROM editorial_posts
             WHERE status = 'draft'
-            UNION ALL
-            SELECT id, news_title AS article_title, hook AS titulo_adaptado,
-                   linkedin_post AS conteudo_adaptado, news_link AS article_url,
-                   'hot_take' AS tipo, 'linkedin' AS canal, status,
-                   scheduled_for AS data_publicacao, 'Hot Take' AS ai_categoria,
-                   id AS hot_take_id, linkedin_url AS url_publicado, created_at AS criado_em
-            FROM hot_takes
-            WHERE status = 'draft' AND editorial_post_id IS NULL
             ORDER BY criado_em DESC
             LIMIT 20
         """)
@@ -18111,7 +18105,12 @@ async def api_editorial_action_items():
             SELECT ep.id, ep.article_title, ep.titulo_adaptado, ep.ai_categoria, ep.data_publicado,
                    ep.url_publicado, ep.linkedin_post_url, ep.linkedin_impressoes, ep.linkedin_reacoes,
                    ep.linkedin_comentarios,
-                   EXTRACT(EPOCH FROM (NOW() - ep.data_publicado))/3600 AS horas_publicado
+                   EXTRACT(EPOCH FROM (NOW() - ep.data_publicado))/3600 AS horas_publicado,
+                   ARRAY(
+                       SELECT j.d FROM unnest(e.janelas_esperadas) AS j(d)
+                       WHERE NOT (j.d = ANY(COALESCE(c.janelas_coletadas, ARRAY[]::int[])))
+                       ORDER BY j.d
+                   ) AS janelas_faltantes
             FROM editorial_posts ep
             JOIN expected e ON e.id = ep.id
             LEFT JOIN coletadas c ON c.post_id = ep.id
@@ -18423,6 +18422,7 @@ async def cron_editorial_weekly_briefing(request: Request):
 @app.post("/api/editorial/{post_id}/metrics")
 async def api_editorial_post_metrics(post_id: int, request: Request):
     """Save metrics for an editorial post (manual or from xlsx upload)"""
+    global _editorial_action_items_cache
     data = await request.json()
 
     with get_db() as conn:
@@ -18480,11 +18480,147 @@ async def api_editorial_post_metrics(post_id: int, request: Request):
 
         conn.commit()
 
+    # Invalida cache do action-items pra refletir mudanca imediata no drill
+    _editorial_action_items_cache = {"data": None, "timestamp": None}
+
     return {
         "status": "success",
         "post_id": post_id,
         "history_id": history_id,
         "dias_apos_publicacao": dias_apos
+    }
+
+
+@app.get("/api/editorial/posts/{post_id}/metrics-snapshot")
+async def api_editorial_metrics_snapshot_get(post_id: int, dias_apos_publicacao: int = None):
+    """Retorna ultimo snapshot pra janela (pre-popular modal). Sem janela, retorna o
+    snapshot mais recente. Tambem inclui janelas_faltantes pra esse post."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, data_publicado, article_title, titulo_adaptado, linkedin_post_url,
+                   url_publicado
+            FROM editorial_posts WHERE id = %s
+        """, (post_id,))
+        post = cursor.fetchone()
+        if not post:
+            raise HTTPException(status_code=404, detail="Post nao encontrado")
+        last = None
+        if dias_apos_publicacao is not None:
+            cursor.execute("""
+                SELECT impressoes, reacoes, comentarios, compartilhamentos, salvamentos,
+                       dias_apos_publicacao, coletado_em
+                FROM editorial_metrics_history
+                WHERE post_id = %s AND dias_apos_publicacao = %s
+                ORDER BY coletado_em DESC LIMIT 1
+            """, (post_id, dias_apos_publicacao))
+            row = cursor.fetchone()
+            if row:
+                last = dict(row)
+        # janelas_faltantes pro post (mesma logica do action-items)
+        janelas_faltantes = []
+        if post.get('data_publicado'):
+            cursor.execute("""
+                WITH expected AS (
+                    SELECT ARRAY(
+                        SELECT d FROM (VALUES (0),(1),(3),(7)) AS v(d)
+                        WHERE d <= FLOOR(EXTRACT(EPOCH FROM (NOW() - %s::timestamp)) / 86400)::int
+                    ) AS janelas_esperadas
+                ),
+                coletadas AS (
+                    SELECT ARRAY_AGG(DISTINCT dias_apos_publicacao) AS janelas_coletadas
+                    FROM editorial_metrics_history
+                    WHERE post_id = %s AND dias_apos_publicacao IS NOT NULL
+                )
+                SELECT ARRAY(
+                    SELECT j.d FROM unnest(e.janelas_esperadas) AS j(d)
+                    WHERE NOT (j.d = ANY(COALESCE(c.janelas_coletadas, ARRAY[]::int[])))
+                    ORDER BY j.d
+                ) AS faltantes
+                FROM expected e CROSS JOIN coletadas c
+            """, (post['data_publicado'], post_id))
+            row = cursor.fetchone()
+            if row and row.get('faltantes'):
+                janelas_faltantes = list(row['faltantes'])
+        post_dict = dict(post)
+        for k in ('data_publicado',):
+            if post_dict.get(k) and hasattr(post_dict[k], 'isoformat'):
+                post_dict[k] = post_dict[k].isoformat()
+        if last and last.get('coletado_em') and hasattr(last['coletado_em'], 'isoformat'):
+            last['coletado_em'] = last['coletado_em'].isoformat()
+    return {
+        "post": post_dict,
+        "ultimo_snapshot": last,
+        "janelas_faltantes": janelas_faltantes,
+    }
+
+
+@app.post("/api/editorial/posts/{post_id}/metrics-snapshot")
+async def api_editorial_metrics_snapshot_save(post_id: int, request: Request):
+    """Registra snapshot de metricas pra janela especifica em editorial_metrics_history.
+    Atomico: DELETE existente da mesma (post_id, dias_apos_publicacao) + INSERT novo.
+    Tambem refresha campos linkedin_* em editorial_posts (ultima janela vence)."""
+    global _editorial_action_items_cache
+    data = await request.json()
+    dias_apos = data.get('dias_apos_publicacao')
+    if dias_apos is None:
+        raise HTTPException(status_code=400, detail="dias_apos_publicacao obrigatorio")
+    try:
+        dias_apos = int(dias_apos)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="dias_apos_publicacao invalido")
+
+    impressoes = int(data.get('impressoes') or 0)
+    reacoes = int(data.get('reacoes') or 0)
+    comentarios = int(data.get('comentarios') or 0)
+    compartilhamentos = int(data.get('compartilhamentos') or 0)
+    salvamentos = int(data.get('salvamentos') or 0)
+    fonte = data.get('fonte', 'manual')
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, data_publicado FROM editorial_posts WHERE id = %s", (post_id,))
+        post = cursor.fetchone()
+        if not post:
+            raise HTTPException(status_code=404, detail="Post nao encontrado")
+
+        # Atomico: remove snapshot anterior pra mesma janela + insere novo
+        cursor.execute("""
+            DELETE FROM editorial_metrics_history
+            WHERE post_id = %s AND dias_apos_publicacao = %s
+        """, (post_id, dias_apos))
+        cursor.execute("""
+            INSERT INTO editorial_metrics_history (
+                post_id, impressoes, reacoes, comentarios, compartilhamentos,
+                salvamentos, dias_apos_publicacao, fonte
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (post_id, impressoes, reacoes, comentarios, compartilhamentos,
+              salvamentos, dias_apos, fonte))
+        history_id = cursor.fetchone()['id']
+
+        # Atualiza editorial_posts com ultimo snapshot conhecido (qualquer janela)
+        cursor.execute("""
+            UPDATE editorial_posts
+            SET linkedin_impressoes = %s,
+                linkedin_reacoes = %s,
+                linkedin_comentarios = %s,
+                linkedin_compartilhamentos = %s,
+                linkedin_metricas_em = CURRENT_TIMESTAMP,
+                atualizado_em = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (impressoes, reacoes, comentarios, compartilhamentos, post_id))
+
+        conn.commit()
+
+    # Invalida cache do action-items pra refletir mudanca imediata no drill
+    _editorial_action_items_cache = {"data": None, "timestamp": None}
+
+    return {
+        "status": "success",
+        "post_id": post_id,
+        "history_id": history_id,
+        "dias_apos_publicacao": dias_apos,
     }
 
 
