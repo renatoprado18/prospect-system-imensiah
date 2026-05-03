@@ -4252,7 +4252,8 @@ async def contacts_needs_attention(limit: int = Query(30, le=500)):
                     "topicos": row["topicos"] or []
                 })
 
-        # Fetch pending tasks for these contacts
+        # Fetch pending tasks for these contacts.
+        # Filtra RACIs onde Renato nao e o R (monitoria, nao acao do user).
         tasks_by_contact = {}
         if contact_ids:
             cursor.execute(f"""
@@ -4260,6 +4261,8 @@ async def contacts_needs_attention(limit: int = Query(30, le=500)):
                 FROM tasks
                 WHERE contact_id IN ({placeholders})
                   AND status = 'pending'
+                  AND (origem IS DISTINCT FROM 'conselhoos_raci'
+                       OR contact_id = (SELECT contact_id FROM users WHERE id = 1))
                 ORDER BY contact_id, data_vencimento ASC NULLS LAST
             """, contact_ids)
             for row in cursor.fetchall():
@@ -16913,12 +16916,15 @@ async def api_contact_attention_context(contact_id: int):
                 conn.rollback()
 
             # --- TASKS pendentes (vencidas primeiro) ---
+            # Filtra RACIs onde Renato nao e o R (monitoria, nao acao do user).
             try:
                 cursor.execute(
                     """
                     SELECT id, titulo, data_vencimento, prioridade, project_id
                     FROM tasks
                     WHERE contact_id = %s AND status = 'pending'
+                      AND (origem IS DISTINCT FROM 'conselhoos_raci'
+                           OR contact_id = (SELECT contact_id FROM users WHERE id = 1))
                     ORDER BY
                         CASE WHEN data_vencimento IS NULL THEN 1 ELSE 0 END,
                         data_vencimento ASC,

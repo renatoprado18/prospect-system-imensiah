@@ -989,6 +989,8 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
         hoje = datetime.now().date()
 
         # === BUSCAR TAREFAS PENDENTES POR CONTATO ===
+        # Filtra RACIs onde Renato nao e o R (monitoria via WhatsApp, nao acao do user).
+        # Mesmo padrao usado em projects.py (tasks_vencidas) e /api/projects/overdue-count.
         tarefas_por_contato = {}
         try:
             cursor.execute("""
@@ -996,6 +998,8 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
                        MIN(data_vencimento) as proxima_vencimento
                 FROM tasks
                 WHERE status = 'pending' AND contact_id IS NOT NULL
+                  AND (origem IS DISTINCT FROM 'conselhoos_raci'
+                       OR contact_id = (SELECT contact_id FROM users WHERE id = 1))
                 GROUP BY contact_id
             """)
             for row in cursor.fetchall():
