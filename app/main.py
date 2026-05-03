@@ -3982,11 +3982,12 @@ _cron_trigger_last: Dict[str, datetime] = {}
 @app.post("/api/admin/cron-runs/trigger")
 async def cron_runs_trigger(
     body: CronTriggerBody,
+    background_tasks: BackgroundTasks,
     user: dict = Depends(require_admin),
 ):
-    """Dispara um cron interno (HTTP GET com header CRON_SECRET) em
-    fire-and-forget. NAO espera o cron terminar — retorna assim que conexao
-    e estabelecida.
+    """Dispara um cron interno via BackgroundTasks (executa pos-response,
+    garantindo que Vercel nao mate a tarefa). Strip no CRON_SECRET pra
+    consistencia com verify_cron_auth.
 
     Rate-limit: 1 disparo por path a cada 10min (em memoria, por instancia).
     """
@@ -4011,7 +4012,7 @@ async def cron_runs_trigger(
         raise HTTPException(status_code=404, detail="cron path nao encontrado em vercel.json nem em .github/workflows/")
 
     base_url = os.getenv("BASE_URL", "https://intel.almeida-prado.com")
-    cron_secret = os.getenv("CRON_SECRET", "")
+    cron_secret = os.getenv("CRON_SECRET", "").strip()
     headers = {"User-Agent": "intel-manual-trigger/1.0"}
     if cron_secret:
         headers["Authorization"] = f"Bearer {cron_secret}"
@@ -4020,16 +4021,16 @@ async def cron_runs_trigger(
 
     async def _fire():
         try:
-            # connect timeout curto, read timeout LONGO — cron pode demorar.
-            # Como fire-and-forget, mesmo se ler/escrever o servidor ja iniciou.
             timeout = httpx.Timeout(connect=5.0, read=300.0, write=10.0, pool=5.0)
             async with httpx.AsyncClient(timeout=timeout) as client:
-                await client.get(target_url, headers=headers)
+                resp = await client.get(target_url, headers=headers)
+                logging.info(f"cron trigger {target_path} -> http {resp.status_code}")
         except Exception as e:
             logging.warning(f"cron trigger fire-and-forget {target_path}: {e}")
 
-    # fire-and-forget — nao espera resposta
-    asyncio.create_task(_fire())
+    # BackgroundTasks roda pos-response mas antes do Vercel terminar a function.
+    # asyncio.create_task era killed em alguns cenarios em serverless.
+    background_tasks.add_task(_fire)
 
     return {"status": "triggered", "path": target_path, "url": target_url}
 
