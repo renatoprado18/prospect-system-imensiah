@@ -47,12 +47,12 @@
             gap: 10px;
         }
 
-        /* Stats Cards - Compact */
+        /* Stats Cards - Ultra Compact (linha horizontal) */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(7, 1fr);
-            gap: 10px;
-            margin-bottom: 16px;
+            gap: 8px;
+            margin-bottom: 12px;
         }
 
         /* Statcard estado muted (count = 0) — discreto, ainda clicavel */
@@ -69,15 +69,17 @@
 
         .stat-card {
             background: white;
-            border-radius: 12px;
-            padding: 12px 14px;
+            border-radius: 10px;
+            padding: 8px 10px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.04);
             transition: all 0.2s;
             display: flex;
-            flex-direction: column;
-            gap: 2px;
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
             position: relative;
             min-width: 0;
+            min-height: 0;
         }
 
         .stat-card:hover {
@@ -86,16 +88,14 @@
         }
 
         .stat-icon {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            width: 26px;
-            height: 26px;
+            position: static;
+            width: 28px;
+            height: 28px;
             border-radius: 7px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
             flex-shrink: 0;
             opacity: 0.85;
         }
@@ -110,21 +110,34 @@
             min-width: 0;
             display: flex;
             flex-direction: column;
-            gap: 2px;
-            padding-right: 32px;
+            gap: 0;
+            padding-right: 0;
+        }
+
+        /* Linha 1: numero + label inline */
+        .stat-headline {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            min-width: 0;
         }
 
         .stat-value {
-            font-size: 1.5rem;
+            font-size: 1.35rem;
             font-weight: 700;
             color: var(--dark);
-            line-height: 1.1;
+            line-height: 1.05;
+            flex-shrink: 0;
         }
 
         .stat-label {
-            font-size: 0.72rem;
+            font-size: 0.7rem;
             color: var(--gray-500);
-            line-height: 1.25;
+            line-height: 1.15;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
         }
 
         .stat-change {
@@ -433,10 +446,11 @@
 
         @media (max-width: 768px) {
             .main-content { margin-left: 0; padding: 60px 12px 16px 12px; }
-            .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-            .stat-card { padding: 10px 12px; }
-            .stat-value { font-size: 1.1rem; }
-            .stat-label { font-size: 0.7rem; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+            .stat-card { padding: 6px 8px; gap: 6px; }
+            .stat-icon { width: 24px; height: 24px; font-size: 0.85rem; }
+            .stat-value { font-size: 1.05rem; }
+            .stat-label { font-size: 0.65rem; }
             .morning-briefing { padding: 14px; }
             .morning-briefing-greeting { font-size: 1.1rem; }
             .morning-briefing-summary { font-size: 0.9rem; }
@@ -1787,13 +1801,13 @@
         .stat-card.drill-active::after {
             content: '';
             position: absolute;
-            bottom: -10px;
+            bottom: -7px;
             left: 50%;
             transform: translateX(-50%);
             width: 0; height: 0;
-            border-left: 9px solid transparent;
-            border-right: 9px solid transparent;
-            border-top: 9px solid var(--drill-color, #6366f1);
+            border-left: 7px solid transparent;
+            border-right: 7px solid transparent;
+            border-top: 7px solid var(--drill-color, #6366f1);
             z-index: 2;
         }
         #workbench {
@@ -2015,20 +2029,21 @@
             padding-top: 3px;
         }
         .drill-project-stats span { display: inline-flex; align-items: center; gap: 2px; }
-        /* Statcard breakdown pills (Fase 4 polish) */
+        /* Statcard breakdown pills (Fase 4 polish) — inline, ultra compacto */
         .stat-breakdown {
             display: flex;
-            gap: 4px;
-            margin-top: 4px;
+            gap: 3px;
+            margin-top: 2px;
             flex-wrap: wrap;
+            min-width: 0;
         }
         .stat-breakdown .pill {
             display: inline-flex;
             align-items: center;
-            gap: 3px;
-            padding: 1px 6px;
-            border-radius: 8px;
-            font-size: 0.65rem;
+            gap: 2px;
+            padding: 0 5px;
+            border-radius: 7px;
+            font-size: 0.6rem;
             font-weight: 600;
             background: var(--gray-100, #f1f5f9);
             color: var(--gray-500, #64748b);
@@ -2038,7 +2053,7 @@
         .stat-breakdown .pill.warning { background: #fef3c7; color: #b45309; }
         .stat-breakdown .pill.info { background: #dbeafe; color: #1d4ed8; }
         .stat-breakdown .pill.muted { opacity: 0.55; }
-        .stat-breakdown .pill i { font-size: 0.7rem; }
+        .stat-breakdown .pill i { font-size: 0.65rem; }
 {% endblock %}
 
 {% block content %}
@@ -2126,58 +2141,72 @@
         </div>
 
 
-        <!-- Stats - Compact clickable cards (drill-down workbench abaixo) -->
+        <!-- Stats - Ultra compact horizontal cards (drill-down workbench abaixo) -->
         <div class="stats-grid">
             <div class="stat-card" style="cursor: pointer;" data-drill="reunioes" onclick="openDrill('reunioes')">
                 <div class="stat-icon" style="background: rgba(99, 102, 241, 0.1); color: #6366f1;"><i class="bi bi-calendar-event"></i></div>
                 <div class="stat-content">
-                    <div class="stat-value" id="statReunioes">-</div>
-                    <div class="stat-label">Reuniões Hoje</div>
+                    <div class="stat-headline">
+                        <div class="stat-value" id="statReunioes">-</div>
+                        <div class="stat-label">Reuniões</div>
+                    </div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer;" data-drill="projetos" onclick="openDrill('projetos')">
                 <div class="stat-icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;"><i class="bi bi-folder2-open"></i></div>
                 <div class="stat-content">
-                    <div class="stat-value" id="statProjectsAction">-</div>
-                    <div class="stat-label">Projetos c/ Atenção</div>
+                    <div class="stat-headline">
+                        <div class="stat-value" id="statProjectsAction">-</div>
+                        <div class="stat-label">Projetos</div>
+                    </div>
                     <div class="stat-breakdown" id="statProjectsBreakdown"></div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer; border-left: 3px solid var(--warning);" data-drill="contatos" onclick="openDrill('contatos')">
                 <div class="stat-icon" style="background: rgba(245, 158, 11, 0.1); color: var(--warning);"><i class="bi bi-exclamation-triangle"></i></div>
                 <div class="stat-content">
-                    <div class="stat-value" id="statAtencao">-</div>
-                    <div class="stat-label">Contatos c/ Atenção</div>
+                    <div class="stat-headline">
+                        <div class="stat-value" id="statAtencao">-</div>
+                        <div class="stat-label">Atenção</div>
+                    </div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer;" data-drill="tarefas" onclick="openDrill('tarefas')">
                 <div class="stat-icon" style="background: rgba(239, 68, 68, 0.1); color: #ef4444;"><i class="bi bi-exclamation-circle"></i></div>
                 <div class="stat-content">
-                    <div class="stat-value" id="statTasksOverdue">-</div>
-                    <div class="stat-label">Tarefas Vencidas</div>
+                    <div class="stat-headline">
+                        <div class="stat-value" id="statTasksOverdue">-</div>
+                        <div class="stat-label">Vencidas</div>
+                    </div>
                     <div class="stat-breakdown" id="statTasksBreakdown"></div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer;" data-drill="editorial" onclick="openDrill('editorial')">
                 <div class="stat-icon" style="background: rgba(34, 197, 94, 0.1); color: #22c55e;"><i class="bi bi-megaphone"></i></div>
                 <div class="stat-content">
-                    <div class="stat-value" id="statEditorial">-</div>
-                    <div class="stat-label">Editorial</div>
+                    <div class="stat-headline">
+                        <div class="stat-value" id="statEditorial">-</div>
+                        <div class="stat-label">Editorial</div>
+                    </div>
                     <div class="stat-breakdown" id="statEditorialBreakdown"></div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer;" data-drill="clipping" onclick="openDrill('clipping')">
                 <div class="stat-icon" style="background: rgba(245, 158, 11, 0.1); color: #f59e0b;"><i class="bi bi-newspaper"></i></div>
                 <div class="stat-content">
-                    <div class="stat-value" id="statClipping">-</div>
-                    <div class="stat-label">Clipping</div>
+                    <div class="stat-headline">
+                        <div class="stat-value" id="statClipping">-</div>
+                        <div class="stat-label">Clipping</div>
+                    </div>
                 </div>
             </div>
             <div class="stat-card" style="cursor: pointer;" data-drill="veiculos" onclick="openDrill('veiculos')">
                 <div class="stat-icon" style="background: rgba(107, 114, 128, 0.1); color: #6b7280;"><i class="bi bi-car-front"></i></div>
                 <div class="stat-content">
-                    <div class="stat-value" id="statVeiculos">-</div>
-                    <div class="stat-label">Alertas Veículos</div>
+                    <div class="stat-headline">
+                        <div class="stat-value" id="statVeiculos">-</div>
+                        <div class="stat-label">Veículos</div>
+                    </div>
                     <div class="stat-breakdown" id="statVeiculosBreakdown"></div>
                 </div>
             </div>
@@ -4482,6 +4511,7 @@
             const failing = s.failing || 0;
             const stuck = s.stuck || 0;
             const late = s.late || 0;
+            const atrasado = s.atrasado || 0;
 
             pill.style.display = 'inline-flex';
             pill.style.alignItems = 'center';
@@ -4502,11 +4532,12 @@
                     txt = failing + ' cron' + (failing > 1 ? 's' : '') + ' com erro';
                 }
                 pill.innerHTML = '<i class="bi bi-exclamation-octagon-fill" style="font-size:0.85em;"></i> <span id="cronHealthLabel">' + txt + '</span>';
-            } else if (late > 0) {
+            } else if (atrasado > 0 || late > 0) {
                 pill.style.background = '#fef3c7';
                 pill.style.color = '#b45309';
                 pill.style.borderColor = '#fde68a';
-                pill.innerHTML = '<i class="bi bi-clock-history" style="font-size:0.85em;"></i> <span id="cronHealthLabel">' + late + ' cron' + (late > 1 ? 's' : '') + ' em atraso</span>';
+                const total = atrasado + late;
+                pill.innerHTML = '<i class="bi bi-clock-history" style="font-size:0.85em;"></i> <span id="cronHealthLabel">' + total + ' cron' + (total > 1 ? 's' : '') + ' atrasado' + (total > 1 ? 's' : '') + '</span>';
             } else {
                 pill.style.background = '#dcfce7';
                 pill.style.color = '#15803d';
@@ -4529,6 +4560,81 @@
             if (modal) modal.style.display = 'none';
         }
 
+        // Estado UI: filtro "so problemas" (default ligado)
+        let _cronOnlyProblems = true;
+
+        function _cronCssBtn(variant) {
+            // variant: 'run' (azul) | 'clean' (vermelho) | 'top' (cinza)
+            const base = 'padding:4px 8px; font-size:0.72rem; font-weight:600; border-radius:6px; cursor:pointer; border:1px solid; transition:all 0.12s; display:inline-flex; align-items:center; gap:4px; line-height:1;';
+            if (variant === 'run') {
+                return base + ' background:#fff; color:#1d4ed8; border-color:#bfdbfe;';
+            }
+            if (variant === 'clean') {
+                return base + ' background:#fff; color:#b91c1c; border-color:#fecaca;';
+            }
+            return base + ' background:#f1f5f9; color:#334155; border-color:#cbd5e1;';
+        }
+
+        async function triggerCron(path, btn) {
+            if (!confirm('Disparar cron agora?\n\n' + path + '\n\n(roda em segundo plano — pode levar minutos. Evite disparar varias vezes.)')) return;
+            const orig = btn ? btn.innerHTML : null;
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i> ...'; }
+            try {
+                const res = await fetch('/api/admin/cron-runs/trigger', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: path })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    const msg = data.detail || ('erro ' + res.status);
+                    if (typeof showToast === 'function') showToast('Falha ao disparar: ' + msg, 'danger');
+                    else alert('Falha ao disparar: ' + msg);
+                } else {
+                    if (typeof showToast === 'function') showToast('Disparado: ' + path, 'success');
+                    else alert('Disparado: ' + path);
+                }
+            } catch (err) {
+                console.warn('trigger cron falhou:', err);
+                if (typeof showToast === 'function') showToast('Falha de rede ao disparar', 'danger');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = orig || '<i class="bi bi-play-fill"></i> Rodar';
+                }
+            }
+        }
+
+        async function clearStuckCrons(path) {
+            const label = path ? ('cron travado em ' + path) : 'TODOS os crons travados';
+            if (!confirm('Limpar ' + label + '?\n\n(Marca como timeout — nao executa nada novo.)')) return;
+            try {
+                const url = path
+                    ? '/api/admin/cron-runs/clear-stuck?path=' + encodeURIComponent(path)
+                    : '/api/admin/cron-runs/clear-stuck';
+                const res = await fetch(url, { method: 'POST', credentials: 'same-origin' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    if (typeof showToast === 'function') showToast('Falha: ' + (data.detail || res.status), 'danger');
+                    else alert('Falha: ' + (data.detail || res.status));
+                    return;
+                }
+                if (typeof showToast === 'function') showToast('Limpos: ' + (data.cleaned || 0), 'success');
+                // refresh
+                await loadCronHealth();
+                renderCronHealthModalBody(_cronHealthCache);
+            } catch (err) {
+                console.warn('clear stuck falhou:', err);
+                if (typeof showToast === 'function') showToast('Falha de rede ao limpar travados', 'danger');
+            }
+        }
+
+        function toggleCronProblemsFilter(checkbox) {
+            _cronOnlyProblems = !!(checkbox && checkbox.checked);
+            renderCronHealthModalBody(_cronHealthCache);
+        }
+
         function renderCronHealthModalBody(data) {
             const body = document.getElementById('cronHealthBody');
             const sub = document.getElementById('cronHealthSubtitle');
@@ -4539,25 +4645,46 @@
             }
             const s = data.summary || {};
             if (sub) {
-                sub.textContent = (s.healthy || 0) + ' OK · ' + (s.late || 0) + ' atrasados · '
+                sub.textContent = (s.healthy || 0) + ' OK · '
+                    + ((s.atrasado || 0) + (s.late || 0)) + ' atrasados · '
                     + (s.failing || 0) + ' com erro · ' + (s.stuck || 0) + ' travados · '
                     + (s.unknown || 0) + ' sem dados';
             }
             const colorByHealth = {
-                healthy: '#22c55e', late: '#f59e0b', failing: '#ef4444',
-                stuck: '#dc2626', unknown: '#94a3b8'
+                healthy: '#22c55e', late: '#f59e0b', atrasado: '#f59e0b',
+                failing: '#ef4444', stuck: '#dc2626', unknown: '#94a3b8'
             };
             const iconByHealth = {
                 healthy: 'bi-check-circle-fill', late: 'bi-clock-history',
+                atrasado: 'bi-clock-history',
                 failing: 'bi-exclamation-octagon-fill',
                 stuck: 'bi-hourglass-split', unknown: 'bi-question-circle'
             };
             const labelByHealth = {
-                healthy: 'OK', late: 'atrasado', failing: 'erro',
-                stuck: 'travado', unknown: 'sem dados'
+                healthy: 'OK', late: 'atrasado', atrasado: 'atrasado',
+                failing: 'erro', stuck: 'travado', unknown: 'sem dados'
             };
 
-            const rows = (data.crons || []).map(c => {
+            // Header com filtro + botao "limpar travados"
+            const stuckCount = s.stuck || 0;
+            const headerActions = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 6px 12px; border-bottom:1px solid #e5e7eb; margin-bottom:6px; flex-wrap:wrap;">
+                    <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.78rem; color:#475569; cursor:pointer; user-select:none;">
+                        <input type="checkbox" ${_cronOnlyProblems ? 'checked' : ''} onchange="toggleCronProblemsFilter(this)" style="cursor:pointer;">
+                        So problemas
+                    </label>
+                    ${stuckCount > 0 ? `<button type="button" onclick="clearStuckCrons()" style="${_cronCssBtn('clean')}" title="Marca todos os cron_runs travados como timeout">
+                        <i class="bi bi-eraser-fill"></i> Limpar travados (${stuckCount})
+                    </button>` : ''}
+                </div>
+            `;
+
+            const allCrons = (data.crons || []);
+            const visibleCrons = _cronOnlyProblems
+                ? allCrons.filter(c => c.health !== 'healthy' && c.health !== 'unknown')
+                : allCrons;
+
+            const rows = visibleCrons.map(c => {
                 const lr = c.last_run;
                 const lastWhen = lr && lr.started_at
                     ? new Date(lr.started_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
@@ -4568,13 +4695,26 @@
                 const errLine = (lr && lr.status === 'error' && lr.error_message)
                     ? '<div style="color:#b91c1c; font-size:0.72rem; margin-top:3px; font-family:monospace; white-space:pre-wrap; max-height:60px; overflow:auto;">' + escapeHtml(lr.error_message.slice(0, 300)) + '</div>'
                     : '';
+                const expectedTodayBadge = c.expected_today
+                    ? '<span style="background:#fef3c7; color:#b45309; padding:1px 6px; border-radius:8px; font-size:0.65rem; font-weight:600; margin-left:4px;">esperado hoje</span>'
+                    : '';
+                const stuckBtn = c.health === 'stuck'
+                    ? `<button type="button" onclick="clearStuckCrons('${escapeHtml(c.path)}')" style="${_cronCssBtn('clean')}" title="Limpar este cron travado">
+                        <i class="bi bi-eraser-fill"></i>
+                    </button>`
+                    : '';
+                const safePath = escapeHtml(c.path);
+                const runBtn = `<button type="button" onclick="triggerCron('${safePath}', this)" style="${_cronCssBtn('run')}" title="Disparar agora (fire-and-forget)">
+                    <i class="bi bi-play-fill"></i> Rodar
+                </button>`;
                 return `
                     <div style="display:flex; align-items:flex-start; gap:10px; padding:10px 6px; border-bottom:1px solid #f1f5f9;">
-                        <i class="bi ${iconByHealth[c.health]}" style="color:${colorByHealth[c.health]}; font-size:1rem; margin-top:2px;"></i>
+                        <i class="bi ${iconByHealth[c.health] || 'bi-question-circle'}" style="color:${colorByHealth[c.health] || '#94a3b8'}; font-size:1rem; margin-top:2px;"></i>
                         <div style="flex:1; min-width:0;">
                             <div style="display:flex; gap:8px; align-items:baseline; flex-wrap:wrap;">
-                                <span style="font-weight:600; color:#0f172a; font-size:0.86rem;">${escapeHtml(c.path)}</span>
+                                <span style="font-weight:600; color:#0f172a; font-size:0.86rem;">${safePath}</span>
                                 <span style="font-size:0.72rem; color:#94a3b8;">${escapeHtml(c.schedule_description || c.schedule || '')}</span>
+                                ${expectedTodayBadge}
                             </div>
                             <div style="font-size:0.74rem; color:#64748b; margin-top:2px;">
                                 Ultimo: <strong>${escapeHtml(lastWhen)}</strong> · ${lr ? lr.status : 'nunca rodou'} ${lastDur ? '· ' + lastDur : ''}${rowsAffected}
@@ -4584,12 +4724,22 @@
                             </div>
                             ${errLine}
                         </div>
-                        <span style="font-size:0.7rem; color:${colorByHealth[c.health]}; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">${labelByHealth[c.health]}</span>
+                        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px; min-width:90px;">
+                            <span style="font-size:0.68rem; color:${colorByHealth[c.health] || '#94a3b8'}; font-weight:700; text-transform:uppercase; letter-spacing:0.05em;">${labelByHealth[c.health] || 'desconhecido'}</span>
+                            <div style="display:flex; gap:4px;">
+                                ${stuckBtn}
+                                ${runBtn}
+                            </div>
+                        </div>
                     </div>
                 `;
             }).join('');
 
-            body.innerHTML = rows || '<div style="padding:20px; text-align:center; color:#94a3b8;">nenhum cron configurado</div>';
+            const empty = _cronOnlyProblems && allCrons.length > 0 && visibleCrons.length === 0
+                ? '<div style="padding:24px; text-align:center; color:#15803d; font-size:0.85rem;"><i class="bi bi-check-circle"></i> nenhum problema nos crons</div>'
+                : '<div style="padding:20px; text-align:center; color:#94a3b8;">nenhum cron configurado</div>';
+
+            body.innerHTML = headerActions + (rows || empty);
         }
 
         function escapeHtml(str) {
@@ -4798,18 +4948,28 @@
                     const renderColetar = (p) => {
                         const titulo = p.titulo_adaptado || p.article_title || '(sem título)';
                         const horas = Math.round(p.horas_publicado || 0);
-                        const faltantes = Array.isArray(p.janelas_faltantes) ? p.janelas_faltantes : [];
-                        // janelas_faltantes pode vir em horas (novo: 1/6/24/72/168) ou dias (legado: 0/1/3/7).
-                        // Detecta: se max > 7 entao eh em horas.
-                        const isHoras = faltantes.some(v => v > 7);
-                        const fmt = (v) => isHoras ? (v < 24 ? v + 'h' : Math.round(v/24) + 'd') : (v === 0 ? '0d' : v + 'd');
-                        const faltantesLabel = faltantes.length
-                            ? 'Falta ' + faltantes.map(fmt).join(', ')
-                            : 'Coletar métricas';
-                        // Mini curve SVG: 5 barras (1h/6h/24h/72h/168h). Sem dados ainda
-                        // (lista do action-items nao traz snapshots) — barras esbatidas
-                        // pra cada janela ja vencida; intensa pras coletadas. O modal
-                        // mostra a curve real depois.
+                        // Backend agora retorna: janelas{}, proxima_acao, urgente
+                        // (com fallback pra janelas_faltantes legado se vier de cliente antigo).
+                        const proxima = p.proxima_acao || null;
+                        const urgente = !!p.urgente;
+                        // Badge unico: refletir SO a proxima acao imediata.
+                        let badgeClass, badgeIcon, badgeLabel;
+                        if (urgente && proxima) {
+                            badgeClass = 'danger';
+                            badgeIcon = 'bi-exclamation-triangle-fill';
+                            badgeLabel = `Coletar ${proxima} agora`;
+                        } else if (proxima) {
+                            badgeClass = 'warning';
+                            badgeIcon = 'bi-hourglass-split';
+                            badgeLabel = `Janela ${proxima} aberta`;
+                        } else {
+                            // Fallback (nao deveria acontecer — backend filtra)
+                            badgeClass = 'info';
+                            badgeIcon = 'bi-graph-up';
+                            badgeLabel = 'Coletar métricas';
+                        }
+                        // Mini curve: 5 quadradinhos coloridos por status.
+                        // Tooltip resume todos os status pro hover.
                         const sparkline = renderJanelasMiniCurve(p);
                         // Click abre modal de input de metricas (nao mais navega pro post)
                         return `<div class="drill-project-row type-conselho" onclick="openMetricsInputModal(${p.id}, 'drill')" style="cursor:pointer;">
@@ -4819,7 +4979,7 @@
                             </div>
                             <div class="drill-project-urgency-info" style="display:flex; gap:6px; align-items:center;">
                                 ${sparkline}
-                                <span class="drill-urgency-badge info"><i class="bi bi-graph-up"></i> ${escapeHtml(faltantesLabel)}</span>
+                                <span class="drill-urgency-badge ${badgeClass}"><i class="bi ${badgeIcon}"></i> ${escapeHtml(badgeLabel)}</span>
                             </div>
                         </div>`;
                     };
@@ -5357,53 +5517,70 @@
             }
         }
 
-        // ============== Mini curve SVG: 5 barras (1h/6h/24h/72h/168h) ==============
-        // Render quick visual hint pro drill. Dados reais virao do /timeline endpoint
-        // quando o modal abrir. Aqui usamos heuristica: barras intensas pras janelas
-        // ja coletadas (deduzido por janelas_faltantes), esbatidas pras pendentes.
+        // ============== Mini curve SVG: 5 quadradinhos (1h/6h/24h/72h/168h) ==============
+        // Cores por status (vem do backend em p.janelas):
+        //   coletada -> verde solido (#22c55e)
+        //   perdida  -> cinza        (#94a3b8)
+        //   aberta   -> amarelo      (#fbbf24)  (proxima acao)
+        //   futura   -> cinza claro  (#e2e8f0)
+        // Fallback pra payload legado (janelas_faltantes em horas/dias).
         function renderJanelasMiniCurve(p) {
-            const horas = Number(p.horas_publicado || 0);
-            const allW = [
-                {k: '1h',   h: 1},
-                {k: '6h',   h: 6},
-                {k: '24h',  h: 24},
-                {k: '72h',  h: 72},
-                {k: '168h', h: 168},
-            ];
-            const faltantes = Array.isArray(p.janelas_faltantes) ? p.janelas_faltantes : [];
-            // Detecta unidade: dias (legado: 0/1/3/7) vs horas (1/6/24/72/168)
-            const isHoras = faltantes.some(v => v > 7);
-            const faltMap = {};
-            if (isHoras) {
-                faltantes.forEach(h => {
-                    const w = allW.find(x => x.h === h);
-                    if (w) faltMap[w.k] = true;
+            const order = ['1h','6h','24h','72h','168h'];
+            const janelas = p.janelas && typeof p.janelas === 'object' ? p.janelas : null;
+            const statusByJ = {};
+            if (janelas) {
+                order.forEach(j => {
+                    statusByJ[j] = (janelas[j] && janelas[j].status) || 'futura';
                 });
             } else {
-                // Mapeamento legado dias -> janela mais proxima
-                faltantes.forEach(d => {
-                    if (d === 0 || d === 1) faltMap['24h'] = true;
-                    else if (d === 3) faltMap['72h'] = true;
-                    else if (d === 7) faltMap['168h'] = true;
+                // Legado: deriva status de janelas_faltantes + horas_publicado
+                const horas = Number(p.horas_publicado || 0);
+                const allH = {'1h':1,'6h':6,'24h':24,'72h':72,'168h':168};
+                const faltantes = Array.isArray(p.janelas_faltantes) ? p.janelas_faltantes : [];
+                const isHoras = faltantes.some(v => v > 7);
+                const faltMap = {};
+                if (isHoras) {
+                    faltantes.forEach(h => {
+                        const k = order.find(j => allH[j] === h);
+                        if (k) faltMap[k] = true;
+                    });
+                } else {
+                    faltantes.forEach(d => {
+                        if (d === 0 || d === 1) faltMap['24h'] = true;
+                        else if (d === 3) faltMap['72h'] = true;
+                        else if (d === 7) faltMap['168h'] = true;
+                    });
+                }
+                order.forEach(j => {
+                    const vencida = horas >= allH[j];
+                    if (!vencida) statusByJ[j] = 'futura';
+                    else if (faltMap[j]) statusByJ[j] = 'aberta';
+                    else statusByJ[j] = 'coletada';
                 });
             }
-            const W = 50, H = 18, bw = 7, gap = 2;
-            const bars = allW.map((w, i) => {
-                const vencida = horas >= w.h;
-                const pendente = faltMap[w.k];
-                const coletada = vencida && !pendente;
-                let fill = '#cbd5e1';  // ainda nao vencida
-                if (vencida && pendente) fill = '#fbbf24';  // pendente: amarelo
-                else if (coletada) fill = '#3b82f6';  // coletada: azul
-                // Barra cresce pra simular curva de alcance: 1h pequena, escalando
-                const heightRatio = [0.3, 0.55, 0.75, 0.88, 1.0][i];
-                const h = Math.round(H * heightRatio);
-                const x = i * (bw + gap);
-                const y = H - h;
-                return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" fill="${fill}" rx="1"/>`;
+            const colors = {
+                coletada: '#22c55e',
+                perdida:  '#94a3b8',
+                aberta:   '#fbbf24',
+                futura:   '#e2e8f0',
+            };
+            const labels = {
+                coletada: 'coletada',
+                perdida:  'perdida',
+                aberta:   'aberta',
+                futura:   'futura',
+            };
+            const sz = 10, gap = 3;
+            const totalW = order.length * (sz + gap) - gap;
+            const H = sz;
+            const bars = order.map((j, i) => {
+                const st = statusByJ[j] || 'futura';
+                const fill = colors[st];
+                const x = i * (sz + gap);
+                return `<rect x="${x}" y="0" width="${sz}" height="${sz}" fill="${fill}" rx="2"/>`;
             }).join('');
-            const totalW = allW.length * (bw + gap) - gap;
-            return `<svg width="${totalW}" height="${H}" viewBox="0 0 ${totalW} ${H}" style="vertical-align:middle;" title="Janelas 1h/6h/24h/72h/168h">${bars}</svg>`;
+            const tooltip = order.map(j => `${j}: ${labels[statusByJ[j] || 'futura']}`).join(' · ');
+            return `<svg width="${totalW}" height="${H}" viewBox="0 0 ${totalW} ${H}" style="vertical-align:middle;"><title>${tooltip}</title>${bars}</svg>`;
         }
 
         // ============== Modal de input de metricas (editorial) ==============

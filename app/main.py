@@ -3650,17 +3650,72 @@ def _load_vercel_crons() -> List[Dict]:
     return []
 
 
+def _expected_today(schedule: str, now_utc: datetime, last_run_started: Optional[datetime]) -> bool:
+    """Retorna True se o cron deveria ter rodado HOJE (UTC) no horario agendado
+    + 30min de tolerancia E ainda nao rodou hoje.
+
+    Cobre:
+    - Diario (1440min): rodou se hora UTC atual >= hora_schedule + 30min e nao tem run hoje
+    - Semanal (10080min): hoje for o dow do schedule + idem horario + sem run hoje
+    Retorna False pra crons sub-diarios (a cada N min/hora) — esses usam logica 'late'.
+    """
+    if not schedule:
+        return False
+    parts = schedule.strip().split()
+    if len(parts) != 5:
+        return False
+    minute_s, hour_s, dom_s, month_s, dow_s = parts
+    interval = _parse_cron_to_minutes(schedule) or 1440
+
+    # so faz sentido pra diario/semanal
+    if interval not in (1440, 10080):
+        return False
+    # se interval >= mensal, ignora
+    try:
+        sched_hour = int(hour_s)
+        sched_min = int(minute_s)
+    except ValueError:
+        return False
+
+    # weekly check: dow tem que bater com hoje (UTC)
+    if interval == 10080:
+        try:
+            sched_dow = int(dow_s)
+        except ValueError:
+            return False
+        # cron dow: 0=dom, 1=seg, ..., 6=sab. python weekday(): 0=seg..6=dom
+        # converter cron dow -> python weekday
+        py_today = now_utc.weekday()  # 0=mon..6=sun
+        py_sched = (sched_dow - 1) % 7  # cron 0(sun)->6, 1(mon)->0, ...
+        if py_today != py_sched:
+            return False
+
+    # janela com 30min de tolerancia
+    today_scheduled = now_utc.replace(hour=sched_hour, minute=sched_min, second=0, microsecond=0)
+    if now_utc < today_scheduled + timedelta(minutes=30):
+        return False  # ainda nao passou da janela
+
+    # ja rodou hoje?
+    if last_run_started is not None:
+        # mesmo dia UTC?
+        if (last_run_started.date() == now_utc.date()
+                and last_run_started >= today_scheduled - timedelta(minutes=5)):
+            return False  # ja rodou hoje no horario certo
+
+    return True
+
+
 @app.get("/api/admin/cron-health")
 async def cron_health(user: dict = Depends(require_admin)):
     """Saude consolidada dos crons — agrega cron_runs (ultimos 7 dias) com
     schedules de vercel.json. Devolve por cron: ultimo run, contagem por
-    status na janela, expected runs, classificacao (healthy/late/failing/unknown).
+    status na janela, expected runs, classificacao (healthy/late/failing/unknown/atrasado).
     """
     crons = _load_vercel_crons()
     now_utc = datetime.utcnow()
 
     out_crons: List[Dict] = []
-    summary = {"healthy": 0, "late": 0, "failing": 0, "stuck": 0, "unknown": 0}
+    summary = {"healthy": 0, "late": 0, "atrasado": 0, "failing": 0, "stuck": 0, "unknown": 0}
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -3738,6 +3793,14 @@ async def cron_health(user: dict = Depends(require_admin)):
                 # nunca rodou — pode ser que telemetria foi adicionada agora
                 health = "unknown"
 
+            # expected_today: era pra ter rodado hoje (UTC + 30min tolerancia)?
+            last_run_started_dt = last_row["started_at"] if last_row else None
+            expected_today = _expected_today(schedule, now_utc, last_run_started_dt)
+
+            # Se era pra ter rodado hoje E nao temos dado de saude bom → atrasado
+            if expected_today and health in ("unknown", "late"):
+                health = "atrasado"
+
             summary[health] = summary.get(health, 0) + 1
 
             out_crons.append({
@@ -3749,11 +3812,12 @@ async def cron_health(user: dict = Depends(require_admin)):
                 "last_run_age_minutes": int(age_minutes) if age_minutes is not None else None,
                 "runs_7d": runs_7d,
                 "expected_runs_7d": expected_7d,
+                "expected_today": expected_today,
                 "health": health,
             })
 
-    # ordem: failing -> stuck -> late -> unknown -> healthy
-    order = {"failing": 0, "stuck": 1, "late": 2, "unknown": 3, "healthy": 4}
+    # ordem: failing -> stuck -> atrasado -> late -> unknown -> healthy
+    order = {"failing": 0, "stuck": 1, "atrasado": 2, "late": 3, "unknown": 4, "healthy": 5}
     out_crons.sort(key=lambda x: (order.get(x["health"], 99), x["path"]))
 
     return {
@@ -3761,6 +3825,117 @@ async def cron_health(user: dict = Depends(require_admin)):
         "crons": out_crons,
         "summary": summary,
     }
+
+
+# ----- Acoes acionaveis pro modal "Saude dos Cron Jobs" -----
+
+class CronTriggerBody(BaseModel):
+    path: str
+
+
+@app.post("/api/admin/cron-runs/clear-stuck")
+async def cron_runs_clear_stuck(
+    path: Optional[str] = None,
+    user: dict = Depends(require_admin),
+):
+    """Marca como 'timeout' os cron_runs orfaos em 'running' ha > 1h
+    (Vercel SIGKILLa funcoes no timeout 300s — _finalize_run nunca executa).
+    Se `path` for fornecido, limpa so daquele cron especifico; senao limpa todos.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if path:
+            cursor.execute(
+                """
+                UPDATE cron_runs
+                SET status='timeout',
+                    error_message='manual cleanup (presumed Vercel SIGKILL)',
+                    finished_at=NOW(),
+                    duration_ms=EXTRACT(EPOCH FROM (NOW() - started_at))*1000
+                WHERE status='running'
+                  AND started_at < NOW() - INTERVAL '1 hour'
+                  AND finished_at IS NULL
+                  AND path = %s
+                RETURNING id, path
+                """,
+                (path,),
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE cron_runs
+                SET status='timeout',
+                    error_message='manual cleanup (presumed Vercel SIGKILL)',
+                    finished_at=NOW(),
+                    duration_ms=EXTRACT(EPOCH FROM (NOW() - started_at))*1000
+                WHERE status='running'
+                  AND started_at < NOW() - INTERVAL '1 hour'
+                  AND finished_at IS NULL
+                RETURNING id, path
+                """
+            )
+        rows = cursor.fetchall()
+        conn.commit()
+    return {"cleaned": len(rows), "paths": [r["path"] for r in rows]}
+
+
+# Rate-limit em memoria pra evitar disparo acidental em loop (1 por path / 10min).
+_cron_trigger_last: Dict[str, datetime] = {}
+
+
+@app.post("/api/admin/cron-runs/trigger")
+async def cron_runs_trigger(
+    body: CronTriggerBody,
+    user: dict = Depends(require_admin),
+):
+    """Dispara um cron interno (HTTP GET com header CRON_SECRET) em
+    fire-and-forget. NAO espera o cron terminar — retorna assim que conexao
+    e estabelecida.
+
+    Rate-limit: 1 disparo por path a cada 10min (em memoria, por instancia).
+    """
+    target_path = (body.path or "").strip()
+    if not target_path or not target_path.startswith("/api/cron/"):
+        raise HTTPException(status_code=400, detail="path invalido (precisa comecar com /api/cron/)")
+
+    # rate-limit
+    now = datetime.utcnow()
+    last = _cron_trigger_last.get(target_path)
+    if last and (now - last).total_seconds() < 600:
+        wait_s = int(600 - (now - last).total_seconds())
+        raise HTTPException(
+            status_code=429,
+            detail=f"rate-limited: aguarde {wait_s}s antes de disparar este cron de novo",
+        )
+    _cron_trigger_last[target_path] = now
+
+    # valida que o path existe em vercel.json (defesa contra path arbitrario)
+    known_paths = {c.get("path") for c in _load_vercel_crons()}
+    if target_path not in known_paths:
+        raise HTTPException(status_code=404, detail="cron path nao encontrado em vercel.json")
+
+    base_url = os.getenv("BASE_URL", "https://intel.almeida-prado.com")
+    cron_secret = os.getenv("CRON_SECRET", "")
+    headers = {"User-Agent": "intel-manual-trigger/1.0"}
+    if cron_secret:
+        headers["Authorization"] = f"Bearer {cron_secret}"
+
+    target_url = f"{base_url.rstrip('/')}{target_path}"
+
+    async def _fire():
+        try:
+            # connect timeout curto, read timeout LONGO — cron pode demorar.
+            # Como fire-and-forget, mesmo se ler/escrever o servidor ja iniciou.
+            timeout = httpx.Timeout(connect=5.0, read=300.0, write=10.0, pool=5.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                await client.get(target_url, headers=headers)
+        except Exception as e:
+            logging.warning(f"cron trigger fire-and-forget {target_path}: {e}")
+
+    # fire-and-forget — nao espera resposta
+    asyncio.create_task(_fire())
+
+    return {"status": "triggered", "path": target_path, "url": target_url}
 
 
 @app.get("/api/admin/linkdapi-debug")
@@ -18288,48 +18463,61 @@ async def api_editorial_action_items():
             LIMIT 20
         """)
         para_aprovar = [dict(r) for r in cursor.fetchall()]
-        # Pendente = post publicado ha >=2d com pelo menos uma janela esperada (0/1/3/7d)
-        # ainda nao registrada em editorial_metrics_history. Sem upper bound — se passou
-        # da janela e nao coletou, continua pendente. Alinha com cron de metricas.
+        # Coletar metricas (pos-publicacao): classifica cada post + cada janela
+        # como coletada/aberta/perdida/futura usando tolerancia de ±30%
+        # (vide WINDOW_RANGES em editorial_actions). Posts entram na fila se
+        # tem PELO MENOS uma janela 'aberta' ou 'perdida'. Posts com tudo
+        # 'coletada' ou 'futura' saem (nada acionavel).
+        from services.editorial_actions import classify_post_windows
+
         cursor.execute("""
-            WITH expected AS (
-                SELECT ep.id,
-                       FLOOR(EXTRACT(EPOCH FROM (NOW() - ep.data_publicado)) / 86400)::int AS dias_desde_pub,
-                       ARRAY(
-                           SELECT d FROM (VALUES (0),(1),(3),(7)) AS v(d)
-                           WHERE d <= FLOOR(EXTRACT(EPOCH FROM (NOW() - ep.data_publicado)) / 86400)::int
-                       ) AS janelas_esperadas
-                FROM editorial_posts ep
-                WHERE ep.status = 'published'
-                  AND ep.data_publicado IS NOT NULL
-                  AND ep.data_publicado < NOW() - INTERVAL '2 days'
-            ),
-            coletadas AS (
-                SELECT post_id, ARRAY_AGG(DISTINCT dias_apos_publicacao) AS janelas_coletadas
-                FROM editorial_metrics_history
-                WHERE dias_apos_publicacao IS NOT NULL
-                GROUP BY post_id
-            )
             SELECT ep.id, ep.article_title, ep.titulo_adaptado, ep.ai_categoria, ep.data_publicado,
                    ep.url_publicado, ep.linkedin_post_url, ep.linkedin_impressoes, ep.linkedin_reacoes,
                    ep.linkedin_comentarios,
-                   EXTRACT(EPOCH FROM (NOW() - ep.data_publicado))/3600 AS horas_publicado,
-                   ARRAY(
-                       SELECT j.d FROM unnest(e.janelas_esperadas) AS j(d)
-                       WHERE NOT (j.d = ANY(COALESCE(c.janelas_coletadas, ARRAY[]::int[])))
-                       ORDER BY j.d
-                   ) AS janelas_faltantes
+                   EXTRACT(EPOCH FROM (NOW() - ep.data_publicado))/3600 AS horas_publicado
             FROM editorial_posts ep
-            JOIN expected e ON e.id = ep.id
-            LEFT JOIN coletadas c ON c.post_id = ep.id
-            WHERE EXISTS (
-                SELECT 1 FROM unnest(e.janelas_esperadas) AS j(d)
-                WHERE NOT (j.d = ANY(COALESCE(c.janelas_coletadas, ARRAY[]::int[])))
-            )
+            WHERE ep.status = 'published'
+              AND ep.data_publicado IS NOT NULL
+              -- Limita ao range plausivel pra coleta: < 220h (max do range 168h)
+              -- Posts mais antigos saem da fila (nada mais a coletar).
+              AND ep.data_publicado > NOW() - INTERVAL '230 hours'
             ORDER BY ep.data_publicado ASC
-            LIMIT 20
         """)
-        coletar_metricas = [dict(r) for r in cursor.fetchall()]
+        publicados_recentes = [dict(r) for r in cursor.fetchall()]
+
+        # Carrega snapshots de todos os posts em batch
+        post_ids = [p['id'] for p in publicados_recentes]
+        snaps_by_post: dict = {}
+        if post_ids:
+            cursor.execute("""
+                SELECT post_id, janela, dias_apos_publicacao, coletado_em, fonte
+                FROM editorial_metrics_history
+                WHERE post_id = ANY(%s)
+                ORDER BY coletado_em ASC
+            """, (post_ids,))
+            for s in cursor.fetchall():
+                snaps_by_post.setdefault(s['post_id'], []).append(dict(s))
+
+        coletar_metricas = []
+        for p in publicados_recentes:
+            horas = float(p.get('horas_publicado') or 0)
+            cls = classify_post_windows(horas, snaps_by_post.get(p['id'], []))
+            # Mantem na fila SO se ha proxima acao (alguma janela aberta).
+            # Posts com tudo coletada/perdida/futura saem.
+            if not cls['proxima_acao']:
+                continue
+            p['janelas'] = cls['janelas']
+            p['proxima_acao'] = cls['proxima_acao']
+            p['urgente'] = cls['urgente']
+            # Retrocompat: janelas_faltantes em horas (1/6/24/72/168) — so 'aberta'
+            p['janelas_faltantes'] = [
+                {"1h": 1, "6h": 6, "24h": 24, "72h": 72, "168h": 168}[j]
+                for j, v in cls['janelas'].items()
+                if v['status'] == 'aberta'
+            ]
+            coletar_metricas.append(p)
+            if len(coletar_metricas) >= 20:
+                break
     for p in para_aprovar + coletar_metricas:
         for k in ('data_publicacao', 'data_publicacao_planejada', 'data_publicado', 'criado_em'):
             if p.get(k) and hasattr(p[k], 'isoformat'):
