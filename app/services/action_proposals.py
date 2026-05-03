@@ -13,11 +13,19 @@ from database import get_db
 logger = logging.getLogger(__name__)
 
 
-# Anti-loop: regex que detecta texto tipico do briefing diario do INTEL bot.
-# Se titulo OU descricao bater, descartamos a proposta — provavel loop bot->webhook.
+# Anti-loop: regex que detecta texto 100% bot-only (briefing + comandos).
+# CUIDADO: NAO incluir "Possivel reuniao" / "mencionou: dia" / "Deseja criar evento"
+# porque sao templates usados em propostas LEGITIMAS tambem (criadas a partir
+# de mensagens reais de contatos). So padroes que SO aparecem em outbound do bot.
 _BRIEFING_LOOP_REGEX = re.compile(
-    r'(bom\s+dia,?\s+renato|hoje,?\s+\d{1,2}/\d{1,2}|tarefas?\s+vencidas|'
-    r'briefing\s+(diario|di[áa]rio))',
+    r'('
+    r'bom\s+dia,?\s+renato|'                         # saudacao do briefing
+    r'tarefas?\s+vencidas|'                           # secao do briefing
+    r'briefing\s+(diario|di[áa]rio)|'                 # nome literal
+    r'propostas?\s+de\s+a[çc][ãa]o\s+pendentes|'      # secao do briefing
+    # Estrutura de "Responda aqui: " com aspas + travessao (so o bot formata assim)
+    r'responda\s+aqui:\s*\n*\s*[•\-*]\s*"(responder|agendar|ignorar|executar|ver)"\s*[—-]'
+    r')',
     re.IGNORECASE
 )
 
