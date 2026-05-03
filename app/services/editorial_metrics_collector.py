@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -25,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 LINKDAPI_BASE = "https://linkdapi.com"
 PROFILE_URN_CACHE: Dict[str, str] = {}  # username -> urn (warm pra reduzir chamadas)
+_ACTIVITY_RE = re.compile(r"activity[:\-](\d{10,})")
+_SHARE_RE = re.compile(r"share[:\-](\d{10,})")
 
 
 async def _get_profile_urn(client: httpx.AsyncClient, api_key: str, username: str) -> Optional[str]:
@@ -64,55 +67,106 @@ async def _fetch_user_posts(client: httpx.AsyncClient, api_key: str, urn: str) -
         return []
 
 
-def _match_post(posts: List[Dict], target_url: str) -> Optional[Dict]:
-    """Acha o post na lista que bate com a URL salva em editorial_posts.
-    Match por URL exato, depois por activity URN (substring 10+ digitos)."""
-    if not target_url:
+def _normalize_text(s: str) -> str:
+    """Normaliza texto pra fuzzy match: lowercase + colapsa whitespace."""
+    if not s:
+        return ""
+    return re.sub(r"\s+", " ", s.lower()).strip()
+
+
+def _match_post(
+    posts: List[Dict],
+    target_url: str,
+    target_text: Optional[str] = None,
+    post_id: Optional[int] = None,
+) -> Optional[Dict]:
+    """Acha o post na lista que bate com a URL/texto salvos em editorial_posts.
+
+    Estrategia (em ordem):
+      1. Activity URN exato (digito do `activity:NNN` ou `activity-NNN`)
+      2. URL completa contains (str in str dos dois lados)
+      3. Texto fuzzy: primeiros 100 chars normalizados batem (substring)
+
+    URN da DB pode vir como `share-NNN` (URN compartilhado) que nao bate com
+    o `activity:MMM` da API (numeros diferentes pro mesmo post). Por isso o
+    fallback por texto e essencial.
+    """
+    if not posts:
         return None
-    target_url = target_url.rstrip("/")
-    for p in posts:
-        purl = (p.get("url") or "").rstrip("/")
-        if purl and purl == target_url:
-            return p
-    # Fallback por digit prefix (URN compartilhado entre share/activity)
-    import re
-    digits = re.findall(r"(\d{10,})", target_url)
-    for d in digits:
-        prefix = d[:10]
+
+    # 1) Activity URN match (mais confiavel quando bate)
+    activity_ids: List[str] = []
+    if target_url:
+        activity_ids.extend(_ACTIVITY_RE.findall(target_url))
+    if activity_ids:
+        for aid in activity_ids:
+            for p in posts:
+                purn = p.get("urn") or ""
+                purl = p.get("url") or ""
+                if aid in purn or aid in purl:
+                    return p
+
+    # 2) URL contains (raro casar pq formatos divergem, mas zero custo)
+    if target_url:
+        tnorm = target_url.rstrip("/")
         for p in posts:
-            purl = p.get("url") or ""
-            if prefix in purl:
+            purl = (p.get("url") or "").rstrip("/")
+            if purl and (purl == tnorm or purl in tnorm or tnorm in purl):
                 return p
+
+    # 3) Fuzzy text match (primeiros 100 chars do post adaptado)
+    if target_text:
+        needle = _normalize_text(target_text)[:100]
+        if len(needle) >= 30:  # threshold pra evitar false-positive
+            for p in posts:
+                haystack = _normalize_text(p.get("text") or "")
+                if needle and needle in haystack:
+                    return p
+
+    logger.warning(
+        f"_match_post: nao achou post (id={post_id}, url={target_url[:80] if target_url else None}, "
+        f"text_preview={(target_text or '')[:60]!r}) em {len(posts)} posts da API"
+    )
     return None
 
 
 def _extract_metrics(post: Dict) -> Dict[str, int]:
     """Extrai contagens do dict de post da LinkdAPI.
-    Estrutura observada: engagements = {reactionsCount, commentsCount, repostsCount}.
+
+    Estrutura observada (LinkdAPI v1):
+      engagements = {totalReactions, commentsCount, repostsCount, reactions: [...]}
+    Mantemos aliases legacy (reactionsCount, etc) por defesa.
     Impressoes nao vem da API publica — fica 0 (so analytics oficial expoe)."""
     eng = (post.get("engagements") or {})
-    # Field names variam — try multiple shapes
     reacoes = (
-        eng.get("reactionsCount")
-        or eng.get("reactions")
+        eng.get("totalReactions")
+        or eng.get("reactionsCount")
         or eng.get("likesCount")
         or eng.get("likes")
         or 0
     )
     comentarios = (
         eng.get("commentsCount")
+        or eng.get("totalComments")
         or eng.get("comments")
         or 0
     )
     compartilhamentos = (
         eng.get("repostsCount")
-        or eng.get("reposts")
+        or eng.get("totalReposts")
         or eng.get("sharesCount")
         or eng.get("shares")
+        or eng.get("reposts")
+        or 0
+    )
+    impressoes = (
+        eng.get("totalViews")
+        or eng.get("viewsCount")
+        or eng.get("impressionsCount")
         or 0
     )
     return {
-        "impressoes": 0,  # LinkdAPI nao expoe — coletado manual via xlsx
+        "impressoes": int(impressoes or 0),
         "reacoes": int(reacoes or 0),
         "comentarios": int(comentarios or 0),
         "compartilhamentos": int(compartilhamentos or 0),
@@ -159,8 +213,8 @@ async def collect_metrics_for_due_windows() -> Dict:
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT ep.id, ep.article_title, ep.titulo_adaptado, ep.data_publicado,
-                   ep.linkedin_post_url, ep.url_publicado,
+            SELECT ep.id, ep.article_title, ep.titulo_adaptado, ep.conteudo_adaptado,
+                   ep.data_publicado, ep.linkedin_post_url, ep.url_publicado,
                    EXTRACT(EPOCH FROM (NOW() - ep.data_publicado)) / 3600 AS horas_desde_pub
             FROM editorial_posts ep
             WHERE ep.status = 'published'
@@ -225,7 +279,12 @@ async def collect_metrics_for_due_windows() -> Dict:
                 "visitas_perfil": 0, "seguidores": 0,
             }
         else:
-            matched = _match_post(posts_lookup, post_url)
+            matched = _match_post(
+                posts_lookup,
+                post_url,
+                target_text=post.get("conteudo_adaptado") or post.get("titulo_adaptado") or post.get("article_title"),
+                post_id=post["id"],
+            )
             if not matched:
                 summary["skipped_no_post_match"] += 1
                 summary["details"].append({
@@ -287,3 +346,65 @@ async def collect_metrics_for_due_windows() -> Dict:
 
     summary["timestamp"] = datetime.now().isoformat()
     return summary
+
+
+async def collect_metrics_for_post(post_id: int) -> Dict:
+    """Coleta metricas atuais de UM post especifico (sem janela / sem insert).
+
+    Usado pra smoke test, debug manual e endpoints ad-hoc. Nao mexe em
+    editorial_metrics_history. Retorna dict com {success, metrics, ...}.
+    """
+    api_key = (os.getenv("LINKDAPI_KEY") or "").strip()
+    if not api_key:
+        return {"success": False, "error": "LINKDAPI_KEY ausente"}
+
+    username = _username_from_linkedin_url("")
+    if not username:
+        return {"success": False, "error": "LINKEDIN_USERNAME ausente no .env"}
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, article_title, titulo_adaptado, conteudo_adaptado,
+                   linkedin_post_url, url_publicado, status, data_publicado
+            FROM editorial_posts WHERE id = %s
+        """, (post_id,))
+        row = cursor.fetchone()
+
+    if not row:
+        return {"success": False, "error": f"post_id={post_id} nao encontrado"}
+
+    post = dict(row)
+    post_url = _resolve_post_url(post)
+    if not post_url:
+        return {"success": False, "error": "post sem linkedin_post_url"}
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        urn = await _get_profile_urn(client, api_key, username)
+        if not urn:
+            return {"success": False, "error": f"sem URN pra username={username}"}
+        posts_lookup = await _fetch_user_posts(client, api_key, urn)
+
+    matched = _match_post(
+        posts_lookup,
+        post_url,
+        target_text=post.get("conteudo_adaptado") or post.get("titulo_adaptado") or post.get("article_title"),
+        post_id=post["id"],
+    )
+    if not matched:
+        return {
+            "success": False,
+            "error": "post nao encontrado na lista da LinkdAPI",
+            "post_id": post_id,
+            "url": post_url,
+            "posts_in_api": len(posts_lookup),
+        }
+
+    metrics = _extract_metrics(matched)
+    return {
+        "success": True,
+        "post_id": post_id,
+        "matched_urn": matched.get("urn"),
+        "matched_url": matched.get("url"),
+        **metrics,
+    }
