@@ -2279,14 +2279,14 @@
                 // coletar_metricas: por definicao sao posts publicados ha 48h+ sem metricas — todos vencidos.
                 const coletarN = (d.coletar_metricas || []).length;
                 if (coletarN > 0) return false;
-                // para_aprovar: drafts sao "vencidos" se tem data_publicacao planejada no passado.
-                // (data_publicacao no shape eh o slot agendado pra editorial_posts; scheduled_for pra hot_takes.)
+                // para_aprovar: pending_approval com slot planejado no passado = vencido.
+                // (data_publicacao no shape vem aliasado de data_publicacao_planejada.)
                 const today = new Date().toISOString().split('T')[0];
-                const draftsVencidos = (d.para_aprovar || []).filter(p => {
+                const pendentesVencidos = (d.para_aprovar || []).filter(p => {
                     if (!p.data_publicacao) return false;
                     return String(p.data_publicacao).split('T')[0] < today;
                 }).length;
-                return draftsVencidos === 0;
+                return pendentesVencidos === 0;
             },
             statVeiculos: () => {
                 // Idle quando todos os vencidos ja estao em OS em execucao
@@ -4764,15 +4764,19 @@
                     const renderApprovar = (p) => {
                         const tipo = p.tipo === 'hot_take' ? 'Hot Take' : (p.ai_categoria || 'Post');
                         const titulo = p.titulo_adaptado || p.article_title || '(sem título)';
-                        // Para Aprovar agora so tem editorial_posts (hot_takes orfaos vivem em /hot-takes)
-                        const target = `/editorial?post=${p.id}`;
-                        return `<div class="drill-project-row type-negocio" onclick="window.location.href='${target}'">
-                            <div class="drill-project-info">
-                                <div class="drill-project-name">${escapeHtml(titulo)}</div>
-                                <div class="drill-project-empresa">${escapeHtml(tipo)}</div>
+                        // 3 acoes inline: aprovar / editar / descartar (com substituicao IA)
+                        const tituloEsc = escapeHtml(titulo);
+                        const slot = p.data_publicacao || p.data_publicacao_planejada;
+                        const slotLabel = slot ? new Date(slot).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+                        return `<div class="drill-project-row type-negocio" id="approval-row-${p.id}">
+                            <div class="drill-project-info" onclick="window.location.href='/editorial?post=${p.id}'" style="cursor:pointer;">
+                                <div class="drill-project-name">${tituloEsc}</div>
+                                <div class="drill-project-empresa">${escapeHtml(tipo)}${slotLabel ? ' · ' + escapeHtml(slotLabel) : ''}</div>
                             </div>
-                            <div class="drill-project-urgency-info">
-                                <span class="drill-urgency-badge warning"><i class="bi bi-pencil-square"></i> Aprovar</span>
+                            <div class="drill-project-urgency-info" style="display:flex; gap:4px; align-items:center;" onclick="event.stopPropagation();">
+                                <button class="btn btn-sm btn-success py-0 px-2" title="Aprovar" onclick="event.stopPropagation(); editorialApprove(${p.id})"><i class="bi bi-check-lg"></i></button>
+                                <button class="btn btn-sm btn-outline-secondary py-0 px-2" title="Editar" onclick="event.stopPropagation(); window.location.href='/editorial?post=${p.id}&edit=1'"><i class="bi bi-pencil"></i></button>
+                                <button class="btn btn-sm btn-outline-danger py-0 px-2" title="Descartar (IA seleciona substituto)" onclick="event.stopPropagation(); editorialDismissPrompt(${p.id})"><i class="bi bi-x-lg"></i></button>
                             </div>
                         </div>`;
                     };
@@ -4780,16 +4784,26 @@
                         const titulo = p.titulo_adaptado || p.article_title || '(sem título)';
                         const horas = Math.round(p.horas_publicado || 0);
                         const faltantes = Array.isArray(p.janelas_faltantes) ? p.janelas_faltantes : [];
+                        // janelas_faltantes pode vir em horas (novo: 1/6/24/72/168) ou dias (legado: 0/1/3/7).
+                        // Detecta: se max > 7 entao eh em horas.
+                        const isHoras = faltantes.some(v => v > 7);
+                        const fmt = (v) => isHoras ? (v < 24 ? v + 'h' : Math.round(v/24) + 'd') : (v === 0 ? '0d' : v + 'd');
                         const faltantesLabel = faltantes.length
-                            ? 'Falta ' + faltantes.map(d => d === 0 ? '0d' : d + 'd').join(', ')
+                            ? 'Falta ' + faltantes.map(fmt).join(', ')
                             : 'Coletar métricas';
+                        // Mini curve SVG: 5 barras (1h/6h/24h/72h/168h). Sem dados ainda
+                        // (lista do action-items nao traz snapshots) — barras esbatidas
+                        // pra cada janela ja vencida; intensa pras coletadas. O modal
+                        // mostra a curve real depois.
+                        const sparkline = renderJanelasMiniCurve(p);
                         // Click abre modal de input de metricas (nao mais navega pro post)
                         return `<div class="drill-project-row type-conselho" onclick="openMetricsInputModal(${p.id}, 'drill')" style="cursor:pointer;">
                             <div class="drill-project-info">
                                 <div class="drill-project-name">${escapeHtml(titulo)}</div>
                                 <div class="drill-project-empresa">${horas}h publicado · ${escapeHtml(p.ai_categoria || '')}</div>
                             </div>
-                            <div class="drill-project-urgency-info">
+                            <div class="drill-project-urgency-info" style="display:flex; gap:6px; align-items:center;">
+                                ${sparkline}
                                 <span class="drill-urgency-badge info"><i class="bi bi-graph-up"></i> ${escapeHtml(faltantesLabel)}</span>
                             </div>
                         </div>`;
@@ -5251,6 +5265,132 @@
             }
         }
 
+        // ============== Approval workflow (drill: aprovar / descartar) ==============
+        async function editorialApprove(postId) {
+            const row = document.getElementById('approval-row-' + postId);
+            try {
+                const resp = await fetch(`/api/editorial/${postId}/approve`, { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    alert(err.detail || 'Erro ao aprovar');
+                    return;
+                }
+                if (typeof showToast === 'function') showToast('Post aprovado e agendado!', 'success');
+                if (row) {
+                    row.style.transition = 'opacity 0.4s';
+                    row.style.opacity = '0';
+                }
+                setTimeout(() => { if (typeof loadEditorialActionItems === 'function') loadEditorialActionItems(); }, 400);
+            } catch (e) {
+                alert('Erro: ' + e.message);
+            }
+        }
+
+        function editorialDismissPrompt(postId) {
+            // Modal inline simples (sem Bootstrap pra evitar conflito de backdrop)
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10001;display:flex;align-items:center;justify-content:center;';
+            overlay.innerHTML = `
+                <div style="background:#fff;border-radius:12px;padding:20px;max-width:420px;width:90%;box-shadow:0 10px 30px rgba(0,0,0,0.3);">
+                    <h5 style="margin:0 0 12px;font-weight:600;">Descartar proposta?</h5>
+                    <p style="font-size:0.9rem;color:#475569;margin-bottom:12px;">A IA selecionara um substituto pra esse slot. Motivo opcional:</p>
+                    <textarea id="dismiss-motivo-${postId}" rows="3" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:0.9rem;" placeholder="Ex: tema repetido, tom errado, link quebrado..."></textarea>
+                    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+                        <button class="btn btn-outline-secondary btn-sm" id="dismiss-cancel-${postId}">Cancelar</button>
+                        <button class="btn btn-danger btn-sm" id="dismiss-confirm-${postId}">Descartar</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            const cleanup = () => overlay.remove();
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+            document.getElementById(`dismiss-cancel-${postId}`).onclick = cleanup;
+            document.getElementById(`dismiss-confirm-${postId}`).onclick = async () => {
+                const motivo = (document.getElementById(`dismiss-motivo-${postId}`).value || '').trim();
+                cleanup();
+                await editorialDismiss(postId, motivo);
+            };
+        }
+
+        async function editorialDismiss(postId, motivo) {
+            const row = document.getElementById('approval-row-' + postId);
+            try {
+                const resp = await fetch(`/api/editorial/${postId}/dismiss`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ motivo: motivo || null })
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    alert(err.detail || 'Erro ao descartar');
+                    return;
+                }
+                const data = await resp.json().catch(() => ({}));
+                if (row) {
+                    row.style.transition = 'opacity 0.4s';
+                    row.style.opacity = '0';
+                }
+                if (typeof showToast === 'function') {
+                    showToast(data.replacement
+                        ? `Substituto selecionado: ${data.replacement.titulo || ''}`
+                        : 'Post descartado (sem substituto disponivel)',
+                        'info');
+                }
+                setTimeout(() => { if (typeof loadEditorialActionItems === 'function') loadEditorialActionItems(); }, 400);
+            } catch (e) {
+                alert('Erro: ' + e.message);
+            }
+        }
+
+        // ============== Mini curve SVG: 5 barras (1h/6h/24h/72h/168h) ==============
+        // Render quick visual hint pro drill. Dados reais virao do /timeline endpoint
+        // quando o modal abrir. Aqui usamos heuristica: barras intensas pras janelas
+        // ja coletadas (deduzido por janelas_faltantes), esbatidas pras pendentes.
+        function renderJanelasMiniCurve(p) {
+            const horas = Number(p.horas_publicado || 0);
+            const allW = [
+                {k: '1h',   h: 1},
+                {k: '6h',   h: 6},
+                {k: '24h',  h: 24},
+                {k: '72h',  h: 72},
+                {k: '168h', h: 168},
+            ];
+            const faltantes = Array.isArray(p.janelas_faltantes) ? p.janelas_faltantes : [];
+            // Detecta unidade: dias (legado: 0/1/3/7) vs horas (1/6/24/72/168)
+            const isHoras = faltantes.some(v => v > 7);
+            const faltMap = {};
+            if (isHoras) {
+                faltantes.forEach(h => {
+                    const w = allW.find(x => x.h === h);
+                    if (w) faltMap[w.k] = true;
+                });
+            } else {
+                // Mapeamento legado dias -> janela mais proxima
+                faltantes.forEach(d => {
+                    if (d === 0 || d === 1) faltMap['24h'] = true;
+                    else if (d === 3) faltMap['72h'] = true;
+                    else if (d === 7) faltMap['168h'] = true;
+                });
+            }
+            const W = 50, H = 18, bw = 7, gap = 2;
+            const bars = allW.map((w, i) => {
+                const vencida = horas >= w.h;
+                const pendente = faltMap[w.k];
+                const coletada = vencida && !pendente;
+                let fill = '#cbd5e1';  // ainda nao vencida
+                if (vencida && pendente) fill = '#fbbf24';  // pendente: amarelo
+                else if (coletada) fill = '#3b82f6';  // coletada: azul
+                // Barra cresce pra simular curva de alcance: 1h pequena, escalando
+                const heightRatio = [0.3, 0.55, 0.75, 0.88, 1.0][i];
+                const h = Math.round(H * heightRatio);
+                const x = i * (bw + gap);
+                const y = H - h;
+                return `<rect x="${x}" y="${y}" width="${bw}" height="${h}" fill="${fill}" rx="1"/>`;
+            }).join('');
+            const totalW = allW.length * (bw + gap) - gap;
+            return `<svg width="${totalW}" height="${H}" viewBox="0 0 ${totalW} ${H}" style="vertical-align:middle;" title="Janelas 1h/6h/24h/72h/168h">${bars}</svg>`;
+        }
+
         // ============== Modal de input de metricas (editorial) ==============
         // Abre modal com campos pra registrar snapshot de metricas pra um post.
         // origem: 'drill' | 'editorial' — determina o refresh apos salvar.
@@ -5268,6 +5408,11 @@
             document.getElementById('mim-title').textContent = 'Carregando...';
             document.getElementById('mim-janela-info').textContent = '';
             document.getElementById('mim-janela').innerHTML = '';
+            // Reset bloco timeline (criado dinamicamente no fetch)
+            const tl = document.getElementById('mim-timeline');
+            if (tl) tl.innerHTML = '';
+            // Carrega timeline em paralelo (nao-bloqueante)
+            loadMetricsModalTimeline(postId);
             modal.style.display = 'flex';
 
             try {
@@ -5331,6 +5476,58 @@
             const modal = document.getElementById('metricsInputModal');
             if (modal) modal.style.display = 'none';
             _metricsModalContext = { postId: null, origem: null, faltantes: [] };
+        }
+
+        // Carrega timeline + actions pendentes + insight para o modal.
+        // Renderiza em #mim-timeline (slot dentro do modal).
+        async function loadMetricsModalTimeline(postId) {
+            const slot = document.getElementById('mim-timeline');
+            if (!slot) return;
+            slot.innerHTML = '<div style="font-size:0.7rem;color:#94a3b8;">Carregando timeline...</div>';
+            try {
+                const resp = await fetch(`/api/editorial/posts/${postId}/timeline`);
+                if (!resp.ok) { slot.innerHTML = ''; return; }
+                const data = await resp.json();
+                const snaps = data.snapshots || [];
+                const janelas = ['1h','6h','24h','72h','168h'];
+                const byJ = {};
+                snaps.forEach(s => { if (s.janela) byJ[s.janela] = s; });
+                // Curve: barras escaladas pela soma de eng (reacoes+coments+shares)
+                const maxEng = Math.max(1, ...snaps.map(s => (s.reacoes||0)+(s.comentarios||0)+(s.compartilhamentos||0)));
+                const W = 30, H = 50;
+                const bars = janelas.map((j, i) => {
+                    const s = byJ[j];
+                    const eng = s ? (s.reacoes||0)+(s.comentarios||0)+(s.compartilhamentos||0) : 0;
+                    const h = s ? Math.max(2, Math.round((eng/maxEng) * H)) : 2;
+                    const fill = s ? '#3b82f6' : '#e2e8f0';
+                    const x = i * (W + 6);
+                    const y = H - h;
+                    return `<g>
+                        <rect x="${x}" y="${y}" width="${W}" height="${h}" fill="${fill}" rx="2"/>
+                        <text x="${x + W/2}" y="${H + 12}" font-size="9" fill="#64748b" text-anchor="middle">${j}</text>
+                        ${s ? `<text x="${x + W/2}" y="${y - 2}" font-size="9" fill="#0f172a" text-anchor="middle" font-weight="600">${eng}</text>` : ''}
+                    </g>`;
+                }).join('');
+                const totalW = janelas.length * (W + 6) - 6;
+                const insight = data.insight ? `<div style="font-size:0.78rem;font-weight:600;color:#0f172a;margin-top:6px;">${escapeHtml(data.insight)}</div>` : '';
+                const meta = data.janela_meta;
+                const acoes = data.actions_pendentes || [];
+                const acoesHtml = acoes.length ? `
+                    <div style="margin-top:8px;padding:8px 10px;background:#f1f5f9;border-radius:8px;">
+                        <div style="font-size:0.7rem;font-weight:600;color:#475569;margin-bottom:4px;">Acoes recomendadas (${meta ? escapeHtml(meta.label) : ''}):</div>
+                        ${acoes.map(a => `<div style="font-size:0.75rem;color:#0f172a;${a.urgent ? 'font-weight:600;color:#dc2626;' : ''}">• ${escapeHtml(a.label)}</div>`).join('')}
+                    </div>` : '';
+                slot.innerHTML = `
+                    <div style="margin-bottom:8px;">
+                        <div style="font-size:0.7rem;color:#64748b;margin-bottom:4px;">Timeline (engajamento por janela):</div>
+                        <svg width="${totalW}" height="${H + 16}" viewBox="0 0 ${totalW} ${H + 16}">${bars}</svg>
+                        ${insight}
+                    </div>
+                    ${acoesHtml}
+                `;
+            } catch(e) {
+                slot.innerHTML = '';
+            }
         }
 
         async function saveMetricsInputModal() {
@@ -5448,6 +5645,8 @@
             <div style="padding:16px 20px;">
                 <div id="mim-title" style="font-size:0.9rem;font-weight:600;margin-bottom:6px;color:#0f172a;">—</div>
                 <div id="mim-janela-info" style="font-size:0.72rem;color:#64748b;margin-bottom:12px;"></div>
+                <!-- Timeline + acoes recomendadas (renderizado por loadMetricsModalTimeline) -->
+                <div id="mim-timeline" style="margin-bottom:12px;"></div>
                 <div style="margin-bottom:12px;">
                     <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Janela (dias apos publicacao)</label>
                     <select id="mim-janela" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;background:#fff;"></select>

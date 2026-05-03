@@ -963,7 +963,8 @@
         <h2><i class="bi bi-kanban me-2" style="color: #6366f1;"></i>Pipeline Editorial</h2>
     </div>
     <div style="display: flex; gap: 4px; padding: 0 16px 12px; flex-wrap: wrap;">
-        <button class="btn btn-sm btn-outline-warning pipeline-tab active" onclick="loadPipeline('draft', this)">📝 Para Aprovar</button>
+        <button class="btn btn-sm btn-outline-warning pipeline-tab active" onclick="loadPipeline('pending_approval', this)">🎯 Para Aprovar</button>
+        <button class="btn btn-sm btn-outline-secondary pipeline-tab" onclick="loadPipeline('draft', this)">📝 Estoque</button>
         <button class="btn btn-sm btn-outline-primary pipeline-tab" onclick="loadPipeline('scheduled', this)">📅 Agendados</button>
         <button class="btn btn-sm btn-outline-success pipeline-tab" onclick="loadPipeline('pending_metrics', this)">📊 Coletar Métricas</button>
         <button class="btn btn-sm btn-outline-secondary pipeline-tab" onclick="loadPipeline('published', this)">✅ Publicados</button>
@@ -1290,6 +1291,8 @@
         <div style="padding:16px 20px;">
             <div id="mim-title" style="font-size:0.9rem;font-weight:600;margin-bottom:6px;color:#0f172a;">—</div>
             <div id="mim-janela-info" style="font-size:0.72rem;color:#64748b;margin-bottom:12px;"></div>
+            <!-- Timeline + acoes recomendadas (renderizado por loadMetricsModalTimeline) -->
+            <div id="mim-timeline" style="margin-bottom:12px;"></div>
             <div style="margin-bottom:12px;">
                 <label style="font-size:0.72rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;">Janela (dias apos publicacao)</label>
                 <select id="mim-janela" style="width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.85rem;background:#fff;"></select>
@@ -2381,14 +2384,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Pipeline Editorial — todas as abas usam tabela sortable
 const PIPELINE_DEFAULT_SORT = {
-    draft:           { col: 'data_publicacao',     dir: 'desc' },  // proximo planejado primeiro? mais recente
+    pending_approval: { col: 'data_publicacao',     dir: 'asc'  },  // proximo slot proposto primeiro
+    draft:           { col: 'data_publicacao',     dir: 'desc' },  // estoque bruto, mais recente
     scheduled:       { col: 'data_publicacao',     dir: 'asc'  },  // proximo agendado primeiro
     pending_metrics: { col: 'data_publicado',      dir: 'asc'  },  // mais antigo (urgente) primeiro
     published:       { col: 'data_publicado',      dir: 'desc' },  // mais recente primeiro
 };
 const pipelineCache = {};   // status -> array de posts
 const pipelineSort = {};    // status -> { col, dir }
-let currentPipelineStatus = 'draft';
+let currentPipelineStatus = 'pending_approval';
 
 async function loadPipeline(status, btn) {
     currentPipelineStatus = status;
@@ -2417,7 +2421,8 @@ async function loadPipeline(status, btn) {
 
         if (posts.length === 0) {
             const msgs = {
-                'draft': 'Nenhum post para aprovar. Use "Auto-Selecionar" ou crie hot-takes.',
+                'pending_approval': 'Nada esperando aprovacao. A IA seleciona 4 posts toda Domingo a noite.',
+                'draft': 'Estoque vazio. Hot takes orfaos e drafts curados aparecem aqui.',
                 'scheduled': 'Nenhum post agendado. Aprove posts na aba "Para Aprovar".',
                 'pending_metrics': 'Todas as janelas (0d/1d/3d/7d) coletadas pra todos os posts! 🎉',
                 'published': 'Nenhum post publicado ainda.'
@@ -2463,6 +2468,14 @@ function sortPipeline(col) {
 
 // Schema de colunas por status. Cada coluna: {key, label, num?, sortable?}
 const PIPELINE_COLUMNS = {
+    pending_approval: [
+        { key: 'id', label: '#' },
+        { key: 'data_publicacao', label: 'Slot proposto' },
+        { key: 'tipo', label: 'Tipo' },
+        { key: 'titulo', label: 'Titulo' },
+        { key: 'ai_categoria', label: 'Categoria' },
+        { key: '_actions', label: 'Acoes', sortable: false },
+    ],
     draft: [
         { key: 'id', label: '#' },
         { key: 'data_publicacao', label: 'Data planejada' },
@@ -2542,6 +2555,13 @@ function pipelineCellHtml(p, col, status) {
     if (col === '_actions') {
         const postUrl = p.url_publicado || p.linkedin_post_url || '';
         const linkBtn = postUrl ? `<a href="${postUrl}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2" title="Abrir no LinkedIn"><i class="bi bi-linkedin"></i></a>` : '';
+        if (status === 'pending_approval') {
+            return `<div style="display:flex; gap:4px; white-space:nowrap;">
+                <button class="btn btn-sm btn-success py-0 px-2" onclick="approvePendingPost(${p.id})" title="Aprovar e agendar">✓</button>
+                <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="openPostModal(${p.id})" title="Editar">✏️</button>
+                <button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="dismissPendingPost(${p.id})" title="Descartar (IA seleciona substituto)">✗</button>
+            </div>`;
+        }
         if (status === 'draft') {
             // Hot takes orfaos: aprovar via quickApproveHotTake, editar em /hot-takes
             if (p.tipo === 'hot_take') {
@@ -2660,6 +2680,62 @@ async function approvePost(postId) {
     } catch (e) { alert('Erro: ' + e.message); }
 }
 
+// ============== Approval workflow (pending_approval -> scheduled / dismissed) ==============
+async function approvePendingPost(postId) {
+    try {
+        const resp = await fetch(`/api/editorial/${postId}/approve`, { method: 'POST' });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            alert(err.detail || 'Erro ao aprovar');
+            return;
+        }
+        showToast && showToast('Post aprovado e agendado!', 'success');
+        loadPipeline('pending_approval', document.querySelector('.pipeline-tab.active'));
+    } catch(e) { alert('Erro: ' + e.message); }
+}
+
+function dismissPendingPost(postId) {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:10001;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+        <div style="background:#fff;border-radius:12px;padding:20px;max-width:420px;width:90%;box-shadow:0 10px 30px rgba(0,0,0,0.3);">
+            <h5 style="margin:0 0 12px;font-weight:600;">Descartar proposta?</h5>
+            <p style="font-size:0.9rem;color:#475569;margin-bottom:12px;">A IA selecionara um substituto pra esse slot. Motivo opcional:</p>
+            <textarea id="dismiss-motivo-${postId}" rows="3" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-family:inherit;font-size:0.9rem;" placeholder="Ex: tema repetido, tom errado, link quebrado..."></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+                <button class="btn btn-outline-secondary btn-sm" id="dismiss-cancel-${postId}">Cancelar</button>
+                <button class="btn btn-danger btn-sm" id="dismiss-confirm-${postId}">Descartar</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    const cleanup = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+    document.getElementById(`dismiss-cancel-${postId}`).onclick = cleanup;
+    document.getElementById(`dismiss-confirm-${postId}`).onclick = async () => {
+        const motivo = (document.getElementById(`dismiss-motivo-${postId}`).value || '').trim();
+        cleanup();
+        try {
+            const resp = await fetch(`/api/editorial/${postId}/dismiss`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ motivo: motivo || null })
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                alert(err.detail || 'Erro ao descartar');
+                return;
+            }
+            const data = await resp.json().catch(() => ({}));
+            showToast && showToast(data.replacement
+                ? `Substituto selecionado: ${data.replacement.titulo || ''}`
+                : 'Post descartado (sem substituto)',
+                'info');
+            loadPipeline('pending_approval', document.querySelector('.pipeline-tab.active'));
+        } catch(e) { alert('Erro: ' + e.message); }
+    };
+}
+
 async function archivePost(postId) {
     if (!confirm('Arquivar este post?')) return;
     try {
@@ -2697,6 +2773,55 @@ async function openMetricsModal(postId) {
 // ============== Modal de input de metricas (snapshot por janela) ==============
 let _metricsModalContext = { postId: null, origem: null, faltantes: [] };
 
+// Timeline loader pro modal — busca /timeline (5 janelas + acoes + insight) e
+// renderiza barras SVG. Nao bloqueia o modal: roda em paralelo.
+async function loadMetricsModalTimeline(postId) {
+    const slot = document.getElementById('mim-timeline');
+    if (!slot) return;
+    slot.innerHTML = '<div style="font-size:0.7rem;color:#94a3b8;">Carregando timeline...</div>';
+    try {
+        const resp = await fetch(`/api/editorial/posts/${postId}/timeline`);
+        if (!resp.ok) { slot.innerHTML = ''; return; }
+        const data = await resp.json();
+        const snaps = data.snapshots || [];
+        const janelas = ['1h','6h','24h','72h','168h'];
+        const byJ = {};
+        snaps.forEach(s => { if (s.janela) byJ[s.janela] = s; });
+        const maxEng = Math.max(1, ...snaps.map(s => (s.reacoes||0)+(s.comentarios||0)+(s.compartilhamentos||0)));
+        const W = 30, H = 50;
+        const bars = janelas.map((j, i) => {
+            const s = byJ[j];
+            const eng = s ? (s.reacoes||0)+(s.comentarios||0)+(s.compartilhamentos||0) : 0;
+            const h = s ? Math.max(2, Math.round((eng/maxEng) * H)) : 2;
+            const fill = s ? '#3b82f6' : '#e2e8f0';
+            const x = i * (W + 6);
+            const y = H - h;
+            return `<g>
+                <rect x="${x}" y="${y}" width="${W}" height="${h}" fill="${fill}" rx="2"/>
+                <text x="${x + W/2}" y="${H + 12}" font-size="9" fill="#64748b" text-anchor="middle">${j}</text>
+                ${s ? `<text x="${x + W/2}" y="${y - 2}" font-size="9" fill="#0f172a" text-anchor="middle" font-weight="600">${eng}</text>` : ''}
+            </g>`;
+        }).join('');
+        const totalW = janelas.length * (W + 6) - 6;
+        const insight = data.insight ? `<div style="font-size:0.78rem;font-weight:600;color:#0f172a;margin-top:6px;">${escapeHtml(data.insight)}</div>` : '';
+        const meta = data.janela_meta;
+        const acoes = data.actions_pendentes || [];
+        const acoesHtml = acoes.length ? `
+            <div style="margin-top:8px;padding:8px 10px;background:#f1f5f9;border-radius:8px;">
+                <div style="font-size:0.7rem;font-weight:600;color:#475569;margin-bottom:4px;">Acoes recomendadas (${meta ? escapeHtml(meta.label) : ''}):</div>
+                ${acoes.map(a => `<div style="font-size:0.75rem;color:#0f172a;${a.urgent ? 'font-weight:600;color:#dc2626;' : ''}">• ${escapeHtml(a.label)}</div>`).join('')}
+            </div>` : '';
+        slot.innerHTML = `
+            <div style="margin-bottom:8px;">
+                <div style="font-size:0.7rem;color:#64748b;margin-bottom:4px;">Timeline (engajamento por janela):</div>
+                <svg width="${totalW}" height="${H + 16}" viewBox="0 0 ${totalW} ${H + 16}">${bars}</svg>
+                ${insight}
+            </div>
+            ${acoesHtml}
+        `;
+    } catch(e) { slot.innerHTML = ''; }
+}
+
 async function openMetricsInputModal(postId, origem) {
     _metricsModalContext = { postId, origem: origem || 'editorial', faltantes: [] };
     const modal = document.getElementById('metricsInputModal');
@@ -2708,6 +2833,9 @@ async function openMetricsInputModal(postId, origem) {
     document.getElementById('mim-title').textContent = 'Carregando...';
     document.getElementById('mim-janela-info').textContent = '';
     document.getElementById('mim-janela').innerHTML = '';
+    const tl = document.getElementById('mim-timeline');
+    if (tl) tl.innerHTML = '';
+    loadMetricsModalTimeline(postId);
     modal.style.display = 'flex';
 
     try {
@@ -2803,7 +2931,7 @@ async function saveMetricsInputModal() {
     }
 }
 
-// Load pipeline on page load
-loadPipeline('draft');
+// Load pipeline on page load (Para Aprovar = pending_approval)
+loadPipeline('pending_approval');
 </script>
 {% endblock %}

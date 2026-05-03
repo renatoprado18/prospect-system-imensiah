@@ -7583,8 +7583,17 @@ async def cron_daily_sync(request: Request):
         return await sync_group_messages(limit_per_group=50)
 
     async def step_auto_publish():
+        # Hard timeout per-step pra evitar bloquear daily-sync inteiro.
+        # Why: 2026-05-03 daily-sync travou em 'running' sem finished_at —
+        # provavel publish_due_posts pendurando em LinkedIn API lenta. Cap
+        # em 90s; cron dedicado /api/cron/auto-publish-linkedin (8h UTC) e
+        # o caminho primario, este aqui e safety net.
         from services.auto_publisher import publish_due_posts
-        return await publish_due_posts()
+        try:
+            return await _aio.wait_for(publish_due_posts(), timeout=90.0)
+        except _aio.TimeoutError:
+            logger.error("daily-sync step_auto_publish: timeout > 90s")
+            return {"status": "error", "error": "publish_due_posts timeout > 90s"}
 
     async def step_linkedin_enrichment():
         from services.linkedin_enrichment import get_linkedin_enrichment
@@ -7690,6 +7699,49 @@ async def cron_daily_sync(request: Request):
     results["completed_at"] = datetime.now().isoformat()
 
     return results
+
+
+@app.get("/api/cron/auto-publish-linkedin")
+@track_cron_run
+async def cron_auto_publish_linkedin(request: Request):
+    """
+    Cron dedicado pra publicacao de posts agendados no LinkedIn.
+
+    Why: o step `auto_publish` dentro de daily-sync esta vulneravel ao timeout
+    300s do Vercel — em 2026-05-03 o cron travou em 'running' sem finished_at,
+    deixando posts agendados em risco. Este endpoint isolado roda em ~ segundos
+    e tem timeout proprio de 120s; se o daily-sync morrer, este aqui ainda
+    publica os posts do dia.
+
+    Schedule (vercel.json): `0 8 * * *` (8h UTC = 5h BRT) — 4h antes do slot
+    mais cedo (9h BRT = 12h UTC). Margem ampla pra retry caso primeira execucao
+    falhe.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    import traceback as _tb
+    from services.auto_publisher import publish_due_posts
+
+    try:
+        result = await _aio.wait_for(publish_due_posts(), timeout=120.0)
+        return {"status": "ok", "job": "auto-publish-linkedin", **result}
+    except _aio.TimeoutError:
+        logger.error("cron_auto_publish_linkedin: publish_due_posts() > 120s")
+        return {
+            "status": "error",
+            "job": "auto-publish-linkedin",
+            "error": "publish_due_posts timeout > 120s",
+        }
+    except Exception as e:
+        logger.exception("cron_auto_publish_linkedin: exception fatal")
+        return {
+            "status": "error",
+            "job": "auto-publish-linkedin",
+            "error": f"{type(e).__name__}: {e}",
+            "trace": _tb.format_exc()[-800:],
+        }
 
 
 # Individual cron endpoints (kept for manual triggering)
@@ -18098,13 +18150,30 @@ async def api_editorial_pipeline(request: Request, status: str = "draft"):
         order_clause = "data_publicacao ASC NULLS LAST, criado_em ASC"
     elif status == 'published':
         order_clause = "data_publicado DESC NULLS LAST, criado_em DESC"
+    elif status == 'pending_approval':
+        order_clause = "data_publicacao ASC NULLS LAST, criado_em DESC"
     else:
         order_clause = "data_publicacao DESC NULLS LAST, criado_em DESC"
     limit = 50 if status == 'published' else 20
 
     with get_db() as conn:
         cursor = conn.cursor()
-        if status == 'draft':
+        if status == 'pending_approval':
+            # data_publicacao_planejada eh o slot proposto pela IA — alias pra reusar JS
+            cursor.execute(f"""
+                SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
+                       tipo, canal, status,
+                       data_publicacao_planejada AS data_publicacao,
+                       data_publicado, ai_categoria,
+                       hot_take_id, linkedin_impressoes, linkedin_reacoes, linkedin_comentarios,
+                       linkedin_metricas_em, url_publicado, linkedin_post_url, criado_em,
+                       dismissed_motivo
+                FROM editorial_posts
+                WHERE status = 'pending_approval'
+                ORDER BY {order_clause}
+                LIMIT {limit}
+            """)
+        elif status == 'draft':
             # UNION editorial_posts drafts + hot_takes orfaos drafts
             cursor.execute(f"""
                 SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
@@ -18161,15 +18230,19 @@ async def api_editorial_action_items():
             return _editorial_action_items_cache["data"]
     with get_db() as conn:
         cursor = conn.cursor()
-        # Apenas editorial_posts drafts (selecionados/curados). Hot_takes orfaos sao
-        # estoque bruto da IA — vivem em /hot-takes, nao aparecem como acao pendente.
+        # APENAS posts pending_approval (selecionados pela IA, aguardando user review).
+        # Drafts brutos sao ESTOQUE — vivem em /hot-takes ou aba editorial,
+        # nao aparecem como acao pendente.
         cursor.execute("""
             SELECT id, article_title, titulo_adaptado, conteudo_adaptado, article_url,
-                   tipo, canal, status, data_publicacao, ai_categoria, hot_take_id,
+                   tipo, canal, status,
+                   data_publicacao_planejada AS data_publicacao,
+                   data_publicacao_planejada,
+                   ai_categoria, hot_take_id,
                    url_publicado, criado_em
             FROM editorial_posts
-            WHERE status = 'draft'
-            ORDER BY criado_em DESC
+            WHERE status = 'pending_approval'
+            ORDER BY data_publicacao_planejada ASC NULLS LAST, criado_em DESC
             LIMIT 20
         """)
         para_aprovar = [dict(r) for r in cursor.fetchall()]
@@ -18216,12 +18289,122 @@ async def api_editorial_action_items():
         """)
         coletar_metricas = [dict(r) for r in cursor.fetchall()]
     for p in para_aprovar + coletar_metricas:
-        for k in ('data_publicacao', 'data_publicado', 'criado_em'):
+        for k in ('data_publicacao', 'data_publicacao_planejada', 'data_publicado', 'criado_em'):
             if p.get(k) and hasattr(p[k], 'isoformat'):
                 p[k] = p[k].isoformat()
     result = {"para_aprovar": para_aprovar, "coletar_metricas": coletar_metricas}
     _editorial_action_items_cache = {"data": result, "timestamp": datetime.now()}
     return result
+
+
+# ============== APPROVAL WORKFLOW (pending_approval -> scheduled / dismissed) ==============
+
+@app.post("/api/editorial/{post_id}/approve")
+async def api_editorial_approve(post_id: int):
+    """User aprova proposta da IA: pending_approval -> scheduled.
+    Promove data_publicacao_planejada para data_publicacao.
+    Atualiza hot_take vinculado tambem.
+    """
+    global _editorial_action_items_cache
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, status, data_publicacao_planejada, data_publicacao, hot_take_id
+            FROM editorial_posts WHERE id = %s
+        """, (post_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Post nao encontrado")
+        if row['status'] != 'pending_approval':
+            raise HTTPException(status_code=400, detail=f"Post nao esta pending_approval (status={row['status']})")
+
+        slot = row['data_publicacao_planejada'] or row['data_publicacao']
+        if not slot:
+            raise HTTPException(status_code=400, detail="Sem slot planejado pra promover")
+
+        cursor.execute("""
+            UPDATE editorial_posts
+            SET status = 'scheduled', data_publicacao = %s, atualizado_em = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (slot, post_id))
+        if row.get('hot_take_id'):
+            cursor.execute("""
+                UPDATE hot_takes SET status = 'scheduled', scheduled_for = %s WHERE id = %s
+            """, (slot, row['hot_take_id']))
+        conn.commit()
+
+    _editorial_action_items_cache = {"data": None, "timestamp": None}
+    return {"status": "scheduled", "post_id": post_id, "data_publicacao": slot.isoformat() if hasattr(slot, 'isoformat') else str(slot)}
+
+
+@app.post("/api/editorial/{post_id}/dismiss")
+async def api_editorial_dismiss(post_id: int, request: Request):
+    """User descarta proposta da IA: pending_approval -> dismissed.
+    Dispara substituicao automatica: IA seleciona proximo melhor candidate
+    do estoque de drafts e marca como pending_approval no MESMO slot.
+    """
+    global _editorial_action_items_cache
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    motivo = (data.get('motivo') or '').strip() or None
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, status, data_publicacao_planejada, hot_take_id
+            FROM editorial_posts WHERE id = %s
+        """, (post_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Post nao encontrado")
+        if row['status'] != 'pending_approval':
+            raise HTTPException(status_code=400, detail=f"Post nao esta pending_approval (status={row['status']})")
+
+        slot = row['data_publicacao_planejada']
+
+        cursor.execute("""
+            UPDATE editorial_posts
+            SET status = 'dismissed', dismissed_em = NOW(), dismissed_motivo = %s,
+                atualizado_em = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (motivo, post_id))
+        # Solta o hot_take vinculado pra voltar pra draft (pode ser repescado)
+        if row.get('hot_take_id'):
+            cursor.execute("""
+                UPDATE hot_takes SET status = 'draft', scheduled_for = NULL WHERE id = %s
+            """, (row['hot_take_id'],))
+        # Outros pending_approval do mesmo ciclo pra excluir da pool de substituto
+        cursor.execute("""
+            SELECT id FROM editorial_posts WHERE status = 'pending_approval'
+        """)
+        exclude_ids = [r['id'] for r in cursor.fetchall()]
+        conn.commit()
+
+    replacement = None
+    if slot:
+        try:
+            from services.auto_publisher import select_replacement_post
+            replacement = await select_replacement_post(slot, exclude_ids=exclude_ids)
+            if replacement:
+                # marca substituicao no post descartado
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        UPDATE editorial_posts SET substituido_por_post_id = %s WHERE id = %s
+                    """, (replacement['id'], post_id))
+                    conn.commit()
+        except Exception as e:
+            logger.exception(f"select_replacement_post falhou pra post {post_id}: {e}")
+
+    _editorial_action_items_cache = {"data": None, "timestamp": None}
+    return {
+        "status": "dismissed",
+        "post_id": post_id,
+        "motivo": motivo,
+        "replacement": replacement,
+    }
 
 
 @app.get("/api/editorial/{post_id}")
@@ -18371,33 +18554,43 @@ async def api_approve_week(request: Request):
         data = {}
     selected = data.get('selected', [])
 
-    # If no selected provided, grab all drafts with data_publicacao set (pre-selected by AI)
+    # If no selected provided, aprova bulk de todos pending_approval
+    # (compat: tambem aceita drafts antigos com data_publicacao setada)
     if not selected:
+        global _editorial_action_items_cache
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, article_title as titulo, tipo as source, data_publicacao,
+                SELECT id, article_title as titulo, tipo as source,
+                       COALESCE(data_publicacao_planejada, data_publicacao) AS slot,
                        conteudo_adaptado as conteudo, article_url as news_link,
                        hashtags, hot_take_id
                 FROM editorial_posts
-                WHERE status = 'draft' AND data_publicacao IS NOT NULL
-                ORDER BY data_publicacao
+                WHERE (status = 'pending_approval' AND data_publicacao_planejada IS NOT NULL)
+                   OR (status = 'draft' AND data_publicacao IS NOT NULL)
+                ORDER BY COALESCE(data_publicacao_planejada, data_publicacao)
             """)
             drafts = [dict(r) for r in cursor.fetchall()]
 
             if not drafts:
-                raise HTTPException(status_code=400, detail="Nenhum post draft com data para aprovar")
+                raise HTTPException(status_code=400, detail="Nenhum post pending_approval ou draft com slot pra aprovar")
 
-            # Schedule them (just change status to scheduled)
             for d in drafts:
-                cursor.execute("UPDATE editorial_posts SET status = 'scheduled' WHERE id = %s", (d['id'],))
+                cursor.execute("""
+                    UPDATE editorial_posts
+                    SET status = 'scheduled', data_publicacao = %s, atualizado_em = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                """, (d['slot'], d['id']))
                 if d.get('hot_take_id'):
-                    cursor.execute("UPDATE hot_takes SET status = 'scheduled' WHERE id = %s", (d['hot_take_id'],))
+                    cursor.execute("""
+                        UPDATE hot_takes SET status = 'scheduled', scheduled_for = %s WHERE id = %s
+                    """, (d['slot'], d['hot_take_id']))
             conn.commit()
 
+            _editorial_action_items_cache = {"data": None, "timestamp": None}
             return {
                 "status": "approved",
-                "scheduled": [{"id": d['id'], "titulo": d['titulo'], "scheduled_for": str(d['data_publicacao'])} for d in drafts]
+                "scheduled": [{"id": d['id'], "titulo": d['titulo'], "scheduled_for": str(d['slot'])} for d in drafts]
             }
 
     result = schedule_selected_posts(selected)
@@ -18484,30 +18677,68 @@ async def api_project_editorial(project_id: int):
 @track_cron_run
 async def cron_editorial_weekly_briefing(request: Request):
     """
-    Cron: Gera briefing editorial semanal.
-    Schedule: 0 21 * * 0 (Domingos as 21h UTC / 18h Brasilia)
+    Cron: Gera briefing editorial semanal + IA seleciona 4 posts da proxima semana
+    como pending_approval (aguardando aprovacao do user via /editorial ou drill).
+
+    Schedule: 0 21 * * 0 (Domingos as 21h UTC / 18h Brasilia).
+    Consolidado com selecao semanal pra evitar 2 jobs no mesmo horario.
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
 
+    global _editorial_action_items_cache
     from services.editorial_pdca import generate_weekly_briefing
+    from services.auto_publisher import select_weekly_posts, schedule_selected_posts
 
+    out = {
+        "job": "editorial-weekly-briefing",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+    # 1) Briefing PDCA
     try:
         result = await generate_weekly_briefing()
-        return {
-            "job": "editorial-weekly-briefing",
-            "timestamp": datetime.now().isoformat(),
-            "status": result.get("status", "error"),
-            "tasks_created": len(result.get("tasks_created", [])),
-            "note_id": result.get("note_id"),
-            "error": result.get("error"),
-        }
+        out["briefing_status"] = result.get("status", "error")
+        out["briefing_tasks_created"] = len(result.get("tasks_created", []))
+        out["briefing_note_id"] = result.get("note_id")
+        if result.get("error"):
+            out["briefing_error"] = result.get("error")
     except Exception as e:
-        return {
-            "job": "editorial-weekly-briefing",
-            "status": "error",
-            "error": str(e),
-        }
+        out["briefing_status"] = "error"
+        out["briefing_error"] = str(e)
+
+    # 2) Auto-selecao de 4 posts pending_approval
+    selection_count = 0
+    try:
+        sel = await select_weekly_posts(posts_per_week=4)
+        if sel.get('error'):
+            out["selection_error"] = sel['error']
+        else:
+            selected = sel.get('selected', [])
+            sched = schedule_selected_posts(selected)
+            selection_count = len(sched.get('scheduled', []))
+            out["selection_count"] = selection_count
+            out["selection_total_candidates"] = sel.get('total_candidates', 0)
+            _editorial_action_items_cache = {"data": None, "timestamp": None}
+    except Exception as e:
+        out["selection_error"] = str(e)
+
+    # 3) Notifica WhatsApp
+    if selection_count > 0:
+        try:
+            from services.intel_bot import send_intel_notification
+            msg = (
+                f"🎯 *Editorial pra proxima semana*\n"
+                f"{selection_count} posts selecionados pela IA — revise e aprove no /editorial\n\n"
+                f"https://intel.almeida-prado.com/editorial"
+            )
+            await send_intel_notification(msg)
+            out["notified"] = True
+        except Exception as e:
+            out["notify_error"] = str(e)
+
+    out["status"] = "ok" if out.get("briefing_status") == "ok" or selection_count > 0 else "error"
+    return out
 
 
 # ============== EDITORIAL METRICS API ==============
@@ -21943,6 +22174,168 @@ async def cron_editorial_metrics_reminder_evening(request: Request):
         return {"job": "editorial-metrics-reminder-evening", **result}
     except Exception as e:
         return {"job": "editorial-metrics-reminder-evening", "status": "error", "error": str(e)}
+
+
+@app.get("/api/cron/auto-collect-linkedin-metrics")
+@track_cron_run
+async def cron_auto_collect_linkedin_metrics(request: Request):
+    """
+    Cron horario: coleta automatica de metricas LinkedIn por janelas
+    granulares (1h/6h/24h/72h/168h). Le posts publicados nos ultimos 7d,
+    pra cada janela vencida ainda nao registrada em editorial_metrics_history,
+    chama LinkdAPI e insere snapshot.
+
+    Schedule: 0 * * * * (hourly UTC)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    try:
+        from services.editorial_metrics_collector import collect_metrics_for_due_windows
+        result = await collect_metrics_for_due_windows()
+        # Invalida cache do action-items pra refletir novas coletas no drill
+        global _editorial_action_items_cache
+        _editorial_action_items_cache = {"data": None, "timestamp": None}
+        return {"job": "auto-collect-linkedin-metrics", **result}
+    except Exception as e:
+        logger.exception("auto-collect-linkedin-metrics falhou")
+        return {"job": "auto-collect-linkedin-metrics", "status": "error", "error": str(e)}
+
+
+@app.get("/api/editorial/posts/{post_id}/timeline")
+async def api_editorial_post_timeline(post_id: int):
+    """Retorna serie temporal de snapshots por janela + acoes pendentes + insight.
+
+    Resposta:
+    {
+      "post_id": 171,
+      "horas_desde_pub": 27.4,
+      "snapshots": [{"janela":"1h", "impressoes":234, "reacoes":12, "coletado_em":"..."}],
+      "janelas_esperadas": ["1h","6h","24h"],
+      "janelas_faltantes": [],
+      "janela_atual": "24h",
+      "actions_pendentes": [...],
+      "insight": "Top 20% dos seus posts"
+    }
+    """
+    from services.editorial_actions import (
+        JANELA_HORAS, JANELAS_ORDER, get_window_meta, evaluate_actions,
+        janelas_esperadas_para, computar_insight,
+    )
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, article_title, titulo_adaptado, data_publicado,
+                   linkedin_post_url, url_publicado
+            FROM editorial_posts WHERE id = %s
+        """, (post_id,))
+        post = cursor.fetchone()
+        if not post:
+            raise HTTPException(status_code=404, detail="Post nao encontrado")
+        post = dict(post)
+        if not post.get("data_publicado"):
+            return {
+                "post_id": post_id,
+                "snapshots": [],
+                "janelas_esperadas": [],
+                "janelas_faltantes": [],
+                "janela_atual": None,
+                "actions_pendentes": [],
+                "insight": "",
+                "error": "Post sem data_publicado",
+            }
+
+        horas = (datetime.now() - post["data_publicado"]).total_seconds() / 3600
+
+        # Snapshots ja coletados pra esse post (preferir janela; fallback dias_apos_publicacao)
+        cursor.execute("""
+            SELECT janela, dias_apos_publicacao, impressoes, reacoes, comentarios,
+                   compartilhamentos, salvamentos, coletado_em, fonte
+            FROM editorial_metrics_history
+            WHERE post_id = %s
+            ORDER BY coletado_em ASC
+        """, (post_id,))
+        rows = [dict(r) for r in cursor.fetchall()]
+
+        # Stats historicos do user pra benchmark (ultimos 90d, posts com >0 eng)
+        cursor.execute("""
+            WITH eng AS (
+                SELECT (COALESCE(linkedin_reacoes,0) + COALESCE(linkedin_comentarios,0)
+                        + COALESCE(linkedin_compartilhamentos,0)) AS e
+                FROM editorial_posts
+                WHERE status = 'published'
+                  AND data_publicado > NOW() - INTERVAL '90 days'
+                  AND id <> %s
+            )
+            SELECT AVG(e) AS avg_eng,
+                   PERCENTILE_CONT(0.2) WITHIN GROUP (ORDER BY e) AS p20_eng,
+                   PERCENTILE_CONT(0.8) WITHIN GROUP (ORDER BY e) AS p80_eng
+            FROM eng
+            WHERE e > 0
+        """, (post_id,))
+        stats_row = cursor.fetchone()
+        stats_user = dict(stats_row) if stats_row else None
+        if stats_user:
+            stats_user = {k: float(v) if v is not None else 0 for k, v in stats_user.items()}
+
+    # Normaliza snapshots — derive janela quando ausente (legado)
+    snapshots = []
+    for r in rows:
+        janela = r.get("janela")
+        if not janela and r.get("dias_apos_publicacao") is not None:
+            d = r["dias_apos_publicacao"]
+            if d == 0 or d == 1:
+                janela = "24h"
+            elif d == 3:
+                janela = "72h"
+            elif d >= 7:
+                janela = "168h"
+        snapshots.append({
+            "janela": janela,
+            "impressoes": r.get("impressoes") or 0,
+            "reacoes": r.get("reacoes") or 0,
+            "comentarios": r.get("comentarios") or 0,
+            "compartilhamentos": r.get("compartilhamentos") or 0,
+            "salvamentos": r.get("salvamentos") or 0,
+            "coletado_em": r["coletado_em"].isoformat() if r.get("coletado_em") else None,
+            "fonte": r.get("fonte"),
+        })
+
+    janelas_esperadas = janelas_esperadas_para(horas)
+    coletadas_set = {s["janela"] for s in snapshots if s.get("janela")}
+    janelas_faltantes = [j for j in janelas_esperadas if j not in coletadas_set]
+    # Janela "atual" = ultima vencida
+    janela_atual = janelas_esperadas[-1] if janelas_esperadas else None
+
+    # Snapshot da janela atual pra avaliar acoes condicionais + insight
+    snap_atual = None
+    if janela_atual:
+        for s in snapshots:
+            if s.get("janela") == janela_atual:
+                snap_atual = s
+                break
+    actions_pendentes = []
+    if janela_atual:
+        meta = get_window_meta(janela_atual)
+        actions_pendentes = [
+            a for a in evaluate_actions(janela_atual, snap_atual)
+            if a.get("aplicavel") is not False
+        ]
+    insight = computar_insight(snap_atual, stats_user)
+
+    return {
+        "post_id": post_id,
+        "title": post.get("titulo_adaptado") or post.get("article_title"),
+        "horas_desde_pub": round(horas, 1),
+        "data_publicado": post["data_publicado"].isoformat(),
+        "snapshots": snapshots,
+        "janelas_esperadas": janelas_esperadas,
+        "janelas_faltantes": janelas_faltantes,
+        "janela_atual": janela_atual,
+        "janela_meta": get_window_meta(janela_atual) if janela_atual else None,
+        "actions_pendentes": actions_pendentes,
+        "insight": insight,
+        "stats_user": stats_user,
+    }
 
 
 @app.get("/api/cron/daily-synthesis")

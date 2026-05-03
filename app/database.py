@@ -1692,6 +1692,18 @@ def init_db():
             ADD COLUMN IF NOT EXISTS hot_take_id INTEGER
         ''')
 
+        # Approval workflow columns: pending_approval -> scheduled -> published
+        # data_publicacao_planejada = slot proposto pela IA (vira data_publicacao apos approve)
+        # dismissed_em/motivo = quando user descarta proposta IA
+        # substituido_por_post_id = id do post que substituiu este (selecionado pela IA pos-dismiss)
+        cursor.execute('''
+            ALTER TABLE editorial_posts
+            ADD COLUMN IF NOT EXISTS data_publicacao_planejada TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS dismissed_em TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS dismissed_motivo TEXT,
+            ADD COLUMN IF NOT EXISTS substituido_por_post_id INTEGER
+        ''')
+
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_editorial_posts_status
             ON editorial_posts(status)
@@ -2145,6 +2157,28 @@ def init_db():
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_editorial_metrics_history_post
             ON editorial_metrics_history(post_id, coletado_em DESC)
+        ''')
+
+        # Migration: granular janela em horas (1h/6h/24h/72h/168h) sobreposta ao
+        # dias_apos_publicacao legado. Novos crons usam janela; legado continua lendo dias.
+        cursor.execute('''
+            ALTER TABLE editorial_metrics_history ADD COLUMN IF NOT EXISTS janela TEXT
+        ''')
+        # Backfill: posts ja coletados nao tem 1h/6h, sem como recriar — best effort.
+        cursor.execute('''
+            UPDATE editorial_metrics_history SET janela = CASE
+                WHEN dias_apos_publicacao = 0 THEN '24h'
+                WHEN dias_apos_publicacao = 1 THEN '24h'
+                WHEN dias_apos_publicacao = 3 THEN '72h'
+                WHEN dias_apos_publicacao = 7 THEN '168h'
+                WHEN dias_apos_publicacao IS NOT NULL AND dias_apos_publicacao >= 7 THEN '168h'
+                ELSE NULL
+            END
+            WHERE janela IS NULL
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_metrics_history_janela
+            ON editorial_metrics_history(post_id, janela)
         ''')
 
         # Bot conversations (conversation memory for intel-bot)
