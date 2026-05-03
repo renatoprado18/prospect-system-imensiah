@@ -2079,7 +2079,12 @@
                         </h5>
                         <small id="cronHealthSubtitle" style="color:#64748b;">Carregando...</small>
                     </div>
-                    <button type="button" onclick="closeCronHealthModal()" style="background:none; border:none; font-size:1.4rem; color:#64748b; cursor:pointer; padding:0 4px;">&times;</button>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <button type="button" id="cronHealthRefreshBtn" onclick="refreshCronHealthModal(this)" title="Atualizar agora" style="background:#f1f5f9; border:1px solid #cbd5e1; border-radius:8px; padding:4px 10px; cursor:pointer; color:#334155; font-size:0.78rem; display:inline-flex; align-items:center; gap:4px;">
+                            <i class="bi bi-arrow-clockwise"></i> Atualizar
+                        </button>
+                        <button type="button" onclick="closeCronHealthModal()" style="background:none; border:none; font-size:1.4rem; color:#64748b; cursor:pointer; padding:0 4px;">&times;</button>
+                    </div>
                 </div>
                 <div id="cronHealthBody" style="overflow-y:auto; padding:12px 16px;">
                     <div style="text-align:center; color:#94a3b8; padding:30px;"><i class="bi bi-hourglass-split"></i> carregando...</div>
@@ -4570,6 +4575,14 @@
             if (modal) modal.style.display = 'none';
         }
 
+        async function refreshCronHealthModal(btn) {
+            const origHtml = btn ? btn.innerHTML : null;
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i> ...'; }
+            await loadCronHealth();
+            renderCronHealthModalBody(_cronHealthCache);
+            if (btn) { btn.disabled = false; btn.innerHTML = origHtml || '<i class="bi bi-arrow-clockwise"></i> Atualizar'; }
+        }
+
         // Estado UI: filtro "so problemas" (default ligado)
         let _cronOnlyProblems = true;
 
@@ -4604,6 +4617,14 @@
                 } else {
                     if (typeof showToast === 'function') showToast('Disparado: ' + path, 'success');
                     else alert('Disparado: ' + path);
+                    // auto-refresh: track_cron_run insere row 'running' no inicio,
+                    // 3s costuma ser suficiente pra ver o novo run (e tambem o resultado em crons rapidos)
+                    setTimeout(() => {
+                        loadCronHealth().then(() => {
+                            const modalOpen = document.getElementById('cronHealthModal').style.display === 'flex';
+                            if (modalOpen) renderCronHealthModalBody(_cronHealthCache);
+                        });
+                    }, 3000);
                 }
             } catch (err) {
                 console.warn('trigger cron falhou:', err);
