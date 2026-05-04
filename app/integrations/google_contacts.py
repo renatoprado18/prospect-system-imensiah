@@ -26,6 +26,7 @@ CONTACTS_SCOPES = [
     "https://www.googleapis.com/auth/calendar",  # Full calendar access (read/write)
     "https://www.googleapis.com/auth/tasks",  # Full tasks access (read/write)
     "https://www.googleapis.com/auth/drive",  # Full Google Drive access
+    "https://www.googleapis.com/auth/spreadsheets",  # Read/write Google Sheets
 ]
 
 

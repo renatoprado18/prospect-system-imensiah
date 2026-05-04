@@ -18084,6 +18084,40 @@ async def api_payment_cycle_send(project_id: int, request: Request):
     return result
 
 
+@app.post("/api/projects/{project_id}/payment-cycle/register-history")
+async def api_payment_cycle_register_history(project_id: int, request: Request):
+    """
+    Registra as despesas do ciclo na planilha Google Sheets 'Historico'.
+    Body: {month, year, expenses} (mesmo schema do preview).
+    Retorna: {success, rows_added, sheet_url}.
+    Requer OAuth Google com scope 'spreadsheets'.
+    """
+    from services.payment_history import register_to_sheet
+    data = await request.json()
+    expenses = data.get('expenses') or []
+    if not expenses:
+        # Fallback: usa expenses do payment_cycle config
+        from services.payment_cycle import get_payment_cycle_config
+        config = get_payment_cycle_config(project_id)
+        if config:
+            expenses = config.get('expenses', [])
+    if not expenses:
+        raise HTTPException(status_code=400, detail="Sem despesas para registrar")
+
+    try:
+        result = await register_to_sheet(
+            month=data.get('month', datetime.now().month),
+            year=data.get('year', datetime.now().year),
+            expenses=expenses,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao registrar: {e}")
+
+    return result
+
+
 # ============== PROJECT NOTES ==============
 
 @app.post("/api/projects/{project_id}/notes")

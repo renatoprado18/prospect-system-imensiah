@@ -3324,6 +3324,34 @@
         }
     }
 
+    async function registrarHistoricoCobranca() {
+        const expenses = getCobrancaExpenses();
+        const month = parseInt(document.getElementById('cobrancaMes').value);
+        const year = parseInt(document.getElementById('cobrancaAno').value);
+        if (!expenses.length) { showToast('Sem despesas para registrar', 'warning'); return; }
+
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/payment-cycle/register-history`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ month, year, expenses })
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                const msg = data.detail || data.error || 'Erro ao registrar';
+                showToast(msg, 'danger');
+                return;
+            }
+            const link = data.sheet_url
+                ? ` <a href="${data.sheet_url}" target="_blank" style="color:#fff; text-decoration:underline;">Ver planilha</a>`
+                : '';
+            showToast(`${data.rows_added} linha(s) adicionada(s) no Historico.${link}`, 'success');
+        } catch (e) {
+            console.error(e);
+            showToast('Erro ao registrar no historico', 'danger');
+        }
+    }
+
     async function enviarCobranca() {
         const expenses = getCobrancaExpenses();
         const month = parseInt(document.getElementById('cobrancaMes').value);
@@ -3597,6 +3625,9 @@
                     </button>
                     <button class="btn btn-success" onclick="copiarCobrancaHtml()" title="Copia HTML formatado (cole no Gmail/Apple Mail)">
                         <i class="bi bi-clipboard-check me-1"></i>Copiar HTML
+                    </button>
+                    <button class="btn btn-outline-success" onclick="registrarHistoricoCobranca()" title="Registra valores na planilha Google Sheets de historico">
+                        <i class="bi bi-table me-1"></i>Registrar no Historico
                     </button>
                 </div>
             </div>
