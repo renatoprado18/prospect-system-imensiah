@@ -3219,7 +3219,8 @@
             <tr>
                 <td><input type="text" class="form-control form-control-sm cb-nome" value="${e.nome}" data-index="${i}"></td>
                 <td><input type="number" class="form-control form-control-sm cb-valor" value="${e.valor}" step="0.01" data-index="${i}" onchange="calcularTotalCobranca()"></td>
-                <td><input type="text" class="form-control form-control-sm cb-pix" value="${e.pix || ''}" data-index="${i}"></td>
+                <td><input type="text" class="form-control form-control-sm cb-pix" value="${e.pix || ''}" data-index="${i}" placeholder="chave PIX"></td>
+                <td><input type="text" class="form-control form-control-sm cb-boleto" value="${e.boleto || ''}" data-index="${i}" placeholder="linha digitavel"></td>
                 <td class="text-center"><input type="number" class="form-control form-control-sm cb-venc" value="${e.vencimento_dia || ''}" data-index="${i}" style="width:60px;"></td>
             </tr>
         `).join('');
@@ -3247,6 +3248,7 @@
             nome: row.querySelector('.cb-nome').value,
             valor: parseFloat(row.querySelector('.cb-valor').value) || 0,
             pix: row.querySelector('.cb-pix').value,
+            boleto: row.querySelector('.cb-boleto') ? row.querySelector('.cb-boleto').value : '',
             vencimento_dia: parseInt(row.querySelector('.cb-venc').value) || 0
         })).filter(e => e.valor > 0);
     }
@@ -3267,6 +3269,13 @@
 
             document.getElementById('cobrancaPreviewHtml').innerHTML = data.body_html;
             document.getElementById('cobrancaPreviewSubject').textContent = `Para: ${data.to} | Assunto: ${data.subject}`;
+            // Cache no DOM pra copiar depois sem refazer fetch
+            window._cobrancaCache = {
+                body_html: data.body_html,
+                body_text: data.body_text || '',
+                to: data.to,
+                subject: data.subject
+            };
             document.getElementById('cobrancaEditStep').style.display = 'none';
             document.getElementById('cobrancaPreviewStep').style.display = 'block';
         } catch (e) {
@@ -3277,6 +3286,42 @@
     function voltarEdicaoCobranca() {
         document.getElementById('cobrancaEditStep').style.display = 'block';
         document.getElementById('cobrancaPreviewStep').style.display = 'none';
+    }
+
+    async function copiarCobrancaHtml() {
+        const cache = window._cobrancaCache || {};
+        const html = cache.body_html || document.getElementById('cobrancaPreviewHtml').innerHTML || '';
+        if (!html) { showToast('Nada para copiar', 'warning'); return; }
+        try {
+            // ClipboardItem suporta colar como rich-text (Gmail, Apple Mail)
+            if (navigator.clipboard && window.ClipboardItem) {
+                const blobHtml = new Blob([html], { type: 'text/html' });
+                const blobText = new Blob([cache.body_text || html.replace(/<[^>]+>/g, '')], { type: 'text/plain' });
+                await navigator.clipboard.write([new ClipboardItem({
+                    'text/html': blobHtml,
+                    'text/plain': blobText
+                })]);
+            } else {
+                await navigator.clipboard.writeText(html);
+            }
+            showToast('HTML copiado! Cole no seu email.', 'success');
+        } catch (e) {
+            console.error(e);
+            showToast('Erro ao copiar HTML', 'danger');
+        }
+    }
+
+    async function copiarCobrancaTexto() {
+        const cache = window._cobrancaCache || {};
+        const text = cache.body_text || '';
+        if (!text) { showToast('Nada para copiar', 'warning'); return; }
+        try {
+            await navigator.clipboard.writeText(text);
+            showToast('Texto copiado! Cole no seu email.', 'success');
+        } catch (e) {
+            console.error(e);
+            showToast('Erro ao copiar texto', 'danger');
+        }
     }
 
     async function enviarCobranca() {
@@ -3511,14 +3556,15 @@
                             <tr>
                                 <th>Despesa</th>
                                 <th style="width:120px;">Valor (R$)</th>
-                                <th>PIX / Dados</th>
+                                <th>PIX</th>
+                                <th>Boleto (linha digitavel)</th>
                                 <th style="width:70px;">Dia Venc.</th>
                             </tr>
                         </thead>
                         <tbody id="cobrancaItens"></tbody>
                         <tfoot>
                             <tr class="table-success">
-                                <td colspan="3" class="fw-bold">TOTAL</td>
+                                <td colspan="4" class="fw-bold">TOTAL</td>
                                 <td id="cobrancaTotal" class="fw-bold text-end" colspan="1">R$ 0,00</td>
                             </tr>
                         </tfoot>
@@ -3546,8 +3592,11 @@
                     <button class="btn btn-outline-secondary" onclick="voltarEdicaoCobranca()">
                         <i class="bi bi-arrow-left me-1"></i>Voltar
                     </button>
-                    <button class="btn btn-success" onclick="enviarCobranca()">
-                        <i class="bi bi-send me-1"></i>Enviar Email
+                    <button class="btn btn-outline-primary" onclick="copiarCobrancaTexto()" title="Copia versao texto plano (markdown-like)">
+                        <i class="bi bi-clipboard me-1"></i>Copiar Texto
+                    </button>
+                    <button class="btn btn-success" onclick="copiarCobrancaHtml()" title="Copia HTML formatado (cole no Gmail/Apple Mail)">
+                        <i class="bi bi-clipboard-check me-1"></i>Copiar HTML
                     </button>
                 </div>
             </div>

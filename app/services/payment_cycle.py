@@ -56,13 +56,28 @@ def generate_payment_email(project_id: int, month: int, year: int,
         mes=mes_nome, ano=year
     )
 
-    # Gerar tabela HTML
+    # Gerar tabela HTML + bloco em texto plano (markdown-like)
     rows_html = ""
+    text_lines = []
+    text_lines.append(f"Despesas Pessoais - {mes_nome}/{year}")
+    text_lines.append(f"Oi {config.get('contact_name', 'Pai')}!")
+    text_lines.append("")
+    text_lines.append(f"Seguem as despesas do mes de {mes_nome}/{year} para pagamento:")
+    text_lines.append("")
+
     for e in expenses:
         valor = e.get('valor', 0)
         if valor <= 0:
             continue
-        pix_info = f"<br><small style='color:#6b7280;'>PIX: {e['pix']}</small>" if e.get('pix') else ""
+        # Pagamento (PIX e/ou Boleto)
+        pagamento_lines_html = []
+        if e.get('pix'):
+            pagamento_lines_html.append(f"<small style='color:#6b7280;'>PIX: {e['pix']}</small>")
+        if e.get('boleto'):
+            pagamento_lines_html.append(f"<small style='color:#6b7280;'>Boleto: {e['boleto']}</small>")
+        pagamento_info = "<br>".join(pagamento_lines_html)
+        pagamento_html = f"<br>{pagamento_info}" if pagamento_info else ""
+
         nota = f" <em style='color:#9ca3af;'>({e['nota']})</em>" if e.get('nota') else ""
         venc = f"Dia {e.get('vencimento_dia', '-')}"
         rows_html += f"""
@@ -70,9 +85,26 @@ def generate_payment_email(project_id: int, month: int, year: int,
             <td style="padding:10px 12px; border-bottom:1px solid #e5e7eb;">{e['nome']}{nota}</td>
             <td style="padding:10px 12px; border-bottom:1px solid #e5e7eb;">{venc}</td>
             <td style="padding:10px 12px; border-bottom:1px solid #e5e7eb; text-align:right; font-weight:600;">
-                R$ {valor:,.2f}{pix_info}
+                R$ {valor:,.2f}{pagamento_html}
             </td>
         </tr>"""
+
+        # Versao texto plano
+        nota_txt = f" ({e['nota']})" if e.get('nota') else ""
+        text_lines.append(f"{e['nome']}{nota_txt} - Dia {e.get('vencimento_dia', '-')} - R$ {valor:,.2f}")
+        if e.get('pix'):
+            text_lines.append(f"  PIX: {e['pix']}")
+        if e.get('boleto'):
+            text_lines.append(f"  Boleto: {e['boleto']}")
+        text_lines.append("")
+
+    text_lines.append(f"TOTAL: R$ {total:,.2f}")
+    text_lines.append("")
+    text_lines.append("Por favor, me envie os comprovantes quando pagar.")
+    text_lines.append("")
+    text_lines.append("Obrigado! Abraco,")
+    text_lines.append("Renato")
+    body_text = "\n".join(text_lines)
 
     body_html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -116,6 +148,7 @@ def generate_payment_email(project_id: int, month: int, year: int,
         "to": to,
         "subject": subject,
         "body_html": body_html,
+        "body_text": body_text,
         "expenses": expenses,
         "total": total,
         "month": month,
