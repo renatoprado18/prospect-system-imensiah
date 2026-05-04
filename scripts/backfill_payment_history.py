@@ -21,6 +21,13 @@ import sys
 # Adiciona app/ ao path pra imports funcionarem
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
+# Carrega .env (precisa GOOGLE_CLIENT_ID/SECRET pra refresh do OAuth token)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+except ImportError:
+    pass
+
 from services.payment_history import register_to_sheet  # noqa: E402
 
 
