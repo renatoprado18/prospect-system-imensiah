@@ -7762,11 +7762,19 @@ async def cron_daily_sync(request: Request):
         "steps": {}
     }
 
-    # Helper para executar step com error handling
-    async def run_step(name, func):
+    # Helper para executar step com error handling + timeout opcional.
+    # Why timeout: Vercel mata daily-sync em 300s (SIGKILL). Cada fase usa
+    # asyncio.gather, ent o step mais lento bloqueia toda a fase. Sem timeout
+    # individual, um step pendurando trava o cron inteiro e o decorator
+    # @track_cron_run nao consegue chamar _finalize_run -> registro fica em
+    # 'running' pra sempre. Per-step timeout garante isolamento.
+    async def run_step(name, func, timeout=60.0):
         try:
-            result = await func()
+            result = await _aio.wait_for(func(), timeout=timeout)
             results["steps"][name] = {"status": "success", **(result if isinstance(result, dict) else {"result": result})}
+        except _aio.TimeoutError:
+            results["steps"][name] = {"status": "timeout", "timeout_s": timeout}
+            logger.error(f"daily-sync step '{name}' timeout > {timeout}s")
         except Exception as e:
             results["steps"][name] = {"status": "error", "error": str(e)}
 
@@ -7824,10 +7832,10 @@ async def cron_daily_sync(request: Request):
         return await get_tasks_sync_service().full_sync()
 
     await _aio.gather(
-        run_step("health_recalc", step_health),
-        run_step("sync_contacts", step_contacts),
-        run_step("sync_calendar", step_calendar),
-        run_step("sync_tasks", step_tasks),
+        run_step("health_recalc", step_health, timeout=90.0),
+        run_step("sync_contacts", step_contacts, timeout=90.0),
+        run_step("sync_calendar", step_calendar, timeout=60.0),
+        run_step("sync_tasks", step_tasks, timeout=90.0),
     )
 
     # ==================== FASE 2: Comunicacao (paralelo) ====================
@@ -7865,10 +7873,10 @@ async def cron_daily_sync(request: Request):
         return {"skipped": "no token"}
 
     await _aio.gather(
-        run_step("sync_gmail", step_gmail),
-        run_step("sync_whatsapp", step_whatsapp),
-        run_step("payment_cycle", step_payment),
-        run_step("smart_fup", step_fup),
+        run_step("sync_gmail", step_gmail, timeout=15.0),
+        run_step("sync_whatsapp", step_whatsapp, timeout=120.0),
+        run_step("payment_cycle", step_payment, timeout=60.0),
+        run_step("smart_fup", step_fup, timeout=60.0),
     )
 
     # ==================== FASE 3: IA e processamento (paralelo) ====================
@@ -8040,19 +8048,22 @@ async def cron_daily_sync(request: Request):
             logger.error(f"step_classify_messages fatal: {e}")
         return processed
 
+    # Per-step timeouts: budget total da fase = max(steps). Mantemos abaixo
+    # de 120s pra dar folga ao decorator finalizar (Vercel cap 300s = soma
+    # das 3 fases + overhead).
     await _aio.gather(
-        run_step("daily_ai", step_ai),
-        run_step("campaigns", step_campaigns),
-        run_step("auto_enrich", step_enrich),
-        run_step("avatar_fetch", step_avatars),
-        run_step("group_docs", step_group_docs),
-        run_step("daily_clipping", step_clipping),
-        run_step("social_groups_cache", step_social_groups),
-        run_step("group_messages_sync", step_group_messages),
-        run_step("linkedin_enrichment", step_linkedin_enrichment),
-        run_step("auto_publish", step_auto_publish),
-        run_step("classify_messages", step_classify_messages),
-        run_step("cron_cleanup_stuck", step_cron_cleanup_stuck),
+        run_step("daily_ai", step_ai, timeout=90.0),
+        run_step("campaigns", step_campaigns, timeout=90.0),
+        run_step("auto_enrich", step_enrich, timeout=90.0),
+        run_step("avatar_fetch", step_avatars, timeout=60.0),
+        run_step("group_docs", step_group_docs, timeout=90.0),
+        run_step("daily_clipping", step_clipping, timeout=60.0),
+        run_step("social_groups_cache", step_social_groups, timeout=30.0),
+        run_step("group_messages_sync", step_group_messages, timeout=90.0),
+        run_step("linkedin_enrichment", step_linkedin_enrichment, timeout=120.0),
+        run_step("auto_publish", step_auto_publish),  # ja tem wait_for interno 90s
+        run_step("classify_messages", step_classify_messages, timeout=120.0),
+        run_step("cron_cleanup_stuck", step_cron_cleanup_stuck, timeout=30.0),
     )
 
     results["completed_at"] = datetime.now().isoformat()
