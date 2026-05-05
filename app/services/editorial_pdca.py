@@ -205,7 +205,15 @@ def get_last_week_performance() -> Dict:
 async def generate_weekly_briefing() -> Dict:
     """
     Generate a weekly editorial briefing using Claude AI.
-    Creates tasks and saves as project note.
+
+    Briefing eh SO informativo: gera texto (analise + plano sugerido + pilar foco),
+    salva como nota no projeto Editorial e notifica via WhatsApp. NAO cria tarefas
+    "Publicar hot take/artigo" — o cron auto-publish-linkedin ja decide o que
+    publicar com base na selecao do auto-publisher (Opcao A 2026-05-05).
+
+    Mantem apenas as 2 tarefas operacionais:
+      - "Medir metricas" (sabado)
+      - "Responder todos os comentarios" (sexta)
     """
     performance = get_last_week_performance()
     examples = get_top_bottom_examples(n=3)
@@ -328,52 +336,15 @@ Responda APENAS com o JSON."""
         days_until_monday = 7
     next_monday = today + timedelta(days=days_until_monday)
 
-    day_map = {
-        "segunda": 0, "terca": 1, "quarta": 2, "quinta": 3,
-        "sexta": 4, "sabado": 5, "domingo": 6,
-    }
-
     # Create tasks in project_id=22
+    # NOTA: NAO criamos mais tarefas "Publicar hot take/artigo" pelo loop em
+    # posts_sugeridos — o cron `auto-publish-linkedin` ja publica os posts
+    # selecionados pelo auto-publisher independentemente, e essas tarefas-sugestao
+    # viravam orfas (nunca fechavam). O plano semanal vai SO no texto da nota +
+    # WhatsApp (Opcao A 2026-05-05).
     created_tasks = []
     with get_db() as conn:
         cursor = conn.cursor()
-
-        # 1. Create post tasks from AI suggestions
-        for post_plan in briefing.get("posts_sugeridos", []):
-            dia = post_plan.get("dia", "segunda").lower()
-            day_offset = day_map.get(dia, 0)
-            task_date = next_monday + timedelta(days=day_offset)
-
-            # Parse suggested time
-            horario = post_plan.get("horario_sugerido", "09:00")
-            try:
-                h, m = horario.split(":")
-                task_datetime = task_date.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
-            except (ValueError, AttributeError):
-                task_datetime = task_date.replace(hour=9, minute=0, second=0, microsecond=0)
-
-            tipo_label = "hot take" if post_plan.get("tipo") == "hot_take" else "artigo"
-            tema = post_plan.get("tema", "tema a definir")
-            pilar_label = PILLARS.get(post_plan.get("pilar", ""), {}).get("label", post_plan.get("pilar", ""))
-
-            cursor.execute("""
-                INSERT INTO tasks (
-                    titulo, descricao, project_id, contact_id,
-                    data_vencimento, prioridade, ai_generated, origem,
-                    tags, status
-                ) VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'editorial_briefing', %s, 'pending')
-                RETURNING id
-            """, (
-                f"Publicar {tipo_label}: {tema[:80]}",
-                f"Pilar: {pilar_label}\nGancho: {post_plan.get('gancho', '')}\nHorario sugerido: {horario}",
-                22,  # project_id
-                14911,  # contact_id (Renato)
-                task_datetime,
-                8,  # high priority
-                json.dumps(["editorial", post_plan.get("pilar", ""), tipo_label]),
-            ))
-            task = cursor.fetchone()
-            created_tasks.append({"id": task["id"], "titulo": f"Publicar {tipo_label}: {tema[:80]}"})
 
         # 2. Create "Medir metricas" task for Saturday
         saturday = next_monday + timedelta(days=5)
@@ -468,9 +439,9 @@ Responda APENAS com o JSON."""
             f"Semana passada: {performance['posts_published']} posts, "
             f"{performance['total_impressions']} impressoes, "
             f"{performance['total_engagement']} engajamento\n\n"
-            f"*Plano da semana:*\n{posts_summary}\n"
+            f"*Plano sugerido (auto-publisher decide):*\n{posts_summary}\n"
             f"*Foco:* {briefing.get('pilar_foco', 'A definir')[:120]}\n\n"
-            f"{len(created_tasks)} tarefas criadas no projeto Editorial."
+            f"{len(created_tasks)} tarefas operacionais (metricas + comentarios) no projeto Editorial."
         )
 
         import asyncio
