@@ -123,6 +123,26 @@ def _has_embedded_errors(result: Any) -> tuple:
                 details.append(f"{acc}: {msg}")
             return True, f"{len(bad)}/{len(sub_results)} sub-errors: " + "; ".join(details)
 
+    # 6. steps: dict de sub-resultados (padrao do daily-sync e crons aggregators).
+    # Estrutura: {"steps": {"step_name": {"status": "error"|"timeout", "error": "..."}}}.
+    # Sem isso, daily-sync com 1+ steps falhando ficava marcado 'success' porque
+    # o top-level so tem started_at/completed_at/steps.
+    steps = result.get("steps")
+    if isinstance(steps, dict) and steps:
+        bad_steps = [
+            (name, sr) for name, sr in steps.items()
+            if isinstance(sr, dict) and (
+                sr.get("status") in ("error", "timeout") or
+                (sr.get("error") and not isinstance(sr.get("error"), bool))
+            )
+        ]
+        if bad_steps:
+            details = []
+            for name, sr in bad_steps[:3]:
+                msg = str(sr.get("error") or sr.get("status") or "error")[:120]
+                details.append(f"{name}: {msg}")
+            return True, f"{len(bad_steps)}/{len(steps)} step-errors: " + "; ".join(details)
+
     return False, ""
 
 
