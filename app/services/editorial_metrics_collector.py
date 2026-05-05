@@ -352,6 +352,30 @@ async def collect_metrics_for_due_windows() -> Dict:
 
     # 3. Insert batch
     if new_inserts:
+        # Pre-coleta IDs de posts cujo ultimo snapshot veio de xlsx_upload.
+        # Why: xlsx tem campos que LinkdAPI nao expoe (impressoes reais,
+        # visitas perfil, seguidores ganhos, demografia). NUNCA sobrescrever
+        # o snapshot agregado em editorial_posts com dados pobres da API
+        # — so guardar nova entry em editorial_metrics_history como backup.
+        post_ids_in_batch = list({r[0] for r in new_inserts})
+        xlsx_protected: set = set()
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT DISTINCT ON (post_id) post_id, fonte
+                    FROM editorial_metrics_history
+                    WHERE post_id = ANY(%s)
+                    ORDER BY post_id, coletado_em DESC
+                """, (post_ids_in_batch,))
+                for row in cur.fetchall():
+                    fonte_val = (row.get('fonte') or '').lower() if isinstance(row, dict) else (row[1] or '').lower()
+                    pid_val = row.get('post_id') if isinstance(row, dict) else row[0]
+                    if 'xlsx' in fonte_val:
+                        xlsx_protected.add(pid_val)
+        except Exception:
+            logger.exception("metrics_collector: falha ao detectar xlsx_protected; assumindo vazio")
+
         with get_db() as conn:
             cursor = conn.cursor()
             for row in new_inserts:
@@ -365,18 +389,42 @@ async def collect_metrics_for_due_windows() -> Dict:
                         dias_apos_publicacao, janela, fonte
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (pid, imp, reac, com, comp, vis, seg, sal, dias, janela, fonte))
-                # Refresh ultimo snapshot em editorial_posts (vence pelo mais recente)
-                cursor.execute("""
-                    UPDATE editorial_posts
-                    SET linkedin_impressoes = COALESCE(NULLIF(%s, 0), linkedin_impressoes),
-                        linkedin_reacoes = %s,
-                        linkedin_comentarios = %s,
-                        linkedin_compartilhamentos = %s,
-                        linkedin_metricas_em = CURRENT_TIMESTAMP,
-                        atualizado_em = CURRENT_TIMESTAMP
-                    WHERE id = %s
-                """, (imp, reac, com, comp, pid))
+                # Refresh ultimo snapshot em editorial_posts SO se nao temos xlsx
+                # rico ja salvo — proteger demografia/impressoes reais.
+                if pid not in xlsx_protected:
+                    cursor.execute("""
+                        UPDATE editorial_posts
+                        SET linkedin_impressoes = COALESCE(NULLIF(%s, 0), linkedin_impressoes),
+                            linkedin_reacoes = %s,
+                            linkedin_comentarios = %s,
+                            linkedin_compartilhamentos = %s,
+                            linkedin_metricas_em = CURRENT_TIMESTAMP,
+                            atualizado_em = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """, (imp, reac, com, comp, pid))
             conn.commit()
+
+        # 4. Auto-complete tasks "Coletar metricas..." que o cron acaba de cobrir.
+        # Why: cron ja coletou — manter task pendente vira ruido pro user.
+        # Match em 2 niveis (post_id direto OU descricao 'post_id=NNN' legacy).
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                for pid in post_ids_in_batch:
+                    cur.execute("""
+                        UPDATE tasks SET status='completed', data_conclusao=NOW(),
+                            descricao=COALESCE(descricao,'') ||
+                                ' | Auto-completed: cron auto-collect em ' || NOW()::date
+                        WHERE status='pending'
+                          AND titulo ILIKE 'Coletar metricas%%'
+                          AND (
+                            editorial_post_id = %s
+                            OR descricao LIKE %s
+                          )
+                    """, (pid, f'%post_id={pid}%'))
+                conn.commit()
+        except Exception:
+            logger.exception("metrics_collector: auto-complete tasks falhou (nao fatal)")
 
     summary["timestamp"] = datetime.now().isoformat()
     return summary

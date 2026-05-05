@@ -962,12 +962,14 @@
     <div class="posts-header">
         <h2><i class="bi bi-kanban me-2" style="color: #6366f1;"></i>Pipeline Editorial</h2>
     </div>
+    <!-- Ordem natural do funil: Estoque -> Para Aprovar -> Agendados -> Coletar Metricas -> Publicados.
+         Default ativo continua "Para Aprovar" — eh a aba de acao prioritaria. -->
     <div style="display: flex; gap: 4px; padding: 0 16px 12px; flex-wrap: wrap;">
-        <button class="btn btn-sm btn-outline-warning pipeline-tab active" onclick="loadPipeline('pending_approval', this)">🎯 Para Aprovar</button>
-        <button class="btn btn-sm btn-outline-secondary pipeline-tab" onclick="loadPipeline('draft', this)">📝 Estoque</button>
-        <button class="btn btn-sm btn-outline-primary pipeline-tab" onclick="loadPipeline('scheduled', this)">📅 Agendados</button>
-        <button class="btn btn-sm btn-outline-success pipeline-tab" onclick="loadPipeline('pending_metrics', this)">📊 Coletar Métricas</button>
-        <button class="btn btn-sm btn-outline-secondary pipeline-tab" onclick="loadPipeline('published', this)">✅ Publicados</button>
+        <button class="btn btn-sm btn-outline-secondary pipeline-tab" data-pipeline-tab="draft" onclick="loadPipeline('draft', this)">📝 Estoque</button>
+        <button class="btn btn-sm btn-outline-warning pipeline-tab active" data-pipeline-tab="pending_approval" onclick="loadPipeline('pending_approval', this)">🎯 Para Aprovar</button>
+        <button class="btn btn-sm btn-outline-primary pipeline-tab" data-pipeline-tab="scheduled" onclick="loadPipeline('scheduled', this)">📅 Agendados</button>
+        <button class="btn btn-sm btn-outline-success pipeline-tab" data-pipeline-tab="pending_metrics" onclick="loadPipeline('pending_metrics', this)">📊 Coletar Métricas</button>
+        <button class="btn btn-sm btn-outline-secondary pipeline-tab" data-pipeline-tab="published" onclick="loadPipeline('published', this)">✅ Publicados</button>
     </div>
     <div id="pipelineContent" style="padding: 0 16px 16px;">
         <div class="text-muted text-center py-3">Carregando...</div>
@@ -2465,7 +2467,7 @@ async function loadPipeline(status, btn) {
                 'pending_approval': 'Nada esperando aprovacao. A IA seleciona 4 posts toda Domingo a noite.',
                 'draft': 'Estoque vazio. Hot takes orfaos e drafts curados aparecem aqui.',
                 'scheduled': 'Nenhum post agendado. Aprove posts na aba "Para Aprovar".',
-                'pending_metrics': 'Todas as janelas (0d/1d/3d/7d) coletadas pra todos os posts! 🎉',
+                'pending_metrics': 'Todas as janelas (1h/6h/24h/72h/168h) coletadas pra todos os posts! 🎉',
                 'published': 'Nenhum post publicado ainda.'
             };
             container.innerHTML = `<div class="text-muted text-center py-3">${msgs[status] || 'Vazio'}</div>`;
@@ -2539,6 +2541,8 @@ const PIPELINE_COLUMNS = {
         { key: 'tipo', label: 'Tipo' },
         { key: 'titulo', label: 'Titulo' },
         { key: 'idade', label: 'Idade' },
+        // Mini-curve (1h/6h/24h/72h/168h) — alinhado com drill do dashboard
+        { key: 'janelas_curve', label: 'Janelas', sortable: false },
         { key: '_actions', label: 'Acoes', sortable: false },
     ],
     published: [
@@ -2554,6 +2558,69 @@ const PIPELINE_COLUMNS = {
         { key: '_actions', label: 'Acoes', sortable: false },
     ],
 };
+
+// ============== Mini curve SVG: 5 quadradinhos (1h/6h/24h/72h/168h) ==============
+// Versao da pagina /editorial — reproduz a mesma logica de cores/labels do
+// drill do dashboard (renderJanelasMiniCurve em rap_dashboard.html). Mantida
+// duplicada (em vez de import) pq cada template inclui seu proprio script.
+// Cores por status (vem do backend em p.janelas):
+//   coletada -> verde solido (#22c55e)
+//   perdida  -> cinza        (#94a3b8)
+//   aberta   -> amarelo      (#fbbf24)  (proxima acao)
+//   futura   -> cinza claro  (#e2e8f0)
+// Fallback pra payload legado (janelas_faltantes em horas/dias).
+function renderJanelasMiniCurveEditorial(p) {
+    const order = ['1h','6h','24h','72h','168h'];
+    const janelas = p.janelas && typeof p.janelas === 'object' ? p.janelas : null;
+    const statusByJ = {};
+    if (janelas) {
+        order.forEach(j => {
+            statusByJ[j] = (janelas[j] && janelas[j].status) || 'futura';
+        });
+    } else {
+        // Legado: deriva status de janelas_faltantes + horas_publicado
+        const horas = Number(p.horas_publicado || 0);
+        const allH = {'1h':1,'6h':6,'24h':24,'72h':72,'168h':168};
+        const faltantes = Array.isArray(p.janelas_faltantes) ? p.janelas_faltantes : [];
+        const isHoras = faltantes.some(v => v > 7);
+        const faltMap = {};
+        if (isHoras) {
+            faltantes.forEach(h => {
+                const k = order.find(j => allH[j] === h);
+                if (k) faltMap[k] = true;
+            });
+        } else {
+            faltantes.forEach(d => {
+                if (d === 0 || d === 1) faltMap['24h'] = true;
+                else if (d === 3) faltMap['72h'] = true;
+                else if (d === 7) faltMap['168h'] = true;
+            });
+        }
+        order.forEach(j => {
+            const vencida = horas >= allH[j];
+            if (!vencida) statusByJ[j] = 'futura';
+            else if (faltMap[j]) statusByJ[j] = 'aberta';
+            else statusByJ[j] = 'coletada';
+        });
+    }
+    const colors = {
+        coletada: '#22c55e',
+        perdida:  '#94a3b8',
+        aberta:   '#fbbf24',
+        futura:   '#e2e8f0',
+    };
+    const sz = 10, gap = 3;
+    const totalW = order.length * (sz + gap) - gap;
+    const H = sz;
+    const bars = order.map((j, i) => {
+        const st = statusByJ[j] || 'futura';
+        const fill = colors[st];
+        const x = i * (sz + gap);
+        return `<rect x="${x}" y="0" width="${sz}" height="${sz}" fill="${fill}" rx="2"/>`;
+    }).join('');
+    const tooltip = order.map(j => `${j}: ${statusByJ[j] || 'futura'}`).join(' · ');
+    return `<svg width="${totalW}" height="${H}" viewBox="0 0 ${totalW} ${H}" style="vertical-align:middle;"><title>${tooltip}</title>${bars}</svg>`;
+}
 
 function pipelineCellHtml(p, col, status) {
     if (col === 'id') return `<span class="id-badge">#${p.id}</span>`;
@@ -2578,6 +2645,12 @@ function pipelineCellHtml(p, col, status) {
         if (horas < 24) return `<span style="color:#f59e0b;">${horas}h</span>`;
         const dias = Math.floor(horas / 24);
         return `<span style="color:${dias > 3 ? '#dc2626' : '#475569'};">${dias}d</span>`;
+    }
+    if (col === 'janelas_curve') {
+        // Mini-curve 1h/6h/24h/72h/168h — mesma logica do drill do dashboard.
+        // Backend (api/editorial/action-items) ja entrega p.janelas com status
+        // por janela (coletada/aberta/perdida/futura).
+        return renderJanelasMiniCurveEditorial(p);
     }
     if (col === 'linkedin_impressoes') return `<span class="num">${p.linkedin_impressoes || 0}</span>`;
     if (col === 'linkedin_reacoes') return `<span class="num">${p.linkedin_reacoes || 0}</span>`;
@@ -2626,10 +2699,17 @@ function pipelineCellHtml(p, col, status) {
             </div>`;
         }
         if (status === 'pending_metrics') {
-            const faltantes = Array.isArray(p.janelas_faltantes) ? p.janelas_faltantes : [];
-            const badge = faltantes.length
-                ? `<span style="background:#fef3c7;color:#92400e;font-size:0.65rem;padding:2px 6px;border-radius:8px;font-weight:600;white-space:nowrap;">Falta ${faltantes.map(d => d + 'd').join(', ')}</span>`
-                : '';
+            // Badge: SO a proxima_acao imediata (mesma UX do drill do dashboard).
+            // urgente=true quando passou do target da janela aberta (cron deveria
+            // ter coletado mas nao coletou) -> vermelho.
+            const proxima = p.proxima_acao || null;
+            const urgente = !!p.urgente;
+            let badge = '';
+            if (urgente && proxima) {
+                badge = `<span style="background:#fee2e2;color:#991b1b;font-size:0.65rem;padding:2px 6px;border-radius:8px;font-weight:600;white-space:nowrap;">Coletar ${proxima} agora</span>`;
+            } else if (proxima) {
+                badge = `<span style="background:#fef3c7;color:#92400e;font-size:0.65rem;padding:2px 6px;border-radius:8px;font-weight:600;white-space:nowrap;">Janela ${proxima} aberta</span>`;
+            }
             return `<div style="display:flex; gap:4px; align-items:center; white-space:nowrap;">
                 ${badge}
                 ${linkBtn}
@@ -2699,7 +2779,7 @@ async function approveAllDrafts() {
         const data = await resp.json();
         if (resp.ok) {
             showToast && showToast(`${data.scheduled?.length || 0} posts agendados!`, 'success');
-            loadPipeline('scheduled', document.querySelector('.pipeline-tab:nth-child(2)'));
+            loadPipeline('scheduled', document.querySelector('.pipeline-tab[data-pipeline-tab="scheduled"]'));
         } else {
             alert(data.detail || 'Erro');
         }

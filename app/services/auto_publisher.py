@@ -457,6 +457,39 @@ async def publish_due_posts() -> Dict:
         except Exception as e:
             return {"error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()[-400:]}
 
+    def _autocomplete_publish_tasks(post_id: Optional[int], slot: Optional[datetime]) -> None:
+        """Fecha tarefas redundantes 'Publicar...' que o cron acaba de cobrir.
+        Estrategia em 2 passes:
+          1. Match exato por editorial_post_id (gravado quando temos FK)
+          2. Fallback heuristico pra project 22 + titulo ILIKE 'Publicar%'
+             + data_vencimento::date == slot::date (cobre tasks legacy do
+             weekly-briefing que nao tem FK pq foram criadas antes do post existir)
+        Idempotente — UPDATE com WHERE status='pending'."""
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                if post_id:
+                    cur.execute("""
+                        UPDATE tasks SET status='completed', data_conclusao=NOW(),
+                            descricao=COALESCE(descricao,'') ||
+                                ' | Auto-completed: cron auto-publish em ' || NOW()::date
+                        WHERE editorial_post_id = %s AND status='pending'
+                          AND (titulo ILIKE 'Publicar%%' OR titulo ILIKE 'Publish%%')
+                    """, (post_id,))
+                if slot:
+                    cur.execute("""
+                        UPDATE tasks SET status='completed', data_conclusao=NOW(),
+                            descricao=COALESCE(descricao,'') ||
+                                ' | Auto-completed: cron auto-publish (match por data) em ' || NOW()::date
+                        WHERE project_id = 22 AND status='pending'
+                          AND titulo ILIKE 'Publicar%%'
+                          AND editorial_post_id IS NULL
+                          AND data_vencimento::date = %s::date
+                    """, (slot,))
+                conn.commit()
+        except Exception:
+            logger.exception(f"_autocomplete_publish_tasks falhou pra post {post_id}")
+
     # Publish orphan hot_takes first
     for ht in due_hot_takes:
         try:
@@ -473,6 +506,8 @@ async def publish_due_posts() -> Dict:
                         WHERE id = %s
                     """, (result.get('post_url', ''), ht['id']))
                     conn.commit()
+                # Hot_takes orfaos nao tem editorial_post — fallback so por data
+                _autocomplete_publish_tasks(post_id=None, slot=now)
                 results["published"] += 1
                 results["posts"].append({"id": ht['id'], "source": "hot_take", "url": result.get('post_url')})
                 preview = (text or '').strip().split('\n')[0][:80]
@@ -523,6 +558,13 @@ async def publish_due_posts() -> Dict:
                     mark_as_published(ep['id'], url_publicado=result.get('post_url', ''))
                 except Exception:
                     logger.exception(f"auto_publisher: mark_as_published falhou pra ep {ep['id']}")
+
+                # Auto-complete tarefas redundantes de "Publicar X" — cron ja fez.
+                # Why: weekly-briefing cria tasks "Publicar..." sem FK pra post
+                # (post nao existe ainda). Quando publicamos aqui, fechamos:
+                # 1) Tasks com editorial_post_id == ep.id (futuro: quando linkamos)
+                # 2) Tasks proj 22 + 'Publicar%' + data_vencimento::date == hoje
+                _autocomplete_publish_tasks(post_id=ep['id'], slot=now)
 
                 # Also update linked hot_take
                 if ep.get('hot_take_id'):

@@ -713,7 +713,11 @@ def init_db():
             ('sync_status', "TEXT DEFAULT 'local_only'"),
             ('etag', 'TEXT'),
             ('project_id', 'INTEGER REFERENCES projects(id)'),
-            ('conselhoos_raci_id', 'TEXT')
+            ('conselhoos_raci_id', 'TEXT'),
+            # FK pra editorial_posts — usado pelo cron auto-publish/auto-collect
+            # pra fechar tarefas redundantes assim que ele mesmo executa a acao.
+            # Sem essa coluna o cron nao tem como saber qual task fechar.
+            ('editorial_post_id', 'INTEGER'),
         ]:
             try:
                 cursor.execute(f'ALTER TABLE tasks ADD COLUMN IF NOT EXISTS {col} {col_def}')
@@ -724,6 +728,12 @@ def init_db():
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_tasks_conselhoos_raci
             ON tasks(conselhoos_raci_id) WHERE conselhoos_raci_id IS NOT NULL
+        ''')
+
+        # Index pro cron auto-completar tasks por post_id (lookup hot path)
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_tasks_editorial_post
+            ON tasks(editorial_post_id) WHERE editorial_post_id IS NOT NULL
         ''')
 
         cursor.execute('''

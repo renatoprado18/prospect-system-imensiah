@@ -328,8 +328,8 @@ def _create_metrics_collection_task(cursor, post_id: int, post_title: str, publi
         INSERT INTO tasks (
             titulo, descricao, project_id, contact_id,
             data_vencimento, prioridade, ai_generated, origem,
-            tags, status
-        ) VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'editorial_metrics', %s, 'pending')
+            tags, status, editorial_post_id
+        ) VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'editorial_metrics', %s, 'pending', %s)
         RETURNING id
     """, (
         f"Coletar metricas: {titulo_truncated}",
@@ -339,6 +339,7 @@ def _create_metrics_collection_task(cursor, post_id: int, post_title: str, publi
         due_date,
         6,  # priority
         json.dumps(["editorial", "metricas"]),
+        post_id,  # FK pro cron auto-collect fechar a tarefa quando coletar via API
     ))
     return cursor.fetchone()
 
