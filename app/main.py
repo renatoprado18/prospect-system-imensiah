@@ -15704,12 +15704,46 @@ from services.calendar_events import get_calendar_events
 from services.calendar_sync import get_calendar_sync
 
 
+CALENDAR_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar"
+
+
+def _check_calendar_write_scope() -> Optional[Dict]:
+    """Retorna None se OK, ou dict de erro se a conta Google conectada não tem
+    o scope `calendar` (ex: usuário antigo que conectou antes do scope ser
+    adicionado e nunca reconectou).
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT email, scopes FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+        account = cursor.fetchone()
+    if not account:
+        return {"code": "no_google_account", "message": "Nenhuma conta Google conectada."}
+    scopes = account.get("scopes")
+    if isinstance(scopes, str):
+        try:
+            scopes = json.loads(scopes)
+        except Exception:
+            scopes = []
+    scopes = scopes or []
+    if CALENDAR_WRITE_SCOPE not in scopes:
+        return {
+            "code": "calendar_scope_missing",
+            "message": f"Conta {account['email']} sem scope de escrita no calendário. Reconecte em /rap/settings.",
+            "email": account["email"],
+        }
+    return None
+
+
 @app.post("/api/calendar/events")
 async def create_calendar_event_endpoint(request: Request):
     """Cria evento no calendario"""
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    scope_err = _check_calendar_write_scope()
+    if scope_err:
+        raise HTTPException(status_code=403, detail=scope_err)
 
     data = await request.json()
 
@@ -15799,6 +15833,21 @@ async def list_calendar_events(
     if "error" in result:
         return {"events": [], "total": 0, "error": result.get("error")}
 
+    # Enriquecer com IDs locais e info de recorrência (uma única query)
+    google_ids = [it.get("id") for it in result.get("items", []) if it.get("id")]
+    local_map = {}
+    if google_ids:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, google_event_id, recurring_event_id, recurrence_rule
+                   FROM calendar_events WHERE google_event_id = ANY(%s)""",
+                (google_ids,)
+            )
+            for row in cursor.fetchall():
+                row = dict(row)
+                local_map[row["google_event_id"]] = row
+
     # Formatar eventos para o frontend
     events = []
     for item in result.get("items", []):
@@ -15824,14 +15873,28 @@ async def list_calendar_events(
                     conference = ep.get("uri")
                     break
 
+        google_id = item.get("id")
+        local = local_map.get(google_id, {})
+        recurring_event_id = local.get("recurring_event_id") or item.get("recurringEventId")
+        recurrence_rule = local.get("recurrence_rule")
+        if not recurrence_rule and item.get("recurrence"):
+            for rule in item["recurrence"]:
+                if rule.startswith("RRULE:"):
+                    recurrence_rule = rule
+                    break
+
         events.append({
-            "id": item.get("id"),
+            "id": local.get("id") or google_id,  # local int se existir, senão Google id
+            "google_event_id": google_id,
+            "local_id": local.get("id"),
             "summary": item.get("summary", "Sem titulo"),
             "description": item.get("description"),
             "location": item.get("location"),
             "start_datetime": event_start,
             "end_datetime": event_end,
             "is_all_day": is_all_day,
+            "recurring_event_id": recurring_event_id,
+            "recurrence_rule": recurrence_rule,
             "html_link": item.get("htmlLink"),
             "conference": conference,
             "contact_name": None  # TODO: match with contacts
@@ -15875,6 +15938,10 @@ async def update_calendar_event_endpoint(request: Request, event_id: int):
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
+    scope_err = _check_calendar_write_scope()
+    if scope_err:
+        raise HTTPException(status_code=403, detail=scope_err)
+
     data = await request.json()
     service = get_calendar_events()
 
@@ -15896,20 +15963,42 @@ async def update_calendar_event_endpoint(request: Request, event_id: int):
 def delete_calendar_event_endpoint(
     request: Request,
     event_id: int,
-    delete_from_google: bool = True
+    delete_from_google: bool = True,
+    scope: str = "single"
 ):
-    """Deleta evento"""
+    """Deleta evento. scope: 'single' | 'future' | 'all' (recorrência)."""
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
+    if scope not in ("single", "future", "all"):
+        raise HTTPException(status_code=400, detail=f"scope invalido: {scope}")
+
+    scope_err = _check_calendar_write_scope()
+    if scope_err:
+        raise HTTPException(status_code=403, detail=scope_err)
+
     service = get_calendar_events()
-    success = service.delete_event(event_id, delete_from_google=delete_from_google)
+    success = service.delete_event(event_id, delete_from_google=delete_from_google, scope=scope)
 
     if not success:
         raise HTTPException(status_code=404, detail="Evento nao encontrado")
 
-    return {"deleted": True, "event_id": event_id}
+    return {"deleted": True, "event_id": event_id, "scope": scope}
+
+
+@app.get("/api/calendar/scope-status")
+def get_calendar_scope_status(request: Request):
+    """Retorna se a conta Google conectada tem scope de escrita no calendário.
+    Usado pelo dashboard pra exibir badge de "reconecte conta" quando faltar.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    err = _check_calendar_write_scope()
+    if err is None:
+        return {"ok": True}
+    return {"ok": False, **err}
 
 
 @app.post("/api/calendar/events/{event_id}/link-contact/{contact_id}")

@@ -2067,6 +2067,11 @@
                 <i class="bi bi-check-circle-fill" style="font-size:0.85em;"></i>
                 <span id="cronHealthLabel">Crons OK</span>
             </button>
+            <a id="calendarScopePill" href="/rap/settings" title="Reconecte sua conta Google pra liberar escrita no calendário"
+                style="display:none; background:#fef3c7; color:#92400e; border:1px solid #fcd34d; border-radius:999px; padding:3px 10px; font-size:0.78rem; font-weight:600; text-decoration:none;">
+                <i class="bi bi-calendar-x" style="font-size:0.85em;"></i>
+                <span>Reconecte Google</span>
+            </a>
         </div>
 
         <!-- Cron Health Modal -->
@@ -4486,6 +4491,22 @@
         // Refresh cron health a cada 5min — wrap em arrow pq loadCronHealth
         // e definida em outro <script> block (parseado depois deste)
         setInterval(() => loadCronHealth(), 5 * 60 * 1000);
+
+        // Calendar scope pill (mostra só quando precisa reconectar)
+        async function loadCalendarScopeStatus() {
+            try {
+                const res = await fetch('/api/calendar/scope-status', { credentials: 'same-origin' });
+                if (!res.ok) return;
+                const data = await res.json();
+                const pill = document.getElementById('calendarScopePill');
+                if (pill && !data.ok && data.code === 'calendar_scope_missing') {
+                    pill.style.display = 'inline-flex';
+                }
+            } catch (err) {
+                console.warn('calendar scope check failed:', err);
+            }
+        }
+        loadCalendarScopeStatus();
     </script>
 
     <!-- ============== Cron Health Pill + Modal ============== -->

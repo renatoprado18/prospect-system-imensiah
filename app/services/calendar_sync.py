@@ -311,8 +311,11 @@ class CalendarSyncService:
 
         return result
 
-    async def delete_from_google(self, event_id: int) -> bool:
-        """Deleta evento do Google Calendar"""
+    async def delete_from_google(self, event_id: int, scope: str = "single") -> bool:
+        """Deleta evento do Google Calendar.
+
+        scope: "single" | "future" | "all" — passado direto pra integração.
+        """
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -334,10 +337,12 @@ class CalendarSyncService:
 
         access_token = await self.get_access_token(account["email"])
 
-        return await delete_calendar_event(
+        result = await delete_calendar_event(
             access_token=access_token,
-            event_id=event["google_event_id"]
+            event_id=event["google_event_id"],
+            scope=scope
         )
+        return bool(result.get("deleted"))
 
     def get_sync_status(self) -> Dict:
         """Retorna status da sincronizacao"""

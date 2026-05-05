@@ -148,8 +148,19 @@ class CalendarEventsService:
 
         return self.get_event(event_id)
 
-    def delete_event(self, event_id: int, delete_from_google: bool = True) -> bool:
-        """Deleta evento"""
+    def delete_event(
+        self,
+        event_id: int,
+        delete_from_google: bool = True,
+        scope: str = "single"
+    ) -> bool:
+        """Deleta evento.
+
+        scope: "single" | "future" | "all" — controla recorrência no Google.
+        Para "future", o local fica como está (só trunca no Google); o sync
+        incremental remove as instâncias locais futuras.
+        Para "all", deleta tudo localmente que aponte pra mesma série.
+        """
         with get_db() as conn:
             cursor = conn.cursor()
 
@@ -169,15 +180,18 @@ class CalendarEventsService:
                         sync = get_calendar_sync()
                         loop = asyncio.get_event_loop()
                         if loop.is_running():
-                            asyncio.create_task(sync.delete_from_google(event_id))
+                            asyncio.create_task(sync.delete_from_google(event_id, scope=scope))
                         else:
-                            loop.run_until_complete(sync.delete_from_google(event_id))
+                            loop.run_until_complete(sync.delete_from_google(event_id, scope=scope))
                     except Exception as e:
                         print(f"Erro ao deletar do Google: {e}")
 
-            # Deletar localmente
-            cursor.execute("DELETE FROM calendar_events WHERE id = %s", (event_id,))
-            conn.commit()
+            # Deletar localmente: para "future" não removemos nada (o sync
+            # vai limpar as instâncias futuras quando rodar). Para "single"
+            # e "all" removemos o registro local pelo ID.
+            if scope != "future":
+                cursor.execute("DELETE FROM calendar_events WHERE id = %s", (event_id,))
+                conn.commit()
 
             return True
 

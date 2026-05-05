@@ -338,26 +338,144 @@ class GoogleCalendarIntegration:
                 logger.error(f"Erro ao atualizar evento: {e}")
                 return {"error": str(e)}
 
-    async def delete_event(
+    async def get_event(
         self,
         access_token: str,
         event_id: str,
         calendar_id: str = "primary"
-    ) -> bool:
-        """Deleta evento do Google Calendar."""
+    ) -> Dict[str, Any]:
+        """Busca um evento (raw) — inclui recurringEventId, recurrence, originalStartTime."""
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.delete(
+                response = await client.get(
                     f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events/{event_id}",
                     headers={"Authorization": f"Bearer {access_token}"},
                     timeout=30.0
                 )
+                if response.status_code == 200:
+                    return response.json()
+                return {"error": f"HTTP {response.status_code}: {response.text}"}
+            except Exception as e:
+                logger.error(f"Erro ao buscar evento: {e}")
+                return {"error": str(e)}
 
-                return response.status_code == 204
+    async def delete_event(
+        self,
+        access_token: str,
+        event_id: str,
+        calendar_id: str = "primary",
+        scope: str = "single"
+    ) -> Dict[str, Any]:
+        """Deleta evento do Google Calendar.
+
+        scope:
+          - "single" (default): apaga só esse evento/ocorrência. Se event_id for
+            um instance ID de série recorrente, apaga só essa instância.
+          - "future": apaga essa ocorrência e todas posteriores (modifica UNTIL
+            do RRULE da série master). Requer event_id de uma instância.
+          - "all": apaga a série inteira (delete no master).
+
+        Retorna {"deleted": True, "scope": "..."} em sucesso ou {"error": "..."}.
+        """
+        async with httpx.AsyncClient() as client:
+            try:
+                if scope == "single":
+                    response = await client.delete(
+                        f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events/{event_id}",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        timeout=30.0
+                    )
+                    if response.status_code == 204:
+                        return {"deleted": True, "scope": "single"}
+                    return {"error": f"HTTP {response.status_code}: {response.text}"}
+
+                # Para future/all precisamos saber master + (eventualmente) instance start
+                event_resp = await client.get(
+                    f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events/{event_id}",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=30.0
+                )
+                if event_resp.status_code != 200:
+                    return {"error": f"Erro ao buscar evento: HTTP {event_resp.status_code}"}
+                event = event_resp.json()
+                master_id = event.get("recurringEventId") or event_id
+
+                if scope == "all":
+                    response = await client.delete(
+                        f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events/{master_id}",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        timeout=30.0
+                    )
+                    if response.status_code == 204:
+                        return {"deleted": True, "scope": "all"}
+                    return {"error": f"HTTP {response.status_code}: {response.text}"}
+
+                if scope == "future":
+                    # Precisa de master com recurrence + start desta ocorrência
+                    if master_id == event_id:
+                        # event_id já é o master. Sem instance específica, vira "all".
+                        return {"error": "scope=future requer event_id de uma instância, não do master da série"}
+
+                    master_resp = await client.get(
+                        f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events/{master_id}",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        timeout=30.0
+                    )
+                    if master_resp.status_code != 200:
+                        return {"error": f"Erro ao buscar série master: HTTP {master_resp.status_code}"}
+                    master = master_resp.json()
+                    recurrence = master.get("recurrence") or []
+                    if not recurrence:
+                        return {"error": "Série master sem RRULE — evento não é recorrente"}
+
+                    original = event.get("originalStartTime") or event.get("start") or {}
+                    inst_str = original.get("dateTime") or original.get("date")
+                    if not inst_str:
+                        return {"error": "Não foi possível determinar data da ocorrência"}
+
+                    from zoneinfo import ZoneInfo
+                    if "T" in inst_str:
+                        inst_dt = datetime.fromisoformat(inst_str.replace("Z", "+00:00"))
+                        if inst_dt.tzinfo is None:
+                            inst_dt = inst_dt.replace(tzinfo=ZoneInfo("America/Sao_Paulo"))
+                        inst_utc = inst_dt.astimezone(ZoneInfo("UTC"))
+                        until_dt = inst_utc - timedelta(seconds=1)
+                        until_str = until_dt.strftime("%Y%m%dT%H%M%SZ")
+                    else:
+                        # all-day event: UNTIL=YYYYMMDD (dia anterior)
+                        inst_date = datetime.fromisoformat(inst_str)
+                        until_str = (inst_date - timedelta(days=1)).strftime("%Y%m%d")
+
+                    new_recurrence = []
+                    for rule in recurrence:
+                        if rule.startswith("RRULE:"):
+                            parts = [
+                                p for p in rule[len("RRULE:"):].split(";")
+                                if p and not p.startswith("UNTIL=") and not p.startswith("COUNT=")
+                            ]
+                            parts.append(f"UNTIL={until_str}")
+                            new_recurrence.append("RRULE:" + ";".join(parts))
+                        else:
+                            new_recurrence.append(rule)
+
+                    patch_resp = await client.patch(
+                        f"{self.CALENDAR_API_BASE}/calendars/{calendar_id}/events/{master_id}",
+                        headers={
+                            "Authorization": f"Bearer {access_token}",
+                            "Content-Type": "application/json"
+                        },
+                        json={"recurrence": new_recurrence},
+                        timeout=30.0
+                    )
+                    if patch_resp.status_code == 200:
+                        return {"deleted": True, "scope": "future", "until": until_str}
+                    return {"error": f"Erro ao truncar série: HTTP {patch_resp.status_code}: {patch_resp.text}"}
+
+                return {"error": f"scope inválido: {scope}. Use 'single', 'future' ou 'all'"}
 
             except Exception as e:
                 logger.error(f"Erro ao deletar evento: {e}")
-                return False
+                return {"error": str(e)}
 
     async def list_events_incremental(
         self,
@@ -511,14 +629,20 @@ async def update_calendar_event(
 async def delete_calendar_event(
     access_token: str,
     event_id: str,
-    calendar_id: str = "primary"
-) -> bool:
-    """Deleta evento do Google Calendar (standalone function)."""
+    calendar_id: str = "primary",
+    scope: str = "single"
+) -> Dict[str, Any]:
+    """Deleta evento do Google Calendar (standalone function).
+
+    Retorna {"deleted": True, "scope": "..."} ou {"error": "..."}.
+    Veja GoogleCalendarIntegration.delete_event para semântica do scope.
+    """
     integration = get_calendar_integration()
     return await integration.delete_event(
         access_token=access_token,
         event_id=event_id,
-        calendar_id=calendar_id
+        calendar_id=calendar_id,
+        scope=scope
     )
 
 

@@ -744,6 +744,7 @@
             </form>
         </div>
         <div class="event-modal-footer">
+            <button id="eventDeleteBtn" class="btn btn-outline-danger" onclick="deleteEvent()" style="display:none; margin-right:auto;">Apagar</button>
             <button class="btn btn-outline-secondary" onclick="closeEventModal()">Cancelar</button>
             <button class="btn btn-primary" onclick="saveEvent()">Salvar</button>
         </div>
@@ -1263,6 +1264,8 @@ function openNewEventModal() {
     document.getElementById('eventModalTitle').textContent = 'Novo Evento';
     document.getElementById('eventForm').reset();
     document.getElementById('eventId').value = '';
+    const delBtn = document.getElementById('eventDeleteBtn');
+    if (delBtn) { delBtn.style.display = 'none'; delBtn.dataset.recurring = '0'; }
 
     // Load contacts lazily when modal opens
     loadContacts();
@@ -1331,14 +1334,62 @@ function openEventDetail(eventId) {
     }
 
     document.getElementById('eventModalTitle').textContent = 'Editar Evento';
-    document.getElementById('eventId').value = event.id;
+    // Usar local_id (int) quando disponível — endpoints PUT/DELETE exigem int
+    const localId = event.local_id || (Number.isInteger(event.id) ? event.id : null);
+    document.getElementById('eventId').value = localId || '';
     document.getElementById('eventTitle').value = event.summary;
     document.getElementById('eventStart').value = event.start_datetime ? event.start_datetime.slice(0, 16) : '';
     document.getElementById('eventEnd').value = event.end_datetime ? event.end_datetime.slice(0, 16) : '';
     document.getElementById('eventDescription').value = event.description || '';
     document.getElementById('eventContact').value = event.contact_id || '';
 
+    const delBtn = document.getElementById('eventDeleteBtn');
+    if (delBtn) {
+        delBtn.style.display = localId ? 'inline-block' : 'none';
+        const isRecurring = !!(event.recurring_event_id || event.recurrence_rule);
+        delBtn.dataset.recurring = isRecurring ? '1' : '0';
+    }
+
     document.getElementById('eventModal').classList.add('active');
+}
+
+async function deleteEvent() {
+    const eventId = document.getElementById('eventId').value;
+    if (!eventId) return;
+    const title = document.getElementById('eventTitle').value || 'este evento';
+    const delBtn = document.getElementById('eventDeleteBtn');
+    const isRecurring = delBtn && delBtn.dataset.recurring === '1';
+
+    let scope = 'single';
+    if (isRecurring) {
+        const choice = window.prompt(
+            `"${title}" é um evento recorrente.\n\nApagar:\n` +
+            `  1 = só esta ocorrência\n` +
+            `  2 = esta e todas as futuras\n\n` +
+            `Digite 1 ou 2 (ou cancele):`,
+            '1'
+        );
+        if (choice === null) return;
+        if (choice.trim() === '1') scope = 'single';
+        else if (choice.trim() === '2') scope = 'future';
+        else { alert('Opção inválida.'); return; }
+    } else {
+        if (!confirm(`Apagar "${title}"? Esta ação não pode ser desfeita.`)) return;
+    }
+
+    try {
+        const url = `/api/calendar/events/${eventId}?delete_from_google=true&scope=${scope}`;
+        const response = await fetch(url, { method: 'DELETE' });
+        if (response.ok) {
+            closeEventModal();
+            loadEvents();
+        } else {
+            const text = await response.text();
+            alert(`Erro ao apagar: ${response.status} ${text}`);
+        }
+    } catch (e) {
+        alert('Erro ao apagar evento');
+    }
 }
 
 // Close modal on backdrop click

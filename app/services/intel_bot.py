@@ -97,6 +97,11 @@ TOOLS = [
             "- save_note: salva nota em projeto (project_id, titulo, conteudo, tipo?)\n"
             "- save_memory: salva memoria de contato (contact_id, titulo, resumo, conteudo_completo?, tipo?)\n"
             "- schedule_meeting: cria evento (titulo, data_hora ISO, duracao_min?, contact_id?, local?, descricao?)\n"
+            "- update_calendar_event: edita evento existente (PATCH-style). params: event_id (int=local id), e SOMENTE os campos que mudaram entre: titulo?, data_hora? ISO, duracao_min?, local?, descricao?. "
+            "Para eventos recorrentes a edicao afeta apenas a ocorrencia editada (vira exception); pra mudar toda a serie, oriente o usuario a editar no Google Calendar diretamente.\n"
+            "- delete_calendar_event: apaga evento. params: event_id (int=local id), scope? ('single'|'future'). "
+            "Se evento for recorrente e scope nao for passado, o handler retorna erro pedindo pra perguntar: apagar so essa ocorrencia (single) OU esta e todas as futuras (future). "
+            "Pra eventos nao-recorrentes, scope='single' (default). Apague direto se a intencao do usuario for clara; em caso ambiguo (ex: varios eventos casam com o pedido), confirme antes.\n"
             "- send_whatsapp: envia WhatsApp via rap-whatsapp (contact_id, message)\n"
             "- enrich_contact: enriquece contato com IA (contact_id)\n"
             "- update_contact: atualiza campos do contato (contact_id, fields: {campo: valor})\n"
@@ -112,7 +117,8 @@ TOOLS = [
                     "description": "Nome da acao",
                     "enum": [
                         "create_task", "complete_task", "save_note", "save_memory",
-                        "schedule_meeting", "send_whatsapp", "enrich_contact", "update_contact",
+                        "schedule_meeting", "update_calendar_event", "delete_calendar_event",
+                        "send_whatsapp", "enrich_contact", "update_contact",
                         "save_feedback",
                         "save_system_memory", "search_system_memories"
                     ]
@@ -379,7 +385,7 @@ def _entity_type_for_action(action: str) -> str:
         return "task"
     if action in ("save_note", "save_memory"):
         return "note" if action == "save_note" else "memory"
-    if action == "schedule_meeting":
+    if action in ("schedule_meeting", "update_calendar_event", "delete_calendar_event"):
         return "meeting"
     if action in ("update_contact", "enrich_contact"):
         return "contact"
@@ -579,6 +585,115 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 "sucesso": True,
                 "event_id": event.get("id"),
                 "mensagem": f"Evento '{titulo}' criado em {start_dt.strftime('%d/%m %H:%M')} ({duracao_min}min)"
+            }, ensure_ascii=False)
+
+        elif action == "update_calendar_event":
+            event_id = params.get("event_id")
+            if event_id is None:
+                return json.dumps({"erro": "event_id e obrigatorio"})
+            try:
+                event_id = int(event_id)
+            except (TypeError, ValueError):
+                return json.dumps({"erro": f"event_id invalido: {event_id}. Use o id local (int) do calendar_events."})
+
+            from services.calendar_events import get_calendar_events
+            cal = get_calendar_events()
+            current = cal.get_event(event_id)
+            if not current:
+                return json.dumps({"erro": f"Evento #{event_id} nao encontrado"})
+
+            # PATCH-style: aplicado direto na ocorrencia (instance vira exception
+            # se for recorrente). Nao expomos "todas as futuras" pra update.
+
+            # Monta updates apenas com campos passados (PATCH-style)
+            updates = {}
+            if "titulo" in params:
+                updates["summary"] = params["titulo"]
+            if "local" in params:
+                updates["location"] = params["local"]
+            if "descricao" in params:
+                updates["description"] = params["descricao"]
+
+            new_start_dt = None
+            new_end_dt = None
+            if "data_hora" in params:
+                try:
+                    new_start_dt = datetime.fromisoformat(str(params["data_hora"]).replace("Z", "+00:00"))
+                except ValueError:
+                    return json.dumps({"erro": f"data_hora invalida: {params['data_hora']}. Use ISO 8601."})
+                updates["start_datetime"] = new_start_dt
+
+            if "duracao_min" in params or new_start_dt is not None:
+                duracao = params.get("duracao_min")
+                base_start = new_start_dt
+                if base_start is None and current.get("start_datetime"):
+                    try:
+                        base_start = datetime.fromisoformat(current["start_datetime"].replace("Z", "+00:00"))
+                    except (ValueError, AttributeError):
+                        base_start = None
+                if duracao is None and current.get("start_datetime") and current.get("end_datetime"):
+                    try:
+                        old_start = datetime.fromisoformat(current["start_datetime"].replace("Z", "+00:00"))
+                        old_end = datetime.fromisoformat(current["end_datetime"].replace("Z", "+00:00"))
+                        duracao = max(int((old_end - old_start).total_seconds() / 60), 15)
+                    except (ValueError, AttributeError):
+                        duracao = 60
+                if base_start is not None and duracao is not None:
+                    new_end_dt = base_start + timedelta(minutes=int(duracao))
+                    updates["end_datetime"] = new_end_dt
+
+            if not updates:
+                return json.dumps({"erro": "Nenhum campo para atualizar foi passado"})
+
+            # NOTE: scope=single em recorrentes — sync_to_google atualmente patch
+            # via google_event_id local (que e o instance_id se for ocorrencia
+            # exception, ou o master id se nao). Para edicao em "all", precisa
+            # apontar pro master — passamos via override.
+            updated = cal.update_event(event_id, updates, sync_to_google=True)
+            if not updated:
+                return json.dumps({"erro": "Falha ao atualizar evento"})
+
+            changed = ", ".join(updates.keys())
+            return json.dumps({
+                "sucesso": True,
+                "event_id": event_id,
+                "mensagem": f"Evento '{updated.get('summary')}' atualizado ({changed})"
+            }, ensure_ascii=False)
+
+        elif action == "delete_calendar_event":
+            event_id = params.get("event_id")
+            if event_id is None:
+                return json.dumps({"erro": "event_id e obrigatorio"})
+            try:
+                event_id = int(event_id)
+            except (TypeError, ValueError):
+                return json.dumps({"erro": f"event_id invalido: {event_id}. Use o id local (int)."})
+
+            from services.calendar_events import get_calendar_events
+            cal = get_calendar_events()
+            current = cal.get_event(event_id)
+            if not current:
+                return json.dumps({"erro": f"Evento #{event_id} nao encontrado"})
+
+            is_recurring = bool(current.get("recurring_event_id") or current.get("recurrence_rule"))
+            scope = params.get("scope")
+            if is_recurring and scope not in ("single", "future"):
+                return json.dumps({
+                    "erro": "evento_recorrente_sem_scope",
+                    "mensagem": f"O evento '{current.get('summary')}' e recorrente. Pergunte ao usuario: apagar so essa ocorrencia (scope='single') ou esta e todas as futuras (scope='future')?"
+                }, ensure_ascii=False)
+            if not is_recurring:
+                scope = "single"
+
+            ok = cal.delete_event(event_id, delete_from_google=True, scope=scope)
+            if not ok:
+                return json.dumps({"erro": "Falha ao apagar evento"})
+
+            return json.dumps({
+                "sucesso": True,
+                "event_id": event_id,
+                "scope_aplicado": scope,
+                "mensagem": f"Evento '{current.get('summary')}' apagado (scope: {scope})"
             }, ensure_ascii=False)
 
         elif action == "send_whatsapp":
