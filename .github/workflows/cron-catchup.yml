@@ -1,0 +1,24 @@
+name: Cron — Catch-up retry
+
+# Why: Vercel crons sub-daily nao sao suportados em Hobby; alem disso, alguns crons
+# falham sem ninguem perceber (ate o pill no dashboard). Este workflow varre
+# /api/cron/catchup hourly (offset minuto 30 pra nao coincidir com crons no top
+# da hora) e o endpoint decide quais crons retentar com filtros (stuck/recent/daily).
+
+on:
+  schedule:
+    - cron: '30 * * * *'  # minuto 30 de cada hora, UTC
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit cron-catchup endpoint
+        run: |
+          response=$(curl -sS -X POST -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/catchup")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)

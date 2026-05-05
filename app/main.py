@@ -3787,11 +3787,9 @@ def _next_run_at(schedule: str, now_utc: datetime) -> Optional[str]:
         return None
 
 
-@app.get("/api/admin/cron-health")
-async def cron_health(user: dict = Depends(require_admin)):
-    """Saude consolidada dos crons — agrega cron_runs (ultimos 7 dias) com
-    schedules de vercel.json. Devolve por cron: ultimo run, contagem por
-    status na janela, expected runs, classificacao (healthy/late/failing/unknown/atrasado).
+def _compute_cron_health() -> Dict:
+    """Calcula saude consolidada dos crons. Helper extraido pra ser reutilizado
+    por /api/admin/cron-health (UI) e /api/cron/catchup (retry automatico).
     """
     crons = _load_all_crons()
     now_utc = datetime.utcnow()
@@ -3811,7 +3809,8 @@ async def cron_health(user: dict = Depends(require_admin)):
             # ultimo run
             cursor.execute(
                 """
-                SELECT id, started_at, finished_at, duration_ms, status, rows_affected, error_message, http_status
+                SELECT id, started_at, finished_at, duration_ms, status, rows_affected,
+                       error_message, http_status, trigger_source
                 FROM cron_runs
                 WHERE path = %s
                 ORDER BY started_at DESC
@@ -3937,6 +3936,15 @@ async def cron_health(user: dict = Depends(require_admin)):
     }
 
 
+@app.get("/api/admin/cron-health")
+async def cron_health(user: dict = Depends(require_admin)):
+    """Saude consolidada dos crons — agrega cron_runs (ultimos 7 dias) com
+    schedules de vercel.json. Devolve por cron: ultimo run, contagem por
+    status na janela, expected runs, classificacao (healthy/late/failing/unknown/atrasado).
+    """
+    return _compute_cron_health()
+
+
 # ----- Acoes acionaveis pro modal "Saude dos Cron Jobs" -----
 
 class CronTriggerBody(BaseModel):
@@ -4027,7 +4035,10 @@ async def cron_runs_trigger(
 
     base_url = os.getenv("BASE_URL", "https://intel.almeida-prado.com")
     cron_secret = os.getenv("CRON_SECRET", "").strip()
-    headers = {"User-Agent": "intel-manual-trigger/1.0"}
+    headers = {
+        "User-Agent": "intel-manual-trigger/1.0",
+        "X-Cron-Source": "manual",
+    }
     if cron_secret:
         headers["Authorization"] = f"Bearer {cron_secret}"
 
@@ -4047,6 +4058,107 @@ async def cron_runs_trigger(
     background_tasks.add_task(_fire)
 
     return {"status": "triggered", "path": target_path, "url": target_url}
+
+
+@app.post("/api/cron/catchup")
+@track_cron_run
+async def cron_catchup(request: Request, background_tasks: BackgroundTasks):
+    """Retenta crons que falharam ou estao atrasados, com filtros pra evitar spam.
+
+    Roda hourly via GH Actions (.github/workflows/cron-catchup.yml). Vive em
+    /api/cron/* (nao /api/admin/) pra ser monitorado pelo proprio cron-health
+    — se o catch-up parar, o pill mostra. Auth via verify_cron_auth (Bearer
+    CRON_SECRET) pra GH Actions chamar.
+
+    Filtros por path candidato (health in failing/atrasado):
+    - skip 'stuck' (precisa intervencao humana)
+    - skip se ultimo run < 30min (rate-limit)
+    - skip se ja teve 2+ runs catch_up nas ultimas 24h (limite diario)
+    - skip se ultimo run e 'running' (deixa terminar)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    health_report = _compute_cron_health()
+    candidates = [c for c in health_report["crons"] if c["health"] in ("failing", "atrasado")]
+
+    skipped = {"stuck": 0, "recent": 0, "daily_limit": 0, "running": 0}
+    retried: List[str] = []
+
+    base_url = os.getenv("BASE_URL", "https://intel.almeida-prado.com")
+    cron_secret = os.getenv("CRON_SECRET", "").strip()
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        for c in candidates:
+            path = c.get("path")
+            if not path:
+                continue
+
+            last = c.get("last_run") or {}
+            # ultimo running ainda em curso — deixa terminar
+            if last.get("status") == "running":
+                skipped["running"] += 1
+                continue
+
+            # rate-limit: 30min entre tentativas (independente de source)
+            cursor.execute(
+                """
+                SELECT 1 FROM cron_runs
+                WHERE path = %s AND started_at > NOW() - INTERVAL '30 minutes'
+                LIMIT 1
+                """,
+                (path,),
+            )
+            if cursor.fetchone():
+                skipped["recent"] += 1
+                continue
+
+            # limite diario: max 2 catch_up runs por path nas ultimas 24h
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS c FROM cron_runs
+                WHERE path = %s AND trigger_source = 'catch_up'
+                  AND started_at > NOW() - INTERVAL '24 hours'
+                """,
+                (path,),
+            )
+            row = cursor.fetchone()
+            if row and row["c"] >= 2:
+                skipped["daily_limit"] += 1
+                continue
+
+            target_url = f"{base_url.rstrip('/')}{path}"
+            headers = {
+                "User-Agent": "intel-cron-catchup/1.0",
+                "X-Cron-Source": "catch_up",
+            }
+            if cron_secret:
+                headers["Authorization"] = f"Bearer {cron_secret}"
+
+            async def _fire(url=target_url, hdrs=headers, p=path):
+                try:
+                    timeout = httpx.Timeout(connect=5.0, read=300.0, write=10.0, pool=5.0)
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        resp = await client.get(url, headers=hdrs)
+                        logging.info(f"cron catchup {p} -> http {resp.status_code}")
+                except Exception as e:
+                    logging.warning(f"cron catchup fire-and-forget {p}: {e}")
+
+            background_tasks.add_task(_fire)
+            retried.append(path)
+
+    # Filtra stuck do summary (skipped['stuck']) — eles nao entram em candidates
+    # porque nao sao failing/atrasado, mas vale reportar.
+    skipped["stuck"] = sum(1 for c in health_report["crons"] if c["health"] == "stuck")
+
+    return {
+        "status": "success",
+        "scanned": len(candidates),
+        "retried": retried,
+        "skipped": skipped,
+    }
 
 
 @app.get("/api/admin/cron-auth-debug")

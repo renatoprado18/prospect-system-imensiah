@@ -4736,6 +4736,14 @@
                 const streakBadge = (c.error_streak && c.error_streak >= 2)
                     ? '<span style="background:#fee2e2; color:#b91c1c; padding:1px 6px; border-radius:8px; font-size:0.65rem; font-weight:700; margin-left:4px;" title="erros consecutivos">' + c.error_streak + 'x falhas</span>'
                     : '';
+                // Badge de origem do ultimo run — so mostra se != 'scheduled' (default mantem UI limpa)
+                const ts = lr && lr.trigger_source;
+                let triggerBadge = '';
+                if (ts === 'manual') {
+                    triggerBadge = '<span style="background:#e2e8f0; color:#475569; padding:1px 6px; border-radius:8px; font-size:0.65rem; font-weight:600; margin-left:4px;" title="ultimo run disparado manualmente">manual</span>';
+                } else if (ts === 'catch_up') {
+                    triggerBadge = '<span style="background:#dbeafe; color:#1e40af; padding:1px 6px; border-radius:8px; font-size:0.65rem; font-weight:600; margin-left:4px;" title="ultimo run foi retry automatico">catch-up</span>';
+                }
                 const stuckBtn = c.health === 'stuck'
                     ? `<button type="button" onclick="clearStuckCrons('${escapeHtml(c.path)}')" style="${_cronCssBtn('clean')}" title="Limpar este cron travado">
                         <i class="bi bi-eraser-fill"></i>
@@ -4757,7 +4765,7 @@
                                 ${streakBadge}
                             </div>
                             <div style="font-size:0.74rem; color:#64748b; margin-top:2px;">
-                                Ultimo: <strong>${escapeHtml(lastWhen)}</strong> · ${lr ? lr.status : 'nunca rodou'} ${lastDur ? '· ' + lastDur : ''}${rowsAffected}
+                                Ultimo: <strong>${escapeHtml(lastWhen)}</strong> · ${lr ? lr.status : 'nunca rodou'} ${lastDur ? '· ' + lastDur : ''}${rowsAffected}${triggerBadge}
                             </div>
                             ${c.next_run_at ? `<div style="font-size:0.74rem; color:#94a3b8; margin-top:1px;">
                                 Proximo: ${escapeHtml(new Date(c.next_run_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }))} BRT

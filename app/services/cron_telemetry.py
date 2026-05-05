@@ -126,18 +126,22 @@ def _has_embedded_errors(result: Any) -> tuple:
     return False, ""
 
 
-def _insert_run(path: str) -> Optional[int]:
+# Sources validos pro header X-Cron-Source. Qualquer outro valor cai pra 'scheduled'.
+_VALID_TRIGGER_SOURCES = ("scheduled", "manual", "catch_up")
+
+
+def _insert_run(path: str, trigger_source: str = "scheduled") -> Optional[int]:
     """Insere row inicial com status='running'. Retorna id ou None em caso de falha."""
     try:
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO cron_runs (path, status, started_at)
-                VALUES (%s, 'running', NOW())
+                INSERT INTO cron_runs (path, status, started_at, trigger_source)
+                VALUES (%s, 'running', NOW(), %s)
                 RETURNING id
                 """,
-                (path,),
+                (path, trigger_source),
             )
             row = cursor.fetchone()
             conn.commit()
@@ -206,7 +210,15 @@ def track_cron_run(handler):
         except Exception:
             path = getattr(request, "scope", {}).get("path", "/api/cron/unknown")
 
-        run_id = _insert_run(path)
+        # X-Cron-Source: 'manual' = botao "Rodar" na UI, 'catch_up' = retry automatico,
+        # default 'scheduled' (Vercel cron / GH Actions agendados ou ausencia do header).
+        try:
+            raw_source = (request.headers.get("x-cron-source") or "").strip().lower()
+        except Exception:
+            raw_source = ""
+        trigger_source = raw_source if raw_source in _VALID_TRIGGER_SOURCES else "scheduled"
+
+        run_id = _insert_run(path, trigger_source)
         started = time.time()
 
         try:

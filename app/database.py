@@ -333,6 +333,18 @@ def init_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_cron_runs_path_started ON cron_runs (path, started_at DESC)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_cron_runs_status ON cron_runs (status)')
 
+        # trigger_source: distingue runs scheduled (cron agendado) de manual (UI) e
+        # catch_up (sistema retentando crons que falharam). Default 'scheduled' pra
+        # rows pre-existentes. Idempotente.
+        cursor.execute('''
+            ALTER TABLE cron_runs
+            ADD COLUMN IF NOT EXISTS trigger_source TEXT NOT NULL DEFAULT 'scheduled'
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_cron_runs_path_source_started
+            ON cron_runs (path, trigger_source, started_at DESC)
+        ''')
+
         # Interactions table (timeline de interações com prospects)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS interactions (
