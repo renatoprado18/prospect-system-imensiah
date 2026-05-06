@@ -88,6 +88,10 @@
     {
       "path": "/api/cron/linkedin-funnel-snapshot",
       "schedule": "0 2 * * 1"
+    },
+    {
+      "path": "/api/cron/linkedin-monitor-topics",
+      "schedule": "0 9 * * *"
     }
   ]
 }

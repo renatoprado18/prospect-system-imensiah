@@ -2382,6 +2382,39 @@ def init_db():
             ON linkedin_funnel_metrics (snapshot_em DESC)
         ''')
 
+        # Topicos descobertos via LinkdAPI search/posts (Fase 1 do funil).
+        # Cron diario varre keywords pre-configuradas e persiste posts relevantes
+        # (filtro de ruido por reactions). raw_json guarda payload bruto pra debug.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS linkedin_topics (
+                id SERIAL PRIMARY KEY,
+                keyword TEXT NOT NULL,
+                post_url TEXT,
+                post_urn TEXT,
+                autor_nome TEXT,
+                autor_headline TEXT,
+                autor_urn TEXT,
+                autor_followers INT,
+                texto TEXT,
+                reactions INT DEFAULT 0,
+                comments INT DEFAULT 0,
+                descoberto_em TIMESTAMP NOT NULL DEFAULT NOW(),
+                posted_at TIMESTAMP,
+                raw_json JSONB
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_linkedin_topics_keyword_descoberto
+            ON linkedin_topics (keyword, descoberto_em DESC)
+        ''')
+        # Index UNIQUE non-partial pra suportar ON CONFLICT(post_urn).
+        # NULLs sao considerados distintos por default no Postgres, entao nao
+        # vai bloquear futuras rows com post_urn nulo.
+        cursor.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_linkedin_topics_post_urn
+            ON linkedin_topics (post_urn)
+        ''')
+
         # Seed idempotente do saldo LinkdAPI: usuario tem 2380 creditos em 06/05/2026.
         # So insere se a tabela esta vazia (nao reseta em cold-starts subsequentes).
         cursor.execute("SELECT COUNT(*) AS n FROM linkdapi_usage")

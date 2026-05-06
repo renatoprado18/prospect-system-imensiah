@@ -4107,6 +4107,54 @@ async def cron_linkedin_funnel_snapshot(request: Request):
     return {"snapshot": snap, "alert": alert}
 
 
+@app.get("/api/cron/linkedin-monitor-topics")
+@track_cron_run
+async def cron_linkedin_monitor_topics(request: Request):
+    """Cron diario (06h BRT via GH Actions): monitor de topicos LinkedIn por keyword.
+    Custo tipico: 5 calls/dia (1 por keyword) = ~150 calls/mes."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.linkedin_topic_monitor import monitor_keywords
+    summary = await monitor_keywords()
+    return {"job": "linkedin-monitor-topics", **summary}
+
+
+@app.get("/api/admin/linkedin-topics")
+async def linkedin_topics_admin(
+    limit: int = 50,
+    offset: int = 0,
+    user: dict = Depends(require_admin),
+):
+    """Lista os topicos descobertos mais recentes (paginacao simples).
+    Usado pra debug + drill-down futuro do pill no dashboard."""
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, keyword, post_url, post_urn, autor_nome, autor_headline,
+                   autor_urn, autor_followers, texto, reactions, comments,
+                   descoberto_em, posted_at
+            FROM linkedin_topics
+            ORDER BY descoberto_em DESC
+            LIMIT %s OFFSET %s
+            """,
+            (limit, offset),
+        )
+        rows = []
+        for r in cursor.fetchall():
+            row = dict(r)
+            if row.get("descoberto_em"):
+                row["descoberto_em"] = row["descoberto_em"].isoformat()
+            if row.get("posted_at"):
+                row["posted_at"] = row["posted_at"].isoformat()
+            rows.append(row)
+        cursor.execute("SELECT COUNT(*) AS n FROM linkedin_topics")
+        total = int((cursor.fetchone() or {}).get("n") or 0)
+    return {"total": total, "limit": limit, "offset": offset, "topics": rows}
+
+
 @app.post("/api/cron/catchup")
 @track_cron_run
 async def cron_catchup(request: Request, background_tasks: BackgroundTasks):
@@ -22577,6 +22625,15 @@ async def cron_daily_morning_briefing(request: Request):
         agent_section = format_digest_section(agent_summary, header="Fiz por você (24h)")
         if agent_section:
             sections.append(agent_section)
+
+        # 9. Topicos LinkedIn (informativo, sem task)
+        try:
+            from services.linkedin_topic_monitor import format_topics_for_briefing
+            topics_section = format_topics_for_briefing(limit_per_keyword=2)
+            if topics_section:
+                sections.append(topics_section)
+        except Exception as _e:
+            logging.warning(f"morning-briefing: topics section falhou: {_e}")
 
         if not sections:
             return {
