@@ -7893,20 +7893,24 @@ async def cron_daily_sync(request: Request):
     # ==================== FASE 1: Sync dados (paralelo) ====================
 
     async def step_health():
+        # Why to_thread: corpo todo sync (psycopg2 + loop CPU). Sem to_thread,
+        # bloqueia o event loop e asyncio.wait_for nao consegue cancelar.
         from services.circulos import calcular_health_score
-        updated = 0
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, circulo, ultimo_contato, total_interacoes FROM contacts WHERE COALESCE(circulo, 5) <= 4")
-            for contact in cursor.fetchall():
-                try:
-                    health = calcular_health_score(dict(contact), contact["circulo"])
-                    cursor.execute("UPDATE contacts SET health_score = %s WHERE id = %s", (health, contact["id"]))
-                    updated += 1
-                except Exception:
-                    pass
-            conn.commit()
-        return {"updated": updated}
+        def _run():
+            updated = 0
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id, circulo, ultimo_contato, total_interacoes FROM contacts WHERE COALESCE(circulo, 5) <= 4")
+                for contact in cursor.fetchall():
+                    try:
+                        health = calcular_health_score(dict(contact), contact["circulo"])
+                        cursor.execute("UPDATE contacts SET health_score = %s WHERE id = %s", (health, contact["id"]))
+                        updated += 1
+                    except Exception:
+                        pass
+                conn.commit()
+            return {"updated": updated}
+        return await _aio.to_thread(_run)
 
     async def step_contacts():
         with get_db() as conn:
@@ -7998,8 +8002,10 @@ async def cron_daily_sync(request: Request):
         return await get_ai_agent().run_daily_generation()
 
     async def step_campaigns():
+        # Why to_thread: process_pending_steps e sync (sem await), pode levar
+        # minutos com 200 campaigns. Bloqueava event loop -> wait_for inutil.
         from services.campaign_executor import CampaignExecutor
-        return CampaignExecutor().process_pending_steps(limit=200)
+        return await _aio.to_thread(lambda: CampaignExecutor().process_pending_steps(limit=200))
 
     async def step_enrich():
         from services.contact_enrichment import auto_enrich_priority_contacts
@@ -8092,24 +8098,26 @@ async def cron_daily_sync(request: Request):
         decorator @track_cron_run nunca executa, deixando registros orfaos
         em 'running' pra sempre. Este step limpa esses zumbis.
         """
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                UPDATE cron_runs
-                SET status='timeout',
-                    error_message='presumed timeout (Vercel SIGKILL — finalize never ran)',
-                    finished_at=NOW(),
-                    duration_ms=EXTRACT(EPOCH FROM (NOW() - started_at))*1000
-                WHERE status='running'
-                  AND started_at < NOW() - INTERVAL '2 hours'
-                  AND finished_at IS NULL
-                RETURNING id, path
-                """
-            )
-            rows = cursor.fetchall()
-            conn.commit()
-            return {"cleaned": len(rows), "paths": [r['path'] for r in rows]}
+        def _run():
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE cron_runs
+                    SET status='timeout',
+                        error_message='presumed timeout (Vercel SIGKILL — finalize never ran)',
+                        finished_at=NOW(),
+                        duration_ms=EXTRACT(EPOCH FROM (NOW() - started_at))*1000
+                    WHERE status='running'
+                      AND started_at < NOW() - INTERVAL '2 hours'
+                      AND finished_at IS NULL
+                    RETURNING id, path
+                    """
+                )
+                rows = cursor.fetchall()
+                conn.commit()
+                return {"cleaned": len(rows), "paths": [r['path'] for r in rows]}
+        return await _aio.to_thread(_run)
 
     async def step_classify_messages():
         """Classifica mensagens incoming dos ultimos 7 dias ainda nao classificadas.
