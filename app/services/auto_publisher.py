@@ -51,18 +51,79 @@ def _notify_token_issue(reason: str):
         logger.exception("auto_publisher: falha ao notificar token invalido")
 
 
-async def select_weekly_posts(posts_per_week: int = 4) -> Dict:
+# Cadencia semanal padrao: 3 hot_takes opinativos + 1 repost de artigo curado.
+# Usuario corrigiu 2026-05-06: nao queremos 4 posts mistos aleatorios, queremos
+# essa proporcao fixa pra manter a voz (hot_takes) sem perder o pulso curado.
+DEFAULT_WEEKLY_MIX: Dict[str, int] = {'hot_take': 3, 'editorial': 1}
+
+
+def _week_bounds(start_date: Optional[date]) -> tuple:
+    """Devolve (week_start, week_end_exclusive) baseado em start_date.
+
+    Se None, usa proxima segunda (mesmo criterio de schedule_selected_posts).
+    week_end_exclusive = week_start + 7 dias (intervalo half-open).
+    """
+    if start_date is None:
+        today = date.today()
+        days_until_monday = (7 - today.weekday()) % 7
+        if days_until_monday == 0:
+            days_until_monday = 7
+        start_date = today + timedelta(days=days_until_monday)
+    week_start = datetime(start_date.year, start_date.month, start_date.day)
+    return week_start, week_start + timedelta(days=7)
+
+
+def count_committed_posts_in_week(start_date: Optional[date] = None) -> int:
+    """Conta posts ja comprometidos pra semana (idempotencia guard).
+
+    Why COALESCE: o slot vive em colunas diferentes conforme o status:
+      - pending_approval -> data_publicacao_planejada (proposta da IA)
+      - scheduled        -> data_publicacao (slot promovido pos-approve)
+      - published        -> data_publicado (slot real pos-publicacao)
+    Pegar so uma das tres dava falso negativo e duplicava posts (cron 2x
+    em 2026-05-03 -> 8 pending_approval em vez de 4).
+    """
+    week_start, week_end = _week_bounds(start_date)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) AS c FROM editorial_posts
+            WHERE status IN ('pending_approval', 'scheduled', 'published')
+              AND COALESCE(data_publicacao_planejada, data_publicacao, data_publicado) >= %s
+              AND COALESCE(data_publicacao_planejada, data_publicacao, data_publicado) <  %s
+        """, (week_start, week_end))
+        row = cursor.fetchone()
+    return int(row['c'] if row else 0)
+
+
+async def select_weekly_posts(
+    posts_per_week: int = 4,
+    mix: Optional[Dict[str, int]] = None,
+) -> Dict:
     """
     IA seleciona os melhores posts para a semana.
-    Mistura hot-takes e reposts de artigos para diversidade.
+
+    Cadencia padrao: 3 hot_takes + 1 editorial repost (DEFAULT_WEEKLY_MIX).
+    Pode ser sobrescrita via mix={'hot_take': N, 'editorial': M}; nesse caso
+    posts_per_week e ignorado (vira sum(mix.values())).
+
     Chamado pelo cron no domingo.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return {"error": "ANTHROPIC_API_KEY nao configurada"}
 
-    # Collect candidates from both sources
-    candidates = []
+    if mix is None:
+        mix = dict(DEFAULT_WEEKLY_MIX)
+    n_hot_takes = max(0, int(mix.get('hot_take', 0)))
+    n_editorials = max(0, int(mix.get('editorial', 0)))
+    total_target = n_hot_takes + n_editorials
+    if total_target == 0:
+        return {"error": "mix vazio: especifique hot_take e/ou editorial > 0"}
+
+    # Collect candidates from both sources (separados — selecao por bucket)
+    hot_take_candidates: List[Dict] = []
+    editorial_candidates: List[Dict] = []
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -79,7 +140,7 @@ async def select_weekly_posts(posts_per_week: int = 4) -> Dict:
         for r in cursor.fetchall():
             row = dict(r)
             row['conteudo_preview'] = (row['conteudo'] or '')[:300]
-            candidates.append(row)
+            hot_take_candidates.append(row)
 
         # Editorial posts (reposts + hot_takes) com conteudo adaptado
         cursor.execute("""
@@ -95,9 +156,10 @@ async def select_weekly_posts(posts_per_week: int = 4) -> Dict:
         for r in cursor.fetchall():
             row = dict(r)
             row['conteudo_preview'] = (row['conteudo'] or '')[:300]
-            candidates.append(row)
+            editorial_candidates.append(row)
 
-    if not candidates:
+    total_candidates = len(hot_take_candidates) + len(editorial_candidates)
+    if total_candidates == 0:
         return {"error": "Nenhum post disponivel para agendar", "candidates": 0}
 
     # Feedback loop: top/bottom posts reais para guiar selecao
@@ -105,64 +167,73 @@ async def select_weekly_posts(posts_per_week: int = 4) -> Dict:
     examples = get_top_bottom_examples(n=3)
     examples_block = format_examples_for_prompt(examples)
 
-    # Ask AI to select the best mix
-    candidates_text = "\n".join([
-        f"[{i+1}] ({c['source']}) {c['titulo']}\n    Preview: {c['conteudo_preview']}"
-        for i, c in enumerate(candidates)
-    ])
-
-    prompt = f"""Voce e um estrategista de conteudo LinkedIn para Renato Almeida Prado,
+    async def _ask_ai(bucket_name: str, items: List[Dict], n: int) -> List[Dict]:
+        """Pede pra IA escolher N melhores de uma lista. Sem itens ou n<=0 -> []."""
+        if n <= 0 or not items:
+            return []
+        cands_text = "\n".join([
+            f"[{i+1}] {c['titulo']}\n    Preview: {c['conteudo_preview']}"
+            for i, c in enumerate(items)
+        ])
+        prompt = f"""Voce e um estrategista de conteudo LinkedIn para Renato Almeida Prado,
 executivo de tecnologia e governanca corporativa.
 
-Selecione os {posts_per_week} melhores posts para publicar esta semana.
+Selecione os {n} melhores {bucket_name} para publicar esta semana.
 {examples_block}
 CANDIDATOS:
-{candidates_text}
+{cands_text}
 
 CRITERIOS:
 - Padroes dos posts top: provocacao + numeros especificos + tom direto + IA aplicada
 - Evitar padroes dos bottom: tom institucional, economia macro genérica, sem call-to-action
 - Diversidade de tema (nao repetir assuntos similares)
 - Relevancia para o perfil (IA, governanca, negocios, empreendedorismo)
-- Mix de formatos (hot-takes opinativos + reposts informativos)
 
 Responda APENAS com JSON:
 {{"selections": [
-    {{"index": 1, "reason": "motivo curto"}},
-    {{"index": 3, "reason": "motivo curto"}}
+    {{"index": 1, "reason": "motivo curto"}}
 ]}}"""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500, "messages": [{"role": "user", "content": prompt}]}
+                )
+            if resp.status_code != 200:
+                logger.warning(f"select_weekly_posts {bucket_name}: API {resp.status_code}")
+                return []
+            text = resp.json()["content"][0]["text"]
+            start = text.find("{"); end = text.rfind("}") + 1
+            if start < 0:
+                return []
+            parsed = json.loads(text[start:end])
+            chosen: List[Dict] = []
+            for s in parsed.get("selections", []):
+                idx = s.get("index", 0) - 1
+                if 0 <= idx < len(items):
+                    c = items[idx]
+                    c['reason'] = s.get('reason', '')
+                    chosen.append(c)
+                if len(chosen) >= n:
+                    break
+            return chosen
+        except Exception as e:
+            logger.warning(f"select_weekly_posts {bucket_name} fallback: {e}")
+            return []
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500, "messages": [{"role": "user", "content": prompt}]}
-            )
+        selected_hot = await _ask_ai("hot-takes opinativos", hot_take_candidates, n_hot_takes)
+        selected_edit = await _ask_ai("reposts editoriais", editorial_candidates, n_editorials)
 
-        if resp.status_code != 200:
-            return {"error": f"API error: {resp.status_code}"}
-
-        text = resp.json()["content"][0]["text"]
-
-        # Parse JSON
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start < 0:
-            return {"error": "IA nao retornou JSON valido"}
-
-        result = json.loads(text[start:end])
-        selections = result.get("selections", [])
-
-        selected = []
-        for s in selections:
-            idx = s.get("index", 0) - 1
-            if 0 <= idx < len(candidates):
-                c = candidates[idx]
-                c['reason'] = s.get('reason', '')
-                selected.append(c)
-
-        return {"selected": selected, "total_candidates": len(candidates)}
+        # Hot-takes primeiro (formato dominante), repost por ultimo
+        selected = selected_hot + selected_edit
+        return {
+            "selected": selected,
+            "total_candidates": total_candidates,
+            "mix_target": {'hot_take': n_hot_takes, 'editorial': n_editorials},
+            "mix_actual": {'hot_take': len(selected_hot), 'editorial': len(selected_edit)},
+        }
 
     except Exception as e:
         return {"error": str(e)}
@@ -183,6 +254,20 @@ def schedule_selected_posts(selected: List[Dict], start_date: date = None) -> Di
         if days_until_monday == 0:
             days_until_monday = 7
         start_date = today + timedelta(days=days_until_monday)
+
+    # Guard idempotente: se a semana ja tem posts comprometidos suficientes,
+    # nao criar duplicatas. Cron 2x em 2026-05-03 criou 8 pending_approval
+    # em vez de 4. Defesa em profundidade — handler do cron tambem checa antes
+    # de gastar tokens em select_weekly_posts.
+    committed = count_committed_posts_in_week(start_date)
+    if committed >= len(selected):
+        return {
+            "scheduled": [],
+            "skipped": True,
+            "reason": f"semana ja tem {committed} posts comprometidos",
+            "committed": committed,
+            "week_start": start_date.isoformat(),
+        }
 
     # LinkedIn best times: Tue-Thu 9h, 12h
     slots = []

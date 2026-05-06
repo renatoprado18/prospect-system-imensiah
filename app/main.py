@@ -19367,7 +19367,12 @@ async def cron_editorial_weekly_briefing(request: Request):
 
     global _editorial_action_items_cache
     from services.editorial_pdca import generate_weekly_briefing
-    from services.auto_publisher import select_weekly_posts, schedule_selected_posts
+    from services.auto_publisher import (
+        select_weekly_posts,
+        schedule_selected_posts,
+        count_committed_posts_in_week,
+        DEFAULT_WEEKLY_MIX,
+    )
 
     out = {
         "job": "editorial-weekly-briefing",
@@ -19386,19 +19391,34 @@ async def cron_editorial_weekly_briefing(request: Request):
         out["briefing_status"] = "error"
         out["briefing_error"] = str(e)
 
-    # 2) Auto-selecao de 4 posts pending_approval
+    # 2) Auto-selecao semanal: 3 hot_takes + 1 repost editorial (cadencia padrao).
+    # Idempotencia: se semana ja tem posts comprometidos, pula sem gastar tokens
+    # da Claude no select. Em 2026-05-03 o cron rodou 2x e criou 8 pending em
+    # vez de 4 — guard aqui + em schedule_selected_posts (defesa em profundidade).
     selection_count = 0
+    target_total = sum(DEFAULT_WEEKLY_MIX.values())
     try:
-        sel = await select_weekly_posts(posts_per_week=4)
-        if sel.get('error'):
-            out["selection_error"] = sel['error']
+        committed = count_committed_posts_in_week()
+        if committed >= target_total:
+            out["selection_skipped"] = True
+            out["selection_reason"] = f"semana ja tem {committed} posts comprometidos"
+            out["selection_committed"] = committed
         else:
-            selected = sel.get('selected', [])
-            sched = schedule_selected_posts(selected)
-            selection_count = len(sched.get('scheduled', []))
-            out["selection_count"] = selection_count
-            out["selection_total_candidates"] = sel.get('total_candidates', 0)
-            _editorial_action_items_cache = {"data": None, "timestamp": None}
+            sel = await select_weekly_posts()  # default: 3 hot_take + 1 editorial
+            if sel.get('error'):
+                out["selection_error"] = sel['error']
+            else:
+                selected = sel.get('selected', [])
+                sched = schedule_selected_posts(selected)
+                if sched.get('skipped'):
+                    out["selection_skipped"] = True
+                    out["selection_reason"] = sched.get('reason')
+                else:
+                    selection_count = len(sched.get('scheduled', []))
+                    out["selection_count"] = selection_count
+                    out["selection_total_candidates"] = sel.get('total_candidates', 0)
+                    out["selection_mix"] = sel.get('mix_actual')
+                    _editorial_action_items_cache = {"data": None, "timestamp": None}
     except Exception as e:
         out["selection_error"] = str(e)
 
