@@ -1685,23 +1685,24 @@ async function openPostModal(postId) {
                                 </div>
                             </div>
                         </div>
-
-                        <!-- Importar xlsx do LinkedIn Analytics (autopreenche os campos acima) -->
-                        <div style="margin-top: 12px;">
-                            <div style="border: 1px dashed #c4b5fd; border-radius: 8px; padding: 10px 12px; cursor: pointer; background: #faf5ff; display: flex; align-items: center; gap: 8px; transition: background 0.15s;"
-                                 ondragover="event.preventDefault(); this.style.background='#f3e8ff';"
-                                 ondragleave="this.style.background='#faf5ff';"
-                                 ondrop="handleXlsxDropForPost(event, ${post.id})"
-                                 onclick="document.getElementById('xlsx-input-${post.id}').click()">
-                                <i class="bi bi-cloud-arrow-up" style="color: #7c3aed; font-size: 1rem;"></i>
-                                <span style="font-size: 0.78rem; color: #6b21a8;">
-                                    Arraste xlsx do LinkedIn Analytics — autopreenche e mantém histórico
-                                </span>
-                                <input type="file" id="xlsx-input-${post.id}" accept=".xlsx,.xls" style="display:none;" onchange="handleXlsxForPost(this.files[0], ${post.id})">
-                            </div>
-                            <div id="xlsx-confirm-${post.id}" style="display:none; margin-top: 8px;"></div>
-                        </div>
                     ` : ''}
+
+                    <!-- Importar xlsx do LinkedIn Analytics (autopreenche os campos acima) -->
+                    <!-- Sempre visivel pra posts publicados: xlsx eh a unica fonte de impressoes/demographics -->
+                    <div style="margin-top: 12px;">
+                        <div style="border: 1px dashed #c4b5fd; border-radius: 8px; padding: 10px 12px; cursor: pointer; background: #faf5ff; display: flex; align-items: center; gap: 8px; transition: background 0.15s;"
+                             ondragover="event.preventDefault(); this.style.background='#f3e8ff';"
+                             ondragleave="this.style.background='#faf5ff';"
+                             ondrop="handleXlsxDropForPost(event, ${post.id})"
+                             onclick="document.getElementById('xlsx-input-${post.id}').click()">
+                            <i class="bi bi-cloud-arrow-up" style="color: #7c3aed; font-size: 1rem;"></i>
+                            <span style="font-size: 0.78rem; color: #6b21a8;">
+                                Arraste xlsx do LinkedIn Analytics — autopreenche impressões, demographics e mantém histórico
+                            </span>
+                            <input type="file" id="xlsx-input-${post.id}" accept=".xlsx,.xls" style="display:none;" onchange="handleXlsxForPost(this.files[0], ${post.id})">
+                        </div>
+                        <div id="xlsx-confirm-${post.id}" style="display:none; margin-top: 8px;"></div>
+                    </div>
                 </div>
             `;
         }
