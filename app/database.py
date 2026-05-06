@@ -2342,6 +2342,56 @@ def init_db():
             ON message_classifications(requires_reply)
         ''')
 
+        # LinkdAPI usage ledger — saldo de creditos via soma de credits_delta.
+        # API nao expoe endpoint publico de saldo, entao trackamos local:
+        # cada call insere row com credits_delta=-1, refill manual insere +N.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS linkdapi_usage (
+                id SERIAL PRIMARY KEY,
+                endpoint TEXT NOT NULL,
+                called_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                status_code INTEGER,
+                credits_delta INTEGER NOT NULL DEFAULT -1,
+                notes TEXT
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_linkdapi_usage_called
+            ON linkdapi_usage (called_at DESC)
+        ''')
+
+        # Snapshot semanal do funil LinkedIn (dom 23h BRT) — alimenta
+        # /api/admin/linkedin-funnel + pill no rap_dashboard.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS linkedin_funnel_metrics (
+                id SERIAL PRIMARY KEY,
+                snapshot_em TIMESTAMP NOT NULL DEFAULT NOW(),
+                keywords_ativas INTEGER DEFAULT 0,
+                topicos_descobertos INTEGER DEFAULT 0,
+                engajadores_unicos INTEGER DEFAULT 0,
+                contatos_enriquecidos INTEGER DEFAULT 0,
+                conversas_iniciadas INTEGER DEFAULT 0,
+                demos_originadas INTEGER DEFAULT 0,
+                creditos_consumidos_periodo INTEGER DEFAULT 0,
+                creditos_saldo INTEGER DEFAULT 0,
+                details_json JSONB
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_linkedin_funnel_metrics_em
+            ON linkedin_funnel_metrics (snapshot_em DESC)
+        ''')
+
+        # Seed idempotente do saldo LinkdAPI: usuario tem 2380 creditos em 06/05/2026.
+        # So insere se a tabela esta vazia (nao reseta em cold-starts subsequentes).
+        cursor.execute("SELECT COUNT(*) AS n FROM linkdapi_usage")
+        seed_row = cursor.fetchone()
+        if seed_row and (seed_row.get('n') if isinstance(seed_row, dict) else seed_row[0]) == 0:
+            cursor.execute('''
+                INSERT INTO linkdapi_usage (endpoint, credits_delta, notes)
+                VALUES ('seed', 2380, 'saldo inicial em 2026-05-06 (Hobby tier, $1=120 creditos)')
+            ''')
+
         # =====================================================================
         # Sincroniza sequences que podem ter ficado atras do MAX(id) real.
         # Idempotente — roda toda vez que init_db() executa.

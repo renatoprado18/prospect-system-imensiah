@@ -4060,6 +4060,53 @@ async def cron_runs_trigger(
     return {"status": "triggered", "path": target_path, "url": target_url}
 
 
+# ===== LinkedIn Funnel — Fase 0 telemetria =====
+
+@app.get("/api/admin/linkedin-funnel")
+async def linkedin_funnel_admin(user: dict = Depends(require_admin)):
+    """Estado do funil LinkedIn: saldo LinkdAPI + estado atual + ultimos snapshots."""
+    from services.linkedin_funnel import (
+        get_balance, get_consumption_last_7d, get_funnel_state, get_funnel_history,
+        LOW_BALANCE_THRESHOLD,
+    )
+    saldo = get_balance()
+    return {
+        "saldo_creditos": saldo,
+        "low_balance_threshold": LOW_BALANCE_THRESHOLD,
+        "saldo_baixo": saldo < LOW_BALANCE_THRESHOLD,
+        "consumo_7d": get_consumption_last_7d(),
+        "state": get_funnel_state(),
+        "snapshots": get_funnel_history(limit=12),
+    }
+
+
+class LinkdAPIRefillBody(BaseModel):
+    amount: int
+    notes: Optional[str] = None
+
+
+@app.post("/api/admin/linkdapi/refill")
+async def linkdapi_refill(body: LinkdAPIRefillBody, user: dict = Depends(require_admin)):
+    """Registra refill manual de creditos LinkdAPI ($10 = 1200 creditos tipico)."""
+    from services.linkedin_funnel import record_refill, get_balance
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="amount precisa ser > 0")
+    result = record_refill(body.amount, body.notes)
+    return {**result, "saldo_atual": get_balance()}
+
+
+@app.get("/api/cron/linkedin-funnel-snapshot")
+@track_cron_run
+async def cron_linkedin_funnel_snapshot(request: Request):
+    """Cron weekly (dom 23h BRT): snapshot do funil + alerta de saldo baixo."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.linkedin_funnel import snapshot_funnel, check_low_balance_alert
+    snap = snapshot_funnel()
+    alert = await check_low_balance_alert()
+    return {"snapshot": snap, "alert": alert}
+
+
 @app.post("/api/cron/catchup")
 @track_cron_run
 async def cron_catchup(request: Request, background_tasks: BackgroundTasks):

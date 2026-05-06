@@ -39,6 +39,7 @@ async def _get_profile_urn(client: httpx.AsyncClient, api_key: str, username: st
             headers={"X-linkdapi-apikey": api_key},
             params={"username": username},
         )
+        _track_call("profile/full", resp.status_code)
         if resp.status_code != 200:
             logger.warning(f"LinkdAPI profile/full {username} -> {resp.status_code}")
             return None
@@ -58,6 +59,7 @@ async def _fetch_user_posts(client: httpx.AsyncClient, api_key: str, urn: str) -
             headers={"X-linkdapi-apikey": api_key},
             params={"urn": urn},
         )
+        _track_call("posts/all", resp.status_code)
         if resp.status_code != 200:
             logger.warning(f"LinkdAPI posts/all {urn} -> {resp.status_code}")
             return []
@@ -65,6 +67,16 @@ async def _fetch_user_posts(client: httpx.AsyncClient, api_key: str, urn: str) -
     except Exception as e:
         logger.warning(f"LinkdAPI posts/all falhou: {e}")
         return []
+
+
+def _track_call(endpoint: str, status_code: int) -> None:
+    """Wrapper sobre linkedin_funnel.track_linkdapi_call. Import lazy + try/except
+    pra nao quebrar coleta se telemetria falhar (rule #6 de cron telemetry)."""
+    try:
+        from services.linkedin_funnel import track_linkdapi_call
+        track_linkdapi_call(endpoint, status_code)
+    except Exception:
+        logger.debug(f"_track_call({endpoint}, {status_code}) falhou — telemetria offline?")
 
 
 def _normalize_text(s: str) -> str:

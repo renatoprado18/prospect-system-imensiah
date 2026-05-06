@@ -2067,6 +2067,12 @@
                 <i class="bi bi-check-circle-fill" style="font-size:0.85em;"></i>
                 <span id="cronHealthLabel">Crons OK</span>
             </button>
+            <a id="linkedinFunnelPill" href="/api/admin/linkedin-funnel" target="_blank" rel="noopener"
+                title="Funil LinkedIn → imensIAH"
+                style="display:none; background:#e0f2fe; color:#075985; border:1px solid #bae6fd; border-radius:999px; padding:3px 10px; font-size:0.78rem; font-weight:600; text-decoration:none;">
+                <i class="bi bi-linkedin" style="font-size:0.85em;"></i>
+                <span id="linkedinFunnelLabel">Funil LinkedIn</span>
+            </a>
             <a id="calendarScopePill" href="/rap/settings" title="Reconecte sua conta Google pra liberar escrita no calendário"
                 style="display:none; background:#fef3c7; color:#92400e; border:1px solid #fcd34d; border-radius:999px; padding:3px 10px; font-size:0.78rem; font-weight:600; text-decoration:none;">
                 <i class="bi bi-calendar-x" style="font-size:0.85em;"></i>
@@ -4491,6 +4497,52 @@
         // Refresh cron health a cada 5min — wrap em arrow pq loadCronHealth
         // e definida em outro <script> block (parseado depois deste)
         setInterval(() => loadCronHealth(), 5 * 60 * 1000);
+
+        // LinkedIn funnel pill — mostra saldo + estado do funil. Muted quando 0.
+        async function loadLinkedInFunnel() {
+            try {
+                const res = await fetch('/api/admin/linkedin-funnel', { credentials: 'same-origin' });
+                if (!res.ok) return;
+                const data = await res.json();
+                const pill = document.getElementById('linkedinFunnelPill');
+                const label = document.getElementById('linkedinFunnelLabel');
+                if (!pill || !label) return;
+
+                const saldo = data.saldo_creditos || 0;
+                const state = data.state || {};
+                const conv = state.conversas_iniciadas_30d || 0;
+                const demos = state.demos_originadas_30d || 0;
+                const baixo = !!data.saldo_baixo;
+
+                pill.style.display = 'inline-flex';
+                pill.style.alignItems = 'center';
+                pill.style.gap = '5px';
+
+                if (baixo) {
+                    pill.style.background = '#fee2e2';
+                    pill.style.color = '#b91c1c';
+                    pill.style.borderColor = '#fecaca';
+                    pill.innerHTML = '<i class="bi bi-linkedin" style="font-size:0.85em;"></i> <span id="linkedinFunnelLabel">LinkedIn ' + saldo + ' creditos · refill</span>';
+                } else if (conv === 0 && demos === 0) {
+                    // muted: funil ainda nao gerou pipeline
+                    pill.style.background = '#f1f5f9';
+                    pill.style.color = '#64748b';
+                    pill.style.borderColor = '#e2e8f0';
+                    pill.style.opacity = '0.7';
+                    pill.innerHTML = '<i class="bi bi-linkedin" style="font-size:0.85em;"></i> <span id="linkedinFunnelLabel">Funil LinkedIn · ' + saldo + ' creditos</span>';
+                } else {
+                    pill.style.background = '#e0f2fe';
+                    pill.style.color = '#075985';
+                    pill.style.borderColor = '#bae6fd';
+                    pill.style.opacity = '1';
+                    const txt = (demos > 0 ? demos + ' demo' + (demos > 1 ? 's' : '') + ' · ' : '') + conv + ' conversa' + (conv !== 1 ? 's' : '') + ' (30d)';
+                    pill.innerHTML = '<i class="bi bi-linkedin" style="font-size:0.85em;"></i> <span id="linkedinFunnelLabel">' + txt + '</span>';
+                }
+            } catch (err) {
+                console.warn('linkedin-funnel load failed:', err);
+            }
+        }
+        loadLinkedInFunnel();
 
         // Calendar scope pill (mostra só quando precisa reconectar)
         async function loadCalendarScopeStatus() {
