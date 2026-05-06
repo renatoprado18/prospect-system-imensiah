@@ -4155,6 +4155,69 @@ async def linkedin_topics_admin(
     return {"total": total, "limit": limit, "offset": offset, "topics": rows}
 
 
+# ===== LinkedIn Outbound Engagements — Fase 1.5 =====
+
+class OutboundRegisterBody(BaseModel):
+    post_url: str
+    comment_text: Optional[str] = None
+
+
+@app.post("/api/admin/linkedin-outbound/register")
+async def linkedin_outbound_register(
+    body: OutboundRegisterBody, user: dict = Depends(require_admin)
+):
+    """Registra um comment outbound (post de outra pessoa onde o Renato comentou).
+    Idempotente por post_url. Resolve autor via 1 call LinkdAPI."""
+    from services.linkedin_outbound_monitor import register_engagement
+    return await register_engagement(body.post_url, body.comment_text)
+
+
+@app.get("/api/admin/linkedin-outbound")
+async def linkedin_outbound_list(
+    include_archived: bool = False, user: dict = Depends(require_admin)
+):
+    """Lista engagements outbound (default: so ativos)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if include_archived:
+            cursor.execute(
+                """
+                SELECT * FROM linkedin_outbound_engagements
+                ORDER BY commented_at DESC
+                """
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT * FROM linkedin_outbound_engagements
+                WHERE archived_at IS NULL
+                ORDER BY commented_at DESC
+                """
+            )
+        rows = []
+        for r in cursor.fetchall():
+            row = dict(r)
+            for k in ("commented_at", "last_checked_at", "next_check_at",
+                      "archived_at", "notify_sent_at"):
+                if row.get(k):
+                    row[k] = row[k].isoformat()
+            rows.append(row)
+    return {"total": len(rows), "engagements": rows}
+
+
+@app.get("/api/cron/linkedin-outbound-check")
+@track_cron_run
+async def cron_linkedin_outbound_check(request: Request):
+    """Cron diario (08h BRT): checa replies a comentarios outbound.
+    Notifica via WhatsApp quando autor do post responde. Custo tipico:
+    ~3 calls/dia em regime estavel (~100/mes)."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.linkedin_outbound_monitor import monitor_due_engagements
+    summary = await monitor_due_engagements()
+    return {"job": "linkedin-outbound-check", **summary}
+
+
 @app.post("/api/cron/catchup")
 @track_cron_run
 async def cron_catchup(request: Request, background_tasks: BackgroundTasks):

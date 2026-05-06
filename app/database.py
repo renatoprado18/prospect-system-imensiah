@@ -2415,6 +2415,39 @@ def init_db():
             ON linkedin_topics (post_urn)
         ''')
 
+        # Engajamentos outbound: posts de outras pessoas onde o Renato comentou.
+        # Cron periodico checa replies; se autor do post responde -> WhatsApp.
+        # Ciclo de vida: register -> check a cada 3d ate 14d -> arquiva.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS linkedin_outbound_engagements (
+                id SERIAL PRIMARY KEY,
+                post_url TEXT NOT NULL,
+                post_urn TEXT,
+                post_author_urn TEXT,
+                post_author_name TEXT,
+                post_author_headline TEXT,
+                my_comment_urn TEXT,
+                my_comment_text TEXT,
+                commented_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                has_reply BOOLEAN DEFAULT FALSE,
+                reply_count INT DEFAULT 0,
+                reply_from_author BOOLEAN DEFAULT FALSE,
+                last_checked_at TIMESTAMP,
+                next_check_at TIMESTAMP,
+                archived_at TIMESTAMP,
+                notify_sent_at TIMESTAMP,
+                notes TEXT
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_outbound_eng_next_check
+            ON linkedin_outbound_engagements (next_check_at) WHERE archived_at IS NULL
+        ''')
+        cursor.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_outbound_eng_post_url
+            ON linkedin_outbound_engagements (post_url)
+        ''')
+
         # Seed idempotente do saldo LinkdAPI: usuario tem 2380 creditos em 06/05/2026.
         # So insere se a tabela esta vazia (nao reseta em cold-starts subsequentes).
         cursor.execute("SELECT COUNT(*) AS n FROM linkdapi_usage")
