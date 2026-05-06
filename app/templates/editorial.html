@@ -2491,7 +2491,16 @@ function pipelineSortValue(p, col) {
     if (col === 'titulo') return (p.article_title || p.titulo_adaptado || '').toLowerCase();
     if (col === 'tipo') return p.tipo || '';
     if (col === 'ai_categoria') return (p.ai_categoria || '').toLowerCase();
-    if (col === 'idade') return p.data_publicado ? Date.now() - new Date(p.data_publicado).getTime() : -1;
+    if (col === 'idade') {
+        // Prefer backend-computed horas_publicado (UTC-safe, vem de SQL EXTRACT(EPOCH...)).
+        // Fallback: parseia data_publicado como UTC (backend grava naive UTC; sem 'Z' o JS
+        // interpreta como local time e o diff fica errado — vide bug post #169 06/05).
+        if (typeof p.horas_publicado === 'number') return p.horas_publicado;
+        if (!p.data_publicado) return -1;
+        const ts = String(p.data_publicado);
+        const utcTs = /[zZ]|[+-]\d{2}:?\d{2}$/.test(ts) ? ts : ts.replace(' ', 'T') + 'Z';
+        return (Date.now() - new Date(utcTs).getTime()) / 3600000;
+    }
     if (['data_publicacao','data_publicado','linkedin_metricas_em','criado_em'].includes(col)) {
         return p[col] ? new Date(p[col]).getTime() : 0;
     }
@@ -2641,8 +2650,19 @@ function pipelineCellHtml(p, col, status) {
     }
     if (col === 'ai_categoria') return p.ai_categoria || '<span style="color:#94a3b8;">—</span>';
     if (col === 'idade') {
-        if (!p.data_publicado) return '<span style="color:#94a3b8;">—</span>';
-        const horas = Math.floor((Date.now() - new Date(p.data_publicado).getTime()) / 3600000);
+        // Prefer horas_publicado do backend (vem do action-items endpoint, calculado
+        // em SQL com NOW() - data_publicado — UTC-safe). Fallback: forca UTC no parse
+        // (data_publicado e naive UTC; sem 'Z' o JS le como local e diff fica negativo).
+        let horas;
+        if (typeof p.horas_publicado === 'number') {
+            horas = Math.floor(p.horas_publicado);
+        } else if (p.data_publicado) {
+            const ts = String(p.data_publicado);
+            const utcTs = /[zZ]|[+-]\d{2}:?\d{2}$/.test(ts) ? ts : ts.replace(' ', 'T') + 'Z';
+            horas = Math.floor((Date.now() - new Date(utcTs).getTime()) / 3600000);
+        } else {
+            return '<span style="color:#94a3b8;">—</span>';
+        }
         if (horas < 24) return `<span style="color:#f59e0b;">${horas}h</span>`;
         const dias = Math.floor(horas / 24);
         return `<span style="color:${dias > 3 ? '#dc2626' : '#475569'};">${dias}d</span>`;

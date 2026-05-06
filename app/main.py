@@ -18947,6 +18947,9 @@ async def api_editorial_action_items():
         coletar_metricas = []
         for p in publicados_recentes:
             horas = float(p.get('horas_publicado') or 0)
+            # Garante float no payload JSON (psycopg devolve Decimal de EXTRACT(EPOCH...);
+            # FastAPI serializa Decimal como string, o que quebra typeof==='number' no front).
+            p['horas_publicado'] = horas
             cls = classify_post_windows(horas, snaps_by_post.get(p['id'], []))
             # Mantem na fila SO se ha proxima acao (alguma janela aberta).
             # Posts com tudo coletada/perdida/futura saem.
