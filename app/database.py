@@ -2448,6 +2448,28 @@ def init_db():
             ON linkedin_outbound_engagements (post_url)
         ''')
 
+        # Custos mensais da plataforma (Vercel/Neon/Railway/Anthropic/LinkdAPI/etc).
+        # Entry manual via /api/admin/platform-costs (Fase 1) — automacao via API
+        # vem na Fase 2. usage_metrics guarda granularidade (memory_gb_min, etc)
+        # quando disponivel; period_start sempre primeiro dia do mes.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS platform_costs (
+                id SERIAL PRIMARY KEY,
+                provider TEXT NOT NULL,
+                period_start DATE NOT NULL,
+                period_end DATE NOT NULL,
+                amount_usd NUMERIC(10,2) NOT NULL,
+                usage_metrics JSONB,
+                notes TEXT,
+                fetched_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                UNIQUE(provider, period_start)
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_platform_costs_period
+            ON platform_costs (period_start DESC, provider)
+        ''')
+
         # Seed idempotente do saldo LinkdAPI: usuario tem 2380 creditos em 06/05/2026.
         # So insere se a tabela esta vazia (nao reseta em cold-starts subsequentes).
         cursor.execute("SELECT COUNT(*) AS n FROM linkdapi_usage")

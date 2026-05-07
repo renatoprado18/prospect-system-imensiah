@@ -244,7 +244,18 @@
   - Contacts without LinkedIn or without posts → enrollment paused
   - Batch enrichment endpoint: `POST /api/v1/campaigns/enrich-linkedin-tasks`
 
-## 21. PWA & Mobile
+## 21. Platform Cost Tracker (admin)
+- **Tabela**: `platform_costs` (provider, period_start, period_end, amount_usd, usage_metrics JSONB, notes)
+- **UNIQUE(provider, period_start)** garante UPSERT idempotente por mes
+- **Endpoints** (require_admin):
+  - `GET /api/admin/platform-costs?months=12` — rows + monthly_totals + alerts
+  - `POST /api/admin/platform-costs` — entry manual (period_start aceita YYYY-MM ou YYYY-MM-DD)
+  - `DELETE /api/admin/platform-costs/{id}` — correcao manual
+- **Alert heuristica**: trend mes-a-mes > 25% E delta absoluto > $5 (motivado pelo incidente LibreChat 07/05/2026)
+- **Seed retroativo**: `scripts/migrations/005_seed_platform_costs.sql` (Railway preciso, free tiers zerados, demais TODO manual)
+- **Fase 1** (atual): entry manual via POST. **Fase 2** (backlog): coleta automatica Vercel/Railway/Anthropic API. Refs `memory/project_cost_tracker.md`
+
+## 22. PWA & Mobile
 - **Manifest**: `/static/manifest.json` (standalone, portrait, theme #6366f1)
 - **Service Worker**: `/static/sw.js` - caches static assets (Bootstrap, icons, fonts) + network-first HTML pages with offline fallback
 - **iOS PWA meta tags**: apple-mobile-web-app-capable, apple-mobile-web-app-status-bar-style (black-translucent), apple-touch-icon

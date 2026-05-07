@@ -4218,6 +4218,166 @@ async def cron_linkedin_outbound_check(request: Request):
     return {"job": "linkedin-outbound-check", **summary}
 
 
+# ===== Platform Costs Tracker (Fase 1: entry manual) =====
+# Motivado pelo incidente do LibreChat (07/05/2026): stack zumbi consumindo
+# $13/mo invisivelmente por meses. Centraliza visibilidade de custos
+# Vercel/Neon/Railway/Anthropic/etc. Fase 2 = coleta automatica via API.
+
+KNOWN_PROVIDERS = [
+    "vercel", "neon", "railway", "anthropic",
+    "linkdapi", "github", "google", "evolution", "other",
+]
+
+
+class PlatformCostBody(BaseModel):
+    provider: str
+    period_start: str  # YYYY-MM-DD ou YYYY-MM (assume dia 1)
+    amount_usd: float
+    period_end: Optional[str] = None
+    usage_metrics: Optional[Dict[str, Any]] = None
+    notes: Optional[str] = None
+
+
+def _parse_period(s: str) -> str:
+    """Aceita YYYY-MM ou YYYY-MM-DD; retorna YYYY-MM-DD (primeiro dia)."""
+    s = (s or "").strip()
+    if len(s) == 7:
+        s = f"{s}-01"
+    try:
+        datetime.strptime(s, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"period invalido: {s}")
+    return s
+
+
+@app.get("/api/admin/platform-costs")
+async def platform_costs_list(
+    months: int = 12,
+    user: dict = Depends(require_admin),
+):
+    """Lista custos dos ultimos N meses (default 12), agrupados por mes
+    e provedor. Retorna trend mes-a-mes por provedor + alerta se aumento
+    >25% E delta absoluto >$5 (heuristica do incidente LibreChat)."""
+    months = max(1, min(int(months), 36))
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, provider, period_start, period_end, amount_usd,
+                   usage_metrics, notes, fetched_at
+            FROM platform_costs
+            WHERE period_start >= (DATE_TRUNC('month', CURRENT_DATE) - (%s || ' months')::interval)::date
+            ORDER BY period_start DESC, provider ASC
+            """,
+            (months,),
+        )
+        rows = []
+        for r in cursor.fetchall():
+            row = dict(r)
+            row["amount_usd"] = float(row["amount_usd"]) if row.get("amount_usd") is not None else 0.0
+            if row.get("period_start"):
+                row["period_start"] = row["period_start"].isoformat()
+            if row.get("period_end"):
+                row["period_end"] = row["period_end"].isoformat()
+            if row.get("fetched_at"):
+                row["fetched_at"] = row["fetched_at"].isoformat()
+            rows.append(row)
+
+    # Totais por mes (period_start) e trend por provedor (mes vs mes anterior)
+    monthly_totals: Dict[str, float] = {}
+    by_provider_period: Dict[str, Dict[str, float]] = {}
+    for r in rows:
+        p = r["period_start"]
+        prov = r["provider"]
+        monthly_totals[p] = monthly_totals.get(p, 0.0) + r["amount_usd"]
+        by_provider_period.setdefault(prov, {})[p] = r["amount_usd"]
+
+    alerts = []
+    for prov, periods in by_provider_period.items():
+        sorted_p = sorted(periods.keys())  # asc
+        for i in range(1, len(sorted_p)):
+            prev, curr = sorted_p[i - 1], sorted_p[i]
+            prev_v, curr_v = periods[prev], periods[curr]
+            delta = curr_v - prev_v
+            pct = (delta / prev_v * 100.0) if prev_v > 0 else 0.0
+            if pct > 25.0 and delta > 5.0:
+                alerts.append({
+                    "provider": prov,
+                    "from_period": prev, "to_period": curr,
+                    "from_usd": round(prev_v, 2), "to_usd": round(curr_v, 2),
+                    "delta_usd": round(delta, 2), "delta_pct": round(pct, 1),
+                })
+
+    return {
+        "rows": rows,
+        "monthly_totals": [
+            {"period_start": k, "total_usd": round(v, 2)}
+            for k, v in sorted(monthly_totals.items(), reverse=True)
+        ],
+        "alerts": alerts,
+        "known_providers": KNOWN_PROVIDERS,
+    }
+
+
+@app.post("/api/admin/platform-costs")
+async def platform_costs_upsert(
+    body: PlatformCostBody, user: dict = Depends(require_admin)
+):
+    """Insere/atualiza custo de um provedor pra um periodo (UPSERT por
+    provider+period_start). Aceita period_start como YYYY-MM ou YYYY-MM-DD."""
+    provider = (body.provider or "").strip().lower()
+    if not provider:
+        raise HTTPException(status_code=400, detail="provider obrigatorio")
+    if body.amount_usd < 0:
+        raise HTTPException(status_code=400, detail="amount_usd nao pode ser negativo")
+    period_start = _parse_period(body.period_start)
+    period_end = _parse_period(body.period_end) if body.period_end else None
+    metrics_json = json.dumps(body.usage_metrics) if body.usage_metrics else None
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO platform_costs
+                (provider, period_start, period_end, amount_usd, usage_metrics, notes)
+            VALUES (%s, %s,
+                    COALESCE(%s::date, (DATE_TRUNC('month', %s::date) + INTERVAL '1 month - 1 day')::date),
+                    %s, %s::jsonb, %s)
+            ON CONFLICT (provider, period_start) DO UPDATE SET
+                period_end = EXCLUDED.period_end,
+                amount_usd = EXCLUDED.amount_usd,
+                usage_metrics = EXCLUDED.usage_metrics,
+                notes = EXCLUDED.notes,
+                fetched_at = NOW()
+            RETURNING id, provider, period_start, period_end, amount_usd
+            """,
+            (provider, period_start, period_end, period_start,
+             body.amount_usd, metrics_json, body.notes),
+        )
+        row = cursor.fetchone()
+        conn.commit()
+        out = dict(row)
+        out["amount_usd"] = float(out["amount_usd"])
+        out["period_start"] = out["period_start"].isoformat()
+        out["period_end"] = out["period_end"].isoformat()
+    return {"ok": True, "row": out}
+
+
+@app.delete("/api/admin/platform-costs/{cost_id}")
+async def platform_costs_delete(
+    cost_id: int, user: dict = Depends(require_admin)
+):
+    """Remove uma entry de custo (correcao de erro de digitacao etc)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM platform_costs WHERE id = %s", (cost_id,))
+        deleted = cursor.rowcount
+        conn.commit()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="entry nao encontrada")
+    return {"ok": True, "deleted": cost_id}
+
+
 @app.post("/api/cron/catchup")
 @track_cron_run
 async def cron_catchup(request: Request, background_tasks: BackgroundTasks):
