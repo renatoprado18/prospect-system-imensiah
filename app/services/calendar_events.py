@@ -28,9 +28,14 @@ class CalendarEventsService:
         contact_id: int = None,
         prospect_id: int = None,
         attendees: List[Dict] = None,
-        create_in_google: bool = True
+        create_in_google: bool = True,
+        account_email: Optional[str] = None,
     ) -> Dict:
-        """Cria novo evento"""
+        """Cria novo evento.
+
+        account_email: email da conta Google onde criar (None = fallback profissional).
+        Salvo na coluna google_account_email pro sync respeitar a conta de origem.
+        """
         with get_db() as conn:
             cursor = conn.cursor()
 
@@ -39,12 +44,13 @@ class CalendarEventsService:
 
             cursor.execute("""
                 INSERT INTO calendar_events
-                (google_event_id, summary, description, location, start_datetime, end_datetime,
-                 contact_id, prospect_id, attendees, source, local_only)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'system', %s)
+                (google_event_id, google_account_email, summary, description, location,
+                 start_datetime, end_datetime, contact_id, prospect_id, attendees, source, local_only)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'system', %s)
                 RETURNING id
             """, (
                 f"local-{datetime.now().timestamp()}",  # ID temporario
+                account_email,
                 summary, description, location,
                 start_datetime, end_datetime,
                 contact_id, prospect_id,

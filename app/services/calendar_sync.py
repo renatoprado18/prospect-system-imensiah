@@ -28,6 +28,39 @@ class CalendarSyncService:
         """Obtem token valido para a conta"""
         return await get_valid_token(email)
 
+    def _resolve_account_email(
+        self,
+        event_account_email: Optional[str] = None,
+        fallback_tipo: str = "professional",
+    ) -> Optional[str]:
+        """Decide qual conta Google usar pra sync de um evento.
+
+        Prioridade:
+        1. event_account_email (coluna google_account_email do evento — preenchido
+           pelo full sync) — fonte de verdade pra eventos vindos do Google
+        2. Conta conectada do tipo `fallback_tipo` (eventos antigos sem coluna
+           preenchida defaultam pro tipo profissional, comportamento legacy)
+        3. Qualquer conta conectada (LIMIT 1) — fallback final
+
+        Antes: todas as 3 funcoes (push/sync/delete) faziam SELECT email FROM
+        google_accounts WHERE conectado LIMIT 1 — escolha arbitraria que causava
+        404 quando event tava na outra conta (bug reportado 2026-05-05).
+        """
+        if event_account_email:
+            return event_account_email
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT email FROM google_accounts WHERE conectado = TRUE AND tipo = %s LIMIT 1",
+                (fallback_tipo,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return row["email"]
+            cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE LIMIT 1")
+            row = cursor.fetchone()
+            return row["email"] if row else None
+
     async def full_sync(self, google_account_email: str) -> Dict:
         """Sincronizacao completa inicial"""
         access_token = await self.get_access_token(google_account_email)
@@ -154,12 +187,14 @@ class CalendarSyncService:
         #    -> calendar_events_pkey duplicate em prod 02/05/2026)
         # ON CONFLICT (google_event_id) DO UPDATE evita ambos: nao geramos
         # novo id pra row ja existente.
+        # google_account_email salvo pra sync correto multi-conta.
         cursor.execute("""
             INSERT INTO calendar_events
-            (google_event_id, summary, description, location, start_datetime, end_datetime,
+            (google_event_id, google_account_email, summary, description, location, start_datetime, end_datetime,
              all_day, attendees, status, conference_url, conference_type, etag, source, last_synced_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'google', NOW())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'google', NOW())
             ON CONFLICT (google_event_id) DO UPDATE SET
+                google_account_email = COALESCE(EXCLUDED.google_account_email, calendar_events.google_account_email),
                 summary = EXCLUDED.summary,
                 description = EXCLUDED.description,
                 location = EXCLUDED.location,
@@ -175,6 +210,7 @@ class CalendarSyncService:
                 atualizado_em = NOW()
         """, (
             event_id,
+            email,
             google_event.get("summary", "Sem titulo"),
             google_event.get("description"),
             google_event.get("location"),
@@ -188,7 +224,11 @@ class CalendarSyncService:
         return bool(existing)
 
     async def push_local_event(self, event_id: int) -> Dict:
-        """Envia evento local para o Google Calendar"""
+        """Envia evento local para o Google Calendar.
+
+        Usa google_account_email do evento se preenchido (criacao explicita
+        do bot/UI deve setar). Fallback pra conta profissional conectada.
+        """
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM calendar_events WHERE id = %s", (event_id,))
@@ -203,16 +243,11 @@ class CalendarSyncService:
                 if not event["google_event_id"].startswith("local-"):
                     return {"error": "Evento ja sincronizado"}
 
-        # Buscar conta Google para obter token
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE LIMIT 1")
-            account = cursor.fetchone()
-
-        if not account:
+        account_email = self._resolve_account_email(event.get("google_account_email"))
+        if not account_email:
             return {"error": "Nenhuma conta Google configurada"}
 
-        access_token = await self.get_access_token(account["email"])
+        access_token = await self.get_access_token(account_email)
 
         # Criar no Google
         attendees = None
@@ -235,18 +270,20 @@ class CalendarSyncService:
         if "error" in google_event:
             return google_event
 
-        # Atualizar local com ID do Google
+        # Atualizar local com ID do Google e gravar a conta usada
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE calendar_events SET
                     google_event_id = %s,
+                    google_account_email = %s,
                     conference_url = %s,
                     local_only = FALSE,
                     last_synced_at = NOW()
                 WHERE id = %s
             """, (
                 google_event["id"],
+                account_email,
                 google_event.get("hangoutLink"),
                 event_id
             ))
@@ -255,7 +292,11 @@ class CalendarSyncService:
         return google_event
 
     async def sync_event_to_google(self, event_id: int) -> Dict:
-        """Sincroniza alteracoes de um evento para o Google"""
+        """Sincroniza alteracoes de um evento para o Google.
+
+        Usa google_account_email do evento (preenchido pelo full sync) pra
+        bater no calendar correto. Fallback pra conta profissional.
+        """
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM calendar_events WHERE id = %s", (event_id,))
@@ -269,16 +310,11 @@ class CalendarSyncService:
             if not event["google_event_id"] or event.get("local_only"):
                 return await self.push_local_event(event_id)
 
-        # Buscar token
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE LIMIT 1")
-            account = cursor.fetchone()
-
-        if not account:
+        account_email = self._resolve_account_email(event.get("google_account_email"))
+        if not account_email:
             return {"error": "Nenhuma conta Google configurada"}
 
-        access_token = await self.get_access_token(account["email"])
+        access_token = await self.get_access_token(account_email)
 
         # Preparar atualizacoes
         updates = {
@@ -315,27 +351,24 @@ class CalendarSyncService:
         """Deleta evento do Google Calendar.
 
         scope: "single" | "future" | "all" — passado direto pra integração.
+        Usa google_account_email do evento pra bater no calendar correto.
         """
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT google_event_id, local_only FROM calendar_events WHERE id = %s
+                SELECT google_event_id, google_account_email, local_only
+                FROM calendar_events WHERE id = %s
             """, (event_id,))
             event = cursor.fetchone()
 
             if not event or not event["google_event_id"] or event.get("local_only"):
                 return True  # Nada a deletar no Google
 
-        # Buscar token
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE LIMIT 1")
-            account = cursor.fetchone()
-
-        if not account:
+        account_email = self._resolve_account_email(event.get("google_account_email"))
+        if not account_email:
             return False
 
-        access_token = await self.get_access_token(account["email"])
+        access_token = await self.get_access_token(account_email)
 
         result = await delete_calendar_event(
             access_token=access_token,

@@ -96,7 +96,9 @@ TOOLS = [
             "- complete_task: conclui tarefa (task_id)\n"
             "- save_note: salva nota em projeto (project_id, titulo, conteudo, tipo?)\n"
             "- save_memory: salva memoria de contato (contact_id, titulo, resumo, conteudo_completo?, tipo?)\n"
-            "- schedule_meeting: cria evento (titulo, data_hora ISO, duracao_min?, contact_id?, local?, descricao?)\n"
+            "- schedule_meeting: cria evento (titulo, data_hora ISO, duracao_min?, contact_id?, local?, descricao?, account?). "
+            "account aceita 'personal' (gmail pessoal) ou 'professional' (almeida-prado, default). "
+            "Use 'personal' pra eventos pessoais (familia, saude, lazer) e 'professional' pra trabalho/conselhos.\n"
             "- update_calendar_event: edita evento existente (PATCH-style). params: event_id (int=local id), e SOMENTE os campos que mudaram entre: titulo?, data_hora? ISO, duracao_min?, local?, descricao?. "
             "Para eventos recorrentes a edicao afeta apenas a ocorrencia editada (vira exception); pra mudar toda a serie, oriente o usuario a editar no Google Calendar diretamente.\n"
             "- delete_calendar_event: apaga evento. params: event_id (int=local id), scope? ('single'|'future'). "
@@ -551,6 +553,23 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
             duracao_min = params.get("duracao_min", 60)
             contact_id = params.get("contact_id")
             local = params.get("local")
+            # Multi-conta: 'personal' | 'professional' (default).
+            # Resolve em email via google_accounts.tipo. Sem conta? deixa NULL
+            # (calendar_sync._resolve_account_email faz fallback profissional).
+            account_alias = (params.get("account") or "professional").lower()
+            account_email = None
+            try:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT email FROM google_accounts WHERE conectado=TRUE AND tipo=%s LIMIT 1",
+                        (account_alias,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        account_email = row["email"]
+            except Exception as e:
+                logger.warning(f"schedule_meeting account lookup err: {e}")
 
             try:
                 start_dt = datetime.fromisoformat(data_hora.replace("Z", "+00:00"))
@@ -567,7 +586,8 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 end_datetime=end_dt,
                 location=local,
                 contact_id=contact_id,
-                create_in_google=True
+                create_in_google=True,
+                account_email=account_email,
             )
 
             # Auto-resolve matching tasks
@@ -581,10 +601,12 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
             except Exception as e:
                 logger.error(f"Task auto-resolve error (meeting): {e}")
 
+            account_label = "pessoal" if account_alias == "personal" else "profissional"
             return json.dumps({
                 "sucesso": True,
                 "event_id": event.get("id"),
-                "mensagem": f"Evento '{titulo}' criado em {start_dt.strftime('%d/%m %H:%M')} ({duracao_min}min)"
+                "google_account_email": account_email,
+                "mensagem": f"Evento '{titulo}' criado em {start_dt.strftime('%d/%m %H:%M')} ({duracao_min}min) no calendario {account_label}"
             }, ensure_ascii=False)
 
         elif action == "update_calendar_event":

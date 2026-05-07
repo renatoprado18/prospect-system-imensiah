@@ -1065,6 +1065,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS calendar_events (
                 id SERIAL PRIMARY KEY,
                 google_event_id TEXT UNIQUE,
+                google_account_email TEXT,
                 summary TEXT NOT NULL,
                 description TEXT,
                 location TEXT,
@@ -1090,9 +1091,23 @@ def init_db():
             )
         ''')
 
+        # Multi-conta: rastreia de qual conta Google o evento veio (sync) ou
+        # foi criado (local). NULL pra eventos antigos — preenchido conforme
+        # full sync subsequente. Sem isso, sync_to_google/delete_from_google
+        # caiam num LIMIT 1 arbitrario (bug: 404 quando event tava na outra conta).
+        cursor.execute('''
+            ALTER TABLE calendar_events
+            ADD COLUMN IF NOT EXISTS google_account_email TEXT
+        ''')
+
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_calendar_events_google_id
             ON calendar_events(google_event_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_calendar_events_account
+            ON calendar_events(google_account_email)
         ''')
 
         cursor.execute('''
