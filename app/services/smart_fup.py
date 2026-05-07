@@ -48,12 +48,18 @@ async def check_pending_fups(access_token: str) -> Dict:
     try:
         # Buscar emails ENVIADOS nos ultimos 7 dias sem resposta
         # Gmail query: emails enviados, nao em thread com resposta
-        sent_messages = await gmail.list_messages(
+        # list_messages retorna Dict {messages: [...], nextPageToken: ...} ou {error: ...}
+        list_result = await gmail.list_messages(
             access_token=access_token,
             query="in:sent newer_than:7d",
             max_results=30
         )
 
+        if not list_result or list_result.get("error"):
+            results["error"] = list_result.get("error") if list_result else "no_response"
+            return results
+
+        sent_messages = list_result.get("messages", []) or []
         if not sent_messages:
             return results
 

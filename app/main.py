@@ -8314,22 +8314,14 @@ async def cron_daily_sync(request: Request):
     )
 
     # ==================== FASE 3: IA e processamento (paralelo) ====================
-
-    async def step_ai():
-        from services.ai_agent import get_ai_agent
-        return await get_ai_agent().run_daily_generation()
+    # daily_ai, auto_enrich, daily_clipping rodam em crons isolados desde 2026-05-07
+    # (cron_run_daily_ai, cron_run_auto_enrich, cron_run_daily_clipping).
 
     async def step_campaigns():
         # Why to_thread: process_pending_steps e sync (sem await), pode levar
         # minutos com 200 campaigns. Bloqueava event loop -> wait_for inutil.
         from services.campaign_executor import CampaignExecutor
         return await _aio.to_thread(lambda: CampaignExecutor().process_pending_steps(limit=200))
-
-    async def step_enrich():
-        from services.contact_enrichment import auto_enrich_priority_contacts
-        with get_db() as conn:
-            r = await auto_enrich_priority_contacts(conn, circulo_max=2, limit=5)
-        return {"enriched": len(r)}
 
     async def step_avatars():
         from services.avatar_fetcher import get_avatar_fetcher
@@ -8345,11 +8337,6 @@ async def cron_daily_sync(request: Request):
         for pid in pids:
             r[pid] = await download_group_documents(pid)
         return {"projects": len(pids)}
-
-    async def step_clipping():
-        from services.news_hub import generate_daily_clipping
-        r = await generate_daily_clipping(limit=10)
-        return {"items": len(r.get('clipping', []))}
 
     async def step_social_groups():
         from services.social_groups import sync_all_groups_cache
@@ -8373,9 +8360,9 @@ async def cron_daily_sync(request: Request):
             return {"status": "error", "error": "publish_due_posts timeout > 90s"}
 
     async def step_linkedin_enrichment():
-        from services.linkedin_enrichment import get_linkedin_enrichment
+        from services.linkedin_enrichment import get_linkedin_enrichment_service
         from services.action_proposals import get_action_proposals
-        enricher = get_linkedin_enrichment()
+        enricher = get_linkedin_enrichment_service()
         result = await enricher.enrich_batch(limit=10, circulo_max=3)
 
         # Create action proposals for job changes
@@ -8437,70 +8424,26 @@ async def cron_daily_sync(request: Request):
                 return {"cleaned": len(rows), "paths": [r['path'] for r in rows]}
         return await _aio.to_thread(_run)
 
-    async def step_classify_messages():
-        """Classifica mensagens incoming dos ultimos 7 dias ainda nao classificadas.
-
-        Pula mensagens ja classificadas (rule/LLM/manual). Usa pipeline hibrido
-        (rule -> LLM Haiku). LIMIT 200 por execucao pra cap de tempo/custo no cron.
-        """
-        from services.message_classifier import classify
-        processed = {"rule": 0, "llm": 0, "errors": 0, "skipped": 0}
-        try:
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    SELECT m.id, m.conteudo, c.nome AS sender_name
-                    FROM messages m
-                    JOIN contacts c ON c.id = m.contact_id
-                    LEFT JOIN message_classifications mc
-                        ON mc.message_id = m.id AND mc.source_table = 'messages'
-                    WHERE m.direcao = 'incoming'
-                      AND m.enviado_em > NOW() - INTERVAL '7 days'
-                      AND mc.message_id IS NULL
-                      AND m.conteudo IS NOT NULL
-                      AND length(trim(m.conteudo)) > 0
-                    ORDER BY m.enviado_em DESC
-                    LIMIT 200
-                    """
-                )
-                rows = [dict(r) for r in cursor.fetchall()]
-            for row in rows:
-                try:
-                    res = await classify(
-                        message_id=row["id"],
-                        source_table="messages",
-                        text=row["conteudo"] or "",
-                        sender_name=row.get("sender_name") or "",
-                    )
-                    if res.get("cached"):
-                        processed["skipped"] += 1
-                    elif res.get("method") == "rule":
-                        processed["rule"] += 1
-                    elif res.get("method") == "llm":
-                        processed["llm"] += 1
-                except Exception as e:
-                    processed["errors"] += 1
-                    logger.warning(f"classify msg={row['id']} err: {e}")
-        except Exception as e:
-            logger.error(f"step_classify_messages fatal: {e}")
-        return processed
+    # classify_messages removido do daily-sync: cron hourly /api/cron/classify-messages
+    # (schedule "15 * * * *", limit=500, timeout=240s) cobre o backlog principal.
+    # Step daqui era redundante e timeoutava 120s sem ganho real.
+    #
+    # daily_ai, auto_enrich, daily_clipping migrados pra crons isolados:
+    # /api/cron/run-daily-ai, /run-auto-enrich, /run-daily-clipping
+    # Why: rodando dentro do daily-sync competiam por event loop e estouravam
+    # timeout per-step. Em crons isolados cada um tem 300s sozinho.
 
     # Per-step timeouts: budget total da fase = max(steps). Mantemos abaixo
     # de 120s pra dar folga ao decorator finalizar (Vercel cap 300s = soma
     # das 3 fases + overhead).
     await _aio.gather(
-        run_step("daily_ai", step_ai, timeout=90.0),
         run_step("campaigns", step_campaigns, timeout=90.0),
-        run_step("auto_enrich", step_enrich, timeout=90.0),
         run_step("avatar_fetch", step_avatars, timeout=60.0),
         run_step("group_docs", step_group_docs, timeout=90.0),
-        run_step("daily_clipping", step_clipping, timeout=60.0),
-        run_step("social_groups_cache", step_social_groups, timeout=30.0),
+        run_step("social_groups_cache", step_social_groups, timeout=60.0),
         run_step("group_messages_sync", step_group_messages, timeout=90.0),
         run_step("linkedin_enrichment", step_linkedin_enrichment, timeout=120.0),
         run_step("auto_publish", step_auto_publish),  # ja tem wait_for interno 90s
-        run_step("classify_messages", step_classify_messages, timeout=120.0),
         run_step("cron_cleanup_stuck", step_cron_cleanup_stuck, timeout=30.0),
     )
 
@@ -8549,6 +8492,166 @@ async def cron_auto_publish_linkedin(request: Request):
             "job": "auto-publish-linkedin",
             "error": f"{type(e).__name__}: {e}",
             "trace": _tb.format_exc()[-800:],
+        }
+
+
+@app.get("/api/cron/classify-messages")
+@track_cron_run
+async def cron_classify_messages(request: Request):
+    """
+    Cron hourly: classifica mensagens incoming nao classificadas (precisa-resposta).
+
+    Why: o trigger 'Responder msg' do statcard "Contatos c/ Atencao" antes
+    defaultava NULL como TRUE — gerava ~30% de falso positivo (mensagens
+    recentes sem classificacao apareciam como precisam-resposta). Agora o
+    statcard so conta requires_reply=TRUE explicito; este cron mantem o
+    backlog em dia rodando a cada hora.
+
+    Schedule (vercel.json): `0 * * * *`. Limit 500/exec — cobre pico tipico
+    de 50-100 incoming/h com folga.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.message_classifier import classify_pending_batch
+
+    try:
+        result = await _aio.wait_for(
+            classify_pending_batch(limit=500, days=7), timeout=240.0
+        )
+        return {"status": "ok", "job": "classify-messages", **result}
+    except _aio.TimeoutError:
+        logger.error("cron_classify_messages: classify_pending_batch > 240s")
+        return {
+            "status": "error",
+            "job": "classify-messages",
+            "error": "classify_pending_batch timeout > 240s",
+        }
+    except Exception as e:
+        logger.exception("cron_classify_messages: exception fatal")
+        return {
+            "status": "error",
+            "job": "classify-messages",
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+# ============================================================================
+# Crons isolados extraidos do daily-sync (2026-05-07)
+#
+# Why: dentro do daily-sync esses 3 steps competiam por event loop com 8+
+# outros e estouravam timeout per-step (90s/60s). Em crons isolados, cada
+# um tem 300s sozinho e roda confortavelmente.
+#
+# Mantem telemetria via @track_cron_run (mesma tabela cron_runs).
+# Schedules escalonados pra nao bater no daily-sync (5h UTC).
+# ============================================================================
+
+
+@app.get("/api/cron/run-daily-ai")
+@track_cron_run
+async def cron_run_daily_ai(request: Request):
+    """
+    Cron isolado: geracao diaria do AI agent (briefings, etc).
+    Schedule (vercel.json): `15 5 * * *` (5h15 UTC). Timeout 240s.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.ai_agent import get_ai_agent
+
+    try:
+        result = await _aio.wait_for(
+            get_ai_agent().run_daily_generation(), timeout=240.0
+        )
+        return {"status": "ok", "job": "run-daily-ai", "result": result}
+    except _aio.TimeoutError:
+        logger.error("cron_run_daily_ai: run_daily_generation > 240s")
+        return {
+            "status": "error",
+            "job": "run-daily-ai",
+            "error": "run_daily_generation timeout > 240s",
+        }
+    except Exception as e:
+        logger.exception("cron_run_daily_ai: exception fatal")
+        return {
+            "status": "error",
+            "job": "run-daily-ai",
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+@app.get("/api/cron/run-auto-enrich")
+@track_cron_run
+async def cron_run_auto_enrich(request: Request):
+    """
+    Cron isolado: enriquece contatos prioritarios (circulos 1-2) com IA + LinkdAPI.
+    Schedule (vercel.json): `25 5 * * *` (5h25 UTC). Timeout 240s.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.contact_enrichment import auto_enrich_priority_contacts
+
+    try:
+        async def _run():
+            with get_db() as conn:
+                return await auto_enrich_priority_contacts(conn, circulo_max=2, limit=5)
+
+        result = await _aio.wait_for(_run(), timeout=240.0)
+        return {"status": "ok", "job": "run-auto-enrich", "result": result}
+    except _aio.TimeoutError:
+        logger.error("cron_run_auto_enrich: auto_enrich_priority_contacts > 240s")
+        return {
+            "status": "error",
+            "job": "run-auto-enrich",
+            "error": "auto_enrich_priority_contacts timeout > 240s",
+        }
+    except Exception as e:
+        logger.exception("cron_run_auto_enrich: exception fatal")
+        return {
+            "status": "error",
+            "job": "run-auto-enrich",
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+@app.get("/api/cron/run-daily-clipping")
+@track_cron_run
+async def cron_run_daily_clipping(request: Request):
+    """
+    Cron isolado: gera clipping diario (RSS + IA rank).
+    Schedule (vercel.json): `35 5 * * *` (5h35 UTC). Timeout 240s.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.news_hub import generate_daily_clipping
+
+    try:
+        result = await _aio.wait_for(generate_daily_clipping(limit=10), timeout=240.0)
+        return {
+            "status": "ok",
+            "job": "run-daily-clipping",
+            "items": len(result.get('clipping', [])),
+        }
+    except _aio.TimeoutError:
+        logger.error("cron_run_daily_clipping: generate_daily_clipping > 240s")
+        return {
+            "status": "error",
+            "job": "run-daily-clipping",
+            "error": "generate_daily_clipping timeout > 240s",
+        }
+    except Exception as e:
+        logger.exception("cron_run_daily_clipping: exception fatal")
+        return {
+            "status": "error",
+            "job": "run-daily-clipping",
+            "error": f"{type(e).__name__}: {e}",
         }
 
 

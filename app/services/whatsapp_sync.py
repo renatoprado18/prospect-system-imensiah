@@ -11,6 +11,7 @@ Funcionalidades:
 Autor: INTEL
 Data: 2026-03-26
 """
+import asyncio
 import os
 import re
 import json
@@ -294,25 +295,26 @@ class WhatsAppSyncService:
             chats = await self.wa.get_all_chats(include_groups=include_groups)
             self._sync_status["total_chats"] = len(chats)
 
+            # Why to_thread: cada iteracao chamava _find_contact_by_phone +
+            # _update_contact_interaction + _save_messages_to_conversation —
+            # todas sync (psycopg2) dentro de async def. Bloqueava event loop,
+            # daily-sync timeoutava em 120s. Wrap libera o loop entre chats.
             for chat in chats:
                 try:
                     phone = chat.get("_phone")
                     if not phone:
                         continue
 
-                    # Buscar contato pelo telefone
-                    contact = self._find_contact_by_phone(phone)
+                    contact = await asyncio.to_thread(self._find_contact_by_phone, phone)
                     if not contact:
                         self._sync_status["processed"] += 1
                         continue
 
                     contact_id = contact["id"]
 
-                    # Buscar mensagens do chat
                     messages = await self.wa.get_messages_for_chat(phone, limit=100)
 
                     if messages:
-                        # Contar mensagens e pegar data mais recente
                         msg_count = len(messages)
                         latest_date = None
 
@@ -323,12 +325,17 @@ class WhatsAppSyncService:
                                     latest_date = parsed["timestamp"]
 
                         if latest_date:
-                            self._update_contact_interaction(contact_id, msg_count, latest_date)
+                            await asyncio.to_thread(
+                                self._update_contact_interaction, contact_id, msg_count, latest_date
+                            )
 
-                        # Criar conversa e salvar mensagens na tabela messages
-                        conversation_id = self._get_or_create_conversation(contact_id, phone)
+                        conversation_id = await asyncio.to_thread(
+                            self._get_or_create_conversation, contact_id, phone
+                        )
                         if conversation_id:
-                            saved = self._save_messages_to_conversation(conversation_id, contact_id, messages)
+                            saved = await asyncio.to_thread(
+                                self._save_messages_to_conversation, conversation_id, contact_id, messages
+                            )
                             self._sync_status["messages_saved"] += saved
                             if saved > 0:
                                 logger.info(f"Salvas {saved} mensagens para contato {contact['nome']} (ID: {contact_id})")

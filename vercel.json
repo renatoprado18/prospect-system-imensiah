@@ -96,6 +96,22 @@
     {
       "path": "/api/cron/linkedin-outbound-check",
       "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron/classify-messages",
+      "schedule": "15 * * * *"
+    },
+    {
+      "path": "/api/cron/run-daily-ai",
+      "schedule": "15 5 * * *"
+    },
+    {
+      "path": "/api/cron/run-auto-enrich",
+      "schedule": "25 5 * * *"
+    },
+    {
+      "path": "/api/cron/run-daily-clipping",
+      "schedule": "35 5 * * *"
     }
   ]
 }

@@ -169,10 +169,15 @@ async def sync_all_groups_cache() -> Dict:
                 batch_results = await aio.gather(*[fetch_group(jid) for jid in batch])
                 all_groups.extend([r for r in batch_results if r])
 
-            # 4. Cruzar telefones com contatos e salvar cache
+        # 4. Cruzar telefones com contatos e salvar cache.
+        # Why to_thread: get_db()+_cross_phone_with_contacts+UPDATE em loop de N grupos
+        # eh sync e bloqueava o event loop dentro do async. wait_for nao conseguia
+        # cancelar — daily-sync timeoutava o step. Wrap em thread libera o loop.
+        def _persist():
+            synced = 0
+            errors = 0
             with get_db() as conn:
                 cursor = conn.cursor()
-
                 for g in all_groups:
                     try:
                         known = _cross_phone_with_contacts(g['phones'])
@@ -198,12 +203,16 @@ async def sync_all_groups_cache() -> Dict:
                             json.dumps(g['phones']), json.dumps(known_ids),
                             len(known), health_medio, json.dumps(g['labels'])
                         ))
-                        results["synced"] += 1
+                        synced += 1
                     except Exception as e:
-                        results["errors"] += 1
-                        logger.warning(f"Erro ao cachear grupo {g['name']}: {e}")
-
+                        errors += 1
+                        logger.warning(f"Erro ao cachear grupo {g.get('name')}: {e}")
                 conn.commit()
+            return synced, errors
+
+        synced, errors = await aio.to_thread(_persist)
+        results["synced"] = synced
+        results["errors"] = errors
 
     except Exception as e:
         logger.error(f"Erro no sync de grupos: {e}")
