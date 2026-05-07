@@ -1110,6 +1110,25 @@ def init_db():
             ON calendar_events(google_account_email)
         ''')
 
+        # Proatividade do INTEL bot (Inteligencia Real P4): bot inicia conversa
+        # quando detecta sinal acionavel. Tabela generica por signal_type pra
+        # dedup — extensivel pros 4 triggers planejados (#335 post-meeting,
+        # #336 grupo WA pico, #337 decay, #338 oportunidade cruzada).
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS proactive_signals (
+                id SERIAL PRIMARY KEY,
+                signal_type TEXT NOT NULL,
+                ref_id TEXT NOT NULL,
+                payload JSONB DEFAULT '{}',
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(signal_type, ref_id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_proactive_signals_sent
+            ON proactive_signals(sent_at DESC)
+        ''')
+
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_calendar_events_contact
             ON calendar_events(contact_id)

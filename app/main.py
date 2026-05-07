@@ -8640,6 +8640,36 @@ async def cron_classify_messages(request: Request):
         }
 
 
+@app.get("/api/cron/proactive-check")
+@track_cron_run
+async def cron_proactive_check(request: Request):
+    """
+    Cron 30min: detecta sinais acionaveis e bot inicia conversa via WA.
+
+    MVP P4 (Inteligencia Real): trigger pos-reuniao (#335). Roadmap inclui
+    decay relacionamento (#337), pico grupo WA (#336), oportunidade cruzada
+    (#338) — todos compartilham proactive_signals pra dedup.
+
+    Schedule (vercel.json): `*/30 * * * *`. Janela de pos-reuniao e 15-60min
+    apos end_datetime; cada evento qualifica uma vez (UNIQUE em proactive_signals).
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.proactive_signals import run_all_checks
+
+    try:
+        result = await _aio.wait_for(run_all_checks(), timeout=120.0)
+        return {"status": "ok", "job": "proactive-check", **result}
+    except _aio.TimeoutError:
+        logger.error("cron_proactive_check: run_all_checks > 120s")
+        return {"status": "error", "job": "proactive-check", "error": "timeout > 120s"}
+    except Exception as e:
+        logger.exception("cron_proactive_check: exception fatal")
+        return {"status": "error", "job": "proactive-check", "error": f"{type(e).__name__}: {e}"}
+
+
 # ============================================================================
 # Crons isolados extraidos do daily-sync (2026-05-07)
 #
