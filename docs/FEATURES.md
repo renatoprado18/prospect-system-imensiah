@@ -159,14 +159,37 @@
 | Fathom | Import reuniões | FATHOM_API_KEY |
 | ConselhoOS | Sync dados conselhos | CONSELHOOS_DATABASE_URL |
 
-## 17. Cron Jobs (vercel.json)
-| Horário | Job | Steps |
+## 17. Cron Jobs (vercel.json + GH Actions)
+
+### Vercel crons (daily-only por restricao Hobby plan)
+| Horário UTC | Job | Steps / proposito |
 |---------|-----|-------|
-| 5h diário | daily-sync | Health, Contacts, Calendar, Tasks, Gmail, PaymentCycle, WA, SmartFUP, AI, Campaigns, AutoEnrich, GroupDocs, Avatars, Clipping, SocialGroupsCache (13 steps) |
-| 6h diário | sync-whatsapp-history | Histórico WA |
-| 18h diário | health-recalc | Health scores |
-| 8h segunda | weekly-digest | Digest semanal |
-| 4h domingo | cleanup | Expirar propostas, limpar notificações |
+| 5:00 | `daily-sync` | Health, Contacts, Calendar, Tasks, Gmail, PaymentCycle, SmartFUP, Campaigns, GroupDocs, Avatars, GroupMessagesSync, LinkedinEnrichment, AutoPublish, CronCleanupStuck (~32s, ~14 steps leves) |
+| 5:15 | `run-daily-ai` | Geracao IA do agent (briefings, sugestoes) — isolado pra ter 240s sozinho |
+| 5:25 | `run-auto-enrich` | Enriquece 5 contatos prioritarios (LinkdAPI + Claude) |
+| 5:35 | `run-daily-clipping` | Coleta RSS + ranking IA, top 10 |
+| 6:00 | `sync-whatsapp-history` | Historico WA |
+| 18:00 | `health-recalc` | Health scores |
+| 8:00 (seg) | `weekly-digest` | Digest semanal |
+| 4:00 (dom) | `cleanup` | Expirar propostas, limpar notificacoes |
+| 12:00 (dia 2) | `platform-costs-snapshot` | Custos mensais |
+
+### GH Actions crons (frequencia >1x/dia)
+| Schedule UTC | Workflow | Endpoint |
+|---------|-----|-------|
+| `15 * * * *` | `cron-classify-messages.yml` | `/api/cron/classify-messages` (limit=500/h) |
+| `5 * * * *` | `cron-whatsapp-sync.yml` | `/api/cron/run-whatsapp-sync` (paginado, batch=50) |
+| `20 * * * *` | `cron-social-groups.yml` | `/api/cron/run-social-groups` (paginado, batch=30) |
+| `5 12,15 * * *` | `cron-auto-publish-linkedin.yml` | `/api/cron/auto-publish-linkedin` |
+| `*/15 * * * *` | `cron-catchup.yml` | `/api/cron/catchup` (retry crons que falharam) |
+| (multiplos) | `cron-auto-collect-metrics.yml` | LinkedIn metrics windows |
+
+### Crons paginados (cron_cursors)
+- Tabela `cron_cursors (name PK, cursor_value, total_items, updated_at)` persiste offset entre runs.
+- Helpers `_read_cron_cursor(name)` / `_write_cron_cursor(name, value, total)` em `app/main.py`.
+- Services `whatsapp_sync.sync_all_chats(limit, offset)` e `social_groups.sync_all_groups_cache(limit, offset)` retornam `next_offset` (cyclic) e `more_pages`.
+- Env vars: `WHATSAPP_SYNC_BATCH` (default 50), `SOCIAL_GROUPS_BATCH` (default 30).
+- Visibilidade no `/api/admin/cron-health` em `paginated_cursors[]` (offset/total/progress_pct).
 
 ## 18. Intel Bot (WhatsApp conversacional via intel-bot)
 - Bot WhatsApp dedicado na instancia "intel-bot" (numero 5511915020192)

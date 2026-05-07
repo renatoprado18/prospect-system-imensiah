@@ -1,0 +1,25 @@
+name: Cron — WhatsApp Sync (paginated)
+
+# Why GitHub Actions: Vercel Hobby plan rejeita schedules sub-diarios.
+# Endpoint /api/cron/run-whatsapp-sync processa BATCH chats por execucao via
+# cron_cursors. Hourly trigger acelera cobertura: 771 chats / 50 batch = ~16
+# runs pra primeira passada (vs 16 dias com cron diario do Vercel).
+# Webhook em tempo real cobre o gap entre execucoes.
+
+on:
+  schedule:
+    - cron: '5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit run-whatsapp-sync endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/run-whatsapp-sync")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)

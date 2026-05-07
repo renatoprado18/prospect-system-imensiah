@@ -3953,8 +3953,37 @@ async def cron_health(user: dict = Depends(require_admin)):
     """Saude consolidada dos crons — agrega cron_runs (ultimos 7 dias) com
     schedules de vercel.json. Devolve por cron: ultimo run, contagem por
     status na janela, expected runs, classificacao (healthy/late/failing/unknown/atrasado).
+    Tambem inclui progresso dos crons paginados (cron_cursors).
     """
-    return _compute_cron_health()
+    health = _compute_cron_health()
+
+    # Cursors dos crons paginados (whatsapp_sync, social_groups, etc).
+    # Mostra offset/total e ETA pra primeira passada completa.
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT name, cursor_value, total_items, updated_at "
+                "FROM cron_cursors ORDER BY name"
+            )
+            cursors = []
+            for row in cursor.fetchall():
+                offset = int(row["cursor_value"] or 0)
+                total = int(row["total_items"] or 0)
+                pct = round((offset / total) * 100, 1) if total else 0
+                cursors.append({
+                    "name": row["name"],
+                    "offset": offset,
+                    "total": total,
+                    "progress_pct": pct,
+                    "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+                })
+            health["paginated_cursors"] = cursors
+    except Exception as e:
+        logger.warning(f"cron_health: falhou ao ler cron_cursors: {e}")
+        health["paginated_cursors"] = []
+
+    return health
 
 
 # ----- Acoes acionaveis pro modal "Saude dos Cron Jobs" -----
@@ -20021,10 +20050,14 @@ async def api_editorial_post_metrics(post_id: int, request: Request):
         salvamentos = data.get('salvamentos', 0) or 0
         fonte = data.get('fonte', 'manual')
 
+        from services.editorial_actions import janela_para_horas
         dias_apos = None
+        janela = None
         if post.get('data_publicado'):
             delta = datetime.now() - post['data_publicado']
             dias_apos = delta.days
+            horas = delta.total_seconds() / 3600
+            janela = janela_para_horas(horas)
 
         cursor.execute("""
             UPDATE editorial_posts
@@ -20041,11 +20074,11 @@ async def api_editorial_post_metrics(post_id: int, request: Request):
         cursor.execute("""
             INSERT INTO editorial_metrics_history (
                 post_id, impressoes, reacoes, comentarios, compartilhamentos,
-                visitas_perfil, seguidores, salvamentos, dias_apos_publicacao, fonte
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                visitas_perfil, seguidores, salvamentos, dias_apos_publicacao, janela, fonte
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (post_id, impressoes, reacoes, comentarios, compartilhamentos,
-              visitas_perfil, seguidores, salvamentos, dias_apos, fonte))
+              visitas_perfil, seguidores, salvamentos, dias_apos, janela, fonte))
         history_id = cursor.fetchone()['id']
 
         cursor.execute("""
@@ -20065,7 +20098,8 @@ async def api_editorial_post_metrics(post_id: int, request: Request):
         "status": "success",
         "post_id": post_id,
         "history_id": history_id,
-        "dias_apos_publicacao": dias_apos
+        "dias_apos_publicacao": dias_apos,
+        "janela": janela,
     }
 
 
@@ -20162,6 +20196,16 @@ async def api_editorial_metrics_snapshot_save(post_id: int, request: Request):
         if not post:
             raise HTTPException(status_code=404, detail="Post nao encontrado")
 
+        # Deriva janela: prefere horas reais (mais preciso); fallback no dias_apos legado
+        from services.editorial_actions import janela_para_horas
+        janela = None
+        if post.get('data_publicado'):
+            horas = (datetime.now() - post['data_publicado']).total_seconds() / 3600
+            janela = janela_para_horas(horas)
+        if not janela:
+            legacy_map = {0: "24h", 1: "24h", 3: "72h", 7: "168h"}
+            janela = legacy_map.get(dias_apos) or ("168h" if dias_apos >= 7 else None)
+
         # Atomico: remove snapshot anterior pra mesma janela + insere novo
         cursor.execute("""
             DELETE FROM editorial_metrics_history
@@ -20170,11 +20214,11 @@ async def api_editorial_metrics_snapshot_save(post_id: int, request: Request):
         cursor.execute("""
             INSERT INTO editorial_metrics_history (
                 post_id, impressoes, reacoes, comentarios, compartilhamentos,
-                salvamentos, dias_apos_publicacao, fonte
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                salvamentos, dias_apos_publicacao, janela, fonte
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (post_id, impressoes, reacoes, comentarios, compartilhamentos,
-              salvamentos, dias_apos, fonte))
+              salvamentos, dias_apos, janela, fonte))
         history_id = cursor.fetchone()['id']
 
         # Atualiza editorial_posts com ultimo snapshot conhecido (qualquer janela)
@@ -20297,10 +20341,13 @@ async def api_editorial_metrics_upload(request: Request):
         cursor.execute("SELECT id, data_publicado, status FROM editorial_posts WHERE id = %s", (post_id,))
         post = cursor.fetchone()
 
+        from services.editorial_actions import janela_para_horas
         dias_apos = None
+        janela = None
         if post.get('data_publicado'):
             delta = datetime.now() - post['data_publicado']
             dias_apos = delta.days
+            janela = janela_para_horas(delta.total_seconds() / 3600)
 
         impressoes = metrics.get('impressoes', 0) or 0
         reacoes = metrics.get('reacoes', 0) or 0
@@ -20326,11 +20373,11 @@ async def api_editorial_metrics_upload(request: Request):
         cursor.execute("""
             INSERT INTO editorial_metrics_history (
                 post_id, impressoes, reacoes, comentarios, compartilhamentos,
-                visitas_perfil, seguidores, salvamentos, dias_apos_publicacao, fonte
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                visitas_perfil, seguidores, salvamentos, dias_apos_publicacao, janela, fonte
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (post_id, impressoes, reacoes, comentarios, compartilhamentos,
-              visitas_perfil, seguidores, salvamentos, dias_apos, 'xlsx_upload'))
+              visitas_perfil, seguidores, salvamentos, dias_apos, janela, 'xlsx_upload'))
         history_id = cursor.fetchone()['id']
 
         cursor.execute("""
