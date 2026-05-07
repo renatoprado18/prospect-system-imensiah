@@ -1138,6 +1138,17 @@ def init_db():
             )
         ''')
 
+        # Cursor genérico pra crons paginados (whatsapp_sync, social_groups, etc).
+        # Cada cron grava offset atual + total_items pra retomar de onde parou.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS cron_cursors (
+                name TEXT PRIMARY KEY,
+                cursor_value INTEGER DEFAULT 0,
+                total_items INTEGER DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         # ConselhoOS Links - vincula contatos INTEL com empresas do ConselhoOS
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS conselhoos_links (

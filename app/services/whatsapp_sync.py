@@ -265,15 +265,27 @@ class WhatsAppSyncService:
 
         return saved
 
-    async def sync_all_chats(self, include_groups: bool = False) -> Dict[str, Any]:
+    async def sync_all_chats(
+        self,
+        include_groups: bool = False,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
         """
-        Sincroniza todos os chats do WhatsApp com contatos.
+        Sincroniza chats do WhatsApp com contatos.
+
+        Pagination: quando limit eh fornecido, processa apenas chats[offset:offset+limit]
+        e retorna `next_offset` (cyclic) + `more_pages` pro caller persistir cursor.
+        Sem limit, processa todos (comportamento original).
 
         Args:
             include_groups: Se True, inclui grupos
+            limit: numero maximo de chats por execucao (None = todos)
+            offset: indice inicial (0-based)
 
         Returns:
-            Estatisticas do sync
+            Estatisticas do sync + paginacao (total_chats, processed_offset_range,
+            next_offset, more_pages)
         """
         if self._sync_status["running"]:
             return {"error": "Sync já em execução", "status": self._sync_status}
@@ -287,13 +299,33 @@ class WhatsAppSyncService:
             "linked": 0,
             "messages_saved": 0,
             "errors": 0,
-            "last_error": None
+            "last_error": None,
+            "offset": offset,
+            "limit": limit,
+            "next_offset": 0,
+            "more_pages": False,
         }
 
         try:
             # Buscar todos os chats
-            chats = await self.wa.get_all_chats(include_groups=include_groups)
-            self._sync_status["total_chats"] = len(chats)
+            all_chats = await self.wa.get_all_chats(include_groups=include_groups)
+            total = len(all_chats)
+            self._sync_status["total_chats"] = total
+
+            # Aplicar paginacao
+            if limit is not None and limit > 0:
+                chats = all_chats[offset:offset + limit]
+                next_off = offset + limit
+                if next_off >= total:
+                    next_off = 0  # ciclou — recomeca na proxima execucao
+                    self._sync_status["more_pages"] = False
+                else:
+                    self._sync_status["more_pages"] = True
+                self._sync_status["next_offset"] = next_off
+            else:
+                chats = all_chats
+                self._sync_status["next_offset"] = 0
+                self._sync_status["more_pages"] = False
 
             # Why to_thread: cada iteracao chamava _find_contact_by_phone +
             # _update_contact_interaction + _save_messages_to_conversation —

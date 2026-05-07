@@ -8178,6 +8178,44 @@ async def cron_sync_contacts(request: Request):
 # Vercel Cron Jobs - executados automaticamente
 # Configurados em vercel.json
 
+
+def _read_cron_cursor(name: str) -> int:
+    """Le offset persistido pra cron paginado. Retorna 0 se nao existe."""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT cursor_value FROM cron_cursors WHERE name = %s",
+                (name,),
+            )
+            row = cursor.fetchone()
+            return int(row["cursor_value"]) if row else 0
+    except Exception:
+        logger.exception(f"_read_cron_cursor({name}): falhou, defaulting 0")
+        return 0
+
+
+def _write_cron_cursor(name: str, value: int, total: int = 0) -> None:
+    """Persiste offset pro proximo run. UPSERT por nome."""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO cron_cursors (name, cursor_value, total_items, updated_at)
+                VALUES (%s, %s, %s, NOW())
+                ON CONFLICT (name) DO UPDATE
+                SET cursor_value = EXCLUDED.cursor_value,
+                    total_items = EXCLUDED.total_items,
+                    updated_at = NOW()
+                """,
+                (name, value, total),
+            )
+            conn.commit()
+    except Exception:
+        logger.exception(f"_write_cron_cursor({name}={value}): falhou")
+
+
 def verify_cron_auth(request: Request) -> bool:
     """Verifica autorizacao de cron job.
 
@@ -8695,11 +8733,11 @@ async def cron_run_daily_clipping(request: Request):
 @track_cron_run
 async def cron_run_whatsapp_sync(request: Request):
     """
-    Cron isolado: sincroniza chats WhatsApp com contatos (sem grupos).
-    Schedule (vercel.json): `45 5 * * *` (5h45 UTC). Timeout 240s.
-    Why: dentro do daily-sync timeoutava em 120s mesmo com to_thread aplicado
-    nas funcs sync. Trabalho real (N chats x DB queries x Evolution API) eh
-    longo por natureza.
+    Cron paginado: sincroniza chats WhatsApp em chunks de WHATSAPP_SYNC_BATCH.
+    Schedule (vercel.json): `45 5 * * *` daily. Timeout 240s.
+    Why paginado: sync completo de N chats x (DB query + Evolution API + saves)
+    eh >240s. Cursor persiste em cron_cursors, retoma do offset salvo no proximo
+    run. Webhook em tempo real cobre o gap entre execucoes.
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
@@ -8707,18 +8745,34 @@ async def cron_run_whatsapp_sync(request: Request):
     import asyncio as _aio
     from services.whatsapp_sync import get_whatsapp_sync_service
 
+    BATCH = int(os.getenv("WHATSAPP_SYNC_BATCH", "50"))
+    offset = _read_cron_cursor("whatsapp_sync")
+
     try:
         result = await _aio.wait_for(
-            get_whatsapp_sync_service().sync_all_chats(include_groups=False),
+            get_whatsapp_sync_service().sync_all_chats(
+                include_groups=False, limit=BATCH, offset=offset,
+            ),
             timeout=240.0,
         )
-        return {"status": "ok", "job": "run-whatsapp-sync", "result": result}
+        next_offset = int(result.get("next_offset", 0))
+        total = int(result.get("total_chats", 0))
+        _write_cron_cursor("whatsapp_sync", next_offset, total)
+        return {
+            "status": "ok",
+            "job": "run-whatsapp-sync",
+            "offset_used": offset,
+            "next_offset": next_offset,
+            "more_pages": result.get("more_pages", False),
+            "result": result,
+        }
     except _aio.TimeoutError:
-        logger.error("cron_run_whatsapp_sync: sync_all_chats > 240s")
+        logger.error(f"cron_run_whatsapp_sync: sync_all_chats > 240s (offset={offset})")
         return {
             "status": "error",
             "job": "run-whatsapp-sync",
             "error": "sync_all_chats timeout > 240s",
+            "offset_used": offset,
         }
     except Exception as e:
         logger.exception("cron_run_whatsapp_sync: exception fatal")
@@ -8726,6 +8780,7 @@ async def cron_run_whatsapp_sync(request: Request):
             "status": "error",
             "job": "run-whatsapp-sync",
             "error": f"{type(e).__name__}: {e}",
+            "offset_used": offset,
         }
 
 
@@ -8733,10 +8788,10 @@ async def cron_run_whatsapp_sync(request: Request):
 @track_cron_run
 async def cron_run_social_groups(request: Request):
     """
-    Cron isolado: cache de grupos sociais via Evolution API.
-    Schedule (vercel.json): `55 5 * * *` (5h55 UTC). Timeout 240s.
-    Why: findChats + enrichment de N grupos era >60s mesmo com to_thread no
-    save final. Trabalho de rede (Evolution API) e batches de 10 grupos.
+    Cron paginado: cache de grupos sociais em chunks de SOCIAL_GROUPS_BATCH.
+    Schedule (vercel.json): `55 5 * * *` daily. Timeout 240s.
+    Why paginado: findChats + enrichment via Evolution API por grupo eh >240s
+    pra inventario completo. Cursor persiste em cron_cursors.
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
@@ -8744,15 +8799,32 @@ async def cron_run_social_groups(request: Request):
     import asyncio as _aio
     from services.social_groups import sync_all_groups_cache
 
+    BATCH = int(os.getenv("SOCIAL_GROUPS_BATCH", "30"))
+    offset = _read_cron_cursor("social_groups")
+
     try:
-        result = await _aio.wait_for(sync_all_groups_cache(), timeout=240.0)
-        return {"status": "ok", "job": "run-social-groups", "result": result}
+        result = await _aio.wait_for(
+            sync_all_groups_cache(limit=BATCH, offset=offset),
+            timeout=240.0,
+        )
+        next_offset = int(result.get("next_offset", 0))
+        total = int(result.get("total_groups", 0))
+        _write_cron_cursor("social_groups", next_offset, total)
+        return {
+            "status": "ok",
+            "job": "run-social-groups",
+            "offset_used": offset,
+            "next_offset": next_offset,
+            "more_pages": result.get("more_pages", False),
+            "result": result,
+        }
     except _aio.TimeoutError:
-        logger.error("cron_run_social_groups: sync_all_groups_cache > 240s")
+        logger.error(f"cron_run_social_groups: sync_all_groups_cache > 240s (offset={offset})")
         return {
             "status": "error",
             "job": "run-social-groups",
             "error": "sync_all_groups_cache timeout > 240s",
+            "offset_used": offset,
         }
     except Exception as e:
         logger.exception("cron_run_social_groups: exception fatal")
@@ -8760,6 +8832,7 @@ async def cron_run_social_groups(request: Request):
             "status": "error",
             "job": "run-social-groups",
             "error": f"{type(e).__name__}: {e}",
+            "offset_used": offset,
         }
 
 
@@ -16289,7 +16362,7 @@ async def create_calendar_event_endpoint(request: Request):
 
     service = get_calendar_events()
 
-    event = service.create_event(
+    event = await service.create_event(
         summary=data["summary"],
         start_datetime=datetime.fromisoformat(data["start_datetime"]),
         end_datetime=datetime.fromisoformat(data["end_datetime"]),
@@ -16488,7 +16561,7 @@ async def update_calendar_event_endpoint(request: Request, event_id: int):
     if "end_datetime" in data:
         data["end_datetime"] = datetime.fromisoformat(data["end_datetime"])
 
-    event = service.update_event(event_id, data)
+    event = await service.update_event(event_id, data)
 
     if not event:
         raise HTTPException(status_code=404, detail="Evento nao encontrado")
@@ -16497,7 +16570,7 @@ async def update_calendar_event_endpoint(request: Request, event_id: int):
 
 
 @app.delete("/api/calendar/events/{event_id}")
-def delete_calendar_event_endpoint(
+async def delete_calendar_event_endpoint(
     request: Request,
     event_id: int,
     delete_from_google: bool = True,
@@ -16516,7 +16589,7 @@ def delete_calendar_event_endpoint(
         raise HTTPException(status_code=403, detail=scope_err)
 
     service = get_calendar_events()
-    success = service.delete_event(event_id, delete_from_google=delete_from_google, scope=scope)
+    success = await service.delete_event(event_id, delete_from_google=delete_from_google, scope=scope)
 
     if not success:
         raise HTTPException(status_code=404, detail="Evento nao encontrado")
@@ -17027,7 +17100,7 @@ async def briefing_schedule_meeting(request: Request, data: BriefingMeetingCreat
 
     # Create calendar event
     service = get_calendar_events()
-    event = service.create_event(
+    event = await service.create_event(
         summary=title,
         start_datetime=start_datetime,
         end_datetime=end_datetime,

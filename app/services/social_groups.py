@@ -90,8 +90,15 @@ async def _fetch_chat_labels(client, base_url, api_key, instance, jid) -> list:
     return []
 
 
-async def sync_all_groups_cache() -> Dict:
-    """Sincroniza cache de todos os grupos. Roda no cron diario."""
+async def sync_all_groups_cache(
+    limit: Optional[int] = None,
+    offset: int = 0,
+) -> Dict:
+    """Sincroniza cache de grupos.
+
+    Pagination: quando limit eh fornecido, processa apenas group_jids[offset:offset+limit]
+    e retorna `next_offset` (cyclic) + `more_pages`. Sem limit, processa todos.
+    """
     base_url = os.getenv('EVOLUTION_API_URL', '')
     api_key = os.getenv('EVOLUTION_API_KEY', '')
     instance = os.getenv('EVOLUTION_INSTANCE', 'default')
@@ -99,7 +106,7 @@ async def sync_all_groups_cache() -> Dict:
     if not base_url:
         return {"error": "Evolution API nao configurada"}
 
-    results = {"synced": 0, "errors": 0}
+    results = {"synced": 0, "errors": 0, "total_groups": 0, "next_offset": 0, "more_pages": False}
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -113,16 +120,32 @@ async def sync_all_groups_cache() -> Dict:
                 json={}
             )
             chats = resp.json()
-            group_jids = []
+            all_group_jids = []
             named = {}
 
             for c in chats:
                 jid = c.get('remoteJid', '')
                 name = c.get('pushName', '')
                 if '@g.us' in jid:
-                    group_jids.append(jid)
+                    all_group_jids.append(jid)
                     if name:
                         named[jid] = name
+
+            total = len(all_group_jids)
+            results["total_groups"] = total
+
+            # Aplicar paginacao
+            if limit is not None and limit > 0:
+                group_jids = all_group_jids[offset:offset + limit]
+                next_off = offset + limit
+                if next_off >= total:
+                    results["next_offset"] = 0
+                    results["more_pages"] = False
+                else:
+                    results["next_offset"] = next_off
+                    results["more_pages"] = True
+            else:
+                group_jids = all_group_jids
 
             # 3. Buscar metadados e labels de cada grupo
             import asyncio as aio
