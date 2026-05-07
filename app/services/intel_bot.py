@@ -51,6 +51,106 @@ SKIP_PATTERNS = re.compile(
     re.IGNORECASE
 )
 
+# ==================== HALLUCINATION DETECTOR ====================
+# Detecta quando o bot afirma ter executado uma acao mas nao chamou tool.
+# Reportado em feedback #13: bot disse "Evento atualizado" sem chamar
+# update_calendar_event. Cobertura: prompt hardening (REGRA #0) + este
+# validador automatico que cruza claims com tool_calls executados.
+
+# Actions de write (mudam estado). Read-only (query_intel, query_conselhoos,
+# draft_message, project_chat, search_system_memories) NAO entram aqui.
+WRITE_ACTIONS = {
+    "create_task", "complete_task", "save_note", "save_memory",
+    "schedule_meeting", "update_calendar_event", "delete_calendar_event",
+    "send_whatsapp", "send_email",
+    "enrich_contact", "update_contact",
+    "save_feedback", "save_system_memory",
+}
+
+# Verbos em 1a pessoa + objeto direto que indicam acao executada agora.
+# Padroes conservadores pra evitar FP: exigem objeto (artigo + substantivo).
+# Match em qualquer parte do texto (use re.search com IGNORECASE).
+_CLAIM_PATTERNS = [
+    # CRIAR / AGENDAR
+    r'\b(criei|agendei|marquei|registrei)\s+(o|a|os|as|um|uma|seu|sua)\b',
+    r'\b(adicionei|inclui)\s+(no|na|ao|a|o|os)\s+(calendario|agenda|tarefa|projeto|nota|memoria)',
+    # APAGAR / REMOVER
+    r'\b(apaguei|deletei|removi|excluí|exclui)\s+(o|a|os|as|todos|todas|essa|esse|esses|essas)\b',
+    # ATUALIZAR / EDITAR
+    r'\b(atualizei|editei|alterei|modifiquei|movi|remarquei|reagendei)\s+(o|a|os|as|essa|esse)\b',
+    # ENVIAR
+    r'\b(enviei|mandei|despachei)\s+(o|a|os|as|um|uma|essa|esse|seu|sua)\s*(email|mensagem|whatsapp|wa|aviso|recado|texto)?',
+    # SALVAR / ANOTAR
+    r'\b(salvei|anotei|guardei)\s+(o|a|os|as|isso|essa|esse|como)\b',
+    # CONCLUIR
+    r'\b(conclu[ií]|completei|finalizei|fechei)\s+(o|a|os|as|essa|esse|todas|todos)\s*(tarefa|item)?',
+    # Voz passiva: "evento atualizado", "tarefa concluida", "email enviado"
+    # (com ou sem foi/fica/ficou). Caso real do feedback #13: bot disse
+    # "Evento atualizado, 16h, 30min" sem ter chamado update_calendar_event.
+    r'\b(evento|reuniao|tarefa|nota|email|mensagem|memoria|contato)\s+(foi|fica|ficou\s+)?(criad[oa]|atualizad[oa]|apagad[oa]|deletad[oa]|enviad[oa]|salv[oa]|conclu[ií]d[oa]|removid[oa]|editad[oa])\b',
+    # "pronto, [acao executada]"
+    r'\bpronto[,.]?\s*(apaguei|deletei|criei|enviei|atualizei|removi|editei|salvei)\b',
+]
+_CLAIM_RE = re.compile("|".join(_CLAIM_PATTERNS), re.IGNORECASE)
+
+
+def _had_successful_write_action(turn_actions: list) -> bool:
+    """True se alguma write-action rodou com sucesso no turn.
+
+    turn_actions: lista de {"action": str, "result": str (json)} acumulada
+    nas iteracoes do loop tool_use.
+    """
+    for entry in turn_actions:
+        if entry.get("action") not in WRITE_ACTIONS:
+            continue
+        result_str = entry.get("result") or ""
+        # Sucesso = tem "sucesso": true OU ausencia de "erro" no JSON
+        # (handler retorna ou {"sucesso": true, ...} ou {"erro": ...})
+        try:
+            parsed = json.loads(result_str) if isinstance(result_str, str) else result_str
+            if isinstance(parsed, dict):
+                if parsed.get("sucesso") is True:
+                    return True
+                # Algumas actions retornam outras formas — checa ausencia de erro
+                if "erro" not in parsed and "error" not in parsed:
+                    return True
+        except (json.JSONDecodeError, TypeError):
+            # Result nao-JSON, considera sucesso se nao tem palavra "erro"
+            if "erro" not in str(result_str).lower() and "error" not in str(result_str).lower():
+                return True
+    return False
+
+
+def _detect_hallucination(final_text: str, turn_actions: list) -> dict:
+    """Detecta possivel alucinacao de acao executada.
+
+    Returns:
+      {"flagged": bool, "matched_phrases": [str], "had_write_tool": bool}
+    """
+    if not final_text or not final_text.strip():
+        return {"flagged": False, "matched_phrases": [], "had_write_tool": False}
+
+    matches = _CLAIM_RE.findall(final_text)
+    # findall retorna tuplas se houver grupos; flatten + dedupe
+    phrases = []
+    for m in matches:
+        if isinstance(m, tuple):
+            phrase = " ".join(p for p in m if p).strip()
+        else:
+            phrase = m.strip()
+        if phrase and phrase not in phrases:
+            phrases.append(phrase)
+
+    if not phrases:
+        return {"flagged": False, "matched_phrases": [], "had_write_tool": False}
+
+    had_write = _had_successful_write_action(turn_actions)
+    return {
+        "flagged": not had_write,
+        "matched_phrases": phrases[:5],
+        "had_write_tool": had_write,
+    }
+
 
 def _is_renato(phone: str) -> bool:
     """Check if the phone belongs to Renato."""
@@ -1710,6 +1810,9 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
         return "Erro: ANTHROPIC_API_KEY nao configurada."
 
     final_text = ""
+    # Acumula execute_action calls do turn (todas as iteracoes) pra validar
+    # claims na resposta final. Cada entry: {"action": str, "result": str}.
+    turn_actions: list = []
     try:
         for iteration in range(MAX_TOOL_ITERATIONS):
             logger.info(f"Claude call iteration {iteration + 1}/{MAX_TOOL_ITERATIONS}")
@@ -1752,9 +1855,23 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
 
             current_text = "\n".join(text_parts).strip()
 
-            # If no tool calls, we're done
+            # If no tool calls, we're done — antes de salvar/retornar, valida claims
             if stop_reason != "tool_use" or not tool_use_blocks:
                 final_text = current_text
+                hallucination = _detect_hallucination(final_text, turn_actions)
+                if hallucination["flagged"]:
+                    logger.warning(
+                        f"hallucination_detected phone={phone} "
+                        f"matched={hallucination['matched_phrases']} "
+                        f"actions_in_turn={[a.get('action') for a in turn_actions]}"
+                    )
+                    final_text = (
+                        final_text.rstrip()
+                        + "\n\n⚠️ _Aviso interno: detectei afirmacoes de acao executada"
+                        + " mas nao registrei nenhuma chamada de tool correspondente"
+                        + " neste turno. Verifique no sistema antes de assumir que rodou."
+                        + "_"
+                    )
                 _save_conversation_message(phone, "assistant", final_text)
                 break
 
@@ -1774,6 +1891,13 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
                 logger.info(f"Executing tool: {tool_name} with input: {json.dumps(tool_input, ensure_ascii=False)[:200]}")
 
                 tool_result = await _execute_tool(tool_name, tool_input)
+
+                # Acumula execute_action pra validar claims na resposta final
+                if tool_name == "execute_action":
+                    turn_actions.append({
+                        "action": tool_input.get("action"),
+                        "result": tool_result,
+                    })
 
                 tool_calls_data.append({
                     "id": tool_id,
