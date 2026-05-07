@@ -3348,9 +3348,12 @@
                    </small>`
                 : '';
 
-            // Render options as buttons
-            const options = proposal.options || [];
-            const optionsHtml = options.slice(0, 3).map(opt => {
+            // Render options as buttons. Dismiss e renderizado separado pra
+            // sempre aparecer (slice de 3 cortava quando tinha 4+ opcoes).
+            const allOptions = proposal.options || [];
+            const dismissOpt = allOptions.find(o => o.action === 'dismiss');
+            const primaryOpts = allOptions.filter(o => o.action !== 'dismiss').slice(0, 3);
+            const renderOpt = (opt) => {
                 const btnClass = opt.action === 'dismiss' ? 'btn-link text-muted' :
                                  opt.id.includes('approve') || opt.id.includes('respond') ? 'btn-primary' :
                                  opt.id.includes('review') || opt.id.includes('reschedule') ? 'btn-outline-primary' :
@@ -3365,7 +3368,9 @@
                     return `<button class="btn btn-sm ${btnClass}" onclick="apiCallProposal(${proposal.id}, '${opt.url}', '${opt.method || 'POST'}')">${opt.label}</button>`;
                 }
                 return `<button class="btn btn-sm ${btnClass}" onclick="executeProposal(${proposal.id}, '${opt.id}')">${opt.label}</button>`;
-            }).join('');
+            };
+            const optionsHtml = primaryOpts.map(renderOpt).join('') +
+                                (dismissOpt ? renderOpt(dismissOpt) : '');
 
             const safeTitle = escapeHtml(proposal.title || '');
             const safeDesc = escapeHtml(truncate(proposal.description || '', 200));
