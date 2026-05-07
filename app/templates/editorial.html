@@ -4,6 +4,10 @@
 
 {% block extra_css %}
 <style>
+    /* Compact header pra cabecalho + statcards caberem above-the-fold */
+    .main-content .page-header { margin-bottom: 12px; }
+    .main-content .page-title { font-size: 1.25rem; line-height: 1.2; }
+
     /* New Two-Column Layout */
     .editorial-two-col {
         display: grid;
@@ -51,22 +55,22 @@
     .stat-card {
         background: white;
         border-radius: 10px;
-        padding: 12px 14px;
+        padding: 8px 12px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         display: flex;
         align-items: center;
-        gap: 12px;
-        min-height: 64px;
+        gap: 10px;
+        min-height: 52px;
     }
 
     .stat-card .icon {
-        width: 32px;
-        height: 32px;
+        width: 28px;
+        height: 28px;
         border-radius: 8px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 1rem;
+        font-size: 0.9rem;
         flex-shrink: 0;
     }
 
