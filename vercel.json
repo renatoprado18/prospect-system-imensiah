@@ -112,6 +112,14 @@
     {
       "path": "/api/cron/run-daily-clipping",
       "schedule": "35 5 * * *"
+    },
+    {
+      "path": "/api/cron/run-whatsapp-sync",
+      "schedule": "45 5 * * *"
+    },
+    {
+      "path": "/api/cron/run-social-groups",
+      "schedule": "55 5 * * *"
     }
   ]
 }

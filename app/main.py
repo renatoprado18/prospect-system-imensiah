@@ -8307,9 +8307,8 @@ async def cron_daily_sync(request: Request):
         )
         return {"queued": True, "job_id": job_id, "dispatched": dispatched, "error": error}
 
-    async def step_whatsapp():
-        from services.whatsapp_sync import get_whatsapp_sync_service
-        return await get_whatsapp_sync_service().sync_all_chats(include_groups=False)
+    # sync_whatsapp migrado pra cron isolado /api/cron/run-whatsapp-sync
+    # (timeout 240s). Trabalho real >120s mesmo com to_thread aplicado.
 
     async def step_payment():
         from services.payment_cycle import check_payment_replies
@@ -8329,7 +8328,6 @@ async def cron_daily_sync(request: Request):
 
     await _aio.gather(
         run_step("sync_gmail", step_gmail, timeout=15.0),
-        run_step("sync_whatsapp", step_whatsapp, timeout=120.0),
         run_step("payment_cycle", step_payment, timeout=60.0),
         run_step("smart_fup", step_fup, timeout=60.0),
     )
@@ -8359,9 +8357,9 @@ async def cron_daily_sync(request: Request):
             r[pid] = await download_group_documents(pid)
         return {"projects": len(pids)}
 
-    async def step_social_groups():
-        from services.social_groups import sync_all_groups_cache
-        return await sync_all_groups_cache()
+    # social_groups_cache migrado pra cron isolado /api/cron/run-social-groups
+    # (timeout 240s). findChats + enrichment de N grupos era >60s mesmo com
+    # to_thread no save final.
 
     async def step_group_messages():
         from services.group_message_sync import sync_group_messages
@@ -8404,13 +8402,19 @@ async def cron_daily_sync(request: Request):
                     "urgency": "high",
                     "action_params": {"job_change": jc},
                 })
-                # Mark as notified in history
+                # Mark as notified in history.
+                # Postgres nao aceita ORDER BY/LIMIT em UPDATE direto (sintaxe MySQL).
+                # Subquery WHERE id = (SELECT ... LIMIT 1) pega so o registro mais recente.
                 with get_db() as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
                         UPDATE linkedin_enrichment_history SET notificado = TRUE
-                        WHERE contact_id = %s AND notificado = FALSE
-                        ORDER BY detectado_em DESC LIMIT 1
+                        WHERE id = (
+                            SELECT id FROM linkedin_enrichment_history
+                            WHERE contact_id = %s AND notificado = FALSE
+                            ORDER BY detectado_em DESC
+                            LIMIT 1
+                        )
                     """, (r["contact_id"],))
                     conn.commit()
                 proposals_created += 1
@@ -8461,7 +8465,6 @@ async def cron_daily_sync(request: Request):
         run_step("campaigns", step_campaigns, timeout=90.0),
         run_step("avatar_fetch", step_avatars, timeout=60.0),
         run_step("group_docs", step_group_docs, timeout=90.0),
-        run_step("social_groups_cache", step_social_groups, timeout=60.0),
         run_step("group_messages_sync", step_group_messages, timeout=90.0),
         run_step("linkedin_enrichment", step_linkedin_enrichment, timeout=120.0),
         run_step("auto_publish", step_auto_publish),  # ja tem wait_for interno 90s
@@ -8672,6 +8675,78 @@ async def cron_run_daily_clipping(request: Request):
         return {
             "status": "error",
             "job": "run-daily-clipping",
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+@app.get("/api/cron/run-whatsapp-sync")
+@track_cron_run
+async def cron_run_whatsapp_sync(request: Request):
+    """
+    Cron isolado: sincroniza chats WhatsApp com contatos (sem grupos).
+    Schedule (vercel.json): `45 5 * * *` (5h45 UTC). Timeout 240s.
+    Why: dentro do daily-sync timeoutava em 120s mesmo com to_thread aplicado
+    nas funcs sync. Trabalho real (N chats x DB queries x Evolution API) eh
+    longo por natureza.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.whatsapp_sync import get_whatsapp_sync_service
+
+    try:
+        result = await _aio.wait_for(
+            get_whatsapp_sync_service().sync_all_chats(include_groups=False),
+            timeout=240.0,
+        )
+        return {"status": "ok", "job": "run-whatsapp-sync", "result": result}
+    except _aio.TimeoutError:
+        logger.error("cron_run_whatsapp_sync: sync_all_chats > 240s")
+        return {
+            "status": "error",
+            "job": "run-whatsapp-sync",
+            "error": "sync_all_chats timeout > 240s",
+        }
+    except Exception as e:
+        logger.exception("cron_run_whatsapp_sync: exception fatal")
+        return {
+            "status": "error",
+            "job": "run-whatsapp-sync",
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+@app.get("/api/cron/run-social-groups")
+@track_cron_run
+async def cron_run_social_groups(request: Request):
+    """
+    Cron isolado: cache de grupos sociais via Evolution API.
+    Schedule (vercel.json): `55 5 * * *` (5h55 UTC). Timeout 240s.
+    Why: findChats + enrichment de N grupos era >60s mesmo com to_thread no
+    save final. Trabalho de rede (Evolution API) e batches de 10 grupos.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.social_groups import sync_all_groups_cache
+
+    try:
+        result = await _aio.wait_for(sync_all_groups_cache(), timeout=240.0)
+        return {"status": "ok", "job": "run-social-groups", "result": result}
+    except _aio.TimeoutError:
+        logger.error("cron_run_social_groups: sync_all_groups_cache > 240s")
+        return {
+            "status": "error",
+            "job": "run-social-groups",
+            "error": "sync_all_groups_cache timeout > 240s",
+        }
+    except Exception as e:
+        logger.exception("cron_run_social_groups: exception fatal")
+        return {
+            "status": "error",
+            "job": "run-social-groups",
             "error": f"{type(e).__name__}: {e}",
         }
 
