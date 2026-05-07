@@ -210,6 +210,9 @@ TOOLS = [
             "- send_email: envia email via Gmail. params: to (email destinatario) OU contact_id (resolve email do contato), subject, body, account? ('personal'|'professional', default 'professional'). "
             "Se passar contact_id, busca o primeiro email do contato. Se passar 'to', usa direto. "
             "**Confirme o destinatario com o usuario antes de enviar** se nao tiver certeza absoluta — emails errados causam dano.\n"
+            "- import_fathom_meeting: importa reuniao gravada do Fathom (summary + action items). params: share_url ('https://fathom.video/share/XXX') OU recording_id (int), account? ('personal'|'professional', default 'professional'), project_id? (int, vincula nota ao projeto), include_transcript? (bool, default false). "
+            "Identifica contatos via attendees emails (mesmo matching do P4), salva memoria pra cada um, cria tarefas pros action items, retorna resumo do que foi importado. "
+            "Use sempre que o user mencionar 'tem gravacao no Fathom' ou colar URL fathom.video.\n"
             "- enrich_contact: enriquece contato com IA (contact_id)\n"
             "- update_contact: atualiza campos do contato (contact_id, fields: {campo: valor})\n"
             "- save_feedback: salva feedback/melhoria do sistema INTEL (conteudo, tipo?: bug|melhoria|ideia|feedback)\n"
@@ -226,6 +229,7 @@ TOOLS = [
                         "create_task", "complete_task", "save_note", "save_memory",
                         "schedule_meeting", "update_calendar_event", "delete_calendar_event",
                         "send_whatsapp", "send_email",
+                        "import_fathom_meeting",
                         "enrich_contact", "update_contact",
                         "save_feedback",
                         "save_system_memory", "search_system_memories"
@@ -959,6 +963,188 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 "from_account": account_email,
                 "mensagem": f"Email enviado para {destinatario} via conta {account_label}"
             }, ensure_ascii=False)
+
+        elif action == "import_fathom_meeting":
+            share_url = params.get("share_url")
+            recording_id = params.get("recording_id")
+            project_id = params.get("project_id")
+            include_transcript = bool(params.get("include_transcript", False))
+            account_alias = (params.get("account") or "professional").lower()
+
+            if not share_url and not recording_id:
+                return json.dumps({"erro": "passe share_url OU recording_id"})
+
+            from integrations.fathom import FathomIntegration
+            try:
+                fathom = FathomIntegration(account=account_alias)
+                if not fathom.api_key:
+                    return json.dumps({"erro": f"Conta Fathom '{account_alias}' nao configurada"})
+
+                # Busca meeting via share_url ou recording_id
+                if share_url:
+                    meeting_data = await fathom.extract_from_share_link(share_url)
+                else:
+                    try:
+                        rec_id = int(recording_id)
+                    except (TypeError, ValueError):
+                        return json.dumps({"erro": f"recording_id invalido: {recording_id}"})
+                    raw = await fathom.get_meeting_details(rec_id)
+                    if not raw:
+                        return json.dumps({"erro": f"Reuniao recording_id={rec_id} nao encontrada"})
+                    from integrations.fathom import _adapt_meeting_to_summary
+                    meeting_data = _adapt_meeting_to_summary(raw)
+                    meeting_data["calendar_invitees"] = raw.get("calendar_invitees", []) or []
+
+                if not meeting_data:
+                    return json.dumps({"erro": "Reuniao nao encontrada na conta selecionada"})
+
+                rec_id = meeting_data.get("recording_id")
+                summary_md = meeting_data.get("summary") or ""
+                action_items = meeting_data.get("action_items") or []
+                title = meeting_data.get("title") or "Reuniao Fathom"
+                date_iso = meeting_data.get("date") or ""
+                share_url_final = meeting_data.get("share_url") or share_url
+                attendees = meeting_data.get("calendar_invitees") or []
+
+                # Match attendees -> contatos (mesma logica de _identify_contacts no P4)
+                emails_to_match = []
+                for att in attendees:
+                    if att.get("is_external") is False:
+                        continue  # Renato proprio
+                    em = att.get("email")
+                    if em and "@" in str(em):
+                        emails_to_match.append(str(em).lower().strip())
+
+                matched_contacts = []
+                if emails_to_match:
+                    with get_db() as conn:
+                        cur = conn.cursor()
+                        ph = ",".join(["%s"] * len(emails_to_match))
+                        cur.execute(
+                            f"""
+                            SELECT DISTINCT c.id, c.nome, c.empresa
+                            FROM contacts c,
+                                 jsonb_array_elements(COALESCE(c.emails, '[]'::jsonb)) AS ce
+                            WHERE LOWER(
+                                CASE
+                                  WHEN jsonb_typeof(ce) = 'object' THEN ce->>'email'
+                                  WHEN jsonb_typeof(ce) = 'string' THEN ce#>>'{{}}'
+                                  ELSE NULL
+                                END
+                            ) IN ({ph})
+                            """,
+                            emails_to_match,
+                        )
+                        matched_contacts = [dict(r) for r in cur.fetchall()]
+
+                # Cria memoria pra cada contato identificado
+                memorias_criadas = []
+                if matched_contacts:
+                    # Lista de outros participantes pra contextualizar
+                    outros_nomes = [c["nome"] for c in matched_contacts]
+                    with get_db() as conn:
+                        cur = conn.cursor()
+                        for c in matched_contacts:
+                            outros = [n for n in outros_nomes if n != c["nome"]]
+                            outros_str = ", ".join(outros) if outros else "Renato"
+                            resumo_curto = (summary_md[:600] + "...") if len(summary_md) > 600 else summary_md
+                            cur.execute(
+                                """
+                                INSERT INTO contact_memories
+                                  (contact_id, tipo, source_table, titulo, resumo,
+                                   conteudo_completo, data_ocorrencia, criado_em)
+                                VALUES (%s, 'reuniao', 'fathom', %s, %s, %s, %s, NOW())
+                                RETURNING id
+                                """,
+                                (
+                                    c["id"],
+                                    f"{title} (com {outros_str})",
+                                    resumo_curto or f"Reuniao Fathom em {date_iso}",
+                                    f"{summary_md}\n\n---\nGravacao Fathom: {share_url_final}",
+                                    date_iso or None,
+                                ),
+                            )
+                            mem_id = cur.fetchone()["id"]
+                            memorias_criadas.append({"contact_id": c["id"], "nome": c["nome"], "memoria_id": mem_id})
+                        conn.commit()
+
+                # Cria tarefas pros action items (linkadas ao primeiro contato + projeto se passado)
+                tarefas_criadas = []
+                primeiro_contact_id = matched_contacts[0]["id"] if matched_contacts else None
+                if action_items:
+                    with get_db() as conn:
+                        cur = conn.cursor()
+                        for ai in action_items[:10]:  # Cap em 10 pra nao spammar
+                            desc = ai.get("description") or ai.get("text") or ""
+                            playback = ai.get("recording_playback_url") or ""
+                            if not desc:
+                                continue
+                            full_desc = desc
+                            if playback:
+                                full_desc += f"\n\nMomento na gravacao: {playback}"
+                            full_desc += f"\nReuniao: {title} ({date_iso})"
+                            cur.execute(
+                                """
+                                INSERT INTO tasks (titulo, descricao, status, project_id, contact_id,
+                                                   prioridade, ai_generated, origem, data_criacao)
+                                VALUES (%s, %s, 'pending', %s, %s, 7, true, 'reuniao_fathom', NOW())
+                                RETURNING id
+                                """,
+                                (
+                                    desc[:200],
+                                    full_desc,
+                                    project_id,
+                                    primeiro_contact_id,
+                                ),
+                            )
+                            tid = cur.fetchone()["id"]
+                            tarefas_criadas.append({"task_id": tid, "titulo": desc[:80]})
+                        conn.commit()
+
+                # Nota no projeto se passado
+                nota_id = None
+                if project_id and matched_contacts:
+                    with get_db() as conn:
+                        cur = conn.cursor()
+                        cur.execute(
+                            """
+                            INSERT INTO project_notes (project_id, tipo, titulo, conteudo, autor, criado_em)
+                            VALUES (%s, 'reuniao', %s, %s, 'fathom_import', NOW())
+                            RETURNING id
+                            """,
+                            (
+                                project_id,
+                                f"{title} — {date_iso[:10] if date_iso else ''}",
+                                f"Reuniao com {', '.join([c['nome'] for c in matched_contacts])}\n\n{summary_md}\n\nGravacao: {share_url_final}",
+                            ),
+                        )
+                        nota_id = cur.fetchone()["id"]
+                        conn.commit()
+
+                return json.dumps({
+                    "sucesso": True,
+                    "recording_id": rec_id,
+                    "title": title,
+                    "date": date_iso,
+                    "share_url": share_url_final,
+                    "summary_chars": len(summary_md),
+                    "matched_contacts": [{"id": c["id"], "nome": c["nome"]} for c in matched_contacts],
+                    "unmatched_attendees": [
+                        att.get("email") for att in attendees
+                        if att.get("is_external") and str(att.get("email", "")).lower().strip() not in {c["nome"] for c in matched_contacts}
+                        and att.get("email") not in [m.get("nome") for m in matched_contacts]
+                    ][:5],
+                    "memorias_criadas": memorias_criadas,
+                    "tarefas_criadas": tarefas_criadas,
+                    "nota_projeto_id": nota_id,
+                    "mensagem": f"Reuniao '{title}' importada: {len(memorias_criadas)} memorias + {len(tarefas_criadas)} tarefas"
+                                + (f" + nota no projeto #{project_id}" if nota_id else "")
+                                + ". Contatos: " + (", ".join([c["nome"] for c in matched_contacts]) if matched_contacts else "nenhum identificado")
+                }, ensure_ascii=False)
+
+            except Exception as e:
+                logger.exception("import_fathom_meeting failed")
+                return json.dumps({"erro": f"Falha ao importar reuniao Fathom: {type(e).__name__}: {e}"})
 
         elif action == "enrich_contact":
             contact_id = params.get("contact_id")
