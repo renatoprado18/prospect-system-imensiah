@@ -75,21 +75,27 @@ def fetch_anthropic_cost(period_start: date, period_end: date) -> Dict:
         resp.raise_for_status()
         data = resp.json()
 
-    total = Decimal("0")
+    total_cents = Decimal("0")
     days = 0
     for day in data.get("data", []):
         days += 1
         for r in day.get("results", []):
-            total += Decimal(str(r.get("amount", "0")))
+            total_cents += Decimal(str(r.get("amount", "0")))
+
+    # Anthropic cost_report retorna minor units (centavos) apesar do
+    # currency:USD — observado empirically via reconciliacao com Console
+    # (07/05/2026: API somava $1850 mas Console mostrava $18.51 = 100x menos).
+    total_usd = (total_cents / Decimal("100")).quantize(Decimal("0.01"))
 
     return {
-        "amount_usd": float(total.quantize(Decimal("0.01"))),
+        "amount_usd": float(total_usd),
         "metrics": {
             "days_returned": days,
             "currency": "USD",
+            "raw_cents": float(total_cents),
             "source": "anthropic_admin_api",
         },
-        "notes": f"Auto via Anthropic Admin API ({days} dias de cost_report)",
+        "notes": f"Auto via Anthropic Admin API ({days} dias de cost_report, /100 cents->USD)",
     }
 
 
