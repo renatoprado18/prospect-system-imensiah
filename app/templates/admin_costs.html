@@ -59,9 +59,10 @@
     .alert-row {
         display: flex;
         gap: 10px;
-        align-items: baseline;
+        align-items: center;
         font-size: 0.85rem;
         padding: 4px 0;
+        flex-wrap: wrap;
     }
     .alert-row .provider {
         font-weight: 600;
@@ -70,6 +71,58 @@
     }
     .alert-row .delta { color: #dc2626; font-weight: 600; }
     .alert-row .periods { color: #64748b; font-size: 0.78rem; }
+    .alert-row .ack-btn {
+        margin-left: auto;
+        font-size: 0.75rem;
+        padding: 3px 10px;
+        border-radius: 6px;
+        border: 1px solid #fca5a5;
+        background: white;
+        color: #b91c1c;
+        cursor: pointer;
+        font-weight: 600;
+    }
+    .alert-row .ack-btn:hover { background: #fee2e2; }
+    .alert-row .ack-btn:disabled { opacity: 0.5; cursor: wait; }
+
+    .ack-banner {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 10px 14px;
+        margin-bottom: 20px;
+    }
+    .ack-banner > summary {
+        font-size: 0.8rem;
+        color: #64748b;
+        font-weight: 600;
+        cursor: pointer;
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .ack-banner > summary::-webkit-details-marker { display: none; }
+    .ack-banner > summary::before {
+        content: "▸";
+        font-size: 0.7rem;
+        transition: transform 0.15s;
+    }
+    .ack-banner[open] > summary::before { transform: rotate(90deg); }
+    .ack-banner .alert-row { color: #94a3b8; padding: 6px 0 6px 14px; }
+    .ack-banner .alert-row .provider { color: #64748b; }
+    .ack-banner .alert-row .delta { color: #94a3b8; font-weight: 500; }
+    .ack-banner .alert-row .ack-btn {
+        border-color: #cbd5e1;
+        color: #475569;
+    }
+    .ack-banner .alert-row .ack-btn:hover { background: #e2e8f0; }
+    table.costs td.ack-cell {
+        color: #94a3b8;
+        font-weight: 500;
+        text-decoration: line-through;
+        text-decoration-color: #cbd5e1;
+    }
 
     .panel {
         background: white;
@@ -255,6 +308,11 @@
     <div id="alertsList"></div>
 </div>
 
+<details id="ackBanner" class="ack-banner" style="display:none;">
+    <summary><span id="ackSummaryLabel">Reconhecidos</span></summary>
+    <div id="ackList"></div>
+</details>
+
 <div class="actions-row">
     <button class="btn-primary" onclick="openAddModal()">
         <i class="bi bi-plus-lg"></i> Adicionar entry manual
@@ -392,20 +450,72 @@ function renderStats() {
 function renderAlerts() {
     const banner = document.getElementById('alertsBanner');
     const list = document.getElementById('alertsList');
+    const ackBanner = document.getElementById('ackBanner');
+    const ackList = document.getElementById('ackList');
+    const ackSummary = document.getElementById('ackSummaryLabel');
     const alerts = _data.alerts || [];
+    const ackAlerts = _data.acknowledged_alerts || [];
+
     if (alerts.length === 0) {
         banner.style.display = 'none';
-        return;
+    } else {
+        banner.style.display = 'block';
+        list.innerHTML = alerts.map(a => `
+            <div class="alert-row">
+                <span class="provider">${a.provider}</span>
+                <span>$${a.from_usd.toFixed(2)} → $${a.to_usd.toFixed(2)}</span>
+                <span class="delta">+${a.delta_pct.toFixed(0)}% / +$${a.delta_usd.toFixed(2)}</span>
+                <span class="periods">${a.from_period.slice(0,7)} → ${a.to_period.slice(0,7)}</span>
+                <button class="ack-btn"
+                        onclick="ackAlert(this, '${a.provider}', '${a.to_period}', true)"
+                        title="Marcar como reconhecido — remove do dashboard">
+                    <i class="bi bi-check2"></i> OK, ciente
+                </button>
+            </div>
+        `).join('');
     }
-    banner.style.display = 'block';
-    list.innerHTML = alerts.map(a => `
-        <div class="alert-row">
-            <span class="provider">${a.provider}</span>
-            <span>$${a.from_usd.toFixed(2)} → $${a.to_usd.toFixed(2)}</span>
-            <span class="delta">+${a.delta_pct.toFixed(0)}% / +$${a.delta_usd.toFixed(2)}</span>
-            <span class="periods">${a.from_period.slice(0,7)} → ${a.to_period.slice(0,7)}</span>
-        </div>
-    `).join('');
+
+    if (ackAlerts.length === 0) {
+        ackBanner.style.display = 'none';
+    } else {
+        ackBanner.style.display = 'block';
+        ackSummary.textContent = `Reconhecidos (${ackAlerts.length})`;
+        ackList.innerHTML = ackAlerts.map(a => `
+            <div class="alert-row">
+                <span class="provider">${a.provider}</span>
+                <span>$${a.from_usd.toFixed(2)} → $${a.to_usd.toFixed(2)}</span>
+                <span class="delta">+${a.delta_pct.toFixed(0)}% / +$${a.delta_usd.toFixed(2)}</span>
+                <span class="periods">${a.from_period.slice(0,7)} → ${a.to_period.slice(0,7)}</span>
+                <button class="ack-btn"
+                        onclick="ackAlert(this, '${a.provider}', '${a.to_period}', false)"
+                        title="Reativar alerta">
+                    <i class="bi bi-arrow-counterclockwise"></i> Desfazer
+                </button>
+            </div>
+        `).join('');
+    }
+}
+
+async function ackAlert(btn, provider, to_period, ack) {
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/admin/platform-costs/ack', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, to_period, ack }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert('Erro: ' + (err.detail || res.status));
+            btn.disabled = false;
+            return;
+        }
+        await loadAll();
+    } catch (e) {
+        alert('Falhou: ' + e.message);
+        btn.disabled = false;
+    }
 }
 
 function renderTable() {
@@ -431,6 +541,9 @@ function renderTable() {
     const alertSet = new Set(
         (_data.alerts || []).map(a => `${a.provider}:${a.to_period}`)
     );
+    const ackSet = new Set(
+        (_data.acknowledged_alerts || []).map(a => `${a.provider}:${a.to_period}`)
+    );
 
     let body = '';
     for (const prov of providers) {
@@ -444,8 +557,12 @@ function renderTable() {
                 const auto = r.usage_metrics?.auto_filled === true;
                 const manual = r.usage_metrics?.auto_filled === false;
                 const tag = auto ? '<span class="auto-tag">auto</span>' : manual ? '<span class="manual-tag">M</span>' : '';
-                const cls = r.amount_usd === 0 ? 'zero' : alertSet.has(sig) ? 'suspect' : '';
-                const title = r.notes ? r.notes.replace(/"/g, '&quot;') : '';
+                let cls = '';
+                if (r.amount_usd === 0) cls = 'zero';
+                else if (alertSet.has(sig)) cls = 'suspect';
+                else if (ackSet.has(sig)) cls = 'ack-cell';
+                const baseTitle = r.notes ? r.notes.replace(/"/g, '&quot;') : '';
+                const title = ackSet.has(sig) ? (baseTitle ? baseTitle + ' — reconhecido' : 'reconhecido') : baseTitle;
                 body += `<td class="${cls}" title="${title}" onclick="editEntry('${prov}', '${p}', ${r.amount_usd})">$${r.amount_usd.toFixed(2)}${tag}</td>`;
             }
         }

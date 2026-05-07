@@ -230,18 +230,22 @@ def auto_snapshot_month(period_start: Optional[date] = None) -> Dict:
     }
 
 
-def get_active_alerts(months: int = 12) -> List[Dict]:
+def get_active_alerts(months: int = 12, include_acknowledged: bool = False) -> List[Dict]:
     """Retorna saltos suspeitos (>25% E >$5) nos ultimos N meses.
 
     Mesma logica do GET /api/admin/platform-costs — extraida pra reuso
     no dashboard pill e no cron de notificacao.
+
+    include_acknowledged=False (default): filtra alertas que ja foram marcados
+    como "OK ciente" pelo admin (stash em usage_metrics.acknowledged_at na
+    row do to_period). Cada alerta retornado inclui campo acknowledged: bool.
     """
     months = max(1, min(int(months), 36))
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT provider, period_start, amount_usd
+            SELECT provider, period_start, amount_usd, usage_metrics
             FROM platform_costs
             WHERE period_start >= (DATE_TRUNC('month', CURRENT_DATE) - (%s || ' months')::interval)::date
             ORDER BY provider ASC, period_start ASC
@@ -252,9 +256,11 @@ def get_active_alerts(months: int = 12) -> List[Dict]:
 
     by_provider: Dict[str, List[Dict]] = {}
     for r in rows:
+        metrics = r.get("usage_metrics") or {}
         by_provider.setdefault(r["provider"], []).append({
             "period_start": r["period_start"],
             "amount_usd": float(r["amount_usd"] or 0),
+            "acknowledged_at": metrics.get("acknowledged_at"),
         })
 
     alerts = []
@@ -265,6 +271,9 @@ def get_active_alerts(months: int = 12) -> List[Dict]:
             delta = curr_v - prev_v
             pct = (delta / prev_v * 100.0) if prev_v > 0 else 0.0
             if pct > ALERT_PCT_THRESHOLD and delta > ALERT_DELTA_USD_THRESHOLD:
+                ack = bool(entries[i].get("acknowledged_at"))
+                if ack and not include_acknowledged:
+                    continue
                 alerts.append({
                     "provider": prov,
                     "from_period": entries[i - 1]["period_start"].isoformat(),
@@ -273,8 +282,42 @@ def get_active_alerts(months: int = 12) -> List[Dict]:
                     "to_usd": round(curr_v, 2),
                     "delta_usd": round(delta, 2),
                     "delta_pct": round(pct, 1),
+                    "acknowledged": ack,
+                    "acknowledged_at": entries[i].get("acknowledged_at") if ack else None,
                 })
     return alerts
+
+
+def acknowledge_alert(provider: str, to_period: str, ack: bool = True) -> bool:
+    """Marca/desmarca um alerta como reconhecido (stash em usage_metrics).
+
+    Idempotente. Retorna True se a row existia, False caso contrario.
+    Usa to_period (period_start do mes que disparou o alerta).
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if ack:
+            cursor.execute(
+                """
+                UPDATE platform_costs
+                SET usage_metrics = COALESCE(usage_metrics, '{}'::jsonb)
+                                    || jsonb_build_object('acknowledged_at', NOW()::text)
+                WHERE provider = %s AND period_start = %s::date
+                """,
+                (provider, to_period),
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE platform_costs
+                SET usage_metrics = COALESCE(usage_metrics, '{}'::jsonb) - 'acknowledged_at'
+                WHERE provider = %s AND period_start = %s::date
+                """,
+                (provider, to_period),
+            )
+        affected = cursor.rowcount
+        conn.commit()
+    return affected > 0
 
 
 def _alert_signature(alert: Dict) -> str:
@@ -319,7 +362,8 @@ async def check_and_notify_alerts() -> Dict:
     Dedupe por (provider, to_period) — mesmo salto nao alerta 2x em 60 dias.
     Mensagem agrupa todos os alertas novos em 1 unica notificacao.
     """
-    alerts = get_active_alerts(months=12)
+    # include_acknowledged=False: alertas reconhecidos pelo admin nao re-notificam
+    alerts = get_active_alerts(months=12, include_acknowledged=False)
     if not alerts:
         return {"alerted": False, "alerts_total": 0, "alerts_new": 0}
 

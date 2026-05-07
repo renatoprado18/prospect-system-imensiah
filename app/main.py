@@ -4333,7 +4333,14 @@ async def platform_costs_list(
         monthly_totals[p] = monthly_totals.get(p, 0.0) + r["amount_usd"]
         by_provider_period.setdefault(prov, {})[p] = r["amount_usd"]
 
+    # Map (provider, period_start) -> acknowledged_at (pra marcar alertas reconhecidos)
+    ack_map: Dict[tuple, Optional[str]] = {}
+    for r in rows:
+        metrics = r.get("usage_metrics") or {}
+        ack_map[(r["provider"], r["period_start"])] = metrics.get("acknowledged_at")
+
     alerts = []
+    acknowledged_alerts = []
     for prov, periods in by_provider_period.items():
         sorted_p = sorted(periods.keys())  # asc
         for i in range(1, len(sorted_p)):
@@ -4342,12 +4349,19 @@ async def platform_costs_list(
             delta = curr_v - prev_v
             pct = (delta / prev_v * 100.0) if prev_v > 0 else 0.0
             if pct > 25.0 and delta > 5.0:
-                alerts.append({
+                ack_at = ack_map.get((prov, curr))
+                entry = {
                     "provider": prov,
                     "from_period": prev, "to_period": curr,
                     "from_usd": round(prev_v, 2), "to_usd": round(curr_v, 2),
                     "delta_usd": round(delta, 2), "delta_pct": round(pct, 1),
-                })
+                    "acknowledged": bool(ack_at),
+                    "acknowledged_at": ack_at,
+                }
+                if ack_at:
+                    acknowledged_alerts.append(entry)
+                else:
+                    alerts.append(entry)
 
     return {
         "rows": rows,
@@ -4356,8 +4370,36 @@ async def platform_costs_list(
             for k, v in sorted(monthly_totals.items(), reverse=True)
         ],
         "alerts": alerts,
+        "acknowledged_alerts": acknowledged_alerts,
         "known_providers": KNOWN_PROVIDERS,
     }
+
+
+class PlatformCostAckBody(BaseModel):
+    provider: str
+    to_period: str  # YYYY-MM-DD ou YYYY-MM
+    ack: bool = True
+
+
+@app.post("/api/admin/platform-costs/ack")
+async def platform_costs_ack(
+    body: PlatformCostAckBody, user: dict = Depends(require_admin)
+):
+    """Marca um alerta de aumento suspeito como reconhecido (ou desfaz).
+
+    Usado pra remover red flag do dashboard quando o aumento eh esperado
+    (ex: rampagem natural de uso). Nao apaga o dado, so adiciona/remove
+    flag acknowledged_at em usage_metrics da row do to_period.
+    """
+    from services.platform_costs import acknowledge_alert
+    provider = (body.provider or "").strip().lower()
+    if not provider:
+        raise HTTPException(status_code=400, detail="provider obrigatorio")
+    to_period = _parse_period(body.to_period)
+    found = acknowledge_alert(provider, to_period, ack=body.ack)
+    if not found:
+        raise HTTPException(status_code=404, detail="row nao encontrada")
+    return {"ok": True, "provider": provider, "to_period": to_period, "ack": body.ack}
 
 
 @app.post("/api/admin/platform-costs")
