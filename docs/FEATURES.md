@@ -245,15 +245,23 @@
   - Batch enrichment endpoint: `POST /api/v1/campaigns/enrich-linkedin-tasks`
 
 ## 21. Platform Cost Tracker (admin)
-- **Tabela**: `platform_costs` (provider, period_start, period_end, amount_usd, usage_metrics JSONB, notes)
-- **UNIQUE(provider, period_start)** garante UPSERT idempotente por mes
+- **Tabela**: `platform_costs` (provider, period_start, period_end, amount_usd, usage_metrics JSONB, notes); UNIQUE(provider, period_start)
+- **UI**: `/admin/costs` — chart histórico (Chart.js stacked bar), tabela provider×mês, alertas, modal de add/edit, botão "Disparar cron agora"
 - **Endpoints** (require_admin):
   - `GET /api/admin/platform-costs?months=12` — rows + monthly_totals + alerts
-  - `POST /api/admin/platform-costs` — entry manual (period_start aceita YYYY-MM ou YYYY-MM-DD)
-  - `DELETE /api/admin/platform-costs/{id}` — correcao manual
-- **Alert heuristica**: trend mes-a-mes > 25% E delta absoluto > $5 (motivado pelo incidente LibreChat 07/05/2026)
-- **Seed retroativo**: `scripts/migrations/005_seed_platform_costs.sql` (Railway preciso, free tiers zerados, demais TODO manual)
-- **Fase 1** (atual): entry manual via POST. **Fase 2** (backlog): coleta automatica Vercel/Railway/Anthropic API. Refs `memory/project_cost_tracker.md`
+  - `POST /api/admin/platform-costs` — entry manual (tag auto_filled=false)
+  - `DELETE /api/admin/platform-costs/{id}` — correção
+  - `GET /api/cron/platform-costs-snapshot` — cron mensal dia 2 12h UTC
+- **Auto-fill** (`services/platform_costs.py` + `platform_costs_integrations.py`):
+  - Vercel `/v1/billing/charges` (Hobby = $0)
+  - Anthropic `/v1/organizations/cost_report` (Admin Key)
+  - Railway GraphQL `usage` + preços Hobby aproximados
+  - LinkdAPI ledger interno `linkdapi_usage`
+  - google/github = $0 free tier
+- **Manual override**: POSTs marcam `usage_metrics.auto_filled=false`; cron auto-fill respeita e não sobrescreve. Response inclui `kept_manual: true` + `computed_usd` quando aplicável
+- **Alert heurística**: trend mês-a-mês > 25% E delta absoluto > $5 (motivado pelo incidente LibreChat 07/05/2026; descoberta paralela: Anthropic abr/2026 = $1850 vs $5 visível no dashboard)
+- **WhatsApp alert**: cron mensal envia agrupado se houver alerta novo; dedupe via `usage_metrics.alerted_at` (60d)
+- **Pill no rap_dashboard**: `#costAlertsPill` — só aparece quando `alerts.length > 0`, drilldown pra `/admin/costs`
 
 ## 22. PWA & Mobile
 - **Manifest**: `/static/manifest.json` (standalone, portrait, theme #6366f1)

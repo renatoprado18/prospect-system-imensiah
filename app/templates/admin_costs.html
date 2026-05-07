@@ -1,0 +1,583 @@
+{% extends "rap_base.html" %}
+{% block title %}Custos da Plataforma - INTEL{% endblock %}
+{% block page_title %}Custos da Plataforma{% endblock %}
+{% block page_subtitle %}<div class="page-subtitle">Visibilidade centralizada de Vercel, Neon, Railway, Anthropic, LinkdAPI e GitHub. Detecta crescimento silencioso.</div>{% endblock %}
+
+{% block extra_css %}
+<style>
+    .costs-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+    .stat-card {
+        background: white;
+        border-radius: 12px;
+        padding: 14px 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        border-left: 4px solid var(--primary);
+    }
+    .stat-card.danger { border-left-color: #ef4444; }
+    .stat-card.warning { border-left-color: #f59e0b; }
+    .stat-card.success { border-left-color: #10b981; }
+    .stat-card .label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        color: #64748b;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+    }
+    .stat-card .value {
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: #0f172a;
+        margin-top: 4px;
+    }
+    .stat-card .sub {
+        font-size: 0.75rem;
+        color: #94a3b8;
+        margin-top: 2px;
+    }
+
+    .alerts-banner {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        border-radius: 12px;
+        padding: 14px 16px;
+        margin-bottom: 20px;
+    }
+    .alerts-banner h3 {
+        font-size: 0.9rem;
+        font-weight: 700;
+        color: #991b1b;
+        margin: 0 0 10px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .alert-row {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        font-size: 0.85rem;
+        padding: 4px 0;
+    }
+    .alert-row .provider {
+        font-weight: 600;
+        min-width: 100px;
+        color: #b91c1c;
+    }
+    .alert-row .delta { color: #dc2626; font-weight: 600; }
+    .alert-row .periods { color: #64748b; font-size: 0.78rem; }
+
+    .panel {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        margin-bottom: 16px;
+        overflow: hidden;
+    }
+    .panel-header {
+        padding: 12px 16px;
+        border-bottom: 1px solid #f1f5f9;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .panel-title {
+        font-size: 0.95rem;
+        font-weight: 700;
+        margin: 0;
+    }
+    .panel-body { padding: 16px; }
+
+    #chartContainer {
+        position: relative;
+        height: 320px;
+    }
+
+    table.costs {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+    }
+    table.costs th, table.costs td {
+        padding: 8px 10px;
+        text-align: right;
+        border-bottom: 1px solid #f1f5f9;
+        white-space: nowrap;
+    }
+    table.costs th:first-child, table.costs td:first-child {
+        text-align: left;
+        font-weight: 600;
+    }
+    table.costs thead th {
+        background: #f8fafc;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        color: #64748b;
+        letter-spacing: 0.04em;
+    }
+    table.costs tbody tr:hover { background: #fafbfc; }
+    table.costs td.zero { color: #cbd5e1; }
+    table.costs td.suspect { color: #b91c1c; font-weight: 600; }
+    table.costs td.muted { color: #94a3b8; }
+    table.costs td .auto-tag {
+        font-size: 0.65rem;
+        background: #e0e7ff;
+        color: #4338ca;
+        padding: 1px 5px;
+        border-radius: 4px;
+        margin-left: 4px;
+        font-weight: 500;
+    }
+    table.costs td .manual-tag {
+        font-size: 0.65rem;
+        background: #fef3c7;
+        color: #92400e;
+        padding: 1px 5px;
+        border-radius: 4px;
+        margin-left: 4px;
+        font-weight: 500;
+    }
+    table.costs tfoot td {
+        border-top: 2px solid #cbd5e1;
+        font-weight: 700;
+        background: #f8fafc;
+    }
+
+    .actions-row {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+    }
+    .btn-primary, .btn-secondary {
+        font-size: 0.85rem;
+        padding: 7px 14px;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-secondary { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; }
+    .btn-secondary:hover { background: #e2e8f0; }
+
+    .modal-overlay {
+        display: none;
+        position: fixed; inset: 0; z-index: 9999;
+        background: rgba(15,23,42,0.55);
+        align-items: flex-start; justify-content: center;
+        padding: 60px 16px 16px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-card {
+        background: white;
+        border-radius: 14px;
+        max-width: 480px;
+        width: 100%;
+        box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+    }
+    .modal-card h3 {
+        margin: 0;
+        padding: 14px 18px;
+        border-bottom: 1px solid #e5e7eb;
+        font-size: 1rem;
+    }
+    .modal-card form {
+        padding: 16px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .modal-card label {
+        font-size: 0.75rem;
+        color: #64748b;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    .modal-card input, .modal-card select, .modal-card textarea {
+        font-size: 0.9rem;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+    }
+    .modal-card .modal-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        padding: 12px 18px 16px;
+        border-top: 1px solid #f1f5f9;
+    }
+
+    .empty-state {
+        text-align: center;
+        color: #94a3b8;
+        padding: 40px 20px;
+        font-size: 0.9rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="costs-stats" id="statsRow">
+    <div class="stat-card success">
+        <div class="label">Mês corrente</div>
+        <div class="value" id="statCurrent">—</div>
+        <div class="sub" id="statCurrentLabel">carregando...</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Mês anterior</div>
+        <div class="value" id="statPrev">—</div>
+        <div class="sub" id="statPrevLabel">—</div>
+    </div>
+    <div class="stat-card warning">
+        <div class="label">Provider top</div>
+        <div class="value" id="statTopProvider">—</div>
+        <div class="sub" id="statTopProviderAmount">—</div>
+    </div>
+    <div class="stat-card danger">
+        <div class="label">Alertas ativos</div>
+        <div class="value" id="statAlerts">—</div>
+        <div class="sub">>25% E >$5</div>
+    </div>
+</div>
+
+<div id="alertsBanner" class="alerts-banner" style="display:none;">
+    <h3><i class="bi bi-exclamation-triangle-fill"></i> Aumentos suspeitos</h3>
+    <div id="alertsList"></div>
+</div>
+
+<div class="actions-row">
+    <button class="btn-primary" onclick="openAddModal()">
+        <i class="bi bi-plus-lg"></i> Adicionar entry manual
+    </button>
+    <button class="btn-secondary" onclick="triggerCron(this)">
+        <i class="bi bi-arrow-repeat"></i> Disparar cron agora
+    </button>
+    <button class="btn-secondary" onclick="loadAll()">
+        <i class="bi bi-arrow-clockwise"></i> Recarregar
+    </button>
+</div>
+
+<div class="panel">
+    <div class="panel-header">
+        <h3 class="panel-title">Histórico mensal (últimos 12 meses)</h3>
+        <small style="color:#64748b;">stack por provider</small>
+    </div>
+    <div class="panel-body">
+        <div id="chartContainer">
+            <canvas id="costsChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-header">
+        <h3 class="panel-title">Tabela detalhada</h3>
+        <small style="color:#64748b;">click célula pra editar</small>
+    </div>
+    <div class="panel-body" style="overflow-x:auto;">
+        <table class="costs" id="costsTable">
+            <thead><tr><th>Provider</th></tr></thead>
+            <tbody></tbody>
+            <tfoot><tr><td>Total</td></tr></tfoot>
+        </table>
+    </div>
+</div>
+
+<!-- Modal: adicionar/editar entry manual -->
+<div id="costModal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="modal-card">
+        <h3 id="modalTitle">Adicionar entry manual</h3>
+        <form id="costForm" onsubmit="submitForm(event)">
+            <div>
+                <label>Provider</label>
+                <select id="formProvider" required>
+                    <option value="vercel">vercel</option>
+                    <option value="neon">neon</option>
+                    <option value="railway">railway</option>
+                    <option value="anthropic">anthropic</option>
+                    <option value="linkdapi">linkdapi</option>
+                    <option value="github">github</option>
+                    <option value="google">google</option>
+                    <option value="evolution">evolution</option>
+                    <option value="other">other</option>
+                </select>
+            </div>
+            <div>
+                <label>Período (YYYY-MM)</label>
+                <input id="formPeriod" type="month" required />
+            </div>
+            <div>
+                <label>Valor USD</label>
+                <input id="formAmount" type="number" step="0.01" min="0" required placeholder="13.17" />
+            </div>
+            <div>
+                <label>Notas (opcional)</label>
+                <textarea id="formNotes" rows="2" placeholder="Origem do número, contexto..."></textarea>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn-secondary" onclick="closeModal()">Cancelar</button>
+                <button type="submit" class="btn-primary">Salvar</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let _data = null;
+let _chart = null;
+
+const PROVIDER_COLORS = {
+    anthropic: '#8b5cf6',
+    railway:   '#f59e0b',
+    neon:      '#06b6d4',
+    vercel:    '#0f172a',
+    linkdapi:  '#10b981',
+    github:    '#64748b',
+    google:    '#94a3b8',
+    evolution: '#ec4899',
+    other:     '#cbd5e1',
+};
+
+async function loadAll() {
+    const res = await fetch('/api/admin/platform-costs?months=12', { credentials: 'same-origin' });
+    if (!res.ok) {
+        document.querySelector('#costsTable tbody').innerHTML = '<tr><td colspan="14" class="empty-state">Erro ' + res.status + ' carregando dados</td></tr>';
+        return;
+    }
+    _data = await res.json();
+    renderStats();
+    renderAlerts();
+    renderTable();
+    renderChart();
+}
+
+function renderStats() {
+    const totals = _data.monthly_totals || [];
+    const alerts = _data.alerts || [];
+    if (!totals.length) {
+        document.getElementById('statCurrent').textContent = '$0';
+        return;
+    }
+    const current = totals[0];
+    const prev = totals[1] || { total_usd: 0, period_start: '—' };
+    document.getElementById('statCurrent').textContent = '$' + current.total_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById('statCurrentLabel').textContent = current.period_start.slice(0, 7);
+    document.getElementById('statPrev').textContent = '$' + prev.total_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    document.getElementById('statPrevLabel').textContent = prev.period_start.slice(0, 7);
+
+    // Top provider in current month
+    const currentRows = _data.rows.filter(r => r.period_start === current.period_start);
+    currentRows.sort((a, b) => b.amount_usd - a.amount_usd);
+    if (currentRows.length) {
+        document.getElementById('statTopProvider').textContent = currentRows[0].provider;
+        document.getElementById('statTopProviderAmount').textContent = '$' + currentRows[0].amount_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    document.getElementById('statAlerts').textContent = alerts.length;
+}
+
+function renderAlerts() {
+    const banner = document.getElementById('alertsBanner');
+    const list = document.getElementById('alertsList');
+    const alerts = _data.alerts || [];
+    if (alerts.length === 0) {
+        banner.style.display = 'none';
+        return;
+    }
+    banner.style.display = 'block';
+    list.innerHTML = alerts.map(a => `
+        <div class="alert-row">
+            <span class="provider">${a.provider}</span>
+            <span>$${a.from_usd.toFixed(2)} → $${a.to_usd.toFixed(2)}</span>
+            <span class="delta">+${a.delta_pct.toFixed(0)}% / +$${a.delta_usd.toFixed(2)}</span>
+            <span class="periods">${a.from_period.slice(0,7)} → ${a.to_period.slice(0,7)}</span>
+        </div>
+    `).join('');
+}
+
+function renderTable() {
+    const totals = _data.monthly_totals || [];
+    if (!totals.length) {
+        document.querySelector('#costsTable tbody').innerHTML = '<tr><td colspan="14" class="empty-state">Sem dados ainda. Adicione entries manuais ou aguarde o cron mensal.</td></tr>';
+        return;
+    }
+    const periods = totals.map(t => t.period_start);
+    const providers = [...new Set(_data.rows.map(r => r.provider))].sort();
+
+    // Header
+    const thead = document.querySelector('#costsTable thead tr');
+    thead.innerHTML = '<th>Provider</th>' + periods.map(p => `<th>${p.slice(2,7)}</th>`).join('');
+
+    // Body — providers x periods matrix
+    const matrix = {};
+    for (const r of _data.rows) {
+        matrix[r.provider] = matrix[r.provider] || {};
+        matrix[r.provider][r.period_start] = r;
+    }
+
+    const alertSet = new Set(
+        (_data.alerts || []).map(a => `${a.provider}:${a.to_period}`)
+    );
+
+    let body = '';
+    for (const prov of providers) {
+        body += `<tr><td>${prov}</td>`;
+        for (const p of periods) {
+            const r = matrix[prov]?.[p];
+            const sig = `${prov}:${p}`;
+            if (!r) {
+                body += '<td class="muted">—</td>';
+            } else {
+                const auto = r.usage_metrics?.auto_filled === true;
+                const manual = r.usage_metrics?.auto_filled === false;
+                const tag = auto ? '<span class="auto-tag">auto</span>' : manual ? '<span class="manual-tag">M</span>' : '';
+                const cls = r.amount_usd === 0 ? 'zero' : alertSet.has(sig) ? 'suspect' : '';
+                const title = r.notes ? r.notes.replace(/"/g, '&quot;') : '';
+                body += `<td class="${cls}" title="${title}" onclick="editEntry('${prov}', '${p}', ${r.amount_usd})">$${r.amount_usd.toFixed(2)}${tag}</td>`;
+            }
+        }
+        body += '</tr>';
+    }
+    document.querySelector('#costsTable tbody').innerHTML = body;
+
+    // Footer — totals
+    const tfoot = document.querySelector('#costsTable tfoot tr');
+    let footerHtml = '<td>Total</td>';
+    for (const p of periods) {
+        const t = totals.find(t => t.period_start === p);
+        footerHtml += `<td>$${(t?.total_usd || 0).toFixed(2)}</td>`;
+    }
+    tfoot.innerHTML = footerHtml;
+}
+
+function renderChart() {
+    const totals = _data.monthly_totals || [];
+    const periods = totals.map(t => t.period_start).reverse();  // chrono asc
+    const providers = [...new Set(_data.rows.map(r => r.provider))].sort();
+
+    const datasets = providers.map(prov => ({
+        label: prov,
+        data: periods.map(p => {
+            const r = _data.rows.find(r => r.provider === prov && r.period_start === p);
+            return r?.amount_usd || 0;
+        }),
+        backgroundColor: PROVIDER_COLORS[prov] || '#cbd5e1',
+        stack: 'total',
+    }));
+
+    const ctx = document.getElementById('costsChart').getContext('2d');
+    if (_chart) _chart.destroy();
+    _chart = new Chart(ctx, {
+        type: 'bar',
+        data: { labels: periods.map(p => p.slice(2, 7)), datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { stacked: true },
+                y: {
+                    stacked: true,
+                    ticks: { callback: v => '$' + v.toLocaleString() },
+                },
+            },
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => `${ctx.dataset.label}: $${ctx.parsed.y.toFixed(2)}`,
+                    },
+                },
+            },
+        },
+    });
+}
+
+function openAddModal() {
+    document.getElementById('modalTitle').textContent = 'Adicionar entry manual';
+    document.getElementById('costForm').reset();
+    // default period: mes corrente
+    const now = new Date();
+    document.getElementById('formPeriod').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    document.getElementById('costModal').classList.add('open');
+}
+
+function editEntry(provider, period, amount) {
+    document.getElementById('modalTitle').textContent = `Editar ${provider} ${period.slice(0,7)}`;
+    document.getElementById('formProvider').value = provider;
+    document.getElementById('formPeriod').value = period.slice(0, 7);
+    document.getElementById('formAmount').value = amount.toFixed(2);
+    document.getElementById('formNotes').value = '';
+    document.getElementById('costModal').classList.add('open');
+}
+
+function closeModal() {
+    document.getElementById('costModal').classList.remove('open');
+}
+
+async function submitForm(e) {
+    e.preventDefault();
+    const body = {
+        provider: document.getElementById('formProvider').value,
+        period_start: document.getElementById('formPeriod').value,
+        amount_usd: parseFloat(document.getElementById('formAmount').value),
+        notes: document.getElementById('formNotes').value || null,
+    };
+    const res = await fetch('/api/admin/platform-costs', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (res.ok) {
+        closeModal();
+        await loadAll();
+    } else {
+        const err = await res.json().catch(() => ({}));
+        alert('Erro: ' + (err.detail || res.status));
+    }
+}
+
+async function triggerCron(btn) {
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Disparando...';
+    try {
+        const res = await fetch('/api/admin/cron-runs/trigger', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: '/api/cron/platform-costs-snapshot' }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            btn.innerHTML = '<i class="bi bi-check2"></i> Disparado';
+            // Wait 6s e recarrega (cron eh fire-and-forget)
+            setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; loadAll(); }, 6000);
+        } else {
+            alert(data.detail || ('HTTP ' + res.status));
+            btn.innerHTML = orig;
+            btn.disabled = false;
+        }
+    } catch (e) {
+        alert('Falhou: ' + e.message);
+        btn.innerHTML = orig;
+        btn.disabled = false;
+    }
+}
+
+loadAll();
+</script>
+{% endblock %}

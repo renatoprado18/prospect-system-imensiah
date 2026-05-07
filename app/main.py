@@ -626,6 +626,18 @@ async def intel_home(request: Request):
     })
 
 
+@app.get("/admin/costs", response_class=HTMLResponse)
+async def intel_admin_costs(request: Request):
+    """Cost Tracker UI — tabela provider×meses + chart histórico + form."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("admin_costs.html", {
+        "request": request,
+        "user": user,
+    })
+
+
 @app.get("/circulos", response_class=HTMLResponse)
 async def intel_circulos(request: Request):
     """INTEL Circulos - Classificacao de contatos"""
