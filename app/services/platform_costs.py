@@ -1,16 +1,17 @@
-"""Coleta + alerta de custos da plataforma (Cost Tracker - Bloco A).
+"""Coleta + alerta de custos da plataforma (Cost Tracker - Blocos A+B).
 
 Responsabilidades:
-- auto_snapshot_month(period_start): preenche providers triviais (free tiers + LinkdAPI)
+- auto_snapshot_month(period_start): preenche providers automatizaveis
 - get_active_alerts(months): retorna saltos suspeitos (>25% E >$5)
 - check_and_notify_alerts(): get + WhatsApp se houver alerta novo
 
-Providers automaticos (Bloco A):
+Providers automaticos:
 - vercel, google, github: $0 (free tiers conhecidos)
-- linkdapi: SUM(ABS(credits_delta) WHERE delta<0) / 120 (taxa $1=120 creditos)
+- linkdapi: ledger interno linkdapi_usage / 120 ($1=120 creditos)
+- anthropic: /v1/organizations/cost_report (Bloco B, lag ~24h)
+- railway: GraphQL usage + precos Hobby (Bloco B, projetos deletados subestimam)
 
-Providers que continuam manuais (Bloco B vai automatizar via API):
-- railway, neon, anthropic
+Provider manual: neon (no API publica viavel; manual via POST).
 """
 from __future__ import annotations
 
@@ -46,14 +47,37 @@ def _last_day_of_month(d: date) -> date:
     return next_first - timedelta(days=1)
 
 
+def _is_manual_row(cursor, provider: str, period_start: date) -> bool:
+    """True se ja existe row e NAO foi auto-filled (i.e., POST manual).
+
+    Auto rows tagueiam usage_metrics.auto_filled=true. Auto-fill respeita
+    entrada manual pra nao sobrescrever numeros precisos do invoice (caso
+    Railway: API subestima por nao ver projetos deletados)."""
+    cursor.execute(
+        """
+        SELECT usage_metrics FROM platform_costs
+        WHERE provider = %s AND period_start = %s::date
+        """,
+        (provider, period_start),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return False
+    metrics = row.get("usage_metrics") or {}
+    return not metrics.get("auto_filled", False)
+
+
 def _upsert_cost(
     cursor, provider: str, period_start: date, amount_usd: float,
     notes: str, usage_metrics: Optional[dict] = None,
 ) -> dict:
-    """UPSERT idempotente. Retorna row inserido/atualizado."""
+    """UPSERT idempotente. Retorna row inserido/atualizado.
+    Marca auto_filled=true em usage_metrics pra distinguir de POSTs manuais."""
     import json
     period_end = _last_day_of_month(period_start)
-    metrics_json = json.dumps(usage_metrics) if usage_metrics else None
+    final_metrics = dict(usage_metrics) if usage_metrics else {}
+    final_metrics["auto_filled"] = True
+    metrics_json = json.dumps(final_metrics)
     cursor.execute(
         """
         INSERT INTO platform_costs
@@ -69,11 +93,23 @@ def _upsert_cost(
                                      ELSE '{}'::jsonb END),
             notes = EXCLUDED.notes,
             fetched_at = NOW()
+        WHERE COALESCE((platform_costs.usage_metrics->>'auto_filled')::boolean, TRUE) = TRUE
         RETURNING id, provider, period_start, amount_usd
         """,
         (provider, period_start, period_end, amount_usd, metrics_json, notes),
     )
-    return dict(cursor.fetchone())
+    row = cursor.fetchone()
+    if row is None:
+        # Manual row existe — nao toca; retorna o existente
+        cursor.execute(
+            """
+            SELECT id, provider, period_start, amount_usd
+            FROM platform_costs WHERE provider = %s AND period_start = %s::date
+            """,
+            (provider, period_start),
+        )
+        row = cursor.fetchone()
+    return dict(row)
 
 
 def _linkdapi_cost_for_period(cursor, period_start: date, period_end: date) -> Dict:
@@ -109,8 +145,8 @@ def auto_snapshot_month(period_start: Optional[date] = None) -> Dict:
     """Preenche providers automatizaveis pra um mes especifico.
 
     Default: mes anterior completo. Idempotente via UPSERT.
-    Nao toca em providers manuais (railway/neon/anthropic) — esses
-    continuam vindo via POST /api/admin/platform-costs.
+    Cada integracao externa eh independente — falha de uma nao bloqueia outras.
+    Provider manual unico: neon (sem API publica; via POST).
     """
     period_start = period_start or _last_completed_month()
     if period_start.day != 1:
@@ -119,14 +155,15 @@ def auto_snapshot_month(period_start: Optional[date] = None) -> Dict:
     period_end = _last_day_of_month(period_start)
     period_label = period_start.strftime("%Y-%m")
     inserted = []
+    failed: List[Dict] = []
 
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Free tiers conhecidos
-        for prov in FREE_TIER_PROVIDERS:
+        # Free tiers conhecidos (google/github sao realmente $0;
+        # vercel pode ser substituido pela integracao API abaixo)
+        for prov in ["google", "github"]:
             note_map = {
-                "vercel": "Hobby plan free tier (auto)",
                 "google": "Free tier permanente (auto)",
                 "github": "Free private repos / Actions free tier (auto)",
             }
@@ -150,12 +187,46 @@ def auto_snapshot_month(period_start: Optional[date] = None) -> Dict:
             "metrics": link_data["metrics"],
         })
 
+        # === Bloco B — integracoes externas ===
+        # Cada provedor independente; falha de uma nao bloqueia outras.
+        from services.platform_costs_integrations import (
+            fetch_anthropic_cost, fetch_railway_cost, fetch_vercel_cost,
+        )
+
+        for prov, fetch_fn in [
+            ("vercel", fetch_vercel_cost),
+            ("anthropic", fetch_anthropic_cost),
+            ("railway", fetch_railway_cost),
+        ]:
+            try:
+                d = fetch_fn(period_start, period_end)
+                row = _upsert_cost(
+                    cursor, prov, period_start, d["amount_usd"],
+                    d["notes"], usage_metrics=d.get("metrics"),
+                )
+                final_amount = float(row["amount_usd"])
+                kept_manual = (abs(final_amount - d["amount_usd"]) > 0.005)
+                entry = {
+                    "provider": prov,
+                    "amount_usd": final_amount,
+                    "id": row["id"],
+                    "metrics": d.get("metrics"),
+                }
+                if kept_manual:
+                    entry["computed_usd"] = d["amount_usd"]
+                    entry["kept_manual"] = True
+                inserted.append(entry)
+            except Exception as e:
+                logger.warning(f"auto_snapshot {prov} falhou: {e}")
+                failed.append({"provider": prov, "error": str(e)[:200]})
+
         conn.commit()
 
     return {
         "period": period_label,
         "auto_filled": inserted,
-        "manual_pending": ["railway", "neon", "anthropic"],
+        "failed": failed,
+        "manual_pending": ["neon"],
     }
 
 

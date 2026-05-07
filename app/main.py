@@ -4332,7 +4332,11 @@ async def platform_costs_upsert(
         raise HTTPException(status_code=400, detail="amount_usd nao pode ser negativo")
     period_start = _parse_period(body.period_start)
     period_end = _parse_period(body.period_end) if body.period_end else None
-    metrics_json = json.dumps(body.usage_metrics) if body.usage_metrics else None
+    # Manual POST tags auto_filled=false pra proteger contra cron auto-fill
+    # (auto-fill respeita esse flag e nao sobrescreve numero do invoice)
+    metrics_with_flag = dict(body.usage_metrics or {})
+    metrics_with_flag["auto_filled"] = False
+    metrics_json = json.dumps(metrics_with_flag)
 
     with get_db() as conn:
         cursor = conn.cursor()
