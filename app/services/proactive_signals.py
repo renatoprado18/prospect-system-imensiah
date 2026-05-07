@@ -56,48 +56,129 @@ def _record_sent(signal_type: str, ref_id: str, payload: Optional[Dict] = None) 
         logger.warning(f"_record_sent err: {e}")
 
 
+def _identify_contacts_for_event(event: Dict) -> List[Dict]:
+    """Identifica contatos vinculados a um calendar_event via 2 caminhos:
+
+    1. event.contact_id direto (caso ja vinculado pela UI/bot)
+    2. Match dos attendees emails contra contacts.emails (jsonb)
+
+    Filtra emails self=True (Renato proprio). Dedup por contact_id.
+
+    Returns: lista de {id, nome, empresa} ordenada por circulo (C1 primeiro).
+    """
+    import json
+    matches: Dict[int, Dict] = {}
+
+    # Caminho 1: contact_id direto
+    if event.get("contact_id") and event.get("contact_nome"):
+        matches[event["contact_id"]] = {
+            "id": event["contact_id"],
+            "nome": event["contact_nome"],
+            "empresa": event.get("contact_empresa"),
+            "_source": "contact_id",
+        }
+
+    # Caminho 2: attendees emails -> contacts.emails
+    attendees_raw = event.get("attendees") or []
+    if isinstance(attendees_raw, str):
+        try:
+            attendees_raw = json.loads(attendees_raw)
+        except Exception:
+            attendees_raw = []
+    if not isinstance(attendees_raw, list):
+        attendees_raw = []
+
+    # Coleta emails (excl. self e organizers que sao o proprio Renato)
+    emails_to_match = []
+    for att in attendees_raw:
+        if not isinstance(att, dict):
+            continue
+        if att.get("self") is True:
+            continue
+        email = att.get("email")
+        if email and "@" in str(email):
+            emails_to_match.append(str(email).lower().strip())
+
+    if emails_to_match:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                # Match via @> em jsonb: contacts.emails contem
+                # {"email": "x"} (case insensitive via lower)
+                # Usar EXISTS subquery + jsonb_array_elements pra suportar
+                # tanto formato [{"email": "x"}] quanto ["x"] quanto string
+                placeholders = ",".join(["%s"] * len(emails_to_match))
+                cur.execute(
+                    f"""
+                    SELECT DISTINCT c.id, c.nome, c.empresa, COALESCE(c.circulo, 5) AS circulo
+                    FROM contacts c,
+                         jsonb_array_elements(COALESCE(c.emails, '[]'::jsonb)) AS ce
+                    WHERE LOWER(
+                        CASE
+                          WHEN jsonb_typeof(ce) = 'object' THEN ce->>'email'
+                          WHEN jsonb_typeof(ce) = 'string' THEN ce#>>'{{}}'
+                          ELSE NULL
+                        END
+                    ) IN ({placeholders})
+                    """,
+                    emails_to_match,
+                )
+                for row in cur.fetchall():
+                    cid = row["id"]
+                    if cid in matches:
+                        continue  # ja veio do contact_id
+                    matches[cid] = {
+                        "id": cid,
+                        "nome": row["nome"],
+                        "empresa": row["empresa"],
+                        "_source": "attendees",
+                        "_circulo": row["circulo"],
+                    }
+        except Exception as e:
+            logger.warning(f"_identify_contacts attendees match err: {e}")
+
+    # Ordena por circulo (C1 primeiro), depois por nome
+    result = list(matches.values())
+    result.sort(key=lambda c: (c.get("_circulo", 5), c["nome"]))
+    return result
+
+
 async def check_post_meeting() -> Dict:
-    """Trigger #335: detecta reunioes terminadas nos ultimos 30-60min e
+    """Trigger #335: detecta reunioes terminadas nos ultimos 15-180min e
     pergunta ao Renato 'como foi?'.
 
-    Filtros (conservadores pra evitar spam):
-    - end_datetime entre NOW()-60min e NOW()-15min (janela de pos-reuniao
-      imediata; antes de 15min ainda e cedo, depois de 60min ja perdeu o timing)
-    - duracao >= 15min (skip blocos curtos / pausas)
-    - contact_id IS NOT NULL (eventos pessoais sem contato linkado nao geram)
-    - status = 'confirmed' (pula tentativas de eventos cancelados)
-    - signal nao registrado em proactive_signals com signal_type='post_meeting'
+    Filtros:
+    - end_datetime entre NOW()-180min e NOW()-15min (janela ampla pra cobrir
+      reunioes que duraram mais ou crons que rodaram tarde — antes era 60min
+      mas eventos como Lobo/Gasparino 07/05 ficaram fora porque ja tinham
+      passado da janela quando user contou ao bot)
+    - duracao >= 15min
+    - status = 'confirmed'
+    - >= 1 contato identificado: ou via calendar_events.contact_id (caminho
+      antigo) OU via match dos attendees emails contra contacts.emails
+      (caminho novo — eventos importados do Google Calendar nao tem contact_id
+      preenchido, gap real do MVP)
 
-    Mensagem WA proativa:
-        🎯 Reuniao terminou {Xmin} atras:
-        *{summary}* as {HH:MM} ({duration}min)
-        {contact_name} - {empresa}
-
-        Como foi? Posso:
-        - Salvar memoria da conversa
-        - Criar tarefa de follow-up
-        - Atualizar o contato
-
-        So me conta o que rolou que eu organizo.
+    Mensagem WA proativa lista TODOS os contatos identificados, nao so um.
     """
     from services.intel_bot import send_intel_notification
 
-    stats = {"detected": 0, "sent": 0, "skipped_dedup": 0, "errors": 0}
+    stats = {"detected": 0, "sent": 0, "skipped_dedup": 0, "errors": 0, "skipped_no_contact": 0}
 
     try:
         with get_db() as conn:
             cur = conn.cursor()
+            # Eventos elegiveis (sem filtro de contato — matching feito via attendees)
             cur.execute(
                 """
                 SELECT e.id, e.summary, e.start_datetime, e.end_datetime,
-                       e.contact_id, e.status, e.location,
+                       e.contact_id, e.status, e.location, e.attendees,
                        c.nome AS contact_nome, c.empresa AS contact_empresa,
                        EXTRACT(EPOCH FROM (NOW() - e.end_datetime))/60 AS min_atras,
                        EXTRACT(EPOCH FROM (e.end_datetime - e.start_datetime))/60 AS duracao_min
                 FROM calendar_events e
                 LEFT JOIN contacts c ON c.id = e.contact_id
-                WHERE e.end_datetime BETWEEN NOW() - INTERVAL '60 minutes' AND NOW() - INTERVAL '15 minutes'
-                  AND e.contact_id IS NOT NULL
+                WHERE e.end_datetime BETWEEN NOW() - INTERVAL '180 minutes' AND NOW() - INTERVAL '15 minutes'
                   AND COALESCE(e.status, 'confirmed') = 'confirmed'
                   AND EXTRACT(EPOCH FROM (e.end_datetime - e.start_datetime))/60 >= 15
                 ORDER BY e.end_datetime DESC
@@ -117,27 +198,41 @@ async def check_post_meeting() -> Dict:
             stats["skipped_dedup"] += 1
             continue
 
+        # Identifica contatos: pelo contact_id direto + via attendees emails
+        identified = _identify_contacts_for_event(ev)
+        if not identified:
+            # Sem contato vinculado nem match em attendees -> nao gera signal
+            stats["skipped_no_contact"] += 1
+            continue
+
         # Monta mensagem
         try:
             inicio = ev["start_datetime"]
             hora_str = inicio.strftime("%H:%M") if hasattr(inicio, "strftime") else str(inicio)[:5]
             duracao = int(ev.get("duracao_min") or 0)
             min_atras = int(ev.get("min_atras") or 0)
-
-            nome = ev.get("contact_nome") or "contato"
-            empresa = ev.get("contact_empresa")
-            contato_line = f"{nome}" + (f" — {empresa}" if empresa else "")
-
             summary = ev.get("summary") or "Reuniao"
+
+            # Lista contatos identificados (max 4 pra nao poluir)
+            contatos_lines = []
+            for c in identified[:4]:
+                line = c["nome"]
+                if c.get("empresa"):
+                    line += f" — {c['empresa']}"
+                contatos_lines.append(line)
+            if len(identified) > 4:
+                contatos_lines.append(f"+ {len(identified) - 4} outros")
+
+            contatos_block = "\n".join(f"• {l}" for l in contatos_lines)
 
             msg = (
                 f"🎯 Reuniao terminou {min_atras}min atras:\n"
                 f"*{summary}* as {hora_str} ({duracao}min)\n"
-                f"{contato_line}\n\n"
+                f"{contatos_block}\n\n"
                 f"Como foi? Posso:\n"
-                f"• Salvar memoria da conversa\n"
+                f"• Salvar memoria pra cada contato\n"
                 f"• Criar tarefa de follow-up\n"
-                f"• Atualizar o contato\n\n"
+                f"• Atualizar contatos\n\n"
                 f"So me conta o que rolou que eu organizo."
             )
 
@@ -148,9 +243,10 @@ async def check_post_meeting() -> Dict:
                     str(event_id),
                     {
                         "summary": summary,
-                        "contact_id": ev.get("contact_id"),
-                        "contact_nome": nome,
+                        "contact_ids": [c["id"] for c in identified],
+                        "contact_names": [c["nome"] for c in identified],
                         "duracao_min": duracao,
+                        "match_source": "attendees" if not ev.get("contact_id") else "contact_id",
                     },
                 )
                 stats["sent"] += 1
