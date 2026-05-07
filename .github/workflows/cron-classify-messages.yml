@@ -1,0 +1,24 @@
+name: Cron — Classify Messages
+
+# Why GitHub Actions: Vercel Hobby plan rejeita schedules sub-diarios.
+# Endpoint /api/cron/classify-messages roda hourly (limit=500, timeout=240s)
+# pra manter o backlog de mensagens classificadas em dia. Migrado pra GH
+# Actions em 2026-05-07 quando deploy foi bloqueado pela validacao do plano.
+
+on:
+  schedule:
+    - cron: '15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit classify-messages endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/classify-messages")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)
