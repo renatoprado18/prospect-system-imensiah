@@ -42,6 +42,30 @@ _NO_REPLY_PATTERNS = [
     r'^\s*(sim|n[ãa]o|claro|com certeza|pode ser|sem problema)[\s.!]*$',
 ]
 
+# Digests automatizados do proprio bot do INTEL — comecam com emoji especifico
+# seguido de marcadores tipicos. Sao auto-DMs do sistema pro Renato; ele nunca
+# responde isso. Identificado em prod: contato APCE (id 25597) era principal
+# fonte de falso positivo "Responder msg" no statcard.
+_BOT_DIGEST_PATTERNS = [
+    r'^\s*📊\s*coleta de m[ée]tricas',
+    r'^\s*📧\s*\*?digest de emails',
+    r'^\s*📱\s*\*?digest dos grupos',
+    r'^\s*📰\s*\*?clipping',
+    r'^\s*🌅\s*\*?bom dia',
+    r'^\s*🌙\s*\*?boa noite',
+]
+
+# Placeholders de midia sem texto util — viram ruido se classificados como
+# "precisa resposta" (ex: "[Áudio]" sem transcricao).
+_MEDIA_PLACEHOLDER_PATTERNS = [
+    r'^\s*\[(áudio|audio|imagem|image|v[íi]deo|video|sticker|figurinha|gif|documento|document|arquivo|file)\]\s*$',
+]
+
+# Regex pra remover URLs antes de checar se ha pergunta real (?).
+# Antes: 'https://youtu.be/...?si=abc' disparava rule_question_mark porque '?'
+# tava na query string. Strippar URLs primeiro e depois checar '?' no texto restante.
+_URL_RE = re.compile(r'https?://\S+', re.IGNORECASE)
+
 
 def rule_based_check(text: str) -> Optional[bool]:
     """
@@ -54,14 +78,26 @@ def rule_based_check(text: str) -> Optional[bool]:
         return False
     text_lower = text.lower().strip()
 
+    # Digest do bot — sempre false (auto-DM do sistema)
+    for pat in _BOT_DIGEST_PATTERNS:
+        if re.match(pat, text_lower, re.IGNORECASE):
+            return False
+
+    # Placeholder de midia sem texto — false (sem conteudo pra classificar)
+    for pat in _MEDIA_PLACEHOLDER_PATTERNS:
+        if re.match(pat, text_lower, re.IGNORECASE):
+            return False
+
     # Curta + pattern fechamento = no reply
     if len(text_lower) <= 80:
         for pat in _NO_REPLY_PATTERNS:
             if re.match(pat, text_lower, re.IGNORECASE):
                 return False
 
-    # Tem pergunta clara em texto substancial = needs reply
-    if '?' in text and len(text.strip()) > 5:
+    # Tem pergunta clara em texto substancial = needs reply.
+    # Stripa URLs antes pra evitar falso positivo em query strings (?si=, ?utm=, etc).
+    text_sem_url = _URL_RE.sub('', text).strip()
+    if '?' in text_sem_url and len(text_sem_url) > 5:
         return True
 
     return None  # ambiguo — vai pro LLM
@@ -87,7 +123,7 @@ async def llm_classify(text: str, sender_name: str = '') -> Tuple[bool, str]:
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    prompt = f"""Voce classifica mensagens recebidas em PT-BR pra decidir se precisam de resposta.
+    prompt = f"""Voce classifica mensagens recebidas em PT-BR pra decidir se precisam de resposta acionavel do destinatario.
 
 Mensagem de {sender_name or 'contato'}:
 \"\"\"
@@ -97,11 +133,19 @@ Mensagem de {sender_name or 'contato'}:
 Responda SO em JSON valido:
 {{"requires_reply": true|false, "reasoning": "1 frase curta em pt-br"}}
 
-Regras:
-- Agradecimentos curtos, acks ("ok", "obrigada", "coloquei na agenda") = false
-- Perguntas diretas, pedidos, propostas, convites = true
-- Atualizacoes informacionais sem call-to-action = false
-- Quando em duvida = true (conservador)
+Marque true SO quando ha pedido/pergunta/decisao explicita esperando resposta:
+- Perguntas diretas com expectativa de resposta ("voce topa?", "qual prazo?")
+- Pedidos de acao ou decisao explicitos ("me confirma X", "preciso saber se Y")
+- Propostas/convites concretos com data ou call-to-action
+
+Marque false em todo o resto:
+- Agradecimentos, acks, confirmacoes ("ok", "obrigada", "coloquei na agenda", "ja fiz")
+- Atualizacoes informacionais sem CTA ("fyi", "te mandei o doc", relatos)
+- Mensagens muito curtas/ambiguas sem contexto claro ("FGV?", "?", "humm")
+- Placeholders de midia sem texto util ("[Audio]", "[Imagem]", "[Video]", "[Sticker]")
+- Digests/resumos automatizados (comecam com emojis tipo 📊 📧 📱 e listam stats)
+- Reclamacoes/desabafos sem pergunta direta
+- Quando em duvida = false (preferimos perder do que poluir o inbox)
 """
 
     try:
@@ -236,6 +280,56 @@ async def classify(
         'method': 'llm',
         'cached': False,
     }
+
+
+async def classify_pending_batch(limit: int = 500, days: int = 7) -> dict:
+    """Classifica mensagens incoming ainda nao classificadas (rule -> LLM).
+
+    Usado pelo cron hourly /api/cron/classify-messages e tambem por
+    step_classify_messages dentro do daily-sync (limit menor la).
+    """
+    processed = {"rule": 0, "llm": 0, "errors": 0, "skipped": 0}
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT m.id, m.conteudo, c.nome AS sender_name
+                FROM messages m
+                JOIN contacts c ON c.id = m.contact_id
+                LEFT JOIN message_classifications mc
+                    ON mc.message_id = m.id AND mc.source_table = 'messages'
+                WHERE m.direcao = 'incoming'
+                  AND m.enviado_em > NOW() - (%s || ' days')::interval
+                  AND mc.message_id IS NULL
+                  AND m.conteudo IS NOT NULL
+                  AND length(trim(m.conteudo)) > 0
+                ORDER BY m.enviado_em DESC
+                LIMIT %s
+                """,
+                (str(days), limit),
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+        for row in rows:
+            try:
+                res = await classify(
+                    message_id=row["id"],
+                    source_table="messages",
+                    text=row["conteudo"] or "",
+                    sender_name=row.get("sender_name") or "",
+                )
+                if res.get("cached"):
+                    processed["skipped"] += 1
+                elif res.get("method") == "rule":
+                    processed["rule"] += 1
+                elif res.get("method") == "llm":
+                    processed["llm"] += 1
+            except Exception as e:
+                processed["errors"] += 1
+                logger.warning(f"classify msg={row['id']} err: {e}")
+    except Exception as e:
+        logger.error(f"classify_pending_batch fatal: {e}")
+    return processed
 
 
 def manual_override(

@@ -1052,20 +1052,22 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
             conn.rollback()
 
         # === BUSCAR MENSAGENS NAO RESPONDIDAS (ultimos 7 dias) ===
-        # Filtra mensagens classificadas como "nao precisa resposta" (rule/LLM/manual).
-        # Mensagens NAO classificadas continuam contando (conservador — defaultam
-        # como "talvez precisa", classificador roda async no daily-sync).
+        # So inclui mensagens POSITIVAMENTE classificadas como precisa-resposta.
+        # Antes: NULL defaultava pra true — gerava ~30% de falso positivo
+        # (ex: 152/510 nao classificadas em janela de 7d, todas viravam trigger).
+        # Trade-off: mensagem recente leva ate ~2h pro classifier rodar (cron
+        # hourly) e aparecer no statcard. Preferimos cobertura menor e confiavel.
         mensagens_pendentes = set()
         try:
             cursor.execute("""
                 SELECT DISTINCT c.contact_id
                 FROM conversations c
                 JOIN messages m ON m.conversation_id = c.id
-                LEFT JOIN message_classifications mc
+                JOIN message_classifications mc
                     ON mc.message_id = m.id AND mc.source_table = 'messages'
                 WHERE m.direcao = 'incoming'
                   AND m.enviado_em > NOW() - INTERVAL '7 days'
-                  AND (mc.requires_reply IS NULL OR mc.requires_reply = TRUE)
+                  AND mc.requires_reply = TRUE
                   AND NOT EXISTS (
                       SELECT 1 FROM messages m2
                       WHERE m2.conversation_id = c.id
