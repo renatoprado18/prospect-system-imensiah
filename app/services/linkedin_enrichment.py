@@ -537,6 +537,179 @@ class LinkedInEnrichmentService:
                 "job_change": job_change
             }
 
+    async def _fetch_linkdapi_endpoint(self, path: str, params: Dict) -> Dict:
+        """Wrapper generico pra chamada LinkdAPI com tracking de credito.
+
+        path: ex '/api/v1/profile/contact-info'
+        params: dict de query params (username ou urn)
+        Retorna data['data'] se sucesso, ou {} em erro (loga warning).
+        """
+        from services.linkedin_funnel import track_linkdapi_call
+        if not self.use_linkdapi:
+            return {}
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(
+                    f"{LINKDAPI_BASE_URL}{path}",
+                    headers=self.headers,
+                    params=params,
+                )
+                track_linkdapi_call(path, resp.status_code, notes=f"dossier {params}")
+                if resp.status_code == 200:
+                    j = resp.json()
+                    if j.get("success") and j.get("data") is not None:
+                        return j["data"]
+                logger.warning(f"LinkdAPI {path} {params} -> {resp.status_code}: {resp.text[:120]}")
+                return {}
+        except Exception as e:
+            track_linkdapi_call(path, None, notes=f"dossier err {e}")
+            logger.warning(f"LinkdAPI {path} {params} exception: {e}")
+            return {}
+
+    async def generate_dossier(self, contact_id: int, force: bool = False) -> Dict:
+        """Gera dossie executivo LinkedIn (200 palavras) via Claude.
+
+        Pipeline:
+          1. profile/full (se nao tem URN cacheado)
+          2. EM PARALELO: profile/contact-info, profile/recommendations, profile/certifications
+          3. Claude resume tudo em 200 palavras (bio, posicao, forcas das recs,
+             1 conexao notavel, 1 angulo de abordagem)
+          4. Persiste em contacts.dossie_linkedin + dossie_linkedin_em
+
+        Custo: 4 LinkdAPI calls + 1 Claude call por contato.
+        """
+        import asyncio
+        from anthropic import Anthropic
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, nome, linkedin, empresa, cargo, linkedin_headline,
+                       dossie_linkedin, dossie_linkedin_em
+                FROM contacts WHERE id = %s
+            """, (contact_id,))
+            contact = cursor.fetchone()
+            if not contact:
+                return {"error": "Contact not found", "code": "NOT_FOUND"}
+            contact = dict(contact)
+
+        if not contact.get("linkedin"):
+            return {"error": "No LinkedIn URL", "code": "NO_LINKEDIN"}
+        if not self.is_configured() or not self.use_linkdapi:
+            return {"error": "LinkdAPI not configured", "code": "NO_LINKDAPI"}
+
+        # Cache: nao regenera dossie em <30 dias salvo force
+        if not force and contact.get("dossie_linkedin_em"):
+            days = (datetime.now() - contact["dossie_linkedin_em"]).days
+            if days < 30:
+                return {
+                    "success": True, "cached": True,
+                    "dossie": contact["dossie_linkedin"],
+                    "dossie_em": contact["dossie_linkedin_em"].isoformat(),
+                    "days_since": days,
+                }
+
+        username = self.extract_username(contact["linkedin"])
+        if not username:
+            return {"error": "Invalid LinkedIn URL", "code": "INVALID_URL"}
+
+        # Step 1: profile/full pra ter URN + dados base
+        full_data = await self._fetch_linkdapi_endpoint(
+            "/api/v1/profile/full", {"username": username}
+        )
+        if not full_data:
+            return {"error": "Profile fetch failed", "code": "FETCH_FAILED"}
+        urn = full_data.get("urn")
+
+        # Step 2: 3 endpoints em paralelo
+        contact_info, recs, certs = await asyncio.gather(
+            self._fetch_linkdapi_endpoint("/api/v1/profile/contact-info", {"username": username}),
+            self._fetch_linkdapi_endpoint("/api/v1/profile/recommendations", {"urn": urn}) if urn else asyncio.sleep(0, result={}),
+            self._fetch_linkdapi_endpoint("/api/v1/profile/certifications", {"urn": urn}) if urn else asyncio.sleep(0, result={}),
+        )
+
+        # Step 3: monta payload compacto pro Claude
+        payload = {
+            "nome": contact["nome"],
+            "headline": full_data.get("headline"),
+            "summary": (full_data.get("summary") or "")[:600],
+            "geo": (full_data.get("geo") or {}).get("full"),
+            "current": (full_data.get("currentPositions") or full_data.get("fullPositions") or [{}])[0],
+            "experiences_top3": [
+                {"company": e.get("companyName"), "title": e.get("title"),
+                 "start": e.get("start"), "end": e.get("end")}
+                for e in (full_data.get("fullPositions") or [])[:3]
+            ],
+            "educations_top2": [
+                {"school": e.get("schoolName"), "degree": e.get("degree")}
+                for e in (full_data.get("educations") or [])[:2]
+            ],
+            "contact_info": {
+                "email": (contact_info or {}).get("emailAddress"),
+                "phone": (contact_info or {}).get("phoneNumber"),
+                "websites": (contact_info or {}).get("websites"),
+            },
+            "recommendations_received": [
+                {"author": (r.get("recommendee") or r.get("author") or {}).get("name"),
+                 "headline": (r.get("recommendee") or r.get("author") or {}).get("headline"),
+                 "caption": (r.get("caption") or "")[:160],
+                 "text": (r.get("text") or "")[:400]}
+                for r in (recs or {}).get("received", [])[:5]
+            ],
+            "certifications": [
+                {"name": c.get("certificationName") or c.get("name"),
+                 "authority": c.get("issuedBy") or c.get("authority"),
+                 "issued": c.get("issuedDate")}
+                for c in (certs or {}).get("certifications") or (certs or {}).get("items") or []
+            ][:8],
+        }
+
+        prompt = f"""Voce e um analista de relacionamento executivo. Em <=200 palavras (PT-BR),
+gere um DOSSIE de abordagem para o Renato (consultor de estrategia + conselheiro,
+founder do imensIAH SaaS de planejamento estrategico com IA pra PMEs) sobre este contato.
+
+Estrutura obrigatoria (cada secao 1-2 frases curtas):
+1. **Posicao**: cargo + empresa + tempo, em 1 frase
+2. **Trajetoria**: 1 destaque relevante (transicao, tempo no setor, etc)
+3. **Forcas reconhecidas**: o que aparece nas recomendacoes recebidas (cite tipo de elogio)
+4. **Conexao notavel**: 1 escola/empresa/cert que abre conversa (ou "nada notavel")
+5. **Angulo de abordagem**: como o Renato pode iniciar uma conversa relevante (foco em estrategia/IA/PME se fizer sentido)
+
+NAO inclua secoes vazias. Se nao ha dado em uma secao, omita.
+
+Dados:
+{json.dumps(payload, ensure_ascii=False, default=str)[:6000]}
+"""
+
+        api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        if not api_key:
+            return {"error": "ANTHROPIC_API_KEY not set", "code": "NO_CLAUDE"}
+        client = Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        dossie = "".join(b.text for b in msg.content if hasattr(b, "text")).strip()
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE contacts
+                SET dossie_linkedin = %s,
+                    dossie_linkedin_em = CURRENT_TIMESTAMP,
+                    atualizado_em = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """, (dossie, contact_id))
+
+        return {
+            "success": True, "cached": False,
+            "contact_id": contact_id, "nome": contact["nome"],
+            "dossie": dossie,
+            "dossie_em": datetime.now().isoformat(),
+            "endpoints_called": 4,
+        }
+
     async def enrich_batch(
         self,
         limit: int = 50,

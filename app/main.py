@@ -710,6 +710,20 @@ async def intel_linkedin_bookmarklet(request: Request):
     })
 
 
+@app.get("/admin/outbound-register", response_class=HTMLResponse)
+async def admin_outbound_register(request: Request, post_url: str = "", comment: str = ""):
+    """Pagina pra registrar comment outbound — destino do bookmarklet.
+    Aceita ?post_url=X&comment=Y prefilled. Lista engagements ativos + form.
+    Usa endpoint POST /api/admin/linkedin-outbound/register."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url=f"/login?next=/admin/outbound-register", status_code=302)
+    return templates.TemplateResponse("admin_outbound_register.html", {
+        "request": request, "user": user,
+        "prefill_url": post_url, "prefill_comment": comment,
+    })
+
+
 @app.get("/duplicados", response_class=HTMLResponse)
 async def intel_duplicados(request: Request):
     """INTEL - Pagina de duplicados"""
@@ -6373,6 +6387,23 @@ async def enrich_contact_linkedin(contact_id: int, force: bool = False):
     if "error" in result and result.get("code") == "NOT_FOUND":
         raise HTTPException(status_code=404, detail=result["error"])
 
+    return result
+
+
+@app.post("/api/contacts/{contact_id}/dossier-linkedin")
+async def generate_contact_dossier_linkedin(contact_id: int, force: bool = False):
+    """Gera dossie executivo (200 palavras via Claude) a partir de 4 endpoints LinkdAPI.
+    Cache 30 dias salvo force=true. Custo: 4 LinkdAPI calls + 1 Claude call."""
+    service = get_linkedin_enrichment_service()
+    if not service.is_configured():
+        raise HTTPException(status_code=503, detail="LinkdAPI not configured")
+    result = await service.generate_dossier(contact_id, force=force)
+    if "error" in result:
+        if result.get("code") == "NOT_FOUND":
+            raise HTTPException(status_code=404, detail=result["error"])
+        if result.get("code") in ("NO_LINKEDIN", "INVALID_URL"):
+            raise HTTPException(status_code=400, detail=result["error"])
+        raise HTTPException(status_code=500, detail=result["error"])
     return result
 
 

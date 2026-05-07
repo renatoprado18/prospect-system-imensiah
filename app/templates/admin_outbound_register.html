@@ -1,0 +1,159 @@
+{% extends "rap_base.html" %}
+{% block title %}Outbound Comment Register - INTEL{% endblock %}
+{% block page_title %}Outbound Comments{% endblock %}
+
+{% block content %}
+<div style="max-width: 900px;">
+
+  <!-- Form de registro -->
+  <div class="card mb-4">
+    <div class="card-header"><strong><i class="bi bi-plus-circle me-2"></i>Registrar comment outbound</strong></div>
+    <div class="card-body">
+      <p class="text-muted small mb-3">
+        Comentei em post de outra pessoa? Cole a URL do post abaixo (ou use o bookmarklet).
+        O sistema acompanha replies do autor e notifica via WhatsApp.
+      </p>
+      <form id="registerForm">
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">URL do post LinkedIn *</label>
+          <input type="url" class="form-control form-control-sm" id="postUrl"
+                 value="{{ prefill_url|e }}" required
+                 placeholder="https://www.linkedin.com/feed/update/urn:li:activity:...">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small fw-semibold">Texto do meu comentario (opcional)</label>
+          <textarea class="form-control form-control-sm" id="commentText" rows="3"
+                    placeholder="Cole o texto pra futura referencia">{{ prefill_comment|e }}</textarea>
+        </div>
+        <div class="d-flex gap-2 align-items-center">
+          <button type="submit" class="btn btn-primary btn-sm">
+            <i class="bi bi-cloud-upload me-1"></i>Registrar
+          </button>
+          <span id="status" class="small text-muted"></span>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Bookmarklet -->
+  <div class="card mb-4">
+    <div class="card-header"><strong><i class="bi bi-bookmark-star me-2"></i>Bookmarklet</strong></div>
+    <div class="card-body">
+      <p class="small mb-2">
+        Arraste o botao abaixo pra barra de favoritos. Quando estiver em um post LinkedIn
+        onde voce comentou, clique nele — abre esta pagina com URL pre-preenchida.
+        Se voce selecionar o texto do seu comentario antes de clicar, ele tambem vem.
+      </p>
+      <div class="text-center my-3">
+        <a id="bookmarkletBtn" href="#" class="btn btn-success btn-lg"
+           onclick="alert('Arraste pra barra de favoritos'); return false;"
+           draggable="true">
+          <i class="bi bi-linkedin me-2"></i>INTEL Outbound
+        </a>
+      </div>
+      <details class="small">
+        <summary class="text-muted">Codigo JS (alternativa)</summary>
+        <pre id="bookmarkletCode" style="font-size:0.7rem; background:#f8fafc; padding:8px; border-radius:4px; white-space:pre-wrap; word-break:break-all;"></pre>
+      </details>
+    </div>
+  </div>
+
+  <!-- Lista de engagements -->
+  <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong><i class="bi bi-list-check me-2"></i>Comments registrados</strong>
+      <button class="btn btn-sm btn-outline-secondary" onclick="loadEngagements()"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr><th>Autor</th><th>Headline</th><th>Comentado em</th><th>Reply?</th><th>Ultimo check</th><th></th></tr>
+        </thead>
+        <tbody id="engagementsList">
+          <tr><td colspan="6" class="text-center text-muted py-3">Carregando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const ORIGIN = window.location.origin;
+
+// Bookmarklet code — usa origin atual pra apontar pra prod ou dev
+const BOOKMARKLET = "javascript:(function(){var u=window.location.href;if(!/linkedin\\.com\\/(feed\\/update|posts\\/)/.test(u)){alert('Abra um post LinkedIn primeiro');return;}var s=(window.getSelection().toString()||'').trim().slice(0,500);window.open('" + ORIGIN + "/admin/outbound-register?post_url='+encodeURIComponent(u)+'&comment='+encodeURIComponent(s),'_blank');})();";
+
+document.getElementById('bookmarkletBtn').setAttribute('href', BOOKMARKLET);
+document.getElementById('bookmarkletCode').textContent = BOOKMARKLET;
+
+document.getElementById('registerForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const postUrl = document.getElementById('postUrl').value.trim();
+  const commentText = document.getElementById('commentText').value.trim();
+  const status = document.getElementById('status');
+  if (!postUrl) return;
+  status.textContent = 'Registrando... (resolvendo autor via LinkdAPI)';
+  status.className = 'small text-muted';
+  try {
+    const resp = await fetch('/api/admin/linkedin-outbound/register', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({post_url: postUrl, comment_text: commentText || null}),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      status.textContent = 'Erro: ' + (data.detail || 'falha');
+      status.className = 'small text-danger';
+      return;
+    }
+    if (data.status === 'duplicate' || data.duplicate) {
+      status.textContent = 'Ja registrado (id ' + (data.id || '?') + ')';
+      status.className = 'small text-warning';
+    } else {
+      status.textContent = 'OK! Autor: ' + (data.post_author_name || '?') + ' (id ' + (data.id || '?') + ')';
+      status.className = 'small text-success';
+    }
+    document.getElementById('postUrl').value = '';
+    document.getElementById('commentText').value = '';
+    loadEngagements();
+  } catch (err) {
+    status.textContent = 'Erro: ' + err.message;
+    status.className = 'small text-danger';
+  }
+});
+
+async function loadEngagements() {
+  const tbody = document.getElementById('engagementsList');
+  try {
+    const resp = await fetch('/api/admin/linkedin-outbound');
+    const data = await resp.json();
+    if (!data.engagements || data.engagements.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Nada registrado ainda</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.engagements.map(e => `
+      <tr>
+        <td><a href="${e.post_url}" target="_blank">${e.post_author_name || '—'}</a></td>
+        <td class="text-muted small" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${e.post_author_headline || ''}</td>
+        <td class="small">${e.commented_at ? new Date(e.commented_at).toLocaleDateString('pt-BR') : ''}</td>
+        <td class="small">${e.has_reply ? (e.reply_from_author ? '<span class="badge bg-success">autor</span>' : `<span class="badge bg-secondary">${e.reply_count}</span>`) : '—'}</td>
+        <td class="small text-muted">${e.last_checked_at ? new Date(e.last_checked_at).toLocaleDateString('pt-BR') : '—'}</td>
+        <td class="text-end"><a href="${e.post_url}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2"><i class="bi bi-box-arrow-up-right"></i></a></td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">Erro: ' + e.message + '</td></tr>';
+  }
+}
+
+loadEngagements();
+
+// Auto-submit se veio do bookmarklet com URL preenchida
+{% if prefill_url %}
+window.addEventListener('load', () => {
+  // Foca o botao Registrar pra user dar Enter
+  document.querySelector('#registerForm button[type=submit]').focus();
+});
+{% endif %}
+</script>
+{% endblock %}

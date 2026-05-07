@@ -479,6 +479,13 @@ def init_db():
             ADD COLUMN IF NOT EXISTS avatar_checked_at TIMESTAMP
         ''')
 
+        # Dossie LinkedIn — gerado pelo Claude a partir de 4 endpoints LinkdAPI
+        cursor.execute('''
+            ALTER TABLE contacts
+            ADD COLUMN IF NOT EXISTS dossie_linkedin TEXT,
+            ADD COLUMN IF NOT EXISTS dossie_linkedin_em TIMESTAMP
+        ''')
+
         # Indices para Circulos
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_contacts_circulo
