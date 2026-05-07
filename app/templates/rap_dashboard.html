@@ -2078,6 +2078,12 @@
                 <i class="bi bi-calendar-x" style="font-size:0.85em;"></i>
                 <span>Reconecte Google</span>
             </a>
+            <a id="costAlertsPill" href="/api/admin/platform-costs" target="_blank" rel="noopener"
+                title="Aumentos suspeitos de custo da plataforma"
+                style="display:none; background:#fee2e2; color:#b91c1c; border:1px solid #fecaca; border-radius:999px; padding:3px 10px; font-size:0.78rem; font-weight:600; text-decoration:none;">
+                <i class="bi bi-cash-coin" style="font-size:0.85em;"></i>
+                <span id="costAlertsLabel">$ alerta</span>
+            </a>
         </div>
 
         <!-- Cron Health Modal -->
@@ -4559,6 +4565,30 @@
             }
         }
         loadCalendarScopeStatus();
+
+        // Cost alerts pill — só aparece quando há salto suspeito (>25% E >$5)
+        async function loadCostAlerts() {
+            try {
+                const res = await fetch('/api/admin/platform-costs?months=12', { credentials: 'same-origin' });
+                if (!res.ok) return;  // nao-admin: silencioso
+                const data = await res.json();
+                const pill = document.getElementById('costAlertsPill');
+                const label = document.getElementById('costAlertsLabel');
+                if (!pill || !label) return;
+                const alerts = data.alerts || [];
+                if (alerts.length === 0) return;
+                const top = alerts[0];
+                const txt = alerts.length === 1
+                    ? `${top.provider} +${Math.round(top.delta_pct)}% (+$${top.delta_usd.toFixed(2)})`
+                    : `${alerts.length} aumentos suspeitos`;
+                label.textContent = txt;
+                pill.title = `Top: ${top.provider} ${top.from_period.slice(0,7)}→${top.to_period.slice(0,7)}: $${top.from_usd.toFixed(2)}→$${top.to_usd.toFixed(2)}`;
+                pill.style.display = 'inline-flex';
+            } catch (err) {
+                console.warn('cost-alerts load failed:', err);
+            }
+        }
+        loadCostAlerts();
     </script>
 
     <!-- ============== Cron Health Pill + Modal ============== -->

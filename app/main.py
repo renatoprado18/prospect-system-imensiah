@@ -4378,6 +4378,23 @@ async def platform_costs_delete(
     return {"ok": True, "deleted": cost_id}
 
 
+@app.get("/api/cron/platform-costs-snapshot")
+@track_cron_run
+async def cron_platform_costs_snapshot(request: Request):
+    """Cron mensal (dia 2 09h BRT = 12h UTC): auto-fill providers triviais
+    do mes anterior (free tiers + LinkdAPI) + alerta WhatsApp se houver
+    salto suspeito (>25% E >$5).
+
+    Providers manuais (railway/neon/anthropic) continuam via POST.
+    Bloco B vai automatizar via API."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.platform_costs import auto_snapshot_month, check_and_notify_alerts
+    snap = auto_snapshot_month()
+    alert = await check_and_notify_alerts()
+    return {"job": "platform-costs-snapshot", "snapshot": snap, "alert": alert}
+
+
 @app.post("/api/cron/catchup")
 @track_cron_run
 async def cron_catchup(request: Request, background_tasks: BackgroundTasks):

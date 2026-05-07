@@ -98,6 +98,10 @@
       "schedule": "0 11 * * *"
     },
     {
+      "path": "/api/cron/platform-costs-snapshot",
+      "schedule": "0 12 2 * *"
+    },
+    {
       "path": "/api/cron/classify-messages",
       "schedule": "15 * * * *"
     },
