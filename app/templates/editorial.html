@@ -91,8 +91,10 @@
     .published-table th.active .arrow { color: #6366f1; }
     .published-table tr:hover td { background: #fafbfc; }
     .published-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .published-table .titulo { cursor: pointer; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .published-table .titulo { cursor: pointer; display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
     .published-table .titulo:hover { color: #6366f1; text-decoration: underline; }
+    /* Constraint na coluna do title: trunca em ellipsis pra nao empurrar metricas pra fora do viewport */
+    .published-table td.titulo-cell, .published-table th.titulo-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .published-table .id-badge { background: #e2e8f0; color: #64748b; font-size: 0.65rem; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
 
     /* Posts List */
@@ -2785,13 +2787,16 @@ function renderPipelineTable(status) {
 
     const ths = cols.map(c => {
         const sortable = c.sortable !== false;
-        const cls = (c.num ? 'num ' : '') + (sort.col === c.key ? 'active' : '');
+        const cls = (c.num ? 'num ' : '') + (c.key === 'titulo' ? 'titulo-cell ' : '') + (sort.col === c.key ? 'active' : '');
         if (!sortable) return `<th class="${cls}">${c.label}</th>`;
         return `<th class="${cls}" onclick="sortPipeline('${c.key}')">${c.label}${arrow(c.key)}</th>`;
     }).join('');
 
     const rows = posts.map(p => {
-        const cells = cols.map(c => `<td${c.num ? ' class="num"' : ''}>${pipelineCellHtml(p, c.key, status)}</td>`).join('');
+        const cells = cols.map(c => {
+            const tdCls = c.num ? 'num' : (c.key === 'titulo' ? 'titulo-cell' : '');
+            return `<td${tdCls ? ` class="${tdCls}"` : ''}>${pipelineCellHtml(p, c.key, status)}</td>`;
+        }).join('');
         return `<tr>${cells}</tr>`;
     }).join('');
 
