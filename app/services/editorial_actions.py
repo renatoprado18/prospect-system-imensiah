@@ -41,6 +41,23 @@ WINDOW_RANGES = {
 }
 
 
+def janela_para_horas(horas_publicado: Optional[float]) -> Optional[str]:
+    """Mapeia horas desde a publicacao -> chave de janela (1h/6h/24h/72h/168h).
+
+    Usa o range com tolerancia (mesmo do classify_post_windows). Retorna None
+    se horas eh None/negativa ou cai num gap entre janelas (ex: 110h, entre
+    72h<=100 e 168h>=116) — nesse caso o caller decide se assume a proxima
+    janela ou deixa NULL.
+    """
+    if horas_publicado is None or horas_publicado < 0:
+        return None
+    for j in JANELAS_ORDER:
+        lo, hi = WINDOW_RANGES[j]
+        if lo <= horas_publicado <= hi:
+            return j
+    return None
+
+
 def classify_post_windows(horas_publicado: float, snapshots: list) -> dict:
     """Classifica cada janela (1h/6h/24h/72h/168h) pro post como
     'coletada' | 'aberta' | 'perdida' | 'futura' usando tolerancia.

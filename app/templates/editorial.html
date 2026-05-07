@@ -2255,12 +2255,18 @@ async function submitXlsxToPost(postId) {
             window._xlsxPendingMetrics = null;
             const div = document.getElementById(`xlsx-confirm-${postId}`);
             if (div) {
+                const janelaTxt = result.janela ? ` (janela ${result.janela})` : '';
                 div.innerHTML = `<div style="background:#d1fae5; border:1px solid #6ee7b7; border-radius:8px; padding:8px 12px; font-size:0.78rem; color:#065f46;">
-                    <i class="bi bi-check-circle"></i> Metricas registradas (${result.dias_apos_publicacao || 0}d apos publicacao). Historico salvo.
+                    <i class="bi bi-check-circle"></i> Metricas registradas${janelaTxt} — ${result.dias_apos_publicacao || 0}d apos publicacao. Historico salvo.
                 </div>`;
             }
             // Refetch e re-renderiza pra refletir mudanca (linkedin_metricas_em + history)
             setTimeout(() => openPostModal(postId), 800);
+            // Recarrega pipeline atras do modal — post pode ter saido da fila pending_metrics
+            if (currentPipelineStatus === 'pending_metrics') {
+                const tab = document.querySelector('.pipeline-tab[data-pipeline-tab="pending_metrics"]');
+                loadPipeline('pending_metrics', tab);
+            }
         } else {
             alert('Erro ao salvar: ' + (result.detail || 'desconhecido'));
         }
