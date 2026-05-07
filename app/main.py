@@ -8500,6 +8500,8 @@ async def cron_daily_sync(request: Request):
             return {"status": "error", "error": "publish_due_posts timeout > 90s"}
 
     async def step_linkedin_enrichment():
+        import re
+        from urllib.parse import quote
         from services.linkedin_enrichment import get_linkedin_enrichment_service
         from services.action_proposals import get_action_proposals
         enricher = get_linkedin_enrichment_service()
@@ -8512,16 +8514,66 @@ async def cron_daily_sync(request: Request):
             if jc:
                 ap = get_action_proposals()
                 change_type = "mudou de empresa" if jc["type"] == "job_change" else "foi promovido(a)"
+                contact_id = r["contact_id"]
+                nome = r["nome"]
+                new_company = jc.get("new_company", "")
+
+                # Buscar linkedin url + primeiro telefone do contato pra montar
+                # opcoes acionaveis (Ver contato / LinkedIn / WhatsApp / Ignorar).
+                # Sem isso, o card vinha sem botoes (feedback Renato 07/05/2026).
+                linkedin_url = None
+                phone = None
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT linkedin, telefones FROM contacts WHERE id = %s",
+                        (contact_id,),
+                    )
+                    crow = cursor.fetchone()
+                    if crow:
+                        linkedin_url = (crow.get("linkedin") or "").strip() or None
+                        tels = crow.get("telefones") or []
+                        if isinstance(tels, list) and tels:
+                            wa_pref = next((t for t in tels if t.get("whatsapp")), None)
+                            tel_obj = wa_pref or tels[0]
+                            raw = tel_obj.get("number") if isinstance(tel_obj, dict) else None
+                            if raw:
+                                digits = re.sub(r"\D", "", raw)
+                                if digits:
+                                    if not digits.startswith("55") and len(digits) <= 11:
+                                        digits = "55" + digits
+                                    phone = digits
+
+                options = [
+                    {"id": "view_contact", "label": "Ver contato", "action": "navigate",
+                     "url": f"/contatos/{contact_id}"},
+                ]
+                if linkedin_url:
+                    options.append({"id": "open_linkedin", "label": "LinkedIn",
+                                    "action": "navigate", "url": linkedin_url})
+                if phone:
+                    msg = f"Oi {nome.split()[0]}, vi que voce {change_type}"
+                    if new_company:
+                        msg += f" — agora na {new_company}"
+                    msg += ". Parabens!"
+                    options.append({
+                        "id": "send_whatsapp", "label": "WhatsApp",
+                        "action": "navigate",
+                        "url": f"https://wa.me/{phone}?text={quote(msg)}",
+                    })
+                options.append({"id": "ignore", "label": "Ignorar", "action": "dismiss"})
+
                 ap.create_proposal({
                     "action_type": "linkedin_job_change",
-                    "contact_id": r["contact_id"],
-                    "title": f'{r["nome"]} {change_type}',
+                    "contact_id": contact_id,
+                    "title": f'{nome} {change_type}',
                     "description": f'De {jc.get("old_company", "?")} ({jc.get("old_title", "?")}) para {jc.get("new_company", "?")} ({jc.get("new_title", "?")})',
                     "trigger_text": f'Detectado via LinkedIn em {jc.get("detected_at", "")[:10]}',
                     "ai_reasoning": "Mudanca de emprego e oportunidade para reconexao e parabens",
                     "confidence": 0.9,
                     "urgency": "high",
                     "action_params": {"job_change": jc},
+                    "options": options,
                 })
                 # Mark as notified in history.
                 # Postgres nao aceita ORDER BY/LIMIT em UPDATE direto (sintaxe MySQL).
