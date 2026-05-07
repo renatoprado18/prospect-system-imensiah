@@ -4537,17 +4537,14 @@
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm" style="width:0.8rem;height:0.8rem;"></span> Gerando...';
             try {
-                const force = !!contact.dossie_linkedin;
-                const resp = await fetch(`/api/contacts/${contactId}/dossier-linkedin${force ? '?force=true' : ''}`, {
+                // Sempre force=true: botao clicado = intent explicito de gerar/regerar
+                const resp = await fetch(`/api/contacts/${contactId}/dossier-linkedin?force=true`, {
                     method: 'POST'
                 });
                 const data = await resp.json();
                 if (!resp.ok) {
                     alert('Erro: ' + (data.detail || data.error || 'falha'));
                     return;
-                }
-                if (data.cached) {
-                    alert(`Dossie em cache (gerado ha ${data.days_since}d). Clique novamente pra forcar regeneracao.`);
                 }
                 await loadContact();
             } catch (e) {
