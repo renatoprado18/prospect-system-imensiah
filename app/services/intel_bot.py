@@ -107,6 +107,9 @@ TOOLS = [
             "So pergunte se houver ambiguidade real entre eventos diferentes (ex: 2 eventos com nome similar em datas diferentes — ai pergunte qual). "
             "Pra series recorrentes, se o usuario pediu 'apagar todos' use scope='all' direto. Se pediu 'so essa', use 'single'. Se pediu 'desta data em diante', use 'future'.\n"
             "- send_whatsapp: envia WhatsApp via rap-whatsapp (contact_id, message)\n"
+            "- send_email: envia email via Gmail. params: to (email destinatario) OU contact_id (resolve email do contato), subject, body, account? ('personal'|'professional', default 'professional'). "
+            "Se passar contact_id, busca o primeiro email do contato. Se passar 'to', usa direto. "
+            "**Confirme o destinatario com o usuario antes de enviar** se nao tiver certeza absoluta — emails errados causam dano.\n"
             "- enrich_contact: enriquece contato com IA (contact_id)\n"
             "- update_contact: atualiza campos do contato (contact_id, fields: {campo: valor})\n"
             "- save_feedback: salva feedback/melhoria do sistema INTEL (conteudo, tipo?: bug|melhoria|ideia|feedback)\n"
@@ -122,7 +125,8 @@ TOOLS = [
                     "enum": [
                         "create_task", "complete_task", "save_note", "save_memory",
                         "schedule_meeting", "update_calendar_event", "delete_calendar_event",
-                        "send_whatsapp", "enrich_contact", "update_contact",
+                        "send_whatsapp", "send_email",
+                        "enrich_contact", "update_contact",
                         "save_feedback",
                         "save_system_memory", "search_system_memories"
                     ]
@@ -771,6 +775,90 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 }, ensure_ascii=False)
             else:
                 return json.dumps({"erro": f"Falha ao enviar: {result.get('error', 'desconhecido')}"})
+
+        elif action == "send_email":
+            to = params.get("to")
+            contact_id_param = params.get("contact_id")
+            subject = params.get("subject")
+            body = params.get("body")
+            if not subject or not body:
+                return json.dumps({"erro": "subject e body sao obrigatorios"})
+            if not to and not contact_id_param:
+                return json.dumps({"erro": "passe 'to' (email) ou 'contact_id'"})
+
+            # Resolve destinatario via contact_id se necessario
+            recipient_email = to
+            recipient_name = None
+            if contact_id_param and not recipient_email:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT id, nome, emails FROM contacts WHERE id = %s", (contact_id_param,))
+                    contact = cur.fetchone()
+                if not contact:
+                    return json.dumps({"erro": f"Contato #{contact_id_param} nao encontrado"})
+                contact = dict(contact)
+                recipient_name = contact["nome"]
+                emails = contact.get("emails")
+                if isinstance(emails, str):
+                    try:
+                        emails = json.loads(emails)
+                    except Exception:
+                        emails = []
+                if not emails:
+                    return json.dumps({"erro": f"Contato {contact['nome']} nao tem email cadastrado"})
+                # emails e [{"email": "x@y.com", "tipo": "..."}] ou string array
+                first = emails[0] if isinstance(emails, list) else None
+                if isinstance(first, dict):
+                    recipient_email = first.get("email")
+                elif isinstance(first, str):
+                    recipient_email = first
+            if not recipient_email or "@" not in str(recipient_email):
+                return json.dumps({"erro": f"Email destinatario invalido: {recipient_email}"})
+
+            # Resolve conta Gmail (personal | professional)
+            account_alias = (params.get("account") or "professional").lower()
+            account_email = None
+            try:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT email, access_token FROM google_accounts WHERE conectado=TRUE AND tipo=%s LIMIT 1",
+                        (account_alias,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        account_email = row["email"]
+            except Exception as e:
+                logger.warning(f"send_email account lookup err: {e}")
+            if not account_email:
+                return json.dumps({"erro": f"Conta Gmail '{account_alias}' nao conectada"})
+
+            # Pega token valido (refresh automatico se expirou)
+            from integrations.google_contacts import get_valid_token
+            from integrations.gmail import GmailIntegration
+            try:
+                token = await get_valid_token(account_email)
+            except Exception as e:
+                return json.dumps({"erro": f"Falha ao obter token Gmail: {e}"})
+
+            gmail = GmailIntegration()
+            result = await gmail.send_message(
+                access_token=token,
+                to=recipient_email,
+                subject=subject,
+                body=body,
+            )
+            if "error" in result:
+                return json.dumps({"erro": f"Gmail send falhou: {result.get('error')}"})
+
+            account_label = "pessoal" if account_alias == "personal" else "profissional"
+            destinatario = f"{recipient_name} <{recipient_email}>" if recipient_name else recipient_email
+            return json.dumps({
+                "sucesso": True,
+                "gmail_message_id": result.get("id"),
+                "from_account": account_email,
+                "mensagem": f"Email enviado para {destinatario} via conta {account_label}"
+            }, ensure_ascii=False)
 
         elif action == "enrich_contact":
             contact_id = params.get("contact_id")
@@ -1517,6 +1605,14 @@ REGRA #1 (INVIOLAVEL - MAIS IMPORTANTE QUE TUDO):
 ⛔ Se precisar buscar 7 contatos, faca 7 queries (ou uma query com OR/IN). NAO atalhe inventando.
 ⛔ Emails inventados causam DANO REAL (mensagens para pessoas erradas). Isto e INACEITAVEL.
 ⛔ Violacao desta regra ja aconteceu antes e causou problemas serios. NAO repita.
+
+REGRA #0 (ANTI-ALUCINACAO DE ACOES — PRECEDE TUDO):
+⛔ NUNCA responda como se tivesse executado uma acao sem ter chamado a tool correspondente naquele turno.
+⛔ "Apaguei", "criei", "atualizei", "enviei" — essas palavras SO podem aparecer apos um tool_use de execute_action que retornou {"sucesso": true}.
+⛔ Se a tool retornar {"erro": ...} ou nao tiver sido chamada, voce DEVE dizer o que aconteceu de verdade ("falhou porque X" ou "nao consegui executar").
+⛔ Apos cada tool call de write (create/update/delete/send), CITE a mensagem retornada pela tool. Ex: "O sistema confirmou: 'Evento X criado em DD/MM HH:MM (60min) no calendario profissional'".
+⛔ Se nao tiver certeza se a acao rodou, NAO afirme que rodou. Reexecute a tool ou pergunte ao usuario.
+⛔ Casos reportados: bot disse "Evento atualizado" sem ter chamado update_calendar_event (audit_log mostrou ZERO calls). Bot disse "Apaguei os 10 blocos" e logo depois "nao tenho acesso" (contradicao). NAO REPITA.
 
 REGRAS ADICIONAIS:
 - NUNCA diga que alguem curtiu, comentou ou fez algo a menos que tenha EVIDENCIA no banco de dados.
