@@ -101,9 +101,11 @@ TOOLS = [
             "Use 'personal' pra eventos pessoais (familia, saude, lazer) e 'professional' pra trabalho/conselhos.\n"
             "- update_calendar_event: edita evento existente (PATCH-style). params: event_id (int=local id), e SOMENTE os campos que mudaram entre: titulo?, data_hora? ISO, duracao_min?, local?, descricao?. "
             "Para eventos recorrentes a edicao afeta apenas a ocorrencia editada (vira exception); pra mudar toda a serie, oriente o usuario a editar no Google Calendar diretamente.\n"
-            "- delete_calendar_event: apaga evento. params: event_id (int=local id), scope? ('single'|'future'). "
-            "Se evento for recorrente e scope nao for passado, o handler retorna erro pedindo pra perguntar: apagar so essa ocorrencia (single) OU esta e todas as futuras (future). "
-            "Pra eventos nao-recorrentes, scope='single' (default). Apague direto se a intencao do usuario for clara; em caso ambiguo (ex: varios eventos casam com o pedido), confirme antes.\n"
+            "- delete_calendar_event: apaga evento. params: event_id (int=local id), scope? ('single'|'future'|'all', default 'single'). "
+            "scope='single' apaga so a ocorrencia. scope='future' apaga essa e todas as posteriores (modifica RRULE). scope='all' apaga a serie inteira. "
+            "**Se o usuario pediu pra apagar X, apague.** Nao recuse nem peca confirmacao extra. "
+            "So pergunte se houver ambiguidade real entre eventos diferentes (ex: 2 eventos com nome similar em datas diferentes — ai pergunte qual). "
+            "Pra series recorrentes, se o usuario pediu 'apagar todos' use scope='all' direto. Se pediu 'so essa', use 'single'. Se pediu 'desta data em diante', use 'future'.\n"
             "- send_whatsapp: envia WhatsApp via rap-whatsapp (contact_id, message)\n"
             "- enrich_contact: enriquece contato com IA (contact_id)\n"
             "- update_contact: atualiza campos do contato (contact_id, fields: {campo: valor})\n"
@@ -580,7 +582,7 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
 
             from services.calendar_events import get_calendar_events
             cal = get_calendar_events()
-            event = cal.create_event(
+            event = await cal.create_event(
                 summary=titulo,
                 start_datetime=start_dt,
                 end_datetime=end_dt,
@@ -671,7 +673,7 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
             # via google_event_id local (que e o instance_id se for ocorrencia
             # exception, ou o master id se nao). Para edicao em "all", precisa
             # apontar pro master — passamos via override.
-            updated = cal.update_event(event_id, updates, sync_to_google=True)
+            updated = await cal.update_event(event_id, updates, sync_to_google=True)
             if not updated:
                 return json.dumps({"erro": "Falha ao atualizar evento"})
 
@@ -697,17 +699,18 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
             if not current:
                 return json.dumps({"erro": f"Evento #{event_id} nao encontrado"})
 
-            is_recurring = bool(current.get("recurring_event_id") or current.get("recurrence_rule"))
-            scope = params.get("scope")
-            if is_recurring and scope not in ("single", "future"):
+            # Recorrencia: tabela local pode estar com recurring_event_id NULL
+            # (bug pre-2026-05-07: _upsert_event nao populava). Fonte de verdade
+            # passa a ser a Google Calendar API, que retorna erro claro se scope
+            # nao se aplica. Aqui apenas validamos o scope passado e respeitamos
+            # a intencao do usuario sem sobrescrever.
+            scope = params.get("scope") or "single"
+            if scope not in ("single", "future", "all"):
                 return json.dumps({
-                    "erro": "evento_recorrente_sem_scope",
-                    "mensagem": f"O evento '{current.get('summary')}' e recorrente. Pergunte ao usuario: apagar so essa ocorrencia (scope='single') ou esta e todas as futuras (scope='future')?"
+                    "erro": f"scope invalido: {scope}. Use 'single', 'future' ou 'all'."
                 }, ensure_ascii=False)
-            if not is_recurring:
-                scope = "single"
 
-            ok = cal.delete_event(event_id, delete_from_google=True, scope=scope)
+            ok = await cal.delete_event(event_id, delete_from_google=True, scope=scope)
             if not ok:
                 return json.dumps({"erro": "Falha ao apagar evento"})
 
@@ -1528,6 +1531,18 @@ REGRAS ADICIONAIS:
 - Formate respostas com *negrito* para destaques (WhatsApp markdown — em mode chat, evite negrito decorativo)
 - Voce pode fazer multiplas queries em sequencia para responder perguntas complexas
 - Se nao souber algo, diga e sugira como ajudar
+
+CALENDAR (acesso total — pessoal + profissional):
+- Voce TEM permissao de criar, editar e apagar eventos. NAO recuse, NAO peca confirmacao extra.
+- CRIAR: execute_action schedule_meeting com account='personal' (gmail pessoal) ou account='professional' (almeida-prado, default).
+  Use 'personal' pra familia/saude/lazer; 'professional' pra trabalho/conselhos.
+- EDITAR: execute_action update_calendar_event (PATCH-style — passe so o que mudou).
+- APAGAR: execute_action delete_calendar_event com scope='single' (so essa ocorrencia, default), 'future' (essa e todas posteriores), ou 'all' (serie inteira).
+  - "Apaga essa reuniao" -> single
+  - "Apaga todas as ocorrencias dessa serie" -> all
+  - "Apaga deste dia em diante" -> future
+- BATCH: pra apagar varios eventos, faca multiplas chamadas de delete_calendar_event em paralelo (1 tool_use por evento). NAO consolide.
+- AMBIGUIDADE: so peca confirmacao se houver 2+ eventos diferentes que casam com o pedido (ex: "apaga reuniao com Joao" e existem 3 reunioes). Senao, execute direto.
 
 REGISTRO DE LIGACOES:
 - Quando Renato disser "liguei para X", "conversei com X por telefone", ou enviar audio descrevendo uma ligacao:

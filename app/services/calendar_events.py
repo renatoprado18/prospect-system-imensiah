@@ -18,7 +18,7 @@ from services.calendar_sync import get_calendar_sync
 class CalendarEventsService:
     """Servico de CRUD de eventos"""
 
-    def create_event(
+    async def create_event(
         self,
         summary: str,
         start_datetime: datetime,
@@ -35,6 +35,10 @@ class CalendarEventsService:
 
         account_email: email da conta Google onde criar (None = fallback profissional).
         Salvo na coluna google_account_email pro sync respeitar a conta de origem.
+
+        Async: aguarda o push pro Google antes de retornar (antes era
+        asyncio.create_task fire-and-forget — bot retornava sucesso=true sem
+        Google ter recebido nada, gerando "ainda consta hoje" syndromes).
         """
         with get_db() as conn:
             cursor = conn.cursor()
@@ -60,17 +64,11 @@ class CalendarEventsService:
             event_id = cursor.fetchone()["id"]
             conn.commit()
 
-        # Se solicitado, enviar para Google
+        # Se solicitado, enviar para Google e aguardar
         if create_in_google:
             try:
                 sync = get_calendar_sync()
-                # Usar asyncio para chamar metodo async
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # Se ja existe um loop, criar task
-                    asyncio.create_task(sync.push_local_event(event_id))
-                else:
-                    loop.run_until_complete(sync.push_local_event(event_id))
+                await sync.push_local_event(event_id)
             except Exception as e:
                 print(f"Erro ao enviar para Google: {e}")
                 # Evento fica como local_only
@@ -110,8 +108,8 @@ class CalendarEventsService:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def update_event(self, event_id: int, updates: Dict, sync_to_google: bool = True) -> Dict:
-        """Atualiza evento"""
+    async def update_event(self, event_id: int, updates: Dict, sync_to_google: bool = True) -> Dict:
+        """Atualiza evento. Async: aguarda sync pro Google antes de retornar."""
         allowed_fields = ["summary", "description", "location", "start_datetime",
                          "end_datetime", "contact_id", "prospect_id", "status"]
 
@@ -128,6 +126,8 @@ class CalendarEventsService:
         update_parts.append("atualizado_em = NOW()")
         params.append(event_id)
 
+        google_event_id = None
+        local_only = False
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute(f"""
@@ -138,68 +138,70 @@ class CalendarEventsService:
             """, params)
             result = cursor.fetchone()
             conn.commit()
+            if result:
+                google_event_id = result["google_event_id"]
+                local_only = bool(result.get("local_only"))
 
-            # Se tem google_event_id e nao e local_only, atualizar no Google
-            if sync_to_google and result and result["google_event_id"] and not result.get("local_only"):
-                if not result["google_event_id"].startswith("local-"):
-                    try:
-                        sync = get_calendar_sync()
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            asyncio.create_task(sync.sync_event_to_google(event_id))
-                        else:
-                            loop.run_until_complete(sync.sync_event_to_google(event_id))
-                    except Exception as e:
-                        print(f"Erro ao sincronizar com Google: {e}")
+        # Se tem google_event_id e nao e local_only, atualizar no Google e aguardar
+        if sync_to_google and google_event_id and not local_only:
+            if not google_event_id.startswith("local-"):
+                try:
+                    sync = get_calendar_sync()
+                    await sync.sync_event_to_google(event_id)
+                except Exception as e:
+                    print(f"Erro ao sincronizar com Google: {e}")
 
         return self.get_event(event_id)
 
-    def delete_event(
+    async def delete_event(
         self,
         event_id: int,
         delete_from_google: bool = True,
         scope: str = "single"
     ) -> bool:
-        """Deleta evento.
+        """Deleta evento. Async: aguarda delete no Google antes de retornar.
 
         scope: "single" | "future" | "all" — controla recorrência no Google.
         Para "future", o local fica como está (só trunca no Google); o sync
         incremental remove as instâncias locais futuras.
         Para "all", deleta tudo localmente que aponte pra mesma série.
+
+        Antes: asyncio.create_task fire-and-forget — bot retornava True antes
+        do delete bater no Google. Bug reportado em 2026-05-05 ("apagou local
+        mas nao Google"). Agora await direto.
         """
+        google_event_id = None
+        local_only = False
         with get_db() as conn:
             cursor = conn.cursor()
-
-            # Buscar dados para deletar no Google
             cursor.execute("""
                 SELECT google_event_id, local_only FROM calendar_events WHERE id = %s
             """, (event_id,))
             event = cursor.fetchone()
-
             if not event:
                 return False
+            google_event_id = event["google_event_id"]
+            local_only = bool(event.get("local_only"))
 
-            # Se solicitado e tem ID do Google valido, deletar la tambem
-            if delete_from_google and event["google_event_id"] and not event.get("local_only"):
-                if not event["google_event_id"].startswith("local-"):
-                    try:
-                        sync = get_calendar_sync()
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            asyncio.create_task(sync.delete_from_google(event_id, scope=scope))
-                        else:
-                            loop.run_until_complete(sync.delete_from_google(event_id, scope=scope))
-                    except Exception as e:
-                        print(f"Erro ao deletar do Google: {e}")
+        # Deletar no Google primeiro (await garante que erro propaga)
+        if delete_from_google and google_event_id and not local_only:
+            if not google_event_id.startswith("local-"):
+                try:
+                    sync = get_calendar_sync()
+                    await sync.delete_from_google(event_id, scope=scope)
+                except Exception as e:
+                    print(f"Erro ao deletar do Google: {e}")
 
-            # Deletar localmente: para "future" não removemos nada (o sync
-            # vai limpar as instâncias futuras quando rodar). Para "single"
-            # e "all" removemos o registro local pelo ID.
-            if scope != "future":
+        # Deletar localmente: para "future" não removemos nada (o sync
+        # vai limpar as instâncias futuras quando rodar). Para "single"
+        # e "all" removemos o registro local pelo ID.
+        if scope != "future":
+            with get_db() as conn:
+                cursor = conn.cursor()
                 cursor.execute("DELETE FROM calendar_events WHERE id = %s", (event_id,))
                 conn.commit()
 
-            return True
+        return True
 
     def get_events_for_contact(self, contact_id: int, limit: int = 20) -> List[Dict]:
         """Lista eventos de um contato"""

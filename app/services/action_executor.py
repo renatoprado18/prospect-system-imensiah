@@ -214,7 +214,7 @@ class ActionExecutor:
             new_end_datetime = new_datetime + timedelta(hours=1)
 
         # Atualizar evento
-        updated_event = self.calendar_service.update_event(
+        updated_event = await self.calendar_service.update_event(
             event_id,
             {
                 'start_datetime': new_datetime,
@@ -274,7 +274,7 @@ class ActionExecutor:
             return await self.reschedule_event(action_params, chosen_option, contact_id=contact_id)
 
         # Cancelar evento
-        success = self.calendar_service.delete_event(event_id, delete_from_google=True)
+        success = await self.calendar_service.delete_event(event_id, delete_from_google=True)
 
         if success:
             return {
@@ -293,7 +293,7 @@ class ActionExecutor:
             return {'success': False, 'message': 'Evento nao especificado'}
 
         # Atualizar status do evento
-        updated = self.calendar_service.update_event(
+        updated = await self.calendar_service.update_event(
             event_id,
             {'status': 'confirmed'},
             sync_to_google=True

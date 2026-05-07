@@ -180,6 +180,14 @@ class CalendarSyncService:
 
         attendees_json = json.dumps(google_event.get("attendees", []))
 
+        # Recorrencia: master tem campo "recurrence" (lista de RRULE/EXDATE).
+        # Instances tem "recurringEventId" apontando pro master. Antes ambos
+        # eram NULL no banco — handler delete_calendar_event nao detectava
+        # recorrencia e forcava scope=single, ignorando o "future"/"all" pedido.
+        recurring_event_id = google_event.get("recurringEventId")
+        recurrence_list = google_event.get("recurrence") or []
+        recurrence_rule = "\n".join(recurrence_list) if recurrence_list else None
+
         # Upsert atomico via ON CONFLICT (google_event_id).
         # Antes era SELECT-then-INSERT-or-UPDATE — vulneravel a:
         # 1. Race entre SELECT e INSERT (insert duplicado)
@@ -191,8 +199,9 @@ class CalendarSyncService:
         cursor.execute("""
             INSERT INTO calendar_events
             (google_event_id, google_account_email, summary, description, location, start_datetime, end_datetime,
-             all_day, attendees, status, conference_url, conference_type, etag, source, last_synced_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'google', NOW())
+             all_day, attendees, status, conference_url, conference_type, etag,
+             recurring_event_id, recurrence_rule, source, last_synced_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'google', NOW())
             ON CONFLICT (google_event_id) DO UPDATE SET
                 google_account_email = COALESCE(EXCLUDED.google_account_email, calendar_events.google_account_email),
                 summary = EXCLUDED.summary,
@@ -206,6 +215,8 @@ class CalendarSyncService:
                 conference_url = EXCLUDED.conference_url,
                 conference_type = EXCLUDED.conference_type,
                 etag = EXCLUDED.etag,
+                recurring_event_id = EXCLUDED.recurring_event_id,
+                recurrence_rule = EXCLUDED.recurrence_rule,
                 last_synced_at = NOW(),
                 atualizado_em = NOW()
         """, (
@@ -219,7 +230,9 @@ class CalendarSyncService:
             google_event.get("status", "confirmed"),
             conference_url,
             conference_type,
-            google_event.get("etag")
+            google_event.get("etag"),
+            recurring_event_id,
+            recurrence_rule,
         ))
         return bool(existing)
 
