@@ -14320,9 +14320,14 @@ async def get_action_proposals_list(
             proposals = []
             for row in cursor.fetchall():
                 proposal = dict(row)
+                # Colunas sao TIMESTAMP naive em UTC; append "Z" pra JS parsear como UTC
                 for key in ['criado_em', 'expires_at', 'responded_at', 'executed_at']:
                     if proposal.get(key) and hasattr(proposal[key], 'isoformat'):
-                        proposal[key] = proposal[key].isoformat()
+                        ts = proposal[key]
+                        iso = ts.isoformat()
+                        if ts.tzinfo is None:
+                            iso += "Z"
+                        proposal[key] = iso
                 proposals.append(proposal)
             return {"proposals": proposals}
     else:

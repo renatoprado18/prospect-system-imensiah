@@ -586,10 +586,16 @@ class ActionProposalsService:
 
     def _serialize_proposal(self, row: Dict) -> Dict:
         """Serializa proposta para JSON"""
-        # Converter datas
+        # Converter datas. Colunas sao TIMESTAMP naive em UTC, entao append "Z"
+        # pra JS parsear como UTC (sem Z, browser parseia como local time -> off 3h em BRT).
         for key in ['criado_em', 'expires_at', 'responded_at', 'executed_at']:
             if row.get(key) and hasattr(row[key], 'isoformat'):
-                row[key] = row[key].isoformat()
+                ts = row[key]
+                iso = ts.isoformat()
+                # Se ja tem tzinfo, isoformat inclui offset; senao, naive UTC -> append Z
+                if ts.tzinfo is None:
+                    iso += "Z"
+                row[key] = iso
 
         # Parse JSON fields se necessario
         for key in ['action_params', 'options', 'execution_result']:
