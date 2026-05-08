@@ -18,8 +18,20 @@ from typing import Optional, List, Dict, Any
 from collections import defaultdict
 
 from database import get_db
+from services.tz import iso_utc
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_dates(item: Dict) -> Dict:
+    """Garante que collected_at/published_at saem como ISO-8601 UTC com 'Z'.
+    Sem isso, JS no front parseia como local e formatTimeAgo da off por 3h
+    (mesmo bug do action proposals — fix 08384bc). Naive interpretado UTC."""
+    for k in ("collected_at", "published_at"):
+        v = item.get(k)
+        if hasattr(v, "isoformat"):
+            item[k] = iso_utc(v)
+    return item
 
 # Fontes RSS - Perfil amplo do Renato: governança, IA, empreendedorismo, esporte, sustentabilidade
 NEWS_SOURCES = {
@@ -449,7 +461,7 @@ def get_news_feed(user_id: int, limit: int = 15) -> Dict[str, List[Dict]]:
             ORDER BY trending_score DESC, collected_at DESC
             LIMIT 4
         ''')
-        trending = [dict(row) for row in cursor.fetchall()]
+        trending = [_normalize_dates(dict(row)) for row in cursor.fetchall()]
         logger.info(f"[PERF] trending query: {time.time()-t1:.2f}s")
         t2 = time.time()
 
@@ -463,7 +475,7 @@ def get_news_feed(user_id: int, limit: int = 15) -> Dict[str, List[Dict]]:
             LIMIT 30
         ''')
 
-        all_news = [dict(row) for row in cursor.fetchall()]
+        all_news = [_normalize_dates(dict(row)) for row in cursor.fetchall()]
         logger.info(f"[PERF] for_you query: {time.time()-t2:.2f}s")
         t3 = time.time()
 

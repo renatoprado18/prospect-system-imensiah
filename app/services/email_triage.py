@@ -14,6 +14,18 @@ import re
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from database import get_db
+from services.tz import iso_utc
+
+
+def _normalize_email_dates(item: Dict) -> Dict:
+    """Garante ISO-8601 UTC com 'Z' nos timestamps consumidos pelo front
+    (rap_emails.html chama formatTimeAgo em enviado_em||criado_em). Sem o Z,
+    JS parseia como local — mesmo bug do action proposals (fix 08384bc)."""
+    for k in ("enviado_em", "criado_em", "atualizado_em", "lido_em", "expires_at"):
+        v = item.get(k)
+        if hasattr(v, "isoformat"):
+            item[k] = iso_utc(v)
+    return item
 
 # Keywords para detecção
 URGENT_KEYWORDS = ['urgente', 'urgent', 'asap', 'imediato', 'hoje', 'agora', 'crítico', 'critical']
@@ -504,7 +516,7 @@ class EmailTriageService:
             params.extend([limit, offset])
 
             cursor.execute(query, params)
-            items = [dict(row) for row in cursor.fetchall()]
+            items = [_normalize_email_dates(dict(row)) for row in cursor.fetchall()]
 
             # Contar total
             count_query = """

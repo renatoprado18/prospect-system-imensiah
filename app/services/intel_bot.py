@@ -2120,10 +2120,16 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
                     logger.warning(
                         f"hallucination_reprompt {reprompt_count}/{MAX_HALLUCINATION_REPROMPTS} "
                         f"phone={phone} matched={matched_phrase} "
+                        f"stop_reason={stop_reason} "
+                        f"orphan_tool_use_count={len(tool_use_blocks)} "
                         f"actions_in_turn={[a.get('action') for a in turn_actions]}"
                     )
-                    # Adiciona resposta ruim no historico + mensagem corretiva
-                    messages.append({"role": "assistant", "content": content_blocks})
+                    # CRITICO: NAO appende content_blocks raw — pode ter tool_use blocks orfaos
+                    # (ex: stop_reason='max_tokens' com 29 update_task calls parciais). Isso
+                    # quebra iter seguinte com 400 "tool_use ids without tool_result".
+                    # Use current_text (texto puro), descartando qualquer tool_use orfao.
+                    safe_assistant_content = current_text or "(resposta vazia)"
+                    messages.append({"role": "assistant", "content": safe_assistant_content})
                     messages.append({
                         "role": "user",
                         "content": (

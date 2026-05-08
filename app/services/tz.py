@@ -77,6 +77,18 @@ def parse_iso(s: Union[str, None]) -> Optional[datetime]:
     return _ensure_aware(dt)
 
 
+def iso_utc(dt: Optional[datetime]) -> Optional[str]:
+    """Serializa datetime pra ISO-8601 UTC com 'Z' (formato esperado por JS
+    `new Date(...)` interpretar como UTC). Naive assumido UTC.
+
+    Use nas APIs JSON sempre que o front fizer time-ago ou converter via
+    `toLocaleString('pt-BR', {timeZone: 'America/Sao_Paulo'})`. Sem o Z,
+    JS parseia como local e aplica offset duplo (bug 08384bc)."""
+    if dt is None:
+        return None
+    return _ensure_aware(dt).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 def register_jinja_filters(env) -> None:
     """Registra filtros nos templates Jinja2:
     - {{ ts|brt }}          -> '07/05/2026 21:14'
