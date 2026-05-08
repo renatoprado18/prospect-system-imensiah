@@ -92,12 +92,16 @@ _CLAIM_PATTERNS = [
     r'\b(evento|reuniao|tarefa|nota|email|mensagem|memoria|contato)\s+(foi|fica|ficou\s+)?(criad[oa]|atualizad[oa]|apagad[oa]|deletad[oa]|enviad[oa]|salv[oa]|conclu[ií]d[oa]|removid[oa]|editad[oa])\b',
     # "pronto, [acao executada]"
     r'\bpronto[,.]?\s*(apaguei|deletei|criei|enviei|atualizei|removi|editei|salvei)\b',
-    # FUTURO + "agora"/"ja" — bot promete sem executar (caso 08/05: "Vou vincular as 43 tarefas... agora")
-    # Verbos restritos a write actions; pesquisar/consultar nao entram.
-    r'\bvou\s+(criar|agendar|marcar|registrar|adicionar|incluir|apagar|deletar|remover|excluir|atualizar|editar|alterar|modificar|mover|remarcar|reagendar|vincular|enviar|mandar|despachar|salvar|anotar|guardar|concluir|completar|finalizar|fechar)\b[^.!?\n]{0,80}\b(agora|ja\s+ja|imediatamente|nesse\s+momento|a\s+seguir)\b',
-    r'\b(deixa|deixe)\s+eu\s+(fazer|executar|rodar|atualizar|criar|salvar|enviar|apagar)\s+(isso|isto)?\s*agora\b',
-    r'\bfazendo\s+(isso|isto|agora)\b',
-    r'\b(estou|to)\s+(criando|atualizando|salvando|enviando|apagando|deletando|vinculando|movendo)\b',
+    # FUTURO + temporal — bot promete sem executar (casos 08/05).
+    # Lista de verbos cobre write actions + sinonimos genericos (executar/fazer/realizar/rodar/processar).
+    # Read-only (pesquisar/buscar/consultar/checar/ver/listar/mostrar/ler/conferir) ficam fora.
+    r'\bvou\s+(executar|fazer|realizar|rodar|processar|criar|gerar|cadastrar|agendar|marcar|registrar|adicionar|incluir|inserir|apagar|deletar|remover|excluir|limpar|atualizar|editar|alterar|modificar|mover|trocar|remarcar|reagendar|vincular|associar|relacionar|conectar|enviar|mandar|despachar|salvar|anotar|guardar|persistir|concluir|completar|finalizar|fechar|encerrar)\b[^.!?\n]{0,120}\b(agora|ja|ja\s+ja|imediatamente|nesse\s+momento|a\s+seguir|de\s+verdade|mesmo)\b',
+    # Mesmos verbos sem "agora" mas com enumeracao explicita ("as 43 tarefas", "todas as", "todos os")
+    # — bot descreve um plano concreto sem executar. Mais um sintoma forte de promessa nao cumprida.
+    r'\bvou\s+(executar|fazer|realizar|rodar|processar|criar|gerar|cadastrar|agendar|marcar|registrar|adicionar|incluir|inserir|apagar|deletar|remover|excluir|limpar|atualizar|editar|alterar|modificar|mover|trocar|remarcar|reagendar|vincular|associar|relacionar|conectar|enviar|mandar|despachar|salvar|anotar|guardar|persistir|concluir|completar|finalizar|fechar|encerrar)\b[^.!?\n]{0,40}\b(as|os)?\s*(\d+|todas|todos|cada\s+uma|cada\s+um)\b',
+    r'\b(deixa|deixe)\s+eu\s+(fazer|executar|rodar|atualizar|criar|salvar|enviar|apagar|vincular|registrar)\s+(isso|isto)?\s*(agora|mesmo|ja)?\b',
+    r'\bfazendo\s+(isso|isto|agora|a\s+atualizacao|a\s+vinculacao|o\s+update)\b',
+    r'\b(estou|to)\s+(criando|atualizando|salvando|enviando|apagando|deletando|vinculando|movendo|executando|processando)\b',
 ]
 _CLAIM_RE = re.compile("|".join(_CLAIM_PATTERNS), re.IGNORECASE)
 
