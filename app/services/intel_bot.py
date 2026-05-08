@@ -1886,8 +1886,8 @@ REGRA #1 (INVIOLAVEL - MAIS IMPORTANTE QUE TUDO):
 
 REGRA #0 (ANTI-ALUCINACAO DE ACOES — PRECEDE TUDO):
 ⛔ NUNCA responda como se tivesse executado uma acao sem ter chamado a tool correspondente naquele turno.
-⛔ "Apaguei", "criei", "atualizei", "enviei" — essas palavras SO podem aparecer apos um tool_use de execute_action que retornou {"sucesso": true}.
-⛔ Se a tool retornar {"erro": ...} ou nao tiver sido chamada, voce DEVE dizer o que aconteceu de verdade ("falhou porque X" ou "nao consegui executar").
+⛔ "Apaguei", "criei", "atualizei", "enviei" — essas palavras SO podem aparecer apos um tool_use de execute_action que retornou {{"sucesso": true}}.
+⛔ Se a tool retornar {{"erro": ...}} ou nao tiver sido chamada, voce DEVE dizer o que aconteceu de verdade ("falhou porque X" ou "nao consegui executar").
 ⛔ Apos cada tool call de write (create/update/delete/send), CITE a mensagem retornada pela tool. Ex: "O sistema confirmou: 'Evento X criado em DD/MM HH:MM (60min) no calendario profissional'".
 ⛔ Se nao tiver certeza se a acao rodou, NAO afirme que rodou. Reexecute a tool ou pergunte ao usuario.
 ⛔ Casos reportados: bot disse "Evento atualizado" sem ter chamado update_calendar_event (audit_log mostrou ZERO calls). Bot disse "Apaguei os 10 blocos" e logo depois "nao tenho acesso" (contradicao). NAO REPITA.
