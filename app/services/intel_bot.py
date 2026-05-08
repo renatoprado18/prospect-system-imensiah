@@ -43,7 +43,10 @@ INTEL_BOT_NUMBER = os.getenv("INTEL_BOT_NUMBER", "5511915020192")
 RENATO_PHONE = "5511984153337"
 RENATO_PHONE_SUFFIXES = ["11984153337", "984153337"]
 CLAUDE_MODEL = "claude-haiku-4-5-20251001"
-MAX_TOOL_ITERATIONS = 3
+MAX_TOOL_ITERATIONS = 4  # bumped de 3 -> 4 pra acomodar re-prompt + retry
+# Max re-prompts when detector flags promessa-sem-tool. 1 chance extra:
+# bot pode reagir a aviso explicito chamando tool ou admitindo limite.
+MAX_HALLUCINATION_REPROMPTS = 1
 
 # Rate limit: skip trivial messages
 SKIP_PATTERNS = re.compile(
@@ -2060,6 +2063,8 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
     # Acumula execute_action calls do turn (todas as iteracoes) pra validar
     # claims na resposta final. Cada entry: {"action": str, "result": str}.
     turn_actions: list = []
+    # Conta re-prompts feitos quando detector flagar promessa-sem-tool.
+    reprompt_count = 0
     try:
         for iteration in range(MAX_TOOL_ITERATIONS):
             logger.info(f"Claude call iteration {iteration + 1}/{MAX_TOOL_ITERATIONS}")
@@ -2106,17 +2111,51 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
             if stop_reason != "tool_use" or not tool_use_blocks:
                 final_text = current_text
                 hallucination = _detect_hallucination(final_text, turn_actions)
+
+                # Auto re-prompt: bot prometeu sem chamar tool — da uma chance extra
+                # com instrucao explicita pra Claude executar ou admitir limite.
+                if hallucination["flagged"] and reprompt_count < MAX_HALLUCINATION_REPROMPTS:
+                    reprompt_count += 1
+                    matched_phrase = hallucination["matched_phrases"][0]
+                    logger.warning(
+                        f"hallucination_reprompt {reprompt_count}/{MAX_HALLUCINATION_REPROMPTS} "
+                        f"phone={phone} matched={matched_phrase} "
+                        f"actions_in_turn={[a.get('action') for a in turn_actions]}"
+                    )
+                    # Adiciona resposta ruim no historico + mensagem corretiva
+                    messages.append({"role": "assistant", "content": content_blocks})
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"PARE. Voce escreveu '{matched_phrase}' mas NAO chamou nenhuma tool de write neste turno. "
+                            "Isso significa que NADA foi executado e o usuario espera resultado. "
+                            "AGORA voce tem 2 opcoes — escolha uma:\n"
+                            "(a) Execute a acao chamando a tool correta (update_task, postpone_tasks, "
+                            "schedule_meeting, send_email, etc). Comece pelos primeiros itens se for batch. "
+                            "Apos a tool retornar, descreva o resultado real citando o que ela retornou.\n"
+                            "(b) Diga claramente que NAO consegue executar e o motivo concreto "
+                            "(faltou ID? falta tool? autorizacao? schema diferente?). NAO finja que vai fazer.\n"
+                            "PROIBIDO: repetir 'vou fazer', 'agora vou', 'deixa eu fazer'. "
+                            "Aja ou pare."
+                        ),
+                    })
+                    # NAO salva a resposta ruim no DB — vai pollutar historico futuro.
+                    # Continue o loop pra Claude tentar de novo.
+                    continue
+
+                # Sem mais re-prompts: ou nao flagou, ou ja gastou a chance extra
                 if hallucination["flagged"]:
                     logger.warning(
-                        f"hallucination_detected phone={phone} "
+                        f"hallucination_detected_final phone={phone} "
                         f"matched={hallucination['matched_phrases']} "
+                        f"reprompts_used={reprompt_count} "
                         f"actions_in_turn={[a.get('action') for a in turn_actions]}"
                     )
                     final_text = (
                         final_text.rstrip()
-                        + "\n\n⚠️ _Aviso interno: voce afirmou ou prometeu acao"
-                        + f" ('{hallucination['matched_phrases'][0]}') mas nao chamou tool"
-                        + " neste turno. Re-pergunte explicitamente pra forcar execucao_"
+                        + "\n\n⚠️ _Aviso: prometi acao "
+                        + f"('{hallucination['matched_phrases'][0]}') mas nao executei mesmo apos re-prompt. "
+                        + "Algo bloqueou — me reporta o que voce esperava (pode ser que falte tool, ID ou contexto)._"
                     )
                 _save_conversation_message(phone, "assistant", final_text)
                 break
