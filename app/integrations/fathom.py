@@ -8,15 +8,22 @@ PESSOAL, PROFISSIONAL). Endpoints validos:
                                           + includes (summary, transcript, action_items)
   GET  /recordings/{id}/summary         — markdown formatado
   GET  /recordings/{id}/transcript      — array de utterances
-  POST /webhooks/create                 — registra callback
+  POST /webhooks                        — registra callback (Svix-signed)
   Webhook event: new-meeting-content-ready
 """
 import os
 import httpx
 import re
+import hmac
+import hashlib
+import base64
+import time
+import logging
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime
 import json
+
+logger = logging.getLogger(__name__)
 
 logger_module = __name__
 
@@ -111,6 +118,71 @@ class FathomIntegration:
                 return {"error": f"HTTP {resp.status_code}: {resp.text[:200]}", "items": []}
         except Exception as e:
             return {"error": str(e), "items": []}
+
+    async def create_webhook(
+        self,
+        destination_url: str,
+        triggered_for: List[str],
+        include_summary: bool = True,
+        include_action_items: bool = True,
+        include_transcript: bool = False,
+        include_crm_matches: bool = False,
+    ) -> Dict:
+        """POST /webhooks — registra callback. Retorna {id, url, secret, ...}.
+
+        Pelo menos um dos include_* tem que ser true.
+        triggered_for enum: my_recordings, shared_external_recordings,
+                            my_shared_with_team_recordings, shared_team_recordings.
+        Secret retornado precisa virar FATHOM_WEBHOOK_SECRET pra validar assinatura.
+        """
+        if not self.api_key:
+            return {"error": "no_api_key"}
+        body = {
+            "destination_url": destination_url,
+            "triggered_for": triggered_for,
+            "include_summary": include_summary,
+            "include_action_items": include_action_items,
+            "include_transcript": include_transcript,
+            "include_crm_matches": include_crm_matches,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{self.BASE_URL}/webhooks",
+                    headers={**self.headers, "Content-Type": "application/json"},
+                    json=body,
+                )
+                if resp.status_code in (200, 201):
+                    return resp.json()
+                return {"error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    async def list_webhooks(self) -> Dict:
+        if not self.api_key:
+            return {"error": "no_api_key", "items": []}
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(f"{self.BASE_URL}/webhooks", headers=self.headers)
+                if resp.status_code == 200:
+                    return resp.json()
+                return {"error": f"HTTP {resp.status_code}: {resp.text[:200]}", "items": []}
+        except Exception as e:
+            return {"error": str(e), "items": []}
+
+    async def delete_webhook(self, webhook_id: str) -> Dict:
+        if not self.api_key:
+            return {"error": "no_api_key"}
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.delete(
+                    f"{self.BASE_URL}/webhooks/{webhook_id}", headers=self.headers
+                )
+                if resp.status_code in (200, 204):
+                    return {"deleted": True, "id": webhook_id}
+                return {"error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+        except Exception as e:
+            return {"error": str(e)}
 
     # Alias retrocompat — get_meetings retornava lista, agora encapsula list_meetings
     async def get_meetings(self, limit: int = 50, after: Optional[str] = None) -> List[Dict]:
@@ -530,28 +602,260 @@ class FathomIntegration:
         return None
 
 
-# Webhook handler para Fathom callbacks
-async def handle_fathom_webhook(payload: Dict) -> Dict:
+# =============================================================================
+# Webhook signature verification (Svix scheme: webhook-id, webhook-timestamp,
+# webhook-signature). Secret format: whsec_<base64>. Signed content:
+# {webhook_id}.{webhook_timestamp}.{raw_body}, HMAC-SHA256, base64-encoded.
+# =============================================================================
+
+def verify_webhook_signature(
+    secret: str,
+    raw_body: bytes,
+    headers: Dict[str, str],
+    tolerance_seconds: int = 300,
+) -> bool:
+    """Valida assinatura Svix. Headers case-insensitive (passe lowercased)."""
+    if not secret:
+        return False
+    msg_id = headers.get("webhook-id") or headers.get("Webhook-Id") or ""
+    msg_ts = headers.get("webhook-timestamp") or headers.get("Webhook-Timestamp") or ""
+    sig_header = headers.get("webhook-signature") or headers.get("Webhook-Signature") or ""
+    if not msg_id or not msg_ts or not sig_header:
+        return False
+    try:
+        ts = int(msg_ts)
+    except (TypeError, ValueError):
+        return False
+    if abs(time.time() - ts) > tolerance_seconds:
+        return False
+
+    if secret.startswith("whsec_"):
+        try:
+            key = base64.b64decode(secret[len("whsec_"):])
+        except Exception:
+            return False
+    else:
+        key = secret.encode()
+
+    signed = msg_id.encode() + b"." + msg_ts.encode() + b"." + raw_body
+    expected = base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode()
+
+    for part in sig_header.split():
+        if "," not in part:
+            continue
+        version, sig = part.split(",", 1)
+        if version != "v1":
+            continue
+        if hmac.compare_digest(expected, sig):
+            return True
+    return False
+
+
+# =============================================================================
+# Persistência de meeting recebido (webhook) → contact_memories + tasks
+# Mesma logica do tool import_fathom_meeting (intel_bot.py), mas sem retorno
+# no formato de bot — so insere no banco.
+# =============================================================================
+
+async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int] = None) -> Dict:
+    """Processa um Meeting do Fathom (payload do webhook ou /meetings) e persiste.
+
+    - Adapta com `_adapt_meeting_to_summary`
+    - Match attendees externos contra contacts.emails (jsonb)
+    - Insere contact_memories pra cada contato identificado
+    - Insere tasks (cap 10) pros action_items
+    - Se project_id passado: tambem insere project_notes
+
+    Retorna stats {recording_id, matched_contacts, memorias_criadas,
+                   tarefas_criadas, nota_projeto_id}.
     """
-    Processa webhook do Fathom quando reunião é concluída
+    from database import get_db  # local import: evita ciclo no boot
 
-    Pode ser configurado no Fathom para chamar este endpoint
+    adapted = _adapt_meeting_to_summary(meeting_payload)
+    rec_id = adapted.get("recording_id")
+    title = adapted.get("title") or "Reuniao Fathom"
+    summary_md = adapted.get("summary") or ""
+    action_items = adapted.get("action_items") or []
+    date_iso = adapted.get("date") or ""
+    share_url = adapted.get("share_url") or ""
+    attendees = meeting_payload.get("calendar_invitees") or []
+
+    emails_to_match: List[str] = []
+    for att in attendees:
+        if att.get("is_external") is False:
+            continue  # Renato proprio
+        em = att.get("email")
+        if em and "@" in str(em):
+            emails_to_match.append(str(em).lower().strip())
+
+    matched_contacts: List[Dict] = []
+    if emails_to_match:
+        with get_db() as conn:
+            cur = conn.cursor()
+            ph = ",".join(["%s"] * len(emails_to_match))
+            cur.execute(
+                f"""
+                SELECT DISTINCT c.id, c.nome, c.empresa
+                FROM contacts c,
+                     jsonb_array_elements(COALESCE(c.emails, '[]'::jsonb)) AS ce
+                WHERE LOWER(
+                    CASE
+                      WHEN jsonb_typeof(ce) = 'object' THEN ce->>'email'
+                      WHEN jsonb_typeof(ce) = 'string' THEN ce#>>'{{}}'
+                      ELSE NULL
+                    END
+                ) IN ({ph})
+                """,
+                emails_to_match,
+            )
+            matched_contacts = [dict(r) for r in cur.fetchall()]
+
+    memorias_criadas: List[Dict] = []
+    if matched_contacts:
+        outros_nomes = [c["nome"] for c in matched_contacts]
+        with get_db() as conn:
+            cur = conn.cursor()
+            for c in matched_contacts:
+                outros = [n for n in outros_nomes if n != c["nome"]]
+                outros_str = ", ".join(outros) if outros else "Renato"
+                resumo_curto = (summary_md[:600] + "...") if len(summary_md) > 600 else summary_md
+                cur.execute(
+                    """
+                    INSERT INTO contact_memories
+                      (contact_id, tipo, source_table, titulo, resumo,
+                       conteudo_completo, data_ocorrencia, criado_em)
+                    VALUES (%s, 'reuniao', 'fathom', %s, %s, %s, %s, NOW())
+                    RETURNING id
+                    """,
+                    (
+                        c["id"],
+                        f"{title} (com {outros_str})",
+                        resumo_curto or f"Reuniao Fathom em {date_iso}",
+                        f"{summary_md}\n\n---\nGravacao Fathom: {share_url}",
+                        date_iso or None,
+                    ),
+                )
+                mem_id = cur.fetchone()["id"]
+                memorias_criadas.append({"contact_id": c["id"], "nome": c["nome"], "memoria_id": mem_id})
+            conn.commit()
+
+    tarefas_criadas: List[Dict] = []
+    primeiro_contact_id = matched_contacts[0]["id"] if matched_contacts else None
+    if action_items:
+        with get_db() as conn:
+            cur = conn.cursor()
+            for ai in action_items[:10]:
+                desc = ai.get("description") or ai.get("text") or ""
+                playback = ai.get("recording_playback_url") or ""
+                if not desc:
+                    continue
+                full_desc = desc
+                if playback:
+                    full_desc += f"\n\nMomento na gravacao: {playback}"
+                full_desc += f"\nReuniao: {title} ({date_iso})"
+                cur.execute(
+                    """
+                    INSERT INTO tasks (titulo, descricao, status, project_id, contact_id,
+                                       prioridade, ai_generated, origem, data_criacao)
+                    VALUES (%s, %s, 'pending', %s, %s, 7, true, 'reuniao_fathom', NOW())
+                    RETURNING id
+                    """,
+                    (desc[:200], full_desc, project_id, primeiro_contact_id),
+                )
+                tid = cur.fetchone()["id"]
+                tarefas_criadas.append({"task_id": tid, "titulo": desc[:80]})
+            conn.commit()
+
+    nota_id = None
+    if project_id and matched_contacts:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO project_notes (project_id, tipo, titulo, conteudo, autor, criado_em)
+                VALUES (%s, 'reuniao', %s, %s, 'fathom_webhook', NOW())
+                RETURNING id
+                """,
+                (
+                    project_id,
+                    f"{title} — {date_iso[:10] if date_iso else ''}",
+                    f"Reuniao com {', '.join([c['nome'] for c in matched_contacts])}\n\n{summary_md}\n\nGravacao: {share_url}",
+                ),
+            )
+            nota_id = cur.fetchone()["id"]
+            conn.commit()
+
+    return {
+        "recording_id": rec_id,
+        "title": title,
+        "matched_contacts": [{"id": c["id"], "nome": c["nome"]} for c in matched_contacts],
+        "memorias_criadas": len(memorias_criadas),
+        "tarefas_criadas": len(tarefas_criadas),
+        "nota_projeto_id": nota_id,
+    }
+
+
+# Webhook handler para Fathom callbacks (event: new-meeting-content-ready)
+async def handle_fathom_webhook(
+    payload: Dict,
+    raw_body: Optional[bytes] = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> Dict:
+    """Processa webhook do Fathom — schema novo (api.fathom.ai/external/v1).
+
+    O Fathom envia o objeto Meeting completo no body (sem wrapper {type, data}).
+    Validacao de assinatura via FATHOM_WEBHOOK_SECRET (Svix) — opcional: se a env
+    nao estiver setada, loga warning e aceita (modo bootstrap).
+
+    Compat: ainda detecta payload no formato antigo {type: call.completed, data}
+    pra evitar quebrar caso algo chame essa funcao com payload legado.
     """
-    event_type = payload.get("type")
-    data = payload.get("data", {})
+    # Suporta multiplos secrets (1 por conta Fathom: PROFISSIONAL + PESSOAL).
+    # Tenta cada um — se algum bater, aceita.
+    secrets = []
+    for env in ("FATHOM_WEBHOOK_SECRET_PROFISSIONAL",
+                "FATHOM_WEBHOOK_SECRET_PESSOAL",
+                "FATHOM_WEBHOOK_SECRET"):
+        v = (os.getenv(env) or "").strip()
+        if v:
+            secrets.append(v)
+    headers_norm = {k.lower(): v for k, v in (headers or {}).items()}
 
-    if event_type == "call.completed":
-        call_id = data.get("id")
-        fathom = FathomIntegration()
-        analysis = await fathom.analyze_meeting_for_sales(call_id)
+    if secrets:
+        if raw_body is None:
+            return {"status": "rejected", "reason": "no_raw_body_for_signature_check"}
+        if not any(verify_webhook_signature(s, raw_body, headers_norm) for s in secrets):
+            logger.warning("Fathom webhook signature invalida (id=%s ts=%s, tried %d secrets)",
+                           headers_norm.get("webhook-id"), headers_norm.get("webhook-timestamp"),
+                           len(secrets))
+            return {"status": "rejected", "reason": "invalid_signature"}
+    else:
+        logger.warning("Nenhuma FATHOM_WEBHOOK_SECRET* setada — aceitando sem validar assinatura")
 
-        return {
-            "status": "processed",
-            "call_id": call_id,
-            "analysis": analysis
-        }
+    # Compat: payload legado {type: call.completed, data: {...}}
+    if payload.get("type") == "call.completed":
+        call_id = payload.get("data", {}).get("id")
+        return {"status": "ignored_legacy", "call_id": call_id}
 
-    return {"status": "ignored", "event_type": event_type}
+    # Novo schema: payload e o Meeting direto. Heuristica: tem recording_id ou
+    # campos de meeting (default_summary, action_items, calendar_invitees).
+    if not (payload.get("recording_id") or payload.get("default_summary")
+            or payload.get("calendar_invitees") or payload.get("action_items")):
+        logger.warning("Fathom webhook payload sem campos esperados de meeting (keys=%s)",
+                       list(payload.keys())[:10])
+        return {"status": "ignored", "reason": "unrecognized_schema"}
+
+    try:
+        stats = await process_fathom_meeting(payload, project_id=None)
+        logger.info("Fathom webhook processado: rec_id=%s contatos=%s memorias=%s tarefas=%s",
+                    stats.get("recording_id"),
+                    len(stats.get("matched_contacts", [])),
+                    stats.get("memorias_criadas"),
+                    stats.get("tarefas_criadas"))
+        return {"status": "processed", **stats}
+    except Exception as e:
+        logger.exception("Falha ao processar Fathom webhook")
+        return {"status": "error", "error": f"{type(e).__name__}: {e}"}
 
 
 # =============================================================================

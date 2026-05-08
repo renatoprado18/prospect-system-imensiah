@@ -176,6 +176,8 @@ app.add_middleware(
 
 # Templates
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
+from services.tz import register_jinja_filters as _register_tz_filters
+_register_tz_filters(templates.env)
 
 # Static files
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
