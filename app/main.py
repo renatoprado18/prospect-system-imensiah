@@ -16408,15 +16408,16 @@ def get_digest(
     # Enrich with live data
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT t.id, t.titulo, t.data_vencimento, p.nome as projeto FROM tasks t LEFT JOIN projects p ON p.id = t.project_id WHERE t.status = 'pending' AND t.data_vencimento < NOW() ORDER BY t.data_vencimento LIMIT 10")
+        # data_vencimento interpretado como BRT — ver convencao de timezone.
+        cursor.execute("SELECT t.id, t.titulo, t.data_vencimento, p.nome as projeto FROM tasks t LEFT JOIN projects p ON p.id = t.project_id WHERE t.status = 'pending' AND t.data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW() ORDER BY t.data_vencimento LIMIT 10")
         digest["tarefas_vencidas"] = [dict(r) for r in cursor.fetchall()]
         cursor.execute("SELECT c.id, c.nome, c.empresa, c.circulo FROM contacts c WHERE c.circulo <= 2 AND c.ultimo_contato IS NOT NULL AND c.ultimo_contato < NOW() - INTERVAL '14 days' ORDER BY c.circulo LIMIT 10")
         digest["sem_contato"] = [dict(r) for r in cursor.fetchall()]
         cursor.execute("SELECT COUNT(*) as t FROM tasks WHERE status='completed' AND data_conclusao >= NOW()-INTERVAL '7 days'")
         digest["tarefas_concluidas"] = cursor.fetchone()["t"]
-        cursor.execute("SELECT p.nome, COUNT(*) FILTER (WHERE t.status='pending' AND t.data_vencimento<NOW()) as vencidas FROM projects p LEFT JOIN tasks t ON t.project_id=p.id WHERE p.status='ativo' GROUP BY p.nome HAVING COUNT(*) FILTER (WHERE t.status='pending' AND t.data_vencimento<NOW())>0 ORDER BY vencidas DESC LIMIT 5")
+        cursor.execute("SELECT p.nome, COUNT(*) FILTER (WHERE t.status='pending' AND t.data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW()) as vencidas FROM projects p LEFT JOIN tasks t ON t.project_id=p.id WHERE p.status='ativo' GROUP BY p.nome HAVING COUNT(*) FILTER (WHERE t.status='pending' AND t.data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW())>0 ORDER BY vencidas DESC LIMIT 5")
         digest["projetos_atencao"] = [dict(r) for r in cursor.fetchall()]
-        cursor.execute("SELECT summary, start_datetime FROM calendar_events WHERE start_datetime >= CURRENT_DATE AND start_datetime < CURRENT_DATE+INTERVAL '7 days' ORDER BY start_datetime LIMIT 10")
+        cursor.execute("SELECT summary, start_datetime FROM calendar_events WHERE start_datetime >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date AND start_datetime < (NOW() AT TIME ZONE 'America/Sao_Paulo')::date + INTERVAL '7 days' ORDER BY start_datetime LIMIT 10")
         digest["agenda_proxima"] = [dict(r) for r in cursor.fetchall()]
 
     return digest
@@ -17762,7 +17763,7 @@ async def api_projects_overdue_count():
             FROM tasks t
             JOIN projects p ON p.id = t.project_id
             WHERE t.status = 'pending'
-              AND t.data_vencimento < NOW()
+              AND t.data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW()
               AND p.status = 'ativo'
               AND (t.origem IS DISTINCT FROM 'conselhoos_raci'
                    OR t.contact_id = (SELECT contact_id FROM users WHERE id = 1))
@@ -17781,14 +17782,14 @@ async def api_projects_with_attention():
                     p.id, p.nome, p.tipo, p.cor, p.icone, p.atualizado_em,
                     (SELECT COUNT(*) FROM tasks t
                        WHERE t.project_id = p.id AND t.status = 'pending'
-                         AND t.data_vencimento < NOW()
+                         AND t.data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW()
                          AND (t.origem IS DISTINCT FROM 'conselhoos_raci'
                               OR t.contact_id = (SELECT contact_id FROM users WHERE id = 1))
                     ) AS tasks_overdue,
                     (SELECT MIN(data_prevista) FROM project_milestones m
                        WHERE m.project_id = p.id AND m.status = 'pendente'
-                         AND m.data_prevista::date <= CURRENT_DATE + INTERVAL '7 days') AS proximo_marco,
-                    (CURRENT_DATE - p.atualizado_em::date)::int AS dias_sem_atualizacao
+                         AND m.data_prevista::date <= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date + INTERVAL '7 days') AS proximo_marco,
+                    ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date - p.atualizado_em::date)::int AS dias_sem_atualizacao
                 FROM projects p
                 WHERE p.status = 'ativo'
             )
@@ -20104,6 +20105,145 @@ async def api_project_editorial(project_id: int):
 
 
 # ============== EDITORIAL PDCA ==============
+
+@app.get("/api/editorial/hypotheses")
+async def list_editorial_hypotheses(status: str = None):
+    """Lista hipoteses editoriais. status='ativa' por default ('encerrada'/'abandonada' opcionais)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if status:
+            cursor.execute("""
+                SELECT * FROM editorial_hypotheses WHERE status = %s
+                ORDER BY periodo_fim ASC, criada_em DESC
+            """, (status,))
+        else:
+            cursor.execute("""
+                SELECT * FROM editorial_hypotheses
+                ORDER BY (status = 'ativa') DESC, periodo_fim ASC, criada_em DESC
+            """)
+        rows = []
+        for r in cursor.fetchall():
+            d = dict(r)
+            for k in ("criada_em", "encerrada_em"):
+                if d.get(k) and hasattr(d[k], "isoformat"):
+                    d[k] = d[k].isoformat()
+            for k in ("periodo_inicio", "periodo_fim"):
+                if d.get(k):
+                    d[k] = d[k].isoformat()
+            for k in ("baseline", "target", "valor_final"):
+                if d.get(k) is not None:
+                    d[k] = float(d[k])
+            rows.append(d)
+    return {"hypotheses": rows, "total": len(rows)}
+
+
+class HypothesisCreate(BaseModel):
+    descricao: str
+    hipotese: Optional[str] = None
+    metrica: Optional[str] = "eng_pct_avg"
+    baseline: Optional[float] = None
+    target: Optional[float] = None
+    periodo_inicio: str
+    periodo_fim: str
+
+
+@app.post("/api/editorial/hypotheses")
+async def create_editorial_hypothesis(body: HypothesisCreate):
+    """Cria hipotese editorial ativa (Plan do PDCA)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO editorial_hypotheses
+            (descricao, hipotese, metrica, baseline, target, periodo_inicio, periodo_fim, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'ativa')
+            RETURNING id
+        """, (body.descricao, body.hipotese, body.metrica, body.baseline,
+              body.target, body.periodo_inicio, body.periodo_fim))
+        row = cursor.fetchone()
+        conn.commit()
+    return {"id": row["id"], "status": "ativa"}
+
+
+class HypothesisUpdate(BaseModel):
+    status: Optional[str] = None
+    resultado: Optional[str] = None
+    valor_final: Optional[float] = None
+
+
+@app.patch("/api/editorial/hypotheses/{hyp_id}")
+async def update_editorial_hypothesis(hyp_id: int, body: HypothesisUpdate):
+    """Encerra/abandona hipotese e grava resultado (Act do PDCA)."""
+    sets, params = [], []
+    if body.status:
+        if body.status not in ("ativa", "encerrada", "abandonada"):
+            raise HTTPException(status_code=400, detail="status invalido")
+        sets.append("status = %s"); params.append(body.status)
+        if body.status in ("encerrada", "abandonada"):
+            sets.append("encerrada_em = NOW()")
+    if body.resultado is not None:
+        sets.append("resultado = %s"); params.append(body.resultado)
+    if body.valor_final is not None:
+        sets.append("valor_final = %s"); params.append(body.valor_final)
+    if not sets:
+        raise HTTPException(status_code=400, detail="nada pra atualizar")
+    params.append(hyp_id)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE editorial_hypotheses SET {', '.join(sets)} WHERE id = %s RETURNING id, status", tuple(params))
+        row = cursor.fetchone()
+        conn.commit()
+    if not row:
+        raise HTTPException(status_code=404, detail="hipotese nao encontrada")
+    return {"id": row["id"], "status": row["status"]}
+
+
+@app.get("/api/editorial/monthly-trend")
+async def editorial_monthly_trend(months: int = 6):
+    """Retorna serie mensal dos ultimos N meses (default 6) pra trend de eng%/cadencia.
+    Bucketing: ultimo mes (0-30d), penultimo (30-60d), etc."""
+    if months < 1 or months > 24:
+        months = 6
+    series = []
+    with get_db() as conn:
+        cursor = conn.cursor()
+        for i in range(months):
+            cursor.execute("""
+                WITH base AS (
+                  SELECT id,
+                    COALESCE(linkedin_impressoes, 0) AS imp,
+                    COALESCE(linkedin_reacoes, 0) + COALESCE(linkedin_comentarios, 0)
+                      + COALESCE(linkedin_compartilhamentos, 0) AS eng,
+                    CASE WHEN linkedin_impressoes > 0 THEN
+                      (COALESCE(linkedin_reacoes,0) + COALESCE(linkedin_comentarios,0)
+                       + COALESCE(linkedin_compartilhamentos,0)) * 100.0 / linkedin_impressoes
+                      ELSE NULL END AS eng_pct
+                  FROM editorial_posts
+                  WHERE status = 'published' AND data_publicado IS NOT NULL
+                    AND data_publicado >= NOW() - (INTERVAL '30 days' * %s)
+                    AND data_publicado <  NOW() - (INTERVAL '30 days' * %s)
+                )
+                SELECT COUNT(*) AS n,
+                       SUM(imp) AS imp_total,
+                       SUM(eng) AS eng_total,
+                       AVG(eng_pct) AS eng_pct_avg,
+                       COUNT(*) FILTER (WHERE eng = 0) AS zero_eng
+                FROM base
+            """, (i + 1, i))
+            r = cursor.fetchone()
+            label_end = (datetime.now() - timedelta(days=30 * i)).strftime("%d/%m")
+            label_start = (datetime.now() - timedelta(days=30 * (i + 1))).strftime("%d/%m")
+            series.append({
+                "label": f"{label_start}-{label_end}",
+                "month_offset": i + 1,
+                "n": r["n"] or 0,
+                "imp_total": int(r["imp_total"] or 0),
+                "eng_total": int(r["eng_total"] or 0),
+                "eng_pct_avg": round(float(r["eng_pct_avg"] or 0), 2),
+                "zero_eng": r["zero_eng"] or 0,
+            })
+    series.reverse()
+    return {"months": months, "series": series}
+
 
 @app.get("/api/cron/editorial-monthly-review")
 @track_cron_run
@@ -23263,37 +23403,40 @@ async def cron_daily_morning_briefing(request: Request):
             cursor = conn.cursor()
 
             # 1. Overdue tasks
-            # Strict timestamp comparison: a task with vencimento today at 09:00
-            # only counts as overdue once the clock passes 09:00. Aligns with the
-            # /dashboard "Tarefas Vencidas" statcard semantics.
+            # data_vencimento e naive timestamp interpretado como BRT (semantica
+            # do user). Comparacao tem que normalizar pra evitar skew de 3h:
+            # `data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW()` trata
+            # o naive como horario BRT antes de comparar com NOW (UTC instant).
             cursor.execute("""
                 SELECT COUNT(*) as total FROM tasks
-                WHERE status = 'pending' AND data_vencimento < NOW()
+                WHERE status = 'pending'
+                  AND data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW()
             """)
             overdue_count = cursor.fetchone()["total"]
 
-            # 2. Tasks due today
+            # 2. Tasks due today (BRT)
             cursor.execute("""
                 SELECT titulo FROM tasks
-                WHERE status = 'pending' AND data_vencimento::date = CURRENT_DATE
+                WHERE status = 'pending'
+                  AND data_vencimento::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
                 ORDER BY prioridade ASC LIMIT 5
             """)
             today_tasks = [r["titulo"] for r in cursor.fetchall()]
 
-            # 3. Calendar events today
+            # 3. Calendar events today (BRT)
             cursor.execute("""
                 SELECT summary, start_datetime FROM calendar_events
-                WHERE start_datetime::date = CURRENT_DATE
+                WHERE start_datetime::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
                 ORDER BY start_datetime
                 LIMIT 5
             """)
             events = cursor.fetchall()
 
-            # 4. Editorial posts to publish today
+            # 4. Editorial posts to publish today (BRT)
             cursor.execute("""
                 SELECT article_title, data_publicacao FROM editorial_posts
                 WHERE status IN ('scheduled', 'ready')
-                  AND data_publicacao::date = CURRENT_DATE
+                  AND data_publicacao::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
                 ORDER BY data_publicacao
             """)
             editorial_today = cursor.fetchall()
@@ -23434,18 +23577,20 @@ async def cron_daily_evening_debriefing(request: Request):
         with get_db() as conn:
             cursor = conn.cursor()
 
-            # 1. Tarefas que venceram hoje sem conclusão
+            # 1. Tarefas que venceram hoje sem conclusão (BRT)
             cursor.execute("""
                 SELECT titulo FROM tasks
-                WHERE status = 'pending' AND data_vencimento::date = CURRENT_DATE
+                WHERE status = 'pending'
+                  AND data_vencimento::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
                 ORDER BY prioridade ASC LIMIT 10
             """)
             today_overdue = [r['titulo'] for r in cursor.fetchall()]
 
-            # 2. Tarefas para amanhã
+            # 2. Tarefas para amanhã (BRT)
             cursor.execute("""
                 SELECT titulo FROM tasks
-                WHERE status = 'pending' AND data_vencimento::date = CURRENT_DATE + INTERVAL '1 day'
+                WHERE status = 'pending'
+                  AND data_vencimento::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date + INTERVAL '1 day'
                 ORDER BY prioridade ASC LIMIT 5
             """)
             tomorrow_tasks = [r['titulo'] for r in cursor.fetchall()]

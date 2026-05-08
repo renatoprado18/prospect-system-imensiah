@@ -48,9 +48,10 @@
     /* Stats Cards */
     .stats-row {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(4, 1fr);
         gap: 12px;
     }
+    @media (max-width: 1100px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
 
     .stat-card {
         background: white;
@@ -821,6 +822,84 @@
             <div class="value">{{ summary.week_total }}/{{ summary.meta_total }} publicados</div>
             <div class="sub">{{ summary.week_artigos }}/{{ summary.meta_artigos }} artigo · {{ summary.week_hot_takes }}/{{ summary.meta_hot_takes }} hot-takes</div>
         </div>
+    </div>
+
+    <!-- Card 4: Trend mensal eng% (PDCA Check) -->
+    <div class="stat-card neutral" id="trendCard" style="cursor:pointer;" title="Click pra ver detalhes">
+        <div class="icon"><i class="bi bi-graph-up"></i></div>
+        <div class="body" style="min-width:0;">
+            <div class="label">Trend mensal eng%</div>
+            <div class="value" id="trendValue" style="display:flex; align-items:center; gap:8px;">
+                <span id="trendCurrent">—</span>
+                <span id="trendDelta" style="font-size:0.75rem;"></span>
+            </div>
+            <div id="trendSpark" style="margin-top:2px;"></div>
+            <div class="sub" id="trendSubtitle">6 meses</div>
+        </div>
+    </div>
+</div>
+
+<!-- Hipoteses ativas (PDCA Plan) -->
+<div class="posts-card" id="hypothesesCard" style="margin-top: 16px; border-left: 4px solid #f59e0b; display: none;">
+    <div class="posts-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0;"><i class="bi bi-lightbulb me-2" style="color: #f59e0b;"></i>Hipoteses Ativas <span id="hypCount" style="font-size:0.8rem; color: var(--gray-500); margin-left:8px;"></span></h2>
+        <button class="btn btn-sm btn-outline-warning" onclick="openNewHypothesisModal()"><i class="bi bi-plus-lg me-1"></i>Nova</button>
+    </div>
+    <div id="hypothesesList" style="margin-top:12px; font-size:0.82rem;"></div>
+</div>
+
+<!-- Modal: Nova Hipotese -->
+<div id="hypothesisModal" class="ed-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1050; align-items:center; justify-content:center;">
+    <div style="background:white; border-radius:12px; max-width:520px; width:92%; padding:20px; box-shadow:0 10px 40px rgba(0,0,0,0.2);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+            <h3 style="margin:0; font-size:1.1rem; font-weight:700;">Nova Hipotese</h3>
+            <button onclick="closeNewHypothesisModal()" class="btn btn-sm btn-outline-secondary py-0 px-2">×</button>
+        </div>
+        <form id="hypothesisForm">
+            <div class="mb-2">
+                <label class="form-label small fw-semibold">Descricao curta *</label>
+                <input type="text" class="form-control form-control-sm" id="hyp-descricao" required
+                       placeholder="ex: Mover slot 9h pra 16h">
+            </div>
+            <div class="mb-2">
+                <label class="form-label small fw-semibold">Hipotese (o que esperamos)</label>
+                <textarea class="form-control form-control-sm" id="hyp-hipotese" rows="2"
+                          placeholder="ex: 16h aumenta eng% em pelo menos 30% vs 9h"></textarea>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-2">
+                    <label class="form-label small fw-semibold">Metrica</label>
+                    <select class="form-control form-control-sm" id="hyp-metrica">
+                        <option value="eng_pct_avg">eng% medio</option>
+                        <option value="imp_avg">imp medio</option>
+                        <option value="zero_eng_pct">% com 0 eng</option>
+                        <option value="cadencia">cadencia (posts/sem)</option>
+                    </select>
+                </div>
+                <div class="col-md-3 mb-2">
+                    <label class="form-label small fw-semibold">Baseline</label>
+                    <input type="number" step="0.01" class="form-control form-control-sm" id="hyp-baseline" placeholder="1.44">
+                </div>
+                <div class="col-md-3 mb-2">
+                    <label class="form-label small fw-semibold">Target</label>
+                    <input type="number" step="0.01" class="form-control form-control-sm" id="hyp-target" placeholder="1.87">
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-2">
+                    <label class="form-label small fw-semibold">Periodo inicio *</label>
+                    <input type="date" class="form-control form-control-sm" id="hyp-inicio" required>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <label class="form-label small fw-semibold">Periodo fim *</label>
+                    <input type="date" class="form-control form-control-sm" id="hyp-fim" required>
+                </div>
+            </div>
+            <div class="d-flex justify-content-end gap-2 mt-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="closeNewHypothesisModal()">Cancelar</button>
+                <button type="submit" class="btn btn-sm btn-warning"><i class="bi bi-check2 me-1"></i>Criar Hipotese</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -3090,5 +3169,172 @@ async function saveMetricsInputModal() {
 
 // Load pipeline on page load (Para Aprovar = pending_approval)
 loadPipeline('pending_approval');
+
+// ============== Hipoteses (PDCA Plan/Act) ==============
+async function loadHypotheses() {
+    try {
+        const resp = await fetch('/api/editorial/hypotheses?status=ativa');
+        const data = await resp.json();
+        const card = document.getElementById('hypothesesCard');
+        const list = document.getElementById('hypothesesList');
+        const count = document.getElementById('hypCount');
+        if (!data.hypotheses || data.hypotheses.length === 0) {
+            card.style.display = 'none';
+            return;
+        }
+        card.style.display = 'block';
+        count.textContent = `(${data.hypotheses.length})`;
+        const today = new Date().toISOString().slice(0,10);
+        list.innerHTML = data.hypotheses.map(h => {
+            const venc = h.periodo_fim < today;
+            const dias = Math.ceil((new Date(h.periodo_fim) - new Date(today)) / 86400000);
+            const tag = venc
+                ? `<span class="badge bg-danger" style="font-size:0.7rem;">VENCIDA</span>`
+                : `<span class="badge bg-light text-muted" style="font-size:0.7rem;">${dias}d restantes</span>`;
+            const metric = (h.baseline != null && h.target != null)
+                ? `<span class="text-muted" style="font-size:0.75rem;"> · ${h.metrica}: ${h.baseline} → ${h.target}</span>`
+                : '';
+            return `
+            <div style="padding:10px 12px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:${venc ? '#fef2f2' : '#fffbeb'};">
+                <div style="display:flex; justify-content:space-between; align-items:start; gap:8px;">
+                    <div style="flex:1;">
+                        <div><strong>#${h.id}</strong> ${h.descricao} ${tag}${metric}</div>
+                        ${h.hipotese ? `<div class="text-muted small mt-1"><em>${h.hipotese}</em></div>` : ''}
+                        <div class="text-muted" style="font-size:0.7rem; margin-top:2px;">${h.periodo_inicio} → ${h.periodo_fim}</div>
+                    </div>
+                    <div style="display:flex; gap:4px; flex-shrink:0;">
+                        <button class="btn btn-sm btn-outline-success py-0 px-2" style="font-size:0.7rem;" onclick="closeHypothesis(${h.id}, 'encerrada')" title="Encerrar (atingiu meta)">✓ Encerrar</button>
+                        <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:0.7rem;" onclick="closeHypothesis(${h.id}, 'abandonada')" title="Abandonar">✗</button>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        console.error('loadHypotheses err:', e);
+    }
+}
+
+function openNewHypothesisModal() {
+    const today = new Date().toISOString().slice(0,10);
+    const in30 = new Date(Date.now() + 30*86400000).toISOString().slice(0,10);
+    document.getElementById('hyp-inicio').value = today;
+    document.getElementById('hyp-fim').value = in30;
+    document.getElementById('hyp-descricao').value = '';
+    document.getElementById('hyp-hipotese').value = '';
+    document.getElementById('hyp-baseline').value = '';
+    document.getElementById('hyp-target').value = '';
+    const modal = document.getElementById('hypothesisModal');
+    modal.style.display = 'flex';
+}
+
+function closeNewHypothesisModal() {
+    document.getElementById('hypothesisModal').style.display = 'none';
+}
+
+document.getElementById('hypothesisForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = {
+        descricao: document.getElementById('hyp-descricao').value.trim(),
+        hipotese: document.getElementById('hyp-hipotese').value.trim() || null,
+        metrica: document.getElementById('hyp-metrica').value,
+        baseline: parseFloat(document.getElementById('hyp-baseline').value) || null,
+        target: parseFloat(document.getElementById('hyp-target').value) || null,
+        periodo_inicio: document.getElementById('hyp-inicio').value,
+        periodo_fim: document.getElementById('hyp-fim').value,
+    };
+    try {
+        const resp = await fetch('/api/editorial/hypotheses', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            alert('Erro: ' + (data.detail || 'falha'));
+            return;
+        }
+        closeNewHypothesisModal();
+        loadHypotheses();
+    } catch (e) { alert('Erro: ' + e.message); }
+});
+
+async function closeHypothesis(id, status) {
+    let resultado = null, valor_final = null;
+    if (status === 'encerrada') {
+        resultado = prompt('Resultado/aprendizado (1-2 frases):');
+        if (resultado === null) return;
+        const v = prompt('Valor final da metrica (ex: 2.10) — opcional:');
+        if (v) valor_final = parseFloat(v);
+    } else {
+        if (!confirm('Abandonar hipotese? (nao atingiu o periodo ou foi superada por outra)')) return;
+    }
+    try {
+        const resp = await fetch(`/api/editorial/hypotheses/${id}`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({status, resultado, valor_final}),
+        });
+        if (!resp.ok) {
+            const d = await resp.json();
+            alert('Erro: ' + (d.detail || 'falha'));
+            return;
+        }
+        loadHypotheses();
+    } catch (e) { alert('Erro: ' + e.message); }
+}
+
+loadHypotheses();
+
+// ============== Trend mensal eng% (PDCA Check) ==============
+async function loadMonthlyTrend() {
+    try {
+        const resp = await fetch('/api/editorial/monthly-trend?months=6');
+        const data = await resp.json();
+        const series = data.series || [];
+        if (series.length === 0) return;
+        const latest = series[series.length - 1];
+        const prev = series.length >= 2 ? series[series.length - 2] : null;
+        document.getElementById('trendCurrent').textContent = `${latest.eng_pct_avg}%`;
+        if (prev && prev.eng_pct_avg > 0) {
+            const delta = latest.eng_pct_avg - prev.eng_pct_avg;
+            const sign = delta >= 0 ? '+' : '';
+            const color = delta >= 0 ? '#10b981' : '#dc2626';
+            document.getElementById('trendDelta').innerHTML =
+                `<span style="color:${color};">${sign}${delta.toFixed(2)}pp</span>`;
+        }
+        document.getElementById('trendSubtitle').textContent =
+            `${latest.n} posts | ${series.length} meses`;
+        // Sparkline SVG
+        const W = 140, H = 28, P = 2;
+        const vals = series.map(s => s.eng_pct_avg);
+        const max = Math.max(...vals, 0.1);
+        const min = Math.min(...vals, 0);
+        const range = Math.max(max - min, 0.1);
+        const stepX = (W - 2*P) / Math.max(series.length - 1, 1);
+        const pts = series.map((s, i) => {
+            const x = P + i * stepX;
+            const y = H - P - ((s.eng_pct_avg - min) / range) * (H - 2*P);
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(' ');
+        const lastX = P + (series.length - 1) * stepX;
+        const lastY = H - P - ((latest.eng_pct_avg - min) / range) * (H - 2*P);
+        document.getElementById('trendSpark').innerHTML =
+            `<svg width="${W}" height="${H}" style="overflow:visible;">
+                <polyline points="${pts}" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linejoin="round"/>
+                <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.5" fill="#6366f1"/>
+            </svg>`;
+    } catch (e) { console.error('loadMonthlyTrend err:', e); }
+}
+
+document.getElementById('trendCard').addEventListener('click', async () => {
+    const resp = await fetch('/api/editorial/monthly-trend?months=6');
+    const data = await resp.json();
+    const lines = (data.series || []).map(s =>
+        `${s.label}: ${s.n} posts | eng% ${s.eng_pct_avg}% | ${s.imp_total} imp | zero eng ${s.zero_eng}`
+    ).join('\n');
+    alert('Trend 6 meses:\n\n' + lines);
+});
+
+loadMonthlyTrend();
 </script>
 {% endblock %}

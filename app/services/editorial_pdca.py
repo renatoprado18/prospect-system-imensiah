@@ -608,6 +608,33 @@ async def generate_monthly_review() -> Dict:
         for t in current["bottom_zero_titles"]:
             note_md += f"- {t}\n"
 
+    # Hipoteses ativas — Plan/Act do PDCA
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, descricao, hipotese, metrica, baseline, target,
+                   periodo_inicio, periodo_fim,
+                   (CURRENT_DATE > periodo_fim) AS vencida
+            FROM editorial_hypotheses
+            WHERE status = 'ativa'
+            ORDER BY periodo_fim ASC
+        """)
+        hyps = [dict(r) for r in cursor.fetchall()]
+
+    if hyps:
+        note_md += "\n## Hipoteses ativas\n"
+        for h in hyps:
+            base_target = ""
+            if h.get("baseline") is not None and h.get("target") is not None:
+                base_target = f" (baseline {h['baseline']} → target {h['target']} em {h['metrica']})"
+            venc = " — **VENCIDA, encerrar**" if h.get("vencida") else ""
+            note_md += f"- **#{h['id']}** {h['descricao']}{base_target}{venc}\n"
+            if h.get("hipotese"):
+                note_md += f"  _Hipotese:_ {h['hipotese']}\n"
+            note_md += f"  Periodo: {h['periodo_inicio']} → {h['periodo_fim']}\n"
+    else:
+        note_md += "\n## Hipoteses ativas\nNenhuma. Defina 1-3 pra testar este mes (POST /api/editorial/hypotheses).\n"
+
     note_md += "\n## Acoes\n- [ ] Revisar analise + decidir 2-3 hipoteses pra testar\n- [ ] Encerrar hipoteses ativas que terminaram o periodo\n- [ ] Atualizar slot/dow/categoria no auto-publisher se justificado\n"
 
     with get_db() as conn:

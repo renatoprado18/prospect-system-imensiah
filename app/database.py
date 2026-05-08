@@ -486,6 +486,29 @@ def init_db():
             ADD COLUMN IF NOT EXISTS dossie_linkedin_em TIMESTAMP
         ''')
 
+        # Editorial hypotheses — registro PDCA de experimentos editoriais
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS editorial_hypotheses (
+                id SERIAL PRIMARY KEY,
+                descricao TEXT NOT NULL,
+                hipotese TEXT,
+                metrica TEXT DEFAULT 'eng_pct_avg',
+                baseline NUMERIC,
+                target NUMERIC,
+                periodo_inicio DATE NOT NULL,
+                periodo_fim DATE NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ativa',
+                resultado TEXT,
+                valor_final NUMERIC,
+                criada_em TIMESTAMPTZ DEFAULT NOW(),
+                encerrada_em TIMESTAMPTZ
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_editorial_hyp_status
+            ON editorial_hypotheses(status, periodo_fim)
+        ''')
+
         # Indices para Circulos
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_contacts_circulo
