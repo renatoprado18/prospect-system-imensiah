@@ -113,6 +113,9 @@ Estado em **2026-05-02**. Baseado em [audit do código](../app/services/) + cron
 | `smart_triggers.run_automations` (manual/scheduled) | Auto | ❌ | Cria sugestões/tasks. |
 | `drive-webhook` Google Drive push | Auto | ❌ | Indexa novos docs. |
 | `fathom-webhook` (criação automática de project/tasks) | **Auto** | ❌ | Cria projeto + tarefas a partir de reunião. **Phase 3 candidato.** |
+| `agent_intents.detect_and_open` (P6 Diligente Fase 1, em cada msg do bot) | Auto | ❌ | Abre intent persistente quando write executa OU user pede ação em massa OU bot admite falta de tool. Sem efeito externo (só persiste linha). |
+| `agent_intents.tick` (P6 Diligente Fase 2 — futuro, cron 30min) | Auto | ✅ obrigatório | Bot tenta progredir intents abertos sozinho. Logar com `entity_id=intent.id`. |
+| `agent_intents.escalate_blocked` (P6 Diligente Fase 2 — futuro) | Notifica | ✅ | Bot reporta via WhatsApp o que travou (depois de N tentativas). |
 
 ---
 
