@@ -18313,7 +18313,7 @@ async def api_contact_attention_context(contact_id: int):
                         "color": color,
                         "content": trow["titulo"] or "(sem titulo)",
                         "due": venc_date.isoformat() if venc_date else None,
-                        "action": {"type": "open_task", "task_id": trow["id"]},
+                        "action": {"type": "open_task", "task_id": trow["id"], "project_id": trow.get("project_id")},
                         "_sort": (0 if (dias is not None and dias < 0) else 1, dias if dias is not None else 9999),
                     })
             except Exception as e:

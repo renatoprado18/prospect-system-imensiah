@@ -7093,7 +7093,13 @@
             if (!action || !action.type) return;
             switch (action.type) {
                 case 'open_task':
-                    // tasksContainer fica no tab Resumo
+                    // Tarefa com projeto: navega pra pagina do projeto e abre modal de edit
+                    // (deep-link via ?task=ID, projeto chama editTask apos carregar dados).
+                    // Sem projeto: cai pro fallback de scroll/highlight no tab Resumo.
+                    if (action.project_id && action.task_id) {
+                        window.location.href = `/projetos/${action.project_id}?task=${action.task_id}`;
+                        break;
+                    }
                     if (typeof switchTab === 'function') {
                         switchTab('resumo');
                     }

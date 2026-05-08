@@ -679,6 +679,14 @@
             loadWaGroups();
             // Load AI briefing in parallel (non-blocking)
             loadBriefing();
+
+            // Deep-link ?task=ID — abre modal de edit pra tarefa especifica
+            // (usado pelo card "Abrir tarefa" do attention-context em /contatos/{id}).
+            const taskParam = new URLSearchParams(window.location.search).get('task');
+            if (taskParam) {
+                const tid = parseInt(taskParam, 10);
+                if (!isNaN(tid)) editTask(tid);
+            }
         } catch (error) {
             console.error('Error:', error);
             document.getElementById('projectContainer').innerHTML = `
