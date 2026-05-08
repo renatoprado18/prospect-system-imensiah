@@ -96,6 +96,42 @@ SELECT id, tipo, conteudo, criado_em FROM system_feedback WHERE status = 'pendin
 ```
 Se houver feedback pendente, informar ao usuário e priorizar na sessão.
 
+## Timezone — Convenção (07/05/2026)
+
+**Regra única:** UTC tz-aware no Python e DB. Conversão pra BRT só na borda de apresentação (template Jinja, response JSON pra UI).
+
+**Helpers em `app/services/tz.py`** — sempre prefira em vez do stdlib direto:
+```python
+from services.tz import now_utc, to_brt, format_brt, parse_iso, UTC, BRT
+
+ts = now_utc()                  # ✅ tz-aware UTC
+label = format_brt(ts)          # ✅ "07/05/2026 21:14" pra UI
+ts_brt = to_brt(some_db_ts)     # ✅ converte naive→aware→BRT
+```
+
+**❌ Não use:**
+- `datetime.utcnow()` — naive, deprecated em Python 3.12+
+- `datetime.now()` sem `tz=` — naive em timezone local do server (zoado em Vercel)
+- `.strftime()` em datetime naive sem antes converter
+
+**Templates Jinja:** filtros `|brt` e `|iso` já registrados em `main.py:178`.
+```jinja
+{{ ts|brt }}              {# 07/05/2026 21:14 #}
+{{ ts|brt("%H:%M") }}     {# 21:14 #}
+{{ ts|iso }}              {# 2026-05-07T21:14:00Z (atributo <time>) #}
+```
+
+**SQL com timezone:** colunas atuais são `TIMESTAMP` (sem TZ, naive). Pra exibir BRT em queries de admin, use:
+```sql
+(started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::timestamp AS brt
+```
+
+Migrar pra `TIMESTAMPTZ` é backlog (alta migração, baixo ROI imediato — helpers Python já cobrem 95%).
+
+**Frontend JS:** APIs retornam ISO-8601 com `Z` (UTC). Use `new Date(iso).toLocaleString('pt-BR', {timeZone: 'America/Sao_Paulo'})` ou helper único quando padronizado.
+
+**Quando tocar código com TZ errada (utcnow/now naive)**, corrija drive-by se for trivial — não precisa do contexto inteiro pra trocar 1 linha.
+
 ## Antes de Implementar Qualquer Feature
 
 **OBRIGATORIO**: Consulte `docs/FEATURES.md` antes de criar qualquer funcionalidade nova.
