@@ -223,7 +223,7 @@ class NotificationService:
                 SELECT COUNT(*) as count FROM tasks
                 WHERE status = 'pending'
                 AND data_vencimento IS NOT NULL
-                AND data_vencimento < NOW()
+                AND data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW()
             """)
             counts["tasks_due"] = cursor.fetchone()["count"]
 

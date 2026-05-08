@@ -3194,7 +3194,8 @@
                 if (!resp.ok) throw new Error('fail');
                 const data = await resp.json();
                 const avulsas = (data.tasks || []).filter(t => !t.project_name);
-                const today = new Date().toISOString().split('T')[0];
+                // BRT today (en-CA locale = YYYY-MM-DD). UTC-based seria errado pos 21h BRT.
+                const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
                 const vencidasN = avulsas.filter(t => t.data_vencimento && t.data_vencimento.split('T')[0] < today).length;
                 const futurasN = avulsas.length - vencidasN;
                 // Statcard mostra apenas vencidas (acoes urgentes); 0 vencidas = idle

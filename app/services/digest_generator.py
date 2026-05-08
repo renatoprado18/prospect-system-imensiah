@@ -193,7 +193,7 @@ class DigestGeneratorService:
                 FROM tasks t
                 LEFT JOIN projects p ON p.id = t.project_id
                 LEFT JOIN contacts c ON c.id = t.contact_id
-                WHERE t.status = 'pending' AND t.data_vencimento < NOW()
+                WHERE t.status = 'pending' AND t.data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW()
                 ORDER BY t.data_vencimento ASC LIMIT 10
             """)
             digest["tarefas_vencidas"] = [dict(r) for r in cursor.fetchall()]
@@ -201,12 +201,12 @@ class DigestGeneratorService:
             # 3. Projetos com status critico/atencao
             cursor.execute("""
                 SELECT p.id, p.nome, p.tipo,
-                    COUNT(*) FILTER (WHERE t.status = 'pending' AND t.data_vencimento < NOW()) as vencidas
+                    COUNT(*) FILTER (WHERE t.status = 'pending' AND t.data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW()) as vencidas
                 FROM projects p
                 LEFT JOIN tasks t ON t.project_id = p.id
                 WHERE p.status = 'ativo'
                 GROUP BY p.id, p.nome, p.tipo
-                HAVING COUNT(*) FILTER (WHERE t.status = 'pending' AND t.data_vencimento < NOW()) > 0
+                HAVING COUNT(*) FILTER (WHERE t.status = 'pending' AND t.data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW()) > 0
                 ORDER BY vencidas DESC LIMIT 5
             """)
             digest["projetos_atencao"] = [dict(r) for r in cursor.fetchall()]

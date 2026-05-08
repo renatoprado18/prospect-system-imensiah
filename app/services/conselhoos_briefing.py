@@ -297,7 +297,7 @@ def _collect_intel_project_data(empresa_nome: str) -> Dict:
                 LEFT JOIN contacts c ON c.id = t.contact_id
                 WHERE t.project_id = %s
                   AND t.status NOT IN ('completed', 'cancelled')
-                  AND t.data_vencimento < NOW()
+                  AND t.data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW()
                 ORDER BY t.data_vencimento ASC
                 LIMIT 10
             """, (project_id,))

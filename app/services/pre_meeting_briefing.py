@@ -119,7 +119,7 @@ async def _generate_meeting_briefing(meeting: Dict, cursor) -> Optional[str]:
         cursor.execute("""
             SELECT t.titulo, t.data_vencimento, c.nome as responsavel
             FROM tasks t LEFT JOIN contacts c ON c.id = t.contact_id
-            WHERE t.project_id = %s AND t.status = 'pending' AND t.data_vencimento < NOW()
+            WHERE t.project_id = %s AND t.status = 'pending' AND t.data_vencimento AT TIME ZONE 'America/Sao_Paulo' < NOW()
             ORDER BY t.data_vencimento LIMIT 5
         """, (project['id'],))
         overdue = [dict(r) for r in cursor.fetchall()]
