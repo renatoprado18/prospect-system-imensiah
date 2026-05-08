@@ -219,7 +219,12 @@ def get_timeline_manutencao(veiculo_id: int) -> Dict:
         primeiro_km_item = min(kms_executados) if kms_executados else None
 
         linha = {}
-        ultimo_km_feito = None
+        # ultimo_km_feito = ultima manutencao real do item, independente de
+        # bater em marco do plano. Bug anterior: setava so quando km_exec
+        # batia em km_col dentro tolerancia 20%, descartando manutencao em
+        # 208.965 (off de 210k por 1.035km > 1.000 de tolerancia) e caindo
+        # pra registro antigo de 2020 -> 'precisam_revisao' marcava 48k atrasado.
+        ultimo_km_feito = max(kms_executados) if kms_executados else None
 
         for km_col in intervalos:
             # Verifica se este item deveria ser feito neste km
@@ -242,7 +247,9 @@ def get_timeline_manutencao(veiculo_id: int) -> Dict:
                     if abs(km_exec - km_col) <= tolerancia:
                         feito = True
                         km_execucao = km_exec
-                        ultimo_km_feito = km_exec
+                        # NAO sobrescrever ultimo_km_feito aqui (ja setado como
+                        # max(kms_executados) antes do loop). Sobrescrever quebra
+                        # quando manutencao real esta fora da tolerancia do marco.
                         # Busca data
                         for h in hist_item:
                             if h['km_execucao'] == km_exec:
