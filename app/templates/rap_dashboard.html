@@ -2393,6 +2393,30 @@
             banner.style.display = allIdle ? 'block' : 'none';
         }
 
+        // Helpers de evento de calendar — usados em statcard + drill pra
+        // garantir que count e lista mostrem o mesmo subconjunto.
+        function _eventEndDate(e) {
+            // Aceita formatos variados: e.end_datetime (string ISO),
+            // e.end.dateTime, e.end.date (all-day, exclusive).
+            const end = e.end_datetime || (e.end && (e.end.dateTime || e.end.date)) || null;
+            if (!end) return null;
+            const d = new Date(end);
+            return isNaN(d.getTime()) ? null : d;
+        }
+        function _isUpcomingOrOngoing(e) {
+            const end = _eventEndDate(e);
+            if (!end) return true;  // sem end, deixa passar
+            return end >= new Date();
+        }
+        function _isReuniaoTitle(e) {
+            const t = (e.summary || e.title || '').toLowerCase();
+            return !t.includes('aniversario') && !t.includes('aniversário') && !t.includes('birthday')
+                && !t.startsWith('[foco]') && !t.includes('cama') && !t.includes('dormir');
+        }
+        function isReuniaoCard(e) {
+            return _isReuniaoTitle(e) && _isUpcomingOrOngoing(e);
+        }
+
         // Load all critical data in parallel once
         async function loadAllData() {
             if (dataCache.loaded) return;
@@ -2421,14 +2445,10 @@
                 await loadAllData();
                 const data = dataCache.dashboard || {};
 
-                // Reunioes hoje (from calendar data)
+                // Reunioes hoje (from calendar data) — apenas futuras ou em andamento
                 const calData = dataCache.calendar || [];
                 const eventosHoje = Array.isArray(calData) ? calData : [];
-                const reunioesCount = eventosHoje.filter(e => {
-                    const t = (e.summary || e.title || '').toLowerCase();
-                    return !t.includes('aniversario') && !t.includes('aniversário') && !t.includes('birthday')
-                        && !t.startsWith('[foco]') && !t.includes('cama') && !t.includes('dormir');
-                }).length;
+                const reunioesCount = eventosHoje.filter(e => isReuniaoCard(e)).length;
                 document.getElementById('statReunioes').textContent = reunioesCount;
 
                 // Projetos com atencao (mesmo endpoint do drill — atencao + proximos)
@@ -4934,14 +4954,10 @@
                 endpoint: () => '/api/calendar/today',
                 extract: (d) => {
                     const events = Array.isArray(d) ? d : (d.events || []);
-                    return events.filter(e => {
-                        const t = (e.summary || e.title || '').toLowerCase();
-                        return !t.includes('aniversario') && !t.includes('aniversário') && !t.includes('birthday')
-                            && !t.startsWith('[foco]') && !t.includes('cama') && !t.includes('dormir');
-                    });
+                    return events.filter(isReuniaoCard);
                 },
                 emptyIcon: 'bi-calendar-check',
-                emptyText: 'Nenhum compromisso para hoje',
+                emptyText: 'Sem compromissos restantes hoje',
                 renderItem: (e) => {
                     const start = e.start_datetime || (e.start && (e.start.dateTime || e.start.date)) || e.time || e.start_time || '';
                     let time = '';
