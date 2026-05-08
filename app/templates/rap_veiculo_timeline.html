@@ -130,8 +130,9 @@
     .legend-box.missed { background: #ef4444; }
     .legend-box.pending { background: #f59e0b; }
     .legend-box.future { background: #e2e8f0; border: 2px dashed #cbd5e1; }
-    .legend-box.no-data { background: #94a3b8; }
+    .legend-box.no-data { background: transparent; border: 1px dotted #cbd5e1; }
     .legend-box.na { background: #f8fafc; border: 1px solid #e2e8f0; }
+    .legend-box.agora { background: #fee2e2; border: 2px solid #ef4444; }
 
     /* Tabela matriz */
     .matrix-wrapper {
@@ -157,13 +158,14 @@
     /* Header row (km intervals) */
     .matrix-table thead th {
         background: #f8fafc;
-        padding: 0.5rem 0.25rem;
+        padding: 0.6rem 0.3rem;
         font-weight: 600;
         color: #475569;
         position: sticky;
         top: 0;
         z-index: 10;
-        min-width: 55px;
+        min-width: 64px;
+        font-size: 0.78rem;
     }
 
     .matrix-table thead th.corner {
@@ -171,7 +173,7 @@
         left: 0;
         z-index: 20;
         background: #f1f5f9;
-        min-width: 180px;
+        min-width: 220px;
         text-align: left;
         padding-left: 1rem;
     }
@@ -182,59 +184,77 @@
         border-bottom: 3px solid #3b82f6;
     }
 
-    /* Categoria header */
+    /* Categoria header — mais marcante, com cor por categoria */
     .matrix-table .categoria-row td {
-        background: #f1f5f9;
+        background: #eef2ff;
         font-weight: 700;
         text-align: left;
-        padding: 0.75rem 1rem;
-        color: #1e293b;
+        padding: 0.85rem 1rem;
+        color: #312e81;
         position: sticky;
         left: 0;
+        font-size: 0.95rem;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        border-top: 2px solid #c7d2fe;
+        border-bottom: 2px solid #c7d2fe;
+    }
+
+    /* Zebra rows pra leitura mais facil */
+    .matrix-table tbody tr[data-item-id]:nth-child(odd) td.item-name {
+        background: #fafbfc;
+    }
+    .matrix-table tbody tr[data-item-id]:nth-child(odd) td.cell:not(.km-atual-col) {
+        background: #fafbfc;
+    }
+    .matrix-table tbody tr[data-item-id]:hover td {
+        background: #fefce8 !important;
     }
 
     /* Item row */
     .matrix-table tbody td.item-name {
         text-align: left;
-        padding: 0.5rem 1rem;
+        padding: 0.6rem 1rem;
         font-weight: 500;
-        color: #334155;
+        color: #1e293b;
         background: white;
         position: sticky;
         left: 0;
         z-index: 5;
-        min-width: 180px;
-        max-width: 200px;
+        min-width: 220px;
+        max-width: 260px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        font-size: 0.88rem;
     }
 
     .matrix-table tbody td.item-name:hover {
         white-space: normal;
         overflow: visible;
-        background: #fefce8;
+        background: #fefce8 !important;
         z-index: 15;
     }
 
-    /* Celulas de status */
+    /* Celulas de status — maiores e mais legiveis */
     .matrix-table td.cell {
-        padding: 0.25rem;
-        min-width: 55px;
-        height: 36px;
+        padding: 0.3rem;
+        min-width: 64px;
+        height: 44px;
     }
 
     .cell-content {
-        width: 28px;
-        height: 28px;
-        border-radius: 6px;
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
         display: flex;
         align-items: center;
         justify-content: center;
         margin: 0 auto;
-        font-size: 0.75rem;
+        font-size: 0.95rem;
         cursor: pointer;
         transition: transform 0.15s;
+        font-weight: 600;
     }
 
     .cell-content:hover {
@@ -262,9 +282,12 @@
         border: 1px dashed #cbd5e1;
     }
 
+    /* no-data: bem discreto, so um traco — antes era cinza chamativo com "?" */
     .cell-content.no-data {
-        background: #94a3b8;
-        color: white;
+        background: transparent;
+        color: #cbd5e1;
+        border: 1px dotted #e2e8f0;
+        font-size: 0.7rem;
     }
 
     .cell-content.na {
@@ -272,12 +295,57 @@
         color: #e2e8f0;
     }
 
-    /* Coluna do km atual */
+    /* Coluna do km atual (marco mais proximo do passado) */
     .matrix-table td.km-atual-col {
         background: rgba(59, 130, 246, 0.05);
         border-left: 2px solid #3b82f6;
         border-right: 2px solid #3b82f6;
     }
+
+    /* Coluna AGORA (km exato do veiculo, entre marcos) */
+    .matrix-table th.col-agora,
+    .matrix-table td.col-agora {
+        background: #fee2e2;
+        border-left: 2px solid #ef4444;
+        border-right: 2px solid #ef4444;
+        min-width: 70px;
+        position: relative;
+    }
+    .matrix-table th.col-agora {
+        color: #991b1b;
+        font-weight: 700;
+    }
+    .matrix-table th.col-agora::after {
+        content: 'AGORA';
+        display: block;
+        font-size: 0.65rem;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        margin-top: 2px;
+    }
+
+    /* Janela default: oculta colunas fora do range */
+    .matrix-table th.col-hidden,
+    .matrix-table td.col-hidden {
+        display: none;
+    }
+
+    /* Toggle button */
+    .window-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.45rem 0.9rem;
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        color: #475569;
+        cursor: pointer;
+        font-size: 0.85rem;
+        margin-left: auto;
+    }
+    .window-toggle:hover { border-color: #6366f1; color: #6366f1; }
+    .window-toggle.expanded { background: #eef2ff; border-color: #6366f1; color: #4338ca; }
 
     /* Tooltip */
     .cell-tooltip {
@@ -678,6 +746,10 @@
     {% for categoria in timeline.categorias.keys() %}
     <button class="filter-btn" data-filter="{{ categoria }}">{{ categoria }}</button>
     {% endfor %}
+    <button class="window-toggle" id="windowToggle" data-mode="janela">
+        <i class="bi bi-arrows-angle-expand"></i>
+        <span>Ver historico completo</span>
+    </button>
 </div>
 
 <div class="legend">
@@ -704,6 +776,10 @@
     <div class="legend-item">
         <div class="legend-box na"></div>
         <span>Nao aplicavel</span>
+    </div>
+    <div class="legend-item">
+        <div class="legend-box agora"></div>
+        <span>KM atual</span>
     </div>
 </div>
 
@@ -745,12 +821,20 @@
 <!-- Matriz -->
 <div class="timeline-container">
     <div class="matrix-wrapper">
-        <table class="matrix-table" id="matrixTable">
+        {# Determina a coluna AGORA: o primeiro marco >= km_atual #}
+        {% set agora_inserida = namespace(done=false) %}
+        <table class="matrix-table" id="matrixTable" data-km-atual="{{ timeline.km_atual }}">
             <thead>
                 <tr>
                     <th class="corner">Item de Manutencao</th>
                     {% for km in timeline.intervalos %}
-                    <th class="{% if km <= timeline.km_atual and km > timeline.km_atual - timeline.intervalo_base %}km-atual{% endif %}">
+                    {% if not agora_inserida.done and km > timeline.km_atual %}
+                    <th class="col-agora" title="KM atual: {{ '{:,}'.format(timeline.km_atual).replace(',', '.') }}">
+                        {{ "{:,}".format(timeline.km_atual).replace(",", ".") }}
+                    </th>
+                    {% set agora_inserida.done = true %}
+                    {% endif %}
+                    <th class="col-km{% if km <= timeline.km_atual and km > timeline.km_atual - timeline.intervalo_base %} km-atual{% endif %}" data-km="{{ km }}">
                         {{ "{:,}".format(km).replace(",", ".") }}
                     </th>
                     {% endfor %}
@@ -760,12 +844,13 @@
                 {% for categoria, itens in timeline.categorias.items() %}
                 <!-- Categoria header -->
                 <tr class="categoria-row" data-categoria="{{ categoria }}">
-                    <td colspan="{{ timeline.intervalos|length + 1 }}">
+                    <td colspan="{{ timeline.intervalos|length + 2 }}">
                         <i class="bi bi-folder"></i> {{ categoria }}
                     </td>
                 </tr>
                 <!-- Itens da categoria -->
                 {% for item in itens %}
+                {% set agora_row = namespace(done=false) %}
                 <tr data-categoria="{{ categoria }}" data-item-id="{{ item.id }}" class="{% if item.id in timeline.itens_na_os %}in-os{% endif %}">
                     <td class="item-name" title="{{ item.item }}">
                         {{ item.item }}
@@ -776,8 +861,12 @@
                         {% endif %}
                     </td>
                     {% for km in timeline.intervalos %}
+                    {% if not agora_row.done and km > timeline.km_atual %}
+                    <td class="cell col-agora"></td>
+                    {% set agora_row.done = true %}
+                    {% endif %}
                     {% set cell = timeline.matriz.get(item.id, {}).get(km, {'status': 'na', 'class': 'na'}) %}
-                    <td class="cell {% if km <= timeline.km_atual and km > timeline.km_atual - timeline.intervalo_base %}km-atual-col{% endif %}">
+                    <td class="cell col-km{% if km <= timeline.km_atual and km > timeline.km_atual - timeline.intervalo_base %} km-atual-col{% endif %}" data-km="{{ km }}">
                         <div class="cell-content {{ cell.class }}"
                              data-item-id="{{ item.id }}"
                              data-km="{{ km }}"
@@ -785,17 +874,15 @@
                              {% if cell.km_execucao %}data-km-exec="{{ cell.km_execucao }}"{% endif %}
                              {% if cell.data %}data-data="{{ cell.data }}"{% endif %}>
                             {% if cell.status == 'done' %}
-                            <i class="bi bi-check"></i>
+                            <i class="bi bi-check-lg"></i>
                             {% elif cell.status == 'missed' %}
-                            <i class="bi bi-x"></i>
+                            <i class="bi bi-x-lg"></i>
                             {% elif cell.status == 'pending' %}
                             <i class="bi bi-exclamation"></i>
                             {% elif cell.status == 'future' %}
                             <i class="bi bi-clock"></i>
-                            {% elif cell.status == 'no_data' %}
-                            <i class="bi bi-question"></i>
-                            {% else %}
-                            -
+                            {% elif cell.status == 'no_data' %}{# vazio: marcador discreto via CSS #}
+                            {% else %}{# na: vazio #}
                             {% endif %}
                         </div>
                     </td>
@@ -877,11 +964,46 @@ document.querySelectorAll('.cell-content').forEach(cell => {
     });
 });
 
-// Scroll para km atual
+// Toggle janela (default = ±50k/+30k do km atual) vs historico completo
+const matrixEl = document.getElementById('matrixTable');
+const kmAtual = parseInt(matrixEl.dataset.kmAtual, 10) || 0;
+const JANELA_PASSADO = 50000;
+const JANELA_FUTURO = 30000;
+
+function applyWindow(mode) {
+    const min = kmAtual - JANELA_PASSADO;
+    const max = kmAtual + JANELA_FUTURO;
+    document.querySelectorAll('#matrixTable .col-km').forEach(el => {
+        const km = parseInt(el.dataset.km, 10);
+        const hidden = mode === 'janela' && (km < min || km > max);
+        el.classList.toggle('col-hidden', hidden);
+    });
+}
+
+const toggleBtn = document.getElementById('windowToggle');
+toggleBtn.addEventListener('click', () => {
+    const next = toggleBtn.dataset.mode === 'janela' ? 'completo' : 'janela';
+    toggleBtn.dataset.mode = next;
+    if (next === 'completo') {
+        toggleBtn.classList.add('expanded');
+        toggleBtn.querySelector('span').textContent = 'Mostrar so janela atual';
+        toggleBtn.querySelector('i').className = 'bi bi-arrows-angle-contract';
+    } else {
+        toggleBtn.classList.remove('expanded');
+        toggleBtn.querySelector('span').textContent = 'Ver historico completo';
+        toggleBtn.querySelector('i').className = 'bi bi-arrows-angle-expand';
+    }
+    applyWindow(next);
+});
+
+// Inicia em modo janela
+applyWindow('janela');
+
+// Scroll para coluna AGORA (ou km-atual fallback)
 document.addEventListener('DOMContentLoaded', () => {
-    const kmAtualCol = document.querySelector('th.km-atual');
-    if (kmAtualCol) {
-        kmAtualCol.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    const target = document.querySelector('th.col-agora') || document.querySelector('th.km-atual');
+    if (target) {
+        target.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     }
 });
 </script>
