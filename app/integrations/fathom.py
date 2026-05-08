@@ -710,25 +710,81 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
             )
             matched_contacts = [dict(r) for r in cur.fetchall()]
 
+    matched_emails_lower = set(emails_to_match)
+    matched_contact_emails: set = set()  # placeholder; nao usamos pra unmatched, usamos attendees direto
+
+    # Lista atendees externos sem match (pra UI/feedback)
+    unmatched_attendees: List[str] = []
+    if matched_contacts:
+        # Constroi set de emails que matched (revertendo via query)
+        with get_db() as conn:
+            cur = conn.cursor()
+            ids = [c["id"] for c in matched_contacts]
+            cur.execute(
+                """
+                SELECT LOWER(
+                    CASE
+                      WHEN jsonb_typeof(ce) = 'object' THEN ce->>'email'
+                      WHEN jsonb_typeof(ce) = 'string' THEN ce#>>'{}'
+                      ELSE NULL
+                    END
+                ) AS em
+                FROM contacts c, jsonb_array_elements(COALESCE(c.emails, '[]'::jsonb)) ce
+                WHERE c.id = ANY(%s)
+                """,
+                (ids,),
+            )
+            matched_contact_emails = {r["em"] for r in cur.fetchall() if r.get("em")}
+    for att in attendees:
+        if att.get("is_external") is False:
+            continue
+        em = (att.get("email") or "").lower().strip()
+        if em and em not in matched_contact_emails:
+            unmatched_attendees.append(em)
+    unmatched_attendees = unmatched_attendees[:10]
+
     memorias_criadas: List[Dict] = []
+    skipped_memorias = 0
     if matched_contacts:
         outros_nomes = [c["nome"] for c in matched_contacts]
         with get_db() as conn:
             cur = conn.cursor()
             for c in matched_contacts:
+                # Dedup: ja existe memoria pra esse contato + recording_id?
+                if rec_id is not None:
+                    cur.execute(
+                        """
+                        SELECT id FROM contact_memories
+                        WHERE contact_id = %s AND source_table = 'fathom' AND source_id = %s
+                        LIMIT 1
+                        """,
+                        (c["id"], rec_id),
+                    )
+                    existing = cur.fetchone()
+                    if existing:
+                        memorias_criadas.append({
+                            "contact_id": c["id"],
+                            "nome": c["nome"],
+                            "memoria_id": existing["id"],
+                            "skipped": True,
+                        })
+                        skipped_memorias += 1
+                        continue
+
                 outros = [n for n in outros_nomes if n != c["nome"]]
                 outros_str = ", ".join(outros) if outros else "Renato"
                 resumo_curto = (summary_md[:600] + "...") if len(summary_md) > 600 else summary_md
                 cur.execute(
                     """
                     INSERT INTO contact_memories
-                      (contact_id, tipo, source_table, titulo, resumo,
+                      (contact_id, tipo, source_table, source_id, titulo, resumo,
                        conteudo_completo, data_ocorrencia, criado_em)
-                    VALUES (%s, 'reuniao', 'fathom', %s, %s, %s, %s, NOW())
+                    VALUES (%s, 'reuniao', 'fathom', %s, %s, %s, %s, %s, NOW())
                     RETURNING id
                     """,
                     (
                         c["id"],
+                        rec_id,
                         f"{title} (com {outros_str})",
                         resumo_curto or f"Reuniao Fathom em {date_iso}",
                         f"{summary_md}\n\n---\nGravacao Fathom: {share_url}",
@@ -740,6 +796,7 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
             conn.commit()
 
     tarefas_criadas: List[Dict] = []
+    skipped_tarefas = 0
     primeiro_contact_id = matched_contacts[0]["id"] if matched_contacts else None
     if action_items:
         with get_db() as conn:
@@ -749,6 +806,28 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
                 playback = ai.get("recording_playback_url") or ""
                 if not desc:
                     continue
+                titulo_short = desc[:200]
+
+                # Dedup: ja existe task pra esse recording_id + titulo?
+                if rec_id is not None:
+                    cur.execute(
+                        """
+                        SELECT id FROM tasks
+                        WHERE source_table = 'fathom' AND source_id = %s AND titulo = %s
+                        LIMIT 1
+                        """,
+                        (rec_id, titulo_short),
+                    )
+                    existing = cur.fetchone()
+                    if existing:
+                        tarefas_criadas.append({
+                            "task_id": existing["id"],
+                            "titulo": desc[:80],
+                            "skipped": True,
+                        })
+                        skipped_tarefas += 1
+                        continue
+
                 full_desc = desc
                 if playback:
                     full_desc += f"\n\nMomento na gravacao: {playback}"
@@ -756,11 +835,12 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
                 cur.execute(
                     """
                     INSERT INTO tasks (titulo, descricao, status, project_id, contact_id,
-                                       prioridade, ai_generated, origem, data_criacao)
-                    VALUES (%s, %s, 'pending', %s, %s, 7, true, 'reuniao_fathom', NOW())
+                                       prioridade, ai_generated, origem, source_table, source_id,
+                                       data_criacao)
+                    VALUES (%s, %s, 'pending', %s, %s, 7, true, 'reuniao_fathom', 'fathom', %s, NOW())
                     RETURNING id
                     """,
-                    (desc[:200], full_desc, project_id, primeiro_contact_id),
+                    (titulo_short, full_desc, project_id, primeiro_contact_id, rec_id),
                 )
                 tid = cur.fetchone()["id"]
                 tarefas_criadas.append({"task_id": tid, "titulo": desc[:80]})
@@ -768,30 +848,57 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
 
     nota_id = None
     if project_id and matched_contacts:
+        # Dedup de project_note tambem
         with get_db() as conn:
             cur = conn.cursor()
-            cur.execute(
-                """
-                INSERT INTO project_notes (project_id, tipo, titulo, conteudo, autor, criado_em)
-                VALUES (%s, 'reuniao', %s, %s, 'fathom_webhook', NOW())
-                RETURNING id
-                """,
-                (
-                    project_id,
-                    f"{title} — {date_iso[:10] if date_iso else ''}",
-                    f"Reuniao com {', '.join([c['nome'] for c in matched_contacts])}\n\n{summary_md}\n\nGravacao: {share_url}",
-                ),
-            )
-            nota_id = cur.fetchone()["id"]
-            conn.commit()
+            existing_nota = None
+            if rec_id is not None:
+                cur.execute(
+                    """
+                    SELECT id FROM project_notes
+                    WHERE project_id = %s AND tipo = 'reuniao'
+                      AND conteudo LIKE %s
+                    LIMIT 1
+                    """,
+                    (project_id, f"%Gravacao: {share_url}%" if share_url else f"%recording_id={rec_id}%"),
+                )
+                existing_nota = cur.fetchone()
+            if existing_nota:
+                nota_id = existing_nota["id"]
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO project_notes (project_id, tipo, titulo, conteudo, autor, criado_em)
+                    VALUES (%s, 'reuniao', %s, %s, 'fathom_webhook', NOW())
+                    RETURNING id
+                    """,
+                    (
+                        project_id,
+                        f"{title} — {date_iso[:10] if date_iso else ''}",
+                        f"Reuniao com {', '.join([c['nome'] for c in matched_contacts])}\n\n{summary_md}\n\nGravacao: {share_url}",
+                    ),
+                )
+                nota_id = cur.fetchone()["id"]
+                conn.commit()
+
+    novas_memorias = [m for m in memorias_criadas if not m.get("skipped")]
+    novas_tarefas = [t for t in tarefas_criadas if not t.get("skipped")]
 
     return {
         "recording_id": rec_id,
         "title": title,
+        "date": date_iso,
+        "share_url": share_url,
+        "summary_chars": len(summary_md),
         "matched_contacts": [{"id": c["id"], "nome": c["nome"]} for c in matched_contacts],
-        "memorias_criadas": len(memorias_criadas),
-        "tarefas_criadas": len(tarefas_criadas),
+        "unmatched_attendees": unmatched_attendees,
+        "memorias_criadas": novas_memorias,
+        "tarefas_criadas": novas_tarefas,
         "nota_projeto_id": nota_id,
+        "skipped": {
+            "memorias": skipped_memorias,
+            "tarefas": skipped_tarefas,
+        },
     }
 
 
@@ -847,11 +954,15 @@ async def handle_fathom_webhook(
 
     try:
         stats = await process_fathom_meeting(payload, project_id=None)
-        logger.info("Fathom webhook processado: rec_id=%s contatos=%s memorias=%s tarefas=%s",
-                    stats.get("recording_id"),
-                    len(stats.get("matched_contacts", [])),
-                    stats.get("memorias_criadas"),
-                    stats.get("tarefas_criadas"))
+        skipped = stats.get("skipped") or {}
+        logger.info(
+            "Fathom webhook processado: rec_id=%s contatos=%s memorias_novas=%s tarefas_novas=%s skipped=%s",
+            stats.get("recording_id"),
+            len(stats.get("matched_contacts", [])),
+            len(stats.get("memorias_criadas") or []),
+            len(stats.get("tarefas_criadas") or []),
+            skipped,
+        )
         return {"status": "processed", **stats}
     except Exception as e:
         logger.exception("Falha ao processar Fathom webhook")
