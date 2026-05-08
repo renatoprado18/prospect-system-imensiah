@@ -19840,6 +19840,148 @@ async def api_editorial_dismiss(post_id: int, request: Request):
     }
 
 
+# ============== EDITORIAL HYPOTHESES + TREND (PDCA) ==============
+# CRITICO: rotas com paths estaticos PRECISAM vir antes de /api/editorial/{post_id}
+# senao FastAPI tenta parsear o path estatico ('hypotheses') como int e devolve 422.
+
+@app.get("/api/editorial/hypotheses")
+async def list_editorial_hypotheses(status: Optional[str] = None):
+    """Lista hipoteses editoriais. status='ativa' por default ('encerrada'/'abandonada' opcionais)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if status:
+            cursor.execute("""
+                SELECT * FROM editorial_hypotheses WHERE status = %s
+                ORDER BY periodo_fim ASC, criada_em DESC
+            """, (status,))
+        else:
+            cursor.execute("""
+                SELECT * FROM editorial_hypotheses
+                ORDER BY (status = 'ativa') DESC, periodo_fim ASC, criada_em DESC
+            """)
+        rows = []
+        for r in cursor.fetchall():
+            d = dict(r)
+            for k in ("criada_em", "encerrada_em"):
+                if d.get(k) and hasattr(d[k], "isoformat"):
+                    d[k] = d[k].isoformat()
+            for k in ("periodo_inicio", "periodo_fim"):
+                if d.get(k):
+                    d[k] = d[k].isoformat()
+            for k in ("baseline", "target", "valor_final"):
+                if d.get(k) is not None:
+                    d[k] = float(d[k])
+            rows.append(d)
+    return {"hypotheses": rows, "total": len(rows)}
+
+
+class HypothesisCreate2(BaseModel):
+    descricao: str
+    hipotese: Optional[str] = None
+    metrica: Optional[str] = "eng_pct_avg"
+    baseline: Optional[float] = None
+    target: Optional[float] = None
+    periodo_inicio: str
+    periodo_fim: str
+
+
+@app.post("/api/editorial/hypotheses")
+async def create_editorial_hypothesis(body: HypothesisCreate2):
+    """Cria hipotese editorial ativa (Plan do PDCA)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO editorial_hypotheses
+            (descricao, hipotese, metrica, baseline, target, periodo_inicio, periodo_fim, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'ativa')
+            RETURNING id
+        """, (body.descricao, body.hipotese, body.metrica, body.baseline,
+              body.target, body.periodo_inicio, body.periodo_fim))
+        row = cursor.fetchone()
+        conn.commit()
+    return {"id": row["id"], "status": "ativa"}
+
+
+class HypothesisUpdate2(BaseModel):
+    status: Optional[str] = None
+    resultado: Optional[str] = None
+    valor_final: Optional[float] = None
+
+
+@app.patch("/api/editorial/hypotheses/{hyp_id}")
+async def update_editorial_hypothesis(hyp_id: int, body: HypothesisUpdate2):
+    """Encerra/abandona hipotese e grava resultado (Act do PDCA)."""
+    sets, params = [], []
+    if body.status:
+        if body.status not in ("ativa", "encerrada", "abandonada"):
+            raise HTTPException(status_code=400, detail="status invalido")
+        sets.append("status = %s"); params.append(body.status)
+        if body.status in ("encerrada", "abandonada"):
+            sets.append("encerrada_em = NOW()")
+    if body.resultado is not None:
+        sets.append("resultado = %s"); params.append(body.resultado)
+    if body.valor_final is not None:
+        sets.append("valor_final = %s"); params.append(body.valor_final)
+    if not sets:
+        raise HTTPException(status_code=400, detail="nada pra atualizar")
+    params.append(hyp_id)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE editorial_hypotheses SET {', '.join(sets)} WHERE id = %s RETURNING id, status", tuple(params))
+        row = cursor.fetchone()
+        conn.commit()
+    if not row:
+        raise HTTPException(status_code=404, detail="hipotese nao encontrada")
+    return {"id": row["id"], "status": row["status"]}
+
+
+@app.get("/api/editorial/monthly-trend")
+async def editorial_monthly_trend(months: int = 6):
+    """Serie mensal dos ultimos N meses (default 6) pra trend de eng%/cadencia."""
+    if months < 1 or months > 24:
+        months = 6
+    series = []
+    with get_db() as conn:
+        cursor = conn.cursor()
+        for i in range(months):
+            cursor.execute("""
+                WITH base AS (
+                  SELECT id,
+                    COALESCE(linkedin_impressoes, 0) AS imp,
+                    COALESCE(linkedin_reacoes, 0) + COALESCE(linkedin_comentarios, 0)
+                      + COALESCE(linkedin_compartilhamentos, 0) AS eng,
+                    CASE WHEN linkedin_impressoes > 0 THEN
+                      (COALESCE(linkedin_reacoes,0) + COALESCE(linkedin_comentarios,0)
+                       + COALESCE(linkedin_compartilhamentos,0)) * 100.0 / linkedin_impressoes
+                      ELSE NULL END AS eng_pct
+                  FROM editorial_posts
+                  WHERE status = 'published' AND data_publicado IS NOT NULL
+                    AND data_publicado >= NOW() - (INTERVAL '30 days' * %s)
+                    AND data_publicado <  NOW() - (INTERVAL '30 days' * %s)
+                )
+                SELECT COUNT(*) AS n,
+                       SUM(imp) AS imp_total,
+                       SUM(eng) AS eng_total,
+                       AVG(eng_pct) AS eng_pct_avg,
+                       COUNT(*) FILTER (WHERE eng = 0) AS zero_eng
+                FROM base
+            """, (i + 1, i))
+            r = cursor.fetchone()
+            label_end = (datetime.now() - timedelta(days=30 * i)).strftime("%d/%m")
+            label_start = (datetime.now() - timedelta(days=30 * (i + 1))).strftime("%d/%m")
+            series.append({
+                "label": f"{label_start}-{label_end}",
+                "month_offset": i + 1,
+                "n": r["n"] or 0,
+                "imp_total": int(r["imp_total"] or 0),
+                "eng_total": int(r["eng_total"] or 0),
+                "eng_pct_avg": round(float(r["eng_pct_avg"] or 0), 2),
+                "zero_eng": r["zero_eng"] or 0,
+            })
+    series.reverse()
+    return {"months": months, "series": series}
+
+
 @app.get("/api/editorial/{post_id}")
 async def api_editorial_get(post_id: int):
     """Retorna um post especifico"""
@@ -20103,146 +20245,6 @@ async def api_project_editorial(project_id: int):
     posts = get_editorial_posts(project_id=project_id)
     return {"posts": posts, "total": len(posts)}
 
-
-# ============== EDITORIAL PDCA ==============
-
-@app.get("/api/editorial/hypotheses")
-async def list_editorial_hypotheses(status: str = None):
-    """Lista hipoteses editoriais. status='ativa' por default ('encerrada'/'abandonada' opcionais)."""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        if status:
-            cursor.execute("""
-                SELECT * FROM editorial_hypotheses WHERE status = %s
-                ORDER BY periodo_fim ASC, criada_em DESC
-            """, (status,))
-        else:
-            cursor.execute("""
-                SELECT * FROM editorial_hypotheses
-                ORDER BY (status = 'ativa') DESC, periodo_fim ASC, criada_em DESC
-            """)
-        rows = []
-        for r in cursor.fetchall():
-            d = dict(r)
-            for k in ("criada_em", "encerrada_em"):
-                if d.get(k) and hasattr(d[k], "isoformat"):
-                    d[k] = d[k].isoformat()
-            for k in ("periodo_inicio", "periodo_fim"):
-                if d.get(k):
-                    d[k] = d[k].isoformat()
-            for k in ("baseline", "target", "valor_final"):
-                if d.get(k) is not None:
-                    d[k] = float(d[k])
-            rows.append(d)
-    return {"hypotheses": rows, "total": len(rows)}
-
-
-class HypothesisCreate(BaseModel):
-    descricao: str
-    hipotese: Optional[str] = None
-    metrica: Optional[str] = "eng_pct_avg"
-    baseline: Optional[float] = None
-    target: Optional[float] = None
-    periodo_inicio: str
-    periodo_fim: str
-
-
-@app.post("/api/editorial/hypotheses")
-async def create_editorial_hypothesis(body: HypothesisCreate):
-    """Cria hipotese editorial ativa (Plan do PDCA)."""
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO editorial_hypotheses
-            (descricao, hipotese, metrica, baseline, target, periodo_inicio, periodo_fim, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'ativa')
-            RETURNING id
-        """, (body.descricao, body.hipotese, body.metrica, body.baseline,
-              body.target, body.periodo_inicio, body.periodo_fim))
-        row = cursor.fetchone()
-        conn.commit()
-    return {"id": row["id"], "status": "ativa"}
-
-
-class HypothesisUpdate(BaseModel):
-    status: Optional[str] = None
-    resultado: Optional[str] = None
-    valor_final: Optional[float] = None
-
-
-@app.patch("/api/editorial/hypotheses/{hyp_id}")
-async def update_editorial_hypothesis(hyp_id: int, body: HypothesisUpdate):
-    """Encerra/abandona hipotese e grava resultado (Act do PDCA)."""
-    sets, params = [], []
-    if body.status:
-        if body.status not in ("ativa", "encerrada", "abandonada"):
-            raise HTTPException(status_code=400, detail="status invalido")
-        sets.append("status = %s"); params.append(body.status)
-        if body.status in ("encerrada", "abandonada"):
-            sets.append("encerrada_em = NOW()")
-    if body.resultado is not None:
-        sets.append("resultado = %s"); params.append(body.resultado)
-    if body.valor_final is not None:
-        sets.append("valor_final = %s"); params.append(body.valor_final)
-    if not sets:
-        raise HTTPException(status_code=400, detail="nada pra atualizar")
-    params.append(hyp_id)
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(f"UPDATE editorial_hypotheses SET {', '.join(sets)} WHERE id = %s RETURNING id, status", tuple(params))
-        row = cursor.fetchone()
-        conn.commit()
-    if not row:
-        raise HTTPException(status_code=404, detail="hipotese nao encontrada")
-    return {"id": row["id"], "status": row["status"]}
-
-
-@app.get("/api/editorial/monthly-trend")
-async def editorial_monthly_trend(months: int = 6):
-    """Retorna serie mensal dos ultimos N meses (default 6) pra trend de eng%/cadencia.
-    Bucketing: ultimo mes (0-30d), penultimo (30-60d), etc."""
-    if months < 1 or months > 24:
-        months = 6
-    series = []
-    with get_db() as conn:
-        cursor = conn.cursor()
-        for i in range(months):
-            cursor.execute("""
-                WITH base AS (
-                  SELECT id,
-                    COALESCE(linkedin_impressoes, 0) AS imp,
-                    COALESCE(linkedin_reacoes, 0) + COALESCE(linkedin_comentarios, 0)
-                      + COALESCE(linkedin_compartilhamentos, 0) AS eng,
-                    CASE WHEN linkedin_impressoes > 0 THEN
-                      (COALESCE(linkedin_reacoes,0) + COALESCE(linkedin_comentarios,0)
-                       + COALESCE(linkedin_compartilhamentos,0)) * 100.0 / linkedin_impressoes
-                      ELSE NULL END AS eng_pct
-                  FROM editorial_posts
-                  WHERE status = 'published' AND data_publicado IS NOT NULL
-                    AND data_publicado >= NOW() - (INTERVAL '30 days' * %s)
-                    AND data_publicado <  NOW() - (INTERVAL '30 days' * %s)
-                )
-                SELECT COUNT(*) AS n,
-                       SUM(imp) AS imp_total,
-                       SUM(eng) AS eng_total,
-                       AVG(eng_pct) AS eng_pct_avg,
-                       COUNT(*) FILTER (WHERE eng = 0) AS zero_eng
-                FROM base
-            """, (i + 1, i))
-            r = cursor.fetchone()
-            label_end = (datetime.now() - timedelta(days=30 * i)).strftime("%d/%m")
-            label_start = (datetime.now() - timedelta(days=30 * (i + 1))).strftime("%d/%m")
-            series.append({
-                "label": f"{label_start}-{label_end}",
-                "month_offset": i + 1,
-                "n": r["n"] or 0,
-                "imp_total": int(r["imp_total"] or 0),
-                "eng_total": int(r["eng_total"] or 0),
-                "eng_pct_avg": round(float(r["eng_pct_avg"] or 0), 2),
-                "zero_eng": r["zero_eng"] or 0,
-            })
-    series.reverse()
-    return {"months": months, "series": series}
 
 
 @app.get("/api/cron/editorial-monthly-review")
