@@ -60,9 +60,11 @@ SKIP_PATTERNS = re.compile(
 # Actions de write (mudam estado). Read-only (query_intel, query_conselhoos,
 # draft_message, project_chat, search_system_memories) NAO entram aqui.
 WRITE_ACTIONS = {
-    "create_task", "complete_task", "save_note", "save_memory",
+    "create_task", "complete_task", "update_task", "postpone_tasks",
+    "save_note", "save_memory",
     "schedule_meeting", "update_calendar_event", "delete_calendar_event",
     "send_whatsapp", "send_email",
+    "import_fathom_meeting",
     "enrich_contact", "update_contact",
     "save_feedback", "save_system_memory",
 }
@@ -90,6 +92,12 @@ _CLAIM_PATTERNS = [
     r'\b(evento|reuniao|tarefa|nota|email|mensagem|memoria|contato)\s+(foi|fica|ficou\s+)?(criad[oa]|atualizad[oa]|apagad[oa]|deletad[oa]|enviad[oa]|salv[oa]|conclu[ií]d[oa]|removid[oa]|editad[oa])\b',
     # "pronto, [acao executada]"
     r'\bpronto[,.]?\s*(apaguei|deletei|criei|enviei|atualizei|removi|editei|salvei)\b',
+    # FUTURO + "agora"/"ja" — bot promete sem executar (caso 08/05: "Vou vincular as 43 tarefas... agora")
+    # Verbos restritos a write actions; pesquisar/consultar nao entram.
+    r'\bvou\s+(criar|agendar|marcar|registrar|adicionar|incluir|apagar|deletar|remover|excluir|atualizar|editar|alterar|modificar|mover|remarcar|reagendar|vincular|enviar|mandar|despachar|salvar|anotar|guardar|concluir|completar|finalizar|fechar)\b[^.!?\n]{0,80}\b(agora|ja\s+ja|imediatamente|nesse\s+momento|a\s+seguir)\b',
+    r'\b(deixa|deixe)\s+eu\s+(fazer|executar|rodar|atualizar|criar|salvar|enviar|apagar)\s+(isso|isto)?\s*agora\b',
+    r'\bfazendo\s+(isso|isto|agora)\b',
+    r'\b(estou|to)\s+(criando|atualizando|salvando|enviando|apagando|deletando|vinculando|movendo)\b',
 ]
 _CLAIM_RE = re.compile("|".join(_CLAIM_PATTERNS), re.IGNORECASE)
 
@@ -2102,10 +2110,9 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
                     )
                     final_text = (
                         final_text.rstrip()
-                        + "\n\n⚠️ _Aviso interno: detectei afirmacoes de acao executada"
-                        + " mas nao registrei nenhuma chamada de tool correspondente"
-                        + " neste turno. Verifique no sistema antes de assumir que rodou."
-                        + "_"
+                        + "\n\n⚠️ _Aviso interno: voce afirmou ou prometeu acao"
+                        + f" ('{hallucination['matched_phrases'][0]}') mas nao chamou tool"
+                        + " neste turno. Re-pergunte explicitamente pra forcar execucao_"
                     )
                 _save_conversation_message(phone, "assistant", final_text)
                 break
