@@ -194,6 +194,8 @@ TOOLS = [
             "IMPORTANTE: use data_vencimento com data absoluta (ex: '2026-04-24') quando o usuario mencionar 'hoje', 'amanha', uma data especifica. "
             "prazo_dias e apenas fallback quando nao souber a data.\n"
             "- complete_task: conclui tarefa (task_id)\n"
+            "- update_task: edita tarefa existente (PATCH-style). params: task_id (int), e SOMENTE os campos que mudaram entre: titulo?, descricao?, data_vencimento? (YYYY-MM-DD), prioridade?, status? ('pending'|'completed'|'cancelled')\n"
+            "- postpone_tasks: adia tarefas em MASSA com SQL UPDATE (1 chamada SO — nao loop com update_task). params: nova_data YYYY-MM-DD (obrigatorio), apenas_atrasadas? (bool default true — se false adia todas pendentes), project_id? (filtra por projeto), contact_id? (filtra por contato). Retorna numero afetado.\n"
             "- save_note: salva nota em projeto (project_id, titulo, conteudo, tipo?)\n"
             "- save_memory: salva memoria de contato (contact_id, titulo, resumo, conteudo_completo?, tipo?)\n"
             "- schedule_meeting: cria evento (titulo, data_hora ISO, duracao_min?, contact_id?, local?, descricao?, account?). "
@@ -226,7 +228,8 @@ TOOLS = [
                     "type": "string",
                     "description": "Nome da acao",
                     "enum": [
-                        "create_task", "complete_task", "save_note", "save_memory",
+                        "create_task", "complete_task", "update_task", "postpone_tasks",
+                        "save_note", "save_memory",
                         "schedule_meeting", "update_calendar_event", "delete_calendar_event",
                         "send_whatsapp", "send_email",
                         "import_fathom_meeting",
@@ -493,7 +496,7 @@ def _tool_execute_conselhoos(sql: str) -> str:
 
 def _entity_type_for_action(action: str) -> str:
     """Mapeia action para entity_type pra audit_log."""
-    if action in ("create_task", "complete_task"):
+    if action in ("create_task", "complete_task", "update_task", "postpone_tasks"):
         return "task"
     if action in ("save_note", "save_memory"):
         return "note" if action == "save_note" else "memory"
@@ -592,6 +595,113 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 "sucesso": True,
                 "mensagem": f"Tarefa #{task['id']} concluida: {task['titulo']}"
             }, ensure_ascii=False)
+
+        elif action == "update_task":
+            task_id = params.get("task_id")
+            if not task_id:
+                return json.dumps({"erro": "task_id e obrigatorio"})
+
+            allowed = {"titulo", "descricao", "data_vencimento", "prioridade", "status"}
+            valid_status = {"pending", "completed", "cancelled"}
+
+            sets = []
+            values = []
+            for field in allowed:
+                if field not in params:
+                    continue
+                value = params[field]
+                if field == "data_vencimento" and value:
+                    try:
+                        value = datetime.strptime(str(value)[:10], "%Y-%m-%d")
+                    except Exception:
+                        return json.dumps({"erro": f"data_vencimento invalida: {value}. Use YYYY-MM-DD"}, ensure_ascii=False)
+                if field == "status" and value not in valid_status:
+                    return json.dumps({"erro": f"status invalido: {value}. Use {sorted(valid_status)}"}, ensure_ascii=False)
+                sets.append(f"{field} = %s")
+                values.append(value)
+
+            if not sets:
+                return json.dumps({"erro": "Nenhum campo pra atualizar. Passe titulo, descricao, data_vencimento, prioridade ou status."}, ensure_ascii=False)
+
+            # Auto-set data_conclusao quando status vira completed
+            if params.get("status") == "completed":
+                sets.append("data_conclusao = NOW()")
+
+            values.append(task_id)
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"""
+                    UPDATE tasks SET {', '.join(sets)}
+                    WHERE id = %s
+                    RETURNING id, titulo, data_vencimento, status, prioridade
+                """, tuple(values))
+                task = cursor.fetchone()
+                conn.commit()
+
+            if not task:
+                return json.dumps({"erro": f"Tarefa #{task_id} nao encontrada"})
+
+            changed = [f for f in allowed if f in params]
+            return json.dumps({
+                "sucesso": True,
+                "task_id": task["id"],
+                "campos_atualizados": changed,
+                "mensagem": f"Tarefa #{task['id']} atualizada ({', '.join(changed)}): {task['titulo']}"
+            }, ensure_ascii=False, default=str)
+
+        elif action == "postpone_tasks":
+            nova_data_str = params.get("nova_data")
+            if not nova_data_str:
+                return json.dumps({"erro": "nova_data e obrigatoria (formato YYYY-MM-DD)"})
+            try:
+                nova_data = datetime.strptime(str(nova_data_str)[:10], "%Y-%m-%d")
+            except Exception:
+                return json.dumps({"erro": f"nova_data invalida: {nova_data_str}. Use YYYY-MM-DD"}, ensure_ascii=False)
+
+            apenas_atrasadas = params.get("apenas_atrasadas", True)
+            project_id = params.get("project_id")
+            contact_id = params.get("contact_id")
+
+            where = ["status = 'pending'"]
+            sql_values = [nova_data]
+            if apenas_atrasadas:
+                where.append("data_vencimento IS NOT NULL AND data_vencimento < NOW()")
+            if project_id is not None:
+                where.append("project_id = %s")
+                sql_values.append(project_id)
+            if contact_id is not None:
+                where.append("contact_id = %s")
+                sql_values.append(contact_id)
+
+            sql = f"""
+                UPDATE tasks SET data_vencimento = %s
+                WHERE {' AND '.join(where)}
+                RETURNING id, titulo
+            """
+
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql, tuple(sql_values))
+                rows = cursor.fetchall()
+                conn.commit()
+
+            count = len(rows)
+            if count == 0:
+                return json.dumps({
+                    "sucesso": True,
+                    "afetadas": 0,
+                    "mensagem": "Nenhuma tarefa correspondia aos filtros (nada pra adiar)."
+                }, ensure_ascii=False)
+
+            sample = [{"id": r["id"], "titulo": r["titulo"]} for r in rows[:5]]
+            extra = f" (+{count-5} outras)" if count > 5 else ""
+            return json.dumps({
+                "sucesso": True,
+                "afetadas": count,
+                "amostra": sample,
+                "mensagem": f"{count} tarefa(s) adiada(s) pra {nova_data.strftime('%d/%m/%Y')}{extra}"
+            }, ensure_ascii=False, default=str)
 
         elif action == "save_note":
             project_id = params.get("project_id")
@@ -1913,6 +2023,18 @@ REGRAS ADICIONAIS:
 - Formate respostas com *negrito* para destaques (WhatsApp markdown — em mode chat, evite negrito decorativo)
 - Voce pode fazer multiplas queries em sequencia para responder perguntas complexas
 - Se nao souber algo, diga e sugira como ajudar
+
+TAREFAS (acesso total):
+- CRIAR: execute_action create_task
+- CONCLUIR: execute_action complete_task (task_id)
+- EDITAR uma tarefa: execute_action update_task — PATCH-style, passe SO os campos que mudaram (titulo, descricao, data_vencimento, prioridade, status)
+- ADIAR EM MASSA: execute_action postpone_tasks com nova_data + filtros opcionais (apenas_atrasadas default true, project_id, contact_id). UMA chamada SO faz UPDATE em massa — NUNCA faca loop com update_task uma a uma pra adiar varias.
+- "Adie todas atrasadas pra amanha" -> postpone_tasks(nova_data=AMANHA, apenas_atrasadas=true). 1 call. Pronto.
+- "Empurra a #123 pra sexta" -> update_task(task_id=123, data_vencimento=SEXTA). 1 call.
+
+ACAO NAO EXISTE NO ENUM:
+- O enum de execute_action lista TODAS as acoes disponiveis. Se Renato pedir algo fora do enum (ex: "adia X", "deleta tarefa Y", "muda contato Z"), VERIFIQUE primeiro se ja existe acao equivalente (ex: postpone_tasks resolve "adia"; update_contact resolve "muda contato").
+- Se REALMENTE nao existir, diga: "Essa acao ainda nao esta disponivel no INTEL — quer que eu salve como feedback de melhoria?". NUNCA tente alternativas em loop. NUNCA chame execute_action com action fora do enum.
 
 CALENDAR (acesso total — pessoal + profissional):
 - Voce TEM permissao de criar, editar e apagar eventos. NAO recuse, NAO peca confirmacao extra.
