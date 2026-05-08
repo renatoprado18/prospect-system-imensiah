@@ -143,6 +143,7 @@ async def select_weekly_posts(
             hot_take_candidates.append(row)
 
         # Editorial posts (reposts + hot_takes) com conteudo adaptado
+        # PDCA Mes 1 (H3): bloqueia 'Complexidade e Adaptação' — eng% 0.44% no mes 1.
         cursor.execute("""
             SELECT id, 'editorial' as source, COALESCE(titulo_adaptado, article_title) as titulo,
                    conteudo_adaptado as conteudo, hashtags, tipo,
@@ -150,6 +151,7 @@ async def select_weekly_posts(
             FROM editorial_posts
             WHERE status = 'draft' AND conteudo_adaptado IS NOT NULL
                 AND LENGTH(conteudo_adaptado) > 50
+                AND COALESCE(ai_categoria, '') NOT IN ('Complexidade e Adaptação', 'Complexidade e Adaptacao')
             ORDER BY ai_score_relevancia DESC NULLS LAST, criado_em DESC
             LIMIT 20
         """)
@@ -269,12 +271,18 @@ def schedule_selected_posts(selected: List[Dict], start_date: date = None) -> Di
             "week_start": start_date.isoformat(),
         }
 
-    # LinkedIn best times: Tue-Thu 9h, 12h
+    # PDCA Mes 1 (08/05/2026): hipoteses ativas H1 (slot 16h) + H2 (Ter/Qui/Sex).
+    # Slots = 4 horarios em dias top-eng% (Ter/Qui/Sex), pivot pra 16h BRT
+    # (analise mostrou 13-14h pior eng%, 15-16h e 21h melhor). Ordem reflete
+    # prioridade: melhores DOWs/horarios primeiro pra os 4 posts da semana.
     slots = []
-    for day_offset in [1, 2, 3, 4]:  # Tue, Wed, Thu, Fri
-        d = start_date + timedelta(days=day_offset)
-        slots.append(datetime(d.year, d.month, d.day, 9, 0))
-        slots.append(datetime(d.year, d.month, d.day, 12, 0))
+    Tue = start_date + timedelta(days=1)  # Terca
+    Thu = start_date + timedelta(days=3)  # Quinta — melhor eng% no mes 1
+    Fri = start_date + timedelta(days=4)  # Sexta
+    slots.append(datetime(Thu.year, Thu.month, Thu.day, 16, 0))   # Thu 16h
+    slots.append(datetime(Tue.year, Tue.month, Tue.day, 16, 0))   # Tue 16h
+    slots.append(datetime(Fri.year, Fri.month, Fri.day, 16, 0))   # Fri 16h
+    slots.append(datetime(Tue.year, Tue.month, Tue.day, 21, 0))   # Tue 21h (4o)
 
     scheduled = []
     with get_db() as conn:

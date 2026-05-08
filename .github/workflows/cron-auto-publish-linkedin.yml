@@ -1,13 +1,16 @@
 name: Cron — Auto Publish LinkedIn
 
-# Why GitHub Actions: Vercel Hobby caps at 1 cron/day per path. We need 2x/day
-# (slots 9h e 12h BRT) pra cobrir auto-publish dos posts editoriais.
+# Why GitHub Actions: Vercel Hobby caps at 1 cron/day per path. Precisamos de
+# 2 slots/dia (16h e 21h BRT) pra cobrir o agendamento Thu/Tue/Fri 16h + Tue 21h
+# definido em auto_publisher.schedule_selected_posts (PDCA mes 1, 08/05/2026).
 
 on:
   schedule:
-    # 12:05 UTC = 9h05 BRT — slot 9h
-    # 15:05 UTC = 12h05 BRT — slot 12h
-    - cron: '5 12,15 * * *'
+    # 19:05 UTC = 16h05 BRT — slot 16h (mais usado)
+    # 00:05 UTC = 21h05 BRT — slot 21h (cron roda diario; publish_due_posts
+    #            so publica scheduled posts cuja data_publicacao <= now())
+    - cron: '5 19 * * *'
+    - cron: '5 0 * * *'
   workflow_dispatch:  # botao manual em Actions tab
 
 jobs:
