@@ -219,7 +219,10 @@ TOOLS = [
             "- update_contact: atualiza campos do contato (contact_id, fields: {campo: valor})\n"
             "- save_feedback: salva feedback/melhoria do sistema INTEL (conteudo, tipo?: bug|melhoria|ideia|feedback)\n"
             "- save_system_memory: memoria persistente do coach (NAO atrelada a contato — pra decisao de vida, compromisso consigo, padrao observado, reflexao). params: titulo, conteudo, tipo? (decisao|compromisso|padrao|reflexao), tags?\n"
-            "- search_system_memories: busca em memorias persistentes por keyword (params: query, limit?)"
+            "- search_system_memories: busca em memorias persistentes (params: query, limit?, mode?). "
+            "mode='hybrid' (default) combina keyword + semantic — recomendado pra recall por sinonimos/parafraseamento "
+            "(ex: 'drenado' encontra memorias com 'cansado'/'exausto'). "
+            "mode='keyword' so faz match literal. mode='semantic' so via embeddings (Voyage)."
         ),
         "input_schema": {
             "type": "object",
@@ -509,6 +512,27 @@ def _entity_type_for_action(action: str) -> str:
     return "unknown"
 
 
+def _invalidate_task_caches():
+    """Invalida caches do main.py que dependem de tasks state.
+    Chamado depois de qualquer write em tasks via execute_action.
+
+    Por que: caches em main.py (TTL 60s) ficam stale quando o bot escreve
+    direto no banco. Renato reportou statcard de Projetos divergindo do
+    drilldown apos bot rodar postpone_tasks. Padrao identico ao usado em
+    main.py:5344 pra _dashboard_cache.
+
+    Falha silenciosa: cache eventualmente expira por TTL."""
+    try:
+        import main as _main
+        for attr in ("_projects_attention_detailed_cache", "_dashboard_cache"):
+            if hasattr(_main, attr):
+                setattr(_main, attr, {"data": None, "timestamp": None})
+        if hasattr(_main, "_all_tasks_cache"):
+            _main._all_tasks_cache = {}
+    except Exception as e:
+        logger.warning(f"cache invalidation failed: {e}")
+
+
 async def _tool_execute_action(action: str, params: Dict) -> str:
     """Execute a write action on the INTEL system."""
     from services.audit_log import log as audit_log
@@ -565,6 +589,7 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 """, (titulo, descricao, project_id, contact_id, data_vencimento, prioridade))
                 task = cursor.fetchone()
                 conn.commit()
+            _invalidate_task_caches()
 
             date_str = f" para {data_vencimento.strftime('%d/%m %H:%M')}" if data_vencimento else ""
             proj_str = f" no projeto #{project_id}" if project_id else ""
@@ -588,6 +613,7 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 """, (task_id,))
                 task = cursor.fetchone()
                 conn.commit()
+            _invalidate_task_caches()
 
             if not task:
                 return json.dumps({"erro": f"Tarefa #{task_id} nao encontrada ou ja concluida"})
@@ -638,6 +664,7 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 """, tuple(values))
                 task = cursor.fetchone()
                 conn.commit()
+            _invalidate_task_caches()
 
             if not task:
                 return json.dumps({"erro": f"Tarefa #{task_id} nao encontrada"})
@@ -685,6 +712,7 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 cursor.execute(sql, tuple(sql_values))
                 rows = cursor.fetchall()
                 conn.commit()
+            _invalidate_task_caches()
 
             count = len(rows)
             if count == 0:
@@ -1251,10 +1279,14 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
             from services.system_memory import search_memories
             query = params.get("query", "").strip()
             limit = int(params.get("limit", 10))
-            results = search_memories(query, limit=limit)
-            return json.dumps({"resultados": [
+            mode = (params.get("mode") or "hybrid").lower()
+            if mode not in ("hybrid", "keyword", "semantic"):
+                mode = "hybrid"
+            results = search_memories(query, limit=limit, mode=mode)
+            return json.dumps({"mode": mode, "resultados": [
                 {"id": r["id"], "titulo": r["titulo"], "tipo": r["tipo"],
                  "conteudo": r["conteudo"][:500],
+                 "similarity": float(r["similarity"]) if r.get("similarity") is not None else None,
                  "data": r["criado_em"].isoformat() if r.get("criado_em") else None}
                 for r in results
             ]}, ensure_ascii=False, default=str)
@@ -1781,6 +1813,10 @@ MEMÓRIA PERSISTENTE (use ativamente):
 - Tipos: 'decisao', 'compromisso', 'padrao', 'reflexao'.
 - Você tem `search_system_memories` pra buscar memórias anteriores quando o assunto trouxer
   algo que pode estar registrado. Use sem cerimônia.
+- A busca é **semântica por default** (mode='hybrid'): se Renato fala "estou drenado", você
+  encontra memórias antigas com "cansado", "exausto", "saí ralado" — mesmo sem palavra igual.
+  Confie no recall: quando ele tocar num tema (cansaço, frustração, padrão de comportamento,
+  decisão antiga), faça a busca antes de responder do zero.
 
 LIMITES DA MEMÓRIA:
 - Memórias salvas (system_memories) e a Síntese diária aparecem no seu snapshot — você LEMBRA delas.
