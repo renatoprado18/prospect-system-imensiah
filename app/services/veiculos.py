@@ -926,18 +926,52 @@ def get_historico_manutencoes(veiculo_id: int, limit: int = 50) -> List[Dict]:
         return [dict(row) for row in cursor.fetchall()]
 
 
+def _is_heic(image_bytes: bytes) -> bool:
+    """HEIC/HEIF detect via ISO BMFF ftyp box (offset 4-12)."""
+    if len(image_bytes) < 12:
+        return False
+    box = image_bytes[4:12]
+    return box[:4] == b"ftyp" and box[4:8] in (
+        b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1", b"heim", b"heis", b"hevm", b"hevs"
+    )
+
+
 def _comprimir_imagem(image_bytes: bytes, max_size_mb: float = 5.0) -> tuple:
-    """Comprime imagem para ficar abaixo do limite de tamanho. Retorna (bytes, media_type)."""
+    """Normaliza pra JPEG e comprime. Retorna (bytes, "image/jpeg").
+
+    Sempre converte HEIC -> JPEG (Claude Vision nao aceita HEIC, e o
+    media_type tem que bater com os bytes). Pra JPEG/PNG ja dentro do
+    limite, ainda passa pelo PIL pra redimensionar se preciso.
+    """
     from io import BytesIO
     from PIL import Image
 
-    if len(image_bytes) <= max_size_mb * 1024 * 1024:
-        return image_bytes, "image/jpeg"
+    is_heic = _is_heic(image_bytes)
+    if is_heic:
+        try:
+            from pillow_heif import register_heif_opener
+            register_heif_opener()
+        except ImportError:
+            logger.error("pillow-heif nao instalado mas recebeu HEIC — Claude Vision vai rejeitar")
+
+    # Early return: nao-HEIC e ja pequeno → confia no formato original
+    if not is_heic and len(image_bytes) <= max_size_mb * 1024 * 1024:
+        media = _detect_image_media_type(image_bytes) or "image/jpeg"
+        return image_bytes, media
 
     img = Image.open(BytesIO(image_bytes))
 
-    # Converter RGBA para RGB se necessario
-    if img.mode in ('RGBA', 'P'):
+    # Aplica orientacao EXIF (foto de celular tirada na vertical)
+    try:
+        from PIL import ImageOps
+        img = ImageOps.exif_transpose(img)
+    except Exception:
+        pass
+
+    # Converter pra RGB pra salvar como JPEG
+    if img.mode in ('RGBA', 'P', 'LA'):
+        img = img.convert('RGB')
+    elif img.mode != 'RGB':
         img = img.convert('RGB')
 
     # Redimensionar se muito grande
@@ -959,6 +993,22 @@ def _comprimir_imagem(image_bytes: bytes, max_size_mb: float = 5.0) -> tuple:
         quality -= 15
 
     return buf.getvalue(), "image/jpeg"
+
+
+def _detect_image_media_type(image_bytes: bytes) -> Optional[str]:
+    """Detect media type via magic bytes. Cobre JPEG, PNG, WebP, GIF."""
+    if len(image_bytes) < 12:
+        return None
+    head = image_bytes[:12]
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    return None
 
 
 async def extrair_dados_nf_foto(image_bytes: bytes, media_type: str = "image/jpeg") -> Dict:
