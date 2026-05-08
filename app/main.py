@@ -1713,9 +1713,21 @@ async def submit_feedback(feedback: FeedbackSubmit):
 
 @app.post("/api/webhooks/fathom")
 async def fathom_webhook(request: Request):
-    """Webhook para receber dados do Fathom automaticamente"""
-    payload = await request.json()
-    result = await handle_fathom_webhook(payload)
+    """Webhook Fathom — event new-meeting-content-ready.
+
+    Le raw body antes do .json() pra validar assinatura Svix
+    (headers: webhook-id, webhook-timestamp, webhook-signature).
+    """
+    raw = await request.body()
+    try:
+        payload = json.loads(raw.decode("utf-8")) if raw else {}
+    except Exception:
+        payload = {}
+    result = await handle_fathom_webhook(
+        payload,
+        raw_body=raw,
+        headers=dict(request.headers),
+    )
     return result
 
 
@@ -20090,6 +20102,25 @@ async def api_project_editorial(project_id: int):
 
 
 # ============== EDITORIAL PDCA ==============
+
+@app.get("/api/cron/editorial-monthly-review")
+@track_cron_run
+async def cron_editorial_monthly_review(request: Request):
+    """
+    Cron mensal (dia 1 9h BRT / 12h UTC): gera revisao comparativa do mes
+    anterior, salva como project_note no projeto 22, cria task de revisao,
+    notifica WA. Usado pra fechar o ciclo PDCA mensal.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    try:
+        from services.editorial_pdca import generate_monthly_review
+        result = await generate_monthly_review()
+        return {"job": "editorial-monthly-review", **result}
+    except Exception as e:
+        logger.exception("editorial-monthly-review falhou")
+        return {"job": "editorial-monthly-review", "status": "error", "error": str(e)}
+
 
 @app.get("/api/cron/editorial-weekly-briefing")
 @track_cron_run

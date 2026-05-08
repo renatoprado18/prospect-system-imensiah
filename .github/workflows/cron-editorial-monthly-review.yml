@@ -1,0 +1,24 @@
+name: Cron — Editorial Monthly Review
+
+# Why GitHub Actions: Vercel cron caps at daily granularity. Pra ter precisao de
+# "dia 1 do mes 9h BRT" preferimos GH Actions (mais robusto, nao depende de
+# Vercel deployment status).
+
+on:
+  schedule:
+    # 12:00 UTC dia 1 = 9h BRT dia 1
+    - cron: '0 12 1 * *'
+  workflow_dispatch:  # botao manual em Actions tab
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit editorial-monthly-review endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/editorial-monthly-review")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)

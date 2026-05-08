@@ -463,6 +463,209 @@ Responda APENAS com o JSON."""
     }
 
 
+def get_monthly_performance(month_offset: int = 1) -> Dict:
+    """Agrega metricas dos ultimos 30 dias (month_offset=1) ou mes anterior (=2).
+
+    month_offset=1: dias [-30, 0]
+    month_offset=2: dias [-60, -30]
+    """
+    end = datetime.now() - timedelta(days=(month_offset - 1) * 30)
+    start = end - timedelta(days=30)
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id,
+                   COALESCE(article_title, titulo_adaptado, '(sem titulo)') AS titulo,
+                   CASE WHEN hot_take_id IS NOT NULL OR tipo = 'hot_take'
+                        THEN 'hot_take' ELSE 'artigo' END AS tipo_real,
+                   ai_categoria,
+                   data_publicado,
+                   EXTRACT(DOW FROM data_publicado)::int AS dow,
+                   EXTRACT(HOUR FROM data_publicado)::int AS hora,
+                   COALESCE(linkedin_impressoes, 0) AS imp,
+                   COALESCE(linkedin_reacoes, 0) AS reac,
+                   COALESCE(linkedin_comentarios, 0) AS com,
+                   COALESCE(linkedin_compartilhamentos, 0) AS shares
+            FROM editorial_posts
+            WHERE status = 'published' AND data_publicado IS NOT NULL
+              AND data_publicado >= %s AND data_publicado < %s
+            ORDER BY data_publicado DESC
+        """, (start, end))
+        posts = [dict(p) for p in cursor.fetchall()]
+
+    if not posts:
+        return {"period": f"{start.strftime('%d/%m')}-{end.strftime('%d/%m')}",
+                "posts": [], "n": 0, "summary": {}, "by_tipo": {},
+                "by_dow": {}, "by_hora": {}, "by_categoria": {}}
+
+    def _eng(p): return (p["reac"] or 0) + (p["com"] or 0) + (p["shares"] or 0)
+    def _eng_pct(p): return round(_eng(p) * 100.0 / p["imp"], 2) if p["imp"] else None
+
+    def _agg(rows):
+        if not rows: return None
+        imps = [r["imp"] for r in rows]
+        eng_pcts = [_eng_pct(r) for r in rows if _eng_pct(r) is not None]
+        return {
+            "n": len(rows),
+            "imp_avg": round(sum(imps) / len(imps), 1) if imps else 0,
+            "imp_total": sum(imps),
+            "eng_pct_avg": round(sum(eng_pcts) / len(eng_pcts), 2) if eng_pcts else 0,
+            "zero_eng": sum(1 for r in rows if _eng(r) == 0),
+        }
+
+    DOW_NAMES = {0: "Dom", 1: "Seg", 2: "Ter", 3: "Qua", 4: "Qui", 5: "Sex", 6: "Sab"}
+
+    by_tipo, by_dow, by_hora, by_cat = {}, {}, {}, {}
+    for p in posts:
+        by_tipo.setdefault(p["tipo_real"], []).append(p)
+        by_dow.setdefault(DOW_NAMES[p["dow"]], []).append(p)
+        by_hora.setdefault(f"{p['hora']:02d}h", []).append(p)
+        by_cat.setdefault(p["ai_categoria"] or "(sem categoria)", []).append(p)
+
+    posts_with_eng = [{**p, "eng": _eng(p), "eng_pct": _eng_pct(p)} for p in posts]
+    top3 = sorted([p for p in posts_with_eng if p["eng_pct"] is not None],
+                  key=lambda p: p["eng_pct"] or 0, reverse=True)[:3]
+    bottom_zero = [p for p in posts_with_eng if (p["eng"] or 0) == 0]
+
+    return {
+        "period": f"{start.strftime('%d/%m')}-{end.strftime('%d/%m')}",
+        "month_offset": month_offset,
+        "n": len(posts),
+        "summary": {
+            "imp_total": sum(p["imp"] for p in posts),
+            "eng_total": sum(_eng(p) for p in posts),
+            "eng_pct_avg": round(sum(_eng_pct(p) for p in posts if _eng_pct(p) is not None) /
+                                  max(sum(1 for p in posts if _eng_pct(p) is not None), 1), 2),
+            "zero_eng_count": len(bottom_zero),
+            "zero_eng_pct": round(len(bottom_zero) * 100.0 / len(posts), 1),
+        },
+        "by_tipo": {k: _agg(v) for k, v in by_tipo.items()},
+        "by_dow": {k: _agg(v) for k, v in by_dow.items()},
+        "by_hora": {k: _agg(v) for k, v in by_hora.items()},
+        "by_categoria": {k: _agg(v) for k, v in by_cat.items()},
+        "top3": [{"id": p["id"], "titulo": p["titulo"][:80],
+                  "tipo": p["tipo_real"], "eng_pct": p["eng_pct"],
+                  "imp": p["imp"]} for p in top3],
+        "bottom_zero_titles": [p["titulo"][:80] for p in bottom_zero[:5]],
+    }
+
+
+async def generate_monthly_review() -> Dict:
+    """Cron mensal (dia 1): gera analise comparativa mes-vs-mes-anterior, salva
+    como project_note tipo='analise' no projeto 22, cria task de revisao,
+    notifica via WhatsApp.
+
+    Comparacao automatica: pega o ultimo project_note de tipo='analise' do projeto 22
+    e usa como baseline pra calcular delta no eng% e na cadencia.
+    """
+    current = get_monthly_performance(month_offset=1)
+    previous = get_monthly_performance(month_offset=2)
+
+    if current["n"] == 0:
+        return {"error": "Sem posts publicados nos ultimos 30 dias", "current": current}
+
+    # Build comparative summary
+    cur_eng = current["summary"]["eng_pct_avg"]
+    prev_eng = previous["summary"]["eng_pct_avg"] if previous["n"] else None
+    delta_eng = round(cur_eng - prev_eng, 2) if prev_eng is not None else None
+
+    cur_n = current["n"]
+    prev_n = previous["n"]
+
+    # Format ranking lines (top 3 of each dim)
+    def _top_lines(d, label, fmt_metric=lambda v: f"{v['eng_pct_avg']}%"):
+        items = [(k, v) for k, v in d.items() if v and v.get("n", 0) >= 1]
+        items.sort(key=lambda kv: kv[1]["eng_pct_avg"], reverse=True)
+        lines = []
+        for k, v in items[:5]:
+            lines.append(f"  - {k}: n={v['n']}, eng% avg {v['eng_pct_avg']}, imp avg {v['imp_avg']}")
+        return f"### Por {label}\n" + "\n".join(lines) if lines else ""
+
+    note_md = f"""# Revisao Mensal Editorial — {current['period']}
+
+## Resumo
+- Posts publicados: **{cur_n}**{f' (vs {prev_n} no mes anterior, delta {cur_n - prev_n:+d})' if prev_n else ''}
+- Eng% medio: **{cur_eng}%**{f' (vs {prev_eng}% no mes anterior, delta {delta_eng:+.2f}pp)' if prev_eng is not None else ''}
+- Posts com 0 engajamento: {current['summary']['zero_eng_count']}/{cur_n} ({current['summary']['zero_eng_pct']}%)
+- Impressoes totais: {current['summary']['imp_total']}
+
+{_top_lines(current['by_tipo'], 'tipo')}
+
+{_top_lines(current['by_dow'], 'dia da semana')}
+
+{_top_lines(current['by_hora'], 'horario')}
+
+{_top_lines(current['by_categoria'], 'categoria')}
+
+## Top 3 da revisao
+"""
+    for p in current["top3"]:
+        note_md += f"- **#{p['id']}** ({p['tipo']}, {p['eng_pct']}%, {p['imp']} imp): {p['titulo']}\n"
+
+    if current["bottom_zero_titles"]:
+        note_md += "\n## Sample de posts com 0 engajamento\n"
+        for t in current["bottom_zero_titles"]:
+            note_md += f"- {t}\n"
+
+    note_md += "\n## Acoes\n- [ ] Revisar analise + decidir 2-3 hipoteses pra testar\n- [ ] Encerrar hipoteses ativas que terminaram o periodo\n- [ ] Atualizar slot/dow/categoria no auto-publisher se justificado\n"
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO project_notes (project_id, tipo, titulo, conteudo, autor, metadata)
+            VALUES (%s, 'analise', %s, %s, 'cron_monthly_review', %s)
+            RETURNING id
+        """, (22, f"Revisao Mensal Editorial — {current['period']}",
+              note_md, json.dumps({"posts": cur_n, "eng_pct_avg": cur_eng,
+                                    "delta_eng_pp": delta_eng,
+                                    "zero_eng_pct": current["summary"]["zero_eng_pct"]})))
+        note = cursor.fetchone()
+
+        # Cria task de revisao com vencimento em 7 dias
+        venc = datetime.now() + timedelta(days=7)
+        cursor.execute("""
+            INSERT INTO tasks (titulo, descricao, project_id, data_vencimento, prioridade,
+                               ai_generated, origem, tags, status)
+            VALUES (%s, %s, 22, %s, 4, TRUE, 'cron_monthly_review', %s, 'pending')
+            RETURNING id
+        """, (
+            f"Revisar analise mensal {current['period']} + ajustar hipoteses",
+            f"Note id {note['id']}. Eng% atual {cur_eng}% "
+            + (f"(delta {delta_eng:+.2f}pp vs mes anterior). " if delta_eng is not None else "(sem baseline). ")
+            + "Decidir 2-3 hipoteses ativas pra proximo mes.",
+            venc.replace(hour=10, minute=0, second=0, microsecond=0),
+            json.dumps(["editorial", "pdca", "review"])
+        ))
+        task = cursor.fetchone()
+        conn.commit()
+
+    # WhatsApp notify
+    try:
+        from services.intel_bot import send_intel_notification
+        delta_txt = f" (delta {delta_eng:+.2f}pp)" if delta_eng is not None else ""
+        msg = (
+            f"*Revisao Mensal Editorial* {current['period']}\n\n"
+            f"{cur_n} posts | eng% medio {cur_eng}%{delta_txt}\n"
+            f"Zero eng: {current['summary']['zero_eng_count']}/{cur_n} ({current['summary']['zero_eng_pct']}%)\n\n"
+            f"Note: /projetos/22 (id {note['id']})\n"
+            f"Task de revisao criada (id {task['id']}, vence em 7d)."
+        )
+        import asyncio
+        asyncio.create_task(send_intel_notification(msg))
+    except Exception as e:
+        logger.warning(f"WA notify falhou: {e}")
+
+    return {
+        "status": "success",
+        "note_id": note["id"],
+        "task_id": task["id"],
+        "current": {"period": current["period"], "n": cur_n, "eng_pct_avg": cur_eng},
+        "previous": {"period": previous["period"], "n": prev_n, "eng_pct_avg": prev_eng},
+        "delta_eng_pp": delta_eng,
+    }
+
+
 def get_editorial_funnel() -> Dict:
     """
     Get editorial funnel data: Posts -> Impressions -> Engagement -> Messages -> Meetings.
