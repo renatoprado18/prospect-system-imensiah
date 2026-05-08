@@ -115,6 +115,17 @@
 
 ---
 
+## Pendente — Média Prioridade
+
+### Timezone consistency (iniciado 07/05/2026)
+Refactor incremental. Helpers `app/services/tz.py` + filtros Jinja `|brt`/`|iso` prontos. 13 queries SQL convertidas pra `AT TIME ZONE 'America/Sao_Paulo'`. Memória: `project_tz_consistency.md`.
+- [ ] Verificar `formatTimeAgo()` em action proposals (`app/templates/rap_dashboard.html`) — pode mostrar "agora" errado
+- [ ] WhatsApp message timestamps em conversas (UI) — checar se `criado_em` é convertido pra BRT
+- [ ] `/admin/cron-health` UI — queries usam `AT TIME ZONE` mas frontend pode parsear UTC sem converter
+- [ ] Morning briefing greeting "X reuniões hoje" — hoje conta dia inteiro (decidir se filtra terminadas)
+- [ ] Migração big: ~250 `datetime.utcnow()/now()` em Python → `services.tz.now_utc()` (drive-by quando tocar)
+- [ ] Migração DB: 162 colunas `TIMESTAMP` → `TIMESTAMPTZ` (precisa backfill cuidadoso pra `data_vencimento` que tem semântica BRT)
+
 ## Pendente — Baixa Prioridade
 
 ### UX
