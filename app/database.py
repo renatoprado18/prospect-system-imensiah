@@ -2304,6 +2304,31 @@ def init_db():
             ON bot_conversations(phone, created_at DESC)
         ''')
 
+        # Agent Intents — P6 Diligente (Fase 1).
+        # Persiste intents abertos pra que o bot deixe de ser chat reativo
+        # e cumpra palavra. Cada msg checa abertos antes de responder.
+        # Migration tambem disponivel em scripts/migrations/007_agent_intents.sql.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS agent_intents (
+                id SERIAL PRIMARY KEY,
+                intent_text TEXT NOT NULL,
+                intent_type TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                steps_done JSONB DEFAULT '[]'::jsonb,
+                next_step_hint TEXT,
+                blocker TEXT,
+                related_message_id INTEGER REFERENCES bot_conversations(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC'),
+                updated_at TIMESTAMP DEFAULT (NOW() AT TIME ZONE 'UTC'),
+                completed_at TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_agent_intents_status_created
+            ON agent_intents(status, created_at DESC)
+            WHERE status IN ('open', 'in_progress')
+        ''')
+
         # Migration: add labels and sync_enabled to social_groups_cache
         cursor.execute('''
             ALTER TABLE social_groups_cache ADD COLUMN IF NOT EXISTS labels JSONB DEFAULT '[]'::jsonb
@@ -2521,6 +2546,15 @@ def init_db():
         cursor.execute('''
             CREATE UNIQUE INDEX IF NOT EXISTS idx_outbound_eng_post_url
             ON linkedin_outbound_engagements (post_url)
+        ''')
+        # Migration 2026-05-08: tracking de treplica (Renato responde de volta)
+        cursor.execute('''
+            ALTER TABLE linkedin_outbound_engagements
+            ADD COLUMN IF NOT EXISTS my_replies_count INT DEFAULT 0
+        ''')
+        cursor.execute('''
+            ALTER TABLE linkedin_outbound_engagements
+            ADD COLUMN IF NOT EXISTS last_my_reply_at TIMESTAMP
         ''')
 
         # Custos mensais da plataforma (Vercel/Neon/Railway/Anthropic/LinkdAPI/etc).

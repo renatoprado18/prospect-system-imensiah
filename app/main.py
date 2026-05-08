@@ -4274,6 +4274,60 @@ async def linkedin_outbound_list(
     return {"total": len(rows), "engagements": rows}
 
 
+class OutboundMyReplyBody(BaseModel):
+    note: Optional[str] = None  # Trecho ou contexto da resposta (opcional)
+
+
+@app.post("/api/admin/linkedin-outbound/{eng_id}/my-reply")
+async def linkedin_outbound_my_reply(
+    eng_id: int,
+    body: OutboundMyReplyBody,
+    user: dict = Depends(require_admin),
+):
+    """Marca que o Renato respondeu de volta no comment thread.
+
+    Incrementa my_replies_count + seta last_my_reply_at = NOW(). Re-agenda
+    next_check_at pra ~24h pra capturar resposta dos outros. Opcionalmente
+    appenda no campo notes.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, notes FROM linkedin_outbound_engagements WHERE id = %s",
+            (eng_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Engagement nao encontrado")
+
+        new_note = None
+        if body.note:
+            existing = (row["notes"] or "").strip()
+            stamp = datetime.now().strftime("%d/%m %H:%M")
+            entry = f"[respondi {stamp}] {body.note.strip()}"
+            new_note = f"{existing}\n{entry}".strip() if existing else entry
+
+        cursor.execute(
+            """
+            UPDATE linkedin_outbound_engagements SET
+              my_replies_count = COALESCE(my_replies_count, 0) + 1,
+              last_my_reply_at = NOW(),
+              next_check_at = NOW() + INTERVAL '24 hours',
+              notes = COALESCE(%s, notes)
+            WHERE id = %s
+            RETURNING id, my_replies_count, last_my_reply_at, next_check_at
+            """,
+            (new_note, eng_id),
+        )
+        updated = dict(cursor.fetchone())
+        conn.commit()
+
+    for k in ("last_my_reply_at", "next_check_at"):
+        if updated.get(k):
+            updated[k] = updated[k].isoformat()
+    return {"status": "ok", **updated}
+
+
 @app.get("/api/cron/linkedin-outbound-check")
 @track_cron_run
 async def cron_linkedin_outbound_check(request: Request):

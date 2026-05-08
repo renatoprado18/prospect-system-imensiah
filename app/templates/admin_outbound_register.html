@@ -67,10 +67,10 @@
     <div class="card-body p-0">
       <table class="table table-sm mb-0">
         <thead>
-          <tr><th>Autor</th><th>Headline</th><th>Comentado em</th><th>Reply?</th><th>Ultimo check</th><th></th></tr>
+          <tr><th>Autor</th><th>Headline</th><th>Comentado em</th><th>Reply?</th><th>Ja respondi?</th><th>Ultimo check</th><th></th></tr>
         </thead>
         <tbody id="engagementsList">
-          <tr><td colspan="6" class="text-center text-muted py-3">Carregando...</td></tr>
+          <tr><td colspan="7" class="text-center text-muted py-3">Carregando...</td></tr>
         </tbody>
       </table>
     </div>
@@ -128,21 +128,52 @@ async function loadEngagements() {
     const resp = await fetch('/api/admin/linkedin-outbound');
     const data = await resp.json();
     if (!data.engagements || data.engagements.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Nada registrado ainda</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">Nada registrado ainda</td></tr>';
       return;
     }
-    tbody.innerHTML = data.engagements.map(e => `
+    tbody.innerHTML = data.engagements.map(e => {
+      const myCount = e.my_replies_count || 0;
+      const myReplyCol = myCount > 0
+        ? `<span class="badge bg-info" title="Ultima: ${e.last_my_reply_at ? new Date(e.last_my_reply_at).toLocaleString('pt-BR') : ''}">${myCount}x</span>`
+        : '—';
+      return `
       <tr>
         <td><a href="${e.post_url}" target="_blank">${e.post_author_name || '—'}</a></td>
         <td class="text-muted small" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${e.post_author_headline || ''}</td>
         <td class="small">${e.commented_at ? new Date(e.commented_at).toLocaleDateString('pt-BR') : ''}</td>
         <td class="small">${e.has_reply ? (e.reply_from_author ? '<span class="badge bg-success">autor</span>' : `<span class="badge bg-secondary">${e.reply_count}</span>`) : '—'}</td>
+        <td class="small">${myReplyCol}</td>
         <td class="small text-muted">${e.last_checked_at ? new Date(e.last_checked_at).toLocaleDateString('pt-BR') : '—'}</td>
-        <td class="text-end"><a href="${e.post_url}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2"><i class="bi bi-box-arrow-up-right"></i></a></td>
-      </tr>
-    `).join('');
+        <td class="text-end" style="white-space:nowrap;">
+          <button class="btn btn-sm btn-outline-success py-0 px-2 me-1" onclick="markMyReply(${e.id})" title="Marcar que respondi de volta">
+            <i class="bi bi-reply-fill"></i>
+          </button>
+          <a href="${e.post_url}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2"><i class="bi bi-box-arrow-up-right"></i></a>
+        </td>
+      </tr>`;
+    }).join('');
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">Erro: ' + e.message + '</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger py-3">Erro: ' + e.message + '</td></tr>';
+  }
+}
+
+async function markMyReply(engId) {
+  const note = prompt('Anotar trecho da sua resposta? (opcional)');
+  if (note === null) return;  // cancelado
+  try {
+    const resp = await fetch(`/api/admin/linkedin-outbound/${engId}/my-reply`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({note: note || null}),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      alert('Erro: ' + (err.detail || 'falha ao marcar'));
+      return;
+    }
+    loadEngagements();
+  } catch (err) {
+    alert('Erro: ' + err.message);
   }
 }
 
