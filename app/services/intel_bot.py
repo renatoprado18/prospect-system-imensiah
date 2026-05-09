@@ -1486,14 +1486,14 @@ def _load_conversation_history(phone: str, limit: int = 20) -> List[Dict]:
 
 def _save_conversation_message(phone: str, role: str, content: str,
                                 tool_calls: Any = None, tool_results: Any = None):
-    """Save a single message to conversation history."""
+    """Save a single message to conversation history. Retorna o id inserido (ou None se garbage/erro)."""
     # Don't save garbage messages
     if not content or not content.strip():
-        return
+        return None
     garbage = ['demorou demais para processar', 'Erro interno', 'Tenta de novo?',
                '__IMAGE_PENDING__', '__AUDIO_PENDING__', 'Busquei no sistema mas não encontrei']
     if any(g in content for g in garbage):
-        return
+        return None
 
     try:
         tc_json = json.dumps(tool_calls) if tool_calls else None
@@ -1504,10 +1504,14 @@ def _save_conversation_message(phone: str, role: str, content: str,
             cursor.execute("""
                 INSERT INTO bot_conversations (phone, role, content, tool_calls, tool_results)
                 VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
             """, (phone, role, content, tc_json, tr_json))
+            row = cursor.fetchone()
             conn.commit()
+        return row["id"] if row else None
     except Exception as e:
         logger.error(f"Error saving conversation message: {e}")
+        return None
 
 
 def _build_messages_from_history(history: List[Dict]) -> List[Dict]:
@@ -2046,8 +2050,8 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
     except Exception as e:
         logger.warning(f"Dedup check error: {e}")
 
-    # 3. Save user message to history
-    _save_conversation_message(phone, "user", message)
+    # 3. Save user message to history (capture id pra ligar intent ao turn)
+    user_msg_id = _save_conversation_message(phone, "user", message)
 
     # 4. Load conversation history
     history = _load_conversation_history(phone, limit=20)
@@ -2199,6 +2203,7 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
                         user_message=message,
                         write_action_called=write_called,
                         response_text=final_text,
+                        related_message_id=user_msg_id,
                     )
                     if intent_row:
                         logger.info(
