@@ -33,6 +33,11 @@ def _format_sp_datetime(dt: datetime = None) -> str:
     return f"{dt.strftime('%Y-%m-%d')} {DIAS_PT[dt.weekday()]} {dt.strftime('%H:%M')}"
 
 from database import get_db
+from services.agent_intents import (
+    get_open_intents,
+    format_intents_for_prompt,
+    maybe_open_intent_for_turn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1481,14 +1486,14 @@ def _load_conversation_history(phone: str, limit: int = 20) -> List[Dict]:
 
 def _save_conversation_message(phone: str, role: str, content: str,
                                 tool_calls: Any = None, tool_results: Any = None):
-    """Save a single message to conversation history."""
+    """Save a single message to conversation history. Retorna o id inserido (ou None se garbage/erro)."""
     # Don't save garbage messages
     if not content or not content.strip():
-        return
+        return None
     garbage = ['demorou demais para processar', 'Erro interno', 'Tenta de novo?',
                '__IMAGE_PENDING__', '__AUDIO_PENDING__', 'Busquei no sistema mas não encontrei']
     if any(g in content for g in garbage):
-        return
+        return None
 
     try:
         tc_json = json.dumps(tool_calls) if tool_calls else None
@@ -1499,10 +1504,14 @@ def _save_conversation_message(phone: str, role: str, content: str,
             cursor.execute("""
                 INSERT INTO bot_conversations (phone, role, content, tool_calls, tool_results)
                 VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
             """, (phone, role, content, tc_json, tr_json))
+            row = cursor.fetchone()
             conn.commit()
+        return row["id"] if row else None
     except Exception as e:
         logger.error(f"Error saving conversation message: {e}")
+        return None
 
 
 def _build_messages_from_history(history: List[Dict]) -> List[Dict]:
@@ -2041,8 +2050,8 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
     except Exception as e:
         logger.warning(f"Dedup check error: {e}")
 
-    # 3. Save user message to history
-    _save_conversation_message(phone, "user", message)
+    # 3. Save user message to history (capture id pra ligar intent ao turn)
+    user_msg_id = _save_conversation_message(phone, "user", message)
 
     # 4. Load conversation history
     history = _load_conversation_history(phone, limit=20)
@@ -2054,6 +2063,31 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
 
     # 5. Build system prompt (mode controls persona: whatsapp vs chat coach)
     system_prompt = _build_system_prompt(mode=mode)
+
+    # 5b. P6 Diligente — auto-pickup de intents abertos.
+    # Antes de responder a mensagem nova, lembra o bot dos compromissos
+    # pendentes. Se a msg completa/cancela/atualiza algum, ele DEVE agir
+    # e atualizar o intent. Se for assunto separado, mantem abertos.
+    try:
+        open_intents = get_open_intents(limit=5)
+    except Exception as e:
+        logger.warning(f"get_open_intents failed (auto-pickup skipped): {e}")
+        open_intents = []
+    if open_intents:
+        intents_block = (
+            "\n\n## INTENTS ABERTOS (P6 Diligente — voce ja prometeu fazer):\n"
+            + format_intents_for_prompt(open_intents)
+            + "\n\nAntes de responder a mensagem nova:\n"
+            + "1. Verifique se ela COMPLETA, CANCELA ou ATUALIZA algum intent acima "
+            + "(ex: usuario disse 'pode parar', 'ja fiz', 'esqueca', 'continua').\n"
+            + "2. Se sim, EXECUTE a acao apropriada (chame tool de write) E mencione "
+            + "brevemente o intent ao usuario ('voltei naquele de X').\n"
+            + "3. Se a mensagem e separada, mantenha os abertos como estao e responda normal.\n"
+            + "4. Se algum intent estiver 'blocked', mencione-o ('to travado em X') quando fizer sentido.\n"
+            + "5. NUNCA invente que ja fechou um intent — use a tool real e o estado ainda aparece "
+            + "como 'open' ate Fase 2 do P6 expor manage_intent.\n"
+        )
+        system_prompt = system_prompt + intents_block
 
     # 6. Call Claude with tool_use in a loop
     if not ANTHROPIC_API_KEY:
@@ -2164,6 +2198,28 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
                         + "Algo bloqueou — me reporta o que voce esperava (pode ser que falte tool, ID ou contexto)._"
                     )
                 _save_conversation_message(phone, "assistant", final_text)
+
+                # P6 Diligente — detector de intent ao final do turn.
+                # Se write executou OU user pediu acao em massa OU bot admitiu
+                # falta de tool, abre intent pra rastrear ate completar.
+                # Idempotente: dedupa contra abertos existentes.
+                try:
+                    write_called = _had_successful_write_action(turn_actions)
+                    intent_row = maybe_open_intent_for_turn(
+                        user_message=message,
+                        write_action_called=write_called,
+                        response_text=final_text,
+                        related_message_id=user_msg_id,
+                    )
+                    if intent_row:
+                        logger.info(
+                            f"agent_intent.tracked id={intent_row.get('id')} "
+                            f"status={intent_row.get('status')} "
+                            f"write_called={write_called}"
+                        )
+                except Exception as e:
+                    # Detector nao deve quebrar o turn do bot — log e segue
+                    logger.error(f"detect_intent_from_turn failed: {e}", exc_info=True)
                 break
 
             # Execute tool calls
