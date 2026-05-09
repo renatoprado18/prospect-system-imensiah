@@ -30,12 +30,15 @@ logger = logging.getLogger(__name__)
 # -> usuario pediu acao em massa, abre intent pra rastrear ate completar.
 # IMPORTANTE: imperativo (3a pessoa), nao futuro ("vou") nem passado ("fiz").
 _IMPERATIVE_VERBS = (
+    # Cobre 2a-pessoa (imperativo direto: "vincule"/"vincula") +
+    # subjuntivo presente como imperativo polido (ex: "faca isso", "vincule por favor").
+    # Ordem importa: alternativas mais especificas antes pra nao ser ofuscadas.
     "vincul[ae]|associ[ae]|relacion[ae]|conect[ae]|"
     "agend[ae]|marc[ae]|cri[ae]|"
     "envi[ae]|mand[ae]|despach[ae]|"
     "atualiz[ae]|edit[ae]|alter[ae]|modific[ae]|move|mov[ae]|remarc[ae]|reagend[ae]|"
     "delet[ae]|apag[ae]|remov[ae]|exclu[aei]|"
-    "execut[ae]|f[ae]z|realiz[ae]|rod[ae]|process[ae]|"
+    "execut[ae]|fa[cç][ae]|f[ae]z|faz\\b|realiz[ae]|rod[ae]|process[ae]|"
     "salv[ae]|guard[ae]|persist[ae]|"
     "conclu[aei]|complet[ae]|finaliz[ae]|fech[ae]|encerr[ae]"
 )
@@ -358,14 +361,14 @@ def detect_intent_from_turn(
     Retorna dict com {should_open, intent_text, intent_type, status, blocker}
     OU None quando o turn e puro chat/coach/query e nao gera compromisso.
 
-    Regras (do design 08/05):
-    - write_action_called=True -> abre multi_step_action (bot agiu, talvez tenha mais a fazer).
-      Quando write_partial=True (ex: postpone afetou N de M), forca abertura.
-    - user_message tem imperativo plural ("vincule todas", "agende as 5",
-      "atualiza tudo") -> abre multi_step_action.
-    - response_text admite falta/falha ("nao consigo", "falta tool")
-      -> abre BLOCKED.
-    - Caso contrario -> None.
+    Regras (do design 08/05) — ordem de prioridade no codigo:
+    1. response_text admite falta/falha ("nao consigo", "falta tool") -> abre BLOCKED.
+       (PRIORIDADE: gap precisa de visibilidade mais que progresso parcial.)
+    2. write_action_called=True -> abre multi_step_action (bot agiu, talvez mais a fazer).
+       Quando write_partial=True (ex: postpone afetou N de M), abre como in_progress.
+    3. user_message tem imperativo plural ("vincule todas", "faca os 5", "atualiza tudo")
+       -> abre multi_step_action (user pediu acao em massa, rastrear ate completar).
+    4. Caso contrario -> None (chat/coach/query puro, sem compromisso).
     """
     user_msg = (user_message or "").strip()
     response = (response_text or "").strip()

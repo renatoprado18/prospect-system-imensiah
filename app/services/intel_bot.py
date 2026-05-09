@@ -2279,6 +2279,26 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
                 final_text = "Busquei no sistema mas não encontrei uma resposta definitiva. Pode reformular a pergunta ou dar mais detalhes?"
                 _save_conversation_message(phone, "assistant", final_text)
 
+            # P6 Diligente — detector tambem roda quando esgotou max_iterations
+            # (sem isso, intents legitimos passariam batidos quando bot precisa
+            # de muitos passos pra responder).
+            try:
+                write_called = _had_successful_write_action(turn_actions)
+                intent_row = maybe_open_intent_for_turn(
+                    user_message=message,
+                    write_action_called=write_called,
+                    response_text=final_text,
+                    related_message_id=user_msg_id,
+                )
+                if intent_row:
+                    logger.info(
+                        f"agent_intent.tracked_max_iter id={intent_row.get('id')} "
+                        f"status={intent_row.get('status')} "
+                        f"write_called={write_called}"
+                    )
+            except Exception as e:
+                logger.error(f"detect_intent_from_turn (max_iter) failed: {e}", exc_info=True)
+
     except httpx.TimeoutException:
         logger.error("Claude API timeout")
         final_text = "Desculpa, demorou demais para processar. Tenta de novo?"
