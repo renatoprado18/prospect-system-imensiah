@@ -1,0 +1,25 @@
+name: Cron — Agent Intents Tick (P6 Diligente Fase 2)
+
+# Why GitHub Actions: Vercel Hobby plan nao aceita schedules sub-diarios.
+# Endpoint /api/cron/agent-intents-tick roda 30/30min, tenta progredir
+# intents abertos via Claude (write tools) e escala blocked velhos via
+# WhatsApp pro Renato. Memoria de design: project_inteligencia_real.md
+# (P6 Diligente).
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Hit agent-intents-tick endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/agent-intents-tick")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)

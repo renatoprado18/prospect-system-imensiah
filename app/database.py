@@ -2329,6 +2329,19 @@ def init_db():
             WHERE status IN ('open', 'in_progress')
         ''')
 
+        # Migration 008 (P6 Diligente Fase 2): escalation dedup.
+        # Quando intent fica blocked > 60min e ainda nao escalado, cron tick
+        # manda WA pro Renato + seta escalated_at = NOW(). Coluna inline pra que
+        # init_db cubra tudo num lugar so (migration 008 e equivalente).
+        cursor.execute('''
+            ALTER TABLE agent_intents ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMP
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_agent_intents_escalated
+            ON agent_intents(updated_at)
+            WHERE status = 'blocked' AND escalated_at IS NULL
+        ''')
+
         # Migration: add labels and sync_enabled to social_groups_cache
         cursor.execute('''
             ALTER TABLE social_groups_cache ADD COLUMN IF NOT EXISTS labels JSONB DEFAULT '[]'::jsonb
