@@ -2232,6 +2232,17 @@
                     <div class="stat-breakdown" id="statVeiculosBreakdown"></div>
                 </div>
             </div>
+            <!-- P6 Diligente Fase 2: intents abertos do bot (compromissos persistentes) -->
+            <div class="stat-card" style="cursor: pointer;" data-drill="intents" onclick="openDrill('intents')">
+                <div class="stat-icon" style="background: rgba(14, 165, 233, 0.1); color: #0ea5e9;"><i class="bi bi-list-check"></i></div>
+                <div class="stat-content">
+                    <div class="stat-headline">
+                        <div class="stat-value" id="statIntents">-</div>
+                        <div class="stat-label">Intents</div>
+                    </div>
+                    <div class="stat-breakdown" id="statIntentsBreakdown"></div>
+                </div>
+            </div>
         </div>
 
         <!-- Empty state celebratorio (todos statcards = 0) -->
@@ -2366,7 +2377,7 @@
         }
 
         function applyMutedState() {
-            const stats = ['statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos'];
+            const stats = ['statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos', 'statIntents'];
             stats.forEach(id => {
                 const valEl = document.getElementById(id);
                 if (!valEl) return;
@@ -2382,7 +2393,7 @@
         function updateCleanSlateBanner() {
             const banner = document.getElementById('cleanSlateBanner');
             if (!banner) return;
-            const stats = ['statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos'];
+            const stats = ['statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos', 'statIntents'];
             // Mostra so se TODOS estao idle (nao "-" ainda carregando, nao algo ativo).
             let allIdle = true;
             for (const id of stats) {
@@ -2513,6 +2524,7 @@
                 // Briefings pendentes - buscar da API especifica
                 loadTasksOverdue();
                 loadEditorialActionItems();
+                loadAgentIntents();
 
                 // Atualiza muted state + clean slate banner depois das atualizacoes
                 applyMutedState();
@@ -3257,6 +3269,61 @@
             }
             applyMutedState();
             updateCleanSlateBanner();
+        }
+
+        // Load agent intents (P6 Diligente Fase 2: compromissos abertos do bot)
+        async function loadAgentIntents() {
+            try {
+                const resp = await fetch('/api/agent-intents/dashboard');
+                if (!resp.ok) throw new Error('fail');
+                const data = await resp.json();
+                window._statcardData.intents = data;
+                const total = data.total || 0;
+                const counts = data.counts || {};
+                document.getElementById('statIntents').textContent = total;
+                const breakdown = document.getElementById('statIntentsBreakdown');
+                if (breakdown) {
+                    const blockedN = counts.blocked || 0;
+                    const inProgN = counts.in_progress || 0;
+                    const openN = counts.open || 0;
+                    breakdown.innerHTML = `
+                        <span class="pill ${blockedN > 0 ? 'danger' : 'muted'}" title="Travado (precisa ação)"><i class="bi bi-cone-striped"></i> ${blockedN}</span>
+                        <span class="pill ${inProgN > 0 ? 'warning' : 'muted'}" title="Em progresso"><i class="bi bi-hourglass-split"></i> ${inProgN}</span>
+                        <span class="pill ${openN > 0 ? 'info' : 'muted'}" title="Abertos"><i class="bi bi-circle"></i> ${openN}</span>
+                    `;
+                }
+            } catch (e) {
+                document.getElementById('statIntents').textContent = '-';
+            }
+            applyMutedState();
+            updateCleanSlateBanner();
+        }
+
+        // Manage intent (cancela / completa / destrava) — chamado pelos botoes do drill
+        async function manageIntent(intentId, action, details) {
+            const body = { action: action };
+            if (details) body.details = details;
+            try {
+                const resp = await fetch(`/api/agent-intents/${intentId}/manage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    alert(`Falha: ${err.detail || resp.status}`);
+                    return;
+                }
+                // Refresca statcard + drill
+                loadAgentIntents();
+                if (currentDrill === 'intents') {
+                    // Reabre drill pra mostrar lista atualizada
+                    currentDrill = null;
+                    openDrill('intents');
+                }
+            } catch (e) {
+                alert(`Erro: ${e.message}`);
+            }
         }
 
         // Load action proposals (INTEL Proativo)
@@ -5244,6 +5311,50 @@
                     </div>`;
                 },
                 fullPage: '/veiculos'
+            },
+            // P6 Diligente Fase 2: drill de intents abertos do bot
+            intents: {
+                label: 'Intents do Bot',
+                color: '#0ea5e9',
+                endpoint: () => '/api/agent-intents/dashboard',
+                extract: (d) => d.items || [],
+                emptyIcon: 'bi-check-circle',
+                emptyText: 'Sem intents abertos — bot esta em dia',
+                renderItem: (it) => {
+                    const statusColors = {
+                        blocked: { bg: '#fee2e2', fg: '#b91c1c', label: 'TRAVADO' },
+                        in_progress: { bg: '#fef3c7', fg: '#b45309', label: 'EM PROGRESSO' },
+                        open: { bg: '#dbeafe', fg: '#1e40af', label: 'ABERTO' },
+                    };
+                    const sc = statusColors[it.status] || statusColors.open;
+                    const badge = `<span class="drill-badge" style="background:${sc.bg};color:${sc.fg};">${sc.label}</span>`;
+                    const stepsLabel = it.steps_count ? `<span title="passos feitos"><i class="bi bi-list-ol"></i> ${it.steps_count}</span>` : '';
+                    const blockerLine = it.blocker
+                        ? `<div class="drill-item-meta" style="color:#b91c1c;"><i class="bi bi-cone-striped"></i> ${escapeHtml(it.blocker)}</div>`
+                        : '';
+                    const hintLine = !it.blocker && it.next_step_hint
+                        ? `<div class="drill-item-meta"><i class="bi bi-arrow-right-short"></i> ${escapeHtml(it.next_step_hint)}</div>`
+                        : '';
+                    const escalatedTag = it.escalated_at
+                        ? `<span class="drill-badge" style="background:#fae8ff;color:#7e22ce;" title="Escalado via WhatsApp"><i class="bi bi-megaphone"></i></span>`
+                        : '';
+                    return `<div class="drill-item" style="display:flex; flex-direction:column; gap:6px; padding:10px;">
+                        <div style="display:flex; gap:8px; align-items:start;">
+                            <div style="flex:1;">
+                                <div class="drill-item-title">#${it.id} ${escapeHtml(it.intent_text || '')} ${badge} ${escalatedTag}</div>
+                                ${blockerLine}
+                                ${hintLine}
+                            </div>
+                            <div class="drill-item-stats" style="display:flex; gap:10px; align-items:center; color:#6b7280; font-size:0.85em;">${stepsLabel}</div>
+                        </div>
+                        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                            <button class="btn btn-sm btn-outline-success" onclick="manageIntent(${it.id}, 'mark_completed')"><i class="bi bi-check2-circle"></i> Completar</button>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="manageIntent(${it.id}, 'cancel')"><i class="bi bi-x-circle"></i> Cancelar</button>
+                            ${it.status === 'blocked' ? `<button class="btn btn-sm btn-outline-primary" onclick="(function(){const d=prompt('Descreve o passo / o que destravou:'); if(d) manageIntent(${it.id}, 'mark_step', d);})()"><i class="bi bi-arrow-clockwise"></i> Destravar</button>` : ''}
+                        </div>
+                    </div>`;
+                },
+                fullPage: '/agente'
             }
         };
 

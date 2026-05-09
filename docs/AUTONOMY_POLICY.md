@@ -114,8 +114,9 @@ Estado em **2026-05-02**. Baseado em [audit do código](../app/services/) + cron
 | `drive-webhook` Google Drive push | Auto | ❌ | Indexa novos docs. |
 | `fathom-webhook` (criação automática de project/tasks) | **Auto** | ❌ | Cria projeto + tarefas a partir de reunião. **Phase 3 candidato.** |
 | `agent_intents.detect_and_open` (P6 Diligente Fase 1, em cada msg do bot) | Auto | ❌ | Abre intent persistente quando write executa OU user pede ação em massa OU bot admite falta de tool. Sem efeito externo (só persiste linha). |
-| `agent_intents.tick` (P6 Diligente Fase 2 — futuro, cron 30min) | Auto | ✅ obrigatório | Bot tenta progredir intents abertos sozinho. Logar com `entity_id=intent.id`. |
-| `agent_intents.escalate_blocked` (P6 Diligente Fase 2 — futuro) | Notifica | ✅ | Bot reporta via WhatsApp o que travou (depois de N tentativas). |
+| `agent_intents.tick` (P6 Diligente Fase 2 — **ATIVO** desde 2026-05-08, cron 30min via GH Actions) | **Auto** | ✅ **obrigatório** | Bot tenta progredir intents abertos sozinho via Claude. Loga `agent_intent.tick` com `scope_ref={'intent_id': N}`. Quando atualiza intent (mark_step, mark_blocked, mark_completed, cancel), tambem loga `agent_intent.{action}`. Idempotencia: pula intents atualizados < 10min. |
+| `agent_intents.escalate_blocked` (P6 Diligente Fase 2 — **ATIVO** desde 2026-05-08) | **Notifica** | ✅ | Bot reporta via WhatsApp o que travou (intents `status=blocked` + `escalated_at IS NULL` + `updated_at < NOW - 60min`). Marca `escalated_at` pra dedup; reset quando user destrava (status muda de blocked). Loga `agent_intent.escalated`. |
+| `intel_bot.manage_intent` tool (Fase 2 — bot atualiza intent explicitamente) | **Auto** | ✅ | Bot pode chamar `execute_action action='manage_intent'` com sub-actions mark_step/mark_blocked/mark_completed/cancel. Loga `agent_intent.{sub_action}` com `entity_id=intent_id`. Tambem exposto via UI no dashboard (`POST /api/agent-intents/{id}/manage`) com mesmo audit. |
 
 ---
 

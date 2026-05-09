@@ -91,7 +91,7 @@ def open_intent(
                 VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id, intent_text, intent_type, status, steps_done,
                           next_step_hint, blocker, related_message_id,
-                          created_at, updated_at, completed_at
+                          created_at, updated_at, completed_at, escalated_at
                 """,
                 (intent_text.strip(), intent_type, status, related_message_id, blocker, next_step_hint),
             )
@@ -131,6 +131,12 @@ def update_intent(
         values.append(status)
         if status == "completed":
             sets.append("completed_at = (NOW() AT TIME ZONE 'UTC')")
+        # Quando blocker eh resetado (status passa de blocked pra outra coisa),
+        # zera escalated_at pra que se virar blocked de novo (com novo blocker)
+        # possa ser escalado novamente. Sem isso, blocker novo no mesmo intent
+        # nao re-escalava. Trade-off aceito: cada vez que destrava+retrava re-escala.
+        if status != "blocked":
+            sets.append("escalated_at = NULL")
     if steps_done is not None:
         sets.append("steps_done = %s")
         values.append(json.dumps(steps_done))
@@ -160,7 +166,7 @@ def update_intent(
                 WHERE id = %s
                 RETURNING id, intent_text, intent_type, status, steps_done,
                           next_step_hint, blocker, related_message_id,
-                          created_at, updated_at, completed_at
+                          created_at, updated_at, completed_at, escalated_at
                 """,
                 tuple(values),
             )
@@ -220,7 +226,7 @@ def get_open_intents(limit: int = 10) -> List[Dict[str, Any]]:
                 """
                 SELECT id, intent_text, intent_type, status, steps_done,
                        next_step_hint, blocker, related_message_id,
-                       created_at, updated_at, completed_at
+                       created_at, updated_at, completed_at, escalated_at
                 FROM agent_intents
                 WHERE status IN ('open', 'in_progress')
                 ORDER BY created_at DESC
@@ -244,7 +250,7 @@ def get_intent(intent_id: int) -> Optional[Dict[str, Any]]:
                 """
                 SELECT id, intent_text, intent_type, status, steps_done,
                        next_step_hint, blocker, related_message_id,
-                       created_at, updated_at, completed_at
+                       created_at, updated_at, completed_at, escalated_at
                 FROM agent_intents
                 WHERE id = %s
                 """,
@@ -327,7 +333,7 @@ def find_similar_open_intent(intent_text: str) -> Optional[Dict[str, Any]]:
                 """
                 SELECT id, intent_text, intent_type, status, steps_done,
                        next_step_hint, blocker, related_message_id,
-                       created_at, updated_at, completed_at
+                       created_at, updated_at, completed_at, escalated_at
                 FROM agent_intents
                 WHERE status IN ('open', 'in_progress')
                   AND (
@@ -461,3 +467,125 @@ def maybe_open_intent_for_turn(
     except Exception as e:
         logger.error(f"maybe_open_intent_for_turn error: {e}")
         return None
+
+
+# ==================== ESCALATION (Fase 2) ====================
+
+# Threshold pra escalar: blocker velho. 60min = 2 ticks de 30min sem progresso.
+# Renato pode rever se virar ruidoso — easy ajuste.
+ESCALATION_AGE_MINUTES = 60
+
+
+def get_blocked_intents_to_escalate(age_minutes: int = ESCALATION_AGE_MINUTES) -> List[Dict[str, Any]]:
+    """SELECT intents blocked + nao escalados + updated_at > age_minutes atras.
+
+    Usado pelo cron tick pra disparar WhatsApp ao Renato. Index parcial
+    `idx_agent_intents_escalated` cobre o filtro pra performance.
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, intent_text, intent_type, status, steps_done,
+                       next_step_hint, blocker, related_message_id,
+                       created_at, updated_at, completed_at, escalated_at
+                FROM agent_intents
+                WHERE status = 'blocked'
+                  AND escalated_at IS NULL
+                  AND updated_at < (NOW() AT TIME ZONE 'UTC') - (%s || ' minutes')::interval
+                ORDER BY updated_at ASC
+                """,
+                (str(age_minutes),),
+            )
+            rows = cursor.fetchall() or []
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"get_blocked_intents_to_escalate error: {e}")
+        return []
+
+
+def mark_escalated(intent_id: int) -> bool:
+    """Seta escalated_at = NOW() pra dedup. Retorna True em sucesso."""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE agent_intents
+                SET escalated_at = (NOW() AT TIME ZONE 'UTC')
+                WHERE id = %s
+                RETURNING id
+                """,
+                (intent_id,),
+            )
+            row = cursor.fetchone()
+            conn.commit()
+        return bool(row)
+    except Exception as e:
+        logger.error(f"mark_escalated error id={intent_id}: {e}")
+        return False
+
+
+async def escalate_blocked_intents(age_minutes: int = ESCALATION_AGE_MINUTES) -> List[Dict[str, Any]]:
+    """Escala intents blocked velhos via WhatsApp pro Renato.
+
+    - Filtra por status='blocked' AND escalated_at IS NULL AND updated_at < NOW - age.
+    - Pra cada um, manda WA + UPDATE escalated_at = NOW().
+    - Audit log `agent_intent.escalated`.
+
+    Retorna lista de intents escalados nesta rodada (pra que o cron mostre no resumo).
+    Falha silenciosa de WA nao bloqueia outros — registra no log e segue.
+    """
+    intents = get_blocked_intents_to_escalate(age_minutes=age_minutes)
+    if not intents:
+        return []
+
+    # Imports locais — evita ciclo (intel_bot importa daqui).
+    try:
+        from services.intel_bot import send_intel_notification  # noqa: WPS433
+    except Exception as e:
+        logger.error(f"escalate_blocked_intents: cannot import send_intel_notification: {e}")
+        return []
+    try:
+        from services.agent_actions import log_action  # noqa: WPS433
+    except Exception:
+        log_action = None  # type: ignore[assignment]
+
+    escalated: List[Dict[str, Any]] = []
+    for it in intents:
+        text = (it.get("intent_text") or "").strip().replace("\n", " ")
+        blocker = (it.get("blocker") or "(sem motivo registrado)").strip()
+        msg = (
+            f"🚧 Intent #{it['id']} travado:\n"
+            f"*{text[:120]}*\n"
+            f"Motivo: {blocker[:200]}\n\n"
+            f"Reponde \"destrava {it['id']}\" pra retomar, "
+            f"\"esquece {it['id']}\" pra cancelar, ou ignora."
+        )
+        ok = False
+        try:
+            ok = await send_intel_notification(msg)
+        except Exception as e:
+            logger.error(f"escalate_blocked_intents WA send error id={it['id']}: {e}")
+
+        if ok:
+            mark_escalated(it["id"])
+            escalated.append(it)
+            if log_action:
+                try:
+                    log_action(
+                        action_type="agent_intent.escalated",
+                        category="system",
+                        title=f"Intent #{it['id']} escalado via WhatsApp",
+                        details=f"Blocker: {blocker[:200]}",
+                        scope_ref={"intent_id": it["id"]},
+                        source="agent_intents_tick",
+                        payload={"intent_text": text[:300], "blocker": blocker[:300]},
+                    )
+                except Exception as e:
+                    logger.warning(f"escalate_blocked_intents log_action failed: {e}")
+        else:
+            logger.warning(f"escalate_blocked_intents: WA send failed id={it['id']}, deixando pra proxima rodada")
+
+    return escalated

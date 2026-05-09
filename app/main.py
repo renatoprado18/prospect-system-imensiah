@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request, Depends, File, UploadFile
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request, Depends, File, UploadFile, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -8861,6 +8861,162 @@ async def cron_proactive_check(request: Request):
     except Exception as e:
         logger.exception("cron_proactive_check: exception fatal")
         return {"status": "error", "job": "proactive-check", "error": f"{type(e).__name__}: {e}"}
+
+
+@app.post("/api/cron/agent-intents-tick")
+@track_cron_run
+async def cron_agent_intents_tick(request: Request):
+    """
+    Cron 30min (P6 Diligente Fase 2): tenta progredir intents abertos sozinho
+    + escala blocked velhos via WhatsApp.
+
+    Rodado via GitHub Actions (Vercel Hobby nao aceita schedule sub-diario).
+    Workflow: .github/workflows/cron-agent-intents-tick.yml.
+
+    Audit obrigatorio (per AUTONOMY_POLICY.md): tick_one chama log_action
+    pra cada intent processado.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.agent_intents_tick import tick_all
+
+    try:
+        result = await _aio.wait_for(tick_all(), timeout=270.0)
+        return {"status": "ok", "job": "agent-intents-tick", **result}
+    except _aio.TimeoutError:
+        logger.error("cron_agent_intents_tick: tick_all > 270s")
+        return {"status": "error", "job": "agent-intents-tick", "error": "timeout > 270s"}
+    except Exception as e:
+        logger.exception("cron_agent_intents_tick: exception fatal")
+        return {"status": "error", "job": "agent-intents-tick", "error": f"{type(e).__name__}: {e}"}
+
+
+@app.get("/api/agent-intents/dashboard")
+async def api_agent_intents_dashboard():
+    """Dados pro statcard de Intents no rap_dashboard.
+
+    Retorna total + breakdown por status + amostra dos 5 mais recentes.
+    Usado pelo statcard "Intents" que mostra blocked em vermelho, in_progress
+    em amarelo, open neutro. Click abre drill com lista.
+    """
+    from services.agent_intents import get_open_intents
+
+    intents = get_open_intents(limit=20)
+    counts = {"open": 0, "in_progress": 0, "blocked": 0}
+    # get_open_intents filtra por status IN ('open', 'in_progress'); blocked
+    # nao entra. Buscar separadamente os blocked recentes pra completar o
+    # quadro do dashboard.
+    blocked: List[Dict[str, Any]] = []
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, intent_text, intent_type, status, steps_done,
+                       next_step_hint, blocker, related_message_id,
+                       created_at, updated_at, completed_at, escalated_at
+                FROM agent_intents
+                WHERE status = 'blocked'
+                ORDER BY updated_at DESC
+                LIMIT 10
+                """,
+            )
+            blocked = [dict(r) for r in (cursor.fetchall() or [])]
+    except Exception as e:
+        logger.warning(f"agent_intents dashboard blocked fetch failed: {e}")
+
+    for it in intents:
+        s = it.get("status")
+        counts[s] = counts.get(s, 0) + 1
+    counts["blocked"] = len(blocked)
+
+    # Combina pro frontend mostrar tudo num drill so
+    items = (blocked + intents)[:20]
+
+    return {
+        "total": len(intents) + len(blocked),
+        "counts": counts,
+        "items": [
+            {
+                "id": it["id"],
+                "intent_text": (it.get("intent_text") or "")[:200],
+                "status": it.get("status"),
+                "intent_type": it.get("intent_type"),
+                "blocker": (it.get("blocker") or "")[:200] if it.get("blocker") else None,
+                "next_step_hint": (it.get("next_step_hint") or "")[:200] if it.get("next_step_hint") else None,
+                "steps_count": (
+                    len(it.get("steps_done")) if isinstance(it.get("steps_done"), list)
+                    else 0
+                ),
+                "created_at": it.get("created_at").isoformat() if it.get("created_at") else None,
+                "updated_at": it.get("updated_at").isoformat() if it.get("updated_at") else None,
+                "escalated_at": it.get("escalated_at").isoformat() if it.get("escalated_at") else None,
+            }
+            for it in items
+        ],
+    }
+
+
+@app.post("/api/agent-intents/{intent_id}/manage")
+async def api_agent_intents_manage(intent_id: int, body: dict = Body(...)):
+    """Endpoint pra UI fazer manage_intent (botoes "Cancelar" / "Marcar concluido"
+    no drill do dashboard).
+
+    Body: {"action": "mark_step|mark_blocked|mark_completed|cancel", "details": "..."}
+    Reusa a mesma logica de auditoria do bot.
+    """
+    sub_action = (body.get("action") or "").strip()
+    details = (body.get("details") or "").strip()
+    if sub_action not in ("mark_step", "mark_blocked", "mark_completed", "cancel"):
+        raise HTTPException(status_code=400, detail=f"action invalida: {sub_action}")
+
+    from services.agent_intents import (
+        append_step as _append_step,
+        update_intent as _update_intent,
+        cancel_intent as _cancel_intent,
+    )
+    try:
+        if sub_action == "mark_step":
+            if not details:
+                raise HTTPException(status_code=400, detail="details obrigatorio pra mark_step")
+            step = {"kind": "manual_ui_step", "details": details[:300]}
+            result = _append_step(intent_id, step, status="in_progress")
+        elif sub_action == "mark_blocked":
+            if not details:
+                raise HTTPException(status_code=400, detail="details obrigatorio pra mark_blocked")
+            result = _update_intent(intent_id, status="blocked", blocker=details[:300])
+        elif sub_action == "mark_completed":
+            result = _update_intent(intent_id, status="completed")
+        else:
+            result = _cancel_intent(intent_id)
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Audit
+    try:
+        from services.agent_actions import log_action
+        log_action(
+            action_type=f"agent_intent.{sub_action}",
+            category="system",
+            title=f"Intent #{intent_id} — {sub_action} (UI)",
+            details=details[:300] if details else None,
+            scope_ref={"intent_id": intent_id},
+            source="dashboard_ui",
+            payload={"action": sub_action, "details": details[:500]},
+        )
+    except Exception as e:
+        logger.warning(f"manage_intent UI log_action failed: {e}")
+
+    return {
+        "ok": True,
+        "intent_id": intent_id,
+        "action": sub_action,
+        "status": result.get("status") if isinstance(result, dict) else None,
+    }
 
 
 # ============================================================================

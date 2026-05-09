@@ -242,7 +242,8 @@ TOOLS = [
             "- search_system_memories: busca em memorias persistentes (params: query, limit?, mode?). "
             "mode='hybrid' (default) combina keyword + semantic — recomendado pra recall por sinonimos/parafraseamento "
             "(ex: 'drenado' encontra memorias com 'cansado'/'exausto'). "
-            "mode='keyword' so faz match literal. mode='semantic' so via embeddings (Voyage)."
+            "mode='keyword' so faz match literal. mode='semantic' so via embeddings (Voyage).\n"
+            "- manage_intent: gerencia um intent aberto. params: intent_id (int), action ('mark_step'|'mark_blocked'|'mark_completed'|'cancel'), details? (str descrevendo o passo/blocker). Use isso quando voce explicitamente fizer progresso, travar, ou completar um intent. Auto-pickup mostra os intents abertos no system prompt."
         ),
         "input_schema": {
             "type": "object",
@@ -258,7 +259,8 @@ TOOLS = [
                         "import_fathom_meeting",
                         "enrich_contact", "update_contact",
                         "save_feedback",
-                        "save_system_memory", "search_system_memories"
+                        "save_system_memory", "search_system_memories",
+                        "manage_intent"
                     ]
                 },
                 "params": {
@@ -529,6 +531,8 @@ def _entity_type_for_action(action: str) -> str:
         return "contact"
     if action == "send_whatsapp":
         return "message"
+    if action == "manage_intent":
+        return "agent_intent"
     return "unknown"
 
 
@@ -560,7 +564,7 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
     audit_log(
         f"intel_bot.{action}",
         entity_type=_entity_type_for_action(action),
-        entity_id=params.get("contact_id") or params.get("project_id") or params.get("task_id"),
+        entity_id=params.get("contact_id") or params.get("project_id") or params.get("task_id") or params.get("intent_id"),
         actor="intel_bot",
         details={"params": params},
     )
@@ -1310,6 +1314,71 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                  "data": r["criado_em"].isoformat() if r.get("criado_em") else None}
                 for r in results
             ]}, ensure_ascii=False, default=str)
+
+        elif action == "manage_intent":
+            # P6 Diligente Fase 2: bot pode explicitamente atualizar/fechar/cancelar
+            # intent. Auto-pickup ja mostra os abertos no system prompt; usar quando
+            # o bot quiser fazer progresso explicito (vs implicito via detector).
+            intent_id = params.get("intent_id")
+            sub_action = (params.get("action") or "").strip()
+            details = (params.get("details") or "").strip()
+            if not intent_id:
+                return json.dumps({"erro": "intent_id e obrigatorio"})
+            if sub_action not in ("mark_step", "mark_blocked", "mark_completed", "cancel"):
+                return json.dumps({
+                    "erro": f"action invalida: {sub_action}. Use mark_step|mark_blocked|mark_completed|cancel"
+                })
+
+            from services.agent_intents import (
+                append_step as _append_step,
+                update_intent as _update_intent,
+                cancel_intent as _cancel_intent,
+            )
+            try:
+                if sub_action == "mark_step":
+                    if not details:
+                        return json.dumps({"erro": "details obrigatorio pra mark_step"}, ensure_ascii=False)
+                    step = {"kind": "manual_bot_step", "details": details[:300]}
+                    result = _append_step(int(intent_id), step, status="in_progress")
+                    msg = f"Intent #{intent_id} atualizado: passo registrado."
+                elif sub_action == "mark_blocked":
+                    if not details:
+                        return json.dumps({"erro": "details obrigatorio pra mark_blocked (motivo)"}, ensure_ascii=False)
+                    result = _update_intent(int(intent_id), status="blocked", blocker=details[:300])
+                    msg = f"Intent #{intent_id} marcado como blocked."
+                elif sub_action == "mark_completed":
+                    result = _update_intent(int(intent_id), status="completed")
+                    msg = f"Intent #{intent_id} marcado como completed."
+                else:  # cancel
+                    result = _cancel_intent(int(intent_id))
+                    msg = f"Intent #{intent_id} cancelado."
+            except ValueError as ve:
+                return json.dumps({"erro": str(ve)}, ensure_ascii=False)
+            except Exception as e:
+                return json.dumps({"erro": f"falha em manage_intent: {e}"}, ensure_ascii=False)
+
+            # Audit obrigatorio (per AUTONOMY_POLICY.md — manage_intent toca estado).
+            try:
+                from services.agent_actions import log_action
+                log_action(
+                    action_type=f"agent_intent.{sub_action}",
+                    category="system",
+                    title=f"Intent #{intent_id} — {sub_action}",
+                    details=details[:300] if details else None,
+                    scope_ref={"intent_id": int(intent_id)},
+                    source="intel_bot.manage_intent",
+                    payload={"action": sub_action, "details": details[:500]},
+                )
+            except Exception as e:
+                logger.warning(f"manage_intent log_action failed: {e}")
+
+            return json.dumps({
+                "sucesso": True,
+                "intent_id": int(intent_id),
+                "action": sub_action,
+                "status": result.get("status") if isinstance(result, dict) else None,
+                "mensagem": msg,
+            }, ensure_ascii=False, default=str)
 
         else:
             return json.dumps({"erro": f"Acao desconhecida: {action}"})
@@ -2084,8 +2153,9 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
             + "brevemente o intent ao usuario ('voltei naquele de X').\n"
             + "3. Se a mensagem e separada, mantenha os abertos como estao e responda normal.\n"
             + "4. Se algum intent estiver 'blocked', mencione-o ('to travado em X') quando fizer sentido.\n"
-            + "5. NUNCA invente que ja fechou um intent — use a tool real e o estado ainda aparece "
-            + "como 'open' ate Fase 2 do P6 expor manage_intent.\n"
+            + "5. Pra atualizar o estado de um intent EXPLICITAMENTE, use execute_action action='manage_intent' "
+            + "com intent_id + action ('mark_step'|'mark_blocked'|'mark_completed'|'cancel') + details (motivo/passo). "
+            + "Comandos comuns do user que disparam: 'destrava N' (mark_step ou retomar), 'esquece N' (cancel), 'ja fiz N' (mark_completed).\n"
         )
         system_prompt = system_prompt + intents_block
 
