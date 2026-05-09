@@ -1,0 +1,23 @@
+name: Cron — LinkedIn Funnel Snapshot
+
+# Why GitHub Actions: Vercel Hobby plan nao disparou esse cron NENHUMA vez no
+# historico de 14 dias (weekly Mon 02 UTC). Endpoint existe (main.py:4167) e
+# CRON_SECRET ja foi validado pra outros workflows. Migrado em 2026-05-09.
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit linkedin-funnel-snapshot endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/linkedin-funnel-snapshot")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)

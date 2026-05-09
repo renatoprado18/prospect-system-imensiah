@@ -50,10 +50,6 @@
       "schedule": "0 6 * * *"
     },
     {
-      "path": "/api/cron/editorial-metrics-reminder",
-      "schedule": "0 14 * * *"
-    },
-    {
       "path": "/api/cron/editorial-metrics-reminder-evening",
       "schedule": "0 23 * * *"
     },
@@ -68,10 +64,6 @@
     {
       "path": "/api/cron/daily-synthesis",
       "schedule": "0 1 * * *"
-    },
-    {
-      "path": "/api/cron/linkedin-funnel-snapshot",
-      "schedule": "0 2 * * 1"
     },
     {
       "path": "/api/cron/linkedin-monitor-topics",
