@@ -41,68 +41,79 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
             conn.close()
             return None
 
-        # Get RACI items
+        # Get RACI items — busca todos e ordena em Python pra usar buckets
+        # de prioridade (urgente/atrasada-com-movimento/no-prazo/concluida).
         cur.execute("""
-            SELECT id, area, acao, prazo, status,
+            SELECT id, area, acao, prazo, status, updated_at,
                    responsavel_r, responsavel_a, responsavel_c, responsavel_i
             FROM raci_itens
             WHERE empresa_id = %s
-            ORDER BY
-                CASE status
-                    WHEN 'atrasado' THEN 0
-                    WHEN 'pendente' THEN 1
-                    WHEN 'em_andamento' THEN 2
-                    WHEN 'concluido' THEN 3
-                    ELSE 4
-                END,
-                prazo ASC
         """, (empresa_id,))
-        items = cur.fetchall()
+        raw_items = cur.fetchall()
         conn.close()
 
-        if not items:
+        if not raw_items:
             return None
 
         hoje = date.today()
-        atrasados = []
-        pendentes = []
-        em_andamento = []
-        concluidos_recentes = []
+        now = datetime.now()
+        urgentes = []          # bucket 0 — atrasada + sem update há >7d
+        atrasadas_mov = []     # bucket 1 — atrasada + alguem mexeu na semana
+        no_prazo = []          # bucket 2 — prazo futuro, pendente/em_andamento
+        concluidas = []        # bucket 3
 
-        for item in items:
-            prazo = item['prazo']
-            prazo_date = prazo if isinstance(prazo, date) else None
+        for item in raw_items:
+            prazo_raw = item['prazo']
+            prazo_date = prazo_raw if isinstance(prazo_raw, date) else None
             if prazo_date and isinstance(prazo_date, datetime):
                 prazo_date = prazo_date.date()
-
-            is_atrasado = prazo_date and prazo_date < hoje and item['status'] in ('pendente', 'em_andamento')
+            updated_at = item.get('updated_at')
 
             entry = {
                 'id': item['id'],
                 'area': item['area'],
                 'acao': item['acao'],
                 'prazo': prazo_date.strftime('%d/%m') if prazo_date else '—',
+                'prazo_date': prazo_date,
                 'responsavel': item['responsavel_r'] or '?',
                 'status': item['status'],
+                'updated_at': updated_at,
             }
 
-            if is_atrasado:
-                atrasados.append(entry)
-            elif item['status'] == 'pendente':
-                pendentes.append(entry)
-            elif item['status'] == 'em_andamento':
-                em_andamento.append(entry)
-            elif item['status'] == 'concluido':
-                concluidos_recentes.append(entry)
+            if item['status'] == 'concluido':
+                concluidas.append(entry)
+                continue
+
+            is_vencido = bool(prazo_date and prazo_date < hoje)
+            sem_update_semana = updated_at is None or (now - updated_at).days > 7
+
+            if is_vencido and sem_update_semana:
+                urgentes.append(entry)
+            elif is_vencido:
+                atrasadas_mov.append(entry)
+            else:
+                no_prazo.append(entry)
+
+        # Dentro de cada bucket: mais atrasado/antigo primeiro
+        for bucket in (urgentes, atrasadas_mov, no_prazo):
+            bucket.sort(key=lambda e: e['prazo_date'] or date.max)
+        # Concluidas: mais recente primeiro (limita 5)
+        concluidas.sort(key=lambda e: e.get('updated_at') or now, reverse=True)
+        concluidas = concluidas[:5]
 
         return {
             'empresa_nome': empresa['nome'],
             'empresa_id': empresa_id,
-            'atrasados': atrasados,
-            'pendentes': pendentes,
-            'em_andamento': em_andamento,
-            'concluidos': concluidos_recentes[:5],  # Last 5 completed
-            'total': len(items),
+            'urgentes': urgentes,
+            'atrasadas_mov': atrasadas_mov,
+            'no_prazo': no_prazo,
+            'concluidas': concluidas,
+            # Retrocompatibilidade pra qualquer caller antigo:
+            'atrasados': urgentes + atrasadas_mov,
+            'pendentes': [e for e in no_prazo if e['status'] == 'pendente'],
+            'em_andamento': [e for e in no_prazo if e['status'] == 'em_andamento'],
+            'concluidos': concluidas,
+            'total': len(raw_items),
         }
 
     except Exception as e:
@@ -111,45 +122,55 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
 
 
 def format_raci_whatsapp(report: Dict) -> str:
-    """Format RACI report for WhatsApp message."""
+    """Format RACI report for WhatsApp message.
+
+    Formato priority-grouped (alinhado com numeracao do report):
+      🚨 Urgentes (atrasada + sem update há +1 semana)
+      ⚠️ Atrasadas com movimento (alguem mexeu na semana)
+      🔄 No prazo (em andamento / pendente)
+      ✅ Concluidas
+    """
     hoje = date.today().strftime('%d/%m/%Y')
     lines = [
         f"📋 *RACI Semanal — {report['empresa_nome']}*",
         f"_{hoje}_",
         "",
     ]
+    n = 0  # contador continuo pra resposta tipo "3 concluido"
 
-    if report['atrasados']:
-        lines.append(f"🔴 *ATRASADOS ({len(report['atrasados'])}):*")
-        for i, item in enumerate(report['atrasados'], 1):
-            # Shorten responsible name to first name + initial
+    if report.get('urgentes'):
+        lines.append(f"🚨 *Urgentes — atrasadas e sem update há +1 semana ({len(report['urgentes'])}):*")
+        for item in report['urgentes']:
+            n += 1
             resp = _short_name(item['responsavel'])
-            lines.append(f"{i}. {item['acao'][:60]} → *{resp}* (prazo: {item['prazo']})")
+            lines.append(f"{n}. {item['acao'][:80]} — *{resp}* (prazo: {item['prazo']})")
         lines.append("")
 
-    if report['em_andamento']:
-        lines.append(f"🟡 *EM ANDAMENTO ({len(report['em_andamento'])}):*")
-        for i, item in enumerate(report['em_andamento'], len(report['atrasados']) + 1):
+    if report.get('atrasadas_mov'):
+        lines.append(f"⚠️ *Atrasadas — preciso de update ({len(report['atrasadas_mov'])}):*")
+        for item in report['atrasadas_mov']:
+            n += 1
             resp = _short_name(item['responsavel'])
-            lines.append(f"{i}. {item['acao'][:60]} → *{resp}*")
+            lines.append(f"{n}. {item['acao'][:80]} — *{resp}* (prazo: {item['prazo']})")
         lines.append("")
 
-    if report['pendentes']:
-        lines.append(f"⏳ *PENDENTES ({len(report['pendentes'])}):*")
-        for i, item in enumerate(report['pendentes'], len(report['atrasados']) + len(report['em_andamento']) + 1):
+    if report.get('no_prazo'):
+        lines.append(f"🔄 *No prazo ({len(report['no_prazo'])}):*")
+        for item in report['no_prazo']:
+            n += 1
             resp = _short_name(item['responsavel'])
-            lines.append(f"{i}. {item['acao'][:60]} → *{resp}* ({item['prazo']})")
+            lines.append(f"{n}. {item['acao'][:80]} — *{resp}* ({item['prazo']})")
         lines.append("")
 
-    if report['concluidos']:
-        lines.append(f"✅ *CONCLUÍDOS ({len(report['concluidos'])}):*")
-        for item in report['concluidos']:
+    if report.get('concluidas'):
+        lines.append(f"✅ *Concluídas ({len(report['concluidas'])}):*")
+        for item in report['concluidas']:
+            n += 1
             resp = _short_name(item['responsavel'])
-            lines.append(f"• {item['acao'][:50]} → {resp} ✓")
+            lines.append(f"{n}. {item['acao'][:80]} — *{resp}* ✓")
         lines.append("")
 
-    lines.append(f"_Total: {report['total']} itens | Responda com o nº do item + status para atualizar_")
-    lines.append("_Ex: \"3 concluído\" ou \"5 em andamento: entrevistando candidatos\"_")
+    lines.append(f"_Total: {report['total']} | Responda com o nº + status (ex: \"3 concluído\")_")
 
     return "\n".join(lines)
 
@@ -283,27 +304,27 @@ def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:
                 conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
                 cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-                # Get items in the same order as the report
-                cur.execute("""
-                    SELECT id, acao, status FROM raci_itens
-                    WHERE empresa_id = %s
-                    ORDER BY
-                        CASE status
-                            WHEN 'atrasado' THEN 0
-                            WHEN 'pendente' THEN 1
-                            WHEN 'em_andamento' THEN 2
-                            WHEN 'concluido' THEN 3
-                            ELSE 4
-                        END,
-                        prazo ASC
-                """, (empresa_id,))
-                items = cur.fetchall()
+                # Get items na MESMA ordem do report (priority-grouped). Reusa
+                # generate_raci_report pra garantir alinhamento entre o que o user
+                # ve no WhatsApp e o item que vai ser atualizado.
+                conn.close()
+                report = generate_raci_report(empresa_id)
+                if not report:
+                    return None
+                ordered = (
+                    report.get('urgentes', []) +
+                    report.get('atrasadas_mov', []) +
+                    report.get('no_prazo', []) +
+                    report.get('concluidas', [])
+                )
 
-                if item_num < 1 or item_num > len(items):
-                    conn.close()
+                if item_num < 1 or item_num > len(ordered):
                     return None
 
-                target = items[item_num - 1]
+                target = ordered[item_num - 1]
+                # Reabre conexao pra UPDATE
+                conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
+                cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
                 # Update status
                 update_fields = {"status": new_status, "updated_at": datetime.now()}
