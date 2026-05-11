@@ -57,9 +57,9 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
 
         hoje = date.today()
         now = datetime.now()
-        urgentes = []          # bucket 0 — atrasada + sem update há >7d
-        atrasadas_mov = []     # bucket 1 — atrasada + alguem mexeu na semana
-        no_prazo = []          # bucket 2 — prazo futuro, pendente/em_andamento
+        urgentes = []          # bucket 0 — vencido + status='pendente' (ninguem arregacou)
+        atrasadas_mov = []     # bucket 1 — vencido + status='em_andamento' (comecou, falta entregar)
+        no_prazo = []          # bucket 2 — prazo futuro, qualquer status nao-concluido
         concluidas = []        # bucket 3
 
         for item in raw_items:
@@ -80,16 +80,19 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
                 'updated_at': updated_at,
             }
 
-            if item['status'] == 'concluido':
+            status = item['status']
+            if status == 'concluido':
                 concluidas.append(entry)
                 continue
 
             is_vencido = bool(prazo_date and prazo_date < hoje)
-            sem_update_semana = updated_at is None or (now - updated_at).days > 7
 
-            if is_vencido and sem_update_semana:
+            # Criterio status-driven (escolhido 11/05): semantica clara,
+            # nao depende de heuristica de nota/updated_at. Status muda quando
+            # alguem progride — "pendente vencido" = ninguem comecou.
+            if is_vencido and status in ('pendente', 'atrasado'):
                 urgentes.append(entry)
-            elif is_vencido:
+            elif is_vencido and status == 'em_andamento':
                 atrasadas_mov.append(entry)
             else:
                 no_prazo.append(entry)
