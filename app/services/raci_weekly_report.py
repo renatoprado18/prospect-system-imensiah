@@ -188,11 +188,19 @@ def _short_name(name: str) -> str:
 
 
 async def send_raci_to_groups() -> Dict:
-    """Send RACI reports to all empresa WhatsApp groups."""
-    from database import get_db
-    from integrations.evolution_api import get_evolution_client
+    """Envia PREVIEW dos reports RACI semanais pro Renato no chat privado.
 
-    results = {"sent": 0, "skipped": 0, "errors": 0}
+    Mudanca de design 2026-05-11: nao envia mais diretamente pros grupos.
+    Cron Sabado 18h gera o preview por empresa e manda pro Renato; ele revisa,
+    edita se quiser, e cola manualmente nos grupos (segunda 8h tipicamente).
+    Garantia de "humano no loop" antes de qualquer comunicacao externa.
+
+    Mantem o nome da funcao pra nao quebrar callers (cron_raci_weekly_report).
+    """
+    from database import get_db
+    from services.intel_bot import send_intel_notification
+
+    results = {"previews_sent": 0, "skipped": 0, "errors": 0, "empresas": []}
 
     if not CONSELHOOS_DATABASE_URL:
         return {"error": "CONSELHOOS_DATABASE_URL not configured"}
@@ -209,12 +217,14 @@ async def send_raci_to_groups() -> Dict:
     except Exception as e:
         return {"error": str(e)}
 
-    # For each empresa, find linked WA group in INTEL
+    # Pra cada empresa, valida que tem grupo WA linkado e gera preview
     with get_db() as conn:
         cursor = conn.cursor()
 
         for empresa in empresas:
-            # Find INTEL project for this empresa
+            # Find INTEL project for this empresa (so pra validacao — mensagem
+            # vai ser entregue ao Renato, nao ao grupo, mas se nao houver grupo
+            # linkado o report nao tem destino final).
             cursor.execute("""
                 SELECT p.id FROM projects p
                 WHERE LOWER(p.nome) LIKE LOWER(%s)
@@ -222,42 +232,54 @@ async def send_raci_to_groups() -> Dict:
                 LIMIT 1
             """, (f"%{empresa['nome']}%", f"%{empresa['nome']}%"))
             project = cursor.fetchone()
-
             if not project:
                 results["skipped"] += 1
                 continue
 
-            # Find WA group
             cursor.execute("""
                 SELECT group_jid, group_name FROM project_whatsapp_groups
                 WHERE project_id = %s AND ativo = TRUE
                 LIMIT 1
             """, (project['id'],))
             group = cursor.fetchone()
-
             if not group:
                 results["skipped"] += 1
                 continue
 
             # Generate report
             report = generate_raci_report(empresa['id'])
-            if not report or (not report['atrasados'] and not report['pendentes'] and not report['em_andamento']):
+            if not report:
                 results["skipped"] += 1
                 continue
 
-            # Format and send
+            empty = not (report.get('urgentes') or report.get('atrasadas_mov')
+                         or report.get('no_prazo') or report.get('concluidas'))
+            if empty:
+                results["skipped"] += 1
+                continue
+
+            # Wrap com header de preview
             message = format_raci_whatsapp(report)
+            preview = (
+                f"📝 *PREVIEW RACI — {empresa['nome']}*\n"
+                f"_Destino: {group['group_name']}_\n"
+                f"_Revise, edite se quiser, e cole no grupo._\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"{message}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"_Fim do preview. Acima esta o texto pronto pra copiar._"
+            )
+
             try:
-                client = get_evolution_client()
-                await client.send_text(
-                    group['group_jid'],
-                    message,
-                    instance_name="rap-whatsapp"
-                )
-                results["sent"] += 1
-                logger.info(f"RACI report sent to {group['group_name']} for {empresa['nome']}")
+                ok = await send_intel_notification(preview)
+                if ok:
+                    results["previews_sent"] += 1
+                    results["empresas"].append(empresa['nome'])
+                    logger.info(f"RACI preview sent to Renato for {empresa['nome']}")
+                else:
+                    results["errors"] += 1
             except Exception as e:
-                logger.error(f"Error sending RACI to group: {e}")
+                logger.error(f"Error sending RACI preview: {e}")
                 results["errors"] += 1
 
     return results
