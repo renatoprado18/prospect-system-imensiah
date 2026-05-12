@@ -19528,6 +19528,17 @@ async def api_editorial_stats():
     return get_editorial_stats()
 
 
+@app.get("/api/editorial/clipping-matches")
+async def api_editorial_clipping_matches(min_score: int = 12, top_per_news: int = 1):
+    """Match barato entre clipping de hoje e drafts do estoque editorial.
+
+    Sem Claude — overlap de keywords + bonus categoria. Pra validacao semantica
+    use o widget inline em /clipping (chama /api/news/{id}/details).
+    """
+    from services.editorial_match import match_clipping_with_inventory
+    return match_clipping_with_inventory(min_score=min_score, top_per_news=top_per_news)
+
+
 @app.get("/api/editorial/pending-tasks")
 async def api_editorial_pending_tasks():
     """Tarefas pendentes do editorial - o que precisa ser feito"""

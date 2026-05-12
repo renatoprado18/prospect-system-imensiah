@@ -259,6 +259,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="/static/js/article_match.js"></script>
 <script>
     // ============== Toast standalone ==============
     function showToast(message, type = 'info') {
@@ -443,7 +444,11 @@
                         ${it.link ? `<a class="clip-action open" href="${escapeHtml(it.link)}" target="_blank" rel="noopener" onclick="cardAction(${idx}, 'viewed', true)">
                             <i class="bi bi-box-arrow-up-right"></i> Abrir
                         </a>` : ''}
+                        <button type="button" class="am-trigger" onclick="toggleArticleMatch(this, ${it.news_id})">
+                            <i class="bi bi-stars"></i> Artigo relacionado
+                        </button>
                     </div>
+                    <div class="am-related-pane" data-news-id="${it.news_id}" style="display:none;"></div>
                 </div>
             `;
         }).join('');
@@ -461,6 +466,14 @@
         } else {
             pag.style.display = 'none';
         }
+    }
+
+    // ============== Article match (lazy load) ==============
+    function toggleArticleMatch(btn, newsId) {
+        if (!window.ArticleMatch || !newsId) return;
+        const card = btn.closest('.clip-card');
+        const pane = card && card.querySelector('.am-related-pane');
+        window.ArticleMatch.toggle(newsId, btn, pane);
     }
 
     // ============== Acoes nos cards ==============

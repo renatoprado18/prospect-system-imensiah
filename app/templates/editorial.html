@@ -774,6 +774,22 @@
 {% endblock %}
 
 {% block content %}
+<!-- Clipping x Estoque (v1) -->
+<div id="clippingMatchSection" style="background:#fff;border:1px solid var(--gray-200, #e2e8f0);border-radius:12px;padding:14px 18px;margin-bottom:14px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <div>
+            <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.5px;color:#8b5cf6;font-weight:700;margin-bottom:2px;">
+                <i class="bi bi-link-45deg"></i> Clipping × Estoque
+            </div>
+            <div style="font-size:0.85rem;color:#475569;">Quais drafts do seu estoque conversam com as noticias de hoje?</div>
+        </div>
+        <button type="button" id="clippingMatchToggle" onclick="loadClippingMatches()" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:0.82rem;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+            <i class="bi bi-stars"></i> Ver matches de hoje
+        </button>
+    </div>
+    <div id="clippingMatchResults" style="margin-top:14px;display:none;"></div>
+</div>
+
 <!-- Nova estrutura: Layout focado em ações -->
 {% set pendencias_total = (summary.drafts_count or 0) + (summary.metricas_atrasadas or 0) %}
 <div class="stats-row">
@@ -1417,8 +1433,104 @@
 
 {% block extra_js %}
 <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<script src="/static/js/article_match.js"></script>
 <script>
 const ARTICLES_URL = 'https://almeida-prado.com';
+
+// ============== Clipping x Estoque (v1) ==============
+async function loadClippingMatches() {
+    const btn = document.getElementById('clippingMatchToggle');
+    const results = document.getElementById('clippingMatchResults');
+    if (!btn || !results) return;
+
+    if (results.dataset.amLoaded === '1') {
+        const hidden = results.style.display === 'none';
+        results.style.display = hidden ? 'block' : 'none';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Buscando...';
+    results.style.display = 'block';
+    results.innerHTML = '<div style="padding:14px 16px;color:#64748b;font-size:0.85rem;">Cruzando clipping de hoje com estoque...</div>';
+
+    try {
+        const r = await fetch('/api/editorial/clipping-matches');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const data = await r.json();
+        renderClippingMatches(data);
+        results.dataset.amLoaded = '1';
+    } catch (e) {
+        console.error(e);
+        results.innerHTML = '<div style="padding:12px 14px;background:#fef2f2;border-radius:8px;color:#991b1b;font-size:0.85rem;">Erro ao carregar matches.</div>';
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Recarregar';
+    }
+}
+
+function renderClippingMatches(data) {
+    const results = document.getElementById('clippingMatchResults');
+    if (!results) return;
+
+    const pairs = data.pairs || [];
+    if (!pairs.length) {
+        results.innerHTML = '<div style="padding:14px 16px;background:#f8fafc;border-radius:8px;color:#64748b;font-size:0.85rem;">Nenhum clipping disponivel hoje.</div>';
+        return;
+    }
+
+    const meta = `<div style="font-size:0.75rem;color:#64748b;margin-bottom:10px;">${data.total_with_match}/${data.total_news} noticias com match · estoque: ${data.inventory_size} drafts · score min: ${data.min_score}</div>`;
+
+    const matched = pairs.filter(p => p.has_match);
+    const empty = pairs.filter(p => !p.has_match);
+
+    const matchedHtml = matched.map(p => {
+        const m = p.matches[0];
+        const articleUrl = `/editorial?post_id=${m.article_id}`;
+        const rel = (p.news_relevancia || '').toLowerCase();
+        const relBadge = rel === 'alta' ? '<span style="background:#fef3c7;color:#92400e;font-size:0.62rem;font-weight:700;letter-spacing:0.5px;padding:2px 6px;border-radius:4px;">ALTA</span>' : '';
+        return `
+            <div style="border:1px solid #e2e8f0;border-left:3px solid #8b5cf6;border-radius:8px;padding:12px 14px;margin-bottom:10px;background:#fff;">
+                <div style="display:flex;align-items:center;gap:8px;font-size:0.7rem;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">
+                    ${relBadge}<span><i class="bi bi-newspaper"></i> Noticia</span>${p.news_categoria ? `<span>· ${escapeHtml(p.news_categoria)}</span>` : ''}
+                </div>
+                <div style="font-size:0.92rem;font-weight:600;color:#0f172a;margin-bottom:8px;line-height:1.35;">
+                    ${p.news_link ? `<a href="${escapeHtml(p.news_link)}" target="_blank" rel="noopener" style="color:#0f172a;text-decoration:none;">${escapeHtml(p.news_title || '')}</a>` : escapeHtml(p.news_title || '')}
+                </div>
+                <div style="background:linear-gradient(135deg,#faf5ff 0%,#f3e8ff 100%);border-radius:6px;padding:10px 12px;">
+                    <div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;color:#8b5cf6;font-weight:700;margin-bottom:4px;">
+                        <i class="bi bi-arrow-down-right"></i> Draft sugerido (score ${m.score})
+                    </div>
+                    <a href="${articleUrl}" style="display:block;font-size:0.88rem;font-weight:600;color:#5b21b6;text-decoration:none;margin-bottom:4px;">${escapeHtml(m.article_title || '')}</a>
+                    ${m.ai_categoria ? `<div style="font-size:0.72rem;color:#7c3aed;">${escapeHtml(m.ai_categoria)}</div>` : ''}
+                </div>
+                <div style="margin-top:8px;display:flex;gap:6px;">
+                    <a href="${articleUrl}" style="background:#7c3aed;color:#fff;padding:5px 11px;border-radius:5px;font-size:0.75rem;font-weight:600;text-decoration:none;"><i class="bi bi-pencil-square"></i> Abrir draft</a>
+                    <button type="button" onclick="validateMatchWithAI(${p.news_id}, this)" style="background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;padding:5px 11px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;"><i class="bi bi-stars"></i> Validar com IA</button>
+                </div>
+                <div class="am-related-pane" data-news-id="${p.news_id}" style="display:none;margin-top:10px;"></div>
+            </div>`;
+    }).join('');
+
+    const emptyHtml = empty.length ? `
+        <details style="margin-top:8px;">
+            <summary style="cursor:pointer;font-size:0.78rem;color:#64748b;padding:6px 0;">${empty.length} noticia${empty.length !== 1 ? 's' : ''} sem match (clique para listar)</summary>
+            <div style="margin-top:8px;">${empty.map(p => `
+                <div style="padding:8px 10px;background:#f8fafc;border-radius:6px;margin-bottom:6px;font-size:0.82rem;color:#475569;">
+                    ${p.news_link ? `<a href="${escapeHtml(p.news_link)}" target="_blank" rel="noopener" style="color:#475569;">${escapeHtml(p.news_title || '')}</a>` : escapeHtml(p.news_title || '')}
+                </div>
+            `).join('')}</div>
+        </details>` : '';
+
+    results.innerHTML = meta + matchedHtml + emptyHtml;
+}
+
+function validateMatchWithAI(newsId, btn) {
+    if (!window.ArticleMatch || !newsId) return;
+    const card = btn.closest('div[style*="border-left"]') || btn.parentElement.parentElement;
+    const pane = card.querySelector('.am-related-pane');
+    window.ArticleMatch.toggle(newsId, btn, pane);
+}
 
 function escapeHtml(text) {
     if (!text) return '';

@@ -2269,6 +2269,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="/static/js/article_match.js"></script>
 <script>
         // Global sync function
         async function globalSync() {
@@ -2976,6 +2977,9 @@
 
                     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;align-items:center;">
                         ${linkBtn}
+                        <button type="button" class="am-trigger" onclick="dashboardToggleArticleMatch(this, ${item.news_id || 'null'})">
+                            <i class="bi bi-stars"></i> Artigo relacionado
+                        </button>
                         <div style="flex:1;"></div>
                         <button class="clip-action clip-action-dislike" title="Nao relevante (👎)"
                                 onclick="clippingAction('disliked')">👎</button>
@@ -2988,6 +2992,7 @@
                         <button class="clip-action clip-action-like" title="Relevante (👍)"
                                 onclick="clippingAction('liked')">👍</button>
                     </div>
+                    <div class="am-related-pane" data-news-id="${item.news_id || ''}" style="display:none;margin-top:12px;"></div>
                 </div>
                 ${total > 0 ? `<div style="border-top: 1px solid #f1f5f9; padding: 6px 14px; font-size: 0.7rem; color: var(--text-secondary); text-align: center;">
                     ${done} processada${done !== 1 ? 's' : ''} · ${remaining} restante${remaining !== 1 ? 's' : ''}
@@ -3009,6 +3014,13 @@
             if (statEl) statEl.textContent = clippingState.items.length;
             applyMutedState();
             updateCleanSlateBanner();
+        }
+
+        function dashboardToggleArticleMatch(btn, newsId) {
+            if (!window.ArticleMatch || !newsId) return;
+            const pane = btn.closest('.drill-items')?.querySelector('.am-related-pane')
+                      || btn.parentElement?.parentElement?.querySelector('.am-related-pane');
+            window.ArticleMatch.toggle(newsId, btn, pane);
         }
 
         async function clippingAction(feedback) {
