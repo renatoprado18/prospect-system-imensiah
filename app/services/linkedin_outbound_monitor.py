@@ -58,15 +58,18 @@ def _extract_post_urn(post_url: str) -> Optional[str]:
     Aceita formatos:
     - https://www.linkedin.com/feed/update/urn:li:activity:1234567/
     - https://www.linkedin.com/posts/USER_activity-1234567-abcd
+    - https://www.linkedin.com/posts/USER_titulo-1234567-XyZ (sem palavra "activity"
+      no slug — acontece quando o titulo nao contem "activity" nem outras chaves)
     """
     if not post_url:
         return None
-    # formato /feed/update/urn:li:activity:NNN
     m = re.search(r"urn:li:activity:(\d+)", post_url)
     if m:
         return f"urn:li:activity:{m.group(1)}"
-    # formato /posts/USER_activity-NNN-XYZ
     m = re.search(r"activity[-:](\d{15,})", post_url)
+    if m:
+        return f"urn:li:activity:{m.group(1)}"
+    m = re.search(r"-(\d{15,20})-[a-zA-Z0-9_]+/?(?:[?#]|$)", post_url)
     if m:
         return f"urn:li:activity:{m.group(1)}"
     return None
