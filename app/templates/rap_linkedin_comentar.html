@@ -1,0 +1,254 @@
+{% extends "rap_base.html" %}
+
+{% block title %}LinkedIn Comentar — INTEL{% endblock %}
+{% block page_title %}LinkedIn — Analise ad-hoc{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle">Cole URL ou texto de um post pra gerar comentarios (mesmo pipeline do curator BG)</p>{% endblock %}
+
+{% block extra_css %}
+.adhoc-form { padding: 20px; }
+.adhoc-form label { font-size: 0.85rem; font-weight: 600; margin-top: 12px; display: block; }
+.adhoc-form input,
+.adhoc-form textarea {
+    width: 100%; padding: 8px 10px;
+    border: 1px solid #cbd5e1; border-radius: 6px;
+    font-size: 0.85rem; margin-top: 4px;
+}
+.adhoc-form textarea { min-height: 140px; resize: vertical; }
+.adhoc-form .btn-primary {
+    margin-top: 16px;
+    padding: 10px 24px;
+    background: #6366f1; color: #fff; border: none;
+    border-radius: 6px; font-size: 0.9rem; font-weight: 600;
+    cursor: pointer;
+}
+.adhoc-form .btn-primary:hover { background: #4f46e5; }
+.adhoc-form .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.adhoc-result {
+    margin-top: 20px;
+    padding: 20px;
+    background: #f8fafc;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+}
+.adhoc-score-badge {
+    display: inline-block;
+    font-size: 0.85rem; font-weight: 700;
+    padding: 4px 12px; border-radius: 12px;
+    margin-bottom: 8px;
+}
+.adhoc-score-badge.high { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+.adhoc-score-badge.med { background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; }
+.adhoc-score-badge.low { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
+.adhoc-draft {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+    padding: 12px; margin-top: 12px;
+}
+.adhoc-draft-label {
+    font-size: 0.75rem; font-weight: 700; color: #6366f1;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
+}
+.adhoc-draft-label.recommended::after {
+    content: "✓ RECOMENDADO";
+    background: #15803d; color: #fff; font-size: 0.65rem;
+    padding: 1px 6px; border-radius: 4px; margin-left: 8px;
+}
+.adhoc-draft-text { white-space: pre-wrap; line-height: 1.5; color: #334155; }
+.adhoc-btn {
+    padding: 4px 10px; border-radius: 5px; font-size: 0.75rem;
+    border: 1px solid #cbd5e1; background: #fff; cursor: pointer;
+    color: #334155; margin-top: 8px;
+}
+.adhoc-btn:hover { background: #f1f5f9; }
+.history-list { padding: 0; }
+.history-item {
+    padding: 12px 16px;
+    border-bottom: 1px solid #e2e8f0;
+    cursor: pointer;
+}
+.history-item:hover { background: #f8fafc; }
+.history-item-title { font-size: 0.85rem; font-weight: 600; }
+.history-item-meta { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <div class="card mb-3">
+            <div class="card-header" style="background: #fff; border-bottom: 1px solid #e2e8f0;">
+                <h5 class="mb-0" style="font-size: 1rem;">Analisar post</h5>
+            </div>
+            <div class="adhoc-form">
+                <label>URL do post LinkedIn (opcional se colar o texto):</label>
+                <input id="adhoc-url" type="url" placeholder="https://www.linkedin.com/feed/update/urn:li:activity:..." />
+
+                <label>OU cole o texto do post:</label>
+                <textarea id="adhoc-text" placeholder="Cole o texto do post aqui (use se a URL nao funcionar ou nao tiver)"></textarea>
+
+                <label>Nome do autor (se sabe):</label>
+                <input id="adhoc-author" type="text" placeholder="Ex: Allan Gotsis" />
+
+                <label>Headline do autor (se sabe):</label>
+                <input id="adhoc-headline" type="text" placeholder="Ex: CEO Synapse" />
+
+                <button class="btn-primary" id="adhoc-submit" onclick="analyzeAdhoc()">
+                    <i class="bi bi-cpu"></i> Analisar (Sonnet + Opus)
+                </button>
+            </div>
+        </div>
+
+        <div id="adhoc-result-container"></div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header" style="background: #fff; border-bottom: 1px solid #e2e8f0;">
+                <h5 class="mb-0" style="font-size: 1rem;">Historico</h5>
+            </div>
+            <div class="history-list" id="adhoc-history">
+                <div class="text-center py-4 text-muted">
+                    <div class="spinner-border spinner-border-sm"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function escapeHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function analyzeAdhoc() {
+    const url = document.getElementById('adhoc-url').value.trim();
+    const text = document.getElementById('adhoc-text').value.trim();
+    const author = document.getElementById('adhoc-author').value.trim();
+    const headline = document.getElementById('adhoc-headline').value.trim();
+
+    if (!url && !text) {
+        alert('Forneca URL ou cole o texto do post.');
+        return;
+    }
+
+    const btn = document.getElementById('adhoc-submit');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass"></i> Analisando (10-30s)...';
+
+    try {
+        const resp = await fetch('/api/linkedin/adhoc-analyze', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                post_url: url || null,
+                post_text: text || null,
+                author_name: author || null,
+                author_headline: headline || null,
+            })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            alert('Erro: ' + (data.detail || data.error || 'desconhecido'));
+            return;
+        }
+        renderResult(data);
+        await loadHistory();
+    } catch (e) {
+        alert('Erro: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-cpu"></i> Analisar (Sonnet + Opus)';
+    }
+}
+
+function renderResult(d) {
+    const score = d.score ?? 0;
+    const scoreClass = score >= 7 ? 'high' : (score >= 5 ? 'med' : 'low');
+    const rec = (d.draft_recommended || 'A').toUpperCase();
+    const html = `
+        <div class="adhoc-result">
+            <div class="adhoc-score-badge ${scoreClass}">Score ${score}/10 · ${d.ai_verdict || ''}</div>
+            ${d.ai_angle ? `<div><strong>Angulo:</strong> ${escapeHtml(d.ai_angle)}</div>` : ''}
+            ${d.ai_rationale ? `<div class="text-muted mt-1" style="font-size:0.85rem; font-style:italic;">${escapeHtml(d.ai_rationale)}</div>` : ''}
+            ${d.tradeoff_explanation ? `<div class="mt-2" style="font-size:0.8rem;"><strong>Tradeoff A vs B:</strong> ${escapeHtml(d.tradeoff_explanation)}</div>` : ''}
+
+            ${d.draft_a ? `
+                <div class="adhoc-draft">
+                    <div class="adhoc-draft-label ${rec === 'A' ? 'recommended' : ''}">Draft A · mais ousado</div>
+                    <div class="adhoc-draft-text">${escapeHtml(d.draft_a)}</div>
+                    <button class="adhoc-btn" onclick="copyText(${JSON.stringify(d.draft_a).replace(/"/g, '&quot;')})"><i class="bi bi-clipboard"></i> Copiar A</button>
+                </div>` : ''}
+            ${d.draft_b ? `
+                <div class="adhoc-draft">
+                    <div class="adhoc-draft-label ${rec === 'B' ? 'recommended' : ''}">Draft B · mais seguro</div>
+                    <div class="adhoc-draft-text">${escapeHtml(d.draft_b)}</div>
+                    <button class="adhoc-btn" onclick="copyText(${JSON.stringify(d.draft_b).replace(/"/g, '&quot;')})"><i class="bi bi-clipboard"></i> Copiar B</button>
+                </div>` : ''}
+            ${d.draft_dm ? `
+                <div class="adhoc-draft" style="border-color: #c7d2fe; background: #eef2ff;">
+                    <div class="adhoc-draft-label" style="color: #4f46e5;">DM Follow-up D+2</div>
+                    <div class="adhoc-draft-text">${escapeHtml(d.draft_dm)}</div>
+                    <button class="adhoc-btn" onclick="copyText(${JSON.stringify(d.draft_dm).replace(/"/g, '&quot;')})"><i class="bi bi-clipboard"></i> Copiar DM</button>
+                </div>` : ''}
+        </div>`;
+    document.getElementById('adhoc-result-container').innerHTML = html;
+}
+
+async function copyText(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+        const btn = event.target.closest('button');
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-check2"></i> Copiado';
+        setTimeout(() => { btn.innerHTML = orig; }, 1500);
+    } catch (e) {
+        alert('Erro ao copiar: ' + e.message);
+    }
+}
+
+async function loadHistory() {
+    try {
+        const r = await fetch('/api/linkedin/adhoc-drafts?limit=20');
+        if (!r.ok) return;
+        const data = await r.json();
+        const drafts = data.drafts || [];
+        const container = document.getElementById('adhoc-history');
+        if (drafts.length === 0) {
+            container.innerHTML = '<div class="text-center py-4 text-muted">Nenhum draft ad-hoc ainda</div>';
+            return;
+        }
+        container.innerHTML = drafts.map(d => {
+            const score = d.score_numeric ?? '?';
+            const scoreClass = score >= 7 ? 'high' : (score >= 5 ? 'med' : 'low');
+            const author = d.post_author_name || 'autor desconhecido';
+            const excerpt = (d.post_excerpt || '').slice(0, 80);
+            const when = (d.fetched_at || '').slice(0, 10);
+            return `<div class="history-item" onclick="showHistoryDetail(${d.id})">
+                <div class="history-item-title">
+                    <span class="adhoc-score-badge ${scoreClass}" style="font-size:0.7rem; padding:1px 6px;">${score}</span>
+                    ${escapeHtml(author)}
+                </div>
+                <div class="history-item-meta">${escapeHtml(excerpt)}... · ${when}</div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        console.warn('history load falhou:', e);
+    }
+}
+
+async function showHistoryDetail(id) {
+    try {
+        const r = await fetch(`/api/linkedin/adhoc-drafts/${id}`);
+        if (!r.ok) { alert('Erro carregando detalhe'); return; }
+        const d = await r.json();
+        renderResult(d);
+        window.scrollTo({top: 0, behavior: 'smooth'});
+    } catch (e) {
+        alert('Erro: ' + e.message);
+    }
+}
+
+loadHistory();
+</script>
+{% endblock %}
