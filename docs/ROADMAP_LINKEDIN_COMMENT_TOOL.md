@@ -78,11 +78,17 @@ Cada item LinkedIn ganha:
   - `✓ Publiquei` (modal pede URL do comentário pra capturar URN → registra em `linkedin_outbound_engagements` → cria task D+2 com DM rascunho)
   - `Dispensar tarefa` (marca task como `completed` com nota "dispensada via curator")
 
-### 1.5 Notificação WhatsApp diária 8h BRT
+### 1.5 Dashboard pill (sem WhatsApp)
 
-Cron envia resumo: "Bom dia. 3 posts altamente alinhados hoje: Custódio Pereira, Fausto Alves, Bernardo Hiragami. Drafts prontos em /tarefas-pendentes."
+Cobertura passiva — sem push: o dashboard ganha um pill no header tipo:
 
-Não notifica se `score >= 7` count = 0 (silêncio é OK).
+> 🟢 LinkedIn · 3 posts altamente alinhados aguardando comentário
+
+Click no pill leva pra `/tarefas-pendentes` filtrado por score ≥ 7. Pill some quando count = 0.
+
+Alinhado com a filosofia de notificações do sistema (memory `feedback_notifications.md`): notificar só quando precisa de ação manual urgente; cobertura passiva via dashboard pill diário.
+
+Implementação: 1 query no endpoint do dashboard somando `linkedin_task_data.score_numeric >= 7 AND linkedin_task_data.published = false AND tasks.status = 'pending'`.
 
 ### 1.6 Rota `/linkedin/comentar` (web only — análise ad-hoc)
 
@@ -96,7 +102,7 @@ Pra posts que **não vieram via tarefa** (você descobriu por outro caminho). Fo
 - `LINKEDIN_CURATOR_MODEL_SCORING=claude-sonnet-4-6`
 - `LINKEDIN_CURATOR_MODEL_DRAFT=claude-opus-4-7`
 - `LINKEDIN_CURATOR_MAX_DAILY=15` (cap diário de análise pra controlar custo)
-- `LINKEDIN_CURATOR_NOTIFY_HOUR=8`
+- (sem `NOTIFY_HOUR` — notificação é passiva via pill no dashboard)
 
 ### Custo estimado (10 tasks analisadas/dia)
 
@@ -211,7 +217,7 @@ Hoje as tarefas "Curtir post de X" são criadas externamente (via campanha, manu
 - 1.2 Service curator: 4h (parsing URL + LinkdAPI + Sonnet scoring + Opus drafts)
 - 1.3 Cron + endpoint: 1h
 - 1.4 UI badges + expand inline + botões: 3h
-- 1.5 Notify WA: 30 min
+- 1.5 Dashboard pill: 30 min
 - 1.6 Rota `/linkedin/comentar` ad-hoc: 2h
 - Testes + ajustes: 2h
 - **Total: ~13h** (1.5-2 dias focados)
