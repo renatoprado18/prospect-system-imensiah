@@ -688,7 +688,11 @@ def analyze_task(task_id: int, force: bool = False) -> Dict:
 
 
 def fetch_pending_linkedin_tasks(limit: int = 50) -> List[Dict]:
-    """Lista tasks LinkedIn pendentes sem analise (ai_ran_at NULL) ou stale (>24h)."""
+    """Lista tasks LinkedIn pendentes sem analise (ai_ran_at NULL) ou stale (>24h).
+
+    Filtra tasks que tem URL real do post na descricao — tasks tipo "Buscar
+    no LinkedIn" (sem URL especifica) nao podem ser analisadas automaticamente.
+    """
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -699,6 +703,7 @@ def fetch_pending_linkedin_tasks(limit: int = 50) -> List[Dict]:
             WHERE t.titulo ILIKE 'LinkedIn: Curtir post de%%'
               AND t.status = 'pending'
               AND (ltd.ai_ran_at IS NULL OR ltd.ai_ran_at < NOW() - INTERVAL '24 hours')
+              AND t.descricao ~ 'linkedin\\.com/(feed/update|posts)'
             ORDER BY t.id DESC
             LIMIT %s
             """,
