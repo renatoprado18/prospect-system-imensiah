@@ -100,10 +100,19 @@ Pra posts que **não vieram via tarefa** (você descobriu por outro caminho). Fo
 
 ### Custo estimado (10 tasks analisadas/dia)
 
-- LinkdAPI: ~1.500 créds/mês (~$13 — cabe no orçamento $10 + buffer ou refill avulso)
-- Sonnet scoring: $0,01 × 10 × 30 = ~$3/mês
-- Opus drafts (só nos qualificados, ~30%): $0,03 × 3 × 30 = ~$3/mês
-- **Total: ~$19/mês**
+Verificado contra consumo real de LinkdAPI (12/05/2026): ~2 créds/call média em produção (saldo 2.38k → 2.12k em 5 dias com ~27 calls/dia).
+
+| Componente | Cálculo | Custo/mês |
+|---|---|---|
+| LinkdAPI (`posts/info` × 10/dia) | 600 créds × $1/120 | **~$5** |
+| Sonnet scoring (10/dia × $0,01) | $0,01 × 300 | **~$3** |
+| Opus drafts (só score ≥7, ~3/dia × $0,10) | $0,10 × 90 | **~$9** |
+| **Total híbrido** | | **~$17/mês** |
+| Alternativa: Sonnet para drafts também | $0,03 × 90 | $3 (vs $9) → **total ~$11/mês** |
+
+**Saldo LinkdAPI atual (2.12k créds, 12/05) cobre ~3,5-4 meses de curator sem refill.** Primeiros meses custam só Claude (~$11-12/mês). Refill avulso depois conforme uso.
+
+Custo se BG curator dispara também a tool `/linkedin/comentar` ad-hoc: +1-3 calls/dia (variável conforme uso ad-hoc).
 
 ---
 
