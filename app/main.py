@@ -4513,6 +4513,36 @@ async def api_linkedin_task_dispense(
     return {"ok": True, "task_id": task_id, "status": "completed"}
 
 
+@app.get("/api/linkedin-curator/scores")
+async def api_linkedin_curator_scores(request: Request):
+    """Bulk: retorna score_numeric + ai_angle pra todas tasks LinkedIn pendentes.
+    Usado pela UI de tarefas pra renderizar badges sem N+1."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT ltd.task_id, ltd.score_numeric, ltd.ai_angle, ltd.ai_verdict,
+                   ltd.ai_ran_at, ltd.published,
+                   ltd.draft_recommended,
+                   (ltd.draft_a IS NOT NULL OR ltd.draft_b IS NOT NULL) AS has_drafts
+            FROM linkedin_task_data ltd
+            JOIN tasks t ON t.id = ltd.task_id
+            WHERE t.status = 'pending'
+              AND t.titulo ILIKE 'LinkedIn: Curtir post de%%'
+            """
+        )
+        scores = {}
+        for r in cursor.fetchall():
+            row = dict(r)
+            if row.get("ai_ran_at"):
+                row["ai_ran_at"] = row["ai_ran_at"].isoformat()
+            scores[row["task_id"]] = row
+    return {"scores": scores}
+
+
 @app.get("/api/linkedin-curator/pending-count")
 async def api_linkedin_curator_pending_count(request: Request):
     """Conta posts LinkedIn alto-score nao publicados ainda — feed pro pill do dashboard."""
@@ -13569,7 +13599,11 @@ async def get_task_linkedin_data(request: Request, task_id: int):
         cursor.execute(
             """
             SELECT task_id, post_url, post_text, post_posted_at, post_engagements,
-                   ai_verdict, ai_rationale, ai_angle, ai_ran_at, fetched_at
+                   post_author_name, post_author_headline, post_author_urn,
+                   ai_verdict, ai_rationale, ai_angle, ai_ran_at, fetched_at,
+                   score_numeric, draft_a, draft_b, draft_dm, draft_recommended,
+                   published, published_version, published_text, published_at,
+                   outbound_engagement_id, dm_followup_task_id
             FROM linkedin_task_data
             WHERE task_id = %s
             """,
@@ -13578,7 +13612,11 @@ async def get_task_linkedin_data(request: Request, task_id: int):
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Sem dados de post LinkedIn pra essa task")
-        return dict(row)
+        result = dict(row)
+        for k in ("ai_ran_at", "fetched_at", "published_at"):
+            if result.get(k):
+                result[k] = result[k].isoformat()
+        return result
 
 
 @app.post("/api/tasks/{task_id}/complete-with-followup")

@@ -14,6 +14,67 @@
     border-bottom: 1px solid var(--border-color, #e2e8f0);
     transition: background 0.15s;
 }
+/* LinkedIn curator score badges */
+.li-score-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 9px;
+    margin-left: 6px;
+    vertical-align: middle;
+    letter-spacing: 0.3px;
+}
+.li-score-badge.high { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+.li-score-badge.med  { background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; }
+.li-score-badge.low  { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
+.li-score-badge.pending { background: #fff; color: #94a3b8; border: 1px dashed #cbd5e1; }
+.li-angle-line { font-size: 0.78rem; color: #475569; margin-top: 2px; line-height: 1.4; }
+.li-drafts {
+    background: #f8fafc;
+    border-top: 1px solid #e2e8f0;
+    padding: 12px 16px;
+    margin: 8px -16px -10px -16px;
+    grid-column: 1 / -1;
+    font-size: 0.85rem;
+}
+.li-draft {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    position: relative;
+}
+.li-draft-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #6366f1;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+.li-draft-label.recommended::after {
+    content: "✓ RECOMENDADO";
+    background: #15803d; color: #fff; font-size: 0.6rem;
+    padding: 1px 6px; border-radius: 4px; margin-left: 6px;
+}
+.li-draft-text { color: #334155; white-space: pre-wrap; line-height: 1.45; }
+.li-btn-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.li-btn {
+    padding: 4px 10px; border-radius: 5px; font-size: 0.75rem;
+    border: 1px solid #cbd5e1; background: #fff; cursor: pointer;
+    color: #334155;
+}
+.li-btn:hover { background: #f1f5f9; }
+.li-btn.primary { background: #6366f1; color: #fff; border-color: #6366f1; }
+.li-btn.primary:hover { background: #4f46e5; }
+.li-btn.success { background: #10b981; color: #fff; border-color: #10b981; }
+.li-btn.success:hover { background: #059669; }
+.li-btn.danger { color: #b91c1c; border-color: #fecaca; }
+.li-btn.danger:hover { background: #fee2e2; }
+.li-copied-flash { color: #15803d; font-size: 0.7rem; margin-left: 6px; }
+
 .task-item:hover { background: var(--bg-secondary, #f8fafc); }
 .task-checkbox {
     width: 22px; height: 22px; border-radius: 50%;
@@ -98,6 +159,7 @@
     <div class="task-filter-bar">
         <button class="task-filter-btn active" data-filter="direct" onclick="setFilter('direct')">Diretas</button>
         <button class="task-filter-btn" data-filter="raci" onclick="setFilter('raci')">RACI</button>
+        <button class="task-filter-btn" data-filter="linkedin-high-score" onclick="setFilter('linkedin-high-score')">🟢 LinkedIn ≥7</button>
         <button class="task-filter-btn" data-filter="all" onclick="setFilter('all')">Todas</button>
     </div>
     <div class="card-body p-0" id="tasksList">
@@ -115,6 +177,10 @@
     let undoTaskCache = null;
     // Cache de dados LinkedIn por taskId: {loading, data, error}
     const linkedinDataCache = {};
+    // Bulk scores map carregado uma vez por loadTasks
+    let linkedinScores = {};
+    // Filter set via URL ?filter=linkedin-high-score
+    const urlFilter = new URLSearchParams(window.location.search).get('filter');
 
     function isRaci(t) {
         return t.origem === 'conselhoos_raci' || t.conselhoos_raci_id != null;
@@ -164,8 +230,9 @@
             return `<div class="task-detail"><i class="bi bi-arrow-clockwise me-1"></i>Carregando post...</div>`;
         }
         if (cache.error === 'not_found') {
-            // Sidecar ainda nao populada — fallback pro descricao legado
-            return `<div class="task-detail">${linkify(task.descricao || '')}<div class="text-muted mt-2" style="font-size:0.78rem;"><i class="bi bi-info-circle me-1"></i>Texto completo do post nao foi capturado pra essa task. Abra o link pra ler no LinkedIn.</div></div>`;
+            // Sidecar ainda nao populada — fallback pro descricao legado + offer analyze
+            const analyzeBtn = `<button class="li-btn primary mt-2" onclick="analyzeLinkedInTask(${task.id})"><i class="bi bi-cpu"></i> Analisar agora (curator)</button>`;
+            return `<div class="task-detail">${linkify(task.descricao || '')}<div class="text-muted mt-2" style="font-size:0.78rem;"><i class="bi bi-info-circle me-1"></i>Nao analisado ainda pelo curator.</div>${analyzeBtn}</div>`;
         }
         if (cache.error) {
             return `<div class="task-detail text-danger">Erro carregando post (${cache.error}). <a href="#" onclick="event.preventDefault(); fetchLinkedInData(${task.id})">tentar de novo</a></div>`;
@@ -173,16 +240,204 @@
         const d = cache.data;
         const eng = renderEngagements(d.post_engagements);
         const postedAt = d.post_posted_at || '';
-        const meta = [postedAt, eng].filter(Boolean).join(' · ');
+        const meta = [d.post_author_name, postedAt, eng].filter(Boolean).join(' · ');
         const postUrl = d.post_url || '';
         const escapedText = (d.post_text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         const textWithLinks = escapedText.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+
+        // AI section
+        let aiSection = '';
+        if (d.ai_ran_at) {
+            const score = d.score_numeric;
+            const rationale = d.ai_rationale || '';
+            const angle = d.ai_angle || '';
+            const verdict = d.ai_verdict || '';
+            const scoreClass = (score >= 7) ? 'high' : (score >= 5 ? 'med' : 'low');
+            aiSection = `
+                <div class="mt-3 pt-2" style="border-top: 1px dashed #cbd5e1;">
+                    <div style="font-size:0.85rem;">
+                        <span class="li-score-badge ${scoreClass}">Score ${score ?? '?'}/10</span>
+                        <span class="text-muted ms-2" style="font-size:0.78rem;">${verdict}</span>
+                    </div>
+                    ${angle ? `<div class="li-angle-line mt-1"><strong>Angulo:</strong> ${escapeHtml(angle)}</div>` : ''}
+                    ${rationale ? `<div class="li-angle-line text-muted" style="font-style:italic;">${escapeHtml(rationale)}</div>` : ''}
+                </div>`;
+        } else {
+            aiSection = `<div class="mt-3 pt-2" style="border-top: 1px dashed #cbd5e1;">
+                <button class="li-btn primary" onclick="analyzeLinkedInTask(${task.id})"><i class="bi bi-cpu"></i> Analisar agora (curator)</button>
+            </div>`;
+        }
+
+        // Drafts section
+        let draftsSection = '';
+        if (d.draft_a || d.draft_b || d.draft_dm) {
+            const rec = (d.draft_recommended || 'A').toUpperCase();
+            draftsSection = `
+                <div class="li-drafts">
+                    ${d.published ? `<div class="alert alert-success py-2 mb-2" style="font-size:0.8rem;"><i class="bi bi-check-circle"></i> Ja publicado (versao ${d.published_version || '?'}) em ${(d.published_at || '').slice(0, 10)}</div>` : ''}
+                    ${d.draft_a ? `
+                        <div class="li-draft">
+                            <div class="li-draft-label ${rec === 'A' ? 'recommended' : ''}">Draft A · mais ousado</div>
+                            <div class="li-draft-text">${escapeHtml(d.draft_a)}</div>
+                            <div class="li-btn-row">
+                                <button class="li-btn" onclick="copyDraft(${task.id}, 'A')"><i class="bi bi-clipboard"></i> Copiar</button>
+                                ${!d.published ? `<button class="li-btn success" onclick="openPublishModal(${task.id}, 'A')"><i class="bi bi-check2-square"></i> Publiquei A</button>` : ''}
+                            </div>
+                        </div>` : ''}
+                    ${d.draft_b ? `
+                        <div class="li-draft">
+                            <div class="li-draft-label ${rec === 'B' ? 'recommended' : ''}">Draft B · mais seguro</div>
+                            <div class="li-draft-text">${escapeHtml(d.draft_b)}</div>
+                            <div class="li-btn-row">
+                                <button class="li-btn" onclick="copyDraft(${task.id}, 'B')"><i class="bi bi-clipboard"></i> Copiar</button>
+                                ${!d.published ? `<button class="li-btn success" onclick="openPublishModal(${task.id}, 'B')"><i class="bi bi-check2-square"></i> Publiquei B</button>` : ''}
+                            </div>
+                        </div>` : ''}
+                    ${d.draft_dm ? `
+                        <div class="li-draft" style="border-color: #c7d2fe; background: #eef2ff;">
+                            <div class="li-draft-label" style="color: #4f46e5;">DM Follow-up · D+2</div>
+                            <div class="li-draft-text">${escapeHtml(d.draft_dm)}</div>
+                            <div class="li-btn-row">
+                                <button class="li-btn" onclick="copyDraft(${task.id}, 'DM')"><i class="bi bi-clipboard"></i> Copiar DM</button>
+                            </div>
+                        </div>` : ''}
+                    <div class="li-btn-row mt-2">
+                        ${!d.published ? `<button class="li-btn danger" onclick="dispenseLinkedInTask(${task.id})"><i class="bi bi-x-circle"></i> Dispensar (nao vou comentar)</button>` : ''}
+                        <button class="li-btn" onclick="analyzeLinkedInTask(${task.id}, true)"><i class="bi bi-arrow-clockwise"></i> Re-analisar</button>
+                    </div>
+                </div>`;
+        }
+
         return `
             <div class="task-detail linkedin-post-detail">
                 ${meta ? `<div class="text-muted mb-2" style="font-size:0.78rem;">${meta}</div>` : ''}
                 <div class="linkedin-post-text" style="white-space:pre-wrap;">${textWithLinks}</div>
                 ${postUrl ? `<div class="mt-2"><a href="${postUrl}" target="_blank" rel="noopener" class="task-action-btn"><i class="bi bi-linkedin"></i> Abrir no LinkedIn</a></div>` : ''}
+                ${aiSection}
+            </div>
+            ${draftsSection}`;
+    }
+
+    function escapeHtml(s) {
+        if (!s) return '';
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    async function copyDraft(taskId, version) {
+        const cache = linkedinDataCache[taskId];
+        if (!cache || !cache.data) return;
+        const d = cache.data;
+        const text = version === 'A' ? d.draft_a : (version === 'B' ? d.draft_b : d.draft_dm);
+        if (!text) return;
+        try {
+            await navigator.clipboard.writeText(text);
+            // visual feedback
+            const flash = document.createElement('span');
+            flash.className = 'li-copied-flash';
+            flash.textContent = '✓ copiado';
+            event.target.closest('.li-btn-row').appendChild(flash);
+            setTimeout(() => flash.remove(), 1500);
+        } catch (e) {
+            alert('Erro ao copiar: ' + e.message);
+        }
+    }
+
+    async function analyzeLinkedInTask(taskId, force=false) {
+        if (!confirm('Rodar analise do curator nessa task? Vai consumir ~1 cred LinkdAPI + Claude.')) return;
+        const btn = event.target.closest('button');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass"></i> Analisando...'; }
+        try {
+            const url = `/api/tasks/${taskId}/analyze-linkedin${force ? '?force=true' : ''}`;
+            const r = await fetch(url, { method: 'POST' });
+            const data = await r.json();
+            if (!r.ok || !data.ok) {
+                alert('Erro: ' + (data.error || data.detail || 'desconhecido'));
+                return;
+            }
+            // Recarrega dados
+            delete linkedinDataCache[taskId];
+            await fetchLinkedInData(taskId);
+            await loadLinkedInScores();
+        } catch (e) {
+            alert('Erro: ' + e.message);
+        }
+    }
+
+    async function dispenseLinkedInTask(taskId) {
+        if (!confirm('Dispensar essa task? (vai virar completed sem publicar comentario)')) return;
+        try {
+            const r = await fetch(`/api/linkedin-task/${taskId}/dispense`, { method: 'POST' });
+            const data = await r.json();
+            if (!r.ok) {
+                alert('Erro: ' + (data.detail || 'desconhecido'));
+                return;
+            }
+            allTasks = allTasks.filter(t => t.id !== taskId);
+            renderTasks();
+        } catch (e) { alert('Erro: ' + e.message); }
+    }
+
+    function openPublishModal(taskId, version) {
+        const cache = linkedinDataCache[taskId];
+        if (!cache || !cache.data) return;
+        const d = cache.data;
+        const defaultText = version === 'A' ? d.draft_a : d.draft_b;
+        const html = `
+            <div style="position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;">
+                <div style="background:#fff; border-radius:12px; max-width:600px; width:100%; padding:24px; box-shadow:0 20px 50px rgba(0,0,0,0.3);">
+                    <h5 style="margin-top:0;">Registrar publicacao (versao ${version})</h5>
+                    <p style="font-size:0.85rem; color:#64748b;">Cole o comentario final publicado (pode ter editado) + URL opcional do comment publicado.</p>
+                    <label style="font-size:0.8rem; font-weight:600;">Texto publicado:</label>
+                    <textarea id="publishText" style="width:100%; min-height:120px; padding:8px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.85rem;">${defaultText || ''}</textarea>
+                    <label style="font-size:0.8rem; font-weight:600; margin-top:10px; display:block;">URL do comentario (opcional):</label>
+                    <input id="publishUrl" type="url" placeholder="https://www.linkedin.com/feed/update/..." style="width:100%; padding:8px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.85rem;">
+                    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px;">
+                        <button class="li-btn" onclick="document.getElementById('publishModalRoot').remove()">Cancelar</button>
+                        <button class="li-btn success" onclick="submitPublish(${taskId}, '${version}')">Confirmar publicacao</button>
+                    </div>
+                </div>
             </div>`;
+        const root = document.createElement('div');
+        root.id = 'publishModalRoot';
+        root.innerHTML = html;
+        document.body.appendChild(root);
+    }
+
+    async function submitPublish(taskId, version) {
+        const text = document.getElementById('publishText').value.trim();
+        const url = document.getElementById('publishUrl').value.trim();
+        if (!text) { alert('Texto obrigatorio'); return; }
+        try {
+            const r = await fetch(`/api/linkedin-task/${taskId}/publish`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    version: version,
+                    published_text: text,
+                    comment_url: url || null,
+                }),
+            });
+            const data = await r.json();
+            if (!r.ok) { alert('Erro: ' + (data.detail || 'desconhecido')); return; }
+            document.getElementById('publishModalRoot').remove();
+            // Task is now completed; remove from list
+            allTasks = allTasks.filter(t => t.id !== taskId);
+            renderTasks();
+            alert(`Publicado. Task DM follow-up criada (id ${data.dm_followup_task_id}) com vencimento D+2.`);
+        } catch (e) {
+            alert('Erro: ' + e.message);
+        }
+    }
+
+    async function loadLinkedInScores() {
+        try {
+            const r = await fetch('/api/linkedin-curator/scores');
+            if (!r.ok) return;
+            const data = await r.json();
+            linkedinScores = data.scores || {};
+        } catch (e) {
+            console.warn('loadLinkedInScores falhou:', e);
+        }
     }
 
     function extractFirstUrl(text) {
@@ -228,11 +483,27 @@
         let tasks = allTasks;
         if (currentFilter === 'direct') tasks = tasks.filter(t => !isRaci(t) && !t.project_name);
         else if (currentFilter === 'raci') tasks = tasks.filter(isRaci);
+        else if (currentFilter === 'linkedin-high-score') {
+            tasks = tasks.filter(t => {
+                if (!isLinkedInTask(t)) return false;
+                const sc = linkedinScores[t.id];
+                return sc && sc.score_numeric >= 7 && !sc.published;
+            });
+        }
         else tasks = tasks.filter(t => isRaci(t) || !t.project_name);
+
+        // Ordem: LinkedIn score >= 7 primeiro, depois resto
+        tasks.sort((a, b) => {
+            const sA = (linkedinScores[a.id] || {}).score_numeric || 0;
+            const sB = (linkedinScores[b.id] || {}).score_numeric || 0;
+            if (sA !== sB) return sB - sA;
+            return (a.data_vencimento || '').localeCompare(b.data_vencimento || '');
+        });
 
         if (tasks.length === 0) {
             const msg = currentFilter === 'raci' ? 'Nenhuma tarefa RACI pendente'
                       : currentFilter === 'direct' ? 'Nenhuma tarefa direta pendente'
+                      : currentFilter === 'linkedin-high-score' ? 'Nenhum post LinkedIn alto-score aguardando'
                       : 'Nenhuma tarefa pendente';
             container.innerHTML = `<div class="empty-state"><i class="bi bi-check-circle text-success" style="font-size:3rem;"></i><p class="mt-2">${msg}</p></div>`;
             return;
@@ -249,6 +520,29 @@
             const actionBtn = isLinkedIn
                 ? `<a href="${url}" target="_blank" rel="noopener" class="task-action-btn" onclick="event.stopPropagation()"><i class="bi bi-linkedin"></i> Abrir post</a>`
                 : '';
+
+            // LinkedIn curator score badge + angle
+            let scoreBadge = '';
+            let angleLine = '';
+            if (isLinkedInTask(t)) {
+                const sc = linkedinScores[t.id];
+                if (sc && sc.score_numeric != null) {
+                    const cls = sc.score_numeric >= 7 ? 'high' : (sc.score_numeric >= 5 ? 'med' : 'low');
+                    const emoji = sc.score_numeric >= 7 ? '🟢' : (sc.score_numeric >= 5 ? '🟡' : '⚪');
+                    scoreBadge = `<span class="li-score-badge ${cls}" title="Score curator">${emoji} ${sc.score_numeric}/10</span>`;
+                    if (sc.score_numeric >= 7 && sc.ai_angle) {
+                        angleLine = `<div class="li-angle-line">💡 ${escapeHtml(sc.ai_angle)}</div>`;
+                    } else if (sc.score_numeric < 5) {
+                        angleLine = `<div class="li-angle-line text-muted">curtir-basta ou dispensar</div>`;
+                    }
+                    if (sc.published) {
+                        scoreBadge += `<span class="li-score-badge high" style="margin-left:4px;" title="Ja publicado">✓ publicado</span>`;
+                    }
+                } else {
+                    scoreBadge = `<span class="li-score-badge pending" title="Aguardando analise do curator">Sem analise</span>`;
+                }
+            }
+
             const expanded = expandedTaskIds.has(t.id);
             let detailHtml = '';
             if (expanded) {
@@ -262,7 +556,8 @@
                 <div class="task-item" id="task-${t.id}">
                     <div class="task-checkbox" onclick="event.stopPropagation(); completeTask(${t.id})"></div>
                     <div class="task-body" onclick="toggleDetail(${t.id})">
-                        <div class="task-title">${t.titulo}${raciBadge}</div>
+                        <div class="task-title">${t.titulo}${raciBadge}${scoreBadge}</div>
+                        ${angleLine}
                         <div class="task-meta">
                             ${dateStr ? `<span class="${isOverdue ? 'task-overdue' : ''}"><i class="bi bi-clock me-1"></i>${dateStr}</span>` : ''}
                             ${resp ? `<span class="ms-2"><i class="bi bi-person me-1"></i>${resp}</span>` : ''}
@@ -277,10 +572,25 @@
     async function loadTasks() {
         const container = document.getElementById('tasksList');
         try {
-            const resp = await fetch('/api/projects/all-tasks?status=pending&limit=200');
-            const data = await resp.json();
+            // Em paralelo: tasks + scores
+            const [tasksResp, scoresResp] = await Promise.all([
+                fetch('/api/projects/all-tasks?status=pending&limit=200'),
+                fetch('/api/linkedin-curator/scores').catch(() => null),
+            ]);
+            const data = await tasksResp.json();
             allTasks = data.tasks || [];
-            renderTasks();
+
+            if (scoresResp && scoresResp.ok) {
+                const sd = await scoresResp.json();
+                linkedinScores = sd.scores || {};
+            }
+
+            // Apply URL filter if present
+            if (urlFilter === 'linkedin-high-score') {
+                setFilter('linkedin-high-score');
+            } else {
+                renderTasks();
+            }
         } catch (e) {
             container.innerHTML = '<div class="empty-state text-danger">Erro ao carregar tarefas</div>';
         }
