@@ -2084,6 +2084,12 @@
                 <i class="bi bi-cash-coin" style="font-size:0.85em;"></i>
                 <span id="costAlertsLabel">$ alerta</span>
             </a>
+            <a id="linkedinCuratorPill" href="/tarefas-pendentes?filter=linkedin-high-score"
+                title="Posts LinkedIn altamente alinhados aguardando comentario"
+                style="display:none; background:#dcfce7; color:#15803d; border:1px solid #86efac; border-radius:999px; padding:3px 10px; font-size:0.78rem; font-weight:600; text-decoration:none;">
+                <i class="bi bi-linkedin" style="font-size:0.85em;"></i>
+                <span id="linkedinCuratorLabel">LinkedIn 0</span>
+            </a>
         </div>
 
         <!-- Cron Health Modal -->
@@ -4654,6 +4660,31 @@
             }
         }
         loadLinkedInFunnel();
+
+        // LinkedIn Curator pill — posts alto-score aguardando comentario
+        async function loadLinkedInCuratorPill() {
+            try {
+                const res = await fetch('/api/linkedin-curator/pending-count', { credentials: 'same-origin' });
+                if (!res.ok) return;
+                const data = await res.json();
+                const pill = document.getElementById('linkedinCuratorPill');
+                const label = document.getElementById('linkedinCuratorLabel');
+                if (!pill || !label) return;
+
+                const high = data.high || 0;
+                if (high > 0) {
+                    pill.style.display = 'inline-flex';
+                    pill.style.alignItems = 'center';
+                    pill.style.gap = '5px';
+                    label.textContent = `LinkedIn · ${high} post${high > 1 ? 's' : ''} alto-score`;
+                } else {
+                    pill.style.display = 'none';
+                }
+            } catch (err) {
+                console.warn('linkedin-curator pill load failed:', err);
+            }
+        }
+        loadLinkedInCuratorPill();
 
         // Calendar scope pill (mostra só quando precisa reconectar)
         async function loadCalendarScopeStatus() {

@@ -4341,6 +4341,348 @@ async def cron_linkedin_outbound_check(request: Request):
     return {"job": "linkedin-outbound-check", **summary}
 
 
+# ===== LinkedIn Comment Curator (P1 MVP) =====
+# Roda em BG diariamente analisando tasks "LinkedIn: Curtir post de X" pendentes.
+# Pipeline: extract URL -> LinkdAPI -> Sonnet scoring -> Opus drafts (se score>=7).
+# Custo tipico: ~$11-17/mes em regime estavel (~10 analises/dia, 3 com drafts).
+
+
+@app.get("/api/cron/linkedin-curator")
+@track_cron_run
+async def cron_linkedin_curator(request: Request):
+    """Cron diario (7h BRT via vercel.json): roda o curator pra analisar tasks
+    pendentes de Curtir LinkedIn. Idempotente — so processa tasks sem ai_ran_at
+    (ou stale >24h). Cap diario via LINKEDIN_CURATOR_MAX_DAILY (default 15)."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.linkedin_comment_curator import run_daily_curator
+    summary = run_daily_curator()
+    return {"job": "linkedin-curator", **summary}
+
+
+@app.post("/api/tasks/{task_id}/analyze-linkedin")
+async def api_analyze_linkedin_task(
+    task_id: int,
+    force: bool = False,
+    user: dict = Depends(require_admin),
+):
+    """Forca analise (ou re-analise com force=true) de uma task LinkedIn especifica."""
+    from services.linkedin_comment_curator import analyze_task
+    return analyze_task(task_id, force=force)
+
+
+class LinkedInTaskPublishBody(BaseModel):
+    version: str = "A"  # 'A' | 'B' | 'custom'
+    published_text: str
+    comment_url: Optional[str] = None  # URL do comentario publicado (opcional)
+
+
+@app.post("/api/linkedin-task/{task_id}/publish")
+async def api_linkedin_task_publish(
+    task_id: int,
+    body: LinkedInTaskPublishBody,
+    user: dict = Depends(require_admin),
+):
+    """Registra que o Renato publicou o comentario.
+
+    Efeitos:
+    1. Marca linkedin_task_data.published=true + version + text + at
+    2. Registra em linkedin_outbound_engagements via register_engagement
+       (cron de monitor de replies pega o engagement automaticamente)
+    3. Cria task D+2 de DM follow-up com draft_dm nas notas
+    4. Marca a task original como completed (estilo Curtir → curti+comentei)
+    """
+    from services.linkedin_outbound_monitor import register_engagement
+
+    version = (body.version or "A").upper()
+    if version not in ("A", "B", "CUSTOM"):
+        raise HTTPException(status_code=400, detail="version invalida (use A, B ou custom)")
+
+    # 1) Le dados existentes do sidecar
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT ltd.*, t.contact_id, t.titulo AS task_titulo
+            FROM linkedin_task_data ltd
+            JOIN tasks t ON t.id = ltd.task_id
+            WHERE ltd.task_id = %s
+            """,
+            (task_id,),
+        )
+        sidecar = cursor.fetchone()
+        if not sidecar:
+            raise HTTPException(status_code=404, detail="task sem sidecar — analise antes")
+        sidecar = dict(sidecar)
+
+    post_url = sidecar.get("post_url")
+    if not post_url:
+        raise HTTPException(status_code=400, detail="sidecar sem post_url")
+
+    # 2) Register engagement (idempotente por post_url)
+    eng_result = await register_engagement(post_url, comment_text=body.published_text)
+    engagement_id = eng_result.get("id") if eng_result.get("ok") else None
+
+    # 3) Cria task D+2 com draft_dm
+    dm_text = sidecar.get("draft_dm") or ""
+    author_name = sidecar.get("post_author_name") or "autor do post"
+    dm_followup_task_id = None
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO tasks (
+                    titulo, descricao, contact_id, data_vencimento,
+                    prioridade, ai_generated, origem, status
+                ) VALUES (%s, %s, %s, %s, 6, TRUE, 'linkedin_curator', 'pending')
+                RETURNING id
+                """,
+                (
+                    f"LinkedIn DM: Follow-up com {author_name}",
+                    f"DM de follow-up D+2 sobre o post comentado.\n\n"
+                    f"Comentario publicado:\n\"{body.published_text}\"\n\n"
+                    f"Post: {post_url}\n\n"
+                    f"=== RASCUNHO DM ===\n{dm_text}",
+                    sidecar.get("contact_id"),
+                    datetime.utcnow() + timedelta(days=2),
+                ),
+            )
+            dm_followup_task_id = cursor.fetchone()["id"]
+
+            # 4) Marca task original como completed
+            cursor.execute(
+                """
+                UPDATE tasks SET status = 'completed', atualizado_em = NOW()
+                WHERE id = %s
+                """,
+                (task_id,),
+            )
+
+            # 5) Atualiza sidecar
+            cursor.execute(
+                """
+                UPDATE linkedin_task_data SET
+                    published = TRUE,
+                    published_version = %s,
+                    published_text = %s,
+                    published_at = NOW(),
+                    outbound_engagement_id = %s,
+                    dm_followup_task_id = %s
+                WHERE task_id = %s
+                """,
+                (version, body.published_text, engagement_id, dm_followup_task_id, task_id),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.exception(f"publish task {task_id} falhou: {e}")
+        raise HTTPException(status_code=500, detail=f"erro persistindo: {e}")
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "version": version,
+        "engagement_id": engagement_id,
+        "dm_followup_task_id": dm_followup_task_id,
+        "post_url": post_url,
+    }
+
+
+@app.post("/api/linkedin-task/{task_id}/dispense")
+async def api_linkedin_task_dispense(
+    task_id: int,
+    user: dict = Depends(require_admin),
+):
+    """Marca task LinkedIn como completed sem publicar (decisao manual: nao vale comentar)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM tasks WHERE id = %s", (task_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="task nao encontrada")
+        cursor.execute(
+            """
+            UPDATE tasks SET
+                status = 'completed',
+                descricao = COALESCE(descricao, '') || E'\n\n[dispensada via curator]',
+                atualizado_em = NOW()
+            WHERE id = %s
+            """,
+            (task_id,),
+        )
+        conn.commit()
+    return {"ok": True, "task_id": task_id, "status": "completed"}
+
+
+@app.get("/api/linkedin-curator/scores")
+async def api_linkedin_curator_scores(request: Request):
+    """Bulk: retorna score_numeric + ai_angle pra todas tasks LinkedIn pendentes.
+    Usado pela UI de tarefas pra renderizar badges sem N+1."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT ltd.task_id, ltd.score_numeric, ltd.ai_angle, ltd.ai_verdict,
+                   ltd.ai_ran_at, ltd.published,
+                   ltd.draft_recommended,
+                   (ltd.draft_a IS NOT NULL OR ltd.draft_b IS NOT NULL) AS has_drafts
+            FROM linkedin_task_data ltd
+            JOIN tasks t ON t.id = ltd.task_id
+            WHERE t.status = 'pending'
+              AND t.titulo ILIKE 'LinkedIn: Curtir post de%%'
+            """
+        )
+        scores = {}
+        for r in cursor.fetchall():
+            row = dict(r)
+            if row.get("ai_ran_at"):
+                row["ai_ran_at"] = row["ai_ran_at"].isoformat()
+            scores[row["task_id"]] = row
+    return {"scores": scores}
+
+
+@app.get("/api/linkedin-curator/pending-count")
+async def api_linkedin_curator_pending_count(request: Request):
+    """Conta posts LinkedIn alto-score nao publicados ainda — feed pro pill do dashboard."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE ltd.score_numeric >= 7) AS high,
+                COUNT(*) FILTER (WHERE ltd.score_numeric BETWEEN 5 AND 6) AS med,
+                COUNT(*) FILTER (WHERE ltd.score_numeric IS NULL) AS pending_analysis,
+                COUNT(*) AS total
+            FROM linkedin_task_data ltd
+            JOIN tasks t ON t.id = ltd.task_id
+            WHERE COALESCE(ltd.published, FALSE) = FALSE
+              AND t.status = 'pending'
+              AND t.titulo ILIKE 'LinkedIn: Curtir post de%%'
+            """
+        )
+        row = dict(cursor.fetchone() or {})
+
+        # Tambem conta tasks LinkedIn sem entry no sidecar (nao analisadas ainda)
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS unanalyzed
+            FROM tasks t
+            WHERE t.status = 'pending'
+              AND t.titulo ILIKE 'LinkedIn: Curtir post de%%'
+              AND NOT EXISTS (SELECT 1 FROM linkedin_task_data ltd WHERE ltd.task_id = t.id)
+            """
+        )
+        unanalyzed = cursor.fetchone()["unanalyzed"]
+
+    return {
+        "high": row.get("high") or 0,
+        "med": row.get("med") or 0,
+        "pending_analysis": (row.get("pending_analysis") or 0) + (unanalyzed or 0),
+        "total": (row.get("total") or 0) + (unanalyzed or 0),
+    }
+
+
+# ===== /linkedin/comentar — analise ad-hoc =====
+
+
+class LinkedInAdhocBody(BaseModel):
+    post_url: Optional[str] = None
+    post_text: Optional[str] = None
+    author_name: Optional[str] = None
+    author_headline: Optional[str] = None
+
+
+@app.post("/api/linkedin/adhoc-analyze")
+async def api_linkedin_adhoc_analyze(
+    body: LinkedInAdhocBody,
+    user: dict = Depends(require_admin),
+):
+    """Analise ad-hoc — paste URL OU texto + autor opcional. Persiste em
+    linkedin_adhoc_drafts e retorna drafts."""
+    from services.linkedin_comment_curator import analyze_adhoc
+
+    if not (body.post_url or body.post_text):
+        raise HTTPException(status_code=400, detail="forneca post_url ou post_text")
+
+    result = analyze_adhoc(
+        post_url=body.post_url,
+        post_text=body.post_text,
+        author_name=body.author_name,
+        author_headline=body.author_headline,
+        created_by_user_id=user.get("id"),
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=500, detail=result.get("error") or "erro analise")
+    return result
+
+
+@app.get("/api/linkedin/adhoc-drafts")
+async def api_linkedin_adhoc_drafts_list(
+    limit: int = 30,
+    user: dict = Depends(require_admin),
+):
+    """Lista historico de analises ad-hoc."""
+    limit = max(1, min(int(limit), 200))
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, post_url, post_author_name, score_numeric, ai_verdict,
+                   ai_angle, draft_recommended, published, published_at, fetched_at,
+                   LEFT(post_text, 200) AS post_excerpt
+            FROM linkedin_adhoc_drafts
+            ORDER BY fetched_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = []
+        for r in cursor.fetchall():
+            row = dict(r)
+            for k in ("fetched_at", "published_at"):
+                if row.get(k):
+                    row[k] = row[k].isoformat()
+            rows.append(row)
+    return {"total": len(rows), "drafts": rows}
+
+
+@app.get("/api/linkedin/adhoc-drafts/{draft_id}")
+async def api_linkedin_adhoc_draft_detail(
+    draft_id: int, user: dict = Depends(require_admin)
+):
+    """Retorna drafts completos de uma analise ad-hoc."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM linkedin_adhoc_drafts WHERE id = %s", (draft_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="draft nao encontrado")
+        result = dict(row)
+        for k in ("fetched_at", "published_at", "ai_ran_at"):
+            if result.get(k):
+                result[k] = result[k].isoformat()
+    return result
+
+
+@app.get("/linkedin/comentar", response_class=HTMLResponse)
+async def linkedin_comentar_page(request: Request):
+    """Pagina pra analise ad-hoc de post LinkedIn (URL ou texto colado)."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login?next=/linkedin/comentar", status_code=302)
+    return templates.TemplateResponse(
+        "rap_linkedin_comentar.html",
+        {"request": request, "user": user},
+    )
+
+
 # ===== Platform Costs Tracker (Fase 1: entry manual) =====
 # Motivado pelo incidente do LibreChat (07/05/2026): stack zumbi consumindo
 # $13/mo invisivelmente por meses. Centraliza visibilidade de custos
@@ -13257,7 +13599,11 @@ async def get_task_linkedin_data(request: Request, task_id: int):
         cursor.execute(
             """
             SELECT task_id, post_url, post_text, post_posted_at, post_engagements,
-                   ai_verdict, ai_rationale, ai_angle, ai_ran_at, fetched_at
+                   post_author_name, post_author_headline, post_author_urn,
+                   ai_verdict, ai_rationale, ai_angle, ai_ran_at, fetched_at,
+                   score_numeric, draft_a, draft_b, draft_dm, draft_recommended,
+                   published, published_version, published_text, published_at,
+                   outbound_engagement_id, dm_followup_task_id
             FROM linkedin_task_data
             WHERE task_id = %s
             """,
@@ -13266,7 +13612,11 @@ async def get_task_linkedin_data(request: Request, task_id: int):
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Sem dados de post LinkedIn pra essa task")
-        return dict(row)
+        result = dict(row)
+        for k in ("ai_ran_at", "fetched_at", "published_at"):
+            if result.get(k):
+                result[k] = result[k].isoformat()
+        return result
 
 
 @app.post("/api/tasks/{task_id}/complete-with-followup")
