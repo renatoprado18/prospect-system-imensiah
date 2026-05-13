@@ -280,7 +280,7 @@
                             <div class="li-draft-label ${rec === 'A' ? 'recommended' : ''}">Draft A · mais ousado</div>
                             <div class="li-draft-text">${escapeHtml(d.draft_a)}</div>
                             <div class="li-btn-row">
-                                <button class="li-btn" onclick="copyDraft(${task.id}, 'A')"><i class="bi bi-clipboard"></i> Copiar</button>
+                                <button class="li-btn" onclick="copyDraft(${task.id}, 'A', event)"><i class="bi bi-clipboard"></i> Copiar</button>
                                 ${!d.published ? `<button class="li-btn success" onclick="openPublishModal(${task.id}, 'A')"><i class="bi bi-check2-square"></i> Publiquei A</button>` : ''}
                             </div>
                         </div>` : ''}
@@ -289,7 +289,7 @@
                             <div class="li-draft-label ${rec === 'B' ? 'recommended' : ''}">Draft B · mais seguro</div>
                             <div class="li-draft-text">${escapeHtml(d.draft_b)}</div>
                             <div class="li-btn-row">
-                                <button class="li-btn" onclick="copyDraft(${task.id}, 'B')"><i class="bi bi-clipboard"></i> Copiar</button>
+                                <button class="li-btn" onclick="copyDraft(${task.id}, 'B', event)"><i class="bi bi-clipboard"></i> Copiar</button>
                                 ${!d.published ? `<button class="li-btn success" onclick="openPublishModal(${task.id}, 'B')"><i class="bi bi-check2-square"></i> Publiquei B</button>` : ''}
                             </div>
                         </div>` : ''}
@@ -298,7 +298,7 @@
                             <div class="li-draft-label" style="color: #4f46e5;">DM Follow-up · D+2</div>
                             <div class="li-draft-text">${escapeHtml(d.draft_dm)}</div>
                             <div class="li-btn-row">
-                                <button class="li-btn" onclick="copyDraft(${task.id}, 'DM')"><i class="bi bi-clipboard"></i> Copiar DM</button>
+                                <button class="li-btn" onclick="copyDraft(${task.id}, 'DM', event)"><i class="bi bi-clipboard"></i> Copiar DM</button>
                             </div>
                         </div>` : ''}
                     <div class="li-btn-row mt-2">
@@ -323,20 +323,23 @@
         return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    async function copyDraft(taskId, version) {
+    async function copyDraft(taskId, version, evt) {
         const cache = linkedinDataCache[taskId];
         if (!cache || !cache.data) return;
         const d = cache.data;
         const text = version === 'A' ? d.draft_a : (version === 'B' ? d.draft_b : d.draft_dm);
         if (!text) return;
+        // Captura o botao ANTES do await — event global some apos await em async fn
+        const btnRow = evt && evt.currentTarget ? evt.currentTarget.closest('.li-btn-row') : null;
         try {
             await navigator.clipboard.writeText(text);
-            // visual feedback
-            const flash = document.createElement('span');
-            flash.className = 'li-copied-flash';
-            flash.textContent = '✓ copiado';
-            event.target.closest('.li-btn-row').appendChild(flash);
-            setTimeout(() => flash.remove(), 1500);
+            if (btnRow) {
+                const flash = document.createElement('span');
+                flash.className = 'li-copied-flash';
+                flash.textContent = '✓ copiado';
+                btnRow.appendChild(flash);
+                setTimeout(() => flash.remove(), 1500);
+            }
         } catch (e) {
             alert('Erro ao copiar: ' + e.message);
         }
@@ -382,14 +385,19 @@
         if (!cache || !cache.data) return;
         const d = cache.data;
         const defaultText = version === 'A' ? d.draft_a : d.draft_b;
+        const postUrl = d.post_url || '';
         const html = `
             <div style="position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;">
-                <div style="background:#fff; border-radius:12px; max-width:600px; width:100%; padding:24px; box-shadow:0 20px 50px rgba(0,0,0,0.3);">
+                <div style="background:#fff; border-radius:12px; max-width:640px; width:100%; padding:24px; box-shadow:0 20px 50px rgba(0,0,0,0.3);">
                     <h5 style="margin-top:0;">Registrar publicacao (versao ${version})</h5>
-                    <p style="font-size:0.85rem; color:#64748b;">Cole o comentario final publicado (pode ter editado) + URL opcional do comment publicado.</p>
-                    <label style="font-size:0.8rem; font-weight:600;">Texto publicado:</label>
-                    <textarea id="publishText" style="width:100%; min-height:120px; padding:8px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.85rem;">${defaultText || ''}</textarea>
-                    <label style="font-size:0.8rem; font-weight:600; margin-top:10px; display:block;">URL do comentario (opcional):</label>
+                    <p style="font-size:0.85rem; color:#64748b;margin-bottom:6px;">Edite abaixo se quiser, copie e abra o post — depois cole no LinkedIn, comente, volte e confirme com URL.</p>
+                    <label style="font-size:0.8rem; font-weight:600;">Texto a publicar:</label>
+                    <textarea id="publishText" style="width:100%; min-height:140px; padding:8px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.85rem;">${defaultText || ''}</textarea>
+                    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                        ${postUrl ? `<button class="li-btn primary" onclick="copyAndOpenPost('${postUrl}')"><i class="bi bi-clipboard"></i> Copiar e abrir post</button>` : ''}
+                        <span id="publishCopiedFlash" style="font-size:0.78rem;color:#15803d;display:none;">✓ copiado · post aberto em nova aba</span>
+                    </div>
+                    <label style="font-size:0.8rem; font-weight:600; margin-top:14px; display:block;">URL do comentario publicado (opcional):</label>
                     <input id="publishUrl" type="url" placeholder="https://www.linkedin.com/feed/update/..." style="width:100%; padding:8px; border:1px solid #cbd5e1; border-radius:6px; font-size:0.85rem;">
                     <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px;">
                         <button class="li-btn" onclick="document.getElementById('publishModalRoot').remove()">Cancelar</button>
@@ -401,6 +409,23 @@
         root.id = 'publishModalRoot';
         root.innerHTML = html;
         document.body.appendChild(root);
+    }
+
+    async function copyAndOpenPost(postUrl) {
+        const textarea = document.getElementById('publishText');
+        const text = textarea ? textarea.value : '';
+        if (!text.trim()) { alert('Texto vazio — preencha antes de copiar.'); return; }
+        try {
+            await navigator.clipboard.writeText(text);
+            const flash = document.getElementById('publishCopiedFlash');
+            if (flash) {
+                flash.style.display = 'inline';
+                setTimeout(() => { flash.style.display = 'none'; }, 4000);
+            }
+            window.open(postUrl, '_blank', 'noopener');
+        } catch (e) {
+            alert('Erro ao copiar: ' + e.message);
+        }
     }
 
     async function submitPublish(taskId, version) {
