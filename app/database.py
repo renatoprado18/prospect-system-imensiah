@@ -2569,6 +2569,22 @@ def init_db():
             ALTER TABLE linkedin_outbound_engagements
             ADD COLUMN IF NOT EXISTS last_my_reply_at TIMESTAMP
         ''')
+        # Migration 2026-05-12: self-healing pattern. failure_count rastreia
+        # tentativas consecutivas falhas (resetado em sucesso). Apos N falhas
+        # (3 por padrao), row vai pra quarentine e sai do due-set ate triagem
+        # manual. Previne cron preso em erro eterno por bug de extracao/URN.
+        cursor.execute('''
+            ALTER TABLE linkedin_outbound_engagements
+            ADD COLUMN IF NOT EXISTS failure_count INT DEFAULT 0
+        ''')
+        cursor.execute('''
+            ALTER TABLE linkedin_outbound_engagements
+            ADD COLUMN IF NOT EXISTS quarantined_at TIMESTAMP
+        ''')
+        cursor.execute('''
+            ALTER TABLE linkedin_outbound_engagements
+            ADD COLUMN IF NOT EXISTS last_error TEXT
+        ''')
 
         # Custos mensais da plataforma (Vercel/Neon/Railway/Anthropic/LinkdAPI/etc).
         # Entry manual via /api/admin/platform-costs (Fase 1) — automacao via API

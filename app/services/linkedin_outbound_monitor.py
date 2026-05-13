@@ -42,6 +42,10 @@ LINKDAPI_BASE = "https://linkdapi.com"
 COLD_THRESHOLD_DAYS = int((os.getenv("LINKEDIN_OUTBOUND_COLD_DAYS") or "14").strip() or 14)
 RECHECK_INTERVAL_DAYS = int((os.getenv("LINKEDIN_OUTBOUND_RECHECK_DAYS") or "3").strip() or 3)
 FIRST_CHECK_DELAY_HOURS = int((os.getenv("LINKEDIN_OUTBOUND_FIRST_CHECK_HOURS") or "24").strip() or 24)
+# Self-healing: apos N falhas engagement-specific seguidas, row vai pra quarentine
+# e sai do due-set ate triagem manual. Backoff entre tentativas vai escalando.
+MAX_FAILURES_BEFORE_QUARANTINE = int((os.getenv("LINKEDIN_OUTBOUND_MAX_FAILURES") or "3").strip() or 3)
+FAILURE_BACKOFF_HOURS = [1, 4]  # hours pra failure_count=1 e 2; >=3 -> quarantine
 
 
 def _track_call(endpoint: str, status_code: int) -> None:
@@ -302,12 +306,89 @@ async def _send_reply_notification(eng: Dict) -> bool:
         return False
 
 
+async def _send_quarantine_notification(engagement_id: int, post_url: str, error_msg: str) -> bool:
+    """One-shot WA notif quando engagement vai pra quarentine apos N falhas."""
+    try:
+        from services.intel_bot import send_intel_notification
+    except Exception as e:
+        logger.warning(f"_send_quarantine_notification: import intel_bot falhou: {e}")
+        return False
+    msg = (
+        f"⚠️ Engagement LinkedIn #{engagement_id} em quarentine\n\n"
+        f"Post: {post_url}\n"
+        f"Erro: {error_msg}\n\n"
+        f"Saiu da fila de checagem apos {MAX_FAILURES_BEFORE_QUARANTINE} falhas seguidas. Triagem manual."
+    )
+    try:
+        return await send_intel_notification(msg)
+    except Exception as e:
+        logger.warning(f"_send_quarantine_notification: send falhou: {e}")
+        return False
+
+
+async def _record_failure(engagement_id: int, error_msg: str) -> Dict:
+    """Registra falha engagement-specific. Incrementa failure_count, aplica backoff
+    em next_check_at. Apos MAX_FAILURES_BEFORE_QUARANTINE, marca quarantined_at e
+    notifica via WhatsApp. NAO chamado pra erros system-level (env config, etc)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT failure_count, post_url FROM linkedin_outbound_engagements WHERE id = %s",
+            (engagement_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return {"quarantined": False, "failure_count": 0}
+        current = (row["failure_count"] or 0) + 1
+        post_url = row["post_url"]
+
+        if current >= MAX_FAILURES_BEFORE_QUARANTINE:
+            cursor.execute(
+                """
+                UPDATE linkedin_outbound_engagements SET
+                    failure_count = %s,
+                    last_error = %s,
+                    last_checked_at = NOW(),
+                    quarantined_at = NOW()
+                WHERE id = %s
+                """,
+                (current, (error_msg or "")[:500], engagement_id),
+            )
+            conn.commit()
+            quarantined = True
+        else:
+            idx = min(current - 1, len(FAILURE_BACKOFF_HOURS) - 1)
+            next_at = datetime.utcnow() + timedelta(hours=FAILURE_BACKOFF_HOURS[idx])
+            cursor.execute(
+                """
+                UPDATE linkedin_outbound_engagements SET
+                    failure_count = %s,
+                    last_error = %s,
+                    last_checked_at = NOW(),
+                    next_check_at = %s
+                WHERE id = %s
+                """,
+                (current, (error_msg or "")[:500], next_at, engagement_id),
+            )
+            conn.commit()
+            quarantined = False
+
+    if quarantined:
+        await _send_quarantine_notification(engagement_id, post_url, error_msg)
+
+    return {"quarantined": quarantined, "failure_count": current}
+
+
 async def check_replies_for_engagement(engagement_id: int) -> Dict:
     """Checa replies de um engagement especifico. Pode disparar WhatsApp.
-    Idempotente: notify_sent_at evita re-notify."""
+    Idempotente: notify_sent_at evita re-notify.
+
+    Erros engagement-specific (post_urn nao resolvido, etc) incrementam
+    failure_count e aplicam backoff. Erros system-level (env config) marcam
+    `system_error=True` pra monitor abortar sem penalizar engagements."""
     api_key = (os.getenv("LINKDAPI_KEY") or "").strip()
     if not api_key:
-        return {"ok": False, "error": "LINKDAPI_KEY ausente"}
+        return {"ok": False, "error": "LINKDAPI_KEY ausente", "system_error": True}
 
     with get_db() as conn:
         cursor = conn.cursor()
@@ -318,19 +399,20 @@ async def check_replies_for_engagement(engagement_id: int) -> Dict:
         eng = cursor.fetchone()
 
     if not eng:
-        return {"ok": False, "error": f"engagement {engagement_id} nao encontrado"}
+        return {"ok": False, "error": f"engagement {engagement_id} nao encontrado", "system_error": True}
 
     eng = dict(eng)
     post_urn = eng.get("post_urn") or _extract_post_urn(eng.get("post_url") or "")
     if not post_urn:
-        return {"ok": False, "error": "post_urn nao resolvido"}
+        rec = await _record_failure(engagement_id, "post_urn nao resolvido")
+        return {"ok": False, "error": "post_urn nao resolvido", **rec}
 
     timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0)
     notified = False
     async with httpx.AsyncClient(timeout=timeout) as client:
         my_urn = await _resolve_user_urn(client, api_key)
         if not my_urn:
-            return {"ok": False, "error": "user URN nao resolvido"}
+            return {"ok": False, "error": "user URN nao resolvido", "system_error": True}
 
         # Busca primeira pagina; pagina mais se necessario (ate achar comment do Renato)
         all_comments: List[Dict] = []
@@ -388,15 +470,19 @@ async def check_replies_for_engagement(engagement_id: int) -> Dict:
         cursor.execute(
             """
             UPDATE linkedin_outbound_engagements SET
+                post_urn = COALESCE(post_urn, %s),
                 my_comment_urn = COALESCE(%s, my_comment_urn),
                 has_reply = %s,
                 reply_count = %s,
                 reply_from_author = %s,
                 last_checked_at = NOW(),
-                next_check_at = %s
+                next_check_at = %s,
+                failure_count = 0,
+                last_error = NULL
             WHERE id = %s
             """,
             (
+                post_urn,
                 my_comment_urn,
                 reply_count > 0,
                 reply_count,
@@ -462,13 +548,13 @@ async def monitor_due_engagements() -> Dict:
         archived = len(cursor.fetchall() or [])
         conn.commit()
 
-    # 2) Pega rows due
+    # 2) Pega rows due (exclui arquivados e quarantined)
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
             SELECT id FROM linkedin_outbound_engagements
-            WHERE archived_at IS NULL AND next_check_at <= NOW()
+            WHERE archived_at IS NULL AND quarantined_at IS NULL AND next_check_at <= NOW()
             ORDER BY next_check_at ASC
             """
         )
@@ -477,29 +563,49 @@ async def monitor_due_engagements() -> Dict:
     checked = 0
     replies_detected = 0
     errors = 0
+    quarantined = 0
     calls_before = _read_calls_count_today()
+    system_error = None
 
     for eid in due_ids:
         try:
             res = await check_replies_for_engagement(eid)
             checked += 1
+            if res.get("system_error"):
+                # config/env issue — aborta loop sem penalizar outras rows
+                errors += 1
+                system_error = res.get("error")
+                logger.warning(f"monitor_due_engagements: system_error em {eid}: {system_error}")
+                break
             if res.get("reply_from_author"):
                 replies_detected += 1
             if not res.get("ok"):
                 errors += 1
+                if res.get("quarantined"):
+                    quarantined += 1
         except Exception as e:
             logger.exception(f"monitor_due_engagements: check {eid} falhou: {e}")
             errors += 1
+            try:
+                rec = await _record_failure(eid, f"exception: {type(e).__name__}: {str(e)[:200]}")
+                if rec.get("quarantined"):
+                    quarantined += 1
+            except Exception:
+                logger.exception(f"monitor_due_engagements: _record_failure({eid}) falhou")
 
     calls = max(0, _read_calls_count_today() - calls_before)
 
-    return {
+    summary = {
         "checked": checked,
         "replies_detected": replies_detected,
         "archived": archived,
         "errors": errors,
+        "quarantined": quarantined,
         "calls": calls,
     }
+    if system_error:
+        summary["system_error"] = system_error
+    return summary
 
 
 def _read_calls_count_today() -> int:
