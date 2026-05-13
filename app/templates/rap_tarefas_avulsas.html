@@ -268,12 +268,38 @@
             </div>`;
         }
 
+        // Override box (zona cinza: score 4-6 sem drafts)
+        let overrideBox = '';
+        const score = d.score_numeric;
+        const isGrayZone = score != null && score >= 4 && score <= 6;
+        const hasNoDrafts = !d.draft_a && !d.draft_b && !d.draft_dm;
+        if (isGrayZone && hasNoDrafts) {
+            overrideBox = `
+                <div class="li-override-box" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;margin-top:12px;">
+                    <div style="font-size:0.85rem;font-weight:600;color:#1e40af;margin-bottom:4px;">
+                        <i class="bi bi-cpu"></i> Score ${score}/10 — drafts nao gerados automaticamente
+                    </div>
+                    <div style="font-size:0.78rem;color:#475569;margin-bottom:8px;">
+                        Quer comentar mesmo assim? Diga o motivo (vira input pra calibrar o scorer no futuro).
+                    </div>
+                    <textarea id="overrideReason-${task.id}" placeholder="Ex: autor e prospect direto / tema central da imensIAH / oportunidade rara de visibilidade..." style="width:100%;min-height:70px;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.85rem;"></textarea>
+                    <div class="li-btn-row mt-2">
+                        <button class="li-btn primary" onclick="forceGenerateDrafts(${task.id})"><i class="bi bi-magic"></i> Gerar drafts mesmo assim</button>
+                        <span style="font-size:0.72rem;color:#64748b;align-self:center;">~$0.05 Opus</span>
+                    </div>
+                </div>`;
+        }
+
         // Drafts section
         let draftsSection = '';
         if (d.draft_a || d.draft_b || d.draft_dm) {
             const rec = (d.draft_recommended || 'A').toUpperCase();
+            const overrideBadge = d.user_override_reason
+                ? `<div class="alert py-2 mb-2" style="font-size:0.78rem;background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;"><i class="bi bi-magic"></i> <strong>Drafts via override</strong> · score ${score}/10 · motivo: <em>${escapeHtml(d.user_override_reason)}</em></div>`
+                : '';
             draftsSection = `
                 <div class="li-drafts">
+                    ${overrideBadge}
                     ${d.published ? `<div class="alert alert-success py-2 mb-2" style="font-size:0.8rem;"><i class="bi bi-check-circle"></i> Ja publicado (versao ${d.published_version || '?'}) em ${(d.published_at || '').slice(0, 10)}</div>` : ''}
                     ${d.draft_a ? `
                         <div class="li-draft">
@@ -315,7 +341,42 @@
                 ${postUrl ? `<div class="mt-2"><a href="${postUrl}" target="_blank" rel="noopener" class="task-action-btn"><i class="bi bi-linkedin"></i> Abrir no LinkedIn</a></div>` : ''}
                 ${aiSection}
             </div>
+            ${overrideBox}
             ${draftsSection}`;
+    }
+
+    async function forceGenerateDrafts(taskId) {
+        const textarea = document.getElementById(`overrideReason-${taskId}`);
+        const reason = (textarea && textarea.value || '').trim();
+        if (reason.length < 10) {
+            alert('Por favor explique em ao menos 10 caracteres por que vale comentar (vira input pra fine-tuning).');
+            if (textarea) textarea.focus();
+            return;
+        }
+        if (!confirm(`Gerar drafts via override?\n\nCusto: ~$0.05 Opus\nMotivo capturado: "${reason}"\n\nOK pra continuar?`)) return;
+
+        const btn = event && event.currentTarget;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass"></i> Gerando drafts...'; }
+        try {
+            const r = await fetch(`/api/linkedin-task/${taskId}/force-generate-drafts`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ reason }),
+            });
+            const data = await r.json();
+            if (!r.ok) {
+                alert('Erro: ' + (data.detail || JSON.stringify(data)));
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-magic"></i> Gerar drafts mesmo assim'; }
+                return;
+            }
+            // recarrega dados da task
+            delete linkedinDataCache[taskId];
+            await fetchLinkedInData(taskId);
+            renderTasks();
+        } catch (e) {
+            alert('Erro: ' + e.message);
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-magic"></i> Gerar drafts mesmo assim'; }
+        }
     }
 
     function escapeHtml(s) {

@@ -4488,6 +4488,104 @@ async def api_linkedin_task_publish(
     }
 
 
+@app.post("/api/linkedin-task/{task_id}/force-generate-drafts")
+async def api_linkedin_task_force_drafts(
+    task_id: int,
+    request: Request,
+    user: dict = Depends(require_admin),
+):
+    """Forca geracao de drafts pra task com score < threshold.
+
+    Captura motivo do override em linkedin_task_data.user_override_reason — input
+    pra fine-tuning futuro do scorer (entender quando o usuario discorda da IA).
+
+    Body: {"reason": "...porque vale comentar mesmo com score baixo..."}
+    """
+    from services.linkedin_comment_curator import generate_drafts
+
+    body = await request.json()
+    reason = (body.get("reason") or "").strip()
+    if not reason or len(reason) < 10:
+        raise HTTPException(status_code=400, detail="reason obrigatorio (>=10 chars) pra fine-tuning")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT post_url, post_text, post_posted_at, post_engagements,
+                   post_author_name, post_author_headline, post_author_urn,
+                   ai_verdict, ai_rationale, ai_angle, score_numeric
+            FROM linkedin_task_data WHERE task_id = %s
+            """,
+            (task_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="task nao tem dados de curator — analise primeiro")
+        d = dict(row)
+        if not d.get("ai_ran_at") and not d.get("ai_angle"):
+            # ai_ran_at nao foi selecionado mas score_numeric existe — checagem fraca
+            pass
+        if d.get("score_numeric") is None:
+            raise HTTPException(status_code=400, detail="task sem score_numeric — rode analise antes")
+
+    post_data = {
+        "post_url": d.get("post_url"),
+        "post_text": d.get("post_text"),
+        "post_posted_at": d.get("post_posted_at"),
+        "post_engagements": d.get("post_engagements"),
+        "author_name": d.get("post_author_name"),
+        "author_headline": d.get("post_author_headline"),
+        "author_urn": d.get("post_author_urn"),
+    }
+    scoring_result = {
+        "ai_angle": d.get("ai_angle"),
+        "ai_rationale": d.get("ai_rationale"),
+        "score": d.get("score_numeric"),
+    }
+
+    drafts = generate_drafts(post_data, scoring_result)
+    if not drafts.get("ok"):
+        raise HTTPException(status_code=500, detail=f"Falha ao gerar drafts: {drafts.get('error')}")
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE linkedin_task_data SET
+                draft_a = %s,
+                draft_b = %s,
+                draft_dm = %s,
+                draft_recommended = %s,
+                user_override_reason = %s,
+                user_override_at = NOW()
+            WHERE task_id = %s
+            """,
+            (
+                drafts.get("draft_a"),
+                drafts.get("draft_b"),
+                drafts.get("draft_dm"),
+                drafts.get("draft_recommended"),
+                reason,
+                task_id,
+            ),
+        )
+        conn.commit()
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "score_numeric": d.get("score_numeric"),
+        "user_override_reason": reason,
+        "drafts": {
+            "draft_a": drafts.get("draft_a"),
+            "draft_b": drafts.get("draft_b"),
+            "draft_dm": drafts.get("draft_dm"),
+            "draft_recommended": drafts.get("draft_recommended"),
+        },
+    }
+
+
 @app.post("/api/linkedin-task/{task_id}/dispense")
 async def api_linkedin_task_dispense(
     task_id: int,
@@ -13603,7 +13701,8 @@ async def get_task_linkedin_data(request: Request, task_id: int):
                    ai_verdict, ai_rationale, ai_angle, ai_ran_at, fetched_at,
                    score_numeric, draft_a, draft_b, draft_dm, draft_recommended,
                    published, published_version, published_text, published_at,
-                   outbound_engagement_id, dm_followup_task_id
+                   outbound_engagement_id, dm_followup_task_id,
+                   user_override_reason, user_override_at
             FROM linkedin_task_data
             WHERE task_id = %s
             """,
@@ -13613,7 +13712,7 @@ async def get_task_linkedin_data(request: Request, task_id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Sem dados de post LinkedIn pra essa task")
         result = dict(row)
-        for k in ("ai_ran_at", "fetched_at", "published_at"):
+        for k in ("ai_ran_at", "fetched_at", "published_at", "user_override_at"):
             if result.get(k):
                 result[k] = result[k].isoformat()
         return result
