@@ -2238,6 +2238,28 @@
                     <div class="stat-breakdown" id="statVeiculosBreakdown"></div>
                 </div>
             </div>
+            <!-- F2 LinkedIn: engagement-driven prospecting -->
+            <div class="stat-card" style="cursor: pointer;" onclick="showEngagementModal()">
+                <div class="stat-icon" style="background: rgba(124, 58, 237, 0.1); color: #7c3aed;"><i class="bi bi-people-fill"></i></div>
+                <div class="stat-content">
+                    <div class="stat-headline">
+                        <div class="stat-value" id="statEngagement">-</div>
+                        <div class="stat-label">Leads engajaram (7d)</div>
+                    </div>
+                    <div class="stat-breakdown" id="statEngagementBreakdown"></div>
+                </div>
+            </div>
+            <!-- Curator calibration: overrides do scorer LinkedIn pendentes de analise -->
+            <div class="stat-card" style="cursor: pointer;" onclick="showOverrideModal()">
+                <div class="stat-icon" style="background: rgba(217, 119, 6, 0.1); color: #d97706;"><i class="bi bi-sliders"></i></div>
+                <div class="stat-content">
+                    <div class="stat-headline">
+                        <div class="stat-value" id="statOverrides">-</div>
+                        <div class="stat-label">Calibrar scorer</div>
+                    </div>
+                    <div class="stat-breakdown" id="statOverridesBreakdown"></div>
+                </div>
+            </div>
             <!-- P6 Diligente Fase 2: intents abertos do bot (compromissos persistentes) -->
             <div class="stat-card" style="cursor: pointer;" data-drill="intents" onclick="openDrill('intents')">
                 <div class="stat-icon" style="background: rgba(14, 165, 233, 0.1); color: #0ea5e9;"><i class="bi bi-list-check"></i></div>
@@ -2878,6 +2900,95 @@
             } catch (error) {
                 console.error('Error loading birthdays:', error);
             }
+        }
+
+        // ============== LinkedIn F2: engagement signals + curator overrides ==============
+        async function loadEngagementStat() {
+            try {
+                const r = await fetch('/api/linkedin-engagement/summary?days=7');
+                if (!r.ok) return;
+                const d = await r.json();
+                const el = document.getElementById('statEngagement');
+                const bk = document.getElementById('statEngagementBreakdown');
+                if (el) el.textContent = d.total || 0;
+                if (bk) bk.textContent = d.total > 0
+                    ? `${d.warm_tasks} warm · ${d.cold_leads} cold`
+                    : '';
+                // muted state quando 0
+                const card = el && el.closest('.stat-card');
+                if (card && d.total === 0) card.classList.add('muted');
+            } catch (e) { console.error('engagement stat:', e); }
+        }
+
+        async function loadOverrideStat() {
+            try {
+                const r = await fetch('/api/linkedin-curator/override-stats');
+                if (!r.ok) return;
+                const d = await r.json();
+                const el = document.getElementById('statOverrides');
+                const bk = document.getElementById('statOverridesBreakdown');
+                if (el) el.textContent = d.total || 0;
+                if (bk) bk.textContent = d.total > 0
+                    ? (d.ready_for_analysis ? '✅ pronto pra analisar' : `${d.total}/${d.threshold} acumulados`)
+                    : '';
+                const card = el && el.closest('.stat-card');
+                if (card) {
+                    if (d.total === 0) card.classList.add('muted');
+                    if (d.ready_for_analysis) card.style.borderLeft = '3px solid #15803d';
+                }
+            } catch (e) { console.error('override stat:', e); }
+        }
+
+        async function showEngagementModal() {
+            try {
+                const r = await fetch('/api/linkedin-engagement/summary?days=7');
+                const d = await r.json();
+                const items = d.items || [];
+                const rows = items.length
+                    ? items.map(it => {
+                        const badge = it.status === 'warm_task_created'
+                            ? '<span style="background:#dcfce7;color:#15803d;padding:1px 6px;border-radius:4px;font-size:0.7rem;">WARM</span>'
+                            : '<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:4px;font-size:0.7rem;">COLD</span>';
+                        const link = it.profile_url ? `<a href="${it.profile_url}" target="_blank" rel="noopener">${escapeText(it.profile_name || '?')}</a>` : escapeText(it.profile_name || '?');
+                        const post = it.post_title ? ` · sobre "${escapeText(it.post_title.substring(0,50))}"` : '';
+                        const text = it.comment_text ? `<div style="font-size:0.75rem;color:#475569;margin-top:2px;font-style:italic;">"${escapeText(it.comment_text.substring(0,180))}"</div>` : '';
+                        return `<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9;"><div>${badge} ${link}${post}</div>${text}</div>`;
+                    }).join('')
+                    : '<div style="padding:24px;text-align:center;color:#64748b;">Sem signals nos ultimos 7 dias.</div>';
+                showSimpleModal(`Leads engajaram (${d.total}) — 7d`,
+                    `<div style="font-size:0.82rem;margin-bottom:10px;color:#64748b;">${d.warm_tasks} contatos existentes (warm) · ${d.cold_leads} leads novos (cold). Tasks warm aparecem em /tarefas-pendentes.</div>${rows}`);
+            } catch (e) { alert('Erro: ' + e.message); }
+        }
+
+        async function showOverrideModal() {
+            try {
+                const r = await fetch('/api/linkedin-curator/override-stats');
+                const d = await r.json();
+                const items = d.items || [];
+                const summary = `<div style="font-size:0.82rem;margin-bottom:10px;color:#64748b;">${d.total}/${d.threshold} overrides acumulados. ${d.ready_for_analysis ? '<strong style="color:#15803d;">Pronto pra analisar padroes</strong> — peca ao Claude.' : 'Continue acumulando — analise vale a partir de 20.'}</div>`;
+                const rows = items.length
+                    ? items.map(it => `<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9;font-size:0.8rem;"><strong>Score ${it.score_numeric}/10</strong> · ${escapeText(it.post_author_name || '?')}<br><span style="color:#475569;">${escapeText(it.user_override_reason || '')}</span></div>`).join('')
+                    : '<div style="padding:24px;text-align:center;color:#64748b;">Sem overrides ainda. Use "Gerar drafts mesmo assim" em tarefas de zona cinza.</div>';
+                showSimpleModal(`Calibrar scorer LinkedIn (${d.total})`, summary + rows);
+            } catch (e) { alert('Erro: ' + e.message); }
+        }
+
+        function showSimpleModal(title, bodyHtml) {
+            const existing = document.getElementById('simpleModalRoot');
+            if (existing) existing.remove();
+            const root = document.createElement('div');
+            root.id = 'simpleModalRoot';
+            root.innerHTML = `
+                <div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;" onclick="if(event.target===this)this.parentElement.remove()">
+                    <div style="background:#fff;border-radius:12px;max-width:700px;width:100%;max-height:80vh;overflow-y:auto;padding:24px;box-shadow:0 20px 50px rgba(0,0,0,0.3);">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:1px solid #e2e8f0;padding-bottom:10px;">
+                            <h5 style="margin:0;">${title}</h5>
+                            <button onclick="document.getElementById('simpleModalRoot').remove()" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#64748b;">&times;</button>
+                        </div>
+                        ${bodyHtml}
+                    </div>
+                </div>`;
+            document.body.appendChild(root);
         }
 
         // ============== Clipping do Dia: queue interativa (1 por vez) ==============
@@ -4608,6 +4719,8 @@
             loadMaintenanceAlerts();
             checkAIStatus();
             loadClippingStat();
+            loadEngagementStat();
+            loadOverrideStat();
             loadCronHealth();
         }, 300);
 

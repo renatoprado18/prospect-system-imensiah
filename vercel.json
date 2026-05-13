@@ -74,6 +74,10 @@
       "schedule": "0 11 * * *"
     },
     {
+      "path": "/api/cron/linkedin-engagement-prospecting",
+      "schedule": "30 11 * * *"
+    },
+    {
       "path": "/api/cron/platform-costs-snapshot",
       "schedule": "0 12 2 * *"
     },

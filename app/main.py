@@ -4341,6 +4341,19 @@ async def cron_linkedin_outbound_check(request: Request):
     return {"job": "linkedin-outbound-check", **summary}
 
 
+@app.get("/api/cron/linkedin-engagement-prospecting")
+@track_cron_run
+async def cron_linkedin_engagement_prospecting(request: Request):
+    """Cron diario (08h30 BRT, F2): quem comentou posts proprios ultimos 7d.
+    Cruza com contacts -> tasks warm + cold leads. ~10-30 calls/dia."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.linkedin_engagement_prospecting import run_engagement_prospecting
+    days = int(request.query_params.get("days", 7))
+    summary = await run_engagement_prospecting(days=days)
+    return {"job": "linkedin-engagement-prospecting", **summary}
+
+
 # ===== LinkedIn Comment Curator (P1 MVP) =====
 # Roda em BG diariamente analisando tasks "LinkedIn: Curtir post de X" pendentes.
 # Pipeline: extract URL -> LinkdAPI -> Sonnet scoring -> Opus drafts (se score>=7).
@@ -4639,6 +4652,109 @@ async def api_linkedin_task_like_and_close(
         )
         conn.commit()
     return {"ok": True, "task_id": task_id, "status": "completed", "action": "like_only"}
+
+
+@app.get("/api/linkedin-curator/override-stats")
+async def api_linkedin_curator_override_stats(request: Request):
+    """Conta overrides do scorer (user forcou drafts em zona cinza) pra calibracao futura.
+
+    Retorna count total, threshold pra acionar analise, breakdown por faixa de
+    score e lista detalhada dos motivos (pra revisao quando >= threshold).
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    threshold = int(os.getenv("CURATOR_OVERRIDE_ANALYSIS_THRESHOLD", "20"))
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE score_numeric BETWEEN 1 AND 3) AS low,
+                COUNT(*) FILTER (WHERE score_numeric BETWEEN 4 AND 6) AS gray,
+                MAX(user_override_at) AS last_override
+            FROM linkedin_task_data
+            WHERE user_override_reason IS NOT NULL
+            """
+        )
+        agg = dict(cur.fetchone() or {})
+        cur.execute(
+            """
+            SELECT task_id, score_numeric, user_override_reason, user_override_at,
+                   post_author_name
+            FROM linkedin_task_data
+            WHERE user_override_reason IS NOT NULL
+            ORDER BY user_override_at DESC NULLS LAST
+            LIMIT 50
+            """
+        )
+        items = [dict(r) for r in cur.fetchall()]
+        for it in items:
+            if it.get("user_override_at"):
+                it["user_override_at"] = it["user_override_at"].isoformat()
+    total = agg.get("total") or 0
+    return {
+        "total": total,
+        "threshold": threshold,
+        "ready_for_analysis": total >= threshold,
+        "breakdown": {
+            "low_1_3": agg.get("low") or 0,
+            "gray_4_6": agg.get("gray") or 0,
+        },
+        "last_override_at": agg.get("last_override").isoformat() if agg.get("last_override") else None,
+        "items": items,
+    }
+
+
+@app.get("/api/linkedin-engagement/summary")
+async def api_linkedin_engagement_summary(request: Request, days: int = 7):
+    """F2 summary: signals capturados nos ultimos N dias agrupados por status."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE status = 'warm_task_created') AS warm,
+                COUNT(*) FILTER (WHERE status = 'cold_lead_created') AS cold,
+                COUNT(*) FILTER (WHERE status = 'dismissed') AS dismissed,
+                MAX(detected_at) AS last_run
+            FROM linkedin_engagement_signals
+            WHERE detected_at >= NOW() - (%s || ' days')::interval
+            """,
+            (str(days),),
+        )
+        agg = dict(cur.fetchone() or {})
+        cur.execute(
+            """
+            SELECT s.id, s.profile_name, s.profile_headline, s.profile_url,
+                   s.comment_text, s.detected_at, s.status, s.contact_id,
+                   s.task_id, s.post_id, p.article_title AS post_title
+            FROM linkedin_engagement_signals s
+            LEFT JOIN editorial_posts p ON p.id = s.post_id
+            WHERE s.detected_at >= NOW() - (%s || ' days')::interval
+            ORDER BY s.detected_at DESC
+            LIMIT 50
+            """,
+            (str(days),),
+        )
+        items = [dict(r) for r in cur.fetchall()]
+        for it in items:
+            if it.get("detected_at"):
+                it["detected_at"] = it["detected_at"].isoformat()
+    return {
+        "days": days,
+        "total": agg.get("total") or 0,
+        "warm_tasks": agg.get("warm") or 0,
+        "cold_leads": agg.get("cold") or 0,
+        "dismissed": agg.get("dismissed") or 0,
+        "last_run_at": agg.get("last_run").isoformat() if agg.get("last_run") else None,
+        "items": items,
+    }
 
 
 @app.get("/api/linkedin-curator/scores")
