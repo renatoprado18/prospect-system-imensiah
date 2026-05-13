@@ -4611,6 +4611,36 @@ async def api_linkedin_task_dispense(
     return {"ok": True, "task_id": task_id, "status": "completed"}
 
 
+@app.post("/api/linkedin-task/{task_id}/like-and-close")
+async def api_linkedin_task_like_and_close(
+    task_id: int,
+    user: dict = Depends(require_admin),
+):
+    """Marca task LinkedIn como completed indicando que o usuario apenas curtiu (sem comentar).
+
+    A curtida em si e manual (LinkdAPI nao oferece write, API LinkedIn oficial nao
+    libera likes). Esse endpoint registra a intencao + fecha a task pra otimizar
+    o fluxo da zona cinza.
+    """
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM tasks WHERE id = %s", (task_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="task nao encontrada")
+        cursor.execute(
+            """
+            UPDATE tasks SET
+                status = 'completed',
+                descricao = COALESCE(descricao, '') || E'\n\n[curtiu sem comentar via curator]',
+                atualizado_em = NOW()
+            WHERE id = %s
+            """,
+            (task_id,),
+        )
+        conn.commit()
+    return {"ok": True, "task_id": task_id, "status": "completed", "action": "like_only"}
+
+
 @app.get("/api/linkedin-curator/scores")
 async def api_linkedin_curator_scores(request: Request):
     """Bulk: retorna score_numeric + ai_angle pra todas tasks LinkedIn pendentes.

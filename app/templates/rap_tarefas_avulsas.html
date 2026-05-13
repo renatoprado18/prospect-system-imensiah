@@ -286,6 +286,7 @@
                     <div class="li-btn-row mt-2">
                         <button class="li-btn primary" onclick="forceGenerateDrafts(${task.id})"><i class="bi bi-magic"></i> Gerar drafts mesmo assim</button>
                         <span style="font-size:0.72rem;color:#64748b;align-self:center;">~$0.05 Opus</span>
+                        <button class="li-btn" style="margin-left:auto;background:#fef3c7;color:#92400e;border-color:#fcd34d;" onclick="likeAndClose(${task.id}, '${(d.post_url || '').replace(/'/g, '&#39;')}')"><i class="bi bi-hand-thumbs-up"></i> Curtir e encerrar</button>
                     </div>
                 </div>`;
         }
@@ -328,6 +329,7 @@
                             </div>
                         </div>` : ''}
                     <div class="li-btn-row mt-2">
+                        ${!d.published ? `<button class="li-btn" style="background:#fef3c7;color:#92400e;border-color:#fcd34d;" onclick="likeAndClose(${task.id}, '${(d.post_url || '').replace(/'/g, '&#39;')}')"><i class="bi bi-hand-thumbs-up"></i> Curtir e encerrar</button>` : ''}
                         ${!d.published ? `<button class="li-btn danger" onclick="dispenseLinkedInTask(${task.id})"><i class="bi bi-x-circle"></i> Dispensar (nao vou comentar)</button>` : ''}
                         <button class="li-btn" onclick="analyzeLinkedInTask(${task.id}, true)"><i class="bi bi-arrow-clockwise"></i> Re-analisar</button>
                     </div>
@@ -439,6 +441,26 @@
             allTasks = allTasks.filter(t => t.id !== taskId);
             renderTasks();
         } catch (e) { alert('Erro: ' + e.message); }
+    }
+
+    async function likeAndClose(taskId, postUrl) {
+        // Abre o post em nova aba pra usuario curtir manualmente (LinkdAPI nao oferece write)
+        if (postUrl) {
+            window.open(postUrl, '_blank', 'noopener');
+        }
+        // Marca task como completed em background
+        try {
+            const r = await fetch(`/api/linkedin-task/${taskId}/like-and-close`, { method: 'POST' });
+            const data = await r.json();
+            if (!r.ok) {
+                alert('Task aberta mas erro ao fechar no INTEL: ' + (data.detail || 'desconhecido'));
+                return;
+            }
+            allTasks = allTasks.filter(t => t.id !== taskId);
+            renderTasks();
+        } catch (e) {
+            alert('Erro: ' + e.message);
+        }
     }
 
     function openPublishModal(taskId, version) {
