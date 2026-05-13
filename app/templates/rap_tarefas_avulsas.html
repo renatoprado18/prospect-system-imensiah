@@ -432,7 +432,6 @@
     }
 
     async function dispenseLinkedInTask(taskId) {
-        if (!confirm('Dispensar essa task? (vai virar completed sem publicar comentario)')) return;
         try {
             const r = await fetch(`/api/linkedin-task/${taskId}/dispense`, { method: 'POST' });
             const data = await r.json();
