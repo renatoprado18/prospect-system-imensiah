@@ -268,12 +268,12 @@
             </div>`;
         }
 
-        // Override box (zona cinza: score 4-6 sem drafts)
+        // Override box (qualquer pill nao-verde: score 1-6 sem drafts)
         let overrideBox = '';
         const score = d.score_numeric;
-        const isGrayZone = score != null && score >= 4 && score <= 6;
+        const needsManualOverride = score != null && score >= 1 && score <= 6;
         const hasNoDrafts = !d.draft_a && !d.draft_b && !d.draft_dm;
-        if (isGrayZone && hasNoDrafts) {
+        if (needsManualOverride && hasNoDrafts) {
             overrideBox = `
                 <div class="li-override-box" style="grid-column:1/-1;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 14px;margin:8px -16px -10px -16px;">
                     <div style="font-size:0.85rem;font-weight:600;color:#1e40af;margin-bottom:4px;">
