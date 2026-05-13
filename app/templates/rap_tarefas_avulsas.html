@@ -283,10 +283,12 @@
                         Quer comentar mesmo assim? Diga o motivo (vira input pra calibrar o scorer no futuro).
                     </div>
                     <textarea id="overrideReason-${task.id}" placeholder="Ex: autor e prospect direto / tema central da imensIAH / oportunidade rara de visibilidade..." style="width:100%;min-height:70px;padding:8px;border:1px solid #cbd5e1;border-radius:6px;font-size:0.85rem;"></textarea>
-                    <div class="li-btn-row mt-2">
+                    <div class="li-btn-row mt-2" style="flex-wrap:wrap;">
                         <button class="li-btn primary" onclick="forceGenerateDrafts(${task.id})"><i class="bi bi-magic"></i> Gerar drafts mesmo assim</button>
                         <span style="font-size:0.72rem;color:#64748b;align-self:center;">~$0.05 Opus</span>
-                        <button class="li-btn" style="margin-left:auto;background:#fef3c7;color:#92400e;border-color:#fcd34d;" onclick="likeAndClose(${task.id}, '${(d.post_url || '').replace(/'/g, '&#39;')}')"><i class="bi bi-hand-thumbs-up"></i> Curtir e encerrar</button>
+                        <div style="flex:1;"></div>
+                        <button class="li-btn" style="background:#fef3c7;color:#92400e;border-color:#fcd34d;" onclick="likeAndClose(${task.id}, '${(d.post_url || '').replace(/'/g, '&#39;')}')"><i class="bi bi-hand-thumbs-up"></i> Curtir e encerrar</button>
+                        <button class="li-btn danger" onclick="dispenseLinkedInTask(${task.id})"><i class="bi bi-x-circle"></i> Dispensar</button>
                     </div>
                 </div>`;
         }
