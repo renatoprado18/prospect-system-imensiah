@@ -9464,15 +9464,15 @@ async def cron_proactive_check(request: Request):
         return {"status": "error", "job": "proactive-check", "error": f"{type(e).__name__}: {e}"}
 
 
-@app.post("/api/cron/agent-intents-tick")
+@app.api_route("/api/cron/agent-intents-tick", methods=["GET", "POST"])
 @track_cron_run
 async def cron_agent_intents_tick(request: Request):
     """
     Cron 30min (P6 Diligente Fase 2): tenta progredir intents abertos sozinho
     + escala blocked velhos via WhatsApp.
 
-    Rodado via GitHub Actions (Vercel Hobby nao aceita schedule sub-diario).
-    Workflow: .github/workflows/cron-agent-intents-tick.yml.
+    Rodado via Railway worker APScheduler (faz GET); aceita POST tambem por
+    compatibilidade. Endpoint nao le body.
 
     Audit obrigatorio (per AUTONOMY_POLICY.md): tick_one chama log_action
     pra cada intent processado.
