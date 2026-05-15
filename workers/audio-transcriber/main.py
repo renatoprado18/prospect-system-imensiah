@@ -97,6 +97,9 @@ _SCHEDULER_JOBS = [
     ("classify-messages", "/api/cron/classify-messages", CronTrigger(minute=15)),
     ("auto-collect-linkedin-metrics", "/api/cron/auto-collect-linkedin-metrics", CronTrigger(minute=0)),
     ("proactive-check", "/api/cron/proactive-check", CronTrigger(minute="*/30")),
+    ("run-whatsapp-sync", "/api/cron/run-whatsapp-sync", CronTrigger(minute=5)),
+    ("run-social-groups", "/api/cron/run-social-groups", CronTrigger(minute=20)),
+    ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
 ]
 
 
