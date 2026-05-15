@@ -16,6 +16,7 @@ import os
 import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 
@@ -32,6 +33,31 @@ MAX_PAGES_PER_POST = 5  # ate ~50 comments por post (10/pagina)
 # ============================================================================
 # Helpers
 # ============================================================================
+
+
+def _extract_comment_urn(permalink: str) -> Optional[str]:
+    """Extrai urn:li:comment:(...) do permalink LinkdAPI.
+
+    Permalink vem URL-encoded com query params commentUrn= e replyUrn= — pegamos
+    o replyUrn (se reply) ou commentUrn (top-level). Sem URN -> sem dedup.
+    """
+    if not permalink:
+        return None
+    try:
+        qs = parse_qs(urlparse(permalink).query)
+    except Exception:
+        return None
+    # replyUrn tem precedencia (mais especifico)
+    for key in ("replyUrn", "commentUrn"):
+        vals = qs.get(key) or []
+        if vals:
+            decoded = unquote(vals[0])
+            if decoded.startswith("urn:li:comment:"):
+                return decoded
+    # fallback: regex no permalink decoded (caso shape mude)
+    decoded_full = unquote(permalink)
+    m = re.search(r"urn:li:comment:\([^)]+\)", decoded_full)
+    return m.group(0) if m else None
 
 
 def _normalize_linkedin_url(url: str) -> str:
@@ -99,12 +125,7 @@ def _persist_signal(
 ) -> Optional[int]:
     """Insert signal idempotente. Retorna id ou None se ja existia."""
     author = comment.get("author") or {}
-    comment_urn = None
-    # comment.permalink contem urn:li:comment:(activity:X,Y)
-    permalink = comment.get("permalink") or ""
-    m = re.search(r"urn:li:comment:\([^)]+\)", permalink)
-    if m:
-        comment_urn = m.group(0)
+    comment_urn = _extract_comment_urn(comment.get("permalink") or "")
 
     # LinkdAPI retorna createdAt como Unix milliseconds (bigint) — converter
     created_raw = comment.get("createdAt")
