@@ -17,6 +17,15 @@ logger = logging.getLogger(__name__)
 
 # Padroes de mensagens automaticas / sistema
 _AUTOMATED_PATTERNS = [
+    # INTEL bot self-notifications (formato emoji + *nome*)
+    # Detectado 15/05/2026 — bot estava classificando proprias notificacoes como
+    # "requires_reply", 52 falsos positivos em 7d. Defesa em profundidade alem
+    # do tag 'automated' no contato APCE (id 25597).
+    re.compile(r'^\s*(📋|❓|📌|💰|🔔|🤖|⚡|💼|🎯|✅|⚠️|🚨)\s*\*[^*\n]{3,80}\*', re.MULTILINE),
+    re.compile(r'^\s*Responda aqui:\s*$', re.IGNORECASE | re.MULTILINE),
+    re.compile(r'\bPedido de reuni[aã]o:\s*', re.IGNORECASE),
+    re.compile(r'\bPossivel reuniao:\s*', re.IGNORECASE),
+    # Originais
     re.compile(r'\[\s*(sistema|system|auto|automatico|bot)\s*\]', re.IGNORECASE),
     re.compile(r'\bnotifica[cç][aã]o\s+autom[aá]tica\b', re.IGNORECASE),
     re.compile(r'\bmensagem\s+autom[aá]tica\b', re.IGNORECASE),
