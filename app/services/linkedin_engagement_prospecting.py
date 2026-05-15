@@ -106,6 +106,21 @@ def _persist_signal(
     if m:
         comment_urn = m.group(0)
 
+    # LinkdAPI retorna createdAt como Unix milliseconds (bigint) — converter
+    created_raw = comment.get("createdAt")
+    comment_at: Optional[datetime] = None
+    if isinstance(created_raw, (int, float)) and created_raw > 0:
+        try:
+            comment_at = datetime.utcfromtimestamp(created_raw / 1000)
+        except (OverflowError, OSError, ValueError):
+            comment_at = None
+    elif isinstance(created_raw, str) and created_raw:
+        # fallback: alguns endpoints podem retornar ISO string
+        try:
+            comment_at = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+        except ValueError:
+            comment_at = None
+
     cur = conn.cursor()
     cur.execute(
         """
@@ -130,7 +145,7 @@ def _persist_signal(
             author.get("name"),
             author.get("headline"),
             (comment.get("comment") or "")[:500],
-            comment.get("createdAt") or None,
+            comment_at,
             contact_id,
             contact_match_type,
             status,
