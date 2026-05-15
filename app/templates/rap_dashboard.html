@@ -5081,9 +5081,9 @@
                 const expectedTodayBadge = c.expected_today
                     ? '<span style="background:#fef3c7; color:#b45309; padding:1px 6px; border-radius:8px; font-size:0.65rem; font-weight:600; margin-left:4px;">esperado hoje</span>'
                     : '';
-                const sourceLabel = c.source === 'github' ? 'GitHub' : 'Vercel';
-                const sourceBg = c.source === 'github' ? '#ede9fe' : '#e0e7ff';
-                const sourceFg = c.source === 'github' ? '#6d28d9' : '#3730a3';
+                const sourceLabel = c.source === 'github' ? 'GitHub' : (c.source === 'railway' ? 'Railway' : 'Vercel');
+                const sourceBg = c.source === 'github' ? '#ede9fe' : (c.source === 'railway' ? '#cffafe' : '#e0e7ff');
+                const sourceFg = c.source === 'github' ? '#6d28d9' : (c.source === 'railway' ? '#155e75' : '#3730a3');
                 const sourceBadge = '<span style="background:' + sourceBg + '; color:' + sourceFg + '; padding:1px 6px; border-radius:8px; font-size:0.65rem; font-weight:600; margin-left:4px;">' + sourceLabel + '</span>';
                 const streakBadge = (c.error_streak && c.error_streak >= 2)
                     ? '<span style="background:#fee2e2; color:#b91c1c; padding:1px 6px; border-radius:8px; font-size:0.65rem; font-weight:700; margin-left:4px;" title="erros consecutivos">' + c.error_streak + 'x falhas</span>'

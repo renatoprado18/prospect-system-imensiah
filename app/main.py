@@ -3754,9 +3754,24 @@ def _load_github_crons() -> List[Dict]:
     return out
 
 
+def _load_railway_crons() -> List[Dict]:
+    """Crons hospedados no Railway worker (APScheduler in-process).
+    Lista estatica que DEVE bater com _SCHEDULER_JOBS em
+    workers/audio-transcriber/main.py — atualizar nos dois lugares ao
+    adicionar/remover jobs."""
+    return [
+        {"path": "/api/cron/classify-messages", "schedule": "15 * * * *", "source": "railway"},
+        {"path": "/api/cron/auto-collect-linkedin-metrics", "schedule": "0 * * * *", "source": "railway"},
+        {"path": "/api/cron/proactive-check", "schedule": "*/30 * * * *", "source": "railway"},
+        {"path": "/api/cron/run-whatsapp-sync", "schedule": "5 * * * *", "source": "railway"},
+        {"path": "/api/cron/run-social-groups", "schedule": "20 * * * *", "source": "railway"},
+        {"path": "/api/cron/agent-intents-tick", "schedule": "*/30 * * * *", "source": "railway"},
+    ]
+
+
 def _load_all_crons() -> List[Dict]:
-    """Combina crons do vercel.json + GitHub Actions. Cada entry tem `source`."""
-    return _load_vercel_crons() + _load_github_crons()
+    """Combina crons do vercel.json + GitHub Actions + Railway worker. Cada entry tem `source`."""
+    return _load_vercel_crons() + _load_github_crons() + _load_railway_crons()
 
 
 def _expected_today(schedule: str, now_utc: datetime, last_run_started: Optional[datetime]) -> bool:
