@@ -55,6 +55,93 @@ EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
 INTEL_BOT_INSTANCE = os.getenv("INTEL_BOT_INSTANCE", "intel-bot")
 INTEL_API_URL = os.getenv("INTEL_API_URL", "https://intel.almeida-prado.com")
 WORKER_SECRET = os.getenv("WORKER_SECRET", "intel-audio-2026")
+CRON_SECRET = (os.getenv("CRON_SECRET") or "").strip()
+
+# ============================================================================
+# Scheduler (substitui GH Actions crons high-freq)
+# ----------------------------------------------------------------------------
+# Motivacao: GH Actions schedule sofre drift/skip sob load do runner pool.
+# APScheduler in-process num worker sempre-on nao tem drift. Catchup hourly
+# do Vercel continua como safety net se o worker reiniciar.
+# Jobs sao fire-and-forget GETs pros endpoints /api/cron/* no Vercel,
+# autenticados via Bearer CRON_SECRET (mesma chave dos crons Vercel-scheduled).
+# ============================================================================
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+
+scheduler = AsyncIOScheduler(timezone="UTC")
+
+
+async def _call_vercel_cron(path: str) -> None:
+    """Dispara endpoint /api/cron/* autenticado. Log status; nao levanta
+    exceptions (deixa o scheduler continuar pros jobs proximos)."""
+    url = f"{INTEL_API_URL.rstrip('/')}{path}"
+    headers = {
+        "User-Agent": "intel-worker-scheduler/1.0",
+        "X-Cron-Source": "railway-worker",
+    }
+    if CRON_SECRET:
+        headers["Authorization"] = f"Bearer {CRON_SECRET}"
+    try:
+        timeout = httpx.Timeout(connect=5.0, read=180.0, write=10.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url, headers=headers)
+        logger.info(f"scheduler: {path} -> http {resp.status_code}")
+    except Exception as e:
+        logger.exception(f"scheduler: {path} failed: {e}")
+
+
+# Jobs (path, trigger). Schedules em UTC matching as expressoes originais dos
+# .github/workflows/cron-*.yml. Adicionar novos = appendar nesta lista.
+_SCHEDULER_JOBS = [
+    ("classify-messages", "/api/cron/classify-messages", CronTrigger(minute=15)),
+    ("auto-collect-linkedin-metrics", "/api/cron/auto-collect-linkedin-metrics", CronTrigger(minute=0)),
+    ("proactive-check", "/api/cron/proactive-check", CronTrigger(minute="*/30")),
+]
+
+
+@app.on_event("startup")
+async def _start_scheduler():
+    if not CRON_SECRET:
+        logger.warning("scheduler: CRON_SECRET ausente — jobs vao disparar sem auth e tomar 401")
+    for job_id, path, trigger in _SCHEDULER_JOBS:
+        scheduler.add_job(
+            _call_vercel_cron,
+            trigger=trigger,
+            args=[path],
+            id=job_id,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=600,
+            replace_existing=True,
+        )
+    scheduler.start()
+    logger.info(f"scheduler: started with {len(_SCHEDULER_JOBS)} jobs")
+
+
+@app.on_event("shutdown")
+async def _stop_scheduler():
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception:
+        logger.exception("scheduler: shutdown error")
+
+
+@app.get("/scheduler-status")
+async def scheduler_status():
+    """Debug: lista jobs registrados + proximo fire scheduled."""
+    jobs_info = []
+    for job in scheduler.get_jobs():
+        jobs_info.append({
+            "id": job.id,
+            "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+            "trigger": str(job.trigger),
+        })
+    return {
+        "scheduler_running": scheduler.running,
+        "cron_secret_set": bool(CRON_SECRET),
+        "jobs": jobs_info,
+    }
 
 
 @app.get("/health")
