@@ -24359,6 +24359,29 @@ async def cron_daily_morning_briefing(request: Request):
         except Exception as _e:
             logging.warning(f"morning-briefing: topics section falhou: {_e}")
 
+        # M2: consome notificacoes pending (silenciadas desde ultimo digest)
+        try:
+            from services.notification_router import consume_pending_for_digest
+            digest_label = f"morning_{now.strftime('%Y_%m_%d')}"
+            pending = consume_pending_for_digest('morning', digest_label)
+            if pending:
+                lines = []
+                expired_count = sum(1 for p in pending if p.get('expired_at'))
+                header_pending = f"📨 *{len(pending)} pendentes desde ultimo digest*"
+                if expired_count:
+                    header_pending += f" ({expired_count} com +24h de atraso)"
+                lines.append(header_pending)
+                for p in pending[:15]:
+                    payload = p.get('payload') or {}
+                    title = payload.get('title') or payload.get('body') or p.get('msg_type') or p.get('source')
+                    expired_badge = ' ⏰' if p.get('expired_at') else ''
+                    lines.append(f"• {str(title)[:120]}{expired_badge}")
+                if len(pending) > 15:
+                    lines.append(f"... +{len(pending) - 15} (ver /admin/notifications-silenced)")
+                sections.append("\n".join(lines))
+        except Exception as _e:
+            logging.warning(f"morning-briefing: pending section falhou: {_e}")
+
         if not sections:
             return {
                 "job": "daily-morning-briefing",
@@ -24512,6 +24535,23 @@ async def cron_daily_evening_debriefing(request: Request):
         # Posts hoje (lembrete sutil)
         if posts_today:
             sections.append(f"📊 {posts_today} post(s) publicado(s) hoje — métricas em ~48h")
+
+        # M2: consome notificacoes pending silenciadas desde o ultimo digest
+        try:
+            from services.notification_router import consume_pending_for_digest
+            digest_label = f"evening_{now.strftime('%Y_%m_%d')}"
+            pending = consume_pending_for_digest('evening', digest_label)
+            if pending:
+                lines = [f"📨 *{len(pending)} pendentes desde ultimo digest*"]
+                for p in pending[:15]:
+                    payload = p.get('payload') or {}
+                    title = payload.get('title') or payload.get('body') or p.get('msg_type') or p.get('source')
+                    lines.append(f"• {str(title)[:120]}")
+                if len(pending) > 15:
+                    lines.append(f"... +{len(pending) - 15} (ver /admin/notifications-silenced)")
+                sections.append("\n".join(lines))
+        except Exception as _e:
+            logging.warning(f"evening-debriefing: pending section falhou: {_e}")
 
         if not sections:
             return {
