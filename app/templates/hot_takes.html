@@ -129,6 +129,17 @@
         box-shadow: 0 4px 12px rgba(0,0,0,0.05);
     }
 
+    /* Destaque temporario quando navegado via ?id= */
+    .take-item.highlighted {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25), 0 8px 24px rgba(0,0,0,0.08);
+        animation: highlightPulse 1.6s ease-in-out 2;
+    }
+    @keyframes highlightPulse {
+        0%, 100% { box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25), 0 8px 24px rgba(0,0,0,0.08); }
+        50% { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0.4), 0 12px 32px rgba(0,0,0,0.12); }
+    }
+
     .take-news {
         font-size: 0.75rem;
         color: var(--gray-500);
@@ -1161,5 +1172,25 @@ document.querySelectorAll('.modal-backdrop').forEach(modal => {
         }
     });
 });
+
+// Deep-link: ?id=N scrolls + destaca o take correspondente (usado pelo
+// pipeline editorial pra navegar pra um hot_take orfao).
+(function() {
+    const params = new URLSearchParams(window.location.search);
+    const targetId = params.get('id');
+    if (!targetId) return;
+    const tryScroll = () => {
+        const el = document.querySelector(`.take-item[data-id="${targetId}"]`);
+        if (!el) return false;
+        el.scrollIntoView({behavior: 'smooth', block: 'center'});
+        el.classList.add('highlighted');
+        setTimeout(() => el.classList.remove('highlighted'), 3500);
+        return true;
+    };
+    // Tenta imediato; fallback espera DOM render completo
+    if (!tryScroll()) {
+        setTimeout(tryScroll, 200);
+    }
+})();
 </script>
 {% endblock %}

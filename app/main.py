@@ -21750,12 +21750,17 @@ async def api_hot_take_metrics(hot_take_id: int, request: Request):
 
 
 @app.get("/hot-takes", response_class=HTMLResponse)
-async def hot_takes_page(request: Request):
-    """Pagina de Hot Takes"""
+async def hot_takes_page(request: Request, id: Optional[int] = None):
+    """Pagina de Hot Takes. ?id=N escala 1 take especifico no result se nao
+    estiver no top 50 (frontend faz scroll+destaque)."""
     import traceback
     try:
-        from services.hot_takes import get_hot_takes, get_weekly_digest_stats
+        from services.hot_takes import get_hot_takes, get_hot_take_by_id, get_weekly_digest_stats
         hot_takes = get_hot_takes(limit=50)
+        if id is not None and not any((t.get("id") == id) for t in hot_takes):
+            extra = get_hot_take_by_id(id)
+            if extra:
+                hot_takes.insert(0, extra)
         stats = get_weekly_digest_stats()
 
         return templates.TemplateResponse("hot_takes.html", {
