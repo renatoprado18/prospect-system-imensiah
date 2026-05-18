@@ -491,7 +491,7 @@ async def process_incoming_message(data: Dict) -> Dict:
     from_me = key.get("fromMe", False)
     message_id = key.get("id")
 
-    # Group messages: check for RACI updates
+    # Group messages: check for RACI updates (smart matcher — texto livre)
     if "@g.us" in remote_jid:
         if not from_me:
             text_content = ""
@@ -501,8 +501,7 @@ async def process_incoming_message(data: Dict) -> Dict:
             elif msg_data.get("message", {}).get("extendedTextMessage", {}).get("text"):
                 text_content = msg_data["message"]["extendedTextMessage"]["text"]
 
-            if text_content and any(kw in text_content.lower() for kw in
-                ['concluído', 'concluido', 'feito', 'pronto', 'andamento', 'iniciado', 'cancelado']):
+            if text_content:
                 try:
                     from database import get_db
                     with get_db() as conn:
@@ -515,28 +514,30 @@ async def process_incoming_message(data: Dict) -> Dict:
                         group_project = cursor.fetchone()
 
                     if group_project:
-                        import httpx
                         cos_db = os.getenv("CONSELHOOS_DATABASE_URL", "")
                         if cos_db:
                             import psycopg2 as pg2
                             conn2 = pg2.connect(cos_db)
                             cur2 = conn2.cursor()
-                            cur2.execute("SELECT id FROM empresas WHERE LOWER(nome) LIKE LOWER(%s) LIMIT 1",
+                            cur2.execute("SELECT id, nome FROM empresas WHERE LOWER(nome) LIKE LOWER(%s) LIMIT 1",
                                         (f"%{group_project['nome']}%",))
                             emp = cur2.fetchone()
                             conn2.close()
                             if emp:
-                                from services.raci_weekly_report import parse_raci_update
-                                result = parse_raci_update(text_content, emp[0])
-                                if result:
-                                    logger.info(f"RACI updated from group message: {result}")
-                                    # Reply confirmation
+                                from services.raci_smart_updates import process_group_message
+                                result = await process_group_message(text_content, emp[0], emp[1])
+                                applied = result.get("applied", [])
+                                if applied:
+                                    logger.info(f"RACI smart_updates applied {len(applied)} via {result.get('source')}: {applied}")
                                     client = get_evolution_client()
-                                    await client.send_text(
-                                        remote_jid,
-                                        f"✅ Atualizado: *{result['acao'][:50]}* → {result['new_status']}",
-                                        instance_name="rap-whatsapp"
-                                    )
+                                    for a in applied:
+                                        await client.send_text(
+                                            remote_jid,
+                                            f"✅ Atualizado: *{a['acao'][:60]}* → {a['new_status']}",
+                                            instance_name="rap-whatsapp"
+                                        )
+                                elif result.get("pending_review"):
+                                    logger.info(f"RACI smart_updates {len(result['pending_review'])} pending review")
                 except Exception as e:
                     logger.warning(f"RACI group update error: {e}")
 
