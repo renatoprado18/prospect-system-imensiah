@@ -332,24 +332,7 @@ class ContentMatcher:
         if not all_articles:
             return None
 
-        # Valid slugs that actually exist on almeida-prado.com (from sitemap)
-        VALID_BLOG_SLUGS = {
-            "adaptacao-continua-segredo-resiliencia",
-            "adaptar-se-ao-inimaginavel-complexidade-exponencial",
-            "ambidestria-organizacional-conselho",
-            "cenarizacao-estrategica-antecipando-futuro",
-            "como-neogovernanca-responde-desafios-era-caos",
-            "confianca-pilar-estrategico-era-complexidade",
-            "conselhos-encruzilhada-terceira-onda-ia",
-            "curiosidade-motor-inovacao-conselho",
-            "diversidade-alavanca-inovacao",
-            "estamos-mesmo-no-comando-da-inovacao",
-            "por-que-falar-em-neogovernanca",
-            "quando-crescer-ja-nao-basta",
-            "resiliencia-cibernetica-desafio-conselhos",
-            "santo-grau-exemplo-neogovernanca",
-            "teoria-complexidade-governanca",
-        }
+        from services.blog_articles import is_blog_url, is_valid_blog_url
 
         # Score each article - ONLY include if has actual tag matches and valid URL
         scored = []
@@ -359,10 +342,8 @@ class ContentMatcher:
                 continue
 
             # For almeida-prado.com/blog, only allow URLs with valid slugs
-            if "almeida-prado.com/blog" in url:
-                slug = url.split("/blog/")[-1] if "/blog/" in url else ""
-                if slug not in VALID_BLOG_SLUGS:
-                    continue
+            if is_blog_url(url) and not is_valid_blog_url(url):
+                continue
 
             score, matched = self._calculate_article_score(
                 article, roda_tags, contact_tags, contact_setor
