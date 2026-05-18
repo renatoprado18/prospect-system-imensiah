@@ -638,6 +638,7 @@ def get_stats() -> Dict:
 # =============================================================================
 
 CATEGORIAS_PRINCIPAIS = [
+    # Praticas Renato (endogenas)
     "Governança Corporativa",
     "NeoGovernança",
     "Conselho de Administração",
@@ -649,7 +650,14 @@ CATEGORIAS_PRINCIPAIS = [
     "Estratégia Empresarial",
     "Gestão de Riscos",
     "Inovação",
-    "Complexidade e Adaptação"
+    "Complexidade e Adaptação",
+    # Macro/exogenas (adicionadas 18/05/2026 pra cobrir noticias que nao
+    # encaixavam nas 12 praticas — confirmado via auditoria de 4 hot-takes
+    # pendentes que estavam todos NULL ai_categoria)
+    "Macro e Política",
+    "Regulação Setorial",
+    "Crise e Recuperação",
+    "Setor Público e Estatais",
 ]
 
 TIPOS_CONTEUDO = ["educativo", "opiniao", "case", "tendencia", "reflexao", "pratico"]
