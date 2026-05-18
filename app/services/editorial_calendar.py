@@ -382,18 +382,33 @@ def mark_as_published(post_id: int, url_publicado: Optional[str] = None, metrica
 
 
 def import_articles_from_site(articles: List[Dict], project_id: Optional[int] = None) -> Dict:
-    """Import articles from the website as draft editorial posts"""
+    """Import articles from the website as draft editorial posts.
+
+    Pula artigos cujo slug nao esta na allowlist (blog_articles.VALID_BLOG_SLUGS).
+    Antes, fazia f-string com slug truncado de articles.json e gerava URLs 404 —
+    72 dos 141 drafts ruins vieram daqui. Ver fix/editorial-broken-urls.
+    """
+    from services.blog_articles import make_blog_url
+
     with get_db() as conn:
         cursor = conn.cursor()
 
         imported = 0
         skipped = 0
+        skipped_invalid_slug = 0
 
         for article in articles:
+            slug = article.get('slug')
+            article_url = make_blog_url(slug)
+            if not article_url:
+                # Slug truncado ou nao publicado — nao cria draft com URL 404.
+                skipped_invalid_slug += 1
+                continue
+
             # Check if already imported
             cursor.execute(
                 "SELECT id FROM editorial_posts WHERE article_slug = %s",
-                (article.get('slug'),)
+                (slug,)
             )
             if cursor.fetchone():
                 skipped += 1
@@ -407,16 +422,20 @@ def import_articles_from_site(articles: List[Dict], project_id: Optional[int] = 
                 ) VALUES (%s, %s, %s, %s, %s, 'linkedin', 'repost', 'draft', %s, %s)
             """, (
                 project_id,
-                article.get('slug'),
+                slug,
                 article.get('title'),
-                f"https://almeida-prado.com/blog/{article.get('slug')}",
+                article_url,
                 article.get('description'),
                 json.dumps(article.get('tags', [])),
                 json.dumps([article.get('category', 'Artigo')])
             ))
             imported += 1
 
-        return {'imported': imported, 'skipped': skipped}
+        return {
+            'imported': imported,
+            'skipped': skipped,
+            'skipped_invalid_slug': skipped_invalid_slug,
+        }
 
 
 def get_calendar_view(year: int, month: int) -> Dict:

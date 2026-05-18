@@ -600,7 +600,19 @@ async def publish_due_posts() -> Dict:
     from services.agent_actions import log_action
 
     async def _safe_publish(text: str, article_url: Optional[str]) -> Dict:
-        """Wrapper com timeout per-post — converte timeout/exception em dict."""
+        """Wrapper com timeout per-post — converte timeout/exception em dict.
+
+        Tambem dropa article_url se for um blog URL invalido (slug fora da
+        VALID_BLOG_SLUGS). Antes, o cron mandava URLs 404 pro LinkedIn —
+        publicava o post mas o link clicado dava erro. Ver fix/editorial-broken-urls.
+        """
+        from services.blog_articles import is_blog_url, is_valid_blog_url
+        if article_url and is_blog_url(article_url) and not is_valid_blog_url(article_url):
+            logger.warning(
+                f"auto_publisher: descartando article_url invalido pre-publish: {article_url!r}"
+            )
+            article_url = None
+
         try:
             return await asyncio.wait_for(
                 publish_post(text, article_url),

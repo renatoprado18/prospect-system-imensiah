@@ -22132,36 +22132,25 @@ async def page_clipping(request: Request):
 
 @app.post("/api/news/to-post")
 async def api_news_to_post(request: Request):
-    """Cria post editorial a partir de noticia do clipping, gerando texto e cruzando com artigos"""
+    """Cria post editorial a partir de noticia do clipping.
+
+    NAO faz mais lookup fuzzy contra drafts pra "achar artigo relacionado".
+    O lookup antigo (ILIKE em qualquer palavra >4 chars) cross-pollinava URLs
+    entre posts de temas distintos — post sobre "Informalidade no Brasil"
+    pegava a URL do post "Brasil na Era Trump" so porque ambos tinham "Brasil"
+    no titulo, e a URL ainda era invalida (slug truncado em articles.json).
+    Resultado: 141 drafts com link 404 e 4 posts com URL quebrada injetada
+    no proprio corpo via prompt do LLM. Ver fix/editorial-broken-urls.
+    """
     import httpx as _hx
 
     data = await request.json()
     titulo = data.get('titulo', '')
     sugestao = data.get('sugestao', '')
-    news_id = data.get('news_id')
 
-    # Buscar artigo relacionado dos drafts
-    article_url = None
-    article_match = None
-    with get_db() as conn:
-        cursor = conn.cursor()
-        # Buscar draft que melhor combina por keywords no titulo
-        words = [w.lower() for w in titulo.split() if len(w) > 4]
-        if words:
-            like_clause = " OR ".join(["article_title ILIKE %s" for _ in words[:5]])
-            params = [f"%{w}%" for w in words[:5]]
-            cursor.execute(f"""
-                SELECT id, article_title, article_url FROM editorial_posts
-                WHERE status = 'draft' AND article_url IS NOT NULL AND article_url != ''
-                  AND ({like_clause})
-                LIMIT 1
-            """, params)
-            match = cursor.fetchone()
-            if match:
-                article_match = dict(match)
-                article_url = match['article_url']
-
-    # Gerar texto para LinkedIn com IA
+    # Gerar texto para LinkedIn com IA — SEM injetar URL no prompt.
+    # Article URL fica fora do conteudo gerado; quem quiser linkar pro blog
+    # deve faze-lo manualmente via edicao, garantindo o slug correto.
     api_key = os.getenv("ANTHROPIC_API_KEY")
     linkedin_text = ""
     if api_key:
@@ -22170,19 +22159,19 @@ async def api_news_to_post(request: Request):
 
 NOTICIA: {titulo}
 SUGESTAO DE ANGULO: {sugestao or 'livre'}
-{f'ARTIGO RELACIONADO DO RENATO: {article_match["article_title"]} ({article_url})' if article_match else ''}
 
 FORMATO OBRIGATORIO (minimo 150 palavras, maximo 250):
 
 1. GANCHO (1 frase impactante que prende atencao)
 2. CONTEXTO (2-3 frases sobre a noticia)
 3. OPINIAO DO RENATO (3-4 frases com visao forte, conectando com governanca/IA/empreendedorismo)
-{f'4. LINK DO ARTIGO: "Escrevi sobre isso em: {article_url}"' if article_url else '4. REFLEXAO FINAL (1-2 frases)'}
+4. REFLEXAO FINAL (1-2 frases)
 5. CALL TO ACTION (pergunta para gerar engajamento)
 6. HASHTAGS (3-4 hashtags relevantes)
 
 Tom: executivo mas acessivel, com opiniao forte. Em portugues.
-NAO use markdown (sem ** ou ## ou *). Texto puro para colar no LinkedIn."""
+NAO use markdown (sem ** ou ## ou *). Texto puro para colar no LinkedIn.
+NAO invente URLs ou links — se quiser referenciar um artigo, deixe em branco."""
 
             async with _hx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
@@ -22193,14 +22182,14 @@ NAO use markdown (sem ** ou ## ou *). Texto puro para colar no LinkedIn."""
                 )
                 if resp.status_code == 200:
                     linkedin_text = resp.json()["content"][0]["text"]
-        except Exception as e:
+        except Exception:
             linkedin_text = sugestao or titulo
 
-    # Criar post editorial
+    # Criar post editorial sem article_url — usuario adiciona manualmente se quiser.
     from services.editorial_calendar import create_editorial_post
     post = create_editorial_post({
         'article_title': titulo,
-        'article_url': article_url or '',
+        'article_url': '',
         'tipo': 'hot_take',
         'canal': 'linkedin',
         'status': 'draft',
