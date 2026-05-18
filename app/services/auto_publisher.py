@@ -125,40 +125,69 @@ async def select_weekly_posts(
     hot_take_candidates: List[Dict] = []
     editorial_candidates: List[Dict] = []
 
+    # Blocklist dinamica (hipoteses ativas + fallback Complexidade legado).
+    # Ver services/editorial_rules.py. Aplicada nos 3 sites de selecao:
+    # hot_takes aqui, editorial aqui, e select_replacement_post.
+    from services.editorial_rules import get_active_blocklist
+    from services.hot_takes import ensure_hot_take_categoria
+    blocklist = get_active_blocklist()
+
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Hot-takes com texto pronto
+        # Hot-takes com texto pronto. ai_categoria pode ser NULL pra registros
+        # legacy — reclassificamos on-the-fly logo abaixo antes do filtro.
         cursor.execute("""
             SELECT id, 'hot_take' as source, news_title as titulo,
-                   linkedin_post as conteudo, hashtags,
+                   linkedin_post as conteudo, hashtags, ai_categoria,
                    created_at as criado_em
             FROM hot_takes
             WHERE status = 'draft' AND linkedin_post IS NOT NULL
-            ORDER BY created_at DESC LIMIT 20
+            ORDER BY created_at DESC LIMIT 30
         """)
-        for r in cursor.fetchall():
-            row = dict(r)
-            row['conteudo_preview'] = (row['conteudo'] or '')[:300]
-            hot_take_candidates.append(row)
+        raw_hot_takes = [dict(r) for r in cursor.fetchall()]
 
-        # Editorial posts (reposts + hot_takes) com conteudo adaptado
-        # PDCA Mes 1 (H3): bloqueia 'Complexidade e Adaptação' — eng% 0.44% no mes 1.
-        cursor.execute("""
-            SELECT id, 'editorial' as source, COALESCE(titulo_adaptado, article_title) as titulo,
-                   conteudo_adaptado as conteudo, hashtags, tipo,
-                   ai_score_relevancia as score, criado_em
-            FROM editorial_posts
-            WHERE status = 'draft' AND conteudo_adaptado IS NOT NULL
-                AND LENGTH(conteudo_adaptado) > 50
-                AND COALESCE(ai_categoria, '') NOT IN ('Complexidade e Adaptação', 'Complexidade e Adaptacao')
-            ORDER BY ai_score_relevancia DESC NULLS LAST, criado_em DESC
-            LIMIT 20
-        """)
+        # Editorial posts (reposts + hot_takes) com conteudo adaptado.
+        # Filtro de bloqueio agora vem da blocklist dinamica.
+        if blocklist:
+            cursor.execute("""
+                SELECT id, 'editorial' as source, COALESCE(titulo_adaptado, article_title) as titulo,
+                       conteudo_adaptado as conteudo, hashtags, tipo,
+                       ai_score_relevancia as score, ai_categoria, criado_em
+                FROM editorial_posts
+                WHERE status = 'draft' AND conteudo_adaptado IS NOT NULL
+                    AND LENGTH(conteudo_adaptado) > 50
+                    AND COALESCE(ai_categoria, '') NOT IN %s
+                ORDER BY ai_score_relevancia DESC NULLS LAST, criado_em DESC
+                LIMIT 20
+            """, (tuple(blocklist),))
+        else:
+            cursor.execute("""
+                SELECT id, 'editorial' as source, COALESCE(titulo_adaptado, article_title) as titulo,
+                       conteudo_adaptado as conteudo, hashtags, tipo,
+                       ai_score_relevancia as score, ai_categoria, criado_em
+                FROM editorial_posts
+                WHERE status = 'draft' AND conteudo_adaptado IS NOT NULL
+                    AND LENGTH(conteudo_adaptado) > 50
+                ORDER BY ai_score_relevancia DESC NULLS LAST, criado_em DESC
+                LIMIT 20
+            """)
         for r in cursor.fetchall():
             row = dict(r)
             row['conteudo_preview'] = (row['conteudo'] or '')[:300]
             editorial_candidates.append(row)
+
+    # Aplica blocklist em hot_takes — reclassifica on-the-fly se ai_categoria NULL.
+    # Limit 20 pra nao gastar tokens demais (worst case 30 chamadas Haiku = ~$0.01).
+    for row in raw_hot_takes[:20]:
+        cat = row.get('ai_categoria')
+        if not cat:
+            cat = await ensure_hot_take_categoria(row['id'])
+            row['ai_categoria'] = cat
+        if cat and blocklist and cat in blocklist:
+            continue  # bloqueado
+        row['conteudo_preview'] = (row['conteudo'] or '')[:300]
+        hot_take_candidates.append(row)
 
     total_candidates = len(hot_take_candidates) + len(editorial_candidates)
     if total_candidates == 0:
@@ -296,20 +325,31 @@ def schedule_selected_posts(selected: List[Dict], start_date: date = None) -> Di
             if post['source'] == 'hot_take':
                 # Create/link editorial_post for unified pipeline
                 ht_id = post['id']
-                cursor.execute("SELECT editorial_post_id FROM hot_takes WHERE id = %s", (ht_id,))
+                # Pega ai_categoria + editorial_post_id num go pra propagar pro INSERT.
+                # Antes do fix, INSERT nao passava ai_categoria → editorial_post ficava
+                # NULL → blocklist nao filtrava (COALESCE('') passa).
+                cursor.execute(
+                    "SELECT editorial_post_id, ai_categoria FROM hot_takes WHERE id = %s",
+                    (ht_id,),
+                )
                 ht_row = cursor.fetchone()
                 ep_id = ht_row['editorial_post_id'] if ht_row and ht_row.get('editorial_post_id') else None
+                ht_categoria = ht_row.get('ai_categoria') if ht_row else None
+                # Caller (post dict de select_weekly_posts) pode ja ter classificacao
+                # mais fresca em memoria — prefere essa se DB ainda nao gravou.
+                if not ht_categoria:
+                    ht_categoria = post.get('ai_categoria')
 
                 if not ep_id:
                     # Create editorial_post from hot_take — slot vai pra data_publicacao_planejada
                     cursor.execute("""
                         INSERT INTO editorial_posts (article_title, article_url, conteudo_adaptado, hashtags,
-                            tipo, canal, status, data_publicacao_planejada, hot_take_id)
-                        VALUES (%s, %s, %s, %s, 'hot_take', 'linkedin', 'pending_approval', %s, %s)
+                            tipo, canal, status, data_publicacao_planejada, hot_take_id, ai_categoria)
+                        VALUES (%s, %s, %s, %s, 'hot_take', 'linkedin', 'pending_approval', %s, %s, %s)
                         RETURNING id
                     """, (post.get('titulo', ''), post.get('news_link', ''),
                           post.get('conteudo', ''), json.dumps(post.get('hashtags', [])),
-                          slot, ht_id))
+                          slot, ht_id, ht_categoria))
                     ep_id = cursor.fetchone()['id']
                     cursor.execute("UPDATE hot_takes SET editorial_post_id = %s, status = 'pending_approval', scheduled_for = %s WHERE id = %s",
                                   (ep_id, slot, ht_id))
@@ -354,6 +394,13 @@ async def select_replacement_post(slot_datetime: datetime, exclude_ids: List[int
     api_key = os.getenv("ANTHROPIC_API_KEY")
     exclude_ids = exclude_ids or []
 
+    # Blocklist dinamica — mesma logica do select_weekly_posts.
+    # Antes do fix, replacement furava o filtro de Complexidade (3o buraco
+    # diagnosticado): dismiss + replace pegava da query sem WHERE filter.
+    from services.editorial_rules import get_active_blocklist
+    from services.hot_takes import ensure_hot_take_categoria
+    blocklist = get_active_blocklist()
+
     candidates: List[Dict] = []
     with get_db() as conn:
         cursor = conn.cursor()
@@ -361,32 +408,34 @@ async def select_replacement_post(slot_datetime: datetime, exclude_ids: List[int
         # Hot-takes drafts (pool bruto)
         cursor.execute("""
             SELECT id, 'hot_take' as source, news_title as titulo,
-                   linkedin_post as conteudo, news_link, hashtags,
+                   linkedin_post as conteudo, news_link, hashtags, ai_categoria,
                    created_at as criado_em
             FROM hot_takes
             WHERE status = 'draft' AND linkedin_post IS NOT NULL
               AND editorial_post_id IS NULL
-            ORDER BY created_at DESC LIMIT 15
+            ORDER BY created_at DESC LIMIT 20
         """)
-        for r in cursor.fetchall():
-            row = dict(r)
-            row['conteudo_preview'] = (row['conteudo'] or '')[:300]
-            candidates.append(row)
+        raw_hot_takes = [dict(r) for r in cursor.fetchall()]
 
-        # Editorial drafts (curados)
+        # Editorial drafts (curados) — agora com filtro de blocklist
         excl_clause = ""
         params: List = []
         if exclude_ids:
             excl_clause = "AND id NOT IN %s"
             params.append(tuple(exclude_ids))
+        block_clause = ""
+        if blocklist:
+            block_clause = "AND COALESCE(ai_categoria, '') NOT IN %s"
+            params.append(tuple(blocklist))
         cursor.execute(f"""
             SELECT id, 'editorial' as source, COALESCE(titulo_adaptado, article_title) as titulo,
                    conteudo_adaptado as conteudo, article_url as news_link, hashtags, tipo,
-                   ai_score_relevancia as score, criado_em
+                   ai_score_relevancia as score, ai_categoria, criado_em
             FROM editorial_posts
             WHERE status = 'draft' AND conteudo_adaptado IS NOT NULL
               AND LENGTH(conteudo_adaptado) > 50
               {excl_clause}
+              {block_clause}
             ORDER BY ai_score_relevancia DESC NULLS LAST, criado_em DESC
             LIMIT 15
         """, params)
@@ -394,6 +443,17 @@ async def select_replacement_post(slot_datetime: datetime, exclude_ids: List[int
             row = dict(r)
             row['conteudo_preview'] = (row['conteudo'] or '')[:300]
             candidates.append(row)
+
+    # Reclassifica + filtra hot_takes fora da get_db (Claude e async).
+    for row in raw_hot_takes[:15]:
+        cat = row.get('ai_categoria')
+        if not cat:
+            cat = await ensure_hot_take_categoria(row['id'])
+            row['ai_categoria'] = cat
+        if cat and blocklist and cat in blocklist:
+            continue
+        row['conteudo_preview'] = (row['conteudo'] or '')[:300]
+        candidates.append(row)
 
     if not candidates:
         return None
@@ -444,14 +504,15 @@ Responda APENAS JSON: {{"index": <numero>, "reason": "motivo curto"}}"""
         cursor = conn.cursor()
         if chosen['source'] == 'hot_take':
             ht_id = chosen['id']
+            # Propaga ai_categoria pra editorial_post (mesma logica do schedule_selected_posts)
             cursor.execute("""
                 INSERT INTO editorial_posts (article_title, article_url, conteudo_adaptado, hashtags,
-                    tipo, canal, status, data_publicacao_planejada, hot_take_id)
-                VALUES (%s, %s, %s, %s, 'hot_take', 'linkedin', 'pending_approval', %s, %s)
+                    tipo, canal, status, data_publicacao_planejada, hot_take_id, ai_categoria)
+                VALUES (%s, %s, %s, %s, 'hot_take', 'linkedin', 'pending_approval', %s, %s, %s)
                 RETURNING id
             """, (chosen.get('titulo', ''), chosen.get('news_link', ''),
                   chosen.get('conteudo', ''), json.dumps(chosen.get('hashtags', [])),
-                  slot_datetime, ht_id))
+                  slot_datetime, ht_id, chosen.get('ai_categoria')))
             ep_id = cursor.fetchone()['id']
             cursor.execute("UPDATE hot_takes SET editorial_post_id = %s, status = 'pending_approval', scheduled_for = %s WHERE id = %s",
                           (ep_id, slot_datetime, ht_id))

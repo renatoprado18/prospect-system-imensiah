@@ -504,9 +504,25 @@ def init_db():
                 encerrada_em TIMESTAMPTZ
             )
         ''')
+        # Regras enforceaveis — lista de dicts {action, target_field, values}
+        # consumida por services/editorial_rules.get_active_blocklist().
+        # Quando NULL/vazio, hipotese fica como informational only.
+        cursor.execute('''
+            ALTER TABLE editorial_hypotheses
+            ADD COLUMN IF NOT EXISTS regras JSONB
+        ''')
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_editorial_hyp_status
             ON editorial_hypotheses(status, periodo_fim)
+        ''')
+
+        # Hot takes — coluna ai_categoria pra plugar no filtro de hipoteses.
+        # Antes desta migration, hot_takes nao recebiam categoria estampada e
+        # furavam o filtro de Complexidade quando promovidos pra editorial_posts
+        # (ai_categoria NULL → COALESCE('') passa). Ver editorial_rules.py.
+        cursor.execute('''
+            ALTER TABLE hot_takes
+            ADD COLUMN IF NOT EXISTS ai_categoria TEXT
         ''')
 
         # Indices para Circulos

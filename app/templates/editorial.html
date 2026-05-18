@@ -911,6 +911,27 @@
                     <input type="date" class="form-control form-control-sm" id="hyp-fim" required>
                 </div>
             </div>
+            <div class="mb-2 mt-2" style="padding:10px; background:#fef9c3; border:1px solid #fde047; border-radius:6px;">
+                <label class="form-label small fw-semibold mb-1">Bloquear categoria (opcional)</label>
+                <select class="form-control form-control-sm" id="hyp-block-cat">
+                    <option value="">— Nenhuma (informational only) —</option>
+                    <option value="Governança Corporativa">Governança Corporativa</option>
+                    <option value="NeoGovernança">NeoGovernança</option>
+                    <option value="Conselho de Administração">Conselho de Administração</option>
+                    <option value="M&A e Fusões">M&A e Fusões</option>
+                    <option value="Empresa Familiar">Empresa Familiar</option>
+                    <option value="Liderança Executiva">Liderança Executiva</option>
+                    <option value="ESG e Sustentabilidade">ESG e Sustentabilidade</option>
+                    <option value="Transformação Digital">Transformação Digital</option>
+                    <option value="Estratégia Empresarial">Estratégia Empresarial</option>
+                    <option value="Gestão de Riscos">Gestão de Riscos</option>
+                    <option value="Inovação">Inovação</option>
+                    <option value="Complexidade e Adaptação">Complexidade e Adaptação</option>
+                </select>
+                <div class="text-muted" style="font-size:0.7rem; margin-top:4px;">
+                    Quando definido, auto_publisher exclui posts dessa categoria.
+                </div>
+            </div>
             <div class="d-flex justify-content-end gap-2 mt-2">
                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="closeNewHypothesisModal()">Cancelar</button>
                 <button type="submit" class="btn btn-sm btn-warning"><i class="bi bi-check2 me-1"></i>Criar Hipotese</button>
@@ -3322,11 +3343,21 @@ async function loadHypotheses() {
             const metric = (h.baseline != null && h.target != null)
                 ? `<span class="text-muted" style="font-size:0.75rem;"> · ${h.metrica}: ${h.baseline} → ${h.target}</span>`
                 : '';
+            // Badge "ENFORCED" quando regras estruturadas existem
+            let enforcedBadge = '';
+            if (h.regras && Array.isArray(h.regras) && h.regras.length > 0) {
+                const blocked = h.regras
+                    .filter(r => r.action === 'block' && r.target_field === 'ai_categoria')
+                    .flatMap(r => r.values || []);
+                if (blocked.length > 0) {
+                    enforcedBadge = ` <span class="badge bg-warning text-dark" style="font-size:0.65rem;" title="Bloqueia: ${blocked.join(', ')}"><i class="bi bi-shield-fill-check"></i> ENFORCED</span>`;
+                }
+            }
             return `
             <div style="padding:10px 12px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:${venc ? '#fef2f2' : '#fffbeb'};">
                 <div style="display:flex; justify-content:space-between; align-items:start; gap:8px;">
                     <div style="flex:1;">
-                        <div><strong>#${h.id}</strong> ${h.descricao} ${tag}${metric}</div>
+                        <div><strong>#${h.id}</strong> ${h.descricao} ${tag}${enforcedBadge}${metric}</div>
                         ${h.hipotese ? `<div class="text-muted small mt-1"><em>${h.hipotese}</em></div>` : ''}
                         <div class="text-muted" style="font-size:0.7rem; margin-top:2px;">${h.periodo_inicio} → ${h.periodo_fim}</div>
                     </div>
@@ -3351,6 +3382,7 @@ function openNewHypothesisModal() {
     document.getElementById('hyp-hipotese').value = '';
     document.getElementById('hyp-baseline').value = '';
     document.getElementById('hyp-target').value = '';
+    document.getElementById('hyp-block-cat').value = '';
     const modal = document.getElementById('hypothesisModal');
     modal.style.display = 'flex';
 }
@@ -3361,6 +3393,10 @@ function closeNewHypothesisModal() {
 
 document.getElementById('hypothesisForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const blockCat = document.getElementById('hyp-block-cat').value;
+    const regras = blockCat
+        ? [{action: 'block', target_field: 'ai_categoria', values: [blockCat]}]
+        : null;
     const body = {
         descricao: document.getElementById('hyp-descricao').value.trim(),
         hipotese: document.getElementById('hyp-hipotese').value.trim() || null,
@@ -3369,6 +3405,7 @@ document.getElementById('hypothesisForm').addEventListener('submit', async (e) =
         target: parseFloat(document.getElementById('hyp-target').value) || null,
         periodo_inicio: document.getElementById('hyp-inicio').value,
         periodo_fim: document.getElementById('hyp-fim').value,
+        regras: regras,
     };
     try {
         const resp = await fetch('/api/editorial/hypotheses', {

@@ -84,20 +84,158 @@ def ensure_table_exists():
                 published_at TIMESTAMP,
                 editorial_post_id INTEGER,
                 linkedin_url TEXT,
-                metrics JSONB DEFAULT '{}'
+                metrics JSONB DEFAULT '{}',
+                ai_categoria TEXT
             )
         ''')
         # Add columns if they don't exist (for existing tables)
         for column, col_type in [
             ('editorial_post_id', 'INTEGER'),
             ('linkedin_url', 'TEXT'),
-            ('metrics', "JSONB DEFAULT '{}'")
+            ('metrics', "JSONB DEFAULT '{}'"),
+            ('ai_categoria', 'TEXT'),
         ]:
             try:
                 cursor.execute(f'ALTER TABLE hot_takes ADD COLUMN IF NOT EXISTS {column} {col_type}')
             except Exception:
                 pass
         conn.commit()
+
+
+# Categorias oficiais — reutiliza taxonomia de editorial_calendar.CATEGORIAS_PRINCIPAIS.
+# Mantida em sync manualmente (12 categorias). Se mudar la, atualize aqui.
+HOT_TAKE_CATEGORIAS = [
+    "Governança Corporativa",
+    "NeoGovernança",
+    "Conselho de Administração",
+    "M&A e Fusões",
+    "Empresa Familiar",
+    "Liderança Executiva",
+    "ESG e Sustentabilidade",
+    "Transformação Digital",
+    "Estratégia Empresarial",
+    "Gestão de Riscos",
+    "Inovação",
+    "Complexidade e Adaptação",
+]
+
+
+async def classify_hot_take_category(news_title: str, body_or_post: str = "") -> Optional[str]:
+    """Classifica hot_take numa das 12 categorias oficiais via Claude Haiku.
+
+    Por que Haiku e nao Sonnet: classificacao 1-de-12 e tarefa simples,
+    Haiku custa ~1/8 e responde em <2s. Sonnet so vale pra analise multi-campo
+    (analyze_article_with_ai usa Sonnet pra 10 campos).
+
+    Returns:
+        String categoria (uma de HOT_TAKE_CATEGORIAS) ou None se classificacao
+        falhou (API down, JSON invalido, etc). Caller decide se trata None como
+        "passa pelo filtro" ou "bloqueia conservadoramente".
+    """
+    if not ANTHROPIC_API_KEY:
+        logger.warning("classify_hot_take_category: ANTHROPIC_API_KEY ausente")
+        return None
+    if not news_title:
+        return None
+
+    prompt = f"""Voce classifica conteudo de governanca corporativa e negocios em UMA das 12 categorias abaixo.
+
+TITULO: {news_title}
+
+CONTEXTO ADICIONAL: {(body_or_post or '')[:500]}
+
+CATEGORIAS POSSIVEIS (escolha exatamente uma):
+{chr(10).join('- ' + c for c in HOT_TAKE_CATEGORIAS)}
+
+Responda APENAS com JSON: {{"categoria": "<nome exato de uma das categorias>"}}
+"""
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "content-type": "application/json",
+                    "anthropic-version": "2023-06-01",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 100,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+        if resp.status_code != 200:
+            logger.warning(f"classify_hot_take_category: API {resp.status_code}")
+            return None
+        text = resp.json()["content"][0]["text"]
+        m = re.search(r'\{[\s\S]*\}', text)
+        if not m:
+            return None
+        parsed = json.loads(m.group())
+        cat = parsed.get("categoria", "").strip()
+        # Valida que ta na lista; senao retorna None pra nao corromper dados.
+        if cat in HOT_TAKE_CATEGORIAS:
+            return cat
+        # Tenta match case-insensitive como fallback (Claude as vezes capitaliza errado)
+        for c in HOT_TAKE_CATEGORIAS:
+            if c.lower() == cat.lower():
+                return c
+        logger.warning(f"classify_hot_take_category: categoria invalida '{cat}'")
+        return None
+    except Exception as e:
+        logger.warning(f"classify_hot_take_category falhou: {type(e).__name__}: {e}")
+        return None
+
+
+def set_hot_take_categoria(hot_take_id: int, categoria: str) -> None:
+    """Grava ai_categoria num hot_take existente. Idempotente."""
+    if not categoria:
+        return
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE hot_takes SET ai_categoria = %s WHERE id = %s",
+                (categoria, hot_take_id),
+            )
+            conn.commit()
+    except Exception:
+        logger.exception(f"set_hot_take_categoria falhou pra {hot_take_id}")
+
+
+async def ensure_hot_take_categoria(hot_take_id: int) -> Optional[str]:
+    """Garante que hot_take tem ai_categoria — classifica on-the-fly se NULL.
+
+    Usado pelo auto_publisher antes de aplicar filtro de blocklist. Permite
+    backfill lazy: hot_takes antigos (criados antes desta feature) ganham
+    categoria so quando entram no funil de selecao.
+
+    Returns:
+        Categoria gravada (existente ou recem-classificada). None se DB read
+        falhou ou Claude falhou e a categoria continua NULL.
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT ai_categoria, news_title, body, linkedin_post FROM hot_takes WHERE id = %s",
+                (hot_take_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+        if row.get("ai_categoria"):
+            return row["ai_categoria"]
+        cat = await classify_hot_take_category(
+            row.get("news_title") or "",
+            row.get("body") or row.get("linkedin_post") or "",
+        )
+        if cat:
+            set_hot_take_categoria(hot_take_id, cat)
+        return cat
+    except Exception:
+        logger.exception(f"ensure_hot_take_categoria falhou pra {hot_take_id}")
+        return None
 
 
 async def fetch_rss_feed(url: str) -> list[dict]:
@@ -418,14 +556,19 @@ Responda em JSON:
 
 
 def save_hot_take(hot_take: dict, status: str = "draft") -> int:
-    """Salva hot take no banco de dados"""
+    """Salva hot take no banco de dados.
+
+    Aceita `ai_categoria` opcional no dict — se presente, grava direto;
+    senao caller (ou ensure_hot_take_categoria) classifica depois.
+    """
     ensure_table_exists()
     with get_db() as conn:
         cursor = conn.cursor()
 
         cursor.execute('''
-            INSERT INTO hot_takes (news_title, news_link, hook, body, cta, linkedin_post, article_slug, hashtags, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO hot_takes (news_title, news_link, hook, body, cta, linkedin_post,
+                                   article_slug, hashtags, status, ai_categoria)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         ''', (
             hot_take.get("news_title", ""),
@@ -436,7 +579,8 @@ def save_hot_take(hot_take: dict, status: str = "draft") -> int:
             hot_take.get("linkedin_post", ""),
             hot_take.get("article_slug"),
             json.dumps(hot_take.get("hashtags", [])),
-            status
+            status,
+            hot_take.get("ai_categoria"),
         ))
 
         hot_take_id = cursor.fetchone()['id']
@@ -553,10 +697,22 @@ async def generate_weekly_digest(limit: int = 5) -> dict:
                 logger.info(f"Gerando hot take para: {news_title[:50]}")
                 hot_take = await generate_hot_take(news, articles)
                 if "error" not in hot_take:
+                    # Classifica antes de salvar pra ja gravar ai_categoria.
+                    # Se falhar, save_hot_take grava NULL e o auto_publisher
+                    # vai re-tentar via ensure_hot_take_categoria. Best-effort.
+                    try:
+                        cat = await classify_hot_take_category(
+                            hot_take.get("news_title", ""),
+                            hot_take.get("linkedin_post") or hot_take.get("body", ""),
+                        )
+                        if cat:
+                            hot_take["ai_categoria"] = cat
+                    except Exception:
+                        logger.exception("classify_hot_take_category falhou durante digest")
                     hot_take_id = save_hot_take(hot_take)
                     hot_take["id"] = hot_take_id
                     hot_takes.append(hot_take)
-                    logger.info(f"Hot take gerado com sucesso: {hot_take_id}")
+                    logger.info(f"Hot take gerado com sucesso: {hot_take_id} (cat={hot_take.get('ai_categoria')})")
                 else:
                     error_msg = hot_take.get('error', 'Unknown error')
                     logger.warning(f"Erro ao gerar hot take: {error_msg} (type: {type(error_msg).__name__})")
@@ -637,6 +793,15 @@ async def generate_hot_take_from_url(url: str) -> dict:
     hot_take = await generate_hot_take(news_item, articles)
 
     if "error" not in hot_take:
+        try:
+            cat = await classify_hot_take_category(
+                hot_take.get("news_title", ""),
+                hot_take.get("linkedin_post") or hot_take.get("body", ""),
+            )
+            if cat:
+                hot_take["ai_categoria"] = cat
+        except Exception:
+            logger.exception("classify_hot_take_category falhou em generate_hot_take_from_url")
         hot_take_id = save_hot_take(hot_take)
         hot_take["id"] = hot_take_id
 

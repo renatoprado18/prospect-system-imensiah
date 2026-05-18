@@ -20719,20 +20719,27 @@ class HypothesisCreate2(BaseModel):
     target: Optional[float] = None
     periodo_inicio: str
     periodo_fim: str
+    # Regras enforceaveis (opcional). Lista de dicts:
+    #   [{"action": "block", "target_field": "ai_categoria", "values": ["X"]}]
+    # Quando None/vazio, hipotese fica informational only (nao bloqueia nada).
+    # Lida por services/editorial_rules.get_active_blocklist().
+    regras: Optional[List[Dict[str, Any]]] = None
 
 
 @app.post("/api/editorial/hypotheses")
 async def create_editorial_hypothesis(body: HypothesisCreate2):
     """Cria hipotese editorial ativa (Plan do PDCA)."""
+    import json as _json
+    regras_json = _json.dumps(body.regras) if body.regras else None
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO editorial_hypotheses
-            (descricao, hipotese, metrica, baseline, target, periodo_inicio, periodo_fim, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, 'ativa')
+            (descricao, hipotese, metrica, baseline, target, periodo_inicio, periodo_fim, status, regras)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'ativa', %s)
             RETURNING id
         """, (body.descricao, body.hipotese, body.metrica, body.baseline,
-              body.target, body.periodo_inicio, body.periodo_fim))
+              body.target, body.periodo_inicio, body.periodo_fim, regras_json))
         row = cursor.fetchone()
         conn.commit()
     return {"id": row["id"], "status": "ativa"}
