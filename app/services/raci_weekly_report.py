@@ -43,11 +43,16 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
 
         # Get RACI items — busca todos e ordena em Python pra usar buckets
         # de prioridade (urgente/atrasada-com-movimento/no-prazo/concluida).
+        # Filtro de concluidos: so mostra os ainda nao relatados em report
+        # anterior (concluido_relatado_em IS NULL). Apos enviar, chamar
+        # mark_concluidos_as_reported(empresa_id) pra marcar.
         cur.execute("""
             SELECT id, area, acao, prazo, status, updated_at,
-                   responsavel_r, responsavel_a, responsavel_c, responsavel_i
+                   responsavel_r, responsavel_a, responsavel_c, responsavel_i,
+                   concluido_relatado_em
             FROM raci_itens
             WHERE empresa_id = %s
+              AND (status != 'concluido' OR concluido_relatado_em IS NULL)
         """, (empresa_id,))
         raw_items = cur.fetchall()
         conn.close()
@@ -283,6 +288,35 @@ async def send_raci_to_groups() -> Dict:
                 results["errors"] += 1
 
     return results
+
+
+def mark_concluidos_as_reported(empresa_id: str) -> int:
+    """Marca todos os concluidos atualmente nao-relatados como ja relatados.
+    Chamar depois que o Renato confirma envio do report ao grupo, pra que
+    no proximo report eles sumam da secao Concluidas. Retorna count.
+
+    Pattern: 1 vez na lista (no report seguinte ao informe de conclusao),
+    depois desaparece.
+    """
+    import psycopg2
+    if not CONSELHOOS_DATABASE_URL:
+        return 0
+    try:
+        conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE raci_itens SET concluido_relatado_em = NOW()
+            WHERE empresa_id = %s
+              AND status = 'concluido'
+              AND concluido_relatado_em IS NULL
+        """, (empresa_id,))
+        n = cur.rowcount
+        conn.commit()
+        conn.close()
+        return n
+    except Exception as e:
+        logger.error(f"mark_concluidos_as_reported error: {e}")
+        return 0
 
 
 def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:
