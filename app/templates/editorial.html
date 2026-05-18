@@ -1437,6 +1437,22 @@
 <script>
 const ARTICLES_URL = 'https://almeida-prado.com';
 
+// Toast standalone — varias funcoes neste arquivo fazem `showToast && showToast(...)`,
+// mas como `showToast` nao estava declarado, JS lancava ReferenceError no bare-name
+// (ao inves de short-circuit). Define a funcao aqui pra evitar quebrar fluxos.
+function showToast(message, type = 'info') {
+    const t = document.createElement('div');
+    const bg = type === 'success' ? '#10b981' : (type === 'error' ? '#ef4444' : '#3b82f6');
+    t.style.cssText = `position:fixed;bottom:24px;right:24px;background:${bg};color:white;padding:12px 20px;border-radius:8px;font-size:0.875rem;font-weight:500;box-shadow:0 8px 24px rgba(0,0,0,0.15);z-index:99999;opacity:0;transform:translateY(10px);transition:all 0.2s;`;
+    t.textContent = message;
+    document.body.appendChild(t);
+    requestAnimationFrame(() => { t.style.opacity = '1'; t.style.transform = 'translateY(0)'; });
+    setTimeout(() => {
+        t.style.opacity = '0'; t.style.transform = 'translateY(10px)';
+        setTimeout(() => t.remove(), 250);
+    }, 2800);
+}
+
 // ============== Clipping x Estoque (v1) ==============
 async function loadClippingMatches() {
     const btn = document.getElementById('clippingMatchToggle');
