@@ -102,22 +102,10 @@ def ensure_table_exists():
         conn.commit()
 
 
-# Categorias oficiais — reutiliza taxonomia de editorial_calendar.CATEGORIAS_PRINCIPAIS.
-# Mantida em sync manualmente (12 categorias). Se mudar la, atualize aqui.
-HOT_TAKE_CATEGORIAS = [
-    "Governança Corporativa",
-    "NeoGovernança",
-    "Conselho de Administração",
-    "M&A e Fusões",
-    "Empresa Familiar",
-    "Liderança Executiva",
-    "ESG e Sustentabilidade",
-    "Transformação Digital",
-    "Estratégia Empresarial",
-    "Gestão de Riscos",
-    "Inovação",
-    "Complexidade e Adaptação",
-]
+# Categorias oficiais — fonte unica em editorial_calendar.CATEGORIAS_PRINCIPAIS.
+# Era duplicada aqui (12 cats hardcoded) mas drift de taxonomia ja causou bug
+# 18/05 quando expansao pra 16 cats nao refletiu no classifier. Agora importa.
+from services.editorial_calendar import CATEGORIAS_PRINCIPAIS as HOT_TAKE_CATEGORIAS
 
 
 async def classify_hot_take_category(news_title: str, body_or_post: str = "") -> Optional[str]:
