@@ -47,25 +47,113 @@ def get_mode() -> str:
 
 
 # ============================================================================
-# Urgency decision (v1 stub — D3 expande com 5 regras reais)
+# Urgency decision — 5 regras v1 (calibrado com Renato 19/05/2026)
 # ============================================================================
 
 
-def is_urgent(payload: Dict, urgency_score: Optional[int], source: str, msg_type: Optional[str]) -> bool:
-    """V1 stub: retorna True so se urgency_score >= 8 OR caller marcou.
+def _rule_meeting_soon_unconfirmed(payload: Dict) -> bool:
+    """Reuniao em <30min sem confirmacao do convidado principal.
 
-    D3 vai expandir com 5 regras:
-    - Reuniao <30min sem confirmacao
-    - LinkedIn outbound: autor do post respondeu
-    - Resposta de prospect em campanha (contact circulo <=3)
-    - Alerta financeiro > limite
-    - Erro de cron em prod
+    Expecta payload com:
+    - meeting_at (ISO string) OU minutes_until (int)
+    - confirmed (bool, default False)
     """
+    if payload.get("confirmed"):
+        return False
+    mins = payload.get("minutes_until")
+    if not isinstance(mins, int) or mins is None:
+        meeting_at = payload.get("meeting_at")
+        if not meeting_at:
+            return False
+        try:
+            from datetime import datetime, timezone
+            ts = datetime.fromisoformat(str(meeting_at).replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            mins = int((ts - now).total_seconds() / 60)
+        except (ValueError, TypeError):
+            return False
+    return 0 < mins <= 30
+
+
+def _rule_linkedin_author_replied(source: str, payload: Dict) -> bool:
+    """Autor de post LinkedIn respondeu ao comentario outbound — sinal forte."""
+    if source != "linkedin_outbound":
+        return False
+    return bool(payload.get("reply_from_author"))
+
+
+def _rule_prospect_campaign_reply(source: str, payload: Dict) -> bool:
+    """Resposta de prospect em campanha ativa (contact circulo <= 3).
+
+    Expecta payload com:
+    - contact_id (obrigatorio)
+    - is_campaign_reply OR source='campaign'/'message_classifier'+msg_type='reply'
+    """
+    if source not in ("campaign", "message_classifier", "campaign_executor", "action_proposal"):
+        return False
+    if not payload.get("is_campaign_reply") and source != "campaign_executor":
+        return False
+    contact_id = payload.get("contact_id")
+    if not contact_id:
+        return False
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT circulo FROM contacts WHERE id = %s", (contact_id,))
+            row = cur.fetchone()
+            if not row or row.get("circulo") is None:
+                return False
+            return int(row["circulo"]) <= 3
+    except Exception as e:
+        logger.warning(f"_rule_prospect_campaign_reply DB falhou: {e}")
+        return False
+
+
+def _rule_financial_alert(source: str, msg_type: Optional[str]) -> bool:
+    """Alerta financeiro do cost_tracker — sempre urgente.
+
+    Source 'cost_tracker' + msg_type 'budget_threshold_hit' ja vem com
+    force_immediate=True do check_budget_threshold(). Esta regra e
+    defesa adicional caso outro caller esqueca a flag.
+    """
+    return source == "cost_tracker" or (msg_type or "").startswith("budget_")
+
+
+def _rule_cron_error_prod(source: str, payload: Dict) -> bool:
+    """Erro de cron em prod — risco operacional alto."""
+    if source != "cron_telemetry" and source != "cron_health":
+        return False
+    severity = (payload.get("severity") or "").lower()
+    return severity in ("error", "critical", "failed")
+
+
+URGENCY_RULES = [
+    ("meeting_soon_unconfirmed", lambda src, mt, pl, sc: _rule_meeting_soon_unconfirmed(pl)),
+    ("linkedin_author_replied",  lambda src, mt, pl, sc: _rule_linkedin_author_replied(src, pl)),
+    ("prospect_campaign_reply",  lambda src, mt, pl, sc: _rule_prospect_campaign_reply(src, pl)),
+    ("financial_alert",          lambda src, mt, pl, sc: _rule_financial_alert(src, mt)),
+    ("cron_error_prod",          lambda src, mt, pl, sc: _rule_cron_error_prod(src, pl)),
+]
+
+
+def is_urgent(
+    payload: Dict,
+    urgency_score: Optional[int],
+    source: str,
+    msg_type: Optional[str],
+) -> tuple[bool, Optional[str]]:
+    """Retorna (urgent, rule_matched) — passou em alguma das 5 regras OR override caller."""
     if payload.get("force_immediate"):
-        return True
+        return True, "caller_force_immediate"
     if isinstance(urgency_score, int) and urgency_score >= 8:
-        return True
-    return False
+        return True, "score_ge_8"
+    for rule_name, rule_fn in URGENCY_RULES:
+        try:
+            if rule_fn(source, msg_type, payload, urgency_score):
+                return True, rule_name
+        except Exception as e:
+            logger.warning(f"Urgency rule '{rule_name}' raised: {e}")
+    return False, None
 
 
 # ============================================================================
@@ -168,7 +256,7 @@ async def route_to_renato(
         ok = await _send_now(text)
         return {"action": "sent" if ok else "skipped", "pending_id": None, "mode": mode}
 
-    urgent = is_urgent(payload, urgency_score, source, msg_type)
+    urgent, urgency_rule = is_urgent(payload, urgency_score, source, msg_type)
 
     # Mode 'shadow' — manda sempre + grava pending pra auditoria
     if mode == MODE_SHADOW:
@@ -178,6 +266,7 @@ async def route_to_renato(
             "action": "shadow",
             "pending_id": pid,
             "would_have": "sent_immediate" if urgent else "queued",
+            "urgency_rule": urgency_rule,
             "actually_sent": ok,
             "mode": mode,
         }
@@ -185,7 +274,13 @@ async def route_to_renato(
     # Mode 'on' — respeita urgencia
     if urgent:
         ok = await _send_now(text)
-        return {"action": "sent" if ok else "skipped", "pending_id": None, "urgent": True, "mode": mode}
+        return {
+            "action": "sent" if ok else "skipped",
+            "pending_id": None,
+            "urgent": True,
+            "urgency_rule": urgency_rule,
+            "mode": mode,
+        }
 
     pid = _enqueue_pending(source, payload, msg_type, urgency_score, digest_target, dedup_key)
     return {
