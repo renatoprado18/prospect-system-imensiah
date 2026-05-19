@@ -20745,8 +20745,52 @@ async def api_editorial_approve(post_id: int):
             """, (slot, row['hot_take_id']))
         conn.commit()
 
+    # Auto-cleanup: se a semana atingiu o target apos esta aprovacao, dismiss
+    # qualquer pending_approval restante na mesma semana. Sem isso, dismiss-
+    # replace cycles deixam pendings stale sobrando ate o user descobrir e
+    # dismissar manualmente (era a queixa de 19/05).
+    auto_dismissed: List[int] = []
+    try:
+        from services.auto_publisher import (
+            count_committed_posts_in_week, DEFAULT_WEEKLY_MIX, _week_bounds,
+        )
+        target_total = sum(DEFAULT_WEEKLY_MIX.values())
+        slot_date = slot.date() if hasattr(slot, 'date') else slot
+        committed = count_committed_posts_in_week(slot_date)
+        if committed >= target_total:
+            week_start, week_end = _week_bounds(slot_date)
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE editorial_posts
+                    SET status = 'dismissed', dismissed_em = NOW(),
+                        dismissed_motivo = %s, atualizado_em = CURRENT_TIMESTAMP
+                    WHERE status = 'pending_approval'
+                      AND data_publicacao_planejada >= %s
+                      AND data_publicacao_planejada < %s
+                    RETURNING id, hot_take_id
+                """, (
+                    f"Semana saturada ({committed}/{target_total}) — auto-dismiss apos aprovacao de #{post_id}",
+                    week_start, week_end,
+                ))
+                for r in cursor.fetchall():
+                    auto_dismissed.append(r['id'])
+                    if r.get('hot_take_id'):
+                        cursor.execute("""
+                            UPDATE hot_takes SET status = 'draft', scheduled_for = NULL,
+                                editorial_post_id = NULL WHERE id = %s
+                        """, (r['hot_take_id'],))
+                conn.commit()
+    except Exception:
+        logger.exception(f"api_editorial_approve: auto-dismiss saturacao falhou pra #{post_id}")
+
     _editorial_action_items_cache = {"data": None, "timestamp": None}
-    return {"status": "scheduled", "post_id": post_id, "data_publicacao": slot.isoformat() if hasattr(slot, 'isoformat') else str(slot)}
+    return {
+        "status": "scheduled",
+        "post_id": post_id,
+        "data_publicacao": slot.isoformat() if hasattr(slot, 'isoformat') else str(slot),
+        "auto_dismissed_saturated": auto_dismissed,
+    }
 
 
 @app.post("/api/editorial/{post_id}/dismiss")
