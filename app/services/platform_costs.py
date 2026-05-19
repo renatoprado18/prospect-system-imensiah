@@ -32,6 +32,11 @@ LINKDAPI_USD_PER_CREDIT = Decimal("1") / Decimal("120")  # $10 = 1200 creditos
 ALERT_PCT_THRESHOLD = 25.0
 ALERT_DELTA_USD_THRESHOLD = 5.0
 
+# Budget MTD (decidido com Renato 19/05/2026)
+MONTHLY_BUDGET_USD = 100.0
+BUDGET_BRIEFING_PCT = 50.0  # secao no morning briefing aparece >= 50%
+BUDGET_ALERT_PCT = 100.0    # alerta urgente WhatsApp >= 100%
+
 
 def _last_completed_month(today: Optional[date] = None) -> date:
     """Primeiro dia do mes anterior. Ex: hoje=2026-05-07 -> 2026-04-01."""
@@ -354,6 +359,143 @@ def _mark_alert_sent(cursor, provider: str, to_period: str) -> None:
         """,
         (provider, to_period),
     )
+
+
+def get_mtd_summary(period_start: Optional[date] = None) -> Dict:
+    """Retorna MTD total + breakdown por provider pro mes corrente.
+
+    Args:
+        period_start: primeiro dia do mes (default: mes atual)
+    Returns:
+        {total_usd, providers: [...], budget_pct, over_budget}
+    """
+    if period_start is None:
+        period_start = date.today().replace(day=1)
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT provider, amount_usd, usage_metrics, fetched_at
+            FROM platform_costs
+            WHERE period_start = %s::date
+            ORDER BY amount_usd DESC
+            """,
+            (period_start,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+    total = sum(float(r["amount_usd"] or 0) for r in rows)
+    pct = (total / MONTHLY_BUDGET_USD * 100.0) if MONTHLY_BUDGET_USD else 0.0
+    return {
+        "period_start": period_start.isoformat(),
+        "total_usd": round(total, 2),
+        "budget_usd": MONTHLY_BUDGET_USD,
+        "budget_pct": round(pct, 1),
+        "over_budget": total >= MONTHLY_BUDGET_USD,
+        "providers": [
+            {
+                "provider": r["provider"],
+                "amount_usd": float(r["amount_usd"] or 0),
+                "fetched_at": r["fetched_at"].isoformat() if r.get("fetched_at") else None,
+            }
+            for r in rows
+        ],
+    }
+
+
+async def check_budget_threshold(budget_usd: float = MONTHLY_BUDGET_USD) -> Dict:
+    """Verifica se MTD ja passou do budget. Idempotente por mes (dedup
+    via row 'system_memories' tipo 'budget_alerted_<month>').
+
+    Returns:
+        {threshold_hit, mtd_usd, budget_usd, alerted, reason}
+    """
+    summary = get_mtd_summary()
+    mtd = summary["total_usd"]
+    period = summary["period_start"]
+
+    if mtd < budget_usd:
+        return {
+            "threshold_hit": False,
+            "mtd_usd": mtd,
+            "budget_usd": budget_usd,
+            "alerted": False,
+            "reason": "below_threshold",
+        }
+
+    # Dedup: ja alertou neste mes? (system_memories tem 'titulo', nao 'chave')
+    alert_key = f"budget_alerted_{period[:7]}"  # 'budget_alerted_2026-05'
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM system_memories WHERE titulo = %s AND tipo = 'budget_alert' AND criado_em >= NOW() - INTERVAL '32 days' LIMIT 1",
+            (alert_key,),
+        )
+        already = cur.fetchone() is not None
+
+    if already:
+        return {
+            "threshold_hit": True,
+            "mtd_usd": mtd,
+            "budget_usd": budget_usd,
+            "alerted": False,
+            "reason": "already_alerted_this_month",
+        }
+
+    # Manda alerta urgente via router (urgente — passa direto mesmo em mode='on')
+    try:
+        from services.notification_router import route_to_renato
+        body = (
+            f"🚨 *Cost Tracker: budget MTD atingido*\n\n"
+            f"MTD: ${mtd:.2f} de ${budget_usd:.2f} ({summary['budget_pct']:.1f}%)\n\n"
+            "Breakdown:\n"
+            + "\n".join(f"• {p['provider']}: ${p['amount_usd']:.2f}" for p in summary["providers"][:6])
+            + "\n\nAuditar /admin/costs"
+        )
+        await route_to_renato(
+            source="cost_tracker",
+            payload={
+                "title": f"Budget MTD atingido (${mtd:.2f})",
+                "body": body,
+                "force_immediate": True,
+                "mtd_usd": mtd,
+                "budget_usd": budget_usd,
+            },
+            msg_type="budget_threshold_hit",
+            urgency_score=10,
+            digest_target="either",
+            dedup_key=alert_key,
+            message_text=body,
+        )
+
+        # Marca alertado (system_memories: titulo + conteudo + tipo)
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO system_memories (titulo, conteudo, tipo, fonte, criado_em)
+                VALUES (%s, %s, 'budget_alert', 'cost_tracker', NOW())
+                """,
+                (alert_key, f"MTD ${mtd:.2f} de ${budget_usd:.2f}"),
+            )
+            conn.commit()
+
+        return {
+            "threshold_hit": True,
+            "mtd_usd": mtd,
+            "budget_usd": budget_usd,
+            "alerted": True,
+        }
+    except Exception as e:
+        logger.warning(f"check_budget_threshold falhou: {e}")
+        return {
+            "threshold_hit": True,
+            "mtd_usd": mtd,
+            "budget_usd": budget_usd,
+            "alerted": False,
+            "reason": f"send_failed:{type(e).__name__}",
+        }
 
 
 async def check_and_notify_alerts() -> Dict:

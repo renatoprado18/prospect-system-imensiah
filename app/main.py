@@ -5165,6 +5165,37 @@ async def cron_platform_costs_snapshot(request: Request):
     return {"job": "platform-costs-snapshot", "snapshot": snap, "alert": alert}
 
 
+@app.get("/api/cron/platform-costs-daily")
+@track_cron_run
+async def cron_platform_costs_daily(request: Request):
+    """Cron diario (08h UTC = 05h BRT, antes do morning briefing).
+
+    Puxa Anthropic+Railway+Vercel APIs e atualiza row MTD do mes corrente
+    (UPSERT idempotente via unique constraint provider+period_start).
+    Depois checa se MTD passou de $100 (MONTHLY_BUDGET_USD) — se sim, alerta
+    urgente via notification_router.
+
+    Agendado em GH Actions (.github/workflows/cron-platform-costs-daily.yml),
+    nao Vercel — Hobby deprioritiza."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.platform_costs import auto_snapshot_month, check_budget_threshold, get_mtd_summary
+    from datetime import date as _date
+
+    snap = auto_snapshot_month(period_start=_date.today().replace(day=1))
+    budget = await check_budget_threshold()
+    summary = get_mtd_summary()
+
+    return {
+        "job": "platform-costs-daily",
+        "mtd_total_usd": summary["total_usd"],
+        "budget_pct": summary["budget_pct"],
+        "over_budget": summary["over_budget"],
+        "snapshot": snap,
+        "budget_check": budget,
+    }
+
+
 @app.post("/api/cron/catchup")
 @track_cron_run
 async def cron_catchup(request: Request, background_tasks: BackgroundTasks):
@@ -24372,6 +24403,25 @@ async def cron_daily_morning_briefing(request: Request):
                 sections.append(topics_section)
         except Exception as _e:
             logging.warning(f"morning-briefing: topics section falhou: {_e}")
+
+        # Cost MTD section (so aparece >= 50% do budget — ate la nao incomoda)
+        try:
+            from services.platform_costs import get_mtd_summary, MONTHLY_BUDGET_USD, BUDGET_BRIEFING_PCT
+            mtd = get_mtd_summary()
+            if mtd["budget_pct"] >= BUDGET_BRIEFING_PCT:
+                emoji = "🚨" if mtd["over_budget"] else "💰"
+                line = (
+                    f"{emoji} *Cost MTD: ${mtd['total_usd']:.2f}* "
+                    f"({mtd['budget_pct']:.0f}% de ${MONTHLY_BUDGET_USD:.0f})"
+                )
+                top = sorted(mtd["providers"], key=lambda p: -p["amount_usd"])[:3]
+                if top:
+                    bks = " · ".join(f"{p['provider']}: ${p['amount_usd']:.2f}" for p in top if p['amount_usd'] > 0)
+                    if bks:
+                        line += f"\n{bks}"
+                sections.append(line)
+        except Exception as _e:
+            logging.warning(f"morning-briefing: cost MTD section falhou: {_e}")
 
         # M2: consome notificacoes pending (silenciadas desde ultimo digest)
         try:

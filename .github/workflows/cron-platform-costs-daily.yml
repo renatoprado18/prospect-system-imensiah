@@ -1,0 +1,23 @@
+name: Cron — Platform Costs Daily
+
+# Snapshot diario das APIs (Anthropic/Railway/Vercel) com UPSERT na row MTD.
+# Detecta MTD >= $100 e dispara alerta WhatsApp urgente via notification_router.
+# GH Actions (nao Vercel) — Hobby deprioritiza silenciosamente.
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # 08h UTC = 05h BRT (antes do morning briefing 08h BRT)
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit platform-costs-daily endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/platform-costs-daily")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)
