@@ -438,6 +438,37 @@ async def collect_metrics_for_due_windows() -> Dict:
         except Exception:
             logger.exception("metrics_collector: auto-complete tasks falhou (nao fatal)")
 
+    # 5. Sweep idempotente: fecha tasks orfas pra posts que JA tem todas janelas
+    # coletadas (independente desta rodada ter inserido algo).
+    # Why: o passo 4 so cobre posts com novos snapshots NESTA run. Posts que ja
+    # foram 100% coletados em runs anteriores deixavam tasks vencidas pra sempre.
+    try:
+        n_windows = len(JANELAS_ORDER)
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                WITH fully_collected AS (
+                    SELECT post_id
+                    FROM editorial_metrics_history
+                    GROUP BY post_id
+                    HAVING COUNT(DISTINCT janela) >= %s
+                )
+                UPDATE tasks SET status='completed', data_conclusao=NOW(),
+                    descricao=COALESCE(descricao,'') ||
+                        ' | Auto-completed: sweep orphan (post 100% coletado) em ' || NOW()::date
+                WHERE status='pending'
+                  AND titulo ILIKE 'Coletar metricas%%'
+                  AND editorial_post_id IN (SELECT post_id FROM fully_collected)
+                RETURNING id
+            """, (n_windows,))
+            closed = [r['id'] for r in cur.fetchall()]
+            conn.commit()
+            if closed:
+                summary["orphan_tasks_closed"] = closed
+                logger.info(f"metrics_collector: sweep fechou {len(closed)} task(s) orfas: {closed}")
+    except Exception:
+        logger.exception("metrics_collector: sweep orphan tasks falhou (nao fatal)")
+
     summary["timestamp"] = datetime.now().isoformat()
     return summary
 

@@ -13802,6 +13802,20 @@ async def update_task_endpoint(request: Request, task_id: int):
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
 
+    try:
+        from services.agent_actions import log_action
+        log_action(
+            action_type='task_updated',
+            category='tasks',
+            title=f"Task #{task_id} editada via PUT",
+            details=f"Fields: {list(data.keys())}",
+            scope_ref={'task_id': task_id},
+            source='api_put_task',
+            payload={'request_data': data, 'user_email': user.get('email') if isinstance(user, dict) else None},
+        )
+    except Exception:
+        pass
+
     return result
 
 
@@ -13821,12 +13835,26 @@ async def patch_task_endpoint(request: Request, task_id: int):
     if "completed" in data:
         data["status"] = "completed" if data["completed"] else "pending"
 
+    # Parse due date (PATCH antes nao passava data_vencimento — bug que deixou
+    # edits de prazo silenciosamente descartados, ex: task 403 em 18/05).
+    due_raw = data.get("due") or data.get("data_vencimento")
+    due_datetime = None
+    if due_raw:
+        try:
+            due_datetime = (
+                datetime.fromisoformat(due_raw.replace("Z", "+00:00"))
+                if isinstance(due_raw, str) else due_raw
+            )
+        except Exception:
+            pass
+
     # Usar o serviço de tasks
     tasks_service = get_tasks_sync_service()
     result = await tasks_service.update_task(
         task_id=task_id,
         titulo=data.get("title") or data.get("titulo"),
         descricao=data.get("notes") or data.get("descricao"),
+        data_vencimento=due_datetime,
         status=data.get("status"),
         prioridade=data.get("prioridade"),
         sync_to_google=data.get("sync_to_google", True)
@@ -13834,6 +13862,21 @@ async def patch_task_endpoint(request: Request, task_id: int):
 
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
+
+    # Audit: registra payload pra debug futuro de "minha edicao sumiu"
+    try:
+        from services.agent_actions import log_action
+        log_action(
+            action_type='task_updated',
+            category='tasks',
+            title=f"Task #{task_id} editada via PATCH",
+            details=f"Fields: {list(data.keys())}",
+            scope_ref={'task_id': task_id},
+            source='api_patch_task',
+            payload={'request_data': data, 'user_email': user.get('email') if isinstance(user, dict) else None},
+        )
+    except Exception:
+        pass
 
     return result
 
