@@ -15,34 +15,84 @@ logger = logging.getLogger(__name__)
 class WhatsAppNotificationService:
     """Gerencia notificacoes WhatsApp para o INTEL Proativo via intel-bot."""
 
+    # M2 routing map: action_type -> (digest_target, urgent_default)
+    # Decide se notificacao vai direto (urgent_default=True) ou pra digest.
+    # Override caso-a-caso via proposal.urgency='high' (forca imediato).
+    _ROUTING_MAP = {
+        # Impacto direto na agenda — sempre imediato
+        'cancel_event':       ('either', True),
+        'reschedule_event':   ('either', True),
+        'urgent_alert':       ('either', True),
+        # Conversacionais/discoveries — vao pro digest
+        'pending_response':   ('either', False),   # ❓ "X perguntou:" — 26% do volume
+        'create_meeting':     ('either', False),   # 🔔 "Possivel reuniao"
+        'update_contact_email': ('either', False), # 📧 "Email detectado"
+        'financial_alert':    ('either', False),   # 💰 — D3 vai checar valor
+    }
+
     async def send_proposal_notification(self, proposal: Dict) -> bool:
         """
-        Envia notificacao de proposta para Renato via intel-bot.
-        Formato conversacional sem links — Renato responde ao bot.
+        Envia notificacao de proposta para Renato.
+
+        M2 (decidido 18/05): roteia via notification_router pra decidir entre
+        imediato vs digest. Comportamento controlado por env NOTIFICATION_DIGEST_MODE
+        (off=legado, shadow=duplica, on=respeita roteamento).
 
         Args:
             proposal: Dados da proposta de acao
 
         Returns:
-            True se enviou com sucesso
+            True se enviou com sucesso (ou enfileirou em digest)
         """
-        from services.intel_bot import send_intel_notification
+        from services.notification_router import route_to_renato
 
         message = self._format_proposal_message(proposal)
+        action_type = proposal.get('action_type', '')
+        proposal_id = proposal.get('id')
+
+        # Determina roteamento padrao por tipo
+        digest_target, urgent_default = self._ROUTING_MAP.get(
+            action_type, ('either', False)
+        )
+
+        # Override: proposal.urgency='high' forca imediato
+        force_immediate = proposal.get('urgency') == 'high' or urgent_default
+
+        payload = {
+            'title': f"Proposta #{proposal_id}: {action_type}",
+            'body': message,
+            'proposal_id': proposal_id,
+            'action_type': action_type,
+            'contact_id': proposal.get('contact_id'),
+            'contact_name': proposal.get('contact_name'),
+            'force_immediate': force_immediate,
+        }
 
         try:
-            success = await send_intel_notification(message)
+            result = await route_to_renato(
+                source='action_proposal',
+                payload=payload,
+                msg_type=action_type,
+                urgency_score=10 if force_immediate else 4,
+                digest_target=digest_target,
+                dedup_key=f"proposal_{proposal_id}",
+                message_text=message,
+            )
 
-            if success:
+            # 'sent' = enviado imediato; 'queued'/'shadow' = aceito; 'duplicate' = ja fila
+            if result['action'] in ('sent', 'queued', 'shadow', 'duplicate'):
                 self._mark_proposal_notified(proposal['id'])
-                logger.info(f"Sent intel-bot notification for proposal {proposal['id']}")
+                logger.info(
+                    f"Proposal {proposal['id']} routed: action={result['action']} "
+                    f"mode={result.get('mode')}"
+                )
                 return True
             else:
-                logger.error(f"Failed to send intel-bot notification for proposal {proposal['id']}")
+                logger.error(f"Failed to route proposal {proposal['id']}: {result}")
                 return False
 
         except Exception as e:
-            logger.error(f"Error sending intel-bot notification: {e}")
+            logger.error(f"Error routing proposal notification: {e}")
             return False
 
     def _format_proposal_message(self, proposal: Dict) -> str:
