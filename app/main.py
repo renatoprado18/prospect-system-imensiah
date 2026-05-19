@@ -20622,7 +20622,7 @@ async def api_editorial_dismiss(post_id: int, request: Request):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, status, data_publicacao_planejada, hot_take_id
+            SELECT id, status, tipo, data_publicacao_planejada, hot_take_id
             FROM editorial_posts WHERE id = %s
         """, (post_id,))
         row = cursor.fetchone()
@@ -20632,6 +20632,7 @@ async def api_editorial_dismiss(post_id: int, request: Request):
             raise HTTPException(status_code=400, detail=f"Post nao esta pending_approval (status={row['status']})")
 
         slot = row['data_publicacao_planejada']
+        dismissed_tipo = row['tipo']
 
         cursor.execute("""
             UPDATE editorial_posts
@@ -20639,10 +20640,16 @@ async def api_editorial_dismiss(post_id: int, request: Request):
                 atualizado_em = CURRENT_TIMESTAMP
             WHERE id = %s
         """, (motivo, post_id))
-        # Solta o hot_take vinculado pra voltar pra draft (pode ser repescado)
+        # Solta o hot_take vinculado pra voltar pra draft (pode ser repescado).
+        # editorial_post_id PRECISA ser zerado: select_replacement_post filtra
+        # `WHERE editorial_post_id IS NULL` pra evitar duplicar candidato — se
+        # nao zerarmos, o hot_take fica preso pra sempre apontando pra ep
+        # dismissed, e o pool de hot_takes vai esgotando ate so sobrar editorial.
         if row.get('hot_take_id'):
             cursor.execute("""
-                UPDATE hot_takes SET status = 'draft', scheduled_for = NULL WHERE id = %s
+                UPDATE hot_takes SET status = 'draft', scheduled_for = NULL,
+                    editorial_post_id = NULL
+                WHERE id = %s
             """, (row['hot_take_id'],))
         # Outros pending_approval do mesmo ciclo pra excluir da pool de substituto
         cursor.execute("""
@@ -20655,7 +20662,14 @@ async def api_editorial_dismiss(post_id: int, request: Request):
     if slot:
         try:
             from services.auto_publisher import select_replacement_post
-            replacement = await select_replacement_post(slot, exclude_ids=exclude_ids)
+            # Preserva tipo: dismiss de hot_take deve trazer outro hot_take.
+            # Antes, dismissar hot_take pegava editorial (ranking IA + sort
+            # por ai_score_relevancia favorece editoriais curados) — frustrava
+            # a cadencia 3 hot + 1 editorial e a fila aparecia "so com artigos".
+            preferred_source = 'hot_take' if dismissed_tipo == 'hot_take' else 'editorial'
+            replacement = await select_replacement_post(
+                slot, exclude_ids=exclude_ids, preferred_source=preferred_source,
+            )
             if replacement:
                 # marca substituicao no post descartado
                 with get_db() as conn:

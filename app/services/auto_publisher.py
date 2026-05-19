@@ -384,10 +384,20 @@ def schedule_selected_posts(selected: List[Dict], start_date: date = None) -> Di
     return {"scheduled": scheduled}
 
 
-async def select_replacement_post(slot_datetime: datetime, exclude_ids: List[int] = None) -> Optional[Dict]:
+async def select_replacement_post(
+    slot_datetime: datetime,
+    exclude_ids: List[int] = None,
+    preferred_source: Optional[str] = None,
+) -> Optional[Dict]:
     """
     Apos user descartar uma proposta da IA, escolhe o proximo melhor candidate
     do estoque de drafts e marca como pending_approval no MESMO slot.
+
+    preferred_source: se 'hot_take' ou 'editorial', restringe os candidatos a
+    essa fonte primeiro (so cai pra pool mista se nao houver candidato dali).
+    Sem isso, o ranking IA + sort por ai_score_relevancia (editoriais tem score,
+    hot_takes nao) fazia editorial ganhar todo replacement de hot_take — fila
+    de aprovacao vazava de hot_takes ao longo da semana.
 
     Returns dict com {id, titulo, source, data_publicacao_planejada} ou None se sem candidatos.
     """
@@ -457,6 +467,19 @@ async def select_replacement_post(slot_datetime: datetime, exclude_ids: List[int
 
     if not candidates:
         return None
+
+    # Aplica preferencia de fonte: se preferred_source bater com algum candidato,
+    # restringe a pool a esse subset. Se nao bater (estoque vazio nessa fonte),
+    # cai pro pool mista — melhor entregar editorial do que vazio.
+    if preferred_source:
+        preferred = [c for c in candidates if c.get('source') == preferred_source]
+        if preferred:
+            candidates = preferred
+        else:
+            logger.info(
+                f"select_replacement_post: preferred_source={preferred_source!r} "
+                f"sem candidatos — fallback pra pool mista ({len(candidates)})"
+            )
 
     # Tenta IA pra ranquear; fallback: pega top
     chosen = None
