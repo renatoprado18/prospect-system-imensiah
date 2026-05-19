@@ -20292,6 +20292,153 @@ async def api_editorial_clipping_matches(min_score: int = 12, top_per_news: int 
     return match_clipping_with_inventory(min_score=min_score, top_per_news=top_per_news)
 
 
+@app.get("/api/editorial/today-clipping")
+async def api_editorial_today_clipping():
+    """Retorna o ultimo clipping diario (resumo + meta) pra render no /editorial."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, resumo_dia, total_noticias, gerado_em
+            FROM news_clippings
+            ORDER BY gerado_em DESC LIMIT 1
+        """)
+        row = cur.fetchone()
+    if not row:
+        return {"clipping": None}
+    d = dict(row)
+    return {"clipping": {
+        "id": d["id"],
+        "resumo": d["resumo_dia"],
+        "total_noticias": d["total_noticias"],
+        "gerado_em": d["gerado_em"].isoformat() if d["gerado_em"] else None,
+    }}
+
+
+@app.post("/api/editorial/clipping-reflection")
+async def api_editorial_clipping_reflection(request: Request):
+    """Combina clipping do dia + reflexao do user -> hot_take draft em pending_approval.
+
+    Body: {reflection: str, clipping_id?: int}
+    """
+    import httpx as hx
+    from services.hot_takes import save_hot_take
+
+    data = await request.json()
+    reflection = (data.get("reflection") or "").strip()
+    clipping_id = data.get("clipping_id")
+    if len(reflection) < 20:
+        raise HTTPException(status_code=400, detail="Reflexao muito curta (minimo 20 chars).")
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        if clipping_id:
+            cur.execute("SELECT id, resumo_dia, conteudo, gerado_em FROM news_clippings WHERE id = %s", (clipping_id,))
+        else:
+            cur.execute("SELECT id, resumo_dia, conteudo, gerado_em FROM news_clippings ORDER BY gerado_em DESC LIMIT 1")
+        clipping = cur.fetchone()
+    if not clipping:
+        raise HTTPException(status_code=404, detail="Nenhum clipping disponivel.")
+    clip = dict(clipping)
+
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY nao configurada")
+
+    prompt = f"""Voce escreve no LinkedIn pelo Renato de Faria e Almeida Prado: conselheiro de empresas, especialista em governanca corporativa, IA aplicada a lideranca estrategica.
+
+VOZ: direta, executiva, sem floreio. Provoca reflexao com exemplos concretos e perguntas. Frases curtas. Quebra de linha pra respirar.
+
+CONTEXTO — Clipping do dia (resumo IA dos top fatos):
+{clip['resumo_dia']}
+
+REFLEXAO DO RENATO sobre o clipping (input bruto, pode ser bullet, frase solta, parecer):
+{reflection}
+
+TAREFA: transforme a reflexao do Renato num post de LinkedIn estruturado, ancorado no clipping. A reflexao e a ALMA do post — nao desprezar nem suavizar pra ficar generico. O clipping da o CONTEXTO factual.
+
+ESTRUTURA:
+1. Hook (1 linha de impacto, max 150 chars) — provoca leitura
+2. Linha em branco. 1-2 frases de contexto ancoradas no clipping.
+3. Linha em branco. 3-5 bullets com "→" — os insights/leituras do Renato.
+4. Linha em branco. Pergunta provocativa pra conselheiros/lideres.
+
+NAO inclua hashtags no body (sao adicionadas separadas).
+TAMANHO ALVO: 500-800 chars no body.
+
+Responda JSON puro, sem markdown:
+{{
+  "hook": "...",
+  "body": "<resto do post depois do hook>",
+  "cta": "<pergunta final do passo 4>",
+  "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"],
+  "ai_categoria": "<NeoGovernança|IA|Liderança|Governança|Inovação|Tecnologia|Outros>"
+}}"""
+
+    async with hx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "messages": [{"role": "user", "content": prompt}]},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Claude API {resp.status_code}: {resp.text[:300]}")
+    text = resp.json()["content"][0]["text"].strip()
+    if text.startswith("```"):
+        text = text.split("```", 2)[1]
+        if text.startswith("json"): text = text[4:]
+    parsed = json.loads(text.strip())
+
+    hashtags = parsed.get("hashtags", [])
+    if isinstance(hashtags, list):
+        hashtags_clean = [h.lstrip("#") for h in hashtags if h]
+    else:
+        hashtags_clean = []
+    linkedin_post = (parsed.get("hook","").strip() + "\n\n" + parsed.get("body","").strip() + "\n\n" + parsed.get("cta","").strip()).strip()
+
+    hot_take = {
+        "news_title": f"Reflexao Clipping {clip['gerado_em'].strftime('%d/%m/%Y')}",
+        "news_link": "",
+        "hook": parsed.get("hook", ""),
+        "body": parsed.get("body", ""),
+        "cta": parsed.get("cta", ""),
+        "linkedin_post": linkedin_post,
+        "article_slug": None,
+        "hashtags": hashtags_clean,
+        "ai_categoria": parsed.get("ai_categoria"),
+    }
+    ht_id = save_hot_take(hot_take, status="pending_approval")
+
+    # Cria editorial_post linkado, com slot = proximo dia util 9h (user pode mudar no approve)
+    from datetime import timedelta as _td
+    slot = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0) + _td(days=1)
+    while slot.weekday() >= 5:  # pula sabado/domingo
+        slot += _td(days=1)
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO editorial_posts (article_title, article_url, conteudo_adaptado, hashtags,
+                tipo, canal, status, data_publicacao_planejada, hot_take_id, ai_categoria)
+            VALUES (%s, %s, %s, %s, 'hot_take', 'linkedin', 'pending_approval', %s, %s, %s)
+            RETURNING id
+        """, (
+            hot_take["news_title"], "", linkedin_post,
+            json.dumps(hashtags_clean),
+            slot, ht_id, parsed.get("ai_categoria"),
+        ))
+        ep_id = cur.fetchone()["id"]
+        cur.execute("UPDATE hot_takes SET editorial_post_id = %s, scheduled_for = %s WHERE id = %s", (ep_id, slot, ht_id))
+        conn.commit()
+
+    return {
+        "status": "success",
+        "hot_take_id": ht_id,
+        "editorial_post_id": ep_id,
+        "preview": linkedin_post,
+        "slot": slot.isoformat(),
+    }
+
+
 @app.get("/api/editorial/pending-tasks")
 async def api_editorial_pending_tasks():
     """Tarefas pendentes do editorial - o que precisa ser feito"""

@@ -1079,6 +1079,25 @@
 </div>
 {% endif %}
 
+<!-- Reflexao sobre Clipping — input rapido pra virar hot_take pending_approval -->
+<div class="posts-card" id="clipping-reflection-card" style="border-top: 3px solid #14b8a6; display: none;">
+    <div class="posts-header">
+        <h2><i class="bi bi-chat-quote me-2" style="color: #14b8a6;"></i>Reaja ao clipping de hoje</h2>
+    </div>
+    <div style="padding: 0 16px 16px;">
+        <div id="clipping-summary" style="background: #f0fdfa; border-left: 3px solid #14b8a6; padding: 10px 12px; border-radius: 4px; font-size: 0.88rem; color: #115e59; margin-bottom: 12px; white-space: pre-wrap;">Carregando clipping...</div>
+        <textarea id="clipping-reflection-input"
+            placeholder="Sua leitura em 3-5 linhas (bullet, frase solta, parecer — vira hot_take no estilo seu)..."
+            style="width: 100%; min-height: 100px; padding: 10px; border: 1px solid var(--gray-300); border-radius: 6px; font-family: inherit; font-size: 0.92rem; resize: vertical;"></textarea>
+        <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+            <button id="clipping-reflection-submit" class="btn btn-sm" style="background: #14b8a6; color: white; border: none;" onclick="submitClippingReflection()">
+                <i class="bi bi-magic me-1"></i>Gerar hot_take
+            </button>
+            <small id="clipping-reflection-status" style="color: var(--gray-600);"></small>
+        </div>
+    </div>
+</div>
+
 <!-- Pipeline Editorial - PRINCIPAL -->
 <div class="posts-card" style="border-top: 3px solid #6366f1;">
     <div class="posts-header">
@@ -3318,6 +3337,68 @@ async function saveMetricsInputModal() {
 
 // Load pipeline on page load (Para Aprovar = pending_approval)
 loadPipeline('pending_approval');
+
+// ============== Clipping Reflection ==============
+async function loadTodayClipping() {
+    try {
+        const resp = await fetch('/api/editorial/today-clipping');
+        const data = await resp.json();
+        if (data.clipping && data.clipping.resumo) {
+            const card = document.getElementById('clipping-reflection-card');
+            const summary = document.getElementById('clipping-summary');
+            const dt = data.clipping.gerado_em ? new Date(data.clipping.gerado_em).toLocaleDateString('pt-BR') : '';
+            summary.textContent = data.clipping.resumo + (dt ? ` (gerado em ${dt})` : '');
+            card.style.display = 'block';
+            card.dataset.clippingId = data.clipping.id;
+        }
+    } catch (e) {
+        console.warn('loadTodayClipping falhou', e);
+    }
+}
+
+async function submitClippingReflection() {
+    const input = document.getElementById('clipping-reflection-input');
+    const btn = document.getElementById('clipping-reflection-submit');
+    const status = document.getElementById('clipping-reflection-status');
+    const card = document.getElementById('clipping-reflection-card');
+    const text = (input.value || '').trim();
+    if (text.length < 20) {
+        status.textContent = 'Escreva pelo menos 20 chars';
+        status.style.color = '#dc2626';
+        return;
+    }
+    btn.disabled = true;
+    status.style.color = 'var(--gray-600)';
+    status.textContent = 'Gerando hot_take... (~15s)';
+    try {
+        const resp = await fetch('/api/editorial/clipping-reflection', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({reflection: text, clipping_id: parseInt(card.dataset.clippingId)}),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            status.style.color = '#dc2626';
+            status.textContent = data.detail || 'Erro';
+            btn.disabled = false;
+            return;
+        }
+        status.style.color = '#059669';
+        status.textContent = `✓ Hot_take #${data.hot_take_id} criado. Carregando aba "Para Aprovar"...`;
+        input.value = '';
+        setTimeout(() => {
+            loadPipeline('pending_approval');
+            status.textContent = '';
+            btn.disabled = false;
+        }, 1200);
+    } catch (e) {
+        status.style.color = '#dc2626';
+        status.textContent = 'Erro de rede';
+        btn.disabled = false;
+    }
+}
+
+loadTodayClipping();
 
 // ============== Hipoteses (PDCA Plan/Act) ==============
 async function loadHypotheses() {
