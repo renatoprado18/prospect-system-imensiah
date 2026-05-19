@@ -2260,6 +2260,17 @@
                     <div class="stat-breakdown" id="statOverridesBreakdown"></div>
                 </div>
             </div>
+            <!-- M2: notificacoes silenciadas hoje (router digest mode) -->
+            <div class="stat-card" style="cursor: pointer;" onclick="showSilencedModal()">
+                <div class="stat-icon" style="background: rgba(20, 184, 166, 0.1); color: #14b8a6;"><i class="bi bi-bell-slash"></i></div>
+                <div class="stat-content">
+                    <div class="stat-headline">
+                        <div class="stat-value" id="statSilenced">-</div>
+                        <div class="stat-label">Silenciadas (24h)</div>
+                    </div>
+                    <div class="stat-breakdown" id="statSilencedBreakdown"></div>
+                </div>
+            </div>
             <!-- P6 Diligente Fase 2: intents abertos do bot (compromissos persistentes) -->
             <div class="stat-card" style="cursor: pointer;" data-drill="intents" onclick="openDrill('intents')">
                 <div class="stat-icon" style="background: rgba(14, 165, 233, 0.1); color: #0ea5e9;"><i class="bi bi-list-check"></i></div>
@@ -2918,6 +2929,63 @@
                 const card = el && el.closest('.stat-card');
                 if (card && d.total === 0) card.classList.add('muted');
             } catch (e) { console.error('engagement stat:', e); }
+        }
+
+        async function loadSilencedStat() {
+            try {
+                const r = await fetch('/api/admin/notifications-silenced?hours=24');
+                if (!r.ok) return;
+                const d = await r.json();
+                const el = document.getElementById('statSilenced');
+                const bk = document.getElementById('statSilencedBreakdown');
+                if (el) el.textContent = d.total || 0;
+                if (bk) bk.textContent = d.total > 0
+                    ? `${d.pending} aguardando · ${d.sent} digeridas`
+                    : '';
+                const card = el && el.closest('.stat-card');
+                if (card && d.total === 0) card.classList.add('muted');
+            } catch (e) { console.error('silenced stat:', e); }
+        }
+
+        async function showSilencedModal() {
+            try {
+                const r = await fetch('/api/admin/notifications-silenced?hours=24');
+                const d = await r.json();
+                const items = d.items || [];
+                const meta = `<div style="font-size:0.82rem;margin-bottom:10px;color:#64748b;">${d.pending} aguardando proximo digest · ${d.sent} ja digeridas. <strong>Mode</strong>: confira NOTIFICATION_DIGEST_MODE em prod.</div>`;
+                const rows = items.length
+                    ? items.map(it => {
+                        const payload = it.payload || {};
+                        const title = payload.title || payload.body || it.msg_type || it.source;
+                        const sentBadge = it.sent_at
+                            ? `<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:4px;font-size:0.65rem;">${escapeText(it.sent_in_digest || 'digerido')}</span>`
+                            : '<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-size:0.65rem;">PENDING</span>';
+                        const expiredBadge = it.expired_at ? '<span style="color:#dc2626;font-size:0.7rem;margin-left:6px;">⏰ +24h</span>' : '';
+                        const mark = !it.sent_at
+                            ? `<button onclick="markSilencedFN(${it.id})" style="background:none;border:1px solid #cbd5e1;border-radius:4px;font-size:0.7rem;padding:1px 6px;cursor:pointer;color:#64748b;margin-left:6px;">deveria ter vindo na hora</button>`
+                            : '';
+                        return `<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9;font-size:0.82rem;">
+                            <div>${sentBadge}${expiredBadge} <strong>${escapeText(it.source)}</strong> · <span style="color:#64748b;">${escapeText(it.msg_type || '')}</span>${mark}</div>
+                            <div style="color:#475569;margin-top:2px;">${escapeText(String(title).substring(0, 160))}</div>
+                        </div>`;
+                    }).join('')
+                    : '<div style="padding:24px;text-align:center;color:#64748b;">Nenhuma notificacao silenciada nas ultimas 24h.</div>';
+                showSimpleModal(`Silenciadas 24h (${d.total})`, meta + rows);
+            } catch (e) { alert('Erro: ' + e.message); }
+        }
+
+        async function markSilencedFN(notifId) {
+            if (!confirm('Marcar como falso negativo? (essa decisao vira input pra calibrar regras de urgencia)')) return;
+            try {
+                const r = await fetch(`/api/admin/notifications-silenced/${notifId}/mark-fn`, { method: 'POST' });
+                const d = await r.json();
+                if (r.ok) {
+                    alert('Marcado como FN. Obrigado pelo feedback!');
+                    showSilencedModal();  // recarrega
+                } else {
+                    alert('Erro: ' + (d.detail || 'desconhecido'));
+                }
+            } catch (e) { alert('Erro: ' + e.message); }
         }
 
         async function loadOverrideStat() {
@@ -4721,6 +4789,7 @@
             loadClippingStat();
             loadEngagementStat();
             loadOverrideStat();
+            loadSilencedStat();
             loadCronHealth();
         }, 300);
 

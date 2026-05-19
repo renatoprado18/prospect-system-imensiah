@@ -4722,6 +4722,75 @@ async def api_linkedin_curator_override_stats(request: Request):
     }
 
 
+@app.get("/api/admin/notifications-silenced")
+async def api_notifications_silenced(request: Request, hours: int = 24):
+    """M2: lista notificacoes que foram pra digest em vez de WhatsApp imediato."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, source, msg_type, payload, urgency_score, digest_target,
+                   queued_at, sent_at, sent_in_digest, expired_at
+            FROM pending_notifications
+            WHERE queued_at >= NOW() - (%s || ' hours')::interval
+            ORDER BY queued_at DESC
+            LIMIT 200
+            """,
+            (str(hours),),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+    for r in rows:
+        for k in ("queued_at", "sent_at", "expired_at"):
+            if r.get(k):
+                r[k] = r[k].isoformat()
+
+    pending = [r for r in rows if not r.get("sent_at")]
+    sent = [r for r in rows if r.get("sent_at")]
+
+    return {
+        "hours": hours,
+        "total": len(rows),
+        "pending": len(pending),
+        "sent": len(sent),
+        "items": rows,
+    }
+
+
+@app.post("/api/admin/notifications-silenced/{notif_id}/mark-fn")
+async def api_mark_silenced_as_fn(notif_id: int, user: dict = Depends(require_admin)):
+    """M2: Renato marca pending como falso negativo (deveria ter vindo na hora)."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT source, msg_type, payload FROM pending_notifications WHERE id = %s",
+            (notif_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Pending notif nao encontrada")
+        cur.execute(
+            """
+            INSERT INTO system_memories (titulo, conteudo, tipo, fonte, criado_em)
+            VALUES (%s, %s, 'notification_fn', 'router_audit', NOW())
+            """,
+            (
+                f"FN router #{notif_id}",
+                json.dumps({
+                    "notif_id": notif_id,
+                    "source": row["source"],
+                    "msg_type": row["msg_type"],
+                    "payload": row["payload"],
+                }, default=str),
+            ),
+        )
+        conn.commit()
+    return {"ok": True, "notif_id": notif_id, "marked_as": "false_negative"}
+
+
 @app.get("/api/linkedin-engagement/summary")
 async def api_linkedin_engagement_summary(request: Request, days: int = 7):
     """F2 summary: signals capturados nos ultimos N dias agrupados por status."""
