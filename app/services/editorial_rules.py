@@ -136,6 +136,65 @@ def get_active_blocklist(target_field: str = "ai_categoria") -> List[str]:
     return result + extra
 
 
+def get_active_schedule_constraints() -> Dict[str, Any]:
+    """Devolve constraints de agendamento derivadas das hipoteses ativas.
+
+    Antes: H#2 (16h BRT) e H#3 (Ter/Qui/Sex) tinham regras=NULL, entao o painel
+    de auto-publish enforce-ava mas o modal manual "Agendar Hot Take" hardcodava
+    seg-sex e horarios 9h/12h/17h. User reportava "opcoes fora das hipoteses".
+
+    Le hipoteses com regras estruturadas:
+      {"action": "restrict_weekdays", "values": [1,3,4]}   # Ter=1, Qui=3, Sex=4
+      {"action": "restrict_hours", "values": [16, 21]}     # horas locais BRT
+
+    Returns:
+        {
+            "allowed_weekdays": [1,3,4] | None  # None = sem restricao
+            "allowed_hours": [16, 21] | None
+            "source_hypotheses": [N, ...]       # numeros das hipoteses contribuintes
+        }
+    """
+    allowed_weekdays: Optional[List[int]] = None
+    allowed_hours: Optional[List[int]] = None
+    sources: List[int] = []
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, regras FROM editorial_hypotheses
+                WHERE status = 'ativa' AND regras IS NOT NULL
+            """)
+            for row in cursor.fetchall():
+                regras = _parse_regras(row.get("regras"))
+                contributed = False
+                for r in regras:
+                    action = r.get("action")
+                    values = r.get("values") or []
+                    if isinstance(values, (int, str)):
+                        values = [values]
+                    if action == "restrict_weekdays":
+                        weekdays = [int(v) for v in values if str(v).lstrip('-').isdigit()]
+                        if weekdays:
+                            allowed_weekdays = sorted(set(weekdays))
+                            contributed = True
+                    elif action == "restrict_hours":
+                        hours = [int(v) for v in values if str(v).lstrip('-').isdigit() and 0 <= int(v) <= 23]
+                        if hours:
+                            allowed_hours = sorted(set(hours))
+                            contributed = True
+                if contributed:
+                    sources.append(row.get("id"))
+    except Exception:
+        logger.exception("get_active_schedule_constraints: erro lendo hipoteses")
+
+    return {
+        "allowed_weekdays": allowed_weekdays,
+        "allowed_hours": allowed_hours,
+        "source_hypotheses": sources,
+    }
+
+
 def build_block_clause(
     column: str = "ai_categoria",
     target_field: str = "ai_categoria",

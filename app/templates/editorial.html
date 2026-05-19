@@ -3343,14 +3343,24 @@ async function loadHypotheses() {
             const metric = (h.baseline != null && h.target != null)
                 ? `<span class="text-muted" style="font-size:0.75rem;"> · ${h.metrica}: ${h.baseline} → ${h.target}</span>`
                 : '';
-            // Badge "ENFORCED" quando regras estruturadas existem
+            // Badge "ENFORCED" quando regras estruturadas existem.
+            // Suporta: block (categoria), restrict_weekdays (Ter/Qui/Sex),
+            // restrict_hours (16h BRT). Sem regras = informational only.
             let enforcedBadge = '';
             if (h.regras && Array.isArray(h.regras) && h.regras.length > 0) {
-                const blocked = h.regras
-                    .filter(r => r.action === 'block' && r.target_field === 'ai_categoria')
-                    .flatMap(r => r.values || []);
-                if (blocked.length > 0) {
-                    enforcedBadge = ` <span class="badge bg-warning text-dark" style="font-size:0.65rem;" title="Bloqueia: ${blocked.join(', ')}"><i class="bi bi-shield-fill-check"></i> ENFORCED</span>`;
+                const dayNames = ['Seg','Ter','Qua','Qui','Sex','Sab','Dom'];
+                const titleParts = [];
+                for (const r of h.regras) {
+                    if (r.action === 'block') {
+                        titleParts.push(`Bloqueia ${r.target_field}: ${(r.values||[]).join(', ')}`);
+                    } else if (r.action === 'restrict_weekdays') {
+                        titleParts.push(`Dias: ${(r.values||[]).map(d => dayNames[d]).join('/')}`);
+                    } else if (r.action === 'restrict_hours') {
+                        titleParts.push(`Horas: ${(r.values||[]).map(x => x+'h').join('/')}`);
+                    }
+                }
+                if (titleParts.length > 0) {
+                    enforcedBadge = ` <span class="badge bg-warning text-dark" style="font-size:0.65rem;" title="${titleParts.join(' • ')}"><i class="bi bi-shield-fill-check"></i> ENFORCED</span>`;
                 }
             }
             return `

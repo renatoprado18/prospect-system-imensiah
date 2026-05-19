@@ -20687,6 +20687,17 @@ async def api_editorial_dismiss(post_id: int, request: Request):
             SELECT id FROM editorial_posts WHERE status = 'pending_approval'
         """)
         exclude_ids = [r['id'] for r in cursor.fetchall()]
+        # Hot_takes ja tentados pra ESTE slot — qualquer ep dismissed no mesmo
+        # slot com hot_take_id != NULL conta como "ja usado". Sem isso, dismiss
+        # libera o HT (clear editorial_post_id) e a IA pega o mesmo HT na
+        # proxima rodada, ciclo infinito (vi HT#159 em ep#198→199→201→202).
+        cursor.execute("""
+            SELECT DISTINCT hot_take_id FROM editorial_posts
+            WHERE status = 'dismissed'
+              AND data_publicacao_planejada = %s
+              AND hot_take_id IS NOT NULL
+        """, (slot,))
+        exclude_hot_take_ids = [r['hot_take_id'] for r in cursor.fetchall()]
         conn.commit()
 
     replacement = None
@@ -20699,7 +20710,9 @@ async def api_editorial_dismiss(post_id: int, request: Request):
             # a cadencia 3 hot + 1 editorial e a fila aparecia "so com artigos".
             preferred_source = 'hot_take' if dismissed_tipo == 'hot_take' else 'editorial'
             replacement = await select_replacement_post(
-                slot, exclude_ids=exclude_ids, preferred_source=preferred_source,
+                slot, exclude_ids=exclude_ids,
+                preferred_source=preferred_source,
+                exclude_hot_take_ids=exclude_hot_take_ids,
             )
             if replacement:
                 # marca substituicao no post descartado
@@ -20724,6 +20737,20 @@ async def api_editorial_dismiss(post_id: int, request: Request):
 # ============== EDITORIAL HYPOTHESES + TREND (PDCA) ==============
 # CRITICO: rotas com paths estaticos PRECISAM vir antes de /api/editorial/{post_id}
 # senao FastAPI tenta parsear o path estatico ('hypotheses') como int e devolve 422.
+
+@app.get("/api/editorial/schedule-rules")
+async def api_editorial_schedule_rules():
+    """Retorna constraints de agendamento derivadas das hipoteses ativas.
+
+    Usado pelo modal "Agendar Hot Take" pra filtrar dias/horas em vez de
+    mostrar opcoes que furam as hipoteses ativas.
+
+    Response: {allowed_weekdays: [1,3,4]|null, allowed_hours: [16,21]|null,
+               source_hypotheses: [2,3]}
+    """
+    from services.editorial_rules import get_active_schedule_constraints
+    return get_active_schedule_constraints()
+
 
 @app.get("/api/editorial/hypotheses")
 async def list_editorial_hypotheses(status: Optional[str] = None):

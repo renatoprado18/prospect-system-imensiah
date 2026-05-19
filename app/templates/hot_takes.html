@@ -974,18 +974,41 @@ hotTakesData.forEach(ht => {
     }
 });
 
+// Cache das constraints da hipotese ativa. Convencao Python weekday():
+// Seg=0 Ter=1 Qua=2 Qui=3 Sex=4 Sab=5 Dom=6. JS Date.getDay(): Dom=0 ... Sab=6.
+// Conversao: jsDay = (pyDay + 1) % 7
+let scheduleRules = null;
+async function loadScheduleRules() {
+    if (scheduleRules !== null) return scheduleRules;
+    try {
+        const r = await fetch('/api/editorial/schedule-rules');
+        scheduleRules = await r.json();
+    } catch (e) {
+        console.warn('Falha lendo schedule-rules, usando defaults', e);
+        scheduleRules = { allowed_weekdays: null, allowed_hours: null };
+    }
+    return scheduleRules;
+}
+
 function getNextWeekdays(count = 5) {
     const days = [];
     const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
     const today = new Date();
 
+    // Filtro vem das hipoteses ativas. Sem constraint, default = Seg-Sex
+    // (preserva comportamento legado).
+    let allowedJsDays = [1, 2, 3, 4, 5]; // Seg-Sex
+    if (scheduleRules && scheduleRules.allowed_weekdays) {
+        allowedJsDays = scheduleRules.allowed_weekdays.map(pyDay => (pyDay + 1) % 7);
+    }
+
     let current = new Date(today);
     current.setDate(current.getDate() + 1); // Start from tomorrow
 
-    while (days.length < count) {
+    let scanned = 0;
+    while (days.length < count && scanned < 30) {
         const dayOfWeek = current.getDay();
-        // Only include weekdays (Mon-Fri = 1-5)
-        if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+        if (allowedJsDays.includes(dayOfWeek)) {
             const dateStr = current.toISOString().split('T')[0];
             days.push({
                 date: dateStr,
@@ -996,6 +1019,7 @@ function getNextWeekdays(count = 5) {
             });
         }
         current.setDate(current.getDate() + 1);
+        scanned++;
     }
     return days;
 }
@@ -1010,10 +1034,13 @@ function selectQuickDate(dateStr) {
     });
 }
 
-function openScheduleModal(id) {
+async function openScheduleModal(id) {
     currentScheduleId = id;
 
-    // Populate quick dates
+    // Carrega constraints das hipoteses ativas (cacheado)
+    await loadScheduleRules();
+
+    // Populate quick dates (ja filtra por allowed_weekdays)
     const quickDatesContainer = document.getElementById('quickDates');
     const nextDays = getNextWeekdays(5);
 
@@ -1027,9 +1054,37 @@ function openScheduleModal(id) {
         </button>
     `).join('');
 
+    // Populate horarios baseado em hipotese ativa (H#2 = 16h BRT enforcing)
+    const timeSelect = document.getElementById('scheduleTime');
+    const allowedHours = (scheduleRules && scheduleRules.allowed_hours) || null;
+    const hourOptions = allowedHours
+        ? allowedHours.map(h => ({ value: `${String(h).padStart(2,'0')}:00`,
+                                    label: `${String(h).padStart(2,'0')}:00${h === allowedHours[0] ? ' (Hipotese ativa)' : ''}` }))
+        : [
+            { value: '09:00', label: '09:00 (Melhor engajamento)' },
+            { value: '12:00', label: '12:00' },
+            { value: '17:00', label: '17:00' },
+          ];
+    timeSelect.innerHTML = hourOptions
+        .map(o => `<option value="${o.value}">${o.label}</option>`)
+        .join('');
+
+    // Atualiza o helper text se hipotese ativa
+    const helper = document.querySelector('#scheduleDate + small');
+    if (helper && scheduleRules && (scheduleRules.allowed_weekdays || scheduleRules.allowed_hours)) {
+        const dayNames = ['Seg','Ter','Qua','Qui','Sex','Sab','Dom'];
+        const days = scheduleRules.allowed_weekdays
+            ? scheduleRules.allowed_weekdays.map(d => dayNames[d]).join('/')
+            : 'qualquer';
+        const hours = scheduleRules.allowed_hours
+            ? scheduleRules.allowed_hours.map(h => `${h}h`).join('/')
+            : 'qualquer';
+        helper.textContent = `Hipoteses ativas restringem a ${days} • ${hours}`;
+    }
+
     // Select first available day without posts
     const firstAvailable = nextDays.find(d => d.postsCount === 0) || nextDays[0];
-    selectQuickDate(firstAvailable.date);
+    if (firstAvailable) selectQuickDate(firstAvailable.date);
 
     document.getElementById('scheduleModal').classList.add('active');
 }

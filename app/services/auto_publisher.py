@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 # pra evitar que 1 post lento bloqueie a fila inteira no cron.
 PUBLISH_TIMEOUT_SECONDS = 30.0
 
+# Minimo de chars no body pra publicar. Posts 95 (106 chars) e 104 (118 chars)
+# sairam com conteudo_adaptado == ai_gancho_linkedin (so a hook), aparecendo
+# vazios no feed. 250 fica acima desses sem bloquear posts curtos legitimos.
+MIN_BODY_CHARS = 250
+
 
 def _notify_token_issue(reason: str):
     """Best-effort: avisa Renato no WhatsApp que o token LinkedIn expirou.
@@ -49,6 +54,30 @@ def _notify_token_issue(reason: str):
             asyncio.run(send_intel_notification(msg))
     except Exception:
         logger.exception("auto_publisher: falha ao notificar token invalido")
+
+
+def _notify_short_body(post_id: int, body_len: int, title: Optional[str], source: str):
+    """Best-effort: avisa que um post agendado foi pulado por body curto demais.
+
+    Cron pular silencioso e o mesmo bug que tinhamos com token expirado:
+    post nao sai, usuario descobre tarde. Notificacao da chance de editar
+    e re-agendar antes da janela passar.
+    """
+    try:
+        from services.intel_bot import send_intel_notification
+        label = (title or "sem titulo")[:60]
+        msg = (
+            f"INTEL: post {source} #{post_id} pulado — body com apenas "
+            f"{body_len} chars (minimo {MIN_BODY_CHARS}). "
+            f"Titulo: {label}. Edite e re-agende em /editorial."
+        )
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(send_intel_notification(msg))
+        except RuntimeError:
+            asyncio.run(send_intel_notification(msg))
+    except Exception:
+        logger.exception("auto_publisher: falha ao notificar short body")
 
 
 # Cadencia semanal padrao: 3 hot_takes opinativos + 1 repost de artigo curado.
@@ -388,6 +417,7 @@ async def select_replacement_post(
     slot_datetime: datetime,
     exclude_ids: List[int] = None,
     preferred_source: Optional[str] = None,
+    exclude_hot_take_ids: List[int] = None,
 ) -> Optional[Dict]:
     """
     Apos user descartar uma proposta da IA, escolhe o proximo melhor candidate
@@ -399,10 +429,16 @@ async def select_replacement_post(
     hot_takes nao) fazia editorial ganhar todo replacement de hot_take — fila
     de aprovacao vazava de hot_takes ao longo da semana.
 
+    exclude_hot_take_ids: ids de hot_takes ja tentados pra ESTE slot. Sem isso,
+    dismiss libera o HT (clear editorial_post_id) e a IA pega o mesmo HT
+    de novo na proxima rodada — ciclo infinito ate o user desistir. Ja vi
+    HT#159 escolhido 4x seguidas pro mesmo slot (eps #198→#199→#201→#202).
+
     Returns dict com {id, titulo, source, data_publicacao_planejada} ou None se sem candidatos.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
     exclude_ids = exclude_ids or []
+    exclude_hot_take_ids = exclude_hot_take_ids or []
 
     # Blocklist dinamica — mesma logica do select_weekly_posts.
     # Antes do fix, replacement furava o filtro de Complexidade (3o buraco
@@ -426,6 +462,10 @@ async def select_replacement_post(
             ORDER BY created_at DESC LIMIT 20
         """)
         raw_hot_takes = [dict(r) for r in cursor.fetchall()]
+        if exclude_hot_take_ids:
+            raw_hot_takes = [
+                h for h in raw_hot_takes if h['id'] not in exclude_hot_take_ids
+            ]
 
         # Editorial drafts (curados) — agora com filtro de blocklist
         excl_clause = ""
@@ -603,7 +643,8 @@ async def publish_due_posts() -> Dict:
 
             # Also check orphan hot_takes (scheduled but no editorial_post)
             cursor.execute("""
-                SELECT id, linkedin_post as conteudo, news_link as article_url
+                SELECT id, linkedin_post as conteudo, news_link as article_url,
+                       news_title as article_title
                 FROM hot_takes
                 WHERE status = 'scheduled' AND scheduled_for <= %s
                   AND editorial_post_id IS NULL
@@ -685,6 +726,11 @@ async def publish_due_posts() -> Dict:
             text = ht['conteudo'] or ''
             if not text:
                 continue
+            if len(text.strip()) < MIN_BODY_CHARS:
+                results["errors"] += 1
+                results["posts"].append({"id": ht['id'], "source": "hot_take", "error": f"body too short ({len(text.strip())} chars)"})
+                _notify_short_body(ht['id'], len(text.strip()), ht.get('article_title'), source="hot_take")
+                continue
             result = await _safe_publish(text, ht.get('article_url'))
             if result.get('success'):
                 with get_db() as conn:
@@ -727,13 +773,18 @@ async def publish_due_posts() -> Dict:
     for ep in due_editorials:
         try:
             text = ep['conteudo'] or ''
+            if len(text.strip()) < MIN_BODY_CHARS:
+                results["errors"] += 1
+                results["posts"].append({"id": ep['id'], "source": "editorial", "error": f"body too short ({len(text.strip())} chars)"})
+                _notify_short_body(ep['id'], len(text.strip()), ep.get('article_title'), source="editorial")
+                continue
             hashtags = ep.get('hashtags', [])
             if isinstance(hashtags, list):
-                hashtags = ' '.join(hashtags)
+                hashtags = ' '.join(f'#{h}' for h in hashtags if h)
             elif isinstance(hashtags, str):
                 try:
                     h = json.loads(hashtags)
-                    hashtags = ' '.join(h) if isinstance(h, list) else hashtags
+                    hashtags = ' '.join(f'#{x}' for x in h if x) if isinstance(h, list) else hashtags
                 except Exception:
                     pass
             full_text = text + ('\n\n' + hashtags if hashtags else '')
