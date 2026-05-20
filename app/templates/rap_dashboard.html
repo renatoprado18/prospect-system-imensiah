@@ -3092,7 +3092,10 @@
                         const link = it.profile_url ? `<a href="${it.profile_url}" target="_blank" rel="noopener">${escapeText(it.profile_name || '?')}</a>` : escapeText(it.profile_name || '?');
                         const post = it.post_title ? ` · sobre "${escapeText(it.post_title.substring(0,50))}"` : '';
                         const text = it.comment_text ? `<div style="font-size:0.75rem;color:#475569;margin-top:2px;font-style:italic;">"${escapeText(it.comment_text.substring(0,180))}"</div>` : '';
-                        return `<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9;"><div>${badge} ${link}${post}</div>${text}</div>`;
+                        const reply = it.comment_deeplink
+                            ? `<div style="margin-top:6px;"><a href="${it.comment_deeplink}" target="_blank" rel="noopener" style="font-size:0.75rem;color:#0a66c2;text-decoration:none;font-weight:600;">↪ Abrir comentario no LinkedIn</a></div>`
+                            : '';
+                        return `<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9;"><div>${badge} ${link}${post}</div>${text}${reply}</div>`;
                     }).join('')
                     : '<div style="padding:24px;text-align:center;color:#64748b;">Sem signals nos ultimos 7 dias.</div>';
                 showSimpleModal(`Leads engajaram (${d.total}) — 7d`,

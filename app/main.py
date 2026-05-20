@@ -4845,7 +4845,9 @@ async def api_linkedin_engagement_summary(request: Request, days: int = 7):
             """
             SELECT s.id, s.profile_name, s.profile_headline, s.profile_url,
                    s.comment_text, s.detected_at, s.status, s.contact_id,
-                   s.task_id, s.post_id, p.article_title AS post_title
+                   s.task_id, s.post_id, s.comment_urn,
+                   p.article_title AS post_title,
+                   p.linkedin_activity_urn, p.linkedin_post_url
             FROM linkedin_engagement_signals s
             LEFT JOIN editorial_posts p ON p.id = s.post_id
             WHERE s.detected_at >= NOW() - (%s || ' days')::interval
@@ -4855,9 +4857,23 @@ async def api_linkedin_engagement_summary(request: Request, days: int = 7):
             (str(days),),
         )
         items = [dict(r) for r in cur.fetchall()]
+        from urllib.parse import quote as _urlquote
         for it in items:
             if it.get("detected_at"):
                 it["detected_at"] = it["detected_at"].isoformat()
+            # Deeplink direto pro comentario no LinkedIn (abre post no scroll certo).
+            # Formato: /feed/update/urn:li:activity:NNN/?commentUrn=<url-encoded comment urn>
+            comment_urn = it.get("comment_urn")
+            activity_urn = it.get("linkedin_activity_urn")
+            post_url = it.get("linkedin_post_url")
+            if comment_urn and (activity_urn or post_url):
+                base = (
+                    f"https://www.linkedin.com/feed/update/{activity_urn}/"
+                    if activity_urn else post_url.rstrip('/') + '/'
+                )
+                it["comment_deeplink"] = f"{base}?commentUrn={_urlquote(comment_urn, safe='')}"
+            else:
+                it["comment_deeplink"] = None
     return {
         "days": days,
         "total": agg.get("total") or 0,
