@@ -4723,19 +4723,30 @@ async def api_linkedin_curator_override_stats(request: Request):
 
 
 @app.get("/api/admin/notifications-silenced")
-async def api_notifications_silenced(request: Request, hours: int = 24):
-    """M2: lista notificacoes que foram pra digest em vez de WhatsApp imediato."""
+async def api_notifications_silenced(request: Request, hours: int = 24, show: str = "unacked"):
+    """M2: lista notificacoes que foram pra digest em vez de WhatsApp imediato.
+
+    Args:
+        hours: janela temporal
+        show: 'unacked' (default — esconde ja confirmadas) | 'all' | 'acked'
+    """
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
+    ack_filter = {
+        "unacked": "AND acked_at IS NULL",
+        "acked":   "AND acked_at IS NOT NULL",
+        "all":     "",
+    }.get(show, "AND acked_at IS NULL")
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
-            """
+            f"""
             SELECT id, source, msg_type, payload, urgency_score, digest_target,
-                   queued_at, sent_at, sent_in_digest, expired_at
+                   queued_at, sent_at, sent_in_digest, expired_at, acked_at
             FROM pending_notifications
             WHERE queued_at >= NOW() - (%s || ' hours')::interval
+              {ack_filter}
             ORDER BY queued_at DESC
             LIMIT 200
             """,
@@ -4744,7 +4755,7 @@ async def api_notifications_silenced(request: Request, hours: int = 24):
         rows = [dict(r) for r in cur.fetchall()]
 
     for r in rows:
-        for k in ("queued_at", "sent_at", "expired_at"):
+        for k in ("queued_at", "sent_at", "expired_at", "acked_at"):
             if r.get(k):
                 r[k] = r[k].isoformat()
 
@@ -4753,11 +4764,28 @@ async def api_notifications_silenced(request: Request, hours: int = 24):
 
     return {
         "hours": hours,
+        "show": show,
         "total": len(rows),
         "pending": len(pending),
         "sent": len(sent),
         "items": rows,
     }
+
+
+@app.post("/api/admin/notifications-silenced/{notif_id}/ack")
+async def api_ack_silenced(notif_id: int, user: dict = Depends(require_admin)):
+    """Renato marca 'Digest OK' — viu o item no digest e esta bem assim.
+    Some do modal de auditoria. Fica no banco pra metricas."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE pending_notifications SET acked_at = NOW() WHERE id = %s AND acked_at IS NULL",
+            (notif_id,),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Pending notif nao encontrada ou ja confirmada")
+        conn.commit()
+    return {"ok": True, "notif_id": notif_id, "marked_as": "acked"}
 
 
 @app.post("/api/admin/notifications-silenced/{notif_id}/mark-fn")

@@ -3002,21 +3002,48 @@
                             : '';
 
                         // Ações
+                        const contactId = payload.contact_id;
                         const actions = [];
-                        if (proposalId) {
-                            actions.push(`<a href="/admin/action-proposals?id=${proposalId}" style="color:#7c3aed;font-size:0.72rem;text-decoration:none;">→ ver proposta</a>`);
+                        if (contactId) {
+                            actions.push(`<a href="/contatos/${contactId}" target="_blank" rel="noopener" style="color:#7c3aed;font-size:0.72rem;text-decoration:none;">→ abrir contato</a>`);
                         }
+                        actions.push(`<button onclick="ackSilenced(${it.id}, this)" style="background:#dcfce7;border:1px solid #86efac;color:#15803d;border-radius:4px;font-size:0.7rem;padding:2px 8px;cursor:pointer;font-weight:600;">✓ Digest OK</button>`);
                         actions.push(`<button onclick="markSilencedFN(${it.id})" style="background:none;border:1px solid #cbd5e1;border-radius:4px;font-size:0.7rem;padding:1px 6px;cursor:pointer;color:#64748b;">deveria ter vindo na hora</button>`);
 
-                        return `<div style="padding:10px 10px;border-bottom:1px solid #f1f5f9;font-size:0.82rem;">
+                        return `<div id="silenced-item-${it.id}" style="padding:10px 10px;border-bottom:1px solid #f1f5f9;font-size:0.82rem;">
                             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">${head}</div>
                             ${bodyPreview}
-                            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;">${actions.join('')}</div>
+                            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">${actions.join('')}</div>
                         </div>`;
                     }).join('')
                     : '<div style="padding:24px;text-align:center;color:#64748b;">Nenhuma notificacao silenciada nas ultimas 24h.</div>';
                 showSimpleModal(`Silenciadas 24h (${d.total})`, meta + rows);
             } catch (e) { alert('Erro: ' + e.message); }
+        }
+
+        async function ackSilenced(notifId, btn) {
+            if (btn) { btn.disabled = true; btn.innerHTML = '...'; }
+            try {
+                const r = await fetch(`/api/admin/notifications-silenced/${notifId}/ack`, { method: 'POST' });
+                if (!r.ok) {
+                    const d = await r.json().catch(() => ({}));
+                    alert('Erro: ' + (d.detail || 'desconhecido'));
+                    if (btn) { btn.disabled = false; btn.innerHTML = '✓ Digest OK'; }
+                    return;
+                }
+                // Remove o item do modal com animacao curta
+                const el = document.getElementById(`silenced-item-${notifId}`);
+                if (el) {
+                    el.style.transition = 'opacity 0.2s';
+                    el.style.opacity = '0';
+                    setTimeout(() => el.remove(), 200);
+                }
+                // Atualiza pill no dashboard
+                if (typeof loadSilencedStat === 'function') loadSilencedStat();
+            } catch (e) {
+                alert('Erro: ' + e.message);
+                if (btn) { btn.disabled = false; btn.innerHTML = '✓ Digest OK'; }
+            }
         }
 
         async function markSilencedFN(notifId) {
