@@ -491,17 +491,27 @@ async def process_incoming_message(data: Dict) -> Dict:
     from_me = key.get("fromMe", False)
     message_id = key.get("id")
 
-    # Group messages: check for RACI updates (smart matcher — texto livre)
+    # Group messages: check for RACI updates (smart matcher — texto livre + media)
     if "@g.us" in remote_jid:
         if not from_me:
             text_content = ""
             msg_data = data.get("data", {})
-            if msg_data.get("message", {}).get("conversation"):
-                text_content = msg_data["message"]["conversation"]
-            elif msg_data.get("message", {}).get("extendedTextMessage", {}).get("text"):
-                text_content = msg_data["message"]["extendedTextMessage"]["text"]
+            message_obj = msg_data.get("message", {}) or {}
+            caption = ""
+            if message_obj.get("conversation"):
+                text_content = message_obj["conversation"]
+            elif message_obj.get("extendedTextMessage", {}).get("text"):
+                text_content = message_obj["extendedTextMessage"]["text"]
+            # Captions de imagem/documento — Phase 2 sera extraido junto com media
+            elif message_obj.get("imageMessage", {}).get("caption"):
+                caption = message_obj["imageMessage"]["caption"]
+            elif message_obj.get("documentMessage", {}).get("caption"):
+                caption = message_obj["documentMessage"]["caption"]
 
-            if text_content:
+            # Detecta se tem media a processar
+            has_media = any(k in message_obj for k in ("audioMessage", "imageMessage", "documentMessage"))
+
+            if text_content or has_media:
                 try:
                     from database import get_db
                     with get_db() as conn:
@@ -524,20 +534,31 @@ async def process_incoming_message(data: Dict) -> Dict:
                             emp = cur2.fetchone()
                             conn2.close()
                             if emp:
-                                from services.raci_smart_updates import process_group_message
-                                result = await process_group_message(text_content, emp[0], emp[1])
-                                applied = result.get("applied", [])
-                                if applied:
-                                    logger.info(f"RACI smart_updates applied {len(applied)} via {result.get('source')}: {applied}")
-                                    client = get_evolution_client()
-                                    for a in applied:
-                                        await client.send_text(
-                                            remote_jid,
-                                            f"✅ Atualizado: *{a['acao'][:60]}* → {a['new_status']}",
-                                            instance_name="rap-whatsapp"
-                                        )
-                                elif result.get("pending_review"):
-                                    logger.info(f"RACI smart_updates {len(result['pending_review'])} pending review")
+                                from services.raci_smart_updates import process_group_message, extract_text_from_media
+
+                                # Phase 2: extrai texto de media se houver. Junta com text_content/caption.
+                                if has_media:
+                                    instance = data.get("instance") or os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp")
+                                    media_text = await extract_text_from_media(message_obj, key, instance, caption=caption)
+                                    if media_text:
+                                        combined = (text_content + "\n\n" if text_content else "") + media_text
+                                        text_content = combined
+                                        logger.info(f"RACI media extracted: {len(media_text)} chars")
+
+                                if text_content:
+                                    result = await process_group_message(text_content, emp[0], emp[1])
+                                    applied = result.get("applied", [])
+                                    if applied:
+                                        logger.info(f"RACI smart_updates applied {len(applied)} via {result.get('source')}: {applied}")
+                                        client = get_evolution_client()
+                                        for a in applied:
+                                            await client.send_text(
+                                                remote_jid,
+                                                f"✅ Atualizado: *{a['acao'][:60]}* → {a['new_status']}",
+                                                instance_name="rap-whatsapp"
+                                            )
+                                    elif result.get("pending_review"):
+                                        logger.info(f"RACI smart_updates {len(result['pending_review'])} pending review")
                 except Exception as e:
                     logger.warning(f"RACI group update error: {e}")
 

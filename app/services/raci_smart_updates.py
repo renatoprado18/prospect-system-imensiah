@@ -34,6 +34,9 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 # Tamanho minimo de msg pra rodar AI (filtra "ok", "👍", reactions)
 MIN_TEXT_LEN_FOR_AI = 12
 
+# Phase 2: limite anti-loop pra docs gigantes baixados da Evolution.
+MAX_MEDIA_BYTES = 20 * 1024 * 1024  # 20MB
+
 
 def _get_open_items(empresa_id: str) -> List[Dict]:
     """Retorna itens nao-concluidos da empresa pra usar como contexto do classifier."""
@@ -208,6 +211,149 @@ def apply_proposal(proposal: Dict, empresa_id: str) -> Optional[Dict]:
     except Exception as e:
         logger.warning(f"apply_proposal falhou: {e}")
         return None
+
+
+async def _download_media_from_evolution(message_key: Dict, instance: str) -> Optional[Dict]:
+    """Baixa media (base64 + mime) da Evolution API via key.id.
+    Returns {'base64', 'mimetype'} ou None. Timeout 15s pra nao bloquear webhook."""
+    evo_url = (os.getenv("EVOLUTION_API_URL") or "").rstrip('/')
+    evo_key = (os.getenv("EVOLUTION_API_KEY") or "").strip()
+    if not evo_url or not evo_key or not instance:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as cli:
+            r = await cli.post(
+                f"{evo_url}/chat/getBase64FromMediaMessage/{instance}",
+                headers={"apikey": evo_key, "Content-Type": "application/json"},
+                json={"message": {"key": message_key}, "convertToMp4": False},
+            )
+        if r.status_code not in (200, 201):
+            logger.warning(f"download media: HTTP {r.status_code}")
+            return None
+        d = r.json()
+        b64 = d.get("base64") or ""
+        mime = (d.get("mimetype") or "").split(";")[0].strip()
+        if not b64:
+            return None
+        if len(b64) * 0.75 > MAX_MEDIA_BYTES:
+            logger.warning(f"media too large: ~{int(len(b64)*0.75/1024/1024)}MB")
+            return None
+        return {"base64": b64, "mimetype": mime or "application/octet-stream"}
+    except Exception as e:
+        logger.warning(f"download media error: {e}")
+        return None
+
+
+async def _claude_media_to_text(b64: str, mime: str, instruction: str,
+                                  model: str = "claude-haiku-4-5-20251001") -> Optional[str]:
+    """Envia media pro Claude com instrucao de extracao. Audio/PDF = type=document; image = type=image."""
+    if not ANTHROPIC_API_KEY:
+        return None
+    is_image = mime.startswith("image/")
+    block = (
+        {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}
+        if is_image
+        else {"type": "document", "source": {"type": "base64", "media_type": mime, "data": b64}}
+    )
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as cli:
+            r = await cli.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01",
+                         "content-type": "application/json"},
+                json={"model": model, "max_tokens": 2000,
+                      "messages": [{"role": "user", "content": [block, {"type": "text", "text": instruction}]}]},
+            )
+        if r.status_code != 200:
+            logger.warning(f"claude media: HTTP {r.status_code}: {r.text[:200]}")
+            return None
+        return r.json()["content"][0]["text"].strip()
+    except Exception as e:
+        logger.warning(f"claude media error: {e}")
+        return None
+
+
+def _extract_docx_text(b64: str) -> Optional[str]:
+    """Extrai texto de .docx localmente via python-docx (paragrafos + tabelas)."""
+    try:
+        import base64, io
+        from docx import Document
+        doc = Document(io.BytesIO(base64.b64decode(b64)))
+        text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if cell.text.strip():
+                        text += "\n" + cell.text
+        return text or None
+    except Exception as e:
+        logger.warning(f"docx extract error: {e}")
+        return None
+
+
+async def extract_text_from_media(message: Dict, message_key: Dict, instance: str,
+                                    caption: str = "") -> Optional[str]:
+    """Detecta tipo de media (audio/image/document) e extrai texto via Claude
+    multimodal ou python-docx. Junta caption se houver. Returns text ou None."""
+    has_audio = "audioMessage" in message
+    has_image = "imageMessage" in message
+    has_doc = "documentMessage" in message
+    if not (has_audio or has_image or has_doc):
+        return None
+
+    media = await _download_media_from_evolution(message_key, instance)
+    if not media:
+        return None
+    b64 = media["base64"]
+    mime = media["mimetype"]
+
+    extracted: Optional[str] = None
+
+    if has_audio:
+        if not mime or mime == "application/octet-stream":
+            mime = "audio/ogg"  # WA default
+        extracted = await _claude_media_to_text(
+            b64, mime,
+            "Transcreva este audio em portugues. Responda APENAS a transcricao, sem comentarios."
+        )
+
+    elif has_image:
+        if not mime.startswith("image/"):
+            mime = "image/jpeg"
+        extracted = await _claude_media_to_text(
+            b64, mime,
+            "Descreva o conteudo desta imagem em portugues — texto, dados, contexto. "
+            "Se for screenshot de planilha/dashboard/conversa, transcreva o conteudo literal. "
+            "Maximo 500 palavras."
+        )
+
+    elif has_doc:
+        doc_msg = message.get("documentMessage", {}) or {}
+        filename = (doc_msg.get("fileName") or "").lower()
+        if filename.endswith(".docx") or "wordprocessingml" in mime:
+            extracted = _extract_docx_text(b64)
+        elif filename.endswith(".pdf") or "pdf" in mime:
+            extracted = await _claude_media_to_text(
+                b64, "application/pdf",
+                "Extraia o conteudo textual deste PDF em portugues. Foque em dados, decisoes, "
+                "prazos, nomes. Pule cabecalhos/rodapes repetitivos. Maximo 2000 palavras."
+            )
+        elif filename.endswith((".txt", ".md")) or mime.startswith("text/"):
+            try:
+                import base64
+                extracted = base64.b64decode(b64).decode("utf-8", errors="replace")[:5000]
+            except Exception:
+                pass
+        else:
+            logger.info(f"documentMessage tipo nao suportado: {filename} mime={mime}")
+
+    if not extracted:
+        return None
+
+    extracted = extracted.strip()
+    if caption and caption.strip():
+        extracted = f"[Legenda: {caption.strip()}]\n\n{extracted}"
+    return extracted
 
 
 async def process_group_message(text: str, empresa_id: str, empresa_nome: str = "") -> Dict:
