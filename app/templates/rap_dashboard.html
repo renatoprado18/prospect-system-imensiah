@@ -2310,6 +2310,13 @@
 {% block extra_js %}
 <script src="/static/js/article_match.js"></script>
 <script>
+        // Global helper — usado pelos modais showSilencedModal/showEngagementModal/
+        // showOverrideModal. Definicao local duplicada existe dentro de
+        // renderClippingInto (mantida pra nao quebrar codigo legado).
+        function escapeText(s) {
+            return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+        }
+
         // Global sync function
         async function globalSync() {
             const btn = document.getElementById('btnGlobalSync');
