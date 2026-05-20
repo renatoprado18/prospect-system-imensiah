@@ -425,6 +425,7 @@ async def collect_metrics_for_due_windows() -> Dict:
                 for pid in post_ids_in_batch:
                     cur.execute("""
                         UPDATE tasks SET status='completed', data_conclusao=NOW(),
+                            sync_status='pending_push',
                             descricao=COALESCE(descricao,'') ||
                                 ' | Auto-completed: cron auto-collect em ' || NOW()::date
                         WHERE status='pending'
@@ -454,6 +455,7 @@ async def collect_metrics_for_due_windows() -> Dict:
                     HAVING COUNT(DISTINCT janela) >= %s
                 )
                 UPDATE tasks SET status='completed', data_conclusao=NOW(),
+                    sync_status='pending_push',
                     descricao=COALESCE(descricao,'') ||
                         ' | Auto-completed: sweep orphan (post 100% coletado) em ' || NOW()::date
                 WHERE status='pending'

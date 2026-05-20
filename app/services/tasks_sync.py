@@ -216,14 +216,21 @@ class TasksSyncService:
                 # Update existing
                 local_task = dict(local_task)
 
-                # Verificar se Google tem versao mais recente
-                google_updated = google_task.get("updated")
+                # Conflict resolution: se local foi modificado depois do ultimo sync
+                # (ex: user editou via UI, ou cron interno fechou task), local vence —
+                # marca pending_push pra reconciliar Google na proxima push.
+                # Antes desse fix, Google vencia sempre e revertia edits locais
+                # (caso real 19/05: tasks 417/451 reabertas + 403 movida de volta).
+                local_atualizado = local_task.get("atualizado_em")
                 local_synced = local_task.get("last_synced_at")
-
-                if local_synced and google_updated:
-                    # Se local foi modificado depois do sync, pode haver conflito
-                    # Por enquanto, Google vence
-                    pass
+                if local_atualizado and local_synced and local_atualizado > local_synced:
+                    # Local tem mudanca pendente — nao sobrescreve. So sinaliza pending_push.
+                    cursor.execute("""
+                        UPDATE tasks SET sync_status = 'pending_push'
+                        WHERE google_task_id = %s AND sync_status != 'pending_push'
+                    """, (google_id,))
+                    conn.commit()
+                    return "skipped"
 
                 cursor.execute("""
                     UPDATE tasks
