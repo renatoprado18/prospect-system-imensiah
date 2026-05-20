@@ -2954,26 +2954,64 @@
             } catch (e) { console.error('silenced stat:', e); }
         }
 
+        function _fmtBRT(iso) {
+            if (!iso) return '';
+            try {
+                const d = new Date(iso);
+                const hh = String(d.getHours()).padStart(2, '0');
+                const mm = String(d.getMinutes()).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                const mon = String(d.getMonth() + 1).padStart(2, '0');
+                return `${day}/${mon} ${hh}:${mm}`;
+            } catch { return iso.substring(0, 16); }
+        }
+
         async function showSilencedModal() {
             try {
                 const r = await fetch('/api/admin/notifications-silenced?hours=24');
                 const d = await r.json();
                 const items = d.items || [];
-                const meta = `<div style="font-size:0.82rem;margin-bottom:10px;color:#64748b;">${d.pending} aguardando proximo digest · ${d.sent} ja digeridas. <strong>Mode</strong>: confira NOTIFICATION_DIGEST_MODE em prod.</div>`;
+                const meta = `<div style="font-size:0.82rem;margin-bottom:10px;color:#64748b;">${d.pending} aguardando proximo digest · ${d.sent} ja digeridas. Avalie se cada item podia esperar — se nao, click "deveria ter vindo na hora" pra calibrar regras.</div>`;
                 const rows = items.length
                     ? items.map(it => {
                         const payload = it.payload || {};
-                        const title = payload.title || payload.body || it.msg_type || it.source;
-                        const sentBadge = it.sent_at
-                            ? `<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:4px;font-size:0.65rem;">${escapeText(it.sent_in_digest || 'digerido')}</span>`
-                            : '<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-size:0.65rem;">PENDING</span>';
+                        const contactName = payload.contact_name || '';
+                        const proposalId = payload.proposal_id;
+                        const actionType = payload.action_type || it.msg_type || '';
+                        const body = (payload.body || payload.title || '').toString();
+                        const queuedFmt = _fmtBRT(it.queued_at);
+
+                        // Status badge
+                        const statusBadge = it.sent_at
+                            ? `<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:4px;font-size:0.65rem;font-weight:600;">${escapeText(it.sent_in_digest || 'digerido')}</span>`
+                            : '<span style="background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-size:0.65rem;font-weight:600;">PENDING</span>';
                         const expiredBadge = it.expired_at ? '<span style="color:#dc2626;font-size:0.7rem;margin-left:6px;">⏰ +24h</span>' : '';
-                        const mark = !it.sent_at
-                            ? `<button onclick="markSilencedFN(${it.id})" style="background:none;border:1px solid #cbd5e1;border-radius:4px;font-size:0.7rem;padding:1px 6px;cursor:pointer;color:#64748b;margin-left:6px;">deveria ter vindo na hora</button>`
+
+                        // Linha 1: badge + queued + contato + ação
+                        const head = [
+                            statusBadge,
+                            expiredBadge,
+                            queuedFmt ? `<span style="color:#64748b;font-size:0.7rem;">⏰ ${queuedFmt}</span>` : '',
+                            contactName ? `<strong>${escapeText(contactName)}</strong>` : `<strong>${escapeText(it.source)}</strong>`,
+                            actionType ? `<span style="color:#64748b;font-size:0.72rem;">${escapeText(actionType)}</span>` : '',
+                        ].filter(Boolean).join(' ');
+
+                        // Body — primeiros 240 chars do texto que apareceria no WhatsApp
+                        const bodyPreview = body
+                            ? `<div style="color:#334155;margin-top:6px;font-size:0.8rem;white-space:pre-wrap;line-height:1.4;background:#f8fafc;padding:6px 8px;border-radius:4px;border-left:2px solid #cbd5e1;">${escapeText(body.substring(0, 240))}${body.length > 240 ? '...' : ''}</div>`
                             : '';
-                        return `<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9;font-size:0.82rem;">
-                            <div>${sentBadge}${expiredBadge} <strong>${escapeText(it.source)}</strong> · <span style="color:#64748b;">${escapeText(it.msg_type || '')}</span>${mark}</div>
-                            <div style="color:#475569;margin-top:2px;">${escapeText(String(title).substring(0, 160))}</div>
+
+                        // Ações
+                        const actions = [];
+                        if (proposalId) {
+                            actions.push(`<a href="/admin/action-proposals?id=${proposalId}" style="color:#7c3aed;font-size:0.72rem;text-decoration:none;">→ ver proposta</a>`);
+                        }
+                        actions.push(`<button onclick="markSilencedFN(${it.id})" style="background:none;border:1px solid #cbd5e1;border-radius:4px;font-size:0.7rem;padding:1px 6px;cursor:pointer;color:#64748b;">deveria ter vindo na hora</button>`);
+
+                        return `<div style="padding:10px 10px;border-bottom:1px solid #f1f5f9;font-size:0.82rem;">
+                            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">${head}</div>
+                            ${bodyPreview}
+                            <div style="margin-top:6px;display:flex;gap:8px;align-items:center;">${actions.join('')}</div>
                         </div>`;
                     }).join('')
                     : '<div style="padding:24px;text-align:center;color:#64748b;">Nenhuma notificacao silenciada nas ultimas 24h.</div>';
