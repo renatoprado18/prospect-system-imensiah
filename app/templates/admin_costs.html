@@ -7,38 +7,45 @@
 <style>
     .costs-stats {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 12px;
-        margin-bottom: 20px;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        margin-bottom: 14px;
     }
+    @media (max-width: 900px) { .costs-stats { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 500px) { .costs-stats { grid-template-columns: 1fr; } }
     .stat-card {
         background: white;
-        border-radius: 12px;
-        padding: 14px 16px;
+        border-radius: 8px;
+        padding: 8px 12px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-        border-left: 4px solid var(--primary);
+        border-left: 3px solid var(--primary);
+        min-height: 0;
     }
     .stat-card.danger { border-left-color: #ef4444; }
     .stat-card.warning { border-left-color: #f59e0b; }
     .stat-card.success { border-left-color: #10b981; }
     .stat-card .label {
-        font-size: 0.7rem;
+        font-size: 0.65rem;
         text-transform: uppercase;
         color: #64748b;
         font-weight: 600;
         letter-spacing: 0.04em;
     }
     .stat-card .value {
-        font-size: 1.6rem;
+        font-size: 1.15rem;
         font-weight: 700;
         color: #0f172a;
-        margin-top: 4px;
+        margin-top: 2px;
+        line-height: 1.2;
     }
     .stat-card .sub {
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         color: #94a3b8;
-        margin-top: 2px;
+        margin-top: 1px;
+        line-height: 1.2;
     }
+    .stat-card .delta-up { color: #dc2626; font-weight: 600; }
+    .stat-card .delta-down { color: #15803d; font-weight: 600; }
 
     .alerts-banner {
         background: #fef2f2;
@@ -432,7 +439,16 @@ function renderStats() {
     const current = totals[0];
     const prev = totals[1] || { total_usd: 0, period_start: '—' };
     document.getElementById('statCurrent').textContent = '$' + current.total_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    document.getElementById('statCurrentLabel').textContent = current.period_start.slice(0, 7);
+    // sub do mes corrente: periodo + variacao vs mes anterior
+    let currentSubHtml = current.period_start.slice(0, 7);
+    if (prev.total_usd > 0) {
+        const delta = current.total_usd - prev.total_usd;
+        const deltaPct = (delta / prev.total_usd) * 100;
+        const cls = delta > 0 ? 'delta-up' : (delta < 0 ? 'delta-down' : '');
+        const sign = delta > 0 ? '+' : '';
+        currentSubHtml += ` · <span class="${cls}">${sign}${deltaPct.toFixed(0)}% vs anterior</span>`;
+    }
+    document.getElementById('statCurrentLabel').innerHTML = currentSubHtml;
     document.getElementById('statPrev').textContent = '$' + prev.total_usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     document.getElementById('statPrevLabel').textContent = prev.period_start.slice(0, 7);
 
