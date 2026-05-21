@@ -130,9 +130,31 @@ async def _stop_scheduler():
         logger.exception("scheduler: shutdown error")
 
 
+def _cron_secret_fingerprint() -> dict:
+    """Fingerprint do CRON_SECRET sem expor o valor — pareia com o formato
+    do /api/admin/cron-auth-debug no Vercel pra comparacao 1:1.
+    Use first4 + last4 + sha256_first8 pra detectar mismatch entre Railway e Vercel.
+    """
+    raw = os.getenv("CRON_SECRET", "")
+    stripped = raw.strip()
+    if not stripped:
+        return {"present": False, "length": 0, "first4": "", "last4": "", "sha256_first8": "",
+                "has_trailing_whitespace": raw != stripped}
+    import hashlib
+    return {
+        "present": True,
+        "length": len(stripped),
+        "first4": stripped[:4],
+        "last4": stripped[-4:],
+        "sha256_first8": hashlib.sha256(stripped.encode("utf-8")).hexdigest()[:8],
+        "has_trailing_whitespace": raw != stripped,
+    }
+
+
 @app.get("/scheduler-status")
 async def scheduler_status():
-    """Debug: lista jobs registrados + proximo fire scheduled."""
+    """Debug: lista jobs registrados + proximo fire scheduled + fingerprint
+    do CRON_SECRET pra comparacao com Vercel (/api/admin/cron-auth-debug)."""
     jobs_info = []
     for job in scheduler.get_jobs():
         jobs_info.append({
@@ -143,6 +165,7 @@ async def scheduler_status():
     return {
         "scheduler_running": scheduler.running,
         "cron_secret_set": bool(CRON_SECRET),
+        "cron_secret_fingerprint": _cron_secret_fingerprint(),
         "jobs": jobs_info,
     }
 
