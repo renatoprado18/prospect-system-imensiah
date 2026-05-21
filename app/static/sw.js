@@ -2,7 +2,7 @@
  * Service Worker for INTEL Push Notifications
  */
 
-const CACHE_NAME = 'intel-v2';
+const CACHE_NAME = 'intel-v3';
 const STATIC_ASSETS = [
     '/static/img/icon-192.svg',
     '/static/img/icon-512.svg',
