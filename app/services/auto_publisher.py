@@ -28,6 +28,65 @@ PUBLISH_TIMEOUT_SECONDS = 30.0
 # sairam com conteudo_adaptado == ai_gancho_linkedin (so a hook), aparecendo
 # vazios no feed. 250 fica acima desses sem bloquear posts curtos legitimos.
 MIN_BODY_CHARS = 250
+# Auto-dismiss apos N falhas consecutivas com body vazio. Evita loop infinito
+# no cron que enche /admin/cron-health de erros (caso post 83, mai/2026).
+PUBLISH_FAILURE_LIMIT = 3
+
+
+def _record_publish_failure(
+    table: str,
+    post_id: int,
+    title: Optional[str],
+    source: str,
+    body_len: int,
+    reason: str = "body_vazio",
+) -> bool:
+    """Incrementa publish_failures + auto-dismiss se atingir limite.
+
+    Returns True se virou dismissed nesta chamada (pra notificar uma vez so).
+
+    table: 'editorial_posts' ou 'hot_takes'
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"UPDATE {table} SET publish_failures = COALESCE(publish_failures, 0) + 1 "
+                f"WHERE id = %s RETURNING publish_failures",
+                (post_id,),
+            )
+            row = cursor.fetchone()
+            attempts = row["publish_failures"] if row else 0
+
+            transitioned = False
+            if attempts >= PUBLISH_FAILURE_LIMIT:
+                motivo = f"auto: {reason} ({attempts} falhas consecutivas)"
+                if table == "editorial_posts":
+                    cursor.execute(
+                        """
+                        UPDATE editorial_posts
+                        SET status = 'dismissed',
+                            dismissed_em = NOW(),
+                            dismissed_motivo = %s,
+                            atualizado_em = NOW()
+                        WHERE id = %s AND status != 'dismissed'
+                        """,
+                        (motivo, post_id),
+                    )
+                else:
+                    cursor.execute(
+                        f"UPDATE {table} SET status = 'dismissed' WHERE id = %s AND status != 'dismissed'",
+                        (post_id,),
+                    )
+                transitioned = cursor.rowcount > 0
+            conn.commit()
+
+            if transitioned:
+                _notify_short_body(post_id, body_len, title, source=f"{source} (auto-dismissed apos {attempts} falhas)")
+            return transitioned
+    except Exception as e:
+        logger.warning(f"_record_publish_failure({table}, {post_id}) falhou: {e}")
+        return False
 
 
 def _notify_token_issue(reason: str):
@@ -748,8 +807,13 @@ async def publish_due_posts() -> Dict:
                 continue
             if len(text.strip()) < MIN_BODY_CHARS:
                 results["errors"] += 1
-                results["posts"].append({"id": ht['id'], "source": "hot_take", "error": f"body too short ({len(text.strip())} chars)"})
-                _notify_short_body(ht['id'], len(text.strip()), ht.get('article_title'), source="hot_take")
+                dismissed = _record_publish_failure(
+                    "hot_takes", ht['id'], ht.get('article_title'), "hot_take", len(text.strip())
+                )
+                results["posts"].append({
+                    "id": ht['id'], "source": "hot_take",
+                    "error": f"body too short ({len(text.strip())} chars)" + (" — auto-dismissed" if dismissed else ""),
+                })
                 continue
             result = await _safe_publish(text, ht.get('article_url'))
             if result.get('success'):
@@ -795,8 +859,13 @@ async def publish_due_posts() -> Dict:
             text = ep['conteudo'] or ''
             if len(text.strip()) < MIN_BODY_CHARS:
                 results["errors"] += 1
-                results["posts"].append({"id": ep['id'], "source": "editorial", "error": f"body too short ({len(text.strip())} chars)"})
-                _notify_short_body(ep['id'], len(text.strip()), ep.get('article_title'), source="editorial")
+                dismissed = _record_publish_failure(
+                    "editorial_posts", ep['id'], ep.get('article_title'), "editorial", len(text.strip())
+                )
+                results["posts"].append({
+                    "id": ep['id'], "source": "editorial",
+                    "error": f"body too short ({len(text.strip())} chars)" + (" — auto-dismissed" if dismissed else ""),
+                })
                 continue
             hashtags = ep.get('hashtags', [])
             if isinstance(hashtags, list):
