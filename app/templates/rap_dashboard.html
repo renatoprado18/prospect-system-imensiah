@@ -3109,9 +3109,52 @@
                         return `<div id="signal-row-${it.id}" style="padding:8px 10px;border-bottom:1px solid #f1f5f9;${itemOpacity}"><div>${badge} ${link}${post}</div>${text}${actions}${draftSlot}</div>`;
                     }).join('')
                     : '<div style="padding:24px;text-align:center;color:#64748b;">Sem signals nos ultimos 7 dias.</div>';
-                showSimpleModal(`Leads engajaram (${d.total}) — 7d`,
-                    `<div style="font-size:0.82rem;margin-bottom:10px;color:#64748b;">${d.warm_tasks} contatos existentes (warm) · ${d.cold_leads} leads novos (cold). Tasks warm aparecem em /tarefas-pendentes.</div>${rows}`);
+                const dismissedLink = d.dismissed > 0
+                    ? `<div style="margin-top:10px;text-align:right;"><a href="#" onclick="event.preventDefault();showDismissedEngagementsModal();" style="font-size:0.75rem;color:#64748b;text-decoration:underline;">Ver ${d.dismissed} ignorados →</a></div>`
+                    : '';
+                const activeTotal = d.total - (d.dismissed || 0);
+                showSimpleModal(`Leads engajaram (${activeTotal}) — 7d`,
+                    `<div style="font-size:0.82rem;margin-bottom:10px;color:#64748b;">${d.warm_tasks} contatos existentes (warm) · ${d.cold_leads} leads novos (cold). Tasks warm aparecem em /tarefas-pendentes.</div>${rows}${dismissedLink}`);
             } catch (e) { alert('Erro: ' + e.message); }
+        }
+
+        async function showDismissedEngagementsModal() {
+            try {
+                const r = await fetch('/api/linkedin-engagement/summary?days=7&include_dismissed=true');
+                const d = await r.json();
+                const items = d.items || [];
+                const rows = items.length
+                    ? items.map(it => {
+                        const link = it.profile_url ? `<a href="${it.profile_url}" target="_blank" rel="noopener">${escapeText(it.profile_name || '?')}</a>` : escapeText(it.profile_name || '?');
+                        const post = it.post_title ? ` · sobre "${escapeText(it.post_title.substring(0,50))}"` : '';
+                        const text = it.comment_text ? `<div style="font-size:0.75rem;color:#475569;margin-top:2px;font-style:italic;">"${escapeText(it.comment_text.substring(0,180))}"</div>` : '';
+                        const deeplink = it.comment_deeplink
+                            ? `<a href="${it.comment_deeplink}" target="_blank" rel="noopener" style="font-size:0.72rem;color:#0a66c2;text-decoration:none;font-weight:600;margin-right:12px;">↪ Abrir comentario</a>`
+                            : '';
+                        const restoreBtn = `<button onclick="restoreEngagementSignal(${it.id})" id="restorebtn-${it.id}" style="font-size:0.7rem;background:#fff;color:#15803d;border:1px solid #15803d;padding:2px 8px;border-radius:4px;cursor:pointer;">↺ Restaurar</button>`;
+                        return `<div id="signal-row-${it.id}" style="padding:8px 10px;border-bottom:1px solid #f1f5f9;opacity:0.7;"><div>${link}${post}</div>${text}<div style="margin-top:6px;display:flex;gap:8px;align-items:center;">${deeplink}${restoreBtn}</div></div>`;
+                    }).join('')
+                    : '<div style="padding:24px;text-align:center;color:#64748b;">Nenhum ignorado nos ultimos 7 dias.</div>';
+                showSimpleModal(`Ignorados (${items.length}) — 7d`,
+                    `<div style="font-size:0.78rem;margin-bottom:10px;color:#64748b;">Comentarios que voce decidiu nao responder. Clica em "Restaurar" pra voltar pra fila principal.</div>${rows}`);
+            } catch (e) { alert('Erro: ' + e.message); }
+        }
+
+        async function restoreEngagementSignal(signalId) {
+            const btn = document.getElementById(`restorebtn-${signalId}`);
+            const row = document.getElementById(`signal-row-${signalId}`);
+            if (!btn || !row) return;
+            btn.disabled = true; btn.textContent = '...';
+            try {
+                const r = await fetch(`/api/linkedin-engagement/${signalId}/restore`, {method: 'POST'});
+                if (!r.ok) { btn.disabled = false; btn.textContent = '↺ Restaurar'; alert('Erro ao restaurar'); return; }
+                row.style.transition = 'opacity 0.3s';
+                row.style.opacity = '0.3';
+                btn.textContent = '✓ Voltou pra fila';
+                btn.style.background = '#dcfce7';
+            } catch (e) {
+                btn.disabled = false; btn.textContent = '↺ Restaurar';
+            }
         }
 
         async function generateReplyDrafts(signalId) {

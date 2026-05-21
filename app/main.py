@@ -4859,6 +4859,33 @@ async def api_linkedin_engagement_dismiss(signal_id: int, request: Request):
     return {"ok": True, "signal_id": signal_id, "status": "dismissed", "task_cancelled": bool(sig.get("task_id"))}
 
 
+@app.post("/api/linkedin-engagement/{signal_id}/restore")
+async def api_linkedin_engagement_restore(signal_id: int, request: Request):
+    """Reverte dismissed -> status original (warm_task_created se tem contact_id, cold_lead_created caso contrario).
+
+    Nao re-abre task cancelada (decisao consciente — usuario pode recriar se quiser)."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE linkedin_engagement_signals
+            SET status = CASE WHEN contact_id IS NOT NULL THEN 'warm_task_created' ELSE 'cold_lead_created' END,
+                processed_at = NOW()
+            WHERE id = %s AND status = 'dismissed'
+            RETURNING id, status
+            """,
+            (signal_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="signal nao encontrado ou nao estava dismissed")
+        conn.commit()
+    return {"ok": True, "signal_id": signal_id, "status": dict(row)["status"]}
+
+
 @app.post("/api/linkedin-engagement/{signal_id}/draft-reply")
 async def api_linkedin_engagement_draft_reply(signal_id: int, request: Request):
     """Gera 2 drafts de resposta pra um comentario que engajou com post do Renato."""
@@ -4873,8 +4900,12 @@ async def api_linkedin_engagement_draft_reply(signal_id: int, request: Request):
 
 
 @app.get("/api/linkedin-engagement/summary")
-async def api_linkedin_engagement_summary(request: Request, days: int = 7):
-    """F2 summary: signals capturados nos ultimos N dias agrupados por status."""
+async def api_linkedin_engagement_summary(request: Request, days: int = 7, include_dismissed: bool = False):
+    """F2 summary: signals capturados nos ultimos N dias agrupados por status.
+
+    Por default exclui status='dismissed' do feed de items (continuam contados
+    no agregado pra mostrar o link de historico). Use include_dismissed=true
+    pra carregar SOMENTE os dismissed (rota /historico)."""
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
@@ -4894,8 +4925,12 @@ async def api_linkedin_engagement_summary(request: Request, days: int = 7):
             (str(days),),
         )
         agg = dict(cur.fetchone() or {})
+        status_filter = (
+            "AND s.status = 'dismissed'" if include_dismissed
+            else "AND s.status != 'dismissed'"
+        )
         cur.execute(
-            """
+            f"""
             SELECT s.id, s.profile_name, s.profile_headline, s.profile_url,
                    s.comment_text, s.detected_at, s.status, s.contact_id,
                    s.task_id, s.post_id, s.comment_urn,
@@ -4904,6 +4939,7 @@ async def api_linkedin_engagement_summary(request: Request, days: int = 7):
             FROM linkedin_engagement_signals s
             LEFT JOIN editorial_posts p ON p.id = s.post_id
             WHERE s.detected_at >= NOW() - (%s || ' days')::interval
+              {status_filter}
             ORDER BY s.detected_at DESC
             LIMIT 50
             """,
