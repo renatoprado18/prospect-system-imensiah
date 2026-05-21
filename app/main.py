@@ -4819,6 +4819,19 @@ async def api_mark_silenced_as_fn(notif_id: int, user: dict = Depends(require_ad
     return {"ok": True, "notif_id": notif_id, "marked_as": "false_negative"}
 
 
+@app.post("/api/linkedin-engagement/{signal_id}/draft-reply")
+async def api_linkedin_engagement_draft_reply(signal_id: int, request: Request):
+    """Gera 2 drafts de resposta pra um comentario que engajou com post do Renato."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    from services.linkedin_reply_drafter import generate_reply_drafts
+    result = await generate_reply_drafts(signal_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=502, detail=result.get("error") or "falha gerar drafts")
+    return result
+
+
 @app.get("/api/linkedin-engagement/summary")
 async def api_linkedin_engagement_summary(request: Request, days: int = 7):
     """F2 summary: signals capturados nos ultimos N dias agrupados por status."""

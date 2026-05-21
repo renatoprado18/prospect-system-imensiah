@@ -3092,15 +3092,85 @@
                         const link = it.profile_url ? `<a href="${it.profile_url}" target="_blank" rel="noopener">${escapeText(it.profile_name || '?')}</a>` : escapeText(it.profile_name || '?');
                         const post = it.post_title ? ` · sobre "${escapeText(it.post_title.substring(0,50))}"` : '';
                         const text = it.comment_text ? `<div style="font-size:0.75rem;color:#475569;margin-top:2px;font-style:italic;">"${escapeText(it.comment_text.substring(0,180))}"</div>` : '';
-                        const reply = it.comment_deeplink
-                            ? `<div style="margin-top:6px;"><a href="${it.comment_deeplink}" target="_blank" rel="noopener" style="font-size:0.75rem;color:#0a66c2;text-decoration:none;font-weight:600;">↪ Abrir comentario no LinkedIn</a></div>`
+                        const deeplink = it.comment_deeplink
+                            ? `<a href="${it.comment_deeplink}" target="_blank" rel="noopener" style="font-size:0.75rem;color:#0a66c2;text-decoration:none;font-weight:600;margin-right:12px;">↪ Abrir comentario</a>`
                             : '';
-                        return `<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9;"><div>${badge} ${link}${post}</div>${text}${reply}</div>`;
+                        const genBtn = it.comment_text
+                            ? `<button onclick="generateReplyDrafts(${it.id})" id="genbtn-${it.id}" style="font-size:0.72rem;background:#0a66c2;color:white;border:none;padding:3px 8px;border-radius:4px;cursor:pointer;font-weight:600;">✏ Gerar resposta</button>`
+                            : '';
+                        const actions = (deeplink || genBtn)
+                            ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${deeplink}${genBtn}</div>`
+                            : '';
+                        const draftSlot = `<div id="drafts-${it.id}" style="margin-top:8px;"></div>`;
+                        return `<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9;"><div>${badge} ${link}${post}</div>${text}${actions}${draftSlot}</div>`;
                     }).join('')
                     : '<div style="padding:24px;text-align:center;color:#64748b;">Sem signals nos ultimos 7 dias.</div>';
                 showSimpleModal(`Leads engajaram (${d.total}) — 7d`,
                     `<div style="font-size:0.82rem;margin-bottom:10px;color:#64748b;">${d.warm_tasks} contatos existentes (warm) · ${d.cold_leads} leads novos (cold). Tasks warm aparecem em /tarefas-pendentes.</div>${rows}`);
             } catch (e) { alert('Erro: ' + e.message); }
+        }
+
+        async function generateReplyDrafts(signalId) {
+            const btn = document.getElementById(`genbtn-${signalId}`);
+            const slot = document.getElementById(`drafts-${signalId}`);
+            if (!btn || !slot) return;
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = 'Gerando... (~10s)';
+            try {
+                const r = await fetch(`/api/linkedin-engagement/${signalId}/draft-reply`, {method: 'POST'});
+                const d = await r.json();
+                if (!r.ok) {
+                    slot.innerHTML = `<div style="color:#dc2626;font-size:0.78rem;padding:6px;">Erro: ${d.detail || 'falha gerar'}</div>`;
+                    btn.disabled = false; btn.textContent = '↻ Tentar de novo';
+                    return;
+                }
+                const drafts = [
+                    {label: 'A — Analitico', text: d.draft_a, recommended: d.recommended === 'A'},
+                    {label: 'B — Caloroso', text: d.draft_b, recommended: d.recommended === 'B'},
+                ];
+                const draftsHtml = drafts.map((dr, idx) => `
+                    <div style="background:${dr.recommended?'#f0f9ff':'#f8fafc'};border:1px solid ${dr.recommended?'#0a66c2':'#e2e8f0'};border-radius:6px;padding:10px;margin-bottom:8px;">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                            <span style="font-size:0.72rem;font-weight:700;color:${dr.recommended?'#0a66c2':'#475569'};">
+                                ${dr.label}${dr.recommended?' ⭐':''}
+                            </span>
+                            <button onclick="copyDraftText('draft-${signalId}-${idx}', this)" style="font-size:0.7rem;background:#fff;border:1px solid #0a66c2;color:#0a66c2;padding:2px 8px;border-radius:4px;cursor:pointer;">📋 Copiar</button>
+                        </div>
+                        <div id="draft-${signalId}-${idx}" style="font-size:0.83rem;color:#1e293b;white-space:pre-wrap;line-height:1.4;">${escapeText(dr.text || '')}</div>
+                    </div>
+                `).join('');
+                const tradeoff = d.tradeoff
+                    ? `<div style="font-size:0.72rem;color:#64748b;margin-top:4px;font-style:italic;">Quando escolher: ${escapeText(d.tradeoff)}</div>`
+                    : '';
+                slot.innerHTML = draftsHtml + tradeoff;
+                btn.textContent = '↻ Regerar';
+                btn.disabled = false;
+            } catch (e) {
+                slot.innerHTML = `<div style="color:#dc2626;font-size:0.78rem;padding:6px;">Erro de rede</div>`;
+                btn.disabled = false; btn.textContent = originalText;
+            }
+        }
+
+        function copyDraftText(elementId, btn) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            const text = el.innerText || el.textContent || '';
+            navigator.clipboard.writeText(text).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = '✓ Copiado';
+                btn.style.background = '#dcfce7';
+                btn.style.color = '#15803d';
+                btn.style.borderColor = '#15803d';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.style.background = '#fff';
+                    btn.style.color = '#0a66c2';
+                    btn.style.borderColor = '#0a66c2';
+                }, 2000);
+            }).catch(() => {
+                btn.textContent = '✗ Erro';
+            });
         }
 
         async function showOverrideModal() {
