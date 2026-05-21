@@ -291,23 +291,23 @@
 {% endblock %}
 
 {% block content %}
-<div class="costs-stats" id="statsRow">
-    <div class="stat-card success">
+<div class="costs-stats" id="statsRow" style="display:flex !important;flex-direction:row !important;flex-wrap:wrap;gap:8px;width:100%;margin-bottom:14px;">
+    <div class="stat-card success" style="flex:1 1 140px;min-width:140px;max-width:100%;">
         <div class="label">Mês corrente</div>
         <div class="value" id="statCurrent">—</div>
         <div class="sub" id="statCurrentLabel">carregando...</div>
     </div>
-    <div class="stat-card">
+    <div class="stat-card" style="flex:1 1 140px;min-width:140px;max-width:100%;">
         <div class="label">Mês anterior</div>
         <div class="value" id="statPrev">—</div>
         <div class="sub" id="statPrevLabel">—</div>
     </div>
-    <div class="stat-card warning">
+    <div class="stat-card warning" style="flex:1 1 140px;min-width:140px;max-width:100%;">
         <div class="label">Provider top</div>
         <div class="value" id="statTopProvider">—</div>
         <div class="sub" id="statTopProviderAmount">—</div>
     </div>
-    <div class="stat-card danger">
+    <div class="stat-card danger" style="flex:1 1 140px;min-width:140px;max-width:100%;">
         <div class="label">Alertas ativos</div>
         <div class="value" id="statAlerts">—</div>
         <div class="sub">>25% E >$5</div>
