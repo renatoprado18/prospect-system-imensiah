@@ -21165,32 +21165,70 @@ async def api_editorial_dismiss(post_id: int, request: Request):
 
     replacement = None
     saturation_reason = None
+    preferred_source = None
     if slot:
-        # Guard D: se semana ja esta no target, NAO pedir replacement.
-        # Bug real (21/05): cadeia 207→208→209→210 — usuario dismissou 3x e
-        # a cada vez o sistema adicionava outro pending_approval no mesmo slot,
-        # mesmo com a semana ja saturada (200 + 83 + 205 + 189 = 4 = target).
+        # Guards D + E: decidir se faz replacement e qual source escolher
+        # baseado no MIX da semana (nao no tipo dismissado).
+        #
+        # Bug original (21/05): cadeia 207→208→209→210 — replacement sempre
+        # tipo='hot_take' (por preserve-source) ignorando que a semana ja
+        # tinha 3 HTs e faltava 1 repost. Agora: olha o gap por source e
+        # decide. Se ambos saturados, skip replacement.
         try:
             from services.auto_publisher import (
-                count_committed_posts_in_week, DEFAULT_WEEKLY_MIX,
+                count_committed_posts_in_week, DEFAULT_WEEKLY_MIX, _week_bounds,
             )
             slot_date = slot.date() if hasattr(slot, 'date') else slot
-            committed = count_committed_posts_in_week(slot_date)
-            target_total = sum(DEFAULT_WEEKLY_MIX.values())
-            if committed >= target_total:
-                saturation_reason = f"semana ja tem {committed}/{target_total} posts comprometidos — replacement skipped"
-                logger.info(f"api_editorial_dismiss #{post_id}: {saturation_reason}")
-        except Exception:
-            logger.exception(f"api_editorial_dismiss: saturation check falhou pra #{post_id}")
+            week_start, week_end = _week_bounds(slot_date)
 
-    if slot and not saturation_reason:
+            # Mix atual por source (pending+scheduled+published na semana).
+            # hot_take = tipo='hot_take'. editorial = qualquer outro (repost,
+            # editorial, mas NAO topic_idea — esses sao briefs).
+            with get_db() as cmix_conn:
+                cmix = cmix_conn.cursor()
+                cmix.execute("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE tipo = 'hot_take') AS hts,
+                        COUNT(*) FILTER (WHERE tipo NOT IN ('hot_take', 'topic_idea', 'ideia')) AS editorials
+                    FROM editorial_posts
+                    WHERE status IN ('pending_approval', 'scheduled', 'published')
+                      AND COALESCE(data_publicacao_planejada, data_publicacao, data_publicado) >= %s
+                      AND COALESCE(data_publicacao_planejada, data_publicacao, data_publicado) <  %s
+                """, (week_start, week_end))
+                mix_now = dict(cmix.fetchone() or {"hts": 0, "editorials": 0})
+
+            target_ht = int(DEFAULT_WEEKLY_MIX.get('hot_take', 0))
+            target_ed = int(DEFAULT_WEEKLY_MIX.get('editorial', 0))
+            gap_ht = target_ht - int(mix_now.get('hts') or 0)
+            gap_ed = target_ed - int(mix_now.get('editorials') or 0)
+
+            if gap_ht <= 0 and gap_ed <= 0:
+                saturation_reason = (
+                    f"semana saturada (HT {mix_now['hts']}/{target_ht}, "
+                    f"editorial {mix_now['editorials']}/{target_ed}) — replacement skipped"
+                )
+                logger.info(f"api_editorial_dismiss #{post_id}: {saturation_reason}")
+            else:
+                # Source com gap maior (positivo) vence. Empate vai pra tipo
+                # do dismissed (preservacao quando ambos precisam).
+                if gap_ed > gap_ht:
+                    preferred_source = 'editorial'
+                elif gap_ht > gap_ed:
+                    preferred_source = 'hot_take'
+                else:
+                    preferred_source = 'hot_take' if dismissed_tipo == 'hot_take' else 'editorial'
+                logger.info(
+                    f"api_editorial_dismiss #{post_id}: mix HT {mix_now['hts']}/{target_ht}, "
+                    f"editorial {mix_now['editorials']}/{target_ed} → preferred_source={preferred_source}"
+                )
+        except Exception:
+            logger.exception(f"api_editorial_dismiss: mix check falhou pra #{post_id}")
+            # Fallback: comportamento antigo
+            preferred_source = 'hot_take' if dismissed_tipo == 'hot_take' else 'editorial'
+
+    if slot and not saturation_reason and preferred_source:
         try:
             from services.auto_publisher import select_replacement_post
-            # Preserva tipo: dismiss de hot_take deve trazer outro hot_take.
-            # Antes, dismissar hot_take pegava editorial (ranking IA + sort
-            # por ai_score_relevancia favorece editoriais curados) — frustrava
-            # a cadencia 3 hot + 1 editorial e a fila aparecia "so com artigos".
-            preferred_source = 'hot_take' if dismissed_tipo == 'hot_take' else 'editorial'
             replacement = await select_replacement_post(
                 slot, exclude_ids=exclude_ids,
                 preferred_source=preferred_source,
