@@ -440,6 +440,26 @@ async def select_replacement_post(
     exclude_ids = exclude_ids or []
     exclude_hot_take_ids = exclude_hot_take_ids or []
 
+    # Guard C: slot collision. Antes deste fix, dismiss + replace ignorava
+    # se outro post ja estava no mesmo slot. Bug real (21/05): #83 scheduled
+    # em 20/05 09:00 + #210 pending_approval no mesmo slot (cadeia dismiss
+    # 207→208→209→210 nunca conferiu que #83 ja ocupava o slot).
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, status FROM editorial_posts
+            WHERE COALESCE(data_publicacao_planejada, data_publicacao) = %s
+              AND status IN ('scheduled', 'pending_approval')
+              AND id NOT IN %s
+        """, (slot_datetime, tuple(exclude_ids) or (0,)))
+        occupant = cursor.fetchone()
+        if occupant:
+            logger.warning(
+                f"select_replacement_post: slot {slot_datetime} ja ocupado por "
+                f"post #{occupant['id']} (status={occupant['status']}) — skip replacement"
+            )
+            return None
+
     # Blocklist dinamica — mesma logica do select_weekly_posts.
     # Antes do fix, replacement furava o filtro de Complexidade (3o buraco
     # diagnosticado): dismiss + replace pegava da query sem WHERE filter.

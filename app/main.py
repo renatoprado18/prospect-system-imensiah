@@ -20991,6 +20991,27 @@ async def api_editorial_action_items():
 
 # ============== APPROVAL WORKFLOW (pending_approval -> scheduled / dismissed) ==============
 
+# MIN_BODY_CHARS reutilizado do auto_publisher pra consistencia entre guard de
+# approve (frente) e guard de publish (tras). Single source of truth.
+def _validate_post_publishable(row: dict) -> Optional[str]:
+    """Valida que um post pode entrar em scheduled/pending_approval.
+
+    Retorna None se OK, ou string descrevendo o motivo da rejeicao.
+    Bugs reais (21/05):
+    - #83 chegou em scheduled com tipo='topic_idea' (brief sem body) — gerou
+      4 falhas de publish + ocupou slot inutil.
+    - Approve-week + bulk-schedule nao validavam tipo nem body.
+    """
+    from services.auto_publisher import MIN_BODY_CHARS
+    tipo = (row.get("tipo") or "").lower()
+    if tipo == "topic_idea":
+        return "tipo='topic_idea' (brief, nao publicavel — escreva primeiro como repost)"
+    body = row.get("conteudo_adaptado") or ""
+    if len(body.strip()) < MIN_BODY_CHARS:
+        return f"conteudo_adaptado tem {len(body.strip())} chars (min {MIN_BODY_CHARS})"
+    return None
+
+
 @app.post("/api/editorial/{post_id}/approve")
 async def api_editorial_approve(post_id: int):
     """User aprova proposta da IA: pending_approval -> scheduled.
@@ -21001,7 +21022,8 @@ async def api_editorial_approve(post_id: int):
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, status, data_publicacao_planejada, data_publicacao, hot_take_id
+            SELECT id, status, tipo, conteudo_adaptado,
+                   data_publicacao_planejada, data_publicacao, hot_take_id
             FROM editorial_posts WHERE id = %s
         """, (post_id,))
         row = cursor.fetchone()
@@ -21009,6 +21031,11 @@ async def api_editorial_approve(post_id: int):
             raise HTTPException(status_code=404, detail="Post nao encontrado")
         if row['status'] != 'pending_approval':
             raise HTTPException(status_code=400, detail=f"Post nao esta pending_approval (status={row['status']})")
+
+        # Guard B: nao approve se nao publicavel
+        rejection = _validate_post_publishable(dict(row))
+        if rejection:
+            raise HTTPException(status_code=400, detail=f"Post nao publicavel: {rejection}")
 
         slot = row['data_publicacao_planejada'] or row['data_publicacao']
         if not slot:
@@ -21137,7 +21164,26 @@ async def api_editorial_dismiss(post_id: int, request: Request):
         conn.commit()
 
     replacement = None
+    saturation_reason = None
     if slot:
+        # Guard D: se semana ja esta no target, NAO pedir replacement.
+        # Bug real (21/05): cadeia 207→208→209→210 — usuario dismissou 3x e
+        # a cada vez o sistema adicionava outro pending_approval no mesmo slot,
+        # mesmo com a semana ja saturada (200 + 83 + 205 + 189 = 4 = target).
+        try:
+            from services.auto_publisher import (
+                count_committed_posts_in_week, DEFAULT_WEEKLY_MIX,
+            )
+            slot_date = slot.date() if hasattr(slot, 'date') else slot
+            committed = count_committed_posts_in_week(slot_date)
+            target_total = sum(DEFAULT_WEEKLY_MIX.values())
+            if committed >= target_total:
+                saturation_reason = f"semana ja tem {committed}/{target_total} posts comprometidos — replacement skipped"
+                logger.info(f"api_editorial_dismiss #{post_id}: {saturation_reason}")
+        except Exception:
+            logger.exception(f"api_editorial_dismiss: saturation check falhou pra #{post_id}")
+
+    if slot and not saturation_reason:
         try:
             from services.auto_publisher import select_replacement_post
             # Preserva tipo: dismiss de hot_take deve trazer outro hot_take.
@@ -21167,6 +21213,7 @@ async def api_editorial_dismiss(post_id: int, request: Request):
         "post_id": post_id,
         "motivo": motivo,
         "replacement": replacement,
+        "saturation_reason": saturation_reason,
     }
 
 
@@ -21484,22 +21531,37 @@ async def api_approve_week(request: Request):
     # (compat: tambem aceita drafts antigos com data_publicacao setada)
     if not selected:
         global _editorial_action_items_cache
+        # Guard B: query exclui tipo='topic_idea' e body < MIN_BODY_CHARS.
+        # Bug real (21/05): #83 (topic_idea sem body) entrou em scheduled.
+        from services.auto_publisher import MIN_BODY_CHARS
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, article_title as titulo, tipo as source,
+                SELECT id, article_title as titulo, tipo as source, tipo,
                        COALESCE(data_publicacao_planejada, data_publicacao) AS slot,
                        conteudo_adaptado as conteudo, article_url as news_link,
                        hashtags, hot_take_id
                 FROM editorial_posts
-                WHERE (status = 'pending_approval' AND data_publicacao_planejada IS NOT NULL)
-                   OR (status = 'draft' AND data_publicacao IS NOT NULL)
+                WHERE ((status = 'pending_approval' AND data_publicacao_planejada IS NOT NULL)
+                    OR (status = 'draft' AND data_publicacao IS NOT NULL))
+                  AND COALESCE(tipo, '') NOT IN ('topic_idea', 'ideia')
+                  AND LENGTH(COALESCE(conteudo_adaptado, '')) >= %s
                 ORDER BY COALESCE(data_publicacao_planejada, data_publicacao)
-            """)
+            """, (MIN_BODY_CHARS,))
             drafts = [dict(r) for r in cursor.fetchall()]
 
+            # Conta rejeitados pra reportar ao user
+            cursor.execute("""
+                SELECT COUNT(*) AS n FROM editorial_posts
+                WHERE ((status = 'pending_approval' AND data_publicacao_planejada IS NOT NULL)
+                    OR (status = 'draft' AND data_publicacao IS NOT NULL))
+                  AND (COALESCE(tipo, '') IN ('topic_idea', 'ideia')
+                       OR LENGTH(COALESCE(conteudo_adaptado, '')) < %s)
+            """, (MIN_BODY_CHARS,))
+            rejected = int(cursor.fetchone()['n'] or 0)
+
             if not drafts:
-                raise HTTPException(status_code=400, detail="Nenhum post pending_approval ou draft com slot pra aprovar")
+                raise HTTPException(status_code=400, detail=f"Nenhum post pending_approval ou draft elegivel pra aprovar (rejeitados: {rejected})")
 
             for d in drafts:
                 cursor.execute("""
@@ -21516,7 +21578,8 @@ async def api_approve_week(request: Request):
             _editorial_action_items_cache = {"data": None, "timestamp": None}
             return {
                 "status": "approved",
-                "scheduled": [{"id": d['id'], "titulo": d['titulo'], "scheduled_for": str(d['slot'])} for d in drafts]
+                "scheduled": [{"id": d['id'], "titulo": d['titulo'], "scheduled_for": str(d['slot'])} for d in drafts],
+                "rejected_non_publishable": rejected,
             }
 
     result = schedule_selected_posts(selected)

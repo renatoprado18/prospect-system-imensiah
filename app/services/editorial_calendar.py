@@ -516,16 +516,22 @@ def bulk_schedule_posts(
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Get posts to schedule (only drafts)
+        # Get posts to schedule (only drafts publicaveis).
+        # Guard B: exclui tipo='topic_idea' e body < MIN_BODY_CHARS.
+        # Bug real (21/05): #83 (topic_idea sem body) entrou em scheduled
+        # via bulk-schedule e gerou 4 falhas de publish.
+        from services.auto_publisher import MIN_BODY_CHARS
         cursor.execute("""
             SELECT * FROM editorial_posts
             WHERE id = ANY(%s) AND status = 'draft'
+              AND COALESCE(tipo, '') NOT IN ('topic_idea', 'ideia')
+              AND LENGTH(COALESCE(conteudo_adaptado, '')) >= %s
             ORDER BY criado_em ASC
-        """, (post_ids,))
+        """, (post_ids, MIN_BODY_CHARS))
         posts = cursor.fetchall()
 
         if not posts:
-            return {'scheduled': [], 'errors': ['No draft posts found']}
+            return {'scheduled': [], 'errors': [f'Nenhum post elegivel — todos tipo=topic_idea ou body < {MIN_BODY_CHARS} chars']}
 
         # Calculate scheduling slots
         current_date = start_date.date() if isinstance(start_date, datetime) else start_date
