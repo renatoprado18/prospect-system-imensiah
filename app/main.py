@@ -4819,6 +4819,46 @@ async def api_mark_silenced_as_fn(notif_id: int, user: dict = Depends(require_ad
     return {"ok": True, "notif_id": notif_id, "marked_as": "false_negative"}
 
 
+@app.post("/api/linkedin-engagement/{signal_id}/dismiss")
+async def api_linkedin_engagement_dismiss(signal_id: int, request: Request):
+    """Marca signal como dismissed (Renato decidiu nao responder).
+
+    Se houver task_id associado (warm), cancela tambem — task era pra Renato
+    'aproximar', mas se ele esta dispensando o signal, a task tambem nao
+    deveria continuar pendente."""
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE linkedin_engagement_signals
+            SET status = 'dismissed', processed_at = NOW()
+            WHERE id = %s
+            RETURNING id, task_id, status
+            """,
+            (signal_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="signal nao encontrado")
+        sig = dict(row)
+        # Cancela task warm linkada
+        if sig.get("task_id"):
+            cur.execute(
+                """
+                UPDATE tasks
+                SET status = 'cancelled', sync_status = 'pending_push',
+                    descricao = COALESCE(descricao,'') || E'\\n\\n[dismissed] Signal LinkedIn descartado em ' || NOW()::date
+                WHERE id = %s AND status = 'pending'
+                """,
+                (sig["task_id"],),
+            )
+        conn.commit()
+    return {"ok": True, "signal_id": signal_id, "status": "dismissed", "task_cancelled": bool(sig.get("task_id"))}
+
+
 @app.post("/api/linkedin-engagement/{signal_id}/draft-reply")
 async def api_linkedin_engagement_draft_reply(signal_id: int, request: Request):
     """Gera 2 drafts de resposta pra um comentario que engajou com post do Renato."""

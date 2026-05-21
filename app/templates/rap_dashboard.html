@@ -3098,11 +3098,15 @@
                         const genBtn = it.comment_text
                             ? `<button onclick="generateReplyDrafts(${it.id})" id="genbtn-${it.id}" style="font-size:0.72rem;background:#0a66c2;color:white;border:none;padding:3px 8px;border-radius:4px;cursor:pointer;font-weight:600;">✏ Gerar resposta</button>`
                             : '';
-                        const actions = (deeplink || genBtn)
-                            ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${deeplink}${genBtn}</div>`
+                        const dismissBtn = it.status !== 'dismissed'
+                            ? `<button onclick="dismissEngagementSignal(${it.id})" id="dismissbtn-${it.id}" style="font-size:0.72rem;background:#fff;color:#64748b;border:1px solid #cbd5e1;padding:3px 8px;border-radius:4px;cursor:pointer;">🗑 Ignorar</button>`
+                            : '';
+                        const actions = (deeplink || genBtn || dismissBtn)
+                            ? `<div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${deeplink}${genBtn}${dismissBtn}</div>`
                             : '';
                         const draftSlot = `<div id="drafts-${it.id}" style="margin-top:8px;"></div>`;
-                        return `<div style="padding:8px 10px;border-bottom:1px solid #f1f5f9;"><div>${badge} ${link}${post}</div>${text}${actions}${draftSlot}</div>`;
+                        const itemOpacity = it.status === 'dismissed' ? 'opacity:0.5;' : '';
+                        return `<div id="signal-row-${it.id}" style="padding:8px 10px;border-bottom:1px solid #f1f5f9;${itemOpacity}"><div>${badge} ${link}${post}</div>${text}${actions}${draftSlot}</div>`;
                     }).join('')
                     : '<div style="padding:24px;text-align:center;color:#64748b;">Sem signals nos ultimos 7 dias.</div>';
                 showSimpleModal(`Leads engajaram (${d.total}) — 7d`,
@@ -3149,6 +3153,31 @@
             } catch (e) {
                 slot.innerHTML = `<div style="color:#dc2626;font-size:0.78rem;padding:6px;">Erro de rede</div>`;
                 btn.disabled = false; btn.textContent = originalText;
+            }
+        }
+
+        async function dismissEngagementSignal(signalId) {
+            const btn = document.getElementById(`dismissbtn-${signalId}`);
+            const row = document.getElementById(`signal-row-${signalId}`);
+            if (!btn || !row) return;
+            btn.disabled = true;
+            btn.textContent = '...';
+            try {
+                const r = await fetch(`/api/linkedin-engagement/${signalId}/dismiss`, {method: 'POST'});
+                if (!r.ok) {
+                    btn.disabled = false; btn.textContent = '🗑 Ignorar';
+                    alert('Erro ao ignorar signal');
+                    return;
+                }
+                // Fade out + remove botoes de acao do row
+                row.style.transition = 'opacity 0.3s';
+                row.style.opacity = '0.4';
+                btn.style.display = 'none';
+                const genBtn = document.getElementById(`genbtn-${signalId}`);
+                if (genBtn) genBtn.style.display = 'none';
+            } catch (e) {
+                btn.disabled = false; btn.textContent = '🗑 Ignorar';
+                alert('Erro de rede');
             }
         }
 
