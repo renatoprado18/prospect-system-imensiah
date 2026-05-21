@@ -6,13 +6,17 @@
 {% block extra_css %}
 <style>
     .costs-stats {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: wrap;
         gap: 8px;
         margin-bottom: 14px;
+        width: 100%;
     }
-    @media (max-width: 900px) { .costs-stats { grid-template-columns: repeat(2, 1fr); } }
-    @media (max-width: 500px) { .costs-stats { grid-template-columns: 1fr; } }
+    .costs-stats > .stat-card {
+        flex: 1 1 0;
+        min-width: 160px;
+    }
     .stat-card {
         background: white;
         border-radius: 8px;
