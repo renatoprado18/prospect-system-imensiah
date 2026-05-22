@@ -1,0 +1,22 @@
+name: Cron — Hetzner Evolution Health
+
+# Verifica de 10 em 10 min se Hetzner Evolution responde + instancias open.
+# 2 falhas consecutivas -> WhatsApp alert (dedup diario).
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Hit hetzner-evolution-health endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/hetzner-evolution-health")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)

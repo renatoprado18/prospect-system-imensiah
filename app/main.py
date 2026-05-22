@@ -5398,6 +5398,128 @@ async def cron_platform_costs_daily(request: Request):
     }
 
 
+@app.get("/api/cron/hetzner-evolution-health")
+@track_cron_run
+async def cron_hetzner_evolution_health(request: Request):
+    """Monitora Hetzner Evolution self-hosted: HTTPS responde + ambas instancias open.
+
+    Roda every 10min via GH Actions. Alerta WhatsApp se 2 runs consecutivas
+    falharam (evita falsos-positivos transientes). Dedup diario via
+    system_memories pra nao spammar."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import httpx
+    evo_url = os.getenv("EVOLUTION_API_URL", "").strip().rstrip("/")
+    evo_key = os.getenv("EVOLUTION_API_KEY", "").strip()
+
+    issues: List[str] = []
+    instances_state: List[Dict[str, str]] = []
+
+    if not evo_url or not evo_key:
+        issues.append("EVOLUTION_API_URL/KEY ausentes")
+    else:
+        try:
+            with httpx.Client(timeout=15.0, follow_redirects=True) as client:
+                r = client.get(evo_url)
+                if r.status_code != 200:
+                    issues.append(f"root HTTP {r.status_code}")
+                r2 = client.get(f"{evo_url}/instance/fetchInstances",
+                                headers={"apikey": evo_key})
+                if r2.status_code != 200:
+                    issues.append(f"fetchInstances HTTP {r2.status_code}")
+                else:
+                    for inst in (r2.json() or []):
+                        name = inst.get("name", "?")
+                        state = inst.get("connectionStatus", "?")
+                        instances_state.append({"name": name, "state": state})
+                        if state != "open":
+                            issues.append(f"{name}={state}")
+        except Exception as e:
+            issues.append(f"exception: {str(e)[:200]}")
+
+    healthy = not issues
+
+    # Verifica run anterior pra detectar falha consecutiva (evita ruido)
+    prev_unhealthy = False
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT result_json FROM cron_runs
+                WHERE path = '/api/cron/hetzner-evolution-health'
+                  AND status = 'ok'
+                ORDER BY started_at DESC LIMIT 1
+            """)
+            row = cur.fetchone()
+            if row and row.get('result_json'):
+                prev_unhealthy = (row['result_json'].get('healthy') is False)
+    except Exception:
+        pass
+
+    alerted = False
+    if not healthy and prev_unhealthy:
+        # Dedup diario via system_memories
+        from services.tz import now_utc
+        from datetime import timedelta
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT 1 FROM system_memories
+                    WHERE tipo = 'hetzner_health_alert'
+                      AND criado_em > %s
+                    LIMIT 1
+                """, (now_utc() - timedelta(hours=24),))
+                already = cur.fetchone() is not None
+
+            if not already:
+                from services.notification_router import route_to_renato
+                body = (
+                    "🔴 *Hetzner Evolution: falha consecutiva*\n\n"
+                    + "\n".join(f"• {i}" for i in issues[:6])
+                    + "\n\n_2 health checks seguidos falharam._"
+                    "\nManager: https://wa.almeida-prado.com/manager"
+                )
+                await route_to_renato(
+                    source="hetzner_health",
+                    payload={
+                        "title": "Hetzner Evolution down",
+                        "body": body,
+                        "force_immediate": True,
+                    },
+                    msg_type="hetzner_health_alert",
+                    urgency_score=10,
+                    digest_target="either",
+                    dedup_key=f"hetzner_health_{now_utc().date().isoformat()}",
+                    message_text=body,
+                )
+                alerted = True
+                # Marca pra dedupe
+                with get_db() as conn2:
+                    cur2 = conn2.cursor()
+                    cur2.execute("""
+                        INSERT INTO system_memories (titulo, conteudo, tipo, criado_em)
+                        VALUES (%s, %s, 'hetzner_health_alert', %s)
+                    """, (
+                        "Hetzner Evolution health alert",
+                        " | ".join(issues[:6]),
+                        now_utc(),
+                    ))
+                    conn2.commit()
+        except Exception as e:
+            logger.warning(f"hetzner alert dispatch falhou: {e}")
+
+    return {
+        "job": "hetzner-evolution-health",
+        "healthy": healthy,
+        "issues": issues,
+        "instances": instances_state,
+        "prev_unhealthy": prev_unhealthy,
+        "alerted": alerted,
+    }
+
+
 @app.post("/api/cron/catchup")
 @track_cron_run
 async def cron_catchup(request: Request, background_tasks: BackgroundTasks):
