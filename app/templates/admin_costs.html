@@ -628,28 +628,20 @@ function getStripePattern(color) {
     return p;
 }
 
-// Regressao linear sobre N pts (max 6 recentes). Retorna array de valores futuros.
+// Projecao = mediana dos ultimos 3 meses (cap em ate o que estiver disponivel).
+// Robusta a ramp-ups (Anthropic), mudancas estruturais (Railway pos-Hetzner) e
+// servicos novos com poucos pontos. Custos sao mensalidade recorrente, nao
+// serie temporal com tendencia continua — extrapolacao linear projeta crescimento
+// falso pra servicos que ja platoaram.
 function projectSeries(values, nAhead = 3) {
-    const lookback = Math.min(6, values.length);
-    if (lookback < 2) {
-        const last = values.length ? values[values.length - 1] : 0;
-        return Array(nAhead).fill(last);
-    }
-    const recent = values.slice(-lookback);
-    const xs = recent.map((_, i) => i);
-    const n = lookback;
-    const sumX = xs.reduce((a, b) => a + b, 0);
-    const sumY = recent.reduce((a, b) => a + b, 0);
-    const sumXY = xs.reduce((s, x, i) => s + x * recent[i], 0);
-    const sumX2 = xs.reduce((s, x) => s + x * x, 0);
-    const denom = n * sumX2 - sumX * sumX;
-    const slope = denom === 0 ? 0 : (n * sumXY - sumX * sumY) / denom;
-    const intercept = (sumY - slope * sumX) / n;
-    const out = [];
-    for (let i = 1; i <= nAhead; i++) {
-        out.push(Math.max(0, intercept + slope * (lookback - 1 + i)));
-    }
-    return out;
+    if (values.length === 0) return Array(nAhead).fill(0);
+    const recent = values.slice(-3);
+    const sorted = [...recent].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 === 0
+        ? (sorted[mid - 1] + sorted[mid]) / 2
+        : sorted[mid];
+    return Array(nAhead).fill(Math.max(0, median));
 }
 
 function nextMonthLabels(lastPeriod, nAhead) {
