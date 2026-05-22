@@ -1,0 +1,16 @@
+{$DOMAIN} {
+    encode gzip
+    reverse_proxy evolution:8080 {
+        header_up Host {host}
+        header_up X-Real-IP {remote}
+        header_up X-Forwarded-For {remote}
+        header_up X-Forwarded-Proto {scheme}
+    }
+    log {
+        output file /data/access.log {
+            roll_size 10mb
+            roll_keep 3
+        }
+        format json
+    }
+}
