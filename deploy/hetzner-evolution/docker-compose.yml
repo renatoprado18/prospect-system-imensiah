@@ -1,12 +1,11 @@
-version: "3.9"
-
 # Evolution API self-hosted (1:1 com setup atual no Railway v2.3.7).
 # Stack: evolution + postgres + redis + caddy (HTTPS automatico via Lets Encrypt).
 # Volumes persistentes: postgres data + evolution instances/store + caddy certs.
+# Imagem: evoapicloud (sucessor do atendai, official desde 2025).
 
 services:
   evolution:
-    image: atendai/evolution-api:v2.3.7
+    image: evoapicloud/evolution-api:v2.3.7
     container_name: evolution
     restart: always
     depends_on:
@@ -69,7 +68,7 @@ services:
       - evonet
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: evolution-postgres
     restart: always
     environment:

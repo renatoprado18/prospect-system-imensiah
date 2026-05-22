@@ -270,7 +270,7 @@
 
 ## 21. Platform Cost Tracker (admin)
 - **Tabela**: `platform_costs` (provider, period_start, period_end, amount_usd, usage_metrics JSONB, notes); UNIQUE(provider, period_start)
-- **UI**: `/admin/costs` — chart histórico (Chart.js stacked bar), tabela provider×mês, alertas, modal de add/edit, botão "Disparar cron agora"
+- **UI**: `/admin/costs` — chart histórico (Chart.js stacked bar + linha pontilhada com projeção 3 meses via regressão linear sobre últimos 6 meses), tabela provider×mês, alertas, modal de add/edit, botão "Disparar cron agora"
 - **Endpoints** (require_admin):
   - `GET /api/admin/platform-costs?months=12` — rows + monthly_totals + alerts
   - `POST /api/admin/platform-costs` — entry manual (tag auto_filled=false)
@@ -280,6 +280,7 @@
   - Vercel `/v1/billing/charges` (Hobby = $0)
   - Anthropic `/v1/organizations/cost_report` (Admin Key)
   - Railway GraphQL `usage` + preços Hobby aproximados
+  - Hetzner Cloud API `/v1/servers` + `/v1/pricing` (EUR→USD@1.08 hardcoded, recalibrar anualmente)
   - LinkdAPI ledger interno `linkdapi_usage`
   - google/github = $0 free tier
 - **Manual override**: POSTs marcam `usage_metrics.auto_filled=false`; cron auto-fill respeita e não sobrescreve. Response inclui `kept_manual: true` + `computed_usd` quando aplicável

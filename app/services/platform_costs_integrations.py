@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 ANTHROPIC_ADMIN_URL = "https://api.anthropic.com/v1/organizations/cost_report"
 RAILWAY_GRAPHQL_URL = "https://backboard.railway.app/graphql/v2"
 VERCEL_API_BASE = "https://api.vercel.com"
+HETZNER_API_BASE = "https://api.hetzner.cloud/v1"
+
+# EUR->USD: Hetzner cobra em EUR pra locations EU. Taxa fixa aproximada
+# (recalibrar anualmente, drift de ~5%/ano e aceitavel pro cost audit).
+EUR_TO_USD = Decimal("1.08")
 
 # Railway Hobby pricing aproximado (valores Anthropic $/unit-time)
 # Source: dashboard Railway docs (docs.railway.com/reference/pricing). Pode estar
@@ -207,6 +212,104 @@ def fetch_railway_cost(period_start: date, period_end: date) -> Dict:
             f"Auto via Railway GraphQL (base ${RAILWAY_BASE_FEE} + "
             f"${total_usage:.2f} usage em {len(per_project)} projetos)"
         ),
+    }
+
+
+# ============================================================================
+# Hetzner Cloud
+# ============================================================================
+
+def _hetzner_price_to_usd(price_block: Dict) -> float:
+    """price_block = {"net": "4.20", "gross": "4.99", "currency": "EUR"}.
+    Retorna gross em USD (converte EUR se necessario)."""
+    try:
+        v = Decimal(str(price_block.get("gross") or 0))
+    except Exception:
+        return 0.0
+    currency = (price_block.get("currency") or "EUR").upper()
+    if currency == "EUR":
+        v = v * EUR_TO_USD
+    return float(v.quantize(Decimal("0.01")))
+
+
+def fetch_hetzner_cost(period_start: date, period_end: date) -> Dict:
+    """Hetzner Cloud: lista servers ativos + multiplica por price_monthly + IPv4.
+
+    Hetzner cobra mensalidade fixa (independente de uso). period_start/end nao
+    sao usados — sempre retorna custo mensal corrente. EUR convertido pra USD.
+    """
+    api_token = (os.getenv("HETZNER_API_TOKEN") or "").strip()
+    if not api_token:
+        raise RuntimeError("HETZNER_API_TOKEN nao configurada")
+
+    headers = {"Authorization": f"Bearer {api_token}"}
+    with httpx.Client(timeout=30.0) as client:
+        srv_resp = client.get(f"{HETZNER_API_BASE}/servers", headers=headers)
+        srv_resp.raise_for_status()
+        servers = srv_resp.json().get("servers") or []
+
+        if not servers:
+            return {
+                "amount_usd": 0.0,
+                "metrics": {"servers": [], "source": "hetzner_api"},
+                "notes": "Hetzner sem servidores ativos.",
+            }
+
+        pr_resp = client.get(f"{HETZNER_API_BASE}/pricing", headers=headers)
+        pr_resp.raise_for_status()
+        pricing = pr_resp.json().get("pricing") or {}
+
+    # Mapa (server_type_name, location_name) -> monthly USD
+    type_loc_price: Dict[tuple, float] = {}
+    for st in pricing.get("server_types") or []:
+        name = st.get("name")
+        for p in st.get("prices") or []:
+            loc = p.get("location")
+            usd = _hetzner_price_to_usd(p.get("price_monthly") or {})
+            if name and loc and usd > 0:
+                type_loc_price[(name, loc)] = usd
+
+    # Preco IPv4 mensal (assumindo igual em todas locations — pega o primeiro)
+    ipv4_monthly_usd = 0.60
+    for ip in pricing.get("primary_ips") or []:
+        if (ip.get("type") or "").lower() == "ipv4":
+            for p in ip.get("prices") or []:
+                v = _hetzner_price_to_usd(p.get("price_monthly") or {})
+                if v > 0:
+                    ipv4_monthly_usd = v
+                    break
+            break
+
+    servers_detail: List[Dict] = []
+    total = Decimal("0")
+    for s in servers:
+        st_name = (s.get("server_type") or {}).get("name", "unknown")
+        loc_name = ((s.get("datacenter") or {}).get("location") or {}).get("name", "")
+        srv_price = type_loc_price.get((st_name, loc_name), 0.0)
+        primary_ipv4 = (s.get("public_net") or {}).get("ipv4")
+        has_ipv4 = bool(primary_ipv4 and primary_ipv4.get("ip"))
+        ipv4_cost = ipv4_monthly_usd if has_ipv4 else 0.0
+        srv_total = srv_price + ipv4_cost
+        servers_detail.append({
+            "name": s.get("name"),
+            "type": st_name,
+            "location": loc_name,
+            "server_usd": round(srv_price, 2),
+            "ipv4_usd": round(ipv4_cost, 2),
+            "monthly_usd": round(srv_total, 2),
+        })
+        total += Decimal(str(srv_total))
+
+    total_usd = float(total.quantize(Decimal("0.01")))
+    return {
+        "amount_usd": total_usd,
+        "metrics": {
+            "servers": servers_detail,
+            "ipv4_price_monthly_usd": ipv4_monthly_usd,
+            "eur_to_usd_rate": float(EUR_TO_USD),
+            "source": "hetzner_api",
+        },
+        "notes": f"Auto via Hetzner Cloud API ({len(servers)} server(s), EUR->USD@{EUR_TO_USD})",
     }
 
 

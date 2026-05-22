@@ -113,9 +113,9 @@ class WhatsAppIntegration:
     """
 
     def __init__(self):
-        self.base_url = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
-        self.api_key = os.getenv("EVOLUTION_API_KEY", "")
-        self.instance = os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp")
+        self.base_url = os.getenv("EVOLUTION_API_URL", "").strip().rstrip("/")
+        self.api_key = os.getenv("EVOLUTION_API_KEY", "").strip()
+        self.instance = os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp").strip()
 
     def _get_headers(self) -> Dict[str, str]:
         return {

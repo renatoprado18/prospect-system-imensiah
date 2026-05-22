@@ -2039,9 +2039,9 @@ async def get_whatsapp_qr():
     """Get QR code for WhatsApp connection"""
     import httpx
 
-    base_url = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
-    api_key = os.getenv("EVOLUTION_API_KEY", "")
-    instance = os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp")
+    base_url = os.getenv("EVOLUTION_API_URL", "").strip().rstrip("/")
+    api_key = os.getenv("EVOLUTION_API_KEY", "").strip()
+    instance = os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp").strip()
 
     if not base_url or not api_key:
         raise HTTPException(status_code=500, detail="Evolution API not configured")
@@ -2068,9 +2068,9 @@ async def disconnect_whatsapp():
     """Disconnect WhatsApp instance"""
     import httpx
 
-    base_url = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
-    api_key = os.getenv("EVOLUTION_API_KEY", "")
-    instance = os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp")
+    base_url = os.getenv("EVOLUTION_API_URL", "").strip().rstrip("/")
+    api_key = os.getenv("EVOLUTION_API_KEY", "").strip()
+    instance = os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp").strip()
 
     if not base_url or not api_key:
         raise HTTPException(status_code=500, detail="Evolution API not configured")

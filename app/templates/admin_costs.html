@@ -600,26 +600,84 @@ function renderTable() {
     tfoot.innerHTML = footerHtml;
 }
 
+// Projeta proximos N meses via regressao linear sobre ate 6 meses recentes.
+// Retorna {labels:["2026-06",...], values:[...]} ou {labels:[],values:[]} se < 2 pts.
+function computeProjection(periods, totalsByPeriod, nAhead = 3) {
+    const totals = periods.map(p => totalsByPeriod[p] || 0);
+    const lookback = Math.min(6, totals.length);
+    if (lookback < 2) return { labels: [], values: [] };
+
+    const recent = totals.slice(-lookback);
+    const xs = recent.map((_, i) => i);
+    const n = lookback;
+    const sumX = xs.reduce((a, b) => a + b, 0);
+    const sumY = recent.reduce((a, b) => a + b, 0);
+    const sumXY = xs.reduce((s, x, i) => s + x * recent[i], 0);
+    const sumX2 = xs.reduce((s, x) => s + x * x, 0);
+    const denom = n * sumX2 - sumX * sumX;
+    const slope = denom === 0 ? 0 : (n * sumXY - sumX * sumY) / denom;
+    const intercept = (sumY - slope * sumX) / n;
+
+    const last = periods[periods.length - 1];
+    const [yStr, mStr] = last.split('-');
+    let y = parseInt(yStr), m = parseInt(mStr);
+    const labels = [], values = [];
+    for (let i = 1; i <= nAhead; i++) {
+        m++;
+        if (m > 12) { m = 1; y++; }
+        labels.push(`${y}-${String(m).padStart(2, '0')}`);
+        values.push(Math.max(0, intercept + slope * (lookback - 1 + i)));
+    }
+    return { labels, values };
+}
+
 function renderChart() {
     const totals = _data.monthly_totals || [];
     const periods = totals.map(t => t.period_start).reverse();  // chrono asc
     const providers = [...new Set(_data.rows.map(r => r.provider))].sort();
 
+    const totalsByPeriod = Object.fromEntries(totals.map(t => [t.period_start, t.total_usd || 0]));
+    const projection = computeProjection(periods, totalsByPeriod, 3);
+    const futureCount = projection.labels.length;
+
     const datasets = providers.map(prov => ({
         label: prov,
+        type: 'bar',
         data: periods.map(p => {
             const r = _data.rows.find(r => r.provider === prov && r.period_start === p);
             return r?.amount_usd || 0;
-        }),
+        }).concat(Array(futureCount).fill(0)),
         backgroundColor: PROVIDER_COLORS[prov] || '#cbd5e1',
         stack: 'total',
     }));
 
+    if (futureCount > 0) {
+        const lastTotal = totalsByPeriod[periods[periods.length - 1]] || 0;
+        const lineData = Array(periods.length - 1).fill(null)
+            .concat([lastTotal])  // ancora a linha no topo da ultima barra real
+            .concat(projection.values);
+        datasets.push({
+            label: 'Projeção',
+            type: 'line',
+            data: lineData,
+            borderColor: '#94a3b8',
+            borderDash: [6, 4],
+            backgroundColor: 'transparent',
+            fill: false,
+            tension: 0.2,
+            pointRadius: 3,
+            pointBackgroundColor: '#94a3b8',
+            stack: undefined,
+            order: 0,
+        });
+    }
+
+    const allLabels = periods.concat(projection.labels);
     const ctx = document.getElementById('costsChart').getContext('2d');
     if (_chart) _chart.destroy();
     _chart = new Chart(ctx, {
         type: 'bar',
-        data: { labels: periods.map(p => p.slice(2, 7)), datasets },
+        data: { labels: allLabels.map(p => p.slice(2, 7)), datasets },
         options: {
             responsive: true,
             maintainAspectRatio: false,
@@ -631,10 +689,21 @@ function renderChart() {
                 },
             },
             plugins: {
-                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        boxWidth: 12, font: { size: 11 },
+                        filter: item => item.text !== 'Projeção' || futureCount > 0,
+                    },
+                },
                 tooltip: {
                     callbacks: {
-                        label: ctx => `${ctx.dataset.label}: $${ctx.parsed.y.toFixed(2)}`,
+                        label: ctx => {
+                            const v = ctx.parsed.y;
+                            if (v == null) return null;
+                            const suffix = ctx.dataset.label === 'Projeção' ? ' (proj)' : '';
+                            return `${ctx.dataset.label}: $${v.toFixed(2)}${suffix}`;
+                        },
                     },
                 },
             },

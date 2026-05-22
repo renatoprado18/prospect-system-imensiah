@@ -195,13 +195,15 @@ def auto_snapshot_month(period_start: Optional[date] = None) -> Dict:
         # === Bloco B — integracoes externas ===
         # Cada provedor independente; falha de uma nao bloqueia outras.
         from services.platform_costs_integrations import (
-            fetch_anthropic_cost, fetch_railway_cost, fetch_vercel_cost,
+            fetch_anthropic_cost, fetch_hetzner_cost, fetch_railway_cost,
+            fetch_vercel_cost,
         )
 
         for prov, fetch_fn in [
             ("vercel", fetch_vercel_cost),
             ("anthropic", fetch_anthropic_cost),
             ("railway", fetch_railway_cost),
+            ("hetzner", fetch_hetzner_cost),
         ]:
             try:
                 d = fetch_fn(period_start, period_end)

@@ -46,8 +46,8 @@ class EvolutionAPIClient:
         api_key: str = None,
         instance_name: str = None
     ):
-        self.base_url = (base_url or os.getenv("EVOLUTION_API_URL", "")).rstrip('/')
-        self.api_key = api_key or os.getenv("EVOLUTION_API_KEY", "")
+        self.base_url = (base_url or os.getenv("EVOLUTION_API_URL", "")).strip().rstrip('/')
+        self.api_key = (api_key or os.getenv("EVOLUTION_API_KEY", "")).strip()
         self.instance_name = instance_name or os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp")
 
         self.headers = {
@@ -864,10 +864,10 @@ async def _transcribe_bot_audio(key: Dict, data: Dict) -> str:
     """Download audio from WhatsApp and transcribe using Claude."""
     import base64
 
-    evo_url = os.getenv("EVOLUTION_API_URL", "")
-    evo_key = os.getenv("EVOLUTION_API_KEY", "")
-    bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot")
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    evo_url = os.getenv("EVOLUTION_API_URL", "").strip().rstrip("/")
+    evo_key = os.getenv("EVOLUTION_API_KEY", "").strip()
+    bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot").strip()
+    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
     if not evo_url or not api_key:
         return ""
