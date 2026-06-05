@@ -25073,6 +25073,11 @@ async def cron_daily_morning_briefing(request: Request):
         if proposals_count > 0:
             sections.append(f"💬 {proposals_count} propostas de acao pendentes")
 
+        # Variaveis tambem consumidas pelo CoS narrative — inicializa antes dos try blocks
+        # pra garantir definicao mesmo se algum bloco lancar.
+        mtd = None
+        pending = []
+
         # 8. Digest: ações autônomas das últimas 24h
         from services.agent_actions import summarize_for_digest, format_digest_section
         from datetime import timedelta as _td
@@ -25145,11 +25150,56 @@ async def cron_daily_morning_briefing(request: Request):
         if len(msg) > 900:
             msg = msg[:897] + "..."
 
-        await send_intel_notification(msg)
+        # Tentativa CoS narrative (Onda 1 — 06/jun/2026). Cai pro template se falhar.
+        # Requer system_memory tipo='cos_config' + ANTHROPIC_API_KEY.
+        cos_text = None
+        try:
+            from services.briefings import generate_cos_briefing_narrative
+            pending_top_titles = []
+            for p in (pending or [])[:8]:
+                payload = (p.get('payload') if isinstance(p, dict) else None) or {}
+                title = (
+                    payload.get('title')
+                    or payload.get('body')
+                    or (p.get('msg_type') if isinstance(p, dict) else None)
+                    or (p.get('source') if isinstance(p, dict) else None)
+                )
+                if title:
+                    pending_top_titles.append(str(title)[:120])
+
+            cost_mtd_arg = None
+            if mtd and isinstance(mtd, dict) and mtd.get('budget_pct', 0) >= 50:
+                cost_mtd_arg = mtd
+
+            cos_text = await generate_cos_briefing_narrative(
+                overdue_count=overdue_count,
+                today_tasks=today_tasks,
+                events=[dict(e) for e in events],
+                editorial_today=[dict(e) for e in editorial_today],
+                needs_metrics_count=len(needs_metrics),
+                proposals_count=proposals_count,
+                agent_total_24h=(agent_summary.get('total', 0) if agent_summary else 0),
+                no_post_alert=no_post_alert,
+                cost_mtd=cost_mtd_arg,
+                pending_count=len(pending) if pending else 0,
+                pending_top=pending_top_titles,
+                now=now,
+            )
+        except Exception as _e:
+            logging.warning(f"morning-briefing: cos narrative failed: {_e}")
+            cos_text = None
+
+        # Envia: prefere CoS se disponivel, senao cai pro template
+        msg_to_send = cos_text if cos_text else msg
+        mode = "cos" if cos_text else "template"
+
+        await send_intel_notification(msg_to_send)
 
         return {
             "job": "daily-morning-briefing",
             "status": "sent",
+            "mode": mode,
+            "length": len(msg_to_send),
             "timestamp": now.isoformat(),
             "overdue": overdue_count,
             "today_tasks": len(today_tasks),

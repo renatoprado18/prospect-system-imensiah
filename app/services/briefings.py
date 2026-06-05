@@ -631,6 +631,184 @@ Se nao houver dados suficientes em alguma secao, indique "Sem dados suficientes"
     }
 
 
+# ============== COS BRIEFING (Onda 1 — 06/jun/2026) ==============
+
+def _format_cos_briefing_data(
+    overdue_count: int,
+    today_tasks: List[str],
+    events: List[Dict],
+    editorial_today: List[Dict],
+    needs_metrics_count: int,
+    proposals_count: int,
+    agent_total_24h: int,
+    no_post_alert: Optional[str],
+    cost_mtd: Optional[Dict],
+    pending_count: int,
+    pending_top: List[str],
+    now: datetime,
+) -> str:
+    """Formata os dados do dia em um bloco estruturado pra Claude."""
+    dias_semana_pt = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"]
+    dia = dias_semana_pt[now.weekday()]
+    date_str = now.strftime("%d/%m/%Y")
+
+    lines = [f"DATA: {date_str} ({dia})", ""]
+
+    lines.append("TAREFAS:")
+    lines.append(f"- {overdue_count} vencidas" if overdue_count else "- 0 vencidas")
+    if today_tasks:
+        lines.append(f"- {len(today_tasks)} pra hoje:")
+        for t in today_tasks:
+            lines.append(f"  - {t}")
+    else:
+        lines.append("- 0 pra hoje")
+    lines.append("")
+
+    if events:
+        lines.append(f"REUNIOES ({len(events)}):")
+        for ev in events:
+            hora = ev["start_datetime"].strftime("%H:%M") if ev.get("start_datetime") else "?"
+            lines.append(f"- {hora} — {ev.get('summary') or '(sem titulo)'}")
+    else:
+        lines.append("REUNIOES: nenhuma agendada")
+    lines.append("")
+
+    ed_lines = []
+    if no_post_alert:
+        ed_lines.append(f"- ALERTA: {no_post_alert}")
+    for ep in editorial_today:
+        hora = ep['data_publicacao'].strftime('%Hh') if ep.get('data_publicacao') else ""
+        ed_lines.append(f"- Post agendado hoje: {ep.get('article_title')} ({hora})")
+    if needs_metrics_count:
+        ed_lines.append(f"- Coletar metricas de {needs_metrics_count} post(s) de ~48h atras")
+    if ed_lines:
+        lines.append("EDITORIAL/LINKEDIN:")
+        lines.extend(ed_lines)
+        lines.append("")
+
+    lines.append(f"PROPOSTAS DE ACAO PENDENTES: {proposals_count}")
+    lines.append(f"ACOES AUTONOMAS NAS ULTIMAS 24H: {agent_total_24h}")
+    lines.append("")
+
+    if cost_mtd:
+        lines.append(
+            f"CUSTO MTD: ${cost_mtd['total_usd']:.2f} "
+            f"({cost_mtd['budget_pct']:.0f}% do budget)"
+        )
+        lines.append("")
+
+    if pending_count:
+        lines.append(f"NOTIFICACOES PENDENTES DESDE ULTIMO DIGEST: {pending_count}")
+        for p in pending_top[:8]:
+            lines.append(f"- {p}")
+
+    return "\n".join(lines).strip()
+
+
+def _build_cos_briefing_system_prompt(cos_config_content: str) -> str:
+    """Monta o system prompt do briefing CoS."""
+    return f"""Voce e o Chief of Staff digital do Renato. Nao e assistente, nao e dashboard — e Chief of Staff. Sua funcao e garantir que cada hora do Renato seja gasta no problema mais alto da pilha.
+
+A configuracao CoS abaixo define prioridades, politicas e mandato. USE como bussola pra ordenar e opinar — nao recite.
+
+==== CONFIGURACAO COS (referencia) ====
+{cos_config_content}
+==== FIM DA CONFIGURACAO ====
+
+REGRAS DO BRIEFING DAS 08H (mensagem WhatsApp diaria):
+
+1. NAO e lista de bullets neutros. E narrativa opinativa em portugues brasileiro com acentos.
+2. Estrutura sugerida (adapte ao dia):
+   - Abertura curta: "Hoje e dia de X" — qual frente domina o dia (use os pesos v5)
+   - 2 a 4 itens prioritarios com SUA leitura, ordenados pela frente que pesa mais
+   - 1 linha de confronto: o que ele esta adiando, evitando, ou nao olhando (use o que sabe da CoS config — Alba sem acao, Wadhwani sem decisao, decisao SP/Japao sem progresso, treino abaixo do piso, etc.)
+   - Fecho objetivo: numeros chave em 1 linha (overdue, reunioes, propostas)
+3. Tom: executivo, direto, sem firula. Sem "espero que esteja bem". Trate o Renato pelo nome.
+4. Formato WhatsApp: *asterisco* pra bold. SEM markdown headers (#, ##). SEM emojis decorativos (so use 1 ou 2 se realmente carregam significado — alerta, decisao). SEM hashtags.
+5. Tamanho: 800 a 1500 caracteres. Nada mais.
+6. Quando voce identificar acao que o CoS ja "rascunhou" (resposta, devolutiva, drafts), mencione em texto ("rascunhei a devolutiva", "preparei contexto pra Vallen"). Sem URLs falsos.
+7. Quando nao houver nada relevante em alguma frente, IGNORE — nao force conteudo. Curto vale mais que cheio.
+8. Se a frente "Vida pessoal" (3a familia / 3b saude) merece confronto (separacao recente, mudanca em decisao, treino), nao evite — Chief of Staff confronta com firmeza respeitosa.
+
+Devolva APENAS o texto do briefing — sem cabecalho meta, sem aspas envolvendo, sem "aqui esta o briefing". So o texto que vai pro WhatsApp."""
+
+
+async def generate_cos_briefing_narrative(
+    overdue_count: int,
+    today_tasks: List[str],
+    events: List[Dict],
+    editorial_today: List[Dict],
+    needs_metrics_count: int,
+    proposals_count: int,
+    agent_total_24h: int,
+    no_post_alert: Optional[str],
+    cost_mtd: Optional[Dict],
+    pending_count: int,
+    pending_top: List[str],
+    now: datetime,
+) -> Optional[str]:
+    """Gera o briefing 7h no formato Chief of Staff usando Claude.
+
+    Retorna None se: sem API key, sem cos_config, ou Claude falhar.
+    Caller deve cair pro template estatico nesse caso.
+    """
+    if not ANTHROPIC_API_KEY:
+        return None
+
+    from services.system_memory import get_active_cos_config
+
+    cfg = get_active_cos_config()
+    if not cfg or not cfg.get("conteudo"):
+        return None
+
+    data_block = _format_cos_briefing_data(
+        overdue_count=overdue_count,
+        today_tasks=today_tasks,
+        events=events,
+        editorial_today=editorial_today,
+        needs_metrics_count=needs_metrics_count,
+        proposals_count=proposals_count,
+        agent_total_24h=agent_total_24h,
+        no_post_alert=no_post_alert,
+        cost_mtd=cost_mtd,
+        pending_count=pending_count,
+        pending_top=pending_top,
+        now=now,
+    )
+
+    system_prompt = _build_cos_briefing_system_prompt(cfg["conteudo"])
+    user_prompt = f"DADOS DE HOJE:\n\n{data_block}\n\nGere o briefing CoS pra Renato. Apenas o texto pro WhatsApp."
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": CLAUDE_MODEL,
+                    "max_tokens": 1200,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_prompt}],
+                },
+            )
+            if response.status_code != 200:
+                return None
+            result = response.json()
+            text = result.get("content", [{}])[0].get("text", "").strip()
+            if not text:
+                return None
+            # WhatsApp seguro: limite duro 1600 chars (margem do limite de 4096)
+            if len(text) > 1600:
+                text = text[:1597] + "..."
+            return text
+    except Exception:
+        return None
+
+
 def get_contacts_needing_briefing(limit: int = 10) -> List[Dict]:
     """
     Retorna contatos que precisam de atencao e se beneficiariam de briefing.

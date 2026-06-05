@@ -148,6 +148,32 @@ def get_latest_synthesis() -> Optional[Dict]:
         return None
 
 
+def get_active_cos_config() -> Optional[Dict]:
+    """Get the most recent active CoS config (prioridades + politicas + mandato).
+
+    Alimenta briefing 7h, propostas de acao, triagem. Sem isso, sistema chuta
+    prioridade. Atualizar via novo INSERT (mantemos historico — caller pega o
+    mais recente).
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, titulo, conteudo, tags, criado_em
+                FROM system_memories
+                WHERE tipo = 'cos_config'
+                ORDER BY criado_em DESC
+                LIMIT 1
+                """
+            )
+            r = cursor.fetchone()
+            return dict(r) if r else None
+    except Exception as e:
+        logger.error(f"get_active_cos_config error: {e}")
+        return None
+
+
 def _search_keyword(query: str, limit: int) -> List[Dict]:
     """Keyword search (ILIKE) sobre titulo + conteudo."""
     try:
