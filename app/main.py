@@ -4722,51 +4722,6 @@ async def api_linkedin_curator_override_stats(request: Request):
     }
 
 
-@app.get("/api/admin/diag-evolution")
-async def api_diag_evolution(request: Request):
-    """Diagnostico temporario 06/jun/2026 — investigar por que cron nao chega."""
-    import os, httpx
-    raw_url = os.getenv("EVOLUTION_API_URL", "")
-    raw_key = os.getenv("EVOLUTION_API_KEY", "")
-    cleaned = raw_url.replace('\\n', '').replace('\\r', '').strip().rstrip('/')
-    instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot").strip()
-
-    out = {
-        "raw_url_repr": repr(raw_url)[:200],
-        "raw_url_bytes_tail": [hex(b) for b in raw_url.encode('utf-8')[-8:]] if raw_url else [],
-        "cleaned_url": cleaned,
-        "instance": instance,
-        "key_set": bool(raw_key),
-    }
-
-    # Tenta call real ao Evolution
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(
-                f"{cleaned}/instance/connectionState/{instance}",
-                headers={"apikey": raw_key.strip()},
-            )
-            out["evolution_status"] = r.status_code
-            out["evolution_body"] = r.text[:300]
-    except Exception as e:
-        out["evolution_error"] = f"{type(e).__name__}: {str(e)[:300]}"
-
-    # Tenta send real curto
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.post(
-                f"{cleaned}/message/sendText/{instance}",
-                headers={"apikey": raw_key.strip(), "Content-Type": "application/json"},
-                json={"number": "5511984153337", "text": "diag-send", "delay": 100},
-            )
-            out["send_status"] = r.status_code
-            out["send_body"] = r.text[:400]
-    except Exception as e:
-        out["send_error"] = f"{type(e).__name__}: {str(e)[:300]}"
-
-    return out
-
-
 @app.get("/api/admin/notifications-silenced")
 async def api_notifications_silenced(request: Request, hours: int = 24, show: str = "unacked"):
     """M2: lista notificacoes que foram pra digest em vez de WhatsApp imediato.
