@@ -25193,7 +25193,16 @@ async def cron_daily_morning_briefing(request: Request):
         msg_to_send = cos_text if cos_text else msg
         mode = "cos" if cos_text else "template"
 
-        await send_intel_notification(msg_to_send)
+        # Bug latente 06/jun/2026: cron ignorava o retorno e respondia "sent" mesmo
+        # quando Evolution rejeitava (Baileys offline OU env var poluido com \n).
+        # Agora falha alto se nao saiu — GH Actions detecta e alerta.
+        delivered = await send_intel_notification(msg_to_send)
+        if not delivered:
+            logging.error(f"morning-briefing: send_intel_notification returned False (mode={mode})")
+            raise HTTPException(
+                status_code=500,
+                detail=f"notification_failed (mode={mode}, length={len(msg_to_send)})",
+            )
 
         return {
             "job": "daily-morning-briefing",

@@ -46,7 +46,10 @@ class EvolutionAPIClient:
         api_key: str = None,
         instance_name: str = None
     ):
-        self.base_url = (base_url or os.getenv("EVOLUTION_API_URL", "")).strip().rstrip('/')
+        # Vercel as vezes cola "\n" literal (2 chars) no final do valor — incidente
+        # 06/jun/2026, brico 15 dias o cron silenciosamente. Limpa explicitamente.
+        raw_url = (base_url or os.getenv("EVOLUTION_API_URL", ""))
+        self.base_url = raw_url.replace('\\n', '').replace('\\r', '').strip().rstrip('/')
         self.api_key = (api_key or os.getenv("EVOLUTION_API_KEY", "")).strip()
         self.instance_name = instance_name or os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp")
 
@@ -864,7 +867,7 @@ async def _transcribe_bot_audio(key: Dict, data: Dict) -> str:
     """Download audio from WhatsApp and transcribe using Claude."""
     import base64
 
-    evo_url = os.getenv("EVOLUTION_API_URL", "").strip().rstrip("/")
+    evo_url = os.getenv("EVOLUTION_API_URL", "").replace('\\n', '').replace('\\r', '').strip().rstrip("/")
     evo_key = os.getenv("EVOLUTION_API_KEY", "").strip()
     bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot").strip()
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
