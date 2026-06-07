@@ -325,6 +325,20 @@ class ConselhoOSRaciSyncService:
                             raci.get("empresa_id"),
                         )
 
+                        # CoS guard 07/06/2026: skip se Renato NAO esta entre os R.
+                        # Bug original: criava task pra ele mesmo quando outro era R,
+                        # inflando o queue com 30+ itens alheios (Sandra, Amadeo, Thalita...).
+                        # RACI continua visivel no ConselhoOS; so nao polui INTEL pessoal.
+                        owner = self._get_owner()
+                        if owner and contact_id != owner.get("contact_id"):
+                            logger.info(
+                                f"Skip RACI {raci_id}: R='{raci.get('responsavel_r')}' "
+                                f"(Renato nao e responsavel — task fica no ConselhoOS, nao no INTEL)"
+                            )
+                            results.setdefault("skipped_not_renato", 0)
+                            results["skipped_not_renato"] += 1
+                            continue
+
                         # Build task title and description
                         area = raci.get("area", "Geral")
                         acao = raci.get("acao", "")
