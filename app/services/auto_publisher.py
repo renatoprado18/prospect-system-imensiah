@@ -139,10 +139,10 @@ def _notify_short_body(post_id: int, body_len: int, title: Optional[str], source
         logger.exception("auto_publisher: falha ao notificar short body")
 
 
-# Cadencia semanal padrao: 3 hot_takes opinativos + 1 repost de artigo curado.
-# Usuario corrigiu 2026-05-06: nao queremos 4 posts mistos aleatorios, queremos
-# essa proporcao fixa pra manter a voz (hot_takes) sem perder o pulso curado.
-DEFAULT_WEEKLY_MIX: Dict[str, int] = {'hot_take': 3, 'editorial': 1}
+# Cadencia semanal: 2 hot_takes opinativos + 1 repost de artigo curado.
+# Alinhamento CoS jun/2026 (Bloco 2 E2): 2 HT + 1 artigo/semana. Reduzido de
+# 3+1 pra 2+1 pq aprovacao virou gargalo real (pendentes acumularam 28d em mai/26).
+DEFAULT_WEEKLY_MIX: Dict[str, int] = {'hot_take': 2, 'editorial': 1}
 
 
 def _week_bounds(start_date: Optional[date]) -> tuple:
@@ -185,13 +185,13 @@ def count_committed_posts_in_week(start_date: Optional[date] = None) -> int:
 
 
 async def select_weekly_posts(
-    posts_per_week: int = 4,
+    posts_per_week: int = 3,
     mix: Optional[Dict[str, int]] = None,
 ) -> Dict:
     """
     IA seleciona os melhores posts para a semana.
 
-    Cadencia padrao: 3 hot_takes + 1 editorial repost (DEFAULT_WEEKLY_MIX).
+    Cadencia padrao: 2 hot_takes + 1 editorial repost (DEFAULT_WEEKLY_MIX).
     Pode ser sobrescrita via mix={'hot_take': N, 'editorial': M}; nesse caso
     posts_per_week e ignorado (vira sum(mix.values())).
 
@@ -389,9 +389,10 @@ def schedule_selected_posts(selected: List[Dict], start_date: date = None) -> Di
         }
 
     # PDCA Mes 1 (08/05/2026): hipoteses ativas H1 (slot 16h) + H2 (Ter/Qui/Sex).
-    # Slots = 4 horarios em dias top-eng% (Ter/Qui/Sex), pivot pra 16h BRT
-    # (analise mostrou 13-14h pior eng%, 15-16h e 21h melhor). Ordem reflete
-    # prioridade: melhores DOWs/horarios primeiro pra os 4 posts da semana.
+    # Slots em dias top-eng% (Ter/Qui/Sex), pivot pra 16h BRT (analise mostrou
+    # 13-14h pior eng%, 15-16h e 21h melhor). Ordem reflete prioridade: melhores
+    # DOWs/horarios primeiro. 4o slot (Tue 21h) e fallback se mix for sobrescrito;
+    # cadencia padrao (2HT+1ed) usa so os 3 primeiros.
     slots = []
     Tue = start_date + timedelta(days=1)  # Terca
     Thu = start_date + timedelta(days=3)  # Quinta — melhor eng% no mes 1
@@ -399,7 +400,7 @@ def schedule_selected_posts(selected: List[Dict], start_date: date = None) -> Di
     slots.append(datetime(Thu.year, Thu.month, Thu.day, 16, 0))   # Thu 16h
     slots.append(datetime(Tue.year, Tue.month, Tue.day, 16, 0))   # Tue 16h
     slots.append(datetime(Fri.year, Fri.month, Fri.day, 16, 0))   # Fri 16h
-    slots.append(datetime(Tue.year, Tue.month, Tue.day, 21, 0))   # Tue 21h (4o)
+    slots.append(datetime(Tue.year, Tue.month, Tue.day, 21, 0))   # Tue 21h (fallback)
 
     scheduled = []
     with get_db() as conn:

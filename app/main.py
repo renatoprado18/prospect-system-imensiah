@@ -21844,8 +21844,9 @@ async def cron_editorial_monthly_review(request: Request):
 @track_cron_run
 async def cron_editorial_weekly_briefing(request: Request):
     """
-    Cron: Gera briefing editorial semanal + IA seleciona 4 posts da proxima semana
-    como pending_approval (aguardando aprovacao do user via /editorial ou drill).
+    Cron: Gera briefing editorial semanal + IA seleciona posts da proxima semana
+    (cadencia DEFAULT_WEEKLY_MIX = 2HT+1ed) como pending_approval, aguardando
+    aprovacao do user via /editorial ou drill.
 
     Schedule: 0 21 * * 0 (Domingos as 21h UTC / 18h Brasilia).
     Consolidado com selecao semanal pra evitar 2 jobs no mesmo horario.
