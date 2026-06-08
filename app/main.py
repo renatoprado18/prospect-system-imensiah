@@ -25227,6 +25227,104 @@ async def cron_daily_morning_briefing(request: Request):
         }
 
 
+# ============== SCHEDULED ACTIONS (V0) ==============
+# Primitivo CoS pra agendar acoes futuras com confirmacao ativa.
+# Substitui GH Actions one-shot. Cron a cada 5min (granularity GH Actions).
+# Ver app/services/scheduled_actions.py + scripts/migrations/016_scheduled_actions.sql
+
+@app.get("/api/cron/process-scheduled-actions")
+@app.post("/api/cron/process-scheduled-actions")
+@track_cron_run
+async def cron_process_scheduled_actions(request: Request):
+    """
+    Processa scheduled_actions com scheduled_for <= NOW(). Idempotent.
+    Notifica Renato via WA depois de cada send (sucesso ou falha terminal).
+
+    Why: GH Actions one-shot pra envios discretos eh band-aid; incidente
+    Marcos Tanaka 07/06/26 (escalado pra 09/06 quando deveria 08/06) motivou
+    o refactor. Ver project_scheduled_actions.md.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.scheduled_actions import process_due
+
+    try:
+        result = await process_due()
+        return {"job": "process-scheduled-actions", **result}
+    except Exception as e:
+        logging.error(f"process-scheduled-actions failed: {e}")
+        # NAO catch silenciosamente (licao Marcos 07/06): se cron quebra, queremos
+        # ver 500 no /admin/cron-health ao inves de "status sent" mentindo.
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/admin/scheduled-actions", response_class=HTMLResponse)
+async def admin_scheduled_actions_page(request: Request):
+    """UI admin: timeline de acoes agendadas (pending/sent/failed/cancelled)."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    if user.get("role") != "admin":
+        return RedirectResponse(url="/", status_code=302)
+
+    from services.scheduled_actions import get_audit_log
+    actions = get_audit_log(limit=200, days=14)
+
+    return templates.TemplateResponse("admin_scheduled_actions.html", {
+        "request": request,
+        "user": user,
+        "actions": actions,
+    })
+
+
+@app.get("/api/admin/scheduled-actions")
+async def api_admin_scheduled_actions_list(
+    request: Request,
+    status: Optional[str] = Query(None, description="pending|sent|failed|cancelled|all"),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """Lista scheduled_actions. status=pending por default na UI; 'all' = audit log completo."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from services.scheduled_actions import list_pending, get_audit_log
+
+    if not status or status == "pending":
+        rows = list_pending(limit=limit)
+    else:
+        # Reusa get_audit_log e filtra (UI simples; melhor seria query especifica)
+        all_rows = get_audit_log(limit=limit * 4, days=30)
+        if status == "all":
+            rows = all_rows[:limit]
+        else:
+            rows = [r for r in all_rows if r.get("status") == status][:limit]
+
+    # Serializa datetimes
+    from services.tz import iso_utc
+    for r in rows:
+        for k in ("scheduled_for", "created_at", "executed_at"):
+            if r.get(k):
+                r[k] = iso_utc(r[k])
+
+    return {"actions": rows, "count": len(rows)}
+
+
+@app.post("/api/admin/scheduled-actions/{action_id}/cancel")
+async def api_admin_scheduled_actions_cancel(request: Request, action_id: int):
+    """Cancela uma acao pendente."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from services.scheduled_actions import cancel
+    ok = cancel(action_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Acao nao encontrada ou ja processada")
+    return {"cancelled": True, "id": action_id}
+
+
 @app.get("/api/cron/daily-evening-debriefing")
 @track_cron_run
 async def cron_daily_evening_debriefing(request: Request):

@@ -1,0 +1,160 @@
+{% extends "rap_base.html" %}
+{% block title %}Scheduled Actions - INTEL{% endblock %}
+{% block page_title %}Scheduled Actions{% endblock %}
+{% block page_subtitle %}<div class="page-subtitle">Acoes agendadas pelo CoS com confirmacao ativa pos-execucao. V0: wa_send. Cron a cada 5min.</div>{% endblock %}
+
+{% block extra_css %}
+<style>
+    .sa-summary {
+        display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .sa-stat {
+        background: white; border-radius: 8px; padding: 10px 14px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        border-left: 3px solid #94a3b8;
+        min-width: 120px;
+    }
+    .sa-stat.pending { border-left-color: #f59e0b; }
+    .sa-stat.sent { border-left-color: #16a34a; }
+    .sa-stat.failed { border-left-color: #dc2626; }
+    .sa-stat.cancelled { border-left-color: #64748b; }
+    .sa-stat .label { font-size: 0.7rem; text-transform: uppercase; color: #64748b; font-weight: 600; }
+    .sa-stat .value { font-size: 1.3rem; font-weight: 700; color: #0f172a; }
+
+    .sa-row {
+        background: white; border-radius: 10px; padding: 12px 14px;
+        margin-bottom: 8px; border-left: 4px solid #e5e7eb;
+        display: grid; grid-template-columns: 90px 1fr auto; gap: 12px; align-items: start;
+    }
+    .sa-row.status-pending { border-left-color: #f59e0b; background: #fffbeb; }
+    .sa-row.status-sent { border-left-color: #16a34a; }
+    .sa-row.status-failed { border-left-color: #dc2626; background: #fef2f2; }
+    .sa-row.status-cancelled { border-left-color: #64748b; opacity: 0.7; }
+
+    .sa-badge {
+        display: inline-block; padding: 3px 8px; border-radius: 12px;
+        font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    .sa-badge.pending { background: #fef3c7; color: #92400e; }
+    .sa-badge.sent { background: #dcfce7; color: #166534; }
+    .sa-badge.failed { background: #fee2e2; color: #991b1b; }
+    .sa-badge.cancelled { background: #f1f5f9; color: #475569; }
+
+    .sa-body { font-size: 0.9rem; }
+    .sa-body .text { color: #1e293b; word-break: break-word; }
+    .sa-body .meta { font-size: 0.78rem; color: #64748b; margin-top: 4px; }
+    .sa-body .meta code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-size: 0.72rem; }
+    .sa-body .err { color: #991b1b; font-family: monospace; font-size: 0.78rem; margin-top: 4px; word-break: break-all; }
+
+    .sa-time { font-size: 0.8rem; color: #475569; font-family: monospace; }
+    .sa-time .when { font-weight: 700; color: #0f172a; }
+
+    .btn-cancel {
+        background: #fff; color: #dc2626; border: 1px solid #fecaca;
+        padding: 4px 10px; border-radius: 6px; font-size: 0.78rem; cursor: pointer;
+    }
+    .btn-cancel:hover { background: #fef2f2; }
+
+    .empty { text-align: center; color: #94a3b8; padding: 40px; font-size: 0.95rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+{% set counts = {'pending': 0, 'sent': 0, 'failed': 0, 'cancelled': 0} %}
+{% for a in actions %}
+    {% if a.status in counts %}{% set _ = counts.update({a.status: counts[a.status] + 1}) %}{% endif %}
+{% endfor %}
+
+<div class="sa-summary">
+    <div class="sa-stat pending">
+        <div class="label">Pendentes</div>
+        <div class="value">{{ counts.pending }}</div>
+    </div>
+    <div class="sa-stat sent">
+        <div class="label">Enviadas</div>
+        <div class="value">{{ counts.sent }}</div>
+    </div>
+    <div class="sa-stat failed">
+        <div class="label">Falhas</div>
+        <div class="value">{{ counts.failed }}</div>
+    </div>
+    <div class="sa-stat cancelled">
+        <div class="label">Canceladas</div>
+        <div class="value">{{ counts.cancelled }}</div>
+    </div>
+</div>
+
+{% if not actions %}
+<div class="empty">Nenhuma acao agendada nos ultimos 14 dias.</div>
+{% else %}
+
+{% for a in actions %}
+<div class="sa-row status-{{ a.status }}">
+    <div>
+        <span class="sa-badge {{ a.status }}">{{ a.status }}</span>
+        <div class="sa-time" style="margin-top: 6px;">
+            {% if a.status == 'pending' %}
+                <span class="when">{{ a.scheduled_for|brt("%d/%m %H:%M") }}</span>
+            {% elif a.executed_at %}
+                <span class="when">{{ a.executed_at|brt("%d/%m %H:%M") }}</span>
+            {% else %}
+                <span class="when">{{ a.scheduled_for|brt("%d/%m %H:%M") }}</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="sa-body">
+        <div class="text">
+            {% if a.action_type == 'wa_send' %}
+                <strong>WA</strong> &rarr; <code>{{ a.payload.number if a.payload else '?' }}</code>
+                via <code>{{ a.payload.instance if a.payload else '?' }}</code>
+                <div style="margin-top: 4px;">{{ (a.payload.text if a.payload else '')[:200] }}{% if a.payload and a.payload.text and a.payload.text|length > 200 %}...{% endif %}</div>
+            {% else %}
+                <strong>{{ a.action_type }}</strong>: {{ a.payload }}
+            {% endif %}
+        </div>
+        <div class="meta">
+            id <code>{{ a.id }}</code>
+            {% if a.created_by %}&middot; criado por <code>{{ a.created_by }}</code>{% endif %}
+            {% if a.source %}&middot; source: {{ a.source }}{% endif %}
+            {% if a.attempts %}&middot; attempts {{ a.attempts }}/{{ a.max_attempts }}{% endif %}
+            {% if a.result_msg_id %}&middot; msg_id <code>{{ a.result_msg_id }}</code>{% endif %}
+            {% if a.result_status %}&middot; status <code>{{ a.result_status }}</code>{% endif %}
+            {% if a.dedup_key %}&middot; dedup <code>{{ a.dedup_key }}</code>{% endif %}
+        </div>
+        {% if a.last_error %}
+        <div class="err">{{ a.last_error }}</div>
+        {% endif %}
+    </div>
+
+    <div>
+        {% if a.status == 'pending' %}
+            <button class="btn-cancel" onclick="cancelAction({{ a.id }})">Cancelar</button>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+{% endif %}
+
+<script>
+async function cancelAction(id) {
+    if (!confirm('Cancelar acao agendada ' + id + '?')) return;
+    try {
+        const resp = await fetch('/api/admin/scheduled-actions/' + id + '/cancel', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        if (resp.ok) {
+            location.reload();
+        } else {
+            const err = await resp.json().catch(() => ({detail: 'erro'}));
+            alert('Falha ao cancelar: ' + (err.detail || resp.status));
+        }
+    } catch (e) {
+        alert('Erro: ' + e.message);
+    }
+}
+</script>
+{% endblock %}
