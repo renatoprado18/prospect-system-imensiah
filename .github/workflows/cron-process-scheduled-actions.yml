@@ -1,0 +1,25 @@
+name: Cron — Process Scheduled Actions
+
+# Why GitHub Actions: scheduled_actions e infra critica do CoS. Incidente Marcos
+# Tanaka 07/06/26 foi causado por GH Actions one-shot com data errada — agora
+# qualquer agendamento passa por scheduled_actions e e processado por cron a cada
+# 5min (granularity minima do GH Actions). Vercel Hobby deprioritiza/skipa crons
+# silenciosamente (ver memoria feedback_cron_host_choice.md), nao serve.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit process-scheduled-actions endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/process-scheduled-actions")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)
