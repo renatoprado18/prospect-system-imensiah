@@ -106,12 +106,17 @@ Responda JSON array (vazio se nada matchou):
 ]
 
 Regras:
+- IMPORTANTE: item_id DEVE ser exatamente um UUID listado acima. NUNCA invente ID, NUNCA use numero. Se nao achar item correspondente claro, NAO inclua a proposta.
 - confianca=alta: msg cita item de forma inequivoca (acao, nome do responsavel, dados especificos). Ex: "Kommo CRM ativado hoje" + tem item "Ativar Kommo CRM".
-- confianca=media: msg pode estar relacionada mas ambigua. Ex: "Reuniao com Camila ontem foi boa" + tem item "Conversar com Camila" (pode ser update ou so update informal sem mudanca de status).
+- confianca=media: msg pode estar relacionada mas ambigua.
 - confianca=baixa: matching forçado, contexto insuficiente. Prefira retornar vazio em vez de baixa.
 - Mensagens irrelevantes (saudacao, off-topic, emoji isolado): retorne array vazio [].
-- Se a msg diz "concluido", "feito", "pronto", "ok", "ja foi" sobre item → action=complete, new_status=concluido.
-- Se reporta progresso sem finalizar → action=update_status, new_status=em_andamento.
+- DETECCAO DE CONCLUSAO — marque new_status=concluido quando a msg indica:
+  * Verbos no PASSADO ("apresentado", "fechado", "criado", "definido", "implementado", "realizado", "feito", "concluido")
+  * Anuncio de RESULTADO final ("decisao tomada", "ficou em X", "esta pronto")
+  * Acao especifica do RACI item executada (mesmo se sem palavra "concluido")
+  * Ex: item "Conversar com Camila" + msg "Reuniao com Camila apresentado Clube Vallen e Politica Comercial" => concluido (a conversa aconteceu).
+- Se reporta progresso sem finalizar ("estamos trabalhando", "em curso", "ainda falta X") → new_status=em_andamento.
 - Se anuncia novo prazo → action=update_prazo + new_prazo.
 - Se adiciona contexto sem mudar status → action=add_note.
 
@@ -135,8 +140,24 @@ Responda APENAS o JSON array."""
         if start < 0:
             return []
         proposals = json.loads(text_out[start:end])
-        # Validacao basica
-        valid = [p for p in proposals if isinstance(p, dict) and p.get('item_id') and p.get('confianca')]
+        # Validacao basica + filtro de alucinacao de IDs (UUID real do contexto)
+        # Bug detectado 08/06/26: Claude as vezes inventa item_id="13" ou UUIDs ineditos.
+        valid_ids = {str(it['id']) for it in items}
+        import re
+        UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+        valid = []
+        for p in proposals:
+            if not isinstance(p, dict): continue
+            iid = str(p.get('item_id') or '')
+            if not iid or not UUID_RE.match(iid):
+                logger.info(f"smart_updates: drop proposta item_id invalido '{iid[:40]}'")
+                continue
+            if iid not in valid_ids:
+                logger.info(f"smart_updates: drop proposta item_id alucinado '{iid}' (nao esta no contexto)")
+                continue
+            if not p.get('confianca'):
+                continue
+            valid.append(p)
         return valid
     except Exception as e:
         logger.warning(f"propose_updates_from_text falhou: {type(e).__name__}: {e}")
@@ -406,3 +427,99 @@ async def process_group_message(text: str, empresa_id: str, empresa_nome: str = 
             logger.warning(f"notif Renato pending review falhou: {e}")
 
     return {"applied": applied, "pending_review": pending, "skipped_low": skipped, "source": "ai"}
+
+
+# ============== BATCH PROCESSOR (08/jun/2026) ==============
+
+async def process_week_for_empresa(
+    empresa_id: str,
+    group_jid: str,
+    empresa_nome: str = "",
+    days: int = 7,
+    auto_apply: bool = False,
+) -> Dict:
+    """Roda smart_updates em batch sobre todas msgs de texto do grupo nos ultimos N dias.
+
+    Args:
+        empresa_id: UUID da empresa no ConselhoOS
+        group_jid: JID do grupo WA (ex: '120363408325592607@g.us')
+        empresa_nome: nome amigavel pra logs
+        days: janela retroativa (default 7)
+        auto_apply: se True, aplica propostas alta-confianca direto
+
+    Returns:
+        {
+          'msgs_processed': int,
+          'proposals_all': list[dict] (todas propostas geradas, ja deduped + match items reais),
+          'high_confidence': list[dict],
+          'medium_confidence': list[dict],
+          'applied': list[dict] (se auto_apply=True),
+        }
+    """
+    from database import get_db
+    out: Dict = {
+        "empresa_id": empresa_id,
+        "empresa_nome": empresa_nome,
+        "group_jid": group_jid,
+        "msgs_processed": 0,
+        "proposals_all": [],
+        "high_confidence": [],
+        "medium_confidence": [],
+        "applied": [],
+    }
+
+    # Pega msgs de texto recentes, mais antigas primeiro pra Claude entender contexto cronologico
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT sender_name, content, timestamp, from_me
+            FROM group_messages
+            WHERE group_jid = %s
+              AND timestamp > NOW() - (%s || ' days')::interval
+              AND content IS NOT NULL AND length(content) >= %s
+            ORDER BY timestamp ASC
+            """,
+            (group_jid, str(days), MIN_TEXT_LEN_FOR_AI),
+        )
+        msgs = cur.fetchall()
+
+    out["msgs_processed"] = len(msgs)
+    if not msgs:
+        return out
+
+    # Dedup propostas por item_id (mantem a de maior confianca)
+    best_per_item: Dict[str, Dict] = {}
+
+    for m in msgs:
+        sender = "EU" if m.get('from_me') else (m.get('sender_name') or '?')
+        ts = m.get('timestamp')
+        text = m.get('content') or ''
+        # Prefix com sender pra Claude ter contexto de quem fala
+        prefixed = f"[{sender} em {ts.strftime('%d/%m %H:%M') if ts else '?'}]\n{text}"
+        try:
+            props = await propose_updates_from_text(prefixed, empresa_id)
+        except Exception as e:
+            logger.warning(f"process_week msg falhou: {e}")
+            continue
+        for p in props:
+            iid = p['item_id']
+            existing = best_per_item.get(iid)
+            conf_rank = {'alta': 3, 'media': 2, 'baixa': 1}
+            new_rank = conf_rank.get(p.get('confianca', '').lower(), 0)
+            old_rank = conf_rank.get((existing or {}).get('confianca', '').lower(), 0)
+            if new_rank > old_rank:
+                best_per_item[iid] = p
+
+    all_proposals = list(best_per_item.values())
+    out["proposals_all"] = all_proposals
+    out["high_confidence"] = [p for p in all_proposals if (p.get('confianca') or '').lower() == 'alta']
+    out["medium_confidence"] = [p for p in all_proposals if (p.get('confianca') or '').lower() == 'media']
+
+    if auto_apply:
+        for p in out["high_confidence"]:
+            r = apply_proposal(p, empresa_id)
+            if r:
+                out["applied"].append(r)
+
+    return out

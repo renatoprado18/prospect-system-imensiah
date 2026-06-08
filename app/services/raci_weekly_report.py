@@ -47,7 +47,7 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
         # anterior (concluido_relatado_em IS NULL). Apos enviar, chamar
         # mark_concluidos_as_reported(empresa_id) pra marcar.
         cur.execute("""
-            SELECT id, area, acao, prazo, status, updated_at,
+            SELECT id, area, acao, prazo, status, updated_at, notas,
                    responsavel_r, responsavel_a, responsavel_c, responsavel_i,
                    concluido_relatado_em
             FROM raci_itens
@@ -62,10 +62,15 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
 
         hoje = date.today()
         now = datetime.now()
-        urgentes = []          # bucket 0 — vencido + status='pendente' (ninguem arregacou)
-        atrasadas_mov = []     # bucket 1 — vencido + status='em_andamento' (comecou, falta entregar)
+        urgentes = []          # bucket 0 — vencido + pendente + SEM update recente
+        atrasadas_mov = []     # bucket 1 — vencido + (em_andamento OU pendente-com-update-recente)
         no_prazo = []          # bucket 2 — prazo futuro, qualquer status nao-concluido
         concluidas = []        # bucket 3
+        recent_updates = []    # ⚡ updates dos ultimos 7 dias pra header
+
+        # 08/06/26: cooldown de 72h em update_at — se mexeram recentemente,
+        # nao e mais "ninguem arregacou", e sim "tem movimento mas falta entregar"
+        update_cooldown_hours = 72
 
         for item in raw_items:
             prazo_raw = item['prazo']
@@ -83,7 +88,28 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
                 'responsavel': item['responsavel_r'] or '?',
                 'status': item['status'],
                 'updated_at': updated_at,
+                'notas': item.get('notas') or '',
             }
+
+            # A: coletar updates recentes (ultimas 7 dias) pra header
+            if updated_at:
+                hours_since = (now - updated_at).total_seconds() / 3600
+                if hours_since <= 7 * 24:
+                    # Pega ultima linha de notas (formato "[DD/MM] texto\n[DD/MM] texto")
+                    last_note = ''
+                    for ln in (entry['notas'] or '').splitlines()[::-1]:
+                        ln = ln.strip()
+                        if ln:
+                            last_note = ln
+                            break
+                    if last_note:
+                        recent_updates.append({
+                            'acao': item['acao'],
+                            'responsavel': item['responsavel_r'] or '?',
+                            'last_note': last_note,
+                            'new_status': item['status'],
+                            'updated_at': updated_at,
+                        })
 
             status = item['status']
             if status == 'concluido':
@@ -92,11 +118,17 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
 
             is_vencido = bool(prazo_date and prazo_date < hoje)
 
-            # Criterio status-driven (escolhido 11/05): semantica clara,
-            # nao depende de heuristica de nota/updated_at. Status muda quando
-            # alguem progride — "pendente vencido" = ninguem comecou.
+            # C (08/06/26): cooldown de 72h. Se vencido+pendente mas teve update
+            # recente, vai pra atrasadas_mov (tem movimento), nao urgentes.
+            has_recent_update = bool(
+                updated_at and (now - updated_at).total_seconds() / 3600 <= update_cooldown_hours
+            )
+
             if is_vencido and status in ('pendente', 'atrasado'):
-                urgentes.append(entry)
+                if has_recent_update:
+                    atrasadas_mov.append(entry)
+                else:
+                    urgentes.append(entry)
             elif is_vencido and status == 'em_andamento':
                 atrasadas_mov.append(entry)
             else:
@@ -109,6 +141,10 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
         concluidas.sort(key=lambda e: e.get('updated_at') or now, reverse=True)
         concluidas = concluidas[:5]
 
+        # Recent updates: mais recente primeiro (limita 8 pra nao inflar mensagem)
+        recent_updates.sort(key=lambda e: e['updated_at'], reverse=True)
+        recent_updates = recent_updates[:8]
+
         return {
             'empresa_nome': empresa['nome'],
             'empresa_id': empresa_id,
@@ -116,6 +152,7 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
             'atrasadas_mov': atrasadas_mov,
             'no_prazo': no_prazo,
             'concluidas': concluidas,
+            'recent_updates': recent_updates,
             # Retrocompatibilidade pra qualquer caller antigo:
             'atrasados': urgentes + atrasadas_mov,
             'pendentes': [e for e in no_prazo if e['status'] == 'pendente'],
@@ -144,6 +181,24 @@ def format_raci_whatsapp(report: Dict) -> str:
         f"_{hoje}_",
         "",
     ]
+
+    # A (08/06/26): seção de atualizações recentes (capturadas das msgs do grupo
+    # via smart_updates) no topo. Da contexto antes de chegar nos atrasados.
+    if report.get('recent_updates'):
+        lines.append(f"📝 *Atualizações desta semana ({len(report['recent_updates'])}):*")
+        for u in report['recent_updates']:
+            resp = _short_name(u['responsavel'])
+            acao = (u['acao'] or '')[:60]
+            note = u['last_note']
+            # Strip prefixo de data se vier "[DD/MM] texto"
+            import re as _re
+            note = _re.sub(r'^\[\d{1,2}/\d{1,2}\]\s*', '', note).strip()
+            note = note[:140]
+            status_emoji = {'concluido': '✅', 'em_andamento': '🔄', 'pendente': '⏳', 'atrasado': '⚠️'}.get(u['new_status'], '')
+            lines.append(f"• {status_emoji} _{acao}_ — *{resp}*")
+            lines.append(f"   {note}")
+        lines.append("")
+
     n = 0  # contador continuo pra resposta tipo "3 concluido"
 
     if report.get('urgentes'):
