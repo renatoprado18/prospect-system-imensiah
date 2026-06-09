@@ -11,11 +11,20 @@ frente do PRIMEIRO match (frente menor = peso maior por convenção v5).
 from __future__ import annotations
 
 import logging
+import unicodedata
 from typing import List, Optional, Tuple
 
 from database import get_db
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_accents(s: str) -> str:
+    """Remove acentos pra match acento-agnostico. 'Estratégico' -> 'Estrategico'."""
+    if not s:
+        return s
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
 def _load_keywords() -> List[Tuple[int, str]]:
@@ -39,14 +48,15 @@ def _load_keywords() -> List[Tuple[int, str]]:
 def is_frente_keyword(text: Optional[str]) -> Optional[int]:
     """Retorna o numero da frente (1-5) se text contem keyword.
 
-    Match ILIKE %keyword% case-insensitive. Retorna primeiro match (frente
+    Match ILIKE %keyword% case-insensitive + acento-agnostico
+    ('Estratégico' bate 'estrategico'). Retorna primeiro match (frente
     menor primeiro = peso maior). None se nenhum match ou texto vazio.
     """
     if not text or not isinstance(text, str):
         return None
-    text_lc = text.lower()
+    text_norm = _strip_accents(text).lower()
     for frente, kw in _load_keywords():
-        if kw.lower() in text_lc:
+        if _strip_accents(kw).lower() in text_norm:
             return frente
     return None
 
@@ -55,9 +65,9 @@ def matching_keywords(text: Optional[str]) -> List[Tuple[int, str]]:
     """Retorna todos os (frente, keyword) que casam no texto. Util pra debug."""
     if not text or not isinstance(text, str):
         return []
-    text_lc = text.lower()
+    text_norm = _strip_accents(text).lower()
     matches: List[Tuple[int, str]] = []
     for frente, kw in _load_keywords():
-        if kw.lower() in text_lc:
+        if _strip_accents(kw).lower() in text_norm:
             matches.append((frente, kw))
     return matches

@@ -550,11 +550,22 @@ class EmailTriageService:
             except Exception as e:
                 logger.warning(f"classify_email_cos R2 falhou: {e}")
 
-        # R3: Frente keyword no subject
+        # R3: Frente keyword em subject, from_name OU dominio do remetente.
+        # Cobre ASSESPRO-SP (from_name) + "Planejamento Estratégico" no subject
+        # (com acento, agora normalizado em is_frente_keyword).
         try:
-            frente = is_frente_keyword(subject)
+            from_name = ""
+            if "<" in from_header:
+                from_name = from_header.split("<", 1)[0].strip().strip('"')
+            else:
+                from_name = from_header
+            frente = (
+                is_frente_keyword(subject)
+                or is_frente_keyword(from_name)
+                or is_frente_keyword(sender_domain)
+            )
             if frente:
-                reasons.append(f"Frente {frente} keyword no subject")
+                reasons.append(f"Frente {frente} keyword (subject/from/domain)")
                 rule_hits.append("R3_frente")
                 return {
                     "classification": "must_read",
