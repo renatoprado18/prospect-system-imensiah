@@ -208,6 +208,10 @@ Sempre que criar um draft_response, JUSTIFIQUE no `motivo` com a evidência da t
 
 Use os pesos v5 da CoS config. Frente que pesa mais HOJE = mais itens. Frentes sem pendência real: ignore (curto vale mais que cheio).
 
+==== FRENTE 1 DRIFT (imensIAH) ====
+
+Se vier no contexto inicial `frente_drift_signals` com items (tasks Frente 1 vencidas > 7 dias com peso alto), escale TODOS via `escalate_to_user` com prioridade 2 (categoria one_way). Motivo factual: cite task_id, dias_vencida e projeto. Frente 1 = aposta principal — drift aqui é red flag.
+
 ==== FECHAMENTO ====
 
 Quando você terminar a investigação (ou atingir o limite de iterações), retorne uma mensagem final de texto curta (2-4 linhas) resumindo o que registrou. Não precisa formato WhatsApp — o briefing 8h vai compor a mensagem a partir dos items registrados.
@@ -218,6 +222,57 @@ NÃO chame tool no turno final. Quando você não tem mais tool pra chamar, diga
 
 def _build_system_prompt(cos_config_content: str) -> str:
     return _SYSTEM_PROMPT_TEMPLATE.format(cos_config_content=cos_config_content or "(sem CoS config ativa)")
+
+
+# ============== Drift detection Frente 1 (imensIAH) ==============
+
+def compute_frente_drift_signals() -> List[Dict[str, Any]]:
+    """Detecta drift na Frente 1 (imensIAH): tasks de peso alto vinculadas a
+    projetos da F1 vencidas ha > 7 dias.
+
+    Mapping MVP (sem coluna 'frente' em projects ainda): projeto.nome ILIKE
+    '%imensIAH%' OR '%Assespro%' OR '%NeoGovernanca%'. Migrar pra
+    project.frente quando coluna existir.
+
+    Retorna lista compacta: [{task_id, titulo, dias_vencida, projeto, peso}]
+    ordenada por dias_vencida desc. Max 10.
+    """
+    signals: List[Dict[str, Any]] = []
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT t.id, t.titulo, t.data_vencimento, t.prioridade,
+                       p.nome AS projeto,
+                       EXTRACT(DAY FROM NOW() - t.data_vencimento)::int AS dias_vencida
+                FROM tasks t
+                JOIN projects p ON p.id = t.project_id
+                WHERE t.status != 'done'
+                  AND t.status != 'completed'
+                  AND t.data_vencimento IS NOT NULL
+                  AND t.data_vencimento < NOW() - INTERVAL '7 days'
+                  AND COALESCE(t.prioridade, 5) <= 5  -- 1=critical, 5=normal; >5=baixa, descarta
+                  AND (
+                       p.nome ILIKE '%imensIAH%'
+                    OR p.nome ILIKE '%Assespro%'
+                    OR p.nome ILIKE '%NeoGovernanca%'
+                  )
+                ORDER BY t.data_vencimento ASC
+                LIMIT 10
+                """
+            )
+            for r in cur.fetchall():
+                signals.append({
+                    "task_id": r["id"],
+                    "titulo": (r["titulo"] or "")[:80],
+                    "dias_vencida": int(r["dias_vencida"] or 0),
+                    "projeto": r["projeto"],
+                    "peso": r.get("prioridade"),
+                })
+    except Exception as e:
+        logger.warning(f"compute_frente_drift_signals falhou: {e}")
+    return signals
 
 
 # ============== Contexto inicial determinístico ==============
@@ -321,6 +376,9 @@ def _collect_initial_context() -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"_collect_initial_context falhou: {e}")
         context["erro_contexto"] = str(e)
+
+    # Drift detection Frente 1 (imensIAH) — sempre top-level pra LLM ver
+    context["frente_drift_signals"] = compute_frente_drift_signals()
 
     return context
 
