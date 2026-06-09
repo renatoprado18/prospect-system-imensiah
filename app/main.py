@@ -24948,6 +24948,49 @@ async def send_ata_email(req: AtaSendEmailRequest):
         conn.close()
 
 
+# ============== COS INVESTIGATOR (Onda 2 — 10/jun/2026) ==============
+# Agent LLM com tool use que descobre quem é relevante a partir das pendências
+# do dia e investiga sob demanda. Roda 7h10 BRT (50min antes do briefing 8h).
+# Popula cos_briefing_items que o briefing 8h LÊ (compose_briefing_from_items).
+
+@app.get("/api/cron/cos-investigator")
+@app.post("/api/cron/cos-investigator")
+@track_cron_run
+async def cron_cos_investigator(request: Request):
+    """
+    Cron: CoS Investigator (Onda 2).
+
+    Schedule: 10 10 * * * (10:10 UTC = 07:10 BRT — off-peak minute, evita
+    atrasos GH Actions top-of-hour. 50min antes do briefing 8h pra dar
+    folga ao agent loop).
+
+    Roda um ciclo do Investigator agent: identifica relevantes do dia
+    via tools (search_messages, get_messages_with, get_overdue_tasks,
+    get_calendar, get_proposals), registra items em cos_briefing_items
+    (feito/one_way/monitor/escalated), e popula cos_action_log com trace.
+
+    O briefing 8h depois LÊ esses items via compose_briefing_from_items.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.cos_investigator import run_investigator_cycle
+
+    try:
+        result = await run_investigator_cycle()
+        return {
+            "job": "cos-investigator",
+            **result,
+        }
+    except Exception as e:
+        logging.exception("cos-investigator falhou")
+        return {
+            "job": "cos-investigator",
+            "status": "error",
+            "error": str(e),
+        }
+
+
 # ============== DAILY MORNING BRIEFING ==============
 
 @app.get("/api/cron/daily-morning-briefing")
