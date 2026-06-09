@@ -440,6 +440,47 @@ class GmailIntegration:
             remove_label_ids=["INBOX"]
         )
 
+    async def add_gmail_label(
+        self,
+        access_token: str,
+        message_id_gmail: str,
+        label_name: str = "!!Renato",
+    ) -> Dict:
+        """Adiciona label a UMA mensagem Gmail. Idempotente:
+        - Le current labels via get_message (format='minimal' nao retorna
+          labels, entao usa 'metadata') e skip se label_id ja esta presente.
+        - Se label nao existe na conta, cria via get_or_create_label.
+        - Retorna {applied: bool, reason: str, label_id: str|None}.
+
+        Helper de alto nivel pro sweep cron e pro CoS aplicar !!Renato em
+        paralelo a Andressa. Sem cap interno — caller (sweep) controla cap
+        diario via agent_actions counter.
+        """
+        # 1. Resolve/cria label_id (cache da chamada de listagem)
+        label_id = await self.get_or_create_label(access_token, label_name)
+        if not label_id:
+            return {"applied": False, "reason": "label_resolve_failed", "label_id": None}
+
+        # 2. Le labels atuais da mensagem (idempotencia)
+        try:
+            msg = await self.get_message(access_token, message_id_gmail, format="metadata")
+            if "error" in msg:
+                return {"applied": False, "reason": f"get_msg_failed: {str(msg.get('error'))[:80]}", "label_id": label_id}
+            current_label_ids = msg.get("labelIds") or []
+            if label_id in current_label_ids:
+                return {"applied": False, "reason": "already_labeled", "label_id": label_id}
+        except Exception as e:
+            return {"applied": False, "reason": f"get_msg_exc: {e}", "label_id": label_id}
+
+        # 3. Aplica label
+        ok = await self.modify_message_labels(
+            access_token, message_id_gmail, add_label_ids=[label_id]
+        )
+        if not ok:
+            return {"applied": False, "reason": "modify_failed", "label_id": label_id}
+
+        return {"applied": True, "reason": "ok", "label_id": label_id}
+
     async def archive_and_remove_label(
         self,
         access_token: str,

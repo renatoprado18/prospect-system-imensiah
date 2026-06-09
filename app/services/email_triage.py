@@ -1733,19 +1733,41 @@ async def _apply_renato_label(
     triage_id: int,
     message_id: int,
 ) -> Dict:
-    """Aplica label !!Renato (idempotente, log em agent_actions).
-    Detalhamento real no Commit 4."""
-    label_id = await gmail_integration.get_or_create_label(access_token, "!!Renato")
-    if not label_id:
-        return {"applied": False, "reason": "label_create_failed"}
+    """Aplica label !!Renato via helper de alto nivel + log em agent_actions.
 
-    ok = await gmail_integration.modify_message_labels(
-        access_token, gmail_id, add_label_ids=[label_id]
-    )
-    if not ok:
-        return {"applied": False, "reason": "modify_failed"}
+    Idempotencia: gmail.add_gmail_label() le current labels e skip se ja
+    aplicada. Isso previne dupla aplicacao quando Andressa marcou primeiro
+    (CoS detecta e nao age). Cap diario fica no caller (sweep_email_triage).
+    """
+    try:
+        result = await gmail_integration.add_gmail_label(
+            access_token=access_token,
+            message_id_gmail=gmail_id,
+            label_name="!!Renato",
+        )
+    except Exception as e:
+        return {"applied": False, "reason": f"call_exc: {e}"}
 
-    # Marca triage e log
+    if not result.get("applied"):
+        # Pode ser already_labeled (Andressa ja marcou) — log discreto
+        if result.get("reason") == "already_labeled":
+            try:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        UPDATE email_triage
+                        SET action_taken = 'label_pre_existing'
+                        WHERE id = %s AND action_taken IS NULL
+                        """,
+                        (triage_id,),
+                    )
+                    conn.commit()
+            except Exception:
+                pass
+        return result
+
+    # Aplicou: marca triage + log agent_actions
     try:
         with get_db() as conn:
             cursor = conn.cursor()
@@ -1774,6 +1796,7 @@ async def _apply_renato_label(
                         "gmail_id": gmail_id,
                         "account_email": account_email,
                         "label": "!!Renato",
+                        "label_id": result.get("label_id"),
                     }),
                     "email_triage_sweep",
                     "done",
@@ -1783,7 +1806,7 @@ async def _apply_renato_label(
     except Exception as e:
         logger.warning(f"_apply_renato_label log falhou: {e}")
 
-    return {"applied": True, "label_id": label_id}
+    return result
 
 
 async def _create_shadow_proposal(
