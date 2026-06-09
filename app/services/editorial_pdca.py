@@ -343,48 +343,68 @@ Responda APENAS com o JSON."""
     # viravam orfas (nunca fechavam). O plano semanal vai SO no texto da nota +
     # WhatsApp (Opcao A 2026-05-05).
     created_tasks = []
+    skipped_dedup = []
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # 2. Create "Medir metricas" task for Saturday
+        def _dedup_or_insert(titulo: str, descricao: str, data_vencimento, prioridade: int, tags: list) -> None:
+            """Verifica se ja existe task pending identica nos ultimos 14d.
+            Se sim, log e skip. Se nao, INSERT."""
+            cursor.execute(
+                """
+                SELECT id FROM tasks
+                WHERE status = 'pending'
+                  AND project_id = %s
+                  AND titulo = %s
+                  AND data_criacao > NOW() - INTERVAL '14 days'
+                LIMIT 1
+                """,
+                (22, titulo),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                logger.info(
+                    f"dedup: task '{titulo}' ja existe pendente (id={existing['id']}), pulando criacao"
+                )
+                skipped_dedup.append({"id": existing["id"], "titulo": titulo})
+                return
+            cursor.execute(
+                """
+                INSERT INTO tasks (
+                    titulo, descricao, project_id, contact_id,
+                    data_vencimento, prioridade, ai_generated, origem,
+                    tags, status
+                ) VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'editorial_briefing', %s, 'pending')
+                RETURNING id
+                """,
+                (
+                    titulo, descricao, 22, 14911,
+                    data_vencimento, prioridade,
+                    json.dumps(tags),
+                ),
+            )
+            row = cursor.fetchone()
+            created_tasks.append({"id": row["id"], "titulo": titulo})
+
+        # 2. "Medir metricas" task for Saturday
         saturday = next_monday + timedelta(days=5)
-        cursor.execute("""
-            INSERT INTO tasks (
-                titulo, descricao, project_id, contact_id,
-                data_vencimento, prioridade, ai_generated, origem,
-                tags, status
-            ) VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'editorial_briefing', %s, 'pending')
-            RETURNING id
-        """, (
+        _dedup_or_insert(
             "Medir metricas: posts da semana",
             "Acesse o LinkedIn Analytics e atualize impressoes, reacoes, comentarios e cliques de cada post da semana.",
-            22, 14911,
             saturday.replace(hour=10, minute=0, second=0, microsecond=0),
             5,
-            json.dumps(["editorial", "metricas"]),
-        ))
-        task = cursor.fetchone()
-        created_tasks.append({"id": task["id"], "titulo": "Medir metricas: posts da semana"})
+            ["editorial", "metricas"],
+        )
 
-        # 3. Create "Responder comentarios" task for Friday
+        # 3. "Responder comentarios" task for Friday
         friday = next_monday + timedelta(days=4)
-        cursor.execute("""
-            INSERT INTO tasks (
-                titulo, descricao, project_id, contact_id,
-                data_vencimento, prioridade, ai_generated, origem,
-                tags, status
-            ) VALUES (%s, %s, %s, %s, %s, %s, TRUE, 'editorial_briefing', %s, 'pending')
-            RETURNING id
-        """, (
+        _dedup_or_insert(
             "Responder todos os comentarios",
             "Revise todos os comentarios dos posts da semana e responda cada um. Engajamento direto gera conexoes e reunioes.",
-            22, 14911,
             friday.replace(hour=17, minute=0, second=0, microsecond=0),
             6,
-            json.dumps(["editorial", "engajamento"]),
-        ))
-        task = cursor.fetchone()
-        created_tasks.append({"id": task["id"], "titulo": "Responder todos os comentarios"})
+            ["editorial", "engajamento"],
+        )
 
         # 4. Save briefing as project note
         briefing_content = f"""## Briefing Editorial Semanal - {next_monday.strftime('%d/%m/%Y')}
@@ -459,6 +479,7 @@ Responda APENAS com o JSON."""
             "total_engagement": performance["total_engagement"],
         },
         "tasks_created": created_tasks,
+        "tasks_skipped_dedup": skipped_dedup,
         "note_id": note["id"] if note else None,
     }
 
