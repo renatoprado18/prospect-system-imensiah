@@ -569,6 +569,81 @@ class EmailTriageService:
         except Exception as e:
             logger.warning(f"classify_email_cos R3 falhou: {e}")
 
+        # R3.5: Financeiro/gov real (whitelist conservadora) — DEVE vir ANTES
+        # de R4 (noreply) pq emails fiscais/bancarios SEMPRE vem de noreply
+        # mas sao must_read. Cobre Agilize TFE (Andressa deixou passar) +
+        # boletos legitimos no personal (vs promo "FATURA DIGITAL" da Claro
+        # que NAO bate whitelist).
+        FINANCIAL_DOMAINS = (
+            "agilize.com.br", "serasa.com.br", "serasaexperian.com.br",
+            "scpc.org.br", "boletobancario.com",
+            "itau.com.br", "bradesco.com.br", "santander.com.br",
+            "bb.com.br", "nubank.com.br", "inter.co",
+            "btg.com", "btgpactual.com", "xpinc.com",
+            "stone.com.br", "pagseguro.uol.com.br", "wise.com",
+        )
+        GOV_DOMAINS = (".gov.br", ".jus.br")
+        financial_keywords = (
+            "fatura", "pagamento devido", "boleto", "cobranca",
+            "vencimento", "imposto", "irpf", "darf", "guia tfe",
+            "extrato", "transferencia confirmada", "nota fiscal", "nf-e",
+            "invoice", "receipt",
+        )
+        is_financial_domain = bool(sender_domain) and any(sender_domain.endswith(d) for d in FINANCIAL_DOMAINS)
+        is_gov_domain = bool(sender_domain) and any(sender_domain.endswith(d) for d in GOV_DOMAINS)
+        text_lc_fin = f"{subject} {body_text[:1500]}".lower()
+        has_financial_kw = any(kw in text_lc_fin for kw in financial_keywords)
+        # Whitelist domain = must_read (alta priority com keyword, media sem).
+        # Whitelist e altamente seletiva — Agilize/banco/Receita so manda
+        # comunicacoes legitimas operacionais. Priority menor sem keyword
+        # marca shadow pra calibracao se acumular FP.
+        if is_financial_domain or is_gov_domain:
+            tag_kind = "gov" if is_gov_domain else "financeiro"
+            prio = 8 if (has_financial_kw or is_gov_domain) else 6
+            conf = 0.90 if (has_financial_kw or is_gov_domain) else 0.78
+            reasons.append(
+                f"Whitelist {tag_kind} ({sender_domain})"
+                + (" + keyword financeira" if has_financial_kw else " (sem keyword — priority menor)")
+            )
+            rule_hits.append("R3_5_financial_gov")
+            return {
+                "classification": "must_read",
+                "priority": prio,
+                "ai_confidence": conf,
+                "reasons": reasons,
+                "suggested_tags": ["!!Renato", tag_kind],
+                "suggested_actions": [{"type": "respond", "reason": "financeiro/gov"}],
+                "escalation": False,
+                "rule_hits": rule_hits,
+            }
+
+        # R3.6: Calendar invite — Andressa deixou passar Poli Angels Round 47
+        # Google Calendar invites tem subject "Invitation:" (ou "Convite:")
+        # e/ou attachment .ics. Convite real = decisao de agenda pendente.
+        subject_lower = subject.lower().strip()
+        if (
+            subject_lower.startswith("invitation:")
+            or subject_lower.startswith("convite:")
+            or subject_lower.startswith("updated invitation:")
+            or subject_lower.startswith("convite atualizado:")
+            or subject_lower.startswith("invite:")
+            or subject_lower.startswith("re: invitation:")
+            or subject_lower.startswith("canceled event:")
+            or subject_lower.startswith("evento cancelado:")
+        ):
+            reasons.append(f"Calendar invite: {subject[:60]}")
+            rule_hits.append("R3_6_calendar_invite")
+            return {
+                "classification": "must_read",
+                "priority": 8,
+                "ai_confidence": 0.92,
+                "reasons": reasons,
+                "suggested_tags": ["!!Renato", "calendar-invite"],
+                "suggested_actions": [{"type": "rsvp", "reason": "calendar invite"}],
+                "escalation": False,
+                "rule_hits": rule_hits,
+            }
+
         # R4: no-reply / notifications / system
         if from_email:
             local = from_email.split("@")[0]
@@ -641,16 +716,34 @@ class EmailTriageService:
                 "rule_hits": rule_hits,
             }
 
-        # R7: Default silent
+        # R7: Default diferenciado por account_type
+        # Decisao 09/06/26 apos analise das 2 caixas com user: personal tem
+        # 12.496 promo + 11.921 update + 19/dia nao lidas predominantemente
+        # noise — default archive_proposed agressivo. Professional tem ~8-30
+        # nao lidas/sem com mistura signal+noise + label !!Renato pela
+        # Andressa — default silent conservador (so archive quando sinal
+        # forte tipo R4/R5/R6).
+        if (account_type or "professional").lower() == "personal":
+            return {
+                "classification": "archive_proposed",
+                "priority": 2,
+                "ai_confidence": 0.78,
+                "reasons": ["Conta personal: default archive_proposed (shadow) — must_read exige sinal claro"],
+                "suggested_tags": ["auto-archive-shadow", "personal-default"],
+                "suggested_actions": [{"type": "archive", "reason": "personal-default"}],
+                "escalation": False,
+                "rule_hits": ["R7_personal_default"],
+            }
+
         return {
             "classification": "silent",
             "priority": 3,
             "ai_confidence": 0.60,
-            "reasons": ["Sem sinais fortes"],
+            "reasons": ["Conta professional: sem sinais fortes — silent"],
             "suggested_tags": [],
             "suggested_actions": [],
             "escalation": False,
-            "rule_hits": ["R7_default"],
+            "rule_hits": ["R7_professional_default"],
         }
 
     def _check_unanswered(self, cursor, conversation_id: int) -> Optional[int]:
