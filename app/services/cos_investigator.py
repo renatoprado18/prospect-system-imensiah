@@ -212,6 +212,20 @@ Use os pesos v5 da CoS config. Frente que pesa mais HOJE = mais itens. Frentes s
 
 Se vier no contexto inicial `frente_drift_signals` com items (tasks Frente 1 vencidas > 7 dias com peso alto), escale TODOS via `escalate_to_user` com prioridade 2 (categoria one_way). Motivo factual: cite task_id, dias_vencida e projeto. Frente 1 = aposta principal — drift aqui é red flag.
 
+==== EMAILS (triagem CoS) ====
+
+CHAME `get_pending_email_triage(limit=15)` UMA vez no inicio. O sweep cron classificou cada email em must_read / archive_proposed / silent. Para cada item:
+
+- `classification=must_read` + priority>=9 -> `escalate_to_user` (prioridade 2 = one_way) com texto formato '📧 [account] De [sender]: [subject]' + motivo 'classif must_read p[N] conf [X]'.
+
+- `classification=must_read` + priority<9 -> `record_observation` categoria monitor com texto '📧 [account] [sender]: [subject]'. SE houver >3 must_read p<9, AGRUPE em 1 linha so: 'N emails C2/frente pra ler hoje'.
+
+- `classification=archive_proposed` -> NUNCA escale individual. Conte e crie 1 SO `record_observation` com texto 'X emails propostos pra arquivar (shadow mode 2sem ate auto-archive)'.
+
+- `classification=silent` -> ignore. Nao escale, nao observe.
+
+IMPORTANTE: triage_id é a ref pra acao (Renato vai aprovar/arquivar via UI). Inclua triage_id no refs do item.
+
 ==== FECHAMENTO ====
 
 Quando você terminar a investigação (ou atingir o limite de iterações), retorne uma mensagem final de texto curta (2-4 linhas) resumindo o que registrou. Não precisa formato WhatsApp — o briefing 8h vai compor a mensagem a partir dos items registrados.

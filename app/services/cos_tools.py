@@ -386,6 +386,95 @@ def get_proposals(
         return []
 
 
+def get_pending_email_triage(
+    cycle_id: str,
+    iteration: int,
+    limit: int = 20,
+    classification: Optional[str] = None,
+) -> List[Dict]:
+    """Email triage pendente (sweep_email_triage popula). Max 25.
+
+    Args:
+        limit: max items (clamp 1-25).
+        classification: filtro 'must_read' | 'archive_proposed' | 'silent' (None=todos).
+
+    Retorna [{triage_id, message_id (FK), gmail_id, account_email, sender, subject,
+              classification, priority, ai_confidence, suggested_tags, criado_em}, ...].
+    Ordenado por priority DESC, ai_confidence DESC.
+    """
+    started = time.time()
+    params_log = {"limit": limit, "classification": classification}
+    try:
+        n = max(1, min(int(limit or 20), 25))
+        with get_db() as conn:
+            cursor = conn.cursor()
+            sql = """
+                SELECT
+                    et.id AS triage_id,
+                    et.message_id,
+                    m.external_id AS gmail_id,
+                    et.account_email,
+                    et.account_type,
+                    et.classification,
+                    et.priority,
+                    et.ai_confidence,
+                    et.suggested_tags,
+                    et.status,
+                    et.criado_em,
+                    m.metadata->>'from_name' AS from_name,
+                    m.metadata->>'from' AS from_email,
+                    m.metadata->>'subject' AS subject_meta,
+                    c.assunto AS subject,
+                    ct.nome AS contact_name,
+                    ct.circulo
+                FROM email_triage et
+                LEFT JOIN messages m ON m.id = et.message_id
+                LEFT JOIN conversations c ON c.id = et.conversation_id
+                LEFT JOIN contacts ct ON ct.id = et.contact_id
+                WHERE et.status IN ('pending', 'archive_proposed_shadow')
+            """
+            args: List[Any] = []
+            if classification:
+                sql += " AND et.classification = %s"
+                args.append(classification)
+            sql += " ORDER BY et.priority DESC NULLS LAST, et.ai_confidence DESC NULLS LAST, et.criado_em DESC LIMIT %s"
+            args.append(n)
+            cursor.execute(sql, args)
+            rows = cursor.fetchall()
+
+            result: List[Dict] = []
+            for r in rows:
+                sender = r.get("from_name") or r.get("from_email") or r.get("contact_name") or "?"
+                subject = r.get("subject_meta") or r.get("subject") or ""
+                acc = r.get("account_email") or r.get("account_type") or "?"
+                # Conta curta pra LLM
+                acc_short = "pro" if (acc and "almeida-prado" in acc) else (
+                    "pess" if (acc and "gmail.com" in acc) else acc
+                )
+                result.append({
+                    "triage_id": r["triage_id"],
+                    "message_id": r["message_id"],
+                    "gmail_id": r.get("gmail_id"),
+                    "account": acc_short,
+                    "account_email": acc,
+                    "sender": _truncate(sender, 60),
+                    "subject": _truncate(subject, 80),
+                    "classification": r["classification"],
+                    "priority": r["priority"],
+                    "ai_confidence": float(r["ai_confidence"]) if r["ai_confidence"] is not None else None,
+                    "suggested_tags": r.get("suggested_tags") or [],
+                    "status": r.get("status"),
+                    "contact_circulo": r.get("circulo"),
+                    "criado_em": r["criado_em"].isoformat() if r["criado_em"] else None,
+                })
+
+        log_tool_call(cycle_id, "get_pending_email_triage", params_log, {"n": len(result)}, iteration, int((time.time() - started) * 1000))
+        return result
+    except Exception as e:
+        log_tool_call(cycle_id, "get_pending_email_triage", params_log, None, iteration, int((time.time() - started) * 1000), str(e))
+        return []
+
+
 # ============== WRITE TOOLS ==============
 
 def create_draft_response(
@@ -605,6 +694,32 @@ COS_TOOLS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "get_pending_email_triage",
+        "description": (
+            "Lista emails pendentes na triagem CoS (email_triage). Sweep cron 30min "
+            "classifica em must_read (priority 7-10, alta confianca), archive_proposed "
+            "(shadow mode, NAO arquiva), ou silent. CHAME no inicio do ciclo pra ver "
+            "o que chegou de email. Retorna ate 25 items com triage_id, account (pro/pess), "
+            "sender, subject (truncado 80ch), classification, priority, ai_confidence, "
+            "suggested_tags, contact_circulo. "
+            "MAPEAMENTO PRA ACAO: "
+            "- must_read + priority>=9 -> escalate_to_user prioridade 2 (one_way) com texto "
+            "  '📧 [account] De [sender]: [subject]'. "
+            "- must_read + priority<9 -> record_observation (monitor); se >3 must_read agrupe "
+            "  em 1 linha '5 emails C2/frente pra ler'. "
+            "- archive_proposed -> record_observation AGRUPADO em 1 linha so: "
+            "  'X emails propostos pra arquivar (shadow mode 2sem ate auto-archive)'. "
+            "  NUNCA escale archive_proposed individualmente."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max items (1-25). Default 20.", "default": 20},
+                "classification": {"type": "string", "description": "Filtra: must_read | archive_proposed | silent. Default todos."},
+            },
+        },
+    },
+    {
         "name": "create_draft_response",
         "description": (
             "Cria um RASCUNHO de resposta pra Renato aprovar/disparar manualmente. Não envia nada — "
@@ -703,6 +818,12 @@ def execute_tool(
             return get_proposals(
                 cycle_id, iteration,
                 status=tool_input.get("status", "pending"),
+            )
+        if tool_name == "get_pending_email_triage":
+            return get_pending_email_triage(
+                cycle_id, iteration,
+                limit=tool_input.get("limit", 20),
+                classification=tool_input.get("classification"),
             )
         if tool_name == "create_draft_response":
             return create_draft_response(
