@@ -15325,6 +15325,44 @@ async def sync_gmail_labels(request: Request, label: str = "!!Renato"):
         raise HTTPException(status_code=500, detail=f"Erro ao sincronizar: {str(e)}")
 
 
+# ============== EMAIL TRIAGE SWEEP CRON (07/06/2026) ==============
+# Reativacao do email triage como CoS. Roda 30min, multi-conta,
+# classifica emails novos via regras CoS-aware (must_read/archive_proposed/silent),
+# aplica label !!Renato em paralelo a Andressa (cap 50/dia, conf>=0.85),
+# shadow mode pra auto-archive (2 semanas avaliacao).
+@app.get("/api/cron/email-triage-sweep")
+@app.post("/api/cron/email-triage-sweep")
+@track_cron_run
+async def cron_email_triage_sweep(request: Request, hours: int = 1):
+    """Cron: varre Gmail das ultimas N horas em AMBAS contas, classifica,
+    aplica label !!Renato quando must_read+conf>=0.85, propoe shadow archive.
+
+    Schedule via GH Actions (cron 7,37 * * * — 2x/hora off-peak).
+    NAO em vercel.json — Hobby plan atrasa crons frequentes.
+
+    Returns:
+        {job, ok, processed, by_account, by_classification,
+         label_applied, shadow_proposals, errors, duration_ms}
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.email_triage import sweep_email_triage
+
+    try:
+        result = await sweep_email_triage(hours=hours)
+        return {"job": "email-triage-sweep", **result}
+    except Exception as e:
+        import traceback
+        logging.exception("email-triage-sweep falhou")
+        return {
+            "job": "email-triage-sweep",
+            "ok": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()[:2000],
+        }
+
+
 @app.post("/api/email-triage/fix-metadata")
 async def fix_email_metadata(request: Request):
     """Corrige metadata dos emails importados que estão sem from_name"""

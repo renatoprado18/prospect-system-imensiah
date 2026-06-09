@@ -7,14 +7,33 @@ Classifica emails que precisam de atenção baseado em:
 - Emails não respondidos há X dias
 
 Oferece ações: responder, agendar reunião, criar tarefa, criar projeto
+
+Sweep cron (07/06/2026):
+- sweep_email_triage(hours): roda 30min, multi-conta, idempotente por
+  messages.external_id (gmail_id). Triga classificacao por regras e
+  insere em email_triage. Aplicacao de label !!Renato e shadow mode
+  delegados pros Commits 4 e 5.
 """
 import os
 import json
 import re
+import logging
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from database import get_db
-from services.tz import iso_utc
+from services.tz import iso_utc, now_utc
+
+logger = logging.getLogger(__name__)
+
+# Cap diario pra aplicacao de label !!Renato pelo CoS (Commit 4).
+# Hardcoded pra protecao contra bug em loop. Estado mantido em
+# agent_actions.action_type='gmail_label_add'.
+MAX_LABELS_PER_DAY = 50
+
+# Shadow mode toggle (Commit 5). Quando True, archive_proposed NAO
+# arquiva no Gmail — so propoe em email_archive_proposals. Vira False
+# manualmente depois de 14d com FP rate <1%.
+AUTO_ARCHIVE_ENABLED = False
 
 
 def _normalize_email_dates(item: Dict) -> Dict:
@@ -378,6 +397,260 @@ class EmailTriageService:
             "tags": [],
             "priority": 3,
             "requires_approval": True
+        }
+
+    # =========================================================================
+    # CoS-aware classification (sweep cron)
+    # =========================================================================
+
+    def classify_email_cos(
+        self,
+        headers: Dict,
+        body_text: str,
+        gmail_label_ids: List[str],
+        account_email: str,
+        account_type: str,
+        contact_id: Optional[int] = None,
+    ) -> Dict:
+        """Classifica um email pelo modelo CoS (must_read | archive_proposed | silent).
+
+        Retorna:
+            {
+                classification: 'must_read' | 'archive_proposed' | 'silent',
+                priority: int 0-10,
+                ai_confidence: float 0.0-1.0,
+                reasons: [str],
+                suggested_tags: [str],
+                suggested_actions: [Dict],
+                escalation: bool (M7 imprensa),
+                rule_hits: [str],
+            }
+
+        Regras (Commit 2 — ordem importa, primeiro forte vence pra
+        must_read; archive_proposed acumula sinais):
+            R0  Label !!Renato JA aplicada (Andressa) -> must_read p10 conf=0.99 SKIP
+            R1  Imprensa (PRESS_DOMAINS + regex) -> must_read p10 conf=0.95 escalation
+            R2  From C0/C1 (circulo 1) -> must_read p9 conf=0.92
+            R3  Frente keyword no subject -> must_read p8 conf=0.85
+            R4  Sender no-reply/notifications/system -> archive_proposed conf=0.95
+            R5  List-Unsubscribe + dominio comercial -> archive_proposed conf=0.92
+            R6  Cold vendor (zero historico + pitch keywords) -> archive_proposed conf=0.88
+            R7  Default -> silent p3 conf=0.60
+        """
+        from services.cos_keywords import is_frente_keyword
+
+        subject = (headers.get("subject") or "").strip()
+        from_header = (headers.get("from") or "").strip()
+        list_unsubscribe = headers.get("list-unsubscribe", "") or headers.get("List-Unsubscribe", "")
+        # Gmail headers may be only in payload — passar headers ja parseados
+        # mas list-unsubscribe nem sempre vem. Buscamos no msg payload tbm.
+
+        # Extrai email do remetente
+        from_email = ""
+        if "<" in from_header:
+            m = re.search(r"<([^>]+)>", from_header)
+            if m:
+                from_email = m.group(1).lower()
+        else:
+            from_email = from_header.strip().lower()
+        sender_domain = from_email.split("@")[1] if "@" in from_email else ""
+
+        reasons: List[str] = []
+        rule_hits: List[str] = []
+        confidence_signals: List[float] = []
+
+        # R0: label !!Renato ja aplicada (idempotencia entre CoS e Andressa)
+        renato_label_present = False
+        try:
+            # gmail_label_ids vem como IDs, nao nomes — entao a checagem
+            # real precisa cruzar com /users/me/labels. Aqui, conservador:
+            # se Gmail label list incluir o ID conhecido ou se o name vier
+            # injetado por upstream, retornamos must_read direto.
+            # Como nao temos o nome aqui, usamos heuristica via headers
+            # X-Gmail-Labels (raro) — pra ser preciso, deixamos a checagem
+            # no caller via gmail_label_ids comparado ao label_id cacheado
+            # em outro lugar. Por simplicidade, MVP: nao pula, deixa o flow
+            # normal classificar e o cap idempotente de modify_message_labels
+            # garante que nao re-aplica.
+            renato_label_present = False
+        except Exception:
+            pass
+
+        # R1: Imprensa
+        is_press = False
+        if sender_domain:
+            from services.notification_router import _PRESS_DOMAINS as PRESS
+            for pd in PRESS:
+                if sender_domain == pd or sender_domain.endswith("." + pd):
+                    is_press = True
+                    break
+        if not is_press:
+            # Regex no subject + body
+            from services.notification_router import _PRESS_REGEX
+            haystack = f"{subject}\n{body_text[:2000]}"
+            if _PRESS_REGEX.search(haystack):
+                is_press = True
+
+        if is_press:
+            return {
+                "classification": "must_read",
+                "priority": 10,
+                "ai_confidence": 0.95,
+                "reasons": ["Imprensa/jornalista detectado (M7 escalation)"],
+                "suggested_tags": ["!!Renato", "imprensa"],
+                "suggested_actions": [{"type": "respond", "reason": "M7 imprensa"}],
+                "escalation": True,
+                "rule_hits": ["R1_press"],
+            }
+
+        # R2: C0/C1 contato (circulo 1)
+        if contact_id:
+            try:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        """
+                        SELECT circulo, circulo_pessoal, circulo_profissional, nome
+                        FROM contacts WHERE id = %s
+                        """,
+                        (contact_id,),
+                    )
+                    cinfo = cur.fetchone()
+                if cinfo:
+                    circulo = cinfo.get("circulo") or min(
+                        x for x in [cinfo.get("circulo_pessoal"), cinfo.get("circulo_profissional"), 99] if x
+                    )
+                    if circulo and circulo == 1:
+                        reasons.append(f"Contato C1 ({cinfo.get('nome')})")
+                        rule_hits.append("R2_c1")
+                        confidence_signals.append(0.92)
+                        return {
+                            "classification": "must_read",
+                            "priority": 9,
+                            "ai_confidence": 0.92,
+                            "reasons": reasons,
+                            "suggested_tags": ["!!Renato"],
+                            "suggested_actions": [{"type": "respond", "reason": "C1"}],
+                            "escalation": False,
+                            "rule_hits": rule_hits,
+                        }
+                    if circulo and circulo == 2:
+                        reasons.append(f"Contato C2 ({cinfo.get('nome')})")
+                        rule_hits.append("R2b_c2")
+                        return {
+                            "classification": "must_read",
+                            "priority": 7,
+                            "ai_confidence": 0.80,
+                            "reasons": reasons,
+                            "suggested_tags": ["!!Renato"],
+                            "suggested_actions": [{"type": "respond", "reason": "C2"}],
+                            "escalation": False,
+                            "rule_hits": rule_hits,
+                        }
+            except Exception as e:
+                logger.warning(f"classify_email_cos R2 falhou: {e}")
+
+        # R3: Frente keyword no subject
+        try:
+            frente = is_frente_keyword(subject)
+            if frente:
+                reasons.append(f"Frente {frente} keyword no subject")
+                rule_hits.append("R3_frente")
+                return {
+                    "classification": "must_read",
+                    "priority": 8,
+                    "ai_confidence": 0.85,
+                    "reasons": reasons,
+                    "suggested_tags": ["!!Renato", f"frente_{frente}"],
+                    "suggested_actions": [{"type": "respond", "reason": f"frente {frente}"}],
+                    "escalation": False,
+                    "rule_hits": rule_hits,
+                }
+        except Exception as e:
+            logger.warning(f"classify_email_cos R3 falhou: {e}")
+
+        # R4: no-reply / notifications / system
+        if from_email:
+            local = from_email.split("@")[0]
+            noreply_patterns = (
+                "no-reply", "noreply", "no_reply", "donotreply", "do-not-reply",
+                "notifications", "notification", "system", "automated",
+                "mailer-daemon", "postmaster",
+            )
+            if any(p in local for p in noreply_patterns):
+                reasons.append(f"Remetente automatico ({local})")
+                rule_hits.append("R4_noreply")
+                return {
+                    "classification": "archive_proposed",
+                    "priority": 2,
+                    "ai_confidence": 0.95,
+                    "reasons": reasons,
+                    "suggested_tags": ["auto-archive-shadow"],
+                    "suggested_actions": [{"type": "archive", "reason": "noreply"}],
+                    "escalation": False,
+                    "rule_hits": rule_hits,
+                }
+
+        # R5: List-Unsubscribe + dominio comercial
+        # Re-extrai do payload header (mais robusto)
+        headers_lower = {k.lower(): v for k, v in (headers or {}).items()}
+        has_unsubscribe = bool(list_unsubscribe or headers_lower.get("list-unsubscribe"))
+
+        # Tambem chega via lookup direto no message.payload.headers — caller
+        # pode injetar via headers dict ja com lowercase
+        if has_unsubscribe and sender_domain:
+            # Dominios pessoais/relevantes NAO sao "comercial"
+            commercial = not any(
+                sender_domain.endswith(d)
+                for d in ("gmail.com", "almeida-prado.com", "outlook.com", "icloud.com", "yahoo.com")
+            )
+            if commercial:
+                reasons.append(f"List-Unsubscribe + dominio comercial ({sender_domain})")
+                rule_hits.append("R5_unsub")
+                return {
+                    "classification": "archive_proposed",
+                    "priority": 2,
+                    "ai_confidence": 0.92,
+                    "reasons": reasons,
+                    "suggested_tags": ["auto-archive-shadow", "newsletter"],
+                    "suggested_actions": [{"type": "archive", "reason": "newsletter"}],
+                    "escalation": False,
+                    "rule_hits": rule_hits,
+                }
+
+        # R6: Cold vendor (zero historico de mensagens + pitch keywords)
+        cold_pitch_kw = [
+            "investimento", "parceria estrategica", "consultoria especializada",
+            "seu interesse", "agendar uma demonstracao", "demo gratuita",
+            "oportunidade unica", "proposta exclusiva", "lead qualificado",
+            "vamos marcar uma conversa", "sales pitch", "outbound",
+        ]
+        text_lc = f"{subject} {body_text[:2000]}".lower()
+        pitch_matches = [kw for kw in cold_pitch_kw if kw in text_lc]
+        if not contact_id and pitch_matches:
+            reasons.append(f"Cold vendor: zero historico + {len(pitch_matches)} pitch kw")
+            rule_hits.append("R6_cold")
+            return {
+                "classification": "archive_proposed",
+                "priority": 1,
+                "ai_confidence": 0.88,
+                "reasons": reasons,
+                "suggested_tags": ["auto-archive-shadow", "cold-vendor"],
+                "suggested_actions": [{"type": "archive", "reason": "cold-vendor"}],
+                "escalation": False,
+                "rule_hits": rule_hits,
+            }
+
+        # R7: Default silent
+        return {
+            "classification": "silent",
+            "priority": 3,
+            "ai_confidence": 0.60,
+            "reasons": ["Sem sinais fortes"],
+            "suggested_tags": [],
+            "suggested_actions": [],
+            "escalation": False,
+            "rule_hits": ["R7_default"],
         }
 
     def _check_unanswered(self, cursor, conversation_id: int) -> Optional[int]:
@@ -1019,6 +1292,589 @@ class EmailTriageService:
                     print(f"Error syncing {account_email}: {traceback.format_exc()}")
 
         return stats
+
+
+# =============================================================================
+# SWEEP CRON (multi-account, 30min)
+# =============================================================================
+
+def _short_account(email: str) -> str:
+    """Render conta como 'pro' (renato@almeida-prado.com) ou 'pess' (gmail)."""
+    if not email:
+        return "?"
+    if "almeida-prado.com" in email:
+        return "pro"
+    if "gmail.com" in email:
+        return "pess"
+    return email.split("@")[0][:6]
+
+
+async def _fetch_recent_messages_for_account(
+    gmail_integration,
+    account: Dict,
+    hours: int,
+) -> List[Dict]:
+    """Busca Gmail message refs das ultimas N horas pra UMA conta.
+
+    Retorna [{gmail_id, account_email, account_type, access_token}, ...].
+    Em erro, retorna [] (toleranca: 1 conta nao derruba outra).
+    """
+    refs: List[Dict] = []
+    account_email = account.get("email")
+    refresh_token = account.get("refresh_token")
+    if not refresh_token:
+        logger.warning(f"sweep: conta {account_email} sem refresh_token")
+        return refs
+
+    # Refresh token sempre (mais seguro que tentar usar access_token
+    # potencialmente expirado).
+    try:
+        refresh_result = await gmail_integration.refresh_access_token(refresh_token)
+    except Exception as e:
+        logger.warning(f"sweep: refresh {account_email} falhou: {e}")
+        return refs
+
+    if "access_token" not in refresh_result:
+        logger.warning(f"sweep: refresh {account_email} sem access_token: {refresh_result}")
+        return refs
+    access_token = refresh_result["access_token"]
+
+    # Persistir access_token novo (best-effort, nao bloqueia)
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE google_accounts SET access_token = %s WHERE email = %s",
+                (access_token, account_email),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"sweep: persist access_token {account_email} falhou: {e}")
+
+    # Gmail query: inbox, ultimas N horas. newer_than:Xh tem granularidade
+    # de horas (1h, 2h, ..., 24h). >24h cai pra dias.
+    if hours <= 1:
+        query = "newer_than:1h"
+    elif hours <= 24:
+        query = f"newer_than:{hours}h"
+    else:
+        days = max(1, hours // 24)
+        query = f"newer_than:{days}d"
+
+    try:
+        result = await gmail_integration.list_messages(
+            access_token=access_token,
+            query=query,
+            max_results=100,
+        )
+    except Exception as e:
+        logger.warning(f"sweep: list_messages {account_email} falhou: {e}")
+        return refs
+
+    if "error" in result:
+        logger.warning(f"sweep: list_messages {account_email} error: {result.get('error')[:200] if isinstance(result.get('error'), str) else result.get('error')}")
+        return refs
+
+    for msg_ref in result.get("messages", []) or []:
+        refs.append({
+            "gmail_id": msg_ref.get("id"),
+            "thread_id": msg_ref.get("threadId"),
+            "account_email": account_email,
+            "account_type": account.get("tipo", "professional"),
+            "access_token": access_token,
+        })
+    return refs
+
+
+def _ensure_message_row(
+    cursor,
+    gmail_id: str,
+    headers: Dict,
+    body: Dict,
+    account_email: str,
+    gmail_integration,
+) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    """Garante que existe linha em messages pra esse gmail_id.
+
+    Retorna (message_id, conversation_id, contact_id) ou (None,...) se falhar.
+    Idempotente: se ja existe, retorna os ids existentes (NAO duplica).
+    """
+    cursor.execute(
+        "SELECT id, conversation_id, contact_id FROM messages WHERE external_id = %s",
+        (gmail_id,),
+    )
+    existing = cursor.fetchone()
+    if existing:
+        return existing["id"], existing["conversation_id"], existing["contact_id"]
+
+    from_header = headers.get("from", "") or ""
+    from_email = gmail_integration.extract_email_address(from_header)
+    from_name = (
+        from_header.split("<")[0].strip().strip('"')
+        if "<" in from_header else from_email
+    )
+    subject = headers.get("subject", "(Sem assunto)")
+    date_str = headers.get("date", "")
+
+    # Resolver contato por email (formato JSON [{'email': '...'}])
+    contact_id = None
+    if from_email:
+        cursor.execute(
+            """
+            SELECT id FROM contacts
+            WHERE emails @> %s::jsonb
+            LIMIT 1
+            """,
+            (json.dumps([{"email": from_email}]),),
+        )
+        c = cursor.fetchone()
+        if c:
+            contact_id = c["id"]
+        else:
+            # Busca menos estrita
+            cursor.execute(
+                "SELECT id FROM contacts WHERE emails::text ILIKE %s LIMIT 1",
+                (f"%{from_email}%",),
+            )
+            c = cursor.fetchone()
+            if c:
+                contact_id = c["id"]
+
+    # Criar conversation
+    cursor.execute(
+        """
+        INSERT INTO conversations (contact_id, canal, assunto, status)
+        VALUES (%s, 'email', %s, 'active')
+        RETURNING id
+        """,
+        (contact_id, subject[:500]),
+    )
+    conversation_id = cursor.fetchone()["id"]
+
+    # Parse data
+    sent_at = None
+    if date_str:
+        try:
+            from email.utils import parsedate_to_datetime
+            sent_at = parsedate_to_datetime(date_str)
+            if sent_at and sent_at.tzinfo:
+                sent_at = sent_at.replace(tzinfo=None)
+        except Exception:
+            pass
+
+    cursor.execute(
+        """
+        INSERT INTO messages (
+            conversation_id, contact_id, external_id, direcao,
+            conteudo, metadata, enviado_em
+        ) VALUES (%s, %s, %s, 'incoming', %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            conversation_id,
+            contact_id,
+            gmail_id,
+            (body.get("text") or "")[:5000],
+            json.dumps({
+                "account": account_email,
+                "from": from_email,
+                "from_name": from_name,
+                "subject": subject,
+            }),
+            sent_at,
+        ),
+    )
+    message_id = cursor.fetchone()["id"]
+    return message_id, conversation_id, contact_id
+
+
+async def sweep_email_triage(hours: int = 1) -> Dict:
+    """Sweep emails recentes de TODAS contas Google conectadas, classifica
+    via regras e insere em email_triage (idempotente por external_id).
+
+    Args:
+        hours: janela de busca pra tras (default 1h pra cron 30min).
+
+    Returns:
+        {
+            ok: bool,
+            processed: int,
+            by_account: {email: count},
+            by_classification: {must_read: N, archive_proposed: N, silent: N},
+            label_applied: int,
+            shadow_proposals: int,
+            errors: [str],
+            duration_ms: int
+        }
+    """
+    import time
+    started = time.time()
+    from integrations.gmail import GmailIntegration
+
+    stats: Dict = {
+        "ok": True,
+        "processed": 0,
+        "by_account": {},
+        "by_classification": {},
+        "label_applied": 0,
+        "label_skipped_cap": 0,
+        "shadow_proposals": 0,
+        "errors": [],
+        "duration_ms": 0,
+    }
+
+    gmail = GmailIntegration()
+    service = get_email_triage_service()
+
+    # 1. Lista contas conectadas
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, email, tipo, access_token, refresh_token
+                FROM google_accounts
+                WHERE conectado = TRUE
+                """
+            )
+            accounts = [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        stats["ok"] = False
+        stats["errors"].append(f"list_accounts: {e}")
+        stats["duration_ms"] = int((time.time() - started) * 1000)
+        return stats
+
+    if not accounts:
+        stats["errors"].append("no_connected_accounts")
+        stats["duration_ms"] = int((time.time() - started) * 1000)
+        return stats
+
+    # 2. Fetch refs por conta (toleranca: 1 falha nao trava outra)
+    all_refs: List[Dict] = []
+    for acc in accounts:
+        try:
+            refs = await _fetch_recent_messages_for_account(gmail, acc, hours)
+            stats["by_account"][acc["email"]] = len(refs)
+            all_refs.extend(refs)
+        except Exception as e:
+            stats["errors"].append(f"fetch_{acc['email']}: {e}")
+            stats["by_account"][acc["email"]] = 0
+
+    # 3. Cap diario de labels (estado em agent_actions)
+    labels_today = 0
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT COUNT(*) AS n FROM agent_actions
+                WHERE action_type = 'gmail_label_add'
+                  AND criado_em > NOW() - INTERVAL '1 day'
+                """
+            )
+            r = cur.fetchone()
+            labels_today = (r["n"] if r else 0) or 0
+    except Exception:
+        pass
+
+    # 4. Processa cada ref
+    for ref in all_refs:
+        gmail_id = ref["gmail_id"]
+        if not gmail_id:
+            continue
+
+        try:
+            # 4a. Idempotencia: ja temos triage pra esse gmail_id?
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT et.id FROM email_triage et
+                    JOIN messages m ON m.id = et.message_id
+                    WHERE m.external_id = %s
+                    LIMIT 1
+                    """,
+                    (gmail_id,),
+                )
+                if cursor.fetchone():
+                    continue  # ja processado, skip
+
+            # 4b. Fetch detalhes do email
+            msg_details = await gmail.get_message(ref["access_token"], gmail_id)
+            if "error" in msg_details:
+                stats["errors"].append(f"get_msg {gmail_id[:12]}: {str(msg_details.get('error'))[:80]}")
+                continue
+
+            headers = gmail.parse_message_headers(msg_details)
+            body = gmail.parse_message_body(msg_details)
+            label_ids = msg_details.get("labelIds") or []
+
+            # 4c. Garante row em messages + resolve contact
+            with get_db() as conn:
+                cursor = conn.cursor()
+                msg_id, conv_id, contact_id = _ensure_message_row(
+                    cursor, gmail_id, headers, body, ref["account_email"], gmail,
+                )
+                if not msg_id:
+                    conn.rollback()
+                    continue
+                conn.commit()
+
+            # 4d. Classificar (CoS-aware — Commit 2 estende isso)
+            decision = service.classify_email_cos(
+                headers=headers,
+                body_text=body.get("text") or "",
+                gmail_label_ids=label_ids,
+                account_email=ref["account_email"],
+                account_type=ref["account_type"],
+                contact_id=contact_id,
+            )
+
+            classification = decision["classification"]
+            confidence = float(decision.get("ai_confidence") or 0.5)
+            stats["by_classification"][classification] = \
+                stats["by_classification"].get(classification, 0) + 1
+
+            # 4e. Inserir em email_triage (UPSERT por message_id)
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO email_triage (
+                        message_id, conversation_id, contact_id,
+                        needs_attention, priority, classification,
+                        classification_reasons, suggested_tags, suggested_actions,
+                        status, account_type, account_email, ai_confidence,
+                        expires_at
+                    ) VALUES (
+                        %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s, %s,
+                        NOW() + INTERVAL '14 days'
+                    )
+                    ON CONFLICT (message_id) DO NOTHING
+                    RETURNING id
+                    """,
+                    (
+                        msg_id,
+                        conv_id,
+                        contact_id,
+                        classification in ("must_read",),
+                        decision.get("priority", 5),
+                        classification,
+                        json.dumps(decision.get("reasons", [])),
+                        json.dumps(decision.get("suggested_tags", [])),
+                        json.dumps(decision.get("suggested_actions", [])),
+                        "pending",
+                        ref["account_type"],
+                        ref["account_email"],
+                        confidence,
+                    ),
+                )
+                row = cursor.fetchone()
+                triage_id = row["id"] if row else None
+                conn.commit()
+
+            if not triage_id:
+                continue  # conflict — outra conta processou primeiro
+
+            stats["processed"] += 1
+
+            # 4f. Aplicar label !!Renato se must_read + conf >= 0.85
+            # (Commit 4: extracao real; aqui ja preparado mas com cap)
+            if (
+                classification == "must_read"
+                and confidence >= 0.85
+                and "!!Renato" not in [l for l in label_ids if isinstance(l, str)]
+            ):
+                if labels_today >= MAX_LABELS_PER_DAY:
+                    stats["label_skipped_cap"] += 1
+                else:
+                    try:
+                        label_result = await _apply_renato_label(
+                            gmail, ref["access_token"], gmail_id,
+                            ref["account_email"], triage_id, msg_id,
+                        )
+                        if label_result.get("applied"):
+                            stats["label_applied"] += 1
+                            labels_today += 1
+                    except Exception as e:
+                        stats["errors"].append(f"label {gmail_id[:12]}: {str(e)[:80]}")
+
+            # 4g. Shadow archive proposals (Commit 5)
+            if classification == "archive_proposed":
+                try:
+                    prop_result = await _create_shadow_proposal(
+                        triage_id=triage_id,
+                        gmail_id=gmail_id,
+                        account_email=ref["account_email"],
+                        headers=headers,
+                        decision=decision,
+                    )
+                    if prop_result.get("created"):
+                        stats["shadow_proposals"] += 1
+                except Exception as e:
+                    stats["errors"].append(f"shadow {gmail_id[:12]}: {str(e)[:80]}")
+
+        except Exception as e:
+            stats["errors"].append(f"process {gmail_id[:12]}: {str(e)[:120]}")
+            logger.exception(f"sweep process {gmail_id}")
+
+    stats["duration_ms"] = int((time.time() - started) * 1000)
+    return stats
+
+
+async def _apply_renato_label(
+    gmail_integration,
+    access_token: str,
+    gmail_id: str,
+    account_email: str,
+    triage_id: int,
+    message_id: int,
+) -> Dict:
+    """Aplica label !!Renato (idempotente, log em agent_actions).
+    Detalhamento real no Commit 4."""
+    label_id = await gmail_integration.get_or_create_label(access_token, "!!Renato")
+    if not label_id:
+        return {"applied": False, "reason": "label_create_failed"}
+
+    ok = await gmail_integration.modify_message_labels(
+        access_token, gmail_id, add_label_ids=[label_id]
+    )
+    if not ok:
+        return {"applied": False, "reason": "modify_failed"}
+
+    # Marca triage e log
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE email_triage
+                SET action_taken = 'label_applied', actioned_at = NOW()
+                WHERE id = %s
+                """,
+                (triage_id,),
+            )
+            cursor.execute(
+                """
+                INSERT INTO agent_actions
+                    (action_type, category, title, details, scope_ref, source, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    "gmail_label_add",
+                    "email_triage",
+                    f"Label !!Renato em email [{_short_account(account_email)}]",
+                    f"triage_id={triage_id} gmail_id={gmail_id}",
+                    json.dumps({
+                        "triage_id": triage_id,
+                        "message_id": message_id,
+                        "gmail_id": gmail_id,
+                        "account_email": account_email,
+                        "label": "!!Renato",
+                    }),
+                    "email_triage_sweep",
+                    "done",
+                ),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"_apply_renato_label log falhou: {e}")
+
+    return {"applied": True, "label_id": label_id}
+
+
+async def _create_shadow_proposal(
+    triage_id: int,
+    gmail_id: str,
+    account_email: str,
+    headers: Dict,
+    decision: Dict,
+) -> Dict:
+    """Cria email_archive_proposals shadow (NAO arquiva). Detalhamento Commit 5."""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            # Skip se ja temos proposta pra esse message_id
+            cur.execute(
+                "SELECT id FROM email_archive_proposals WHERE message_id = %s LIMIT 1",
+                (gmail_id,),
+            )
+            if cur.fetchone():
+                return {"created": False, "reason": "already_proposed"}
+
+            from_h = (headers.get("from") or "")[:200]
+            subj = (headers.get("subject") or "")[:200]
+            reasons = decision.get("reasons", []) or []
+            reason_text = "; ".join(reasons)[:500]
+
+            cur.execute(
+                """
+                INSERT INTO email_archive_proposals
+                    (email_triage_id, message_id, account_email, sender, subject,
+                     classification_reason, ai_confidence, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'shadow')
+                RETURNING id
+                """,
+                (
+                    triage_id, gmail_id, account_email, from_h, subj,
+                    reason_text, float(decision.get("ai_confidence") or 0.0),
+                ),
+            )
+            row = cur.fetchone()
+
+            # Marca triage como shadow proposal
+            cur.execute(
+                """
+                UPDATE email_triage
+                SET status = 'archive_proposed_shadow'
+                WHERE id = %s
+                """,
+                (triage_id,),
+            )
+            conn.commit()
+            return {"created": True, "proposal_id": row["id"] if row else None}
+    except Exception as e:
+        logger.warning(f"_create_shadow_proposal {gmail_id}: {e}")
+        return {"created": False, "error": str(e)}
+
+
+def compute_archive_fp_rate(days: int = 14) -> Dict:
+    """Telemetria FP do shadow mode. Usado pra decidir quando ligar
+    AUTO_ARCHIVE_ENABLED. FP rate = rejected / (approved+rejected)."""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT status, COUNT(*) AS n
+                FROM email_archive_proposals
+                WHERE criado_em > NOW() - INTERVAL '%s days'
+                GROUP BY status
+                """,
+                (days,),
+            )
+            counts = {r["status"]: r["n"] for r in cur.fetchall()}
+    except Exception as e:
+        return {"error": str(e)}
+
+    total = sum(counts.values())
+    approved = counts.get("approved", 0) + counts.get("archived", 0)
+    rejected = counts.get("rejected", 0)
+    decided = approved + rejected
+    fp_rate = (rejected / decided) if decided else None
+    return {
+        "days": days,
+        "total_proposed": total,
+        "by_status": counts,
+        "approved": approved,
+        "rejected": rejected,
+        "decided": decided,
+        "fp_rate": fp_rate,
+        "auto_archive_enabled": AUTO_ARCHIVE_ENABLED,
+    }
 
 
 # Singleton

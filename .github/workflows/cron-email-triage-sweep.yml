@@ -1,0 +1,33 @@
+name: Cron — Email Triage Sweep
+
+# Email triage CoS (07/06/2026 reativacao).
+# Varre Gmail das ultimas 1h em AMBAS contas (renato@almeida-prado.com +
+# renato.almeida.prado@gmail.com), classifica via regras CoS-aware,
+# aplica label !!Renato em paralelo a Andressa (cap 50/dia, conf>=0.85),
+# shadow mode pra auto-archive.
+#
+# Off-peak minutes (7, 37) evita atrasos GH Actions top-of-hour.
+# 2x/hora = janela 30min, alinhada com hours=1 do endpoint.
+#
+# NAO usar Vercel cron — Hobby plan atrasa crons frequentes e silencia
+# falhas (caso CRON_SECRET 2026-05-02). GH Actions reporta erro
+# explicitamente.
+
+on:
+  schedule:
+    - cron: '7,37 * * * *'  # a cada 30min, off-peak
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Hit email-triage-sweep endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            --max-time 300 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/email-triage-sweep?hours=1")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)
