@@ -46,6 +46,110 @@ COS_INVESTIGATOR_MODEL = "claude-sonnet-4-6"
 MAX_ITERATIONS = 15
 MAX_TOKENS_PER_ITER = 4096
 
+# Budget caps (P.6 + L.4): hardcode pra evitar runaway. Ciclo medio ~$0.02-0.20
+# com cache hit. Cap diario $5 = ~25 ciclos worst-case; mensal $100 alinha com
+# MONTHLY_BUDGET_USD do platform_costs.
+COS_DAILY_CAP_USD = 5.0
+COS_MONTHLY_CAP_USD = 100.0
+
+
+def _check_budget_caps() -> Dict[str, Any]:
+    """Calcula gasto Anthropic hoje (cycles do dia) e MTD. Aborta se passar cap.
+
+    Hoje = soma cost_usd de cos_action_log do cycle_id de hoje (proxy mais
+    direto que API Anthropic, que tem lag 24h). MTD = get_mtd_summary().
+
+    Retorna {abort: bool, reason: str, today_usd, mtd_usd}.
+    """
+    today_brt = to_brt(now_utc()).date()
+    today_usd = 0.0
+    mtd_usd = 0.0
+
+    # Override de teste: MOCK_OVER_BUDGET=1 -> simula estouro
+    if (os.getenv("MOCK_OVER_BUDGET") or "").strip() == "1":
+        return {
+            "abort": True,
+            "reason": f"MOCK_OVER_BUDGET=1 (simulado)",
+            "today_usd": COS_DAILY_CAP_USD + 1.0,
+            "mtd_usd": 0.0,
+        }
+
+    # Soma custo dos ciclos de hoje (cycle_id LIKE YYYY-MM-DD-%)
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            # Custos sao logados no cron_runs (result_json) — fonte mais direta
+            cur.execute(
+                """
+                SELECT COALESCE(SUM((result_json->>'cost_usd')::float), 0) AS sum_usd
+                FROM cron_runs
+                WHERE path = '/api/cron/cos-investigator'
+                  AND started_at >= %s::date
+                  AND started_at <  (%s::date + INTERVAL '1 day')
+                  AND result_json ? 'cost_usd'
+                """,
+                (today_brt.isoformat(), today_brt.isoformat()),
+            )
+            row = cur.fetchone()
+            if row:
+                today_usd = float(row.get("sum_usd") or 0)
+    except Exception as e:
+        logger.warning(f"_check_budget_caps today_usd falhou: {e}")
+
+    # MTD do Anthropic via platform_costs
+    try:
+        from services.platform_costs import get_mtd_summary
+        summary = get_mtd_summary()
+        for p in summary.get("providers", []):
+            if p.get("provider") == "anthropic":
+                mtd_usd = float(p.get("amount_usd") or 0)
+                break
+    except Exception as e:
+        logger.warning(f"_check_budget_caps mtd falhou: {e}")
+
+    if today_usd > COS_DAILY_CAP_USD:
+        return {
+            "abort": True,
+            "reason": f"daily_cap_hit: ${today_usd:.2f} > ${COS_DAILY_CAP_USD:.2f}",
+            "today_usd": today_usd,
+            "mtd_usd": mtd_usd,
+        }
+    if mtd_usd > COS_MONTHLY_CAP_USD:
+        return {
+            "abort": True,
+            "reason": f"monthly_cap_hit: ${mtd_usd:.2f} > ${COS_MONTHLY_CAP_USD:.2f}",
+            "today_usd": today_usd,
+            "mtd_usd": mtd_usd,
+        }
+    return {"abort": False, "today_usd": today_usd, "mtd_usd": mtd_usd}
+
+
+def _log_budget_abort_item(cycle_id: str, info: Dict[str, Any]) -> None:
+    """Insere 1 escalated em cos_briefing_items pra Renato decidir."""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO cos_briefing_items
+                  (cycle_id, categoria, texto, prioridade, refs)
+                VALUES (%s, 'escalated', %s, 1, %s::jsonb)
+                """,
+                (
+                    cycle_id,
+                    (
+                        f"CoS investigator desligado: budget "
+                        f"${info.get('today_usd', 0):.2f}/dia (cap ${COS_DAILY_CAP_USD:.0f}) "
+                        f"OU ${info.get('mtd_usd', 0):.2f}/mes (cap ${COS_MONTHLY_CAP_USD:.0f}) "
+                        f"atingido. Renato precisa decidir bump ou pausa."
+                    ),
+                    json.dumps({"budget_abort": True, **info}),
+                ),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"_log_budget_abort_item falhou: {e}")
+
 
 # ============== System prompt ==============
 
@@ -283,6 +387,23 @@ async def run_investigator_cycle(cycle_id: Optional[str] = None) -> Dict[str, An
     if cycle_id is None:
         today_brt = to_brt(now_utc()).date()
         cycle_id = f"{today_brt.isoformat()}-morning"
+
+    # Budget cap check (P.6 L.4): aborta se hoje > $5 ou MTD > $100
+    budget_info = _check_budget_caps()
+    if budget_info.get("abort"):
+        logger.warning(f"cos_investigator abort: {budget_info.get('reason')}")
+        _log_budget_abort_item(cycle_id, budget_info)
+        return {
+            "cycle_id": cycle_id,
+            "status": "aborted_budget",
+            "reason": budget_info.get("reason"),
+            "spent_today": budget_info.get("today_usd"),
+            "spent_mtd": budget_info.get("mtd_usd"),
+            "iterations": 0,
+            "items_created": _count_items_created(cycle_id),
+            "actions_logged": 0,
+            "duration_ms": int((time.time() - started_at) * 1000),
+        }
 
     if not ANTHROPIC_API_KEY:
         return {
