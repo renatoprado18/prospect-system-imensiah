@@ -26,6 +26,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from database import get_db
+from services.tz import now_utc, to_brt
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +245,30 @@ def _enqueue_pending(
         return row["id"] if row else None
 
 
+# ============================================================================
+# Domingo silence guard (Bloco 2 C2 — "domingo sagrado")
+# ============================================================================
+
+def _is_sunday_silence(urgent: bool, urgency_rule: Optional[str]) -> bool:
+    """True se hoje e domingo (BRT) E o item nao e urgente.
+
+    M7 triggers (press_detection, financial_alert, cron_error_prod) e
+    qualquer urgent=True BYPASSAM essa regra. Demais (non-urgent) -> adia
+    pra digest morning de segunda 8h.
+
+    Override env: SUNDAY_SILENCE_OFF=1 desliga (debug)."""
+    if (os.getenv("SUNDAY_SILENCE_OFF") or "").strip() == "1":
+        return False
+    if urgent:
+        return False
+    try:
+        now_brt = to_brt(now_utc())
+        return now_brt.weekday() == 6  # 6 = domingo
+    except Exception as e:
+        logger.warning(f"_is_sunday_silence falhou: {e}")
+        return False
+
+
 async def _send_now(message: str) -> bool:
     """Envia direto via Evolution. Retorna sucesso."""
     phone = (os.getenv(RENATO_PHONE_ENV) or "").strip()
@@ -293,12 +318,21 @@ async def route_to_renato(
     mode = get_mode()
     text = message_text or payload.get("body") or json.dumps(payload, ensure_ascii=False)
 
-    # Mode 'off' — comportamento legado
+    urgent, urgency_rule = is_urgent(payload, urgency_score, source, msg_type)
+
+    # Mode 'off' — comportamento legado (mas com silence guard pra domingo)
     if mode == MODE_OFF:
+        if _is_sunday_silence(urgent, urgency_rule):
+            logger.info(f"domingo silence: msg adiada pra segunda 8h (source={source})")
+            pid = _enqueue_pending(source, payload, msg_type, urgency_score, "morning", dedup_key)
+            return {
+                "action": "queued_sunday_silence",
+                "pending_id": pid,
+                "digest_target": "morning",
+                "mode": mode,
+            }
         ok = await _send_now(text)
         return {"action": "sent" if ok else "skipped", "pending_id": None, "mode": mode}
-
-    urgent, urgency_rule = is_urgent(payload, urgency_score, source, msg_type)
 
     # Mode 'shadow' — manda sempre + grava pending pra auditoria
     if mode == MODE_SHADOW:
@@ -323,6 +357,11 @@ async def route_to_renato(
             "urgency_rule": urgency_rule,
             "mode": mode,
         }
+
+    # Domingo silence (non-urgent) — força digest_target='morning' (segunda 8h)
+    if _is_sunday_silence(urgent, urgency_rule):
+        logger.info(f"domingo silence: msg adiada pra segunda 8h (source={source})")
+        digest_target = "morning"
 
     pid = _enqueue_pending(source, payload, msg_type, urgency_score, digest_target, dedup_key)
     return {
