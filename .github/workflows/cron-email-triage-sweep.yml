@@ -17,17 +17,23 @@ on:
   schedule:
     - cron: '7,37 * * * *'  # a cada 30min, off-peak
   workflow_dispatch:
+    inputs:
+      hours:
+        description: 'Janela de busca em horas (default 1 para cron, ate 168 para backfill)'
+        required: false
+        default: '1'
 
 jobs:
   trigger:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Hit email-triage-sweep endpoint
         run: |
+          HOURS="${{ github.event.inputs.hours || '1' }}"
           response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
-            --max-time 300 \
+            --max-time 600 \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            "https://intel.almeida-prado.com/api/cron/email-triage-sweep?hours=1")
+            "https://intel.almeida-prado.com/api/cron/email-triage-sweep?hours=${HOURS}")
           echo "$response"
           echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)
