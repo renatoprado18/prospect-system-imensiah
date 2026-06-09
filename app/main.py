@@ -15363,6 +15363,194 @@ async def cron_email_triage_sweep(request: Request, hours: int = 1):
         }
 
 
+@app.get("/api/email-triage/archive-proposals/review")
+async def list_archive_proposals_review(
+    request: Request,
+    status: str = "shadow",
+    limit: int = 100,
+    days: int = 14,
+):
+    """Lista propostas shadow de auto-archive pra Renato ratificar.
+
+    Default: status='shadow', ultimos 14 dias, max 100 items.
+    Renato bate semanalmente, escolhe approve/reject em lote via ratify endpoint.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT eap.*, et.classification, et.priority, et.ai_confidence as et_conf
+                FROM email_archive_proposals eap
+                LEFT JOIN email_triage et ON et.id = eap.email_triage_id
+                WHERE eap.status = %s
+                  AND eap.criado_em > NOW() - INTERVAL '%s days'
+                ORDER BY eap.criado_em DESC
+                LIMIT %s
+                """,
+                (status, days, max(1, min(limit, 200))),
+            )
+            items = [dict(r) for r in cursor.fetchall()]
+
+            # Telemetria FP rate junto pra UI
+            from services.email_triage import compute_archive_fp_rate
+            fp = compute_archive_fp_rate(days=days)
+
+            return {
+                "items": items,
+                "total": len(items),
+                "telemetry": fp,
+            }
+    except Exception as e:
+        import traceback
+        logging.exception("list_archive_proposals_review falhou")
+        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
+
+
+@app.post("/api/email-triage/archive-proposals/{proposal_id}/ratify")
+async def ratify_archive_proposal(request: Request, proposal_id: int, data: dict):
+    """Ratifica uma proposta shadow.
+
+    action='approve' -> marca approved + arquiva no Gmail (remove INBOX)
+                        e atualiza status='archived' ao final
+    action='reject' -> marca rejected (sinal de FP, mantem na inbox)
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    action = (data or {}).get("action", "").lower()
+    if action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="action deve ser 'approve' ou 'reject'")
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM email_archive_proposals WHERE id = %s
+                """,
+                (proposal_id,),
+            )
+            prop = cursor.fetchone()
+            if not prop:
+                raise HTTPException(status_code=404, detail="Proposta nao encontrada")
+
+            if prop["status"] not in ("shadow",):
+                return {"success": False, "reason": f"status_invalid: {prop['status']}"}
+
+            if action == "reject":
+                cursor.execute(
+                    """
+                    UPDATE email_archive_proposals
+                    SET status = 'rejected', ratified_at = NOW(), ratified_by = 'renato'
+                    WHERE id = %s
+                    """,
+                    (proposal_id,),
+                )
+                # Volta triage pra pending pra Renato decidir manualmente
+                if prop.get("email_triage_id"):
+                    cursor.execute(
+                        """
+                        UPDATE email_triage SET status = 'pending'
+                        WHERE id = %s AND status = 'archive_proposed_shadow'
+                        """,
+                        (prop["email_triage_id"],),
+                    )
+                conn.commit()
+                return {"success": True, "action": "rejected", "proposal_id": proposal_id}
+
+            # action = 'approve' — arquiva no Gmail
+            account_email = prop["account_email"]
+            gmail_id = prop["message_id"]
+
+            cursor.execute(
+                "SELECT access_token, refresh_token FROM google_accounts WHERE email = %s",
+                (account_email,),
+            )
+            acc = cursor.fetchone()
+            if not acc:
+                raise HTTPException(status_code=400, detail=f"Conta {account_email} nao encontrada")
+
+            from integrations.gmail import GmailIntegration
+            gmail = GmailIntegration()
+
+            # Refresh token (best-effort)
+            access_token = acc["access_token"]
+            if acc.get("refresh_token"):
+                try:
+                    rr = await gmail.refresh_access_token(acc["refresh_token"])
+                    if "access_token" in rr:
+                        access_token = rr["access_token"]
+                        cursor.execute(
+                            "UPDATE google_accounts SET access_token = %s WHERE email = %s",
+                            (access_token, account_email),
+                        )
+                        conn.commit()
+                except Exception:
+                    pass
+
+            archived = await gmail.archive_message(access_token, gmail_id)
+
+            cursor.execute(
+                """
+                UPDATE email_archive_proposals
+                SET status = %s, ratified_at = NOW(), ratified_by = 'renato'
+                WHERE id = %s
+                """,
+                ("archived" if archived else "approved", proposal_id),
+            )
+            if prop.get("email_triage_id"):
+                cursor.execute(
+                    """
+                    UPDATE email_triage
+                    SET status = 'actioned', action_taken = 'archived', actioned_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (prop["email_triage_id"],),
+                )
+            conn.commit()
+            return {
+                "success": True,
+                "action": "archived" if archived else "approved_only",
+                "gmail_archived": archived,
+                "proposal_id": proposal_id,
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logging.exception("ratify_archive_proposal falhou")
+        raise HTTPException(status_code=500, detail=f"Erro: {str(e)}")
+
+
+@app.get("/api/email-triage/archive-proposals/fp-rate")
+async def get_archive_fp_rate(request: Request, days: int = 14):
+    """Telemetria FP rate pra decidir quando ligar AUTO_ARCHIVE_ENABLED.
+
+    Criterio: 14d com FP <1% (rejected/decided) e >=20 propostas decididas.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.email_triage import compute_archive_fp_rate, AUTO_ARCHIVE_ENABLED
+    result = compute_archive_fp_rate(days=days)
+    result["auto_archive_enabled"] = AUTO_ARCHIVE_ENABLED
+    # Criterio de ativacao
+    fp = result.get("fp_rate")
+    decided = result.get("decided", 0) or 0
+    result["ready_to_activate"] = (
+        fp is not None and fp < 0.01 and decided >= 20 and not AUTO_ARCHIVE_ENABLED
+    )
+    return result
+
+
 @app.post("/api/email-triage/fix-metadata")
 async def fix_email_metadata(request: Request):
     """Corrige metadata dos emails importados que estão sem from_name"""
