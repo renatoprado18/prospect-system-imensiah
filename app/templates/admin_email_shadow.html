@@ -1,0 +1,165 @@
+{% extends "rap_base.html" %}
+{% block title %}Email Shadow Review - INTEL{% endblock %}
+{% block page_title %}Email Triage — Shadow Review{% endblock %}
+{% block page_subtitle %}<div class="page-subtitle">Ratifique propostas de arquivamento pra calibrar o CoS. Approve = arquiva no Gmail. Reject = mantém na inbox + sinal de FP pro sistema aprender.</div>{% endblock %}
+
+{% block extra_css %}
+<style>
+.shadow-header {
+    background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;
+    padding:12px 16px; margin-bottom:14px; display:flex;
+    justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;
+    font-size:0.85rem;
+}
+.shadow-telemetry { display:flex; gap:14px; flex-wrap:wrap; color:#475569; }
+.shadow-telemetry strong { color:#0f172a; }
+.shadow-row {
+    display:grid;
+    grid-template-columns: 50px 50px 110px 1fr 200px;
+    gap:10px; align-items:center;
+    padding:8px 12px; background:white; border:1px solid #e2e8f0;
+    border-radius:6px; margin-bottom:6px; font-size:0.85rem;
+}
+.shadow-row.approved { opacity:0.4; background:#f0fdf4; }
+.shadow-row.rejected { opacity:0.4; background:#fef2f2; }
+.shadow-row .acc-badge {
+    display:inline-block; padding:2px 8px; border-radius:10px;
+    font-size:0.7rem; font-weight:600;
+}
+.shadow-row .acc-pro { background:#dbeafe; color:#1e40af; }
+.shadow-row .acc-per { background:#fef3c7; color:#92400e; }
+.shadow-row .conf {
+    font-family:monospace; font-size:0.8rem; color:#64748b;
+    text-align:center;
+}
+.shadow-row .from-name { font-weight:600; color:#0f172a; }
+.shadow-row .subject { color:#475569; }
+.shadow-row .actions { display:flex; gap:6px; justify-content:flex-end; }
+.shadow-row .actions button {
+    padding:4px 10px; border-radius:4px; border:1px solid;
+    font-size:0.75rem; cursor:pointer; transition:all 0.15s;
+}
+.shadow-row .btn-approve {
+    background:#10b981; border-color:#059669; color:white;
+}
+.shadow-row .btn-approve:hover { background:#059669; }
+.shadow-row .btn-reject {
+    background:white; border-color:#dc2626; color:#dc2626;
+}
+.shadow-row .btn-reject:hover { background:#fef2f2; }
+.shadow-row .actions button:disabled { opacity:0.5; cursor:not-allowed; }
+.shadow-row .reason {
+    font-size:0.7rem; color:#94a3b8; margin-top:2px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.empty-state {
+    text-align:center; padding:60px 20px; color:#94a3b8;
+}
+.fp-rate-good { color:#059669; font-weight:700; }
+.fp-rate-warn { color:#d97706; font-weight:700; }
+.fp-rate-bad { color:#dc2626; font-weight:700; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="shadow-header">
+    <div class="shadow-telemetry" id="telemetry">Carregando telemetria…</div>
+    <div>
+        <button class="btn btn-sm btn-outline-primary" onclick="loadProposals()">
+            <i class="bi bi-arrow-clockwise"></i> Recarregar
+        </button>
+    </div>
+</div>
+
+<div id="proposalsList">
+    <div class="empty-state">Carregando propostas shadow…</div>
+</div>
+
+<script>
+let _items = [];
+
+async function loadProposals() {
+    const res = await fetch('/api/email-triage/archive-proposals/review?status=shadow&limit=200&days=14');
+    const data = await res.json();
+    _items = data.items || [];
+    renderTelemetry(data.telemetry || {});
+    renderList();
+}
+
+function renderTelemetry(t) {
+    const fpRate = (t.fp_rate || 0) * 100;
+    const cls = fpRate < 1 ? 'fp-rate-good' : (fpRate < 5 ? 'fp-rate-warn' : 'fp-rate-bad');
+    const ready = t.ready_to_activate ? '✅ Pronto pra ativar auto-archive' : '🟡 Shadow ativo (precisa FP<1% + ≥20 decididos)';
+    document.getElementById('telemetry').innerHTML = `
+        <span><strong>Pendentes:</strong> ${_items.length}</span>
+        <span><strong>Decididos (14d):</strong> ${t.decided || 0}</span>
+        <span><strong>Aprovados:</strong> ${t.approved || 0}</span>
+        <span><strong>Rejeitados:</strong> ${t.rejected || 0}</span>
+        <span><strong>FP rate:</strong> <span class="${cls}">${fpRate.toFixed(1)}%</span></span>
+        <span>${ready}</span>
+    `;
+}
+
+function renderList() {
+    const list = document.getElementById('proposalsList');
+    if (_items.length === 0) {
+        list.innerHTML = '<div class="empty-state">Nenhuma proposta shadow no momento. Aguarde próximo sweep (a cada 30min) ou dispare manual.</div>';
+        return;
+    }
+    list.innerHTML = _items.map(item => {
+        const acc = item.account_email.includes('almeida-prado.com') ? 'pro' : 'per';
+        const accBadge = acc === 'pro' ? 'acc-pro' : 'acc-per';
+        const conf = (item.ai_confidence || 0).toFixed(2);
+        const reason = (item.classification_reason || '—').substring(0, 80);
+        return `
+            <div class="shadow-row" id="row-${item.id}">
+                <div><span class="acc-badge ${accBadge}">${acc}</span></div>
+                <div class="conf">${conf}</div>
+                <div class="from-name" title="${escapeHtml(item.sender || '')}">${escapeHtml((item.sender || '').substring(0, 18))}</div>
+                <div>
+                    <div class="subject" title="${escapeHtml(item.subject || '')}">${escapeHtml((item.subject || '').substring(0, 80))}</div>
+                    <div class="reason">${escapeHtml(reason)}</div>
+                </div>
+                <div class="actions">
+                    <button class="btn-approve" onclick="ratify(${item.id}, 'approve', this)">
+                        ✓ Arquivar
+                    </button>
+                    <button class="btn-reject" onclick="ratify(${item.id}, 'reject', this)">
+                        ✗ Manter
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function ratify(id, action, btn) {
+    const row = document.getElementById('row-' + id);
+    row.querySelectorAll('button').forEach(b => b.disabled = true);
+    try {
+        const res = await fetch(`/api/email-triage/archive-proposals/${id}/ratify`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action: action}),
+        });
+        if (!res.ok) {
+            const err = await res.text();
+            alert(`Erro: ${err}`);
+            row.querySelectorAll('button').forEach(b => b.disabled = false);
+            return;
+        }
+        row.classList.add(action === 'approve' ? 'approved' : 'rejected');
+        setTimeout(() => row.remove(), 800);
+    } catch (e) {
+        alert('Falha: ' + e.message);
+        row.querySelectorAll('button').forEach(b => b.disabled = false);
+    }
+}
+
+loadProposals();
+</script>
+{% endblock %}

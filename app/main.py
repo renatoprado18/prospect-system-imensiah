@@ -15086,6 +15086,17 @@ async def emails_page(request: Request):
     return templates.TemplateResponse("rap_emails.html", {"request": request, "user": user})
 
 
+@app.get("/admin/email-shadow", response_class=HTMLResponse)
+async def admin_email_shadow_page(request: Request):
+    """Shadow review: ratifica propostas de auto-archive (approve = arquiva no
+    Gmail; reject = mantem na inbox + sinal FP pro CoS aprender). 2 semanas
+    de shadow + FP<1% libera auto-archive automatico."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("admin_email_shadow.html", {"request": request, "user": user})
+
+
 @app.get("/api/email-triage")
 async def get_email_triage_list(
     request: Request,
