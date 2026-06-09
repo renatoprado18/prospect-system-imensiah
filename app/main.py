@@ -25648,6 +25648,26 @@ async def cron_editorial_metrics_reminder_evening(request: Request):
         return {"job": "editorial-metrics-reminder-evening", "status": "error", "error": str(e)}
 
 
+@app.get("/api/cron/auto-resolve-editorial")
+@track_cron_run
+async def cron_auto_resolve_editorial(request: Request):
+    """Cron diario (12:30 BRT / 15:30 UTC): fecha tasks 'Medir metricas:
+    posts da semana' cujas metricas ja foram coletadas (LinkdAPI auto-collect
+    com dias_apos_publicacao >= 7 pra TODOS os posts da semana).
+
+    Off-peak deliberado pra nao competir com auto-collect (horario) nem com
+    briefings (manha/noite)."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    try:
+        from services.auto_resolver import auto_resolve_editorial_tasks
+        result = auto_resolve_editorial_tasks()
+        return {"job": "auto-resolve-editorial", "status": "ok", **result}
+    except Exception as e:
+        logger.exception("auto-resolve-editorial falhou")
+        return {"job": "auto-resolve-editorial", "status": "error", "error": str(e)}
+
+
 @app.get("/api/cron/auto-collect-linkedin-metrics")
 @track_cron_run
 async def cron_auto_collect_linkedin_metrics(request: Request):
