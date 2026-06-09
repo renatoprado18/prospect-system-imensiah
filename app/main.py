@@ -25194,48 +25194,46 @@ async def cron_daily_morning_briefing(request: Request):
         if len(msg) > 900:
             msg = msg[:897] + "..."
 
-        # Tentativa CoS narrative (Onda 1 — 06/jun/2026). Cai pro template se falhar.
-        # Requer system_memory tipo='cos_config' + ANTHROPIC_API_KEY.
+        # Onda 2 (10/jun/2026): briefing 8h agora LE items que o CoS
+        # Investigator (cron 7h10) populou em cos_briefing_items. Compose
+        # eh deterministico (template Python), nao chama LLM. Mais previsivel,
+        # mais barato, zero alucinacao. Cai pro fallback estatico se cycle
+        # vazio (investigator falhou OU rodou antes da migracao).
         cos_text = None
+        cos_mode_detail = None
         try:
-            from services.briefings import generate_cos_briefing_narrative
-            pending_top_titles = []
-            for p in (pending or [])[:8]:
-                payload = (p.get('payload') if isinstance(p, dict) else None) or {}
-                title = (
-                    payload.get('title')
-                    or payload.get('body')
-                    or (p.get('msg_type') if isinstance(p, dict) else None)
-                    or (p.get('source') if isinstance(p, dict) else None)
+            from services.briefings import compose_briefing_from_items, mark_items_reported
+            from services.tz import now_utc, to_brt as _to_brt
+            today_brt = _to_brt(now_utc()).date()
+            cycle_id = f"{today_brt.isoformat()}-morning"
+
+            dados_meta = {
+                "overdue_count": overdue_count,
+                "today_tasks": today_tasks,
+                "events": len(events) if events else 0,
+                "proposals_count": proposals_count,
+                "agent_actions_24h": (agent_summary.get('total', 0) if agent_summary else 0),
+            }
+            cos_text = compose_briefing_from_items(cycle_id, dados_meta)
+
+            if cos_text:
+                n_reported = mark_items_reported(cycle_id)
+                cos_mode_detail = f"items_consumed:{n_reported}"
+            else:
+                # Cycle vazio — investigator nao rodou OU nao produziu items
+                cos_mode_detail = "no_items_in_cycle"
+                logging.warning(
+                    f"morning-briefing: cycle {cycle_id} sem items — investigator pode ter falhado. "
+                    f"Caindo pro template estatico."
                 )
-                if title:
-                    pending_top_titles.append(str(title)[:120])
-
-            cost_mtd_arg = None
-            if mtd and isinstance(mtd, dict) and mtd.get('budget_pct', 0) >= 50:
-                cost_mtd_arg = mtd
-
-            cos_text = await generate_cos_briefing_narrative(
-                overdue_count=overdue_count,
-                today_tasks=today_tasks,
-                events=[dict(e) for e in events],
-                editorial_today=[dict(e) for e in editorial_today],
-                needs_metrics_count=len(needs_metrics),
-                proposals_count=proposals_count,
-                agent_total_24h=(agent_summary.get('total', 0) if agent_summary else 0),
-                no_post_alert=no_post_alert,
-                cost_mtd=cost_mtd_arg,
-                pending_count=len(pending) if pending else 0,
-                pending_top=pending_top_titles,
-                now=now,
-            )
         except Exception as _e:
-            logging.warning(f"morning-briefing: cos narrative failed: {_e}")
+            logging.warning(f"morning-briefing: cos compose failed: {_e}")
             cos_text = None
+            cos_mode_detail = f"exception:{type(_e).__name__}"
 
         # Envia: prefere CoS se disponivel, senao cai pro template
         msg_to_send = cos_text if cos_text else msg
-        mode = "cos" if cos_text else "template"
+        mode = "cos_items" if cos_text else "template"
 
         # Bug latente 06/jun/2026: cron ignorava o retorno e respondia "sent" mesmo
         # quando Evolution rejeitava (Baileys offline OU env var poluido com \n).
@@ -25252,6 +25250,7 @@ async def cron_daily_morning_briefing(request: Request):
             "job": "daily-morning-briefing",
             "status": "sent",
             "mode": mode,
+            "mode_detail": cos_mode_detail,
             "length": len(msg_to_send),
             "timestamp": now.isoformat(),
             "overdue": overdue_count,

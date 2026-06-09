@@ -809,6 +809,173 @@ async def generate_cos_briefing_narrative(
         return None
 
 
+# ============== COS BRIEFING READER (Onda 2 — 10/jun/2026) ==============
+#
+# Pivot: o briefing 8h NÃO chama LLM mais. Lê os items que o CoS
+# Investigator populou em cos_briefing_items (cron 7h10) e compõe a
+# mensagem WhatsApp deterministicamente. Mais previsível, mais barato,
+# zero alucinação.
+
+_CATEGORIA_ORDER = {"escalated": 0, "one_way": 1, "feito": 2, "monitor": 3}
+_CATEGORIA_EMOJI = {"escalated": "🔴", "one_way": "🟡", "feito": "✅", "monitor": "👀"}
+_FRENTE_LABEL = {
+    1: "Vallen",
+    2: "imensIAH",
+    3: "Vida pessoal",
+    4: "Conselhos",
+    5: "Editorial/LinkedIn",
+}
+
+
+def _load_briefing_items(cycle_id: str, include_previous_day: bool = True) -> List[Dict]:
+    """Carrega items do ciclo + items não-reportados do dia anterior
+    (catch-up se cron 7h10 falhou)."""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            if include_previous_day:
+                cursor.execute(
+                    """
+                    SELECT id, cycle_id, categoria, frente, texto, refs, prioridade, criado_em
+                    FROM cos_briefing_items
+                    WHERE cycle_id = %s
+                       OR (ja_reportado_em IS NULL AND criado_em >= NOW() - INTERVAL '36 hours')
+                    ORDER BY criado_em ASC
+                    """,
+                    (cycle_id,),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, cycle_id, categoria, frente, texto, refs, prioridade, criado_em
+                    FROM cos_briefing_items
+                    WHERE cycle_id = %s
+                    ORDER BY criado_em ASC
+                    """,
+                    (cycle_id,),
+                )
+            return [dict(r) for r in cursor.fetchall()]
+    except Exception:
+        return []
+
+
+def _frente_dominante(items: List[Dict]) -> Optional[int]:
+    """Frente com mais items (excluindo categoria 'feito' que não pesa)."""
+    counts: Dict[int, int] = {}
+    for it in items:
+        if it["categoria"] == "feito":
+            continue
+        f = it.get("frente")
+        if f:
+            counts[f] = counts.get(f, 0) + 1
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda x: x[1])[0]
+
+
+def mark_items_reported(cycle_id: str) -> int:
+    """Marca items do cycle_id como reportados. Retorna contagem."""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE cos_briefing_items
+                SET ja_reportado_em = NOW()
+                WHERE cycle_id = %s
+                   OR (ja_reportado_em IS NULL AND criado_em >= NOW() - INTERVAL '36 hours')
+                """,
+                (cycle_id,),
+            )
+            n = cursor.rowcount
+            conn.commit()
+            return n or 0
+    except Exception:
+        return 0
+
+
+def compose_briefing_from_items(
+    cycle_id: str,
+    dados_meta: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Compõe mensagem WhatsApp determinística a partir de cos_briefing_items.
+
+    Args:
+        cycle_id: ID do ciclo ("2026-06-10-morning")
+        dados_meta: {overdue_count, today_tasks (list), events (list/int),
+            proposals_count, agent_actions_24h}
+
+    Retorna texto pronto pra WhatsApp (sem markdown headers, *bold* só),
+    ou None se cycle está vazio (caller deve cair pro fallback).
+    """
+    items = _load_briefing_items(cycle_id, include_previous_day=True)
+    if not items:
+        return None
+
+    # Ordena: categoria (escalated > one_way > feito > monitor),
+    # prioridade ASC (1=critico antes), frente ASC, criado_em ASC
+    items.sort(key=lambda it: (
+        _CATEGORIA_ORDER.get(it["categoria"], 9),
+        it.get("prioridade") or 5,
+        it.get("frente") or 99,
+        it.get("id") or 0,
+    ))
+
+    # Abertura: frente dominante (entre não-feitos)
+    fdom = _frente_dominante(items)
+    today_brt_date = datetime.now().strftime("%d/%m")
+    if fdom:
+        abertura = f"☀️ Briefing {today_brt_date}. Hoje pesa *{_FRENTE_LABEL.get(fdom, f'frente {fdom}')}*."
+    else:
+        abertura = f"☀️ Briefing {today_brt_date}."
+
+    # Compõe linhas
+    lines = [abertura, ""]
+    for it in items:
+        emoji = _CATEGORIA_EMOJI.get(it["categoria"], "•")
+        texto = (it.get("texto") or "").strip()
+        # Tira newlines internas — vira 1 linha por item
+        texto = " ".join(texto.split())
+        if len(texto) > 220:
+            texto = texto[:217] + "..."
+        lines.append(f"{emoji} {texto}")
+
+    # Linha final: numeros chave
+    meta = dados_meta or {}
+    overdue = meta.get("overdue_count")
+    today_tasks = meta.get("today_tasks")
+    today_tasks_n = len(today_tasks) if isinstance(today_tasks, list) else (today_tasks or 0)
+    events_n = meta.get("events")
+    if isinstance(events_n, list):
+        events_n = len(events_n)
+    proposals = meta.get("proposals_count")
+    agent_24h = meta.get("agent_actions_24h")
+
+    fecho_parts = []
+    if overdue is not None:
+        fecho_parts.append(f"{overdue} vencidas")
+    if today_tasks_n:
+        fecho_parts.append(f"{today_tasks_n} hoje")
+    if events_n:
+        fecho_parts.append(f"{events_n} reuniões")
+    if proposals is not None:
+        fecho_parts.append(f"{proposals} propostas")
+    if agent_24h is not None:
+        fecho_parts.append(f"{agent_24h} ações 24h")
+
+    if fecho_parts:
+        lines.append("")
+        lines.append("• " + " • ".join(fecho_parts))
+
+    msg = "\n".join(lines)
+
+    # Target 800-1500 chars. Hard cap 1600 pra WhatsApp seguro.
+    if len(msg) > 1600:
+        msg = msg[:1597] + "..."
+
+    return msg
+
+
 def get_contacts_needing_briefing(limit: int = 10) -> List[Dict]:
     """
     Retorna contatos que precisam de atencao e se beneficiariam de briefing.

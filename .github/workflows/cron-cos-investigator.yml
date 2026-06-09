@@ -1,0 +1,28 @@
+name: Cron — CoS Investigator
+
+# Onda 2 (10/jun/2026). Roda o investigator agent (Sonnet 4.6 + tool use)
+# que descobre quem é relevante a partir das pendências do dia e
+# investiga sob demanda. Popula cos_briefing_items que o briefing 8h LE.
+#
+# Off-peak minute (10) evita atrasos GH Actions top-of-hour. 50min antes
+# do briefing 8h pra dar folga ao agent loop (max 15 iter, observado
+# ~60s mas pode ir até ~5min em dia denso).
+
+on:
+  schedule:
+    - cron: '10 10 * * *'   # 10:10 UTC = 07:10 BRT
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Hit cos-investigator endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            --max-time 600 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/cos-investigator")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)
