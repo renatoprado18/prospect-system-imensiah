@@ -127,12 +127,54 @@ def _rule_cron_error_prod(source: str, payload: Dict) -> bool:
     return severity in ("error", "critical", "failed")
 
 
+# M7 escalation trigger: imprensa = sempre Renato + escalation automática.
+# Domínios de veículos relevantes (BR + global financeiro) e regex de
+# vocabulário jornalístico. Match em qualquer um → urgente, bypassa silence guards.
+_PRESS_DOMAINS = {
+    "folha.uol.com.br", "estadao.com.br", "exame.com", "valor.globo.com",
+    "valoreconomico.com.br", "oglobo.com.br", "reuters.com", "bloomberg.com",
+    "agenciabrasil.ebc.com.br", "infomoney.com.br", "brazil.journal.com",
+    "neofeed.com.br", "pipelinevalor.globo.com",
+}
+
+import re as _re
+_PRESS_REGEX = _re.compile(
+    r"\b(jornalista|rep[oó]rter|pauta|mat[eé]ria|"
+    r"declara[cç][aã]o [aà] imprensa|entrevista|"
+    r"coment[aá]rio pra reportagem|fonte off|fonte on the record)\b",
+    _re.IGNORECASE,
+)
+
+
+def _rule_press_detection(payload: Dict) -> bool:
+    """M7: imprensa/jornalista no source ou texto -> urgente + escalation."""
+    # 1. Email com remetente de veículo conhecido
+    if (payload.get("source") or "").lower() == "email" or payload.get("email_from"):
+        sender = (payload.get("email_from") or payload.get("from") or "").lower()
+        if "@" in sender:
+            domain = sender.split("@", 1)[1].strip(" >")
+            for press_d in _PRESS_DOMAINS:
+                if domain == press_d or domain.endswith("." + press_d):
+                    return True
+    # 2. Regex no corpo/texto do payload
+    haystack_parts = []
+    for k in ("body", "text", "conteudo", "subject", "title", "message"):
+        v = payload.get(k)
+        if isinstance(v, str):
+            haystack_parts.append(v)
+    haystack = " ".join(haystack_parts)
+    if haystack and _PRESS_REGEX.search(haystack):
+        return True
+    return False
+
+
 URGENCY_RULES = [
     ("meeting_soon_unconfirmed", lambda src, mt, pl, sc: _rule_meeting_soon_unconfirmed(pl)),
     ("linkedin_author_replied",  lambda src, mt, pl, sc: _rule_linkedin_author_replied(src, pl)),
     ("prospect_campaign_reply",  lambda src, mt, pl, sc: _rule_prospect_campaign_reply(src, pl)),
     ("financial_alert",          lambda src, mt, pl, sc: _rule_financial_alert(src, mt)),
     ("cron_error_prod",          lambda src, mt, pl, sc: _rule_cron_error_prod(src, pl)),
+    ("press_detection",          lambda src, mt, pl, sc: _rule_press_detection(pl)),
 ]
 
 
