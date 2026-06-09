@@ -169,6 +169,36 @@ def _rule_press_detection(payload: Dict) -> bool:
     return False
 
 
+def _rule_frente_keyword_match(payload: Dict) -> bool:
+    """Bloco 2.X — keyword de frente 1 ou 2 no payload -> urgent (assunto critico).
+
+    Frentes 3/4/5 nao urgentes mas vao pro morning briefing (atributo
+    payload['frente_match'] eh setado, consumido por consumers downstream).
+    """
+    try:
+        from services.cos_keywords import is_frente_keyword
+    except Exception:
+        return False
+
+    # Junta texto de todos os campos relevantes
+    parts = []
+    for k in ("body", "text", "conteudo", "subject", "title", "message"):
+        v = payload.get(k)
+        if isinstance(v, str):
+            parts.append(v)
+    haystack = " ".join(parts)
+    if not haystack:
+        return False
+
+    frente = is_frente_keyword(haystack)
+    if frente is None:
+        return False
+
+    # Anota a frente no payload pra debug/consumers downstream
+    payload["frente_match"] = frente
+    return frente in (1, 2)
+
+
 URGENCY_RULES = [
     ("meeting_soon_unconfirmed", lambda src, mt, pl, sc: _rule_meeting_soon_unconfirmed(pl)),
     ("linkedin_author_replied",  lambda src, mt, pl, sc: _rule_linkedin_author_replied(src, pl)),
@@ -176,6 +206,7 @@ URGENCY_RULES = [
     ("financial_alert",          lambda src, mt, pl, sc: _rule_financial_alert(src, mt)),
     ("cron_error_prod",          lambda src, mt, pl, sc: _rule_cron_error_prod(src, pl)),
     ("press_detection",          lambda src, mt, pl, sc: _rule_press_detection(pl)),
+    ("frente_keyword_match",     lambda src, mt, pl, sc: _rule_frente_keyword_match(pl)),
 ]
 
 
