@@ -1668,6 +1668,44 @@ async def transcribe_audio(request: Request):
         return {"error": str(e)}
 
 
+@app.post("/transcribe-raw")
+async def transcribe_raw(request: Request):
+    """Transcreve audio via Groq Whisper sem orquestracao do bot.
+
+    Input: {secret, audio_b64, mimetype?, language?}
+    Output: {text} ou {error}
+
+    Util pra audios fora do fluxo bot (DMs do rap-whatsapp, conselhos, etc).
+    """
+    import base64
+    data = await request.json()
+    if data.get("secret") != WORKER_SECRET:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    audio_b64 = data.get("audio_b64", "")
+    mimetype = data.get("mimetype", "audio/ogg")
+    language = data.get("language", "pt")
+    if not audio_b64:
+        return JSONResponse(status_code=400, content={"error": "missing audio_b64"})
+    try:
+        audio_bytes = base64.b64decode(audio_b64)
+        clean_mime = mimetype.split(";")[0].strip() if mimetype else "audio/ogg"
+        ext_map = {"audio/ogg": "ogg", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/wav": "wav"}
+        ext = ext_map.get(clean_mime, "ogg")
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                files={"file": (f"audio.{ext}", audio_bytes, clean_mime)},
+                data={"model": "whisper-large-v3-turbo", "language": language},
+            )
+        if resp.status_code != 200:
+            return JSONResponse(status_code=resp.status_code, content={"error": "groq_failed", "detail": resp.text[:500]})
+        return {"text": resp.json().get("text", "")}
+    except Exception as e:
+        logger.exception("transcribe-raw error")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.post("/analyze-image")
 async def analyze_image(request: Request):
     """
