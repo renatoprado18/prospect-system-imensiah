@@ -6,7 +6,10 @@ name: Cron — Daily Morning Briefing
 
 on:
   schedule:
-    - cron: '0 11 * * *'
+    # Off-peak minute (7, nao 0) pra evitar atrasos GH Actions top-of-hour.
+    # 11:07 UTC = 08:07 BRT. Diferenca de 7min e irrisoria, mas dropa atraso
+    # de 1-4h pra <5min. Atrasos em 0 11 documentados 04-08/06/2026.
+    - cron: '7 11 * * *'
   workflow_dispatch:
 
 jobs:
