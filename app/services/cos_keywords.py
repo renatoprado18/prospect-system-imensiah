@@ -11,12 +11,18 @@ frente do PRIMEIRO match (frente menor = peso maior por convenção v5).
 from __future__ import annotations
 
 import logging
+import re
 import unicodedata
 from typing import List, Optional, Tuple
 
 from database import get_db
 
 logger = logging.getLogger(__name__)
+
+# Keywords curtas (<= esse tamanho) exigem word boundary pra evitar FP
+# tipo "Emma" batendo "clubebemmais" ou "ata" batendo "data" / "RACI"
+# batendo "racial". Calibracao 10/06/26.
+_SHORT_KEYWORD_MAX_LEN = 5
 
 
 def _strip_accents(s: str) -> str:
@@ -25,6 +31,17 @@ def _strip_accents(s: str) -> str:
         return s
     nfkd = unicodedata.normalize("NFKD", s)
     return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _keyword_matches(kw_norm: str, text_norm: str) -> bool:
+    """Substring match com word boundary pra keywords curtas (<=5 chars).
+    Long keywords continuam ILIKE %kw% (substring). Curtas exigem \\b...\\b
+    pra evitar FP (ex: 'Emma' nao deve bater 'clubebemmais')."""
+    if len(kw_norm) <= _SHORT_KEYWORD_MAX_LEN:
+        # \b funciona com chars alfanumericos
+        pattern = r"\b" + re.escape(kw_norm) + r"\b"
+        return bool(re.search(pattern, text_norm))
+    return kw_norm in text_norm
 
 
 def _load_keywords() -> List[Tuple[int, str]]:
@@ -56,7 +73,8 @@ def is_frente_keyword(text: Optional[str]) -> Optional[int]:
         return None
     text_norm = _strip_accents(text).lower()
     for frente, kw in _load_keywords():
-        if _strip_accents(kw).lower() in text_norm:
+        kw_norm = _strip_accents(kw).lower()
+        if _keyword_matches(kw_norm, text_norm):
             return frente
     return None
 
@@ -68,6 +86,7 @@ def matching_keywords(text: Optional[str]) -> List[Tuple[int, str]]:
     text_norm = _strip_accents(text).lower()
     matches: List[Tuple[int, str]] = []
     for frente, kw in _load_keywords():
-        if _strip_accents(kw).lower() in text_norm:
+        kw_norm = _strip_accents(kw).lower()
+        if _keyword_matches(kw_norm, text_norm):
             matches.append((frente, kw))
     return matches
