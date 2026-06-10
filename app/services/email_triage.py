@@ -594,6 +594,18 @@ class EmailTriageService:
             "bb.com.br", "nubank.com.br", "inter.co",
             "btg.com", "btgpactual.com", "xpinc.com",
             "stone.com.br", "pagseguro.uol.com.br", "wise.com",
+            # NOVOS (calibracao 10/06): bancos + cartoes + telco + AI billing
+            "cora.com.br",                # banco PJ
+            "c6bank.com.br",              # boleto
+            "c6.com.br",
+            "esfera.com.vc",              # Santander Esfera
+            "santander.com.vc",
+            "claro.com.br",               # fatura real (filtro telco abaixo)
+            "mi.claro.com.br",            # subdominio fatura Claro
+            "vivo.com.br",
+            "tim.com.br",
+            "claude.ai",                  # Anthropic billing
+            "anthropic.com",
         )
         GOV_DOMAINS = (".gov.br", ".jus.br")
         financial_keywords = (
@@ -606,6 +618,27 @@ class EmailTriageService:
         is_gov_domain = bool(sender_domain) and any(sender_domain.endswith(d) for d in GOV_DOMAINS)
         text_lc_fin = f"{subject} {body_text[:1500]}".lower()
         has_financial_kw = any(kw in text_lc_fin for kw in financial_keywords)
+
+        # Telco exception: dominios telco entram no FINANCIAL_DOMAINS pq
+        # fatura real e legitima, mas newsletters promocionais (oferta wifi,
+        # multas, desconto) sao noise. Se bate promo SEM bate fatura, sai
+        # do whitelist (vai cair em R4/R5 e arquivar).
+        TELCO_DOMAINS = ("claro.com.br", "mi.claro.com.br", "vivo.com.br", "tim.com.br")
+        is_telco = bool(sender_domain) and any(sender_domain.endswith(d) for d in TELCO_DOMAINS)
+        if is_telco and is_financial_domain:
+            fatura_kw = (
+                "fatura", "boleto", "vencimento", "pagamento devido",
+                "atraso", "nota fiscal", "segunda via",
+            )
+            promo_kw = (
+                "oferta", "promocao", "promoção", "desconto", "ganhe",
+                "contrate", "novidade", "wifi mais", "wi-fi mais",
+            )
+            has_fatura = any(k in text_lc_fin for k in fatura_kw)
+            has_promo = any(k in text_lc_fin for k in promo_kw)
+            if has_promo and not has_fatura:
+                # Promo telco — nao vira must_read, fluir pra R4/R5
+                is_financial_domain = False
         # Whitelist domain = must_read (alta priority com keyword, media sem).
         # Whitelist e altamente seletiva — Agilize/banco/Receita so manda
         # comunicacoes legitimas operacionais. Priority menor sem keyword
