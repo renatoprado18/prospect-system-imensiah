@@ -550,15 +550,17 @@ class EmailTriageService:
             except Exception as e:
                 logger.warning(f"classify_email_cos R2 falhou: {e}")
 
+        # Extrai from_name uma vez — reusado em R3, R4 (LinkedIn DM exc.) e R4 (drive-share exc.)
+        from_name = ""
+        if "<" in from_header:
+            from_name = from_header.split("<", 1)[0].strip().strip('"')
+        else:
+            from_name = from_header
+
         # R3: Frente keyword em subject, from_name OU dominio do remetente.
         # Cobre ASSESPRO-SP (from_name) + "Planejamento Estratégico" no subject
         # (com acento, agora normalizado em is_frente_keyword).
         try:
-            from_name = ""
-            if "<" in from_header:
-                from_name = from_header.split("<", 1)[0].strip().strip('"')
-            else:
-                from_name = from_header
             frente = (
                 is_frente_keyword(subject)
                 or is_frente_keyword(from_name)
@@ -664,6 +666,59 @@ class EmailTriageService:
                 "mailer-daemon", "postmaster",
             )
             if any(p in local for p in noreply_patterns):
+                # R4 exception A: LinkedIn DM real vem de messaging-noreply
+                # mas com nome de pessoa no from_name.
+                # Exemplo: "Rodrigo Clausen via LinkedIn" <messaging-noreply@linkedin.com>
+                # Detecta: dominio linkedin.com + from_name diferente de "LinkedIn"
+                # genérico/alertas/jobs/notifications.
+                if sender_domain and sender_domain.endswith("linkedin.com"):
+                    from_name_lower = (from_name or "").lower().strip()
+                    is_real_person_dm = (
+                        from_name_lower
+                        and from_name_lower not in ("linkedin", "linkedin learning")
+                        and not any(k in from_name_lower for k in (
+                            "alertas de vaga", "jobs", "notifications",
+                            "notificações", "notificacoes",
+                        ))
+                        and "via linkedin" in from_name_lower  # heurística forte
+                    )
+                    if is_real_person_dm:
+                        reasons.append(f"LinkedIn DM real: {from_name}")
+                        rule_hits.append("R4_linkedin_dm_exception")
+                        return {
+                            "classification": "must_read",
+                            "priority": 7,
+                            "ai_confidence": 0.85,
+                            "reasons": reasons,
+                            "suggested_tags": ["!!Renato", "linkedin-dm"],
+                            "suggested_actions": [{"type": "respond", "reason": "LinkedIn DM"}],
+                            "escalation": False,
+                            "rule_hits": rule_hits,
+                        }
+
+                # R4 exception B: Google Docs/Drive share — checar se
+                # subject/from_name tem keyword frente (Vallen, RACI, etc).
+                if (
+                    sender_domain == "google.com"
+                    or "drive-shares-noreply" in from_email
+                    or "docs-noreply" in from_email
+                ):
+                    combined = f"{subject} {from_name or ''}"
+                    frente_hit = is_frente_keyword(combined)
+                    if frente_hit:
+                        reasons.append(f"Google Docs share + frente {frente_hit}")
+                        rule_hits.append("R4_drive_share_frente_exception")
+                        return {
+                            "classification": "must_read",
+                            "priority": 8,
+                            "ai_confidence": 0.88,
+                            "reasons": reasons,
+                            "suggested_tags": ["!!Renato", f"frente_{frente_hit}", "drive-share"],
+                            "suggested_actions": [{"type": "review", "reason": "drive share frente"}],
+                            "escalation": False,
+                            "rule_hits": rule_hits,
+                        }
+
                 reasons.append(f"Remetente automatico ({local})")
                 rule_hits.append("R4_noreply")
                 return {
