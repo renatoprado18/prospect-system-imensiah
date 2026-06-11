@@ -718,8 +718,24 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
     tomorrow_brt = today_brt + timedelta(days=1)
     since = datetime.now() - timedelta(minutes=window_min)
 
+    # Calendario explicito pros proximos 7 dias — evita erro de weekday-arithmetic
+    # do agent (ja vimos sex 13/06 em vez de sex 12/06). Lista YYYY-MM-DD + dia da semana
+    # em PT-BR pra cada um dos 7 dias.
+    _DIAS_PT = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"]
+    calendar_7d = []
+    for offset in range(7):
+        d = today_brt + timedelta(days=offset)
+        calendar_7d.append({
+            "date": d.isoformat(),
+            "weekday": _DIAS_PT[d.weekday()],
+            "label": "hoje" if offset == 0 else ("amanha" if offset == 1 else f"+{offset}d"),
+        })
+
     ctx: Dict[str, Any] = {
         "now_brt": now_brt.isoformat(),
+        "today_brt": today_brt.isoformat(),
+        "today_weekday_pt": _DIAS_PT[today_brt.weekday()],
+        "calendar_7d": calendar_7d,
         "window_min": window_min,
     }
 
@@ -956,6 +972,10 @@ Se voce esta em duvida sobre uma acao, DEFAULTE pra create_action_proposal (semp
 ==== CONTEXTO ====
 
 now_brt: {now_brt}
+today_brt: {today_brt} ({today_weekday_pt})
+
+Calendario explicito 7d (USE pra resolver "sexta", "amanha", "proxima quarta", etc):
+{calendar_7d_json}
 
 Mensagens diretas (WA, 60min, exclui outbound do bot):
 {msgs_recent_json}
@@ -1012,6 +1032,9 @@ def _build_system_prompt(cos_config: str, policy: Dict[str, str], context: Dict[
         cos_config=cos_config or "(sem cos_config ativa — use defaults conservadores)",
         policy_lines=policy_lines,
         now_brt=context.get("now_brt", "?"),
+        today_brt=context.get("today_brt", "?"),
+        today_weekday_pt=context.get("today_weekday_pt", "?"),
+        calendar_7d_json=json.dumps(context.get("calendar_7d", []), default=str, ensure_ascii=False, indent=2),
         msgs_recent_json=json.dumps(context.get("msgs_recent", []), default=str, ensure_ascii=False, indent=2)[:6000],
         group_msgs_recent_json=json.dumps(context.get("group_msgs_recent", []), default=str, ensure_ascii=False, indent=2)[:4000],
         events_upcoming_json=json.dumps(context.get("events_upcoming", []), default=str, ensure_ascii=False, indent=2)[:3000],

@@ -778,9 +778,33 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
         contact = cursor.fetchone()
 
         if not contact:
-            logger.info(f"Contact not found for phone: {phone}")
-            _audit("skipped", f"contact_not_found:{phone}")
-            return {"processed": False, "reason": "contact_not_found", "phone": phone}
+            # Política B (ratificada 11/06/26): criar contato fantasma em vez de dropar.
+            # Rate limit: max 5 fantasmas/hora pra evitar spam virar ruido.
+            cursor.execute("""
+                SELECT COUNT(*) AS c FROM contacts
+                WHERE origem = 'wa_unknown' AND criado_em > NOW() - INTERVAL '1 hour'
+            """)
+            recent_phantoms = cursor.fetchone()["c"]
+            if recent_phantoms >= 5:
+                logger.warning(f"Rate limit fantasma atingido ({recent_phantoms}); dropando {phone}")
+                _audit("skipped", f"phantom_rate_limit:{phone}")
+                return {"processed": False, "reason": "phantom_rate_limit", "phone": phone}
+
+            # Cria fantasma. pushName se disponivel; senao usa "Desconhecido +{phone}".
+            push_name = (data.get("data", {}).get("pushName") or "").strip()
+            display_name = push_name if push_name else f"Desconhecido +{phone}"
+            telefones_json = json.dumps([{"type": "mobile", "number": f"+{phone}", "whatsapp": True}])
+            cursor.execute("""
+                INSERT INTO contacts (nome, telefones, origem, circulo, criado_em, atualizado_em)
+                VALUES (%s, %s::jsonb, 'wa_unknown', 'frio', NOW(), NOW())
+                RETURNING id
+            """, (display_name, telefones_json))
+            contact_id = cursor.fetchone()["id"]
+            conn.commit()
+            logger.info(f"Created phantom contact #{contact_id} ({display_name}) for unknown phone {phone}")
+            _audit("info", f"phantom_created:{contact_id}:{phone}")
+            # Continua fluxo normal — mensagem sera gravada com este contact_id.
+            contact = {"id": contact_id, "nome": display_name}
 
         contact_id = contact["id"]
 
