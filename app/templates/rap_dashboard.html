@@ -5961,14 +5961,16 @@
             else if (cat === 'important') visualType = 'proximo_passo';
             else if (cat === 'attention') visualType = 'attention';
 
-            // Reason: usa label do fator (ex: "Tarefa vencida", "Aniversario!", "Responder msg")
-            // NAO usa f.tipo (vira "TASK", "BIRTHDAY" — sem contexto util)
-            let reasonLabel = '';
-            if (Array.isArray(c.fatores) && c.fatores.length > 0) {
+            // Reason: prefere cta_text (texto factual: "Task -28d: <titulo>", "Msg sem
+            // resposta ha 12d", "Aniversario hoje"). Fallback pro label do fator se cta_text
+            // ausente (compat). Antes: usava f.label generico ("Responder msg", "Tarefa
+            // vencida") sem contexto util pra decidir.
+            let reasonLabel = c.cta_text || '';
+            if (!reasonLabel && Array.isArray(c.fatores) && c.fatores.length > 0) {
                 reasonLabel = c.fatores[0].label || c.fatores[0].descricao || c.fatores[0].tipo || '';
             }
             if (!reasonLabel) reasonLabel = 'Atencao';
-            if (reasonLabel.length > 40) reasonLabel = reasonLabel.slice(0, 38) + '…';
+            if (reasonLabel.length > 50) reasonLabel = reasonLabel.slice(0, 48) + '…';
 
             // Health pill: vermelho <40, amarelo 40-70, verde >70
             const h = c.health_score;

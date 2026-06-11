@@ -986,6 +986,62 @@ def _detect_frente_cos(contact: Dict) -> Optional[int]:
         return None
 
 
+def _build_attention_reason(
+    contact: Dict,
+    tarefa_info: Optional[Dict],
+    mensagens_count: int,
+    aniversario_hoje: bool,
+    projeto_count: int,
+    dias_sem_contato: Optional[int],
+    frequencia_ideal: int,
+) -> str:
+    """Constroi texto factual derivado dos sinais reais.
+
+    Substitui labels genericos ('Responder msg', 'Tarefa vencida') por
+    contexto util pro user decidir: o que esta vencido, ha quanto tempo,
+    qual o titulo da task. Prioridade: aniversario > task vencida > msgs
+    pendentes > projeto > drift de tempo.
+    """
+    if aniversario_hoje:
+        return "Aniversario hoje"
+
+    if tarefa_info and tarefa_info.get("vencida"):
+        titulo = (tarefa_info.get("titulo") or "").strip()
+        prox = tarefa_info.get("proxima")
+        dias_atraso = None
+        try:
+            if prox:
+                prox_d = prox.date() if hasattr(prox, "date") else prox
+                dias_atraso = (datetime.now().date() - prox_d).days
+        except Exception:
+            pass
+        count = tarefa_info.get("count") or 1
+        if titulo:
+            titulo_short = titulo[:35] + "..." if len(titulo) > 35 else titulo
+            if dias_atraso and dias_atraso > 0:
+                return f"Task -{dias_atraso}d: {titulo_short}"
+            return f"Task vencida: {titulo_short}"
+        if count > 1:
+            return f"{count} tasks vencidas"
+        return "Task vencida"
+
+    if mensagens_count > 0:
+        if dias_sem_contato is not None and dias_sem_contato > 0:
+            return f"Msg sem resposta ha {dias_sem_contato}d"
+        return "Msg sem resposta"
+
+    if projeto_count > 0:
+        if projeto_count == 1:
+            return "Projeto ativo sem follow"
+        return f"{projeto_count} projetos ativos sem follow"
+
+    if dias_sem_contato and dias_sem_contato > frequencia_ideal:
+        excedente = dias_sem_contato - frequencia_ideal
+        return f"Sem contato ha {dias_sem_contato}d (+{excedente}d do baseline)"
+
+    return "Atencao"
+
+
 def get_prioridades_por_contexto(limit_per_context: int = 15) -> Dict[str, List[Dict]]:
     """
     Retorna contatos ordenados por prioridade, separados por contexto.
@@ -1028,14 +1084,26 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
         # Mesmo padrao usado em projects.py (tasks_vencidas) e /api/projects/overdue-count.
         tarefas_por_contato = {}
         try:
+            # Inclui titulo da task mais vencida (pra reason factual no widget).
+            # Subquery ORDER BY data_vencimento ASC pega a mais antiga (= mais vencida).
             cursor.execute("""
-                SELECT contact_id, COUNT(*) as count,
-                       MIN(data_vencimento) as proxima_vencimento
-                FROM tasks
-                WHERE status = 'pending' AND contact_id IS NOT NULL
-                  AND (origem IS DISTINCT FROM 'conselhoos_raci'
-                       OR contact_id = (SELECT contact_id FROM users WHERE id = 1))
-                GROUP BY contact_id
+                WITH agg AS (
+                    SELECT contact_id, COUNT(*) as count,
+                           MIN(data_vencimento) as proxima_vencimento
+                    FROM tasks
+                    WHERE status = 'pending' AND contact_id IS NOT NULL
+                      AND (origem IS DISTINCT FROM 'conselhoos_raci'
+                           OR contact_id = (SELECT contact_id FROM users WHERE id = 1))
+                    GROUP BY contact_id
+                )
+                SELECT a.contact_id, a.count, a.proxima_vencimento,
+                       (SELECT titulo FROM tasks t
+                        WHERE t.contact_id = a.contact_id AND t.status = 'pending'
+                          AND (t.origem IS DISTINCT FROM 'conselhoos_raci'
+                               OR t.contact_id = (SELECT contact_id FROM users WHERE id = 1))
+                        ORDER BY t.data_vencimento ASC NULLS LAST
+                        LIMIT 1) AS titulo
+                FROM agg a
             """)
             for row in cursor.fetchall():
                 prox = row["proxima_vencimento"]
@@ -1050,7 +1118,8 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
                 tarefas_por_contato[row["contact_id"]] = {
                     "count": row["count"],
                     "vencida": vencida,
-                    "proxima": prox
+                    "proxima": prox,
+                    "titulo": row["titulo"],
                 }
         except Exception as e:
             logger.warning(f"Error fetching tasks: {e}")
@@ -1250,6 +1319,13 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
             contact["legacy_priority_score"] = round(legacy_score, 1)
             contact["frente_cos"] = frente_cos
             contact["fatores"] = fatores
+
+            # Texto factual derivado dos sinais (substitui "Responder msg" generico).
+            mensagens_count = 1 if mensagem_pendente else 0
+            contact["cta_text"] = _build_attention_reason(
+                contact, tarefa_info, mensagens_count, aniversario_hoje,
+                projeto_count, dias_sem_contato, frequencia_ideal,
+            )
 
             # === CATEGORIA VISUAL ===
             if aniversario_hoje or (tarefa_info and tarefa_info["vencida"]) or (circulo <= 2 and fatores):
