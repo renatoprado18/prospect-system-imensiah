@@ -25274,10 +25274,17 @@ async def cron_daily_morning_briefing(request: Request):
             """)
             today_tasks = [r["titulo"] for r in cursor.fetchall()]
 
-            # 3. Calendar events today (BRT)
+            # 3. Calendar events today (BRT) — filtrar entries que nao sao reunioes:
+            # [Tarefa]/[Task] sao tasks block-time, "Rodizio Prado" e deslocamento
+            # sao logistica recorrente.
             cursor.execute("""
                 SELECT summary, start_datetime FROM calendar_events
                 WHERE start_datetime::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                  AND summary NOT ILIKE '[tarefa]%%'
+                  AND summary NOT ILIKE '[task]%%'
+                  AND summary NOT ILIKE 'rodízio prado%%'
+                  AND summary NOT ILIKE 'rodizio prado%%'
+                  AND summary NOT ILIKE 'deslocamento%%'
                 ORDER BY start_datetime
                 LIMIT 5
             """)
@@ -25346,9 +25353,10 @@ async def cron_daily_morning_briefing(request: Request):
                 ed_parts.append(f"  ⚠️ {no_post_alert}")
             for ep in editorial_today:
                 hora = ep['data_publicacao'].strftime('%Hh') if ep.get('data_publicacao') else ""
-                ed_parts.append(f"  • Post agendado: {ep['article_title']} ({hora})")
+                # auto-publica — sinalizar que nao precisa acao manual
+                ed_parts.append(f"  • Post {hora} (auto): {ep['article_title']}")
             if needs_metrics:
-                ed_parts.append(f"  • Coletar metricas: {len(needs_metrics)} posts de ~48h atras")
+                ed_parts.append(f"  ⚡ Coletar metricas: {len(needs_metrics)} posts de ~48h atras")
             sections.append(f"📊 Editorial:\n" + "\n".join(ed_parts))
 
         if proposals_count > 0:
