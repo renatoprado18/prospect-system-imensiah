@@ -49,10 +49,11 @@ async def check_upcoming_meetings() -> Dict:
         if not meetings:
             return results
 
-        # Filter out trivial events
+        # Filter out trivial events — incluir tasks block-time e rotinas
         skip_patterns = ['gym', 'treino', 'judô', 'judo', 'tênis', 'tennis',
                          'almoço', 'almoco', 'café', 'cafe', 'banho', 'cama',
-                         'dormir', 'pessoal', 'flex', 'deslocamento']
+                         'dormir', 'pessoal', 'flex', 'deslocamento',
+                         '[tarefa]', '[task]', 'rodízio prado', 'rodizio prado']
 
         for meeting in meetings:
             summary = (meeting['summary'] or '').lower()
