@@ -1082,6 +1082,10 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
 
         # === BUSCAR TODOS OS CONTATOS COM CIRCULO ===
         # Filtra contatos snoozed (usuario marcou "adiar ate X dias")
+        # Filtra self-contact (Renato, users.id=1) — nao faz sentido ele aparecer
+        # como contato a atender no proprio inbox. Cobre tambem variantes manuais
+        # (renato@almeida-prado.com, renatodaprado@gmail.com) caso o user contact
+        # esteja desligado.
         cursor.execute("""
             SELECT c.id, c.nome, c.empresa, c.cargo, c.foto_url, c.contexto,
                    c.circulo, c.circulo_pessoal, c.circulo_profissional,
@@ -1090,6 +1094,15 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
             FROM contacts c
             WHERE c.circulo IS NOT NULL
               AND COALESCE(c.circulo, 5) <= 4
+              AND c.id NOT IN (SELECT contact_id FROM users WHERE contact_id IS NOT NULL)
+              AND NOT EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(COALESCE(c.emails, '[]'::jsonb)) e
+                  WHERE LOWER(e->>'email') IN (
+                      'renato@almeida-prado.com',
+                      'renato.almeida.prado@gmail.com',
+                      'renatodaprado@gmail.com'
+                  )
+              )
               AND NOT EXISTS (
                   SELECT 1 FROM contact_snoozes s
                   WHERE s.contact_id = c.id AND s.ate >= CURRENT_DATE
