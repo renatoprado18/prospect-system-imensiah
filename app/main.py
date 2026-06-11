@@ -6196,6 +6196,8 @@ async def contacts_needs_attention(limit: int = Query(30, le=500)):
                 "badge": contact.get("badge"),
                 "category": contact.get("category"),
                 "priority_score": contact.get("priority_score"),
+                "legacy_priority_score": contact.get("legacy_priority_score"),
+                "frente_cos": contact.get("frente_cos"),
                 "dias_sem_contato": contact.get("dias_sem_contato"),
                 "fatores": contact.get("fatores", []),
                 "conversation_starters": conversation_starters,

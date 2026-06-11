@@ -951,6 +951,41 @@ def get_contatos_precisando_atencao(limit: int = 10) -> List[Dict]:
     return todos[:limit]
 
 
+# ============== COS FRENTES (v5) — peso por priorizacao estrategica ==============
+# Mapeamento CoS v5 ratificada — frente menor = priorizacao maior.
+# Usado pra discriminar score de contatos a atender: contato ligado a
+# frente 1 (imensIAH/IA aplicada) pesa mais que contato sem frente.
+# Ref: memoria project_cos_config.md + tabela frente_keywords.
+FRENTE_PESOS_COS = {1: 30, 2: 20, 3: 30, 4: 15, 5: 5}
+
+
+def _detect_frente_cos(contact: Dict) -> Optional[int]:
+    """Detecta a frente CoS do contato via nome/empresa/cargo.
+
+    Usa cos_keywords.is_frente_keyword (mesma fonte do notification_router
+    e email_triage). Retorna 1-5 ou None se nenhum match.
+    """
+    try:
+        from services.cos_keywords import is_frente_keyword
+    except Exception:
+        return None
+
+    # Combina campos mais informativos. Empresa primeiro pq e mais
+    # discriminadora (ex: "Wadhwani" bate frente 2 direto).
+    parts = [
+        contact.get("empresa") or "",
+        contact.get("cargo") or "",
+        contact.get("nome") or "",
+    ]
+    haystack = " ".join(p for p in parts if p).strip()
+    if not haystack:
+        return None
+    try:
+        return is_frente_keyword(haystack)
+    except Exception:
+        return None
+
+
 def get_prioridades_por_contexto(limit_per_context: int = 15) -> Dict[str, List[Dict]]:
     """
     Retorna contatos ordenados por prioridade, separados por contexto.
@@ -1133,15 +1168,29 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
 
             # === CALCULAR FATORES ===
             fatores = []
-            priority_score = peso_base
+            # CoS-aware scoring: score 0-100 normalizado, ponderado por frente CoS,
+            # urgencia (dias sem contato), drift (tasks vencidas) e sinais ativos.
+            # priority_score legado (200/220/etc) ficou ilegivel — todo C1 dava 100+
+            # e perdia discriminacao por mandato estrategico. Agora a base e o
+            # peso da frente CoS (max 30) e fatores empilham boost calibrado.
 
-            # 1. Aniversario hoje (+100)
+            frente_cos = _detect_frente_cos(contact)
+            frente_base = FRENTE_PESOS_COS.get(frente_cos, 0) if frente_cos else 0
+
+            # Score legacy mantido pra backwards-compat (consumidores externos)
+            legacy_score = peso_base
+
+            # CoS score: base por frente + boost por triggers ativos
+            cos_score = frente_base
+
+            # 1. Aniversario hoje (+25 cos, +100 legacy)
             aniversario = contact.get("aniversario")
             aniversario_hoje = False
             if aniversario:
                 try:
                     if aniversario.month == hoje.month and aniversario.day == hoje.day:
-                        priority_score += 100
+                        legacy_score += 100
+                        cos_score += 25
                         fatores.append({"tipo": "birthday", "label": "Aniversario!"})
                         aniversario_hoje = True
                 except (ValueError, AttributeError):
@@ -1153,20 +1202,26 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
             tarefa_info = tarefas_por_contato.get(contact_id)
             if tarefa_info:
                 if tarefa_info["vencida"]:
-                    priority_score += 100
+                    legacy_score += 100
+                    # Drift boost: 10 por task vencida, cap 30
+                    drift_count = tarefa_info.get("count") or 1
+                    cos_score += min(30, 10 * drift_count)
                     fatores.append({"tipo": "task", "label": "Tarefa vencida"})
                 else:
-                    priority_score += 80  # boost only, no factor
+                    legacy_score += 80  # boost only, no factor
 
-            # 3. Projeto ativo (+60)
+            # 3. Projeto ativo (+60 legacy, +10 cos)
             projeto_count = projetos_por_contato.get(contact_id, 0)
             if projeto_count > 0:
-                priority_score += 60
+                legacy_score += 60
+                cos_score += 10
                 fatores.append({"tipo": "project", "label": "Projeto ativo"})
 
-            # 4. Mensagem nao respondida (+50)
-            if contact_id in mensagens_pendentes:
-                priority_score += 50
+            # 4. Mensagem nao respondida (+50 legacy, +15 cos)
+            mensagem_pendente = contact_id in mensagens_pendentes
+            if mensagem_pendente:
+                legacy_score += 50
+                cos_score += 15
                 fatores.append({"tipo": "message", "label": "Responder msg"})
 
             # 5. Tempo sem contato — boost de prioridade pra contatos JA com fator,
@@ -1177,10 +1232,23 @@ def _get_prioridades_por_contexto_impl(limit_per_context: int = 15) -> Dict[str,
             frequencia_ideal = contact.get("frequencia_ideal_dias") or circulo_cfg.get("frequencia_dias", 30)
 
             if dias_sem_contato and dias_sem_contato > frequencia_ideal:
-                priority_score += 20
-                # Nao adiciona como fator — so boosta priority_score de quem ja tem trigger
+                legacy_score += 20
+                # Urgency boost CoS: ate +20 conforme drift do baseline (cap)
+                drift_pct = min(1.0, (dias_sem_contato - frequencia_ideal) / max(frequencia_ideal, 1))
+                cos_score += int(20 * drift_pct)
 
-            contact["priority_score"] = round(priority_score, 1)
+            # Circulo boost: C1/C2 ja sao base alta no legacy mas no CoS-aware
+            # somam +5/+3 pra garantir que C1 com 0 fatores ativos nao empate
+            # com C3 sem frente.
+            if circulo == 1:
+                cos_score += 5
+            elif circulo == 2:
+                cos_score += 3
+
+            cos_score_final = max(0, min(100, cos_score))
+            contact["priority_score"] = cos_score_final
+            contact["legacy_priority_score"] = round(legacy_score, 1)
+            contact["frente_cos"] = frente_cos
             contact["fatores"] = fatores
 
             # === CATEGORIA VISUAL ===
