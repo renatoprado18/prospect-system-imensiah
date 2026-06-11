@@ -322,6 +322,380 @@ def get_overdue_tasks(
         return []
 
 
+def get_overdue_tasks_raci_aware(
+    cycle_id: str,
+    iteration: int,
+    limit: int = 20,
+    project_filter: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Igual get_overdue_tasks mas pula tasks onde R (Responsible) parseado
+    do descricao NAO inclui Renato. Tasks sem RACI continuam no fluxo.
+
+    Retorno:
+        {tasks: [...], delegated_count: N, delegated_sample: [...]}
+        - tasks: lista (mesmo schema de get_overdue_tasks) com tasks que sao
+          R=Renato OU sem RACI.
+        - delegated_count: quantas tasks foram filtradas (R != Renato).
+        - delegated_sample: ate 5 das filtradas com {task_id, titulo, responsible}.
+    """
+    started = time.time()
+    params_log = {"limit": limit, "project_filter": project_filter}
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            sql = """
+                SELECT t.id, t.titulo, t.descricao, t.data_vencimento,
+                       t.contact_id, t.project_id,
+                       p.nome AS projeto, c.nome AS contact_name
+                FROM tasks t
+                LEFT JOIN projects p ON p.id = t.project_id
+                LEFT JOIN contacts c ON c.id = t.contact_id
+                WHERE t.status != 'done'
+                  AND t.data_vencimento IS NOT NULL
+                  AND t.data_vencimento < NOW()
+            """
+            args: List[Any] = []
+            if project_filter:
+                sql += " AND (p.nome ILIKE %s)"
+                args.append(f"%{project_filter}%")
+            # Pega ate 2x limit pra compensar filtragem por RACI
+            sql += " ORDER BY t.data_vencimento ASC LIMIT %s"
+            fetch_limit = min(limit * 2, 40)
+            args.append(fetch_limit)
+            cursor.execute(sql, args)
+            rows = cursor.fetchall()
+
+        today = datetime.now().date()
+        tasks: List[Dict[str, Any]] = []
+        delegated_sample: List[Dict[str, Any]] = []
+        delegated_count = 0
+
+        for r in rows:
+            is_renato = is_renato_responsible(r["descricao"])
+            if is_renato is False:
+                delegated_count += 1
+                if len(delegated_sample) < 5:
+                    delegated_sample.append({
+                        "task_id": r["id"],
+                        "titulo": _truncate(r["titulo"], 80),
+                        "responsible": parse_raci_responsible(r["descricao"]),
+                        "projeto": r["projeto"],
+                    })
+                continue
+            if len(tasks) >= min(limit, 20):
+                continue
+            dv = r["data_vencimento"]
+            dias_atraso = (today - dv.date()).days if dv else 0
+            tasks.append({
+                "id": r["id"],
+                "titulo": _truncate(r["titulo"], 80),
+                "projeto": r["projeto"],
+                "contact_id": r["contact_id"],
+                "contact_name": r["contact_name"],
+                "data_vencimento": dv.isoformat() if dv else None,
+                "dias_atraso": dias_atraso,
+                "peso_estimado": _peso_estimado_task(r["contact_id"], r["projeto"]),
+                "raci_responsible": parse_raci_responsible(r["descricao"]),
+            })
+
+        result = {
+            "tasks": tasks,
+            "delegated_count": delegated_count,
+            "delegated_sample": delegated_sample,
+        }
+        log_tool_call(
+            cycle_id, "get_overdue_tasks_raci_aware", params_log,
+            {"n": len(tasks), "delegated_count": delegated_count},
+            iteration, int((time.time() - started) * 1000),
+        )
+        return result
+    except Exception as e:
+        log_tool_call(
+            cycle_id, "get_overdue_tasks_raci_aware", params_log, None,
+            iteration, int((time.time() - started) * 1000), str(e),
+        )
+        return {"tasks": [], "delegated_count": 0, "delegated_sample": [], "erro": str(e)}
+
+
+# ============== Blocking status detection (WA + email cross-check) ==============
+
+# Keywords que indicam "Renato esta esperando" quando ele foi o ULTIMO a falar
+_KW_RENATO_WAITING = (
+    "aguardo", "aguardando", "aguarde", "espero", "esperando",
+    "preciso de", "sem retorno", "vou esperar", "fico no aguardo",
+    "qualquer retorno", "no aguardo", "aguardamos",
+)
+
+# Keywords que indicam "outro lado prometeu mandar/responder" quando ele foi o ULTIMO a falar
+_KW_EXTERNAL_PROMISED = (
+    "vou mandar", "te mando", "vou enviar", "envio", "te envio",
+    "asap", "esta semana", "amanha", "amanhã", "ate amanha", "ate amanhã",
+    "te aviso quando", "te aviso assim que", "aviso depois", "te retorno",
+    "vou retornar", "retorno depois", "logo mais", "em breve", "vou marcar",
+    "vou agendar", "marco com", "passo o", "deixa eu", "ja te falo",
+    "te passo", "ja envio",
+)
+
+
+def _norm(s: str) -> str:
+    """Lowercase + remove acentos pra match agnostico."""
+    import unicodedata
+    s = (s or "").lower()
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _extract_contact_names(task_text: str) -> List[str]:
+    """Extrai possiveis nomes proprios (palavras Capitalizadas que nao sao
+    inicio de frase). Heuristica simples — pega tokens com primeira maiuscula
+    + tamanho >= 4 que nao sao stopwords PT-BR comuns."""
+    if not task_text:
+        return []
+    stop = {
+        "Confirmar", "Enviar", "Definir", "Implementar", "Coletar", "Wirear",
+        "RACI", "Empresa", "Vallen", "Clinic", "Frente", "Conselho",
+        "Reuniao", "Reunião", "Pendente", "Pendencia", "Acao", "Ação",
+        "Projeto", "Cliente", "Status", "Daily", "Weekly", "Renato",
+        "Cos", "CoS", "Intel", "INTEL", "Bot", "API", "DB",
+        "Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
+        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+        "Brasil", "Brasileiro", "Sao", "São", "Paulo",
+    }
+    # Tokens com pelo menos 1 letra maiuscula e tamanho >= 4
+    tokens = re.findall(r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ][a-záéíóúâêôãõç]{3,}\b", task_text)
+    seen = set()
+    out = []
+    for t in tokens:
+        if t in stop:
+            continue
+        if t.lower() in seen:
+            continue
+        seen.add(t.lower())
+        out.append(t)
+    return out[:6]  # cap 6 nomes
+
+
+def get_task_blocking_status(
+    cycle_id: str,
+    iteration: int,
+    task_id: int,
+) -> Dict[str, Any]:
+    """Cruzamento 1: detecta se task esta bloqueada por terceiro via
+    WhatsApp/email recente.
+
+    Estrategia:
+    1. Le task (titulo + descricao + contact_id + projeto.nome).
+    2. Identifica contatos relevantes: contact_id direto + nomes mencionados
+       no titulo/descricao/projeto (busca por nome em contacts).
+    3. Pra cada contato, pega ate 5 ultimas mensagens em 30d.
+    4. Analisa a ULTIMA mensagem:
+       - direcao='outgoing' + <7d + keyword aguardo/espero
+         -> status='blocked_on_external' (Renato falou ultimo, esperando)
+       - direcao='incoming' + <14d + keyword "vou mandar/asap/esta semana"
+         -> status='waiting_external_followthrough' (outro lado prometeu)
+       - caso contrario -> status='unblocked'
+
+    Retorna:
+        {
+            status: 'blocked_on_external' | 'waiting_external_followthrough' | 'unblocked' | 'no_data',
+            motivo: str explicativo,
+            last_msg_excerpt: str (1 linha trunc 150ch),
+            last_msg_at: ISO timestamp,
+            contact_name: str,
+            suggest_fup_in_days: int (quantos dias ate sugerir FUP soft),
+        }
+    """
+    started = time.time()
+    params_log = {"task_id": task_id}
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            # 1. Carrega task
+            cursor.execute(
+                """
+                SELECT t.id, t.titulo, t.descricao, t.contact_id, t.project_id,
+                       c.nome AS contact_name, p.nome AS projeto
+                FROM tasks t
+                LEFT JOIN contacts c ON c.id = t.contact_id
+                LEFT JOIN projects p ON p.id = t.project_id
+                WHERE t.id = %s
+                """,
+                (task_id,),
+            )
+            task = cursor.fetchone()
+            if not task:
+                result = {"status": "no_data", "motivo": "task_nao_encontrada"}
+                log_tool_call(cycle_id, "get_task_blocking_status", params_log, result, iteration, int((time.time() - started) * 1000))
+                return result
+
+            # 2. Resolve contatos candidatos
+            candidate_ids: List[int] = []
+            candidate_names: Dict[int, str] = {}
+            if task["contact_id"]:
+                candidate_ids.append(task["contact_id"])
+                candidate_names[task["contact_id"]] = task["contact_name"] or f"#{task['contact_id']}"
+
+            # Extrai nomes do titulo/descricao/projeto
+            search_text = " ".join(filter(None, [task["titulo"], task["descricao"], task["projeto"]]))
+            names = _extract_contact_names(search_text)
+            if names:
+                # Busca contatos por nome (top match por interacao)
+                for n in names:
+                    cursor.execute(
+                        """
+                        SELECT id, nome FROM contacts
+                        WHERE nome ILIKE %s
+                        ORDER BY total_interacoes DESC NULLS LAST
+                        LIMIT 1
+                        """,
+                        (f"%{n}%",),
+                    )
+                    r = cursor.fetchone()
+                    if r and r["id"] not in candidate_ids:
+                        candidate_ids.append(r["id"])
+                        candidate_names[r["id"]] = r["nome"]
+
+            if not candidate_ids:
+                result = {
+                    "status": "no_data",
+                    "motivo": "task_sem_contato_identificavel",
+                    "candidates_searched": names,
+                }
+                log_tool_call(cycle_id, "get_task_blocking_status", params_log, result, iteration, int((time.time() - started) * 1000))
+                return result
+
+            # 3. Pega ultimas mensagens em 30d pra cada contato; escolhe contato com msg mais recente
+            since = datetime.now() - timedelta(days=30)
+            best_cid = None
+            best_msgs: List[Any] = []
+            for cid in candidate_ids:
+                cursor.execute(
+                    """
+                    SELECT direcao, conteudo, COALESCE(enviado_em, criado_em) AS ts
+                    FROM messages
+                    WHERE contact_id = %s
+                      AND COALESCE(enviado_em, criado_em) >= %s
+                    ORDER BY COALESCE(enviado_em, criado_em) DESC
+                    LIMIT 5
+                    """,
+                    (cid, since),
+                )
+                rows = cursor.fetchall()
+                if rows:
+                    candidate_ts = rows[0]["ts"]
+                    current_best_ts = best_msgs[0]["ts"] if best_msgs else None
+                    if current_best_ts is None or (candidate_ts and candidate_ts > current_best_ts):
+                        best_cid = cid
+                        best_msgs = rows
+
+        if not best_msgs:
+            result = {
+                "status": "no_data",
+                "motivo": "sem_mensagens_30d",
+                "candidates_searched": [candidate_names[c] for c in candidate_ids[:3]],
+            }
+            log_tool_call(cycle_id, "get_task_blocking_status", params_log, result, iteration, int((time.time() - started) * 1000))
+            return result
+
+        last = best_msgs[0]
+        last_ts = last["ts"]
+        last_dir = last["direcao"]
+        last_content = last["conteudo"] or ""
+        last_cid = best_cid
+        excerpt = _truncate(last_content.replace("\n", " "), 150)
+        norm_last = _norm(last_content)
+        now = datetime.now()
+        try:
+            if last_ts.tzinfo is not None:
+                last_ts_naive = last_ts.replace(tzinfo=None)
+            else:
+                last_ts_naive = last_ts
+        except Exception:
+            last_ts_naive = last_ts
+        days_ago = (now - last_ts_naive).days if last_ts_naive else 999
+
+        contact_label = candidate_names.get(last_cid, f"#{last_cid}")
+
+        # Decide status — combina ultima msg + 2-3 anteriores pra detectar
+        # caso "outro prometeu, Renato confirmou ok aguardo" (followthrough)
+        if last_dir == "outgoing" and days_ago <= 7:
+            kw_renato = next((k for k in _KW_RENATO_WAITING if k in norm_last), None)
+            # Procura promessa externa nas 2-3 ultimas incoming antes desta
+            kw_external = None
+            external_excerpt = None
+            for prev in best_msgs[1:4]:
+                if prev["direcao"] == "incoming":
+                    prev_norm = _norm(prev["conteudo"] or "")
+                    hit = next((k for k in _KW_EXTERNAL_PROMISED if k in prev_norm), None)
+                    if hit:
+                        kw_external = hit
+                        external_excerpt = _truncate((prev["conteudo"] or "").replace("\n", " "), 150)
+                        break
+
+            if kw_external:
+                # Combo: outro lado prometeu + Renato ackmou "ok aguardo"
+                # Esse e o caso Wadhwani/Tanaka — status mais preciso e followthrough
+                result = {
+                    "status": "waiting_external_followthrough",
+                    "motivo": f"{contact_label} prometeu '{kw_external}' e Renato ackmou; aguardando material",
+                    "last_msg_excerpt": excerpt,
+                    "external_promise_excerpt": external_excerpt,
+                    "last_msg_at": last_ts.isoformat() if last_ts else None,
+                    "last_msg_direcao": last_dir,
+                    "contact_name": contact_label,
+                    "contact_id": last_cid,
+                    "suggest_fup_in_days": 5,
+                }
+                log_tool_call(cycle_id, "get_task_blocking_status", params_log, {"status": result["status"], "contact": contact_label}, iteration, int((time.time() - started) * 1000))
+                return result
+
+            if kw_renato:
+                result = {
+                    "status": "blocked_on_external",
+                    "motivo": f"Renato escreveu pra {contact_label} ha {days_ago}d com '{kw_renato}', sem resposta",
+                    "last_msg_excerpt": excerpt,
+                    "last_msg_at": last_ts.isoformat() if last_ts else None,
+                    "last_msg_direcao": last_dir,
+                    "contact_name": contact_label,
+                    "contact_id": last_cid,
+                    "suggest_fup_in_days": max(3, 7 - days_ago),
+                }
+                log_tool_call(cycle_id, "get_task_blocking_status", params_log, {"status": result["status"], "contact": contact_label}, iteration, int((time.time() - started) * 1000))
+                return result
+
+        if last_dir == "incoming" and days_ago <= 14:
+            kw_hit = next((k for k in _KW_EXTERNAL_PROMISED if k in norm_last), None)
+            if kw_hit:
+                result = {
+                    "status": "waiting_external_followthrough",
+                    "motivo": f"{contact_label} prometeu '{kw_hit}' ha {days_ago}d; aguardando material/retorno",
+                    "last_msg_excerpt": excerpt,
+                    "last_msg_at": last_ts.isoformat() if last_ts else None,
+                    "last_msg_direcao": last_dir,
+                    "contact_name": contact_label,
+                    "contact_id": last_cid,
+                    "suggest_fup_in_days": max(5, 10 - days_ago),
+                }
+                log_tool_call(cycle_id, "get_task_blocking_status", params_log, {"status": result["status"], "contact": contact_label}, iteration, int((time.time() - started) * 1000))
+                return result
+
+        result = {
+            "status": "unblocked",
+            "motivo": f"Sem sinal de bloqueio externo (ultima msg c/ {contact_label} ha {days_ago}d, dir={last_dir})",
+            "last_msg_excerpt": excerpt,
+            "last_msg_at": last_ts.isoformat() if last_ts else None,
+            "last_msg_direcao": last_dir,
+            "contact_name": contact_label,
+            "contact_id": last_cid,
+            "suggest_fup_in_days": 0,
+        }
+        log_tool_call(cycle_id, "get_task_blocking_status", params_log, {"status": "unblocked", "contact": contact_label}, iteration, int((time.time() - started) * 1000))
+        return result
+    except Exception as e:
+        log_tool_call(cycle_id, "get_task_blocking_status", params_log, None, iteration, int((time.time() - started) * 1000), str(e))
+        return {"status": "no_data", "motivo": f"erro: {e}"}
+
+
 def get_calendar(
     cycle_id: str,
     iteration: int,
@@ -685,7 +1059,8 @@ COS_TOOLS: List[Dict[str, Any]] = [
             "Lista tasks vencidas (data_vencimento < NOW, status != 'done'). Inclui projeto, "
             "contato, dias de atraso e peso_estimado (1=baixo, 2=médio, 3=alto — alto pra projetos "
             "tipo Vallen/imensIAH/Alba/Wadhwani). Use pra priorizar e identificar contatos relevantes "
-            "do dia (cada task vencida sugere alguém a investigar)."
+            "do dia (cada task vencida sugere alguém a investigar). "
+            "PREFIRA get_overdue_tasks_raci_aware (filtra tasks delegadas onde R != Renato)."
         ),
         "input_schema": {
             "type": "object",
@@ -693,6 +1068,45 @@ COS_TOOLS: List[Dict[str, Any]] = [
                 "limit": {"type": "integer", "description": "Max items. Default 20.", "default": 20},
                 "project_filter": {"type": "string", "description": "Filtra por nome do projeto (ILIKE)."},
             },
+        },
+    },
+    {
+        "name": "get_overdue_tasks_raci_aware",
+        "description": (
+            "Versao Renato-aware de get_overdue_tasks. Filtra tasks onde o R (Responsible) "
+            "parseado do descricao (campo 'RACI ... R: Nome') NAO inclui Renato — essas viram "
+            "delegated_count, NAO entram em 'tasks'. Tasks sem RACI passam normal. "
+            "USE essa pra identificar drift real do Renato (vs tasks que pertencem a outros). "
+            "Retorno: {tasks: [...], delegated_count: N, delegated_sample: [{task_id,titulo,responsible}]}. "
+            "Cada task em tasks inclui raci_responsible (string ou null)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max items em tasks. Default 20.", "default": 20},
+                "project_filter": {"type": "string", "description": "Filtra por nome do projeto (ILIKE)."},
+            },
+        },
+    },
+    {
+        "name": "get_task_blocking_status",
+        "description": (
+            "Cruza UMA task vencida com WhatsApp/email recente pra detectar se ela esta BLOQUEADA "
+            "por terceiro (Renato esperando), em FOLLOWTHROUGH (outro lado prometeu mandar) ou "
+            "UNBLOCKED (sem sinal de bloqueio externo). "
+            "USE antes de tratar uma task vencida como drift do Renato. "
+            "Lê task -> identifica contato (FK + nomes mencionados) -> analisa ultima mensagem em 30d. "
+            "Retorno: {status, motivo, last_msg_excerpt, last_msg_at, contact_name, suggest_fup_in_days}. "
+            "Status: 'blocked_on_external' (Renato falou ultimo + keyword aguardo), "
+            "'waiting_external_followthrough' (outro lado prometeu material/retorno), "
+            "'unblocked' (sem sinal), 'no_data' (sem contato OU sem msgs 30d)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "ID da task pra analisar."},
+            },
+            "required": ["task_id"],
         },
     },
     {
@@ -839,6 +1253,17 @@ def execute_tool(
                 cycle_id, iteration,
                 limit=tool_input.get("limit", 20),
                 project_filter=tool_input.get("project_filter"),
+            )
+        if tool_name == "get_overdue_tasks_raci_aware":
+            return get_overdue_tasks_raci_aware(
+                cycle_id, iteration,
+                limit=tool_input.get("limit", 20),
+                project_filter=tool_input.get("project_filter"),
+            )
+        if tool_name == "get_task_blocking_status":
+            return get_task_blocking_status(
+                cycle_id, iteration,
+                task_id=int(tool_input["task_id"]),
             )
         if tool_name == "get_calendar":
             return get_calendar(
