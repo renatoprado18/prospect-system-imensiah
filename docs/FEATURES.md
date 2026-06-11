@@ -241,6 +241,15 @@
 - **Editorial Metrics Reminder**: cron 0 14 * * * (11h Brasilia) → `/api/cron/editorial-metrics-reminder`
   - Detecta posts publicados ~48h atras sem metricas coletadas (linkedin_metricas_em IS NULL)
   - Envia lembrete via WhatsApp com lista de posts e instrucoes para coletar
+- **Agent Intents (P6 Diligente)**: `services/agent_intents.py` + `services/agent_intents_tick.py` — bot vira agente que cumpre palavra (nao chat reativo)
+  - **Tabela**: `agent_intents(id, intent_text, intent_type, status, steps_done jsonb, next_step_hint, blocker, related_message_id, created_at, updated_at, completed_at, escalated_at)` — migrations 007 + 008
+  - **Fase 1 (auto-detect)**: detector roda no final de cada turn do bot (`maybe_open_intent_for_turn`). Abre intent quando: (a) write tool executou, (b) user mandou imperativo plural ("vincule todas", "agenda as 5"), ou (c) bot admitiu falta de tool/acesso. Dedup por prefix-match (30 chars) contra abertos existentes.
+  - **Fase 1 (auto-pickup)**: cada msg nova do user injeta `## INTENTS ABERTOS` no system prompt antes da resposta, pra bot considerar se completa/cancela/atualiza algum antes de responder a msg nova.
+  - **Fase 2 (cron tick)**: `/api/cron/agent-intents-tick` rodando a cada 30min via Railway worker (`workers/audio-transcriber/main.py:_SCHEDULER_JOBS`). Pra cada intent open/in_progress, roda Claude Haiku com tools seguras (create_task, update_task, postpone_tasks, save_note, save_memory, update_contact + `manage_intent` + `query_intel`) tentando progredir. Skip se `updated_at < 10min` atras (idempotencia). Sem texto = mark blocked com motivo.
+  - **Fase 2 (escalation)**: intents `status=blocked` AND `escalated_at IS NULL` AND `updated_at < NOW - 60min` recebem WhatsApp ("🚧 Intent #N travado, responda 'destrava N' ou 'esquece N'"). Marca `escalated_at` pra dedup; reset quando intent destrava (status muda).
+  - **Tool `manage_intent`** (bot e UI): sub-actions `mark_step` | `mark_blocked` | `mark_completed` | `cancel`. Expostas via `execute_action` no intel_bot E via `POST /api/agent-intents/{id}/manage`.
+  - **Dashboard statcard "Intents"** (rap_dashboard): mostra counts blocked/in_progress/open com cores semaforo, drill-down lista os intents com botoes Completar/Cancelar/Destrava. Endpoint `GET /api/agent-intents/dashboard`.
+  - **Audit obrigatorio** (per AUTONOMY_POLICY.md): cada `tick`, `mark_step`, `mark_blocked`, `mark_completed`, `cancel`, `escalated` loga em `agent_actions` com `scope_ref={"intent_id": N}`.
 
 ## 20. ConselhoOS Integration — Ata + RACI Flow
 - **Ata Generation**: ConselhoOS → Railway worker (no timeout) → Claude generates detailed ata (8-15K chars) → saves to ConselhoOS DB → notifies WhatsApp
