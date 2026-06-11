@@ -25853,6 +25853,126 @@ async def _editorial_metrics_reminder_impl():
     }
 
 
+@app.get("/api/cron/monitor-cron-health")
+@track_cron_run
+async def cron_monitor_cron_health(request: Request):
+    """
+    Health check de crons criticos via heartbeat table.
+
+    Why: 10-11/06/2026 briefing matinal nao chegou e ninguem notou ate Renato
+    perguntar. Causa raiz: GH Actions scheduler dropou silenciosamente apos
+    7 dias de drift acumulado. Sem heartbeat, regressao de cron eh invisivel.
+
+    Como funciona: cada job no Railway worker insere em cron_heartbeats apos
+    cada disparo. Este endpoint (1x/h via Vercel cron) compara MAX(fired_at)
+    com intervalo esperado. Se gap > 2x interval, alerta via WA.
+
+    JOB_INTERVALS em minutos. Cobre os crons CRITICOS — adicionar novos
+    conforme necessario (nao todos, pra evitar ruido).
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.intel_bot import send_intel_notification
+    from services.tz import now_utc
+
+    JOB_INTERVALS = {
+        "daily-morning-briefing": 24 * 60,
+        "daily-evening-debriefing": 24 * 60,
+        "process-scheduled-actions": 5,
+        "raci-weekly-report": 7 * 24 * 60,
+    }
+
+    now = now_utc()
+    alerts: list[dict] = []
+    jobs_status: list[dict] = []
+
+    try:
+        from database import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT job_id, MAX(fired_at) AS last_fired
+                FROM cron_heartbeats
+                GROUP BY job_id
+                """
+            )
+            rows = cursor.fetchall()
+    except Exception as e:
+        logging.exception(f"monitor-cron-health: DB query failed: {e}")
+        raise HTTPException(status_code=500, detail=f"db_error: {e}")
+
+    last_seen = {r["job_id"]: r["last_fired"] for r in rows}
+
+    for job_id, expected_minutes in JOB_INTERVALS.items():
+        last = last_seen.get(job_id)
+        if last is None:
+            jobs_status.append({
+                "job_id": job_id,
+                "last_fired": None,
+                "expected_interval_min": expected_minutes,
+                "gap_min": None,
+                "status": "never_fired",
+            })
+            alerts.append({
+                "job_id": job_id,
+                "reason": "never_fired",
+                "expected_interval_min": expected_minutes,
+            })
+            continue
+
+        # last_fired vem como TIMESTAMPTZ — ja eh tz-aware
+        if last.tzinfo is None:
+            from datetime import timezone as _tz
+            last = last.replace(tzinfo=_tz.utc)
+
+        gap_min = (now - last).total_seconds() / 60.0
+        threshold = 2 * expected_minutes
+        status = "ok" if gap_min <= threshold else "stale"
+
+        jobs_status.append({
+            "job_id": job_id,
+            "last_fired": last.isoformat(),
+            "expected_interval_min": expected_minutes,
+            "gap_min": round(gap_min, 1),
+            "status": status,
+        })
+
+        if status == "stale":
+            alerts.append({
+                "job_id": job_id,
+                "reason": "gap_exceeds_2x",
+                "gap_min": round(gap_min, 1),
+                "expected_interval_min": expected_minutes,
+                "last_fired": last.isoformat(),
+            })
+
+    # Dispara WA se tem alerta. Mensagem compacta — Renato so precisa do sinal.
+    if alerts:
+        lines = ["[INTEL] Cron health alert:"]
+        for a in alerts:
+            if a["reason"] == "never_fired":
+                lines.append(f"- {a['job_id']}: nunca disparou (esperado {a['expected_interval_min']}min)")
+            else:
+                lines.append(
+                    f"- {a['job_id']}: gap {a['gap_min']:.0f}min "
+                    f"(esperado <{a['expected_interval_min']*2}min)"
+                )
+        msg = "\n".join(lines)[:900]
+        try:
+            await send_intel_notification(msg)
+        except Exception as e:
+            logging.warning(f"monitor-cron-health: WA notify failed: {e}")
+
+    return {
+        "ok": len(alerts) == 0,
+        "alerts": alerts,
+        "jobs": jobs_status,
+        "checked_at": now.isoformat(),
+    }
+
+
 @app.get("/api/cron/editorial-metrics-reminder")
 @track_cron_run
 async def cron_editorial_metrics_reminder(request: Request):

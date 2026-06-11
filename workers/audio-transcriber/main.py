@@ -72,9 +72,36 @@ from apscheduler.triggers.cron import CronTrigger
 scheduler = AsyncIOScheduler(timezone="UTC")
 
 
-async def _call_vercel_cron(path: str) -> None:
+def _record_cron_heartbeat(job_id: str, http_status: int | None, duration_ms: int) -> None:
+    """Insere heartbeat em cron_heartbeats. Defensivo: erros sao logados mas
+    nao propagam — telemetria nao pode derrubar o scheduler.
+
+    Schema em scripts/migrations/023_cron_heartbeats.sql. Lido pelo cron
+    /api/cron/monitor-cron-health (1x/h) que alerta via WA se gap > 2x interval.
+    """
+    if not DATABASE_URL:
+        return
+    try:
+        with psycopg.connect(DATABASE_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO cron_heartbeats (job_id, http_status, duration_ms, source)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (job_id, http_status, duration_ms, "railway-worker"),
+                )
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"scheduler: heartbeat insert failed for {job_id}: {e}")
+
+
+async def _call_vercel_cron(path: str, job_id: str | None = None) -> None:
     """Dispara endpoint /api/cron/* autenticado. Log status; nao levanta
-    exceptions (deixa o scheduler continuar pros jobs proximos)."""
+    exceptions (deixa o scheduler continuar pros jobs proximos).
+
+    Apos o HTTP call, grava heartbeat em cron_heartbeats (defensivo: nao falha
+    se DB cair) pro monitor de saude detectar regressao silenciosa."""
     url = f"{INTEL_API_URL.rstrip('/')}{path}"
     headers = {
         "User-Agent": "intel-worker-scheduler/1.0",
@@ -82,13 +109,19 @@ async def _call_vercel_cron(path: str) -> None:
     }
     if CRON_SECRET:
         headers["Authorization"] = f"Bearer {CRON_SECRET}"
+    started = datetime.now()
+    http_status: int | None = None
     try:
         timeout = httpx.Timeout(connect=5.0, read=180.0, write=10.0, pool=5.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.get(url, headers=headers)
+        http_status = resp.status_code
         logger.info(f"scheduler: {path} -> http {resp.status_code}")
     except Exception as e:
         logger.exception(f"scheduler: {path} failed: {e}")
+    finally:
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        _record_cron_heartbeat(job_id or path, http_status, duration_ms)
 
 
 # Jobs (path, trigger). Schedules em UTC matching as expressoes originais dos
@@ -100,6 +133,12 @@ _SCHEDULER_JOBS = [
     ("run-whatsapp-sync", "/api/cron/run-whatsapp-sync", CronTrigger(minute=5)),
     ("run-social-groups", "/api/cron/run-social-groups", CronTrigger(minute=20)),
     ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
+    # Briefings — migrados de GH Actions em 10/06/2026 apos drift acumulado
+    # (1h->3h->5h ao longo de 03-09/jun) e drop total nos dias 10 e 11/jun.
+    # Horarios mantidos identicos aos workflows .github/workflows/cron-daily-*.yml
+    # pra nao mudar comportamento do usuario.
+    ("daily-morning-briefing", "/api/cron/daily-morning-briefing", CronTrigger(hour=11, minute=7)),
+    ("daily-evening-debriefing", "/api/cron/daily-evening-debriefing", CronTrigger(hour=22, minute=0)),
 ]
 
 
@@ -111,7 +150,7 @@ async def _start_scheduler():
         scheduler.add_job(
             _call_vercel_cron,
             trigger=trigger,
-            args=[path],
+            args=[path, job_id],
             id=job_id,
             coalesce=True,
             max_instances=1,
