@@ -25305,6 +25305,44 @@ async def cron_cos_investigator(request: Request):
         }
 
 
+# ============== COS SENSOR AGENT (Stage 2 — 11/jun/2026) ==============
+# Agent LLM com tool use que roda 30/30min, le estado do mundo e age
+# autonomamente (ou propoe) per politica de autonomia ratificada.
+# Stage 2 do roadmap CoS inteligente — substituira detectors rule-based
+# (operational_alerts.py) em Stage 4 depois de 1-2 dias de paralelo.
+
+@app.get("/api/cron/cos-sensor-tick")
+@app.post("/api/cron/cos-sensor-tick")
+@track_cron_run
+async def cron_cos_sensor_tick(request: Request):
+    """
+    Cron: CoS Sensor Agent tick.
+
+    Schedule: */30 * * * * (a cada 30min).
+
+    Roda 1 tick do Sensor: le contexto (msgs 60min, calendar 24h, RACI
+    critico, proposals abertas), decide via LLM Sonnet 4.6 + tools, e
+    executa autonomamente OU vira proposal conforme politica.
+
+    Budget cap: $0.50/dia. Excedeu, skip.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.cos_sensor import tick_safe
+
+    try:
+        result = tick_safe()
+        return {"job": "cos-sensor-tick", **result}
+    except Exception as e:
+        logging.exception("cos-sensor-tick falhou")
+        return {
+            "job": "cos-sensor-tick",
+            "status": "error",
+            "error": str(e),
+        }
+
+
 # ============== DAILY MORNING BRIEFING ==============
 
 @app.get("/api/cron/daily-morning-briefing")
