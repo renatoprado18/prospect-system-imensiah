@@ -23,6 +23,9 @@ class WhatsAppNotificationService:
         'cancel_event':       ('either', True),
         'reschedule_event':   ('either', True),
         'urgent_alert':       ('either', True),
+        # Alertas operacionais (cirurgia funcionaria-chave, afastamento, luto):
+        # imediato. Dono precisa agir antes que problema vire crise.
+        'operational_risk':   ('either', True),
         # Conversacionais/discoveries — vao pro digest
         'pending_response':   ('either', False),   # ❓ "X perguntou:" — 26% do volume
         'create_meeting':     ('either', False),   # 🔔 "Possivel reuniao"
@@ -134,6 +137,19 @@ class WhatsAppNotificationService:
             options_text = self._format_options_conversational(proposal, [
                 ('responder', 'abro a conversa pra voce'),
                 ('criar tarefa', 'crio um lembrete'),
+                ('ignorar', 'descarto'),
+            ])
+
+        elif action_type == 'operational_risk':
+            params = proposal.get('action_params', {}) or {}
+            company = params.get('company', '?')
+            person = params.get('person', '?')
+            risk = params.get('risk_keyword', 'risco')
+            header = f"🚨 *Alerta operacional {company}:* {person} ({risk})"
+            body = f'{contact_name} relatou: "{trigger_text[:180]}"'
+            options_text = self._format_options_conversational(proposal, [
+                ('agendar call', f'crio tarefa pra alinhar com {contact_name}'),
+                ('responder', 'abro a conversa pra voce'),
                 ('ignorar', 'descarto'),
             ])
 

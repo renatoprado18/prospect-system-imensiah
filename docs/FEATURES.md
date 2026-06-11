@@ -138,6 +138,7 @@
 - **Inbox unificado**: `/inbox`
 - **Smart Follow-Up**: detecta emails sem resposta, cria FUP automático → `smart_fup.py`
 - **Action Proposals**: dedup por contato+tipo, auto-resolve on reply, expire >7d
+- **Operational Alerts** (10/06/26): detector proativo em cima do cron `classify-messages`. Trigger P1 (operational_risk) detecta menção a cirurgia/internação/afastamento/atestado/luto/demissão de funcionária-chave (Vallen: Veridiana, Katia, Natália, Lara, Thalita) em janela de 80 chars + nome próprio + empresa monitorada. Emite `action_proposal` urgency=high "Alerta operacional [empresa]: [pessoa] ([risco])" via WhatsApp imediato. Service: `app/services/operational_alerts.py`. Wire: `services/message_classifier.classify_pending_batch`. Triggers P2 (recruitment), P3 (kpi discrepancy), P4 (stuck raci) pendentes — ver `docs/COS_DILIGENCIA_NEXT.md`.
 
 ## 13. Calendário (`/calendario`)
 - Sync Google Calendar bidirecional
