@@ -358,9 +358,11 @@ def get_overdue_tasks_raci_aware(
             if project_filter:
                 sql += " AND (p.nome ILIKE %s)"
                 args.append(f"%{project_filter}%")
-            # Pega ate 2x limit pra compensar filtragem por RACI
+            # Pega ate 5x limit (capped 500) pra compensar filtragem por RACI.
+            # Em backlog longo (~190 overdue), precisamos varrer o suficiente
+            # pra encontrar tasks recentes/sem RACI.
             sql += " ORDER BY t.data_vencimento ASC LIMIT %s"
-            fetch_limit = min(limit * 2, 40)
+            fetch_limit = min(max(limit * 5, 100), 500)
             args.append(fetch_limit)
             cursor.execute(sql, args)
             rows = cursor.fetchall()
@@ -368,13 +370,15 @@ def get_overdue_tasks_raci_aware(
         today = datetime.now().date()
         tasks: List[Dict[str, Any]] = []
         delegated_sample: List[Dict[str, Any]] = []
+        delegated_ids: List[int] = []
         delegated_count = 0
 
         for r in rows:
             is_renato = is_renato_responsible(r["descricao"])
             if is_renato is False:
                 delegated_count += 1
-                if len(delegated_sample) < 5:
+                delegated_ids.append(r["id"])
+                if len(delegated_sample) < 10:
                     delegated_sample.append({
                         "task_id": r["id"],
                         "titulo": _truncate(r["titulo"], 80),
@@ -382,7 +386,8 @@ def get_overdue_tasks_raci_aware(
                         "projeto": r["projeto"],
                     })
                 continue
-            if len(tasks) >= min(limit, 20):
+            # Sem clamp duro — caller controla via limit. fetch_limit do SQL ja cobre teto.
+            if len(tasks) >= limit:
                 continue
             dv = r["data_vencimento"]
             dias_atraso = (today - dv.date()).days if dv else 0
@@ -402,6 +407,7 @@ def get_overdue_tasks_raci_aware(
             "tasks": tasks,
             "delegated_count": delegated_count,
             "delegated_sample": delegated_sample,
+            "delegated_ids": delegated_ids,
         }
         log_tool_call(
             cycle_id, "get_overdue_tasks_raci_aware", params_log,
@@ -414,7 +420,7 @@ def get_overdue_tasks_raci_aware(
             cycle_id, "get_overdue_tasks_raci_aware", params_log, None,
             iteration, int((time.time() - started) * 1000), str(e),
         )
-        return {"tasks": [], "delegated_count": 0, "delegated_sample": [], "erro": str(e)}
+        return {"tasks": [], "delegated_count": 0, "delegated_sample": [], "delegated_ids": [], "erro": str(e)}
 
 
 # ============== Blocking status detection (WA + email cross-check) ==============
@@ -1077,8 +1083,8 @@ COS_TOOLS: List[Dict[str, Any]] = [
             "parseado do descricao (campo 'RACI ... R: Nome') NAO inclui Renato — essas viram "
             "delegated_count, NAO entram em 'tasks'. Tasks sem RACI passam normal. "
             "USE essa pra identificar drift real do Renato (vs tasks que pertencem a outros). "
-            "Retorno: {tasks: [...], delegated_count: N, delegated_sample: [{task_id,titulo,responsible}]}. "
-            "Cada task em tasks inclui raci_responsible (string ou null)."
+            "Retorno: {tasks: [...], delegated_count: N, delegated_sample: [{task_id,titulo,responsible}], "
+            "delegated_ids: [int, ...]}. Cada task em tasks inclui raci_responsible (string ou null)."
         ),
         "input_schema": {
             "type": "object",

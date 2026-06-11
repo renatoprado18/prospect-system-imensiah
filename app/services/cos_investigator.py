@@ -36,7 +36,13 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from database import get_db
-from services.cos_tools import COS_TOOLS, execute_tool
+from services.cos_tools import (
+    COS_TOOLS,
+    execute_tool,
+    get_overdue_tasks_raci_aware,
+    get_task_blocking_status,
+    is_renato_responsible,
+)
 from services.tz import now_utc, to_brt
 
 logger = logging.getLogger(__name__)
@@ -196,6 +202,31 @@ Quando uma pendência aponta pra um contato relevante (em tasks/agenda/propostas
 Contatos cold/vendor/spam: IGNORE — não rascunhe, não escale, não observe.
 
 Sempre que criar um draft_response, JUSTIFIQUE no `motivo` com a evidência da tool (ex: "Thalita pediu ETA do plano de ação na msg de 14/06 18h32").
+
+==== TASKS VENCIDAS — DRIFT vs BLOQUEIO EXTERNO vs DELEGADAS ====
+
+O contexto inicial inclui `overdue_preprocess` ja com cruzamento WA/email feito:
+
+- `active_tasks` -> POTENCIAL DRIFT do Renato. Investigue contatos via get_messages_with se relevante.
+  Tasks aqui sem keyword frente: NAO escale individualmente; agregue ("N tasks vencidas, X de peso alto").
+
+- `blocked_external` -> Renato esta esperando terceiro. NAO ESCALE como drift. Trate como contexto:
+  * Se dias_atraso <= suggest_fup_in_days: ignore (esperar e ok).
+  * Se dias_atraso > suggest_fup_in_days: record_observation tipo
+    "👀 Aguardando [contact] ha Nd (sugerir FUP soft se passar de Xd)" com refs task_id.
+  * NAO criar draft sem chamar get_messages_with antes pra confirmar contexto atual.
+
+- `waiting_followthrough` -> outro lado prometeu mandar algo. NAO escalar como drift.
+  * record_observation: "👀 [contact] prometeu [excerpt promessa]; aguardando".
+  * Se passou MUITO de suggest_fup_in_days e nada chegou, AI pode escalate_to_user prioridade 3
+    pra Renato decidir se cobra.
+
+- `delegated_count > 0` -> tasks com RACI R != Renato foram filtradas. NAO precisa escalar
+  individualmente. Se >= 5, record_observation: "👀 N tasks de conselho delegadas (R != Renato) — apenas Accountable".
+
+REGRA DE OURO: NAO escale como drift uma task se ela esta em blocked_external/waiting_followthrough.
+Antes de tratar uma task como drift do Renato, confira se ela esta em active_tasks. Se estiver em
+blocked/waiting/delegated, e contexto — nao drift.
 
 ==== CATEGORIAS DE ITEMS QUE VOCÊ REGISTRA ====
 
@@ -397,6 +428,108 @@ def _collect_initial_context() -> Dict[str, Any]:
     return context
 
 
+def _preprocess_blocked_tasks(
+    cycle_id: str,
+    max_tasks: int = 300,
+    blocking_check_top: int = 30,
+) -> Dict[str, Any]:
+    """Pre-processa tasks vencidas via Cruzamento 1+2 ANTES do agent loop.
+
+    Pipeline:
+    1. get_overdue_tasks_raci_aware com limit alto (max_tasks) pra varrer
+       backlog inteiro e classificar delegadas corretamente.
+    2. Roda get_task_blocking_status SO nas top-N (blocking_check_top)
+       mais recentes (data_vencimento DESC entre as filtradas), pra evitar
+       N chamadas em backlog longo.
+    3. Particiona:
+       - blocked_external: Renato falou ultimo + 'aguardo' -> contexto
+       - waiting_followthrough: outro lado prometeu material -> contexto
+       - active: 'unblocked' ou 'no_data' -> drift normal (resto entra aqui sem
+         blocking-check pra economizar)
+
+    Retorna {
+        active_tasks: [...],          # tasks que continuam como drift normal
+        blocked_external: [...],      # tasks bloqueadas em terceiros
+        waiting_followthrough: [...], # tasks aguardando material/promessa externa
+        delegated_count: N,           # tasks delegadas (R != Renato)
+        delegated_sample: [...],      # amostra das delegadas (max 10)
+        delegated_ids: [...],         # IDs completos das delegadas
+    }
+    """
+    blocked_external: List[Dict[str, Any]] = []
+    waiting_followthrough: List[Dict[str, Any]] = []
+    active_tasks: List[Dict[str, Any]] = []
+    delegated_count = 0
+    delegated_sample: List[Dict[str, Any]] = []
+    delegated_ids: List[int] = []
+
+    try:
+        raci_result = get_overdue_tasks_raci_aware(
+            cycle_id=cycle_id,
+            iteration=-1,  # pre-process — fora do agent loop
+            limit=max_tasks,
+        )
+        delegated_count = raci_result.get("delegated_count", 0)
+        delegated_sample = raci_result.get("delegated_sample", [])
+        delegated_ids = raci_result.get("delegated_ids", [])
+        tasks = raci_result.get("tasks", [])
+    except Exception as e:
+        logger.warning(f"_preprocess_blocked_tasks raci_aware falhou: {e}")
+        return {
+            "active_tasks": [],
+            "blocked_external": [],
+            "waiting_followthrough": [],
+            "delegated_count": 0,
+            "delegated_sample": [],
+            "delegated_ids": [],
+            "erro": str(e),
+        }
+
+    # Top-N mais recentes (data_vencimento DESC) recebem blocking check.
+    # Resto vai direto pra active (presumindo: sem cruzamento WA = drift).
+    # Ordering: data_vencimento ISO string asc->desc invertido (mais recente primeiro).
+    tasks_sorted = sorted(
+        tasks,
+        key=lambda t: t.get("data_vencimento") or "",
+        reverse=True,
+    )
+    to_check = tasks_sorted[:blocking_check_top]
+    rest = tasks_sorted[blocking_check_top:]
+
+    for t in to_check:
+        try:
+            blocking = get_task_blocking_status(
+                cycle_id=cycle_id,
+                iteration=-1,
+                task_id=t["id"],
+            )
+        except Exception as e:
+            logger.warning(f"_preprocess_blocked_tasks blocking task={t['id']} falhou: {e}")
+            active_tasks.append(t)
+            continue
+
+        status = blocking.get("status")
+        enriched = {**t, "blocking": blocking}
+        if status == "blocked_on_external":
+            blocked_external.append(enriched)
+        elif status == "waiting_external_followthrough":
+            waiting_followthrough.append(enriched)
+        else:
+            active_tasks.append(enriched)
+
+    # Resto entra como active sem check (otimizacao: tasks mais antigas)
+    active_tasks.extend(rest)
+
+    return {
+        "active_tasks": active_tasks,
+        "blocked_external": blocked_external,
+        "waiting_followthrough": waiting_followthrough,
+        "delegated_count": delegated_count,
+        "delegated_sample": delegated_sample,
+        "delegated_ids": delegated_ids,
+    }
+
+
 def _get_cos_config_content() -> str:
     """Pega o conteudo da CoS config ativa (system_memories tipo='cos_config')."""
     try:
@@ -506,14 +639,60 @@ async def run_investigator_cycle(cycle_id: Optional[str] = None) -> Dict[str, An
     initial_context = _collect_initial_context()
     cos_config = _get_cos_config_content()
 
+    # 1b. Pre-process Cruzamento 1+2+3: blocked-on-external + raci-aware
+    # Substitui overdue_top10 cru no contexto pra eliminar falsos drifts.
+    # max_tasks=300 varre backlog inteiro pra classificar delegated corretamente.
+    # blocking_check_top=30 limita chamadas pesadas (~30 queries SQL extras).
+    preprocess = _preprocess_blocked_tasks(cycle_id, max_tasks=300, blocking_check_top=30)
+    initial_context["overdue_preprocess"] = {
+        "active_count": len(preprocess["active_tasks"]),
+        "active_tasks": preprocess["active_tasks"][:10],
+        "blocked_external": [
+            {
+                "task_id": t["id"],
+                "titulo": t["titulo"],
+                "projeto": t.get("projeto"),
+                "dias_atraso": t.get("dias_atraso"),
+                "contact_name": t["blocking"].get("contact_name"),
+                "motivo": t["blocking"].get("motivo"),
+                "last_msg_excerpt": t["blocking"].get("last_msg_excerpt"),
+                "suggest_fup_in_days": t["blocking"].get("suggest_fup_in_days"),
+            }
+            for t in preprocess["blocked_external"][:10]
+        ],
+        "waiting_followthrough": [
+            {
+                "task_id": t["id"],
+                "titulo": t["titulo"],
+                "projeto": t.get("projeto"),
+                "dias_atraso": t.get("dias_atraso"),
+                "contact_name": t["blocking"].get("contact_name"),
+                "motivo": t["blocking"].get("motivo"),
+                "external_promise_excerpt": t["blocking"].get("external_promise_excerpt"),
+                "suggest_fup_in_days": t["blocking"].get("suggest_fup_in_days"),
+            }
+            for t in preprocess["waiting_followthrough"][:10]
+        ],
+        "delegated_count": preprocess["delegated_count"],
+        "delegated_sample": preprocess["delegated_sample"][:5],
+    }
+
     # 2. Prompts
     system_prompt = _build_system_prompt(cos_config)
     user_prompt = (
         f"CYCLE_ID: {cycle_id}\n\n"
         f"DADOS DE HOJE (snapshot determinístico — investigue além disso usando as tools):\n\n"
         f"{json.dumps(initial_context, default=str, ensure_ascii=False, indent=2)}\n\n"
-        f"Comece identificando 3-7 itens relevantes pelo peso CoS, investigue contatos relevantes "
-        f"via get_messages_with e registre items (record_observation/escalate_to_user/create_draft_response)."
+        f"IMPORTANTE: o campo `overdue_preprocess` ja cruzou tasks vencidas com WA/email:\n"
+        f"- `active_tasks`: tasks que VOCE deve considerar como drift do Renato (foco aqui)\n"
+        f"- `blocked_external`: tasks BLOQUEADAS em terceiros (Renato esperando) — NAO sao drift; "
+        f"gere FUP soft (record_observation) so se dias_atraso > suggest_fup_in_days\n"
+        f"- `waiting_followthrough`: outro lado prometeu material/retorno — NAO sao drift; "
+        f"observe via record_observation com motivo factual\n"
+        f"- `delegated_count`: tasks com RACI R != Renato (delegadas, foram filtradas)\n\n"
+        f"Comece identificando 3-7 itens relevantes pelo peso CoS. Para active_tasks "
+        f"investigue contatos via get_messages_with. Para blocked/waiting registre como "
+        f"contexto (record_observation), NAO escale como drift."
     )
 
     # 3. Anthropic client
