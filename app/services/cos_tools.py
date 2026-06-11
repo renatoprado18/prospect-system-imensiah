@@ -25,13 +25,45 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from datetime import datetime, timedelta, date
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from database import get_db
 
 logger = logging.getLogger(__name__)
+
+
+# ============== RACI parser utility ==============
+
+# Captura o campo R: até virgula/quebra de linha/'A:'/'C:'/'I:'.
+# Ex: "R: Amadeo, A: Renato, C: Dra. Thalita" -> "Amadeo"
+#     "R: Renato\nA: Thalita"                  -> "Renato"
+#     "R: Renata, Amadeo\nA: Thalita"          -> "Renata, Amadeo" (lista R)
+_RACI_PATTERN = re.compile(
+    r"R\s*:\s*([^\n]+?)(?=\s*[,;]\s*[ACI]\s*:|\s*[ACI]\s*:|\n|$)",
+    re.IGNORECASE,
+)
+
+
+def parse_raci_responsible(descricao: Optional[str]) -> Optional[str]:
+    """Retorna o R (responsavel) parseado do RACI no descricao da task.
+    Returns None se sem RACI."""
+    if not descricao or "RACI" not in descricao.upper():
+        return None
+    m = _RACI_PATTERN.search(descricao)
+    if m:
+        return m.group(1).strip().rstrip(",;").strip()
+    return None
+
+
+def is_renato_responsible(descricao: Optional[str]) -> Optional[bool]:
+    """True se R inclui Renato. False se R explicitamente outro. None se sem RACI."""
+    r = parse_raci_responsible(descricao)
+    if r is None:
+        return None
+    return "renato" in r.lower()
 
 
 # ============== Internal helpers ==============
