@@ -85,7 +85,7 @@ COS_CONFIG_CONTENT = """# CoS Config — Renato (sessao de extracao jun/2026)
 ### Filtro de "assunto de interesse" (E1 zumbis + relevancia briefing)
 - Frente 1 (imensIAH/Assespro): imensIAH, Assespro, NeoGovernanca, IA aplicada, founder PME, planejamento estrategico, agente AI, governanca nascente
 - Frente 2 (ConselhoOS/Wadhwani): ConselhoOS, Wadhwani, conselho consultivo, conselho administracao, governanca corporativa, RACI, ata, Venture Partner, deal flow, board, conselheiro independente
-- Frente 3 (Vida): Emma, Emanuele Sakamoto, Renato DAP / Renato Dansieri, Manuela Dansieri, Daniela, Orestes, mudanca SP, interior SP, Japao, escola dos filhos, separacao
+- Frente 3 (Vida): Emma / Emanuele Sakamoto (ATUAL companheira, mora junto desde 02/01/2026), Renato DAP / Renato Dansieri (filho), Manuela Dansieri (filha), Daniela (EX-esposa, separacao em 02/01/2026, co-mae dos filhos), Orestes (pai), mudanca SP, interior SP, Japao, escola dos filhos, separacao
 - Frente 4 (Almeida Prado/Vallen): Vallen Clinic, Almeida Prado consultoria, RACI Vallen, devolutiva tecnica, Thalita Mendes (lideranca Vallen)
 - Frente 5 (Capital relacional): Rodolfo Villela, Itausa, Associacao Despertar, Cecilia Zanotti (lideranca Despertar/Itausa)
 - Marca pessoal: estrategia + AI, board governance, IA etica, IA pra PMEs, conselheiro independente, AI agentic
@@ -138,6 +138,15 @@ COS_CONFIG_CONTENT = """# CoS Config — Renato (sessao de extracao jun/2026)
 ## Notas operacionais
 - Briefing 7h (na pratica 08h BRT): formato CoS opinativo, ordenado por peso v5, 1 linha de confronto obrigatoria, fecho com numeros chave.
 - Atualizacoes do CoS config: novo INSERT (mantem historico). `get_active_cos_config` retorna o mais recente.
+
+## Delegacao a Andressa (decidido 07/06/2026, Opcao B)
+NAO delegar trabalho operacional pra Andressa sem mandato explicito definido.
+Andressa hoje nao tem (a) acesso LinkedIn pra coletar metricas, (b) cap financeiro
+pra autorizar manutencao Prado, (c) treino de voz pra responder comentarios.
+Sem isso, "delegar" e teatro. Decisao Renato:
+- Metricas LinkedIn: AUTOMATIZAR via LinkedIn API (TODO Onda 1.5)
+- Manutencao Prado: FICA com Renato
+- Comentarios LinkedIn: CoS rascunha (politica E2), Renato posta
 """
 
 
