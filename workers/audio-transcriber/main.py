@@ -134,6 +134,8 @@ _SCHEDULER_JOBS = [
     ("run-social-groups", "/api/cron/run-social-groups", CronTrigger(minute=20)),
     ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
     ("wa-catchup", "/api/cron/wa-catchup", CronTrigger(minute="*/30")),
+    # Migrado de vercel.json (Hobby cron limit bloqueava deploy) — 11/06/26
+    ("monitor-cron-health", "/api/cron/monitor-cron-health", CronTrigger(minute=0)),
     # Briefings — migrados de GH Actions em 10/06/2026 apos drift acumulado
     # (1h->3h->5h ao longo de 03-09/jun) e drop total nos dias 10 e 11/jun.
     # Horarios mantidos identicos aos workflows .github/workflows/cron-daily-*.yml
