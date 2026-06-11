@@ -3603,6 +3603,80 @@ async def cron_status(user: dict = Depends(require_admin)):
     return out
 
 
+@app.get("/api/admin/webhook-audit")
+async def admin_webhook_audit(
+    request: Request,
+    phone: str = None,
+    hours: int = 24,
+    decision: str = None,
+    limit: int = 50,
+    user: dict = Depends(require_admin),
+):
+    """Inspeciona webhook_audit pra diagnosticar perda de mensagens.
+
+    Filtros:
+    - phone: matcha sufixo em remote_jid ou remote_jid_alt (ex: 351938588722)
+    - hours: janela (default 24h)
+    - decision: processed/skipped/error (default todos)
+    - limit: max 200
+
+    Why: mensagens do Felipe Orioli sumindo entre webhook e tabela messages.
+    Esse endpoint conta o "filme" de cada chamada e em qual ramo o handler
+    descartou.
+    """
+    limit = max(1, min(int(limit or 50), 200))
+    hours = max(1, min(int(hours or 24), 168))
+
+    where = ["received_at > NOW() - INTERVAL %s"]
+    params = [f"{hours} hours"]
+    if phone:
+        digits = ''.join(c for c in phone if c.isdigit())
+        if digits:
+            where.append("(remote_jid LIKE %s OR remote_jid_alt LIKE %s OR payload::text LIKE %s)")
+            like = f"%{digits}%"
+            params.extend([like, like, like])
+    if decision:
+        where.append("decision = %s")
+        params.append(decision)
+
+    sql = f"""
+        SELECT id, received_at, source, event_type, instance,
+               remote_jid, remote_jid_alt, from_me, message_id,
+               decision, decision_reason, resulting_message_id,
+               processing_ms, payload
+        FROM webhook_audit
+        WHERE {' AND '.join(where)}
+        ORDER BY received_at DESC
+        LIMIT {limit}
+    """
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        rows = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if d.get("received_at"):
+                d["received_at"] = d["received_at"].isoformat()
+            rows.append(d)
+
+        # Stats agregadas no mesmo periodo
+        cur.execute(
+            f"""
+            SELECT decision, COUNT(*) AS n
+            FROM webhook_audit
+            WHERE {' AND '.join(where)}
+            GROUP BY decision
+            ORDER BY n DESC
+            """,
+            params,
+        )
+        stats = {row["decision"]: row["n"] for row in cur.fetchall()}
+
+    return {"filter": {"phone": phone, "hours": hours, "decision": decision},
+            "stats": stats, "entries": rows}
+
+
 # ----- /api/admin/cron-health (consome cron_runs) -----
 
 def _parse_cron_to_minutes(schedule: str) -> Optional[int]:
@@ -25547,6 +25621,32 @@ async def cron_process_scheduled_actions(request: Request):
         logging.error(f"process-scheduled-actions failed: {e}")
         # NAO catch silenciosamente (licao Marcos 07/06): se cron quebra, queremos
         # ver 500 no /admin/cron-health ao inves de "status sent" mentindo.
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/cron/wa-catchup")
+@app.post("/api/cron/wa-catchup")
+@track_cron_run
+async def cron_wa_catchup(request: Request, hours: int = 2):
+    """Catchup WhatsApp DMs perdidos pelo webhook.
+
+    Itera contatos prioritarios, fetch ultimas msgs via Evolution
+    /chat/findMessages, replay faltantes pelo handler de webhook (mesma
+    logica + audit). Roda /30min via Railway scheduler.
+
+    Why: caso Felipe Orioli (11/jun/26) — msg some entre Evolution e webhook.
+    Catchup garante recuperacao e cobertura de telemetria.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.wa_catchup import catchup_recent_dms
+
+    try:
+        result = await catchup_recent_dms(hours=hours)
+        return {"job": "wa-catchup", **result}
+    except Exception as e:
+        logging.error(f"wa-catchup failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

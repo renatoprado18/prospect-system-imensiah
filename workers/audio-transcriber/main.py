@@ -133,6 +133,7 @@ _SCHEDULER_JOBS = [
     ("run-whatsapp-sync", "/api/cron/run-whatsapp-sync", CronTrigger(minute=5)),
     ("run-social-groups", "/api/cron/run-social-groups", CronTrigger(minute=20)),
     ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
+    ("wa-catchup", "/api/cron/wa-catchup", CronTrigger(minute="*/30")),
     # Briefings — migrados de GH Actions em 10/06/2026 apos drift acumulado
     # (1h->3h->5h ao longo de 03-09/jun) e drop total nos dias 10 e 11/jun.
     # Horarios mantidos identicos aos workflows .github/workflows/cron-daily-*.yml

@@ -16,6 +16,59 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
+# ==================== TELEMETRIA WEBHOOK ====================
+# Why: mensagens do Felipe Orioli somem entre webhook e tabela `messages`.
+# webhook_audit grava cada chamada — decision em {processed, skipped, error}
+# + reason, pra diagnosticar perda silenciosa.
+# Defensivo: INSERT em try/except — telemetria NUNCA pode falhar o webhook.
+
+def _record_webhook_audit(
+    source: str,
+    event_type: str = None,
+    instance: str = None,
+    remote_jid: str = None,
+    remote_jid_alt: str = None,
+    from_me: bool = None,
+    message_id: str = None,
+    decision: str = "unknown",
+    decision_reason: str = None,
+    resulting_message_id: int = None,
+    payload: Dict = None,
+    processing_ms: int = None,
+) -> None:
+    """Insere row em webhook_audit. Nunca raise — falha silenciosa via warning."""
+    try:
+        from database import get_db
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO webhook_audit
+                  (source, event_type, instance, remote_jid, remote_jid_alt,
+                   from_me, message_id, decision, decision_reason,
+                   resulting_message_id, payload, processing_ms)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    source,
+                    event_type,
+                    instance,
+                    remote_jid,
+                    remote_jid_alt,
+                    from_me,
+                    message_id,
+                    decision,
+                    decision_reason,
+                    resulting_message_id,
+                    json.dumps(payload or {}, default=str),
+                    processing_ms,
+                ),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"webhook_audit insert failed: {e}")
+
+
 def _is_bot_phone(phone: str) -> bool:
     """
     Verifica se o telefone pertence ao proprio intel-bot.
@@ -439,9 +492,23 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
     from database import get_db
     from services.whatsapp_batch_import import get_batch_importer
 
+    started = datetime.now()
     event = (payload.get("event") or "").lower().replace("_", ".")
     instance = payload.get("instance")
     data = payload.get("data", {})
+
+    # Best-effort key extraction pra telemetria entry-point
+    _key = (data or {}).get("key", {}) if isinstance(data, dict) else {}
+    audit_ctx = {
+        "source": "evolution_webhook",
+        "event_type": event,
+        "instance": instance if isinstance(instance, str) else (instance or {}).get("instanceName"),
+        "remote_jid": _key.get("remoteJid"),
+        "remote_jid_alt": _key.get("remoteJidAlt"),
+        "from_me": _key.get("fromMe"),
+        "message_id": _key.get("id"),
+        "payload": payload,
+    }
 
     logger.info(f"Evolution webhook: {event} from {instance}")
 
@@ -449,38 +516,76 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
     intel_bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot").strip()
     instance_name = instance if isinstance(instance, str) else (instance or {}).get("instanceName", "")
     if instance_name == intel_bot_instance and event == "messages.upsert":
-        return await _handle_intel_bot_message(data)
+        result = await _handle_intel_bot_message(data)
+        _record_webhook_audit(
+            **{**audit_ctx, "source": "intel_bot"},
+            decision="processed" if result.get("processed") else "skipped",
+            decision_reason=result.get("reason"),
+            processing_ms=int((datetime.now() - started).total_seconds() * 1000),
+        )
+        return result
 
     result = {"event": event, "processed": False}
 
     try:
         if event == "messages.upsert":
             # Nova mensagem recebida
-            result = await process_incoming_message(data)
+            result = await process_incoming_message(data, audit_ctx=audit_ctx, started=started)
 
         elif event == "connection.update":
             # Status da conexão mudou
             state = data.get("state")
             logger.info(f"Connection state changed: {state}")
             result = {"event": event, "state": state, "processed": True}
+            _record_webhook_audit(
+                **audit_ctx,
+                decision="processed",
+                decision_reason=f"connection.update:{state}",
+                processing_ms=int((datetime.now() - started).total_seconds() * 1000),
+            )
 
         elif event == "qrcode.updated":
             # Novo QR Code
             logger.info("QR Code updated")
             result = {"event": event, "processed": True}
+            _record_webhook_audit(
+                **audit_ctx,
+                decision="processed",
+                decision_reason="qrcode.updated",
+                processing_ms=int((datetime.now() - started).total_seconds() * 1000),
+            )
 
         elif event == "send.message":
             # Mensagem enviada
             result = await process_sent_message(data)
+            _record_webhook_audit(
+                **audit_ctx,
+                decision="processed" if result.get("processed") else "skipped",
+                decision_reason=result.get("reason") or "send.message",
+                processing_ms=int((datetime.now() - started).total_seconds() * 1000),
+            )
+        else:
+            _record_webhook_audit(
+                **audit_ctx,
+                decision="skipped",
+                decision_reason=f"unhandled_event:{event}",
+                processing_ms=int((datetime.now() - started).total_seconds() * 1000),
+            )
 
     except Exception as e:
         logger.exception(f"Error processing webhook: {e}")
         result["error"] = str(e)
+        _record_webhook_audit(
+            **audit_ctx,
+            decision="error",
+            decision_reason=str(e)[:500],
+            processing_ms=int((datetime.now() - started).total_seconds() * 1000),
+        )
 
     return result
 
 
-async def process_incoming_message(data: Dict) -> Dict:
+async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: datetime = None) -> Dict:
     """Processa mensagem recebida e analisa com IA"""
     from database import get_db
     import asyncio
@@ -493,6 +598,37 @@ async def process_incoming_message(data: Dict) -> Dict:
     remote_jid_alt = key.get("remoteJidAlt", "")
     from_me = key.get("fromMe", False)
     message_id = key.get("id")
+
+    # Telemetria — propaga ctx do entry-point ou cria
+    if started is None:
+        started = datetime.now()
+    if audit_ctx is None:
+        audit_ctx = {
+            "source": "evolution_webhook",
+            "event_type": "messages.upsert",
+            "instance": None,
+            "remote_jid": remote_jid,
+            "remote_jid_alt": remote_jid_alt,
+            "from_me": from_me,
+            "message_id": message_id,
+            "payload": data,
+        }
+    else:
+        # Garante que key fields venham preenchidos mesmo se entry-point pulou
+        audit_ctx = {**audit_ctx,
+                     "remote_jid": audit_ctx.get("remote_jid") or remote_jid,
+                     "remote_jid_alt": audit_ctx.get("remote_jid_alt") or remote_jid_alt,
+                     "from_me": from_me if audit_ctx.get("from_me") is None else audit_ctx["from_me"],
+                     "message_id": audit_ctx.get("message_id") or message_id}
+
+    def _audit(decision: str, reason: str, resulting_id: int = None):
+        _record_webhook_audit(
+            **audit_ctx,
+            decision=decision,
+            decision_reason=reason,
+            resulting_message_id=resulting_id,
+            processing_ms=int((datetime.now() - started).total_seconds() * 1000),
+        )
 
     # Group messages: check for RACI updates (smart matcher — texto livre + media)
     if "@g.us" in remote_jid:
@@ -565,6 +701,7 @@ async def process_incoming_message(data: Dict) -> Dict:
                 except Exception as e:
                     logger.warning(f"RACI group update error: {e}")
 
+        _audit("skipped", "group_message")
         return {"processed": False, "reason": "group_message"}
 
     # Extrair telefone - handle LID format (WhatsApp Meta migration)
@@ -580,6 +717,7 @@ async def process_incoming_message(data: Dict) -> Dict:
             phone = remote_jid_alt.replace("@s.whatsapp.net", "")
         else:
             logger.warning(f"Cannot resolve phone from JID: {remote_jid} alt: {remote_jid_alt}")
+            _audit("skipped", "unresolvable_jid")
             return {"processed": False, "reason": "unresolvable_jid"}
 
     # Filtro anti-loop: descartar mensagens originadas do proprio intel-bot.
@@ -589,6 +727,7 @@ async def process_incoming_message(data: Dict) -> Dict:
     # do proprio texto do briefing.
     if _is_bot_phone(phone):
         logger.info(f"Skipping bot-origin message from {phone} (anti-loop guard)")
+        _audit("skipped", f"bot_origin_skipped:{phone}")
         return {"processed": False, "reason": "bot_origin_skipped", "phone": phone}
 
     # Extrair conteúdo
@@ -616,12 +755,14 @@ async def process_incoming_message(data: Dict) -> Dict:
         message_type = "sticker"
 
     if not content:
+        _audit("skipped", "empty_content")
         return {"processed": False, "reason": "empty_content"}
 
     # Verificar se e uma resposta do Renato a uma proposta de acao
     # fromMe = True significa que a mensagem foi enviada do celular conectado (Renato)
     if from_me and is_proposal_response(content):
         asyncio.create_task(process_renato_reply(content, phone))
+        _audit("processed", "proposal_response")
         return {"processed": True, "reason": "proposal_response", "content": content}
 
     # Buscar contato pelo telefone
@@ -638,6 +779,7 @@ async def process_incoming_message(data: Dict) -> Dict:
 
         if not contact:
             logger.info(f"Contact not found for phone: {phone}")
+            _audit("skipped", f"contact_not_found:{phone}")
             return {"processed": False, "reason": "contact_not_found", "phone": phone}
 
         contact_id = contact["id"]
@@ -665,6 +807,7 @@ async def process_incoming_message(data: Dict) -> Dict:
         """, (message_id,))
 
         if cursor.fetchone():
+            _audit("skipped", "duplicate")
             return {"processed": False, "reason": "duplicate"}
 
         # Inserir mensagem
@@ -715,6 +858,7 @@ async def process_incoming_message(data: Dict) -> Dict:
             analyze_message_in_background(new_msg_id, contact_id, content)
         )
 
+    _audit("processed", f"ok:{direction}", resulting_id=new_msg_id)
     return {
         "processed": True,
         "message_id": new_msg_id,
