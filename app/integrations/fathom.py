@@ -797,8 +797,16 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
 
     tarefas_criadas: List[Dict] = []
     skipped_tarefas = 0
+    delegadas_count = 0
     primeiro_contact_id = matched_contacts[0]["id"] if matched_contacts else None
     if action_items:
+        # Import local pra evitar ciclo de boot
+        try:
+            from services.raci_parser import parse_raci
+        except Exception:  # pragma: no cover — defensive
+            parse_raci = None
+            logger.warning("raci_parser indisponivel; tasks Fathom seguirao como pending")
+
         with get_db() as conn:
             cur = conn.cursor()
             for ai in action_items[:10]:
@@ -832,18 +840,40 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
                 if playback:
                     full_desc += f"\n\nMomento na gravacao: {playback}"
                 full_desc += f"\nReuniao: {title} ({date_iso})"
+
+                # RACI-aware status: parsear titulo + descricao completa.
+                # Se responsavel != Renato, nasce como 'delegated' (nao polui inbox).
+                # Memoria: feedback_raci_parsing.md
+                initial_status = "pending"
+                raci_note = ""
+                if parse_raci is not None:
+                    raci = parse_raci(titulo_short, full_desc)
+                    if raci.source != "none" and not raci.is_renato:
+                        initial_status = "delegated"
+                        delegadas_count += 1
+                        raci_note = (
+                            f"\n\n[CoS auto-RACI]: responsavel parseado = {raci.responsible} "
+                            f"(padrao={raci.source}, conv={raci.convention}, conf={raci.confidence:.2f}). "
+                            f"Status inicial = delegated (Renato nao eh R efetivo)."
+                        )
+                        full_desc = full_desc + raci_note
+
                 cur.execute(
                     """
                     INSERT INTO tasks (titulo, descricao, status, project_id, contact_id,
                                        prioridade, ai_generated, origem, source_table, source_id,
                                        data_criacao)
-                    VALUES (%s, %s, 'pending', %s, %s, 7, true, 'reuniao_fathom', 'fathom', %s, NOW())
+                    VALUES (%s, %s, %s, %s, %s, 7, true, 'reuniao_fathom', 'fathom', %s, NOW())
                     RETURNING id
                     """,
-                    (titulo_short, full_desc, project_id, primeiro_contact_id, rec_id),
+                    (titulo_short, full_desc, initial_status, project_id, primeiro_contact_id, rec_id),
                 )
                 tid = cur.fetchone()["id"]
-                tarefas_criadas.append({"task_id": tid, "titulo": desc[:80]})
+                tarefas_criadas.append({
+                    "task_id": tid,
+                    "titulo": desc[:80],
+                    "status": initial_status,
+                })
             conn.commit()
 
     nota_id = None
@@ -894,6 +924,7 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
         "unmatched_attendees": unmatched_attendees,
         "memorias_criadas": novas_memorias,
         "tarefas_criadas": novas_tarefas,
+        "tarefas_delegadas": delegadas_count,  # RACI-aware: tasks com R != Renato
         "nota_projeto_id": nota_id,
         "skipped": {
             "memorias": skipped_memorias,
@@ -956,11 +987,12 @@ async def handle_fathom_webhook(
         stats = await process_fathom_meeting(payload, project_id=None)
         skipped = stats.get("skipped") or {}
         logger.info(
-            "Fathom webhook processado: rec_id=%s contatos=%s memorias_novas=%s tarefas_novas=%s skipped=%s",
+            "Fathom webhook processado: rec_id=%s contatos=%s memorias_novas=%s tarefas_novas=%s tarefas_delegadas=%s skipped=%s",
             stats.get("recording_id"),
             len(stats.get("matched_contacts", [])),
             len(stats.get("memorias_criadas") or []),
             len(stats.get("tarefas_criadas") or []),
+            stats.get("tarefas_delegadas", 0),
             skipped,
         )
         return {"status": "processed", **stats}
