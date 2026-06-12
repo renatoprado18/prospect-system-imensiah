@@ -199,23 +199,22 @@ async def _notify_renato(success: bool, row: Dict[str, Any], result: Dict[str, A
         text = (payload.get("text") or "")[:80]
         source = row.get("source") or ""
 
+        # Politica feedback_notifications: so notificar quando precisa acao
+        # manual. Success do envio = nao precisa acao (so log, ja salvo em
+        # scheduled_actions/cron_runs). Failure NAO terminal = vai retentar
+        # sozinho (nao precisa acao). So notificar failure TERMINAL (CoS
+        # desistiu = Renato precisa decidir: retry manual? muda numero?).
         if success:
-            msg_id = result.get("msg_id", "?")
-            note = (
-                f"CoS enviou WA pra {number}: \"{text}{'...' if len(payload.get('text', '')) > 80 else ''}\""
-                f" - msg id {msg_id}"
-            )
-            if source:
-                note += f" [{source}]"
-        else:
-            err = result.get("error", "erro desconhecido")[:200]
-            attempts = row.get("attempts", 0) + 1
-            max_a = row.get("max_attempts", 3)
-            terminal = attempts >= max_a
-            prefix = "CoS DESISTIU envio WA" if terminal else "CoS falhou envio WA (vai retentar)"
-            note = f"{prefix} pra {number}: {err} (tentativa {attempts}/{max_a})"
-            if source:
-                note += f" [{source}]"
+            return  # silencioso - log no DB, sem WA
+        err = result.get("error", "erro desconhecido")[:200]
+        attempts = row.get("attempts", 0) + 1
+        max_a = row.get("max_attempts", 3)
+        terminal = attempts >= max_a
+        if not terminal:
+            return  # retry automatico, nao polui WA
+        note = f"CoS DESISTIU envio WA pra {number}: {err} (tentativa {attempts}/{max_a})"
+        if source:
+            note += f" [{source}]"
 
         await send_intel_notification(note)
     except Exception as e:

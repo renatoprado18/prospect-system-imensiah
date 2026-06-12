@@ -225,15 +225,25 @@ async def check_post_meeting() -> Dict:
 
             contatos_block = "\n".join(f"• {l}" for l in contatos_lines)
 
+            # Politica feedback_notifications: so notificar quando precisa
+            # acao manual. "Como foi?" e convite reflexivo, baixo valor.
+            # Renato ja recebe pre-meeting + Fathom dispara import async com
+            # action items. Skip se nao houver contato C0/C1 (escalation)
+            # entre os identified.
+            has_c0_c1 = any(
+                (c.get("circulo") or 99) in (1, 2)
+                for c in identified
+            )
+            if not has_c0_c1:
+                # Sem escalation: skip WA, deixa Fathom callback fazer o resumo.
+                logger.info(f"post-meeting: skip notify (sem C0/C1 nos {len(identified)} contatos)")
+                continue
+
             msg = (
-                f"🎯 Reuniao terminou {min_atras}min atras:\n"
+                f"🎯 Reuniao com C1 terminou {min_atras}min atras:\n"
                 f"*{summary}* as {hora_str} ({duracao}min)\n"
                 f"{contatos_block}\n\n"
-                f"Como foi? Posso:\n"
-                f"• Salvar memoria pra cada contato\n"
-                f"• Criar tarefa de follow-up\n"
-                f"• Atualizar contatos\n\n"
-                f"So me conta o que rolou que eu organizo."
+                f"Action items via Fathom em ~10min."
             )
 
             ok = await send_intel_notification(msg)
