@@ -533,6 +533,49 @@ def detect_meeting_proposal(content: str) -> Optional[Dict]:
     return result
 
 
+_FORWARDED_MARKERS = (
+    'você foi convidado', 'voce foi convidado',
+    'when:', 'quando:', 'tac mp', 'pauta:',
+    'microsoft teams meeting', 'reuniao do microsoft teams',
+    '>>>', '____', '------',
+)
+
+
+def _meeting_should_skip(meeting_info: Dict, content: str) -> Optional[str]:
+    """Sanity-check: retorna motivo de skip ou None.
+
+    Filtra create_meeting quando: data extraida ja passou, viola Domingo Sagrado
+    (domingo antes das 10h), mensagem e forward de convite externo. Filtros
+    baratos pra cortar lixo do dashboard sem chamar LLM.
+    """
+    text_lower = content.lower()
+
+    for marker in _FORWARDED_MARKERS:
+        if marker in text_lower:
+            return f"forward/quote detectado ({marker})"
+
+    date_str = meeting_info.get('date')
+    if date_str:
+        try:
+            extracted = datetime.strptime(date_str, '%d/%m/%Y').date()
+            if extracted < datetime.now().date():
+                return f"data extraida ja passou ({date_str})"
+        except ValueError:
+            pass
+
+    weekday = (meeting_info.get('weekday') or '').lower()
+    time_str = meeting_info.get('time') or ''
+    if weekday == 'domingo' and time_str:
+        try:
+            hour = int(time_str.split(':')[0])
+            if hour < 10:
+                return "viola politica Domingo Sagrado (domingo antes das 10h)"
+        except (ValueError, IndexError):
+            pass
+
+    return None
+
+
 async def handle_meeting_proposal(
     meeting_info: Dict,
     contact_id: int,
@@ -541,6 +584,14 @@ async def handle_meeting_proposal(
 ) -> List[Dict]:
     """Cria proposta de acao para reuniao detectada."""
     from services.action_proposals import get_action_proposals
+
+    skip_reason = _meeting_should_skip(meeting_info, content)
+    if skip_reason:
+        logger.info(
+            f"handle_meeting_proposal: skip create_meeting "
+            f"(contact={contact_id}, msg={message_id}) — {skip_reason}"
+        )
+        return []
 
     contact_name = _get_contact_name(contact_id)
 

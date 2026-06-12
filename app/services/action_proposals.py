@@ -110,6 +110,47 @@ class ActionProposalsService:
                     )
                     return None
 
+            # DEDUP CROSS-CLUSTER: tipos relacionados pro mesmo contato em janela curta
+            # viram ruido. Se ja existe alerta no cluster, skip a nova proposta.
+            # Why: msg unica disparava 3-4 propostas (meeting_request + create_meeting +
+            # urgent_alert + update_contact_phone). Auditoria 12/06 mostrou 62% das pendentes
+            # eram quadruplicata cross-type.
+            # Clusters:
+            #   meeting  — propostas de calendario (todas resolvem a mesma intent)
+            #   response — alertas pra responder/agir (high-urgency upgrade ja roda via update)
+            _MEETING_CLUSTER = {
+                'meeting_request', 'create_meeting',
+                'reschedule_event', 'cancel_event',
+            }
+            _RESPONSE_CLUSTER = {
+                'pending_response', 'urgent_alert', 'follow_up_alert',
+                'opportunity_alert', 'complaint_alert', 'follow_up',
+            }
+            cluster = None
+            if action_type in _MEETING_CLUSTER:
+                cluster = _MEETING_CLUSTER
+            elif action_type in _RESPONSE_CLUSTER:
+                cluster = _RESPONSE_CLUSTER
+
+            if contact_id and cluster and len(cluster) > 1:
+                cluster_others = tuple(t for t in cluster if t != action_type)
+                if cluster_others:
+                    cursor.execute("""
+                        SELECT id, action_type FROM action_proposals
+                        WHERE contact_id = %s
+                          AND action_type = ANY(%s)
+                          AND status = 'pending'
+                          AND criado_em > NOW() - INTERVAL '6 hours'
+                        LIMIT 1
+                    """, (contact_id, list(cluster_others)))
+                    sibling = cursor.fetchone()
+                    if sibling:
+                        logger.info(
+                            f"create_proposal: skip {action_type} (contato {contact_id}) — "
+                            f"cluster ja tem pending #{sibling['id']} ({sibling['action_type']})"
+                        )
+                        return None
+
             # DEDUP: se ja existe proposta pendente do mesmo tipo para esse contato nas ultimas 24h,
             # atualizar (com trigger mais recente) em vez de criar nova
             if contact_id:
