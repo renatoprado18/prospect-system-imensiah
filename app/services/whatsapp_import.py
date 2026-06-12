@@ -26,6 +26,8 @@ class WhatsAppImportService:
     PATTERNS = [
         # iOS: [DD/MM/YYYY, HH:MM:SS] Nome: Mensagem
         re.compile(r'^\[(\d{2}/\d{2}/\d{4}), (\d{2}:\d{2}:\d{2})\] ([^:]+): (.+)$'),
+        # iOS year-2: [DD/MM/YY, HH:MM:SS] Nome: Mensagem
+        re.compile(r'^‎?\[(\d{2}/\d{2}/\d{2}), (\d{2}:\d{2}:\d{2})\] ([^:]+): (.+)$'),
         # Android: DD/MM/YYYY HH:MM - Nome: Mensagem
         re.compile(r'^(\d{2}/\d{2}/\d{4}) (\d{2}:\d{2}) - ([^:]+): (.+)$'),
         # Android alt: DD/MM/YY, HH:MM - Nome: Mensagem
@@ -68,6 +70,7 @@ class WhatsAppImportService:
         formats = [
             ('%d/%m/%Y', '%H:%M:%S'),
             ('%d/%m/%Y', '%H:%M'),
+            ('%d/%m/%y', '%H:%M:%S'),
             ('%d/%m/%y', '%H:%M'),
             ('%m/%d/%Y', '%H:%M:%S'),
             ('%m/%d/%Y', '%H:%M'),
