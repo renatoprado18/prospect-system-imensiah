@@ -26097,10 +26097,46 @@ async def cron_monitor_cron_health(request: Request):
                 "last_fired": last.isoformat(),
             })
 
-    # Dispara WA se tem alerta. Mensagem compacta — Renato so precisa do sinal.
+    # Dispara WA so pra alertas NOVOS — dedup 24h por job_id.
+    # Sem isso, este cron (1x/h) repete o mesmo aviso 24x/dia mesmo quando
+    # nada mudou. Politica feedback_notifications: 'so notificar quando
+    # precisa acao manual'. Acao = corrigir cron. Acao 1x/dia, nao 24.
+    new_alerts = []
     if alerts:
+        try:
+            from database import get_db
+            with get_db() as conn:
+                cursor = conn.cursor()
+                # Pega job_ids ja alertados nas ultimas 24h via result_json
+                cursor.execute(
+                    """
+                    SELECT result_json
+                    FROM cron_runs
+                    WHERE path = '/api/cron/monitor-cron-health'
+                      AND started_at > NOW() - INTERVAL '24 hours'
+                      AND status = 'success'
+                      AND result_json IS NOT NULL
+                      AND result_json::text ILIKE '%notified_jobs%'
+                    """
+                )
+                recent_runs = cursor.fetchall()
+            # Junta todos os notified_jobs ja vistos
+            already_notified = set()
+            for r in recent_runs:
+                rj = r["result_json"] if isinstance(r["result_json"], dict) else {}
+                for jid in (rj.get("notified_jobs") or []):
+                    already_notified.add(jid)
+            new_alerts = [a for a in alerts if a["job_id"] not in already_notified]
+        except Exception as e:
+            logging.warning(f"monitor-cron-health: dedup query failed: {e}")
+            # Em caso de falha do dedup, default conservador: NAO manda
+            # (evitar repetir 24x). User pode olhar dashboard pra ver estado.
+            new_alerts = []
+
+    notified_jobs: list[str] = []
+    if new_alerts:
         lines = ["[INTEL] Cron health alert:"]
-        for a in alerts:
+        for a in new_alerts:
             if a["reason"] == "never_fired":
                 lines.append(f"- {a['job_id']}: nunca disparou (esperado {a['expected_interval_min']}min)")
             else:
@@ -26108,6 +26144,7 @@ async def cron_monitor_cron_health(request: Request):
                     f"- {a['job_id']}: gap {a['gap_min']:.0f}min "
                     f"(esperado <{a['expected_interval_min']*2}min)"
                 )
+            notified_jobs.append(a["job_id"])
         msg = "\n".join(lines)[:900]
         try:
             await send_intel_notification(msg)
@@ -26117,6 +26154,8 @@ async def cron_monitor_cron_health(request: Request):
     return {
         "ok": len(alerts) == 0,
         "alerts": alerts,
+        "new_alerts": new_alerts,
+        "notified_jobs": notified_jobs,
         "jobs": jobs_status,
         "checked_at": now.isoformat(),
     }
