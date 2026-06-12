@@ -25574,16 +25574,45 @@ async def cron_daily_morning_briefing(request: Request):
                 "proposals_count": proposals_count,
                 "agent_actions_24h": (agent_summary.get('total', 0) if agent_summary else 0),
             }
+
+            # Pre-check: cycle ja existe pra hoje? Conta items.
+            from database import get_db
+            with get_db() as _conn:
+                _cur = _conn.cursor()
+                _cur.execute(
+                    "SELECT COUNT(*) AS n FROM cos_briefing_items WHERE cycle_id = %s",
+                    (cycle_id,),
+                )
+                _existing = _cur.fetchone()["n"] or 0
+
+            if _existing == 0:
+                # Investigator ainda nao rodou hoje (atraso GH Actions). Dispara
+                # inline pra briefing nao consumir items velhos do dia anterior.
+                # +60-90s latencia, mas garante coerencia. 12/06: briefing rodou
+                # 3h atrasado E ANTES do investigator -> items velhos -> #484
+                # marcado DRIFT mesmo BLOCKED ontem.
+                logging.info(f"morning-briefing: cycle {cycle_id} vazio — disparando investigator inline")
+                try:
+                    from services.cos_investigator import run_investigator_cycle
+                    inline_result = await run_investigator_cycle()
+                    cos_mode_detail = f"inline_investigator:{inline_result.get('items_created', {}).get('total', 0)}"
+                except Exception as _inv_e:
+                    logging.warning(f"morning-briefing: inline investigator falhou: {_inv_e}")
+                    cos_mode_detail = f"inline_investigator_failed:{type(_inv_e).__name__}"
+
             cos_text = compose_briefing_from_items(cycle_id, dados_meta)
 
             if cos_text:
                 n_reported = mark_items_reported(cycle_id)
-                cos_mode_detail = f"items_consumed:{n_reported}"
+                # Se ja tinha detail (inline_investigator), append o consumed
+                if cos_mode_detail and cos_mode_detail.startswith("inline_investigator"):
+                    cos_mode_detail = f"{cos_mode_detail}|items_consumed:{n_reported}"
+                else:
+                    cos_mode_detail = f"items_consumed:{n_reported}"
             else:
-                # Cycle vazio — investigator nao rodou OU nao produziu items
-                cos_mode_detail = "no_items_in_cycle"
+                cos_mode_detail = cos_mode_detail or "no_items_in_cycle"
                 logging.warning(
-                    f"morning-briefing: cycle {cycle_id} sem items — investigator pode ter falhado. "
+                    f"morning-briefing: cycle {cycle_id} sem items pos inline trigger. "
                     f"Caindo pro template estatico."
                 )
         except Exception as _e:
