@@ -791,12 +791,13 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
                 return {"processed": False, "reason": "phantom_rate_limit", "phone": phone}
 
             # Cria fantasma. pushName se disponivel; senao usa "Desconhecido +{phone}".
+            # circulo=5 = circulo mais distante (escala 1=intimo a 5=desconhecido).
             push_name = (data.get("data", {}).get("pushName") or "").strip()
             display_name = push_name if push_name else f"Desconhecido +{phone}"
             telefones_json = json.dumps([{"type": "mobile", "number": f"+{phone}", "whatsapp": True}])
             cursor.execute("""
                 INSERT INTO contacts (nome, telefones, origem, circulo, criado_em, atualizado_em)
-                VALUES (%s, %s::jsonb, 'wa_unknown', 'frio', NOW(), NOW())
+                VALUES (%s, %s::jsonb, 'wa_unknown', 5, NOW(), NOW())
                 RETURNING id
             """, (display_name, telefones_json))
             contact_id = cursor.fetchone()["id"]
