@@ -864,7 +864,56 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                 for r in cur.fetchall()
             ]
 
-            # RACI items criticos (tasks vencidas Vallen/Alba/conselho) — top 5
+            # RACI criticos pra Vallen/Alba/Despertar — fonte AUTORITATIVA eh
+            # ConselhoOS (DB separado). INTEL.tasks tinha dados stale e gerou
+            # proposta #714 falsa em 13/06.
+            # Pra projetos fora do ConselhoOS (Assespro/imensIAH/internas), usar
+            # INTEL.tasks como fallback (com label "INTEL — pode ter ruido").
+            ctx["raci_critical"] = []
+            ctx["tasks_overdue_intel"] = []
+
+            # 1. ConselhoOS — canonical pra clientes do conselho (Renato R ou A)
+            try:
+                import psycopg2 as _pg
+                cos_url = os.getenv("CONSELHOOS_DATABASE_URL", "").strip()
+                if cos_url:
+                    co_conn = _pg.connect(cos_url)
+                    co_cur = co_conn.cursor()
+                    co_cur.execute(
+                        """
+                        SELECT r.id::text AS id, r.acao, r.prazo,
+                               COALESCE(e.nome, 'sem empresa') AS empresa,
+                               r.responsavel_r, r.responsavel_a, r.status
+                        FROM raci_itens r
+                        LEFT JOIN empresas e ON e.id = r.empresa_id
+                        WHERE r.status IN ('pendente', 'atrasado', 'em_andamento')
+                          AND r.prazo IS NOT NULL
+                          AND r.prazo < CURRENT_DATE
+                          AND (
+                            r.responsavel_r ILIKE %s OR r.responsavel_a ILIKE %s
+                          )
+                        ORDER BY r.prazo ASC
+                        LIMIT 5
+                        """,
+                        ("%Renato%", "%Renato%"),
+                    )
+                    for row in co_cur.fetchall():
+                        ctx["raci_critical"].append({
+                            "raci_id": row[0],
+                            "acao": (row[1] or "")[:120],
+                            "vencimento": row[2].isoformat() if row[2] else None,
+                            "empresa": row[3],
+                            "responsavel_r": row[4],
+                            "responsavel_a": row[5],
+                            "status": row[6],
+                            "fonte": "ConselhoOS (canonical)",
+                        })
+                    co_conn.close()
+            except Exception as e:
+                logger.warning(f"cos_sensor: ConselhoOS RACI query falhou: {e}")
+
+            # 2. INTEL tasks — fallback pra projetos fora do ConselhoOS
+            #    (Assespro/imensIAH/internas)
             cur.execute(
                 """
                 SELECT t.id, t.titulo, t.data_vencimento, p.nome AS projeto
@@ -874,19 +923,19 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                   AND t.data_vencimento IS NOT NULL
                   AND t.data_vencimento < NOW()
                   AND (
-                    p.nome ILIKE '%Vallen%' OR p.nome ILIKE '%Alba%'
-                    OR p.nome ILIKE '%conselho%' OR p.nome ILIKE '%imensIAH%'
+                    p.nome ILIKE '%imensIAH%' OR p.nome ILIKE '%Assespro%'
                   )
                 ORDER BY t.data_vencimento ASC
                 LIMIT 5
                 """
             )
-            ctx["raci_critical"] = [
+            ctx["tasks_overdue_intel"] = [
                 {
                     "task_id": r["id"],
                     "titulo": (r["titulo"] or "")[:100],
                     "vencimento": r["data_vencimento"].isoformat() if r["data_vencimento"] else None,
                     "projeto": r["projeto"],
+                    "fonte": "INTEL.tasks (pode ter ruido — checar antes de propor)",
                 }
                 for r in cur.fetchall()
             ]
@@ -992,8 +1041,12 @@ Action proposals abertas (NAO DUPLIQUE — se ja existe proposta sobre o sinal, 
 Mensagens WA agendadas pendentes (NAO duplique):
 {scheduled_open_json}
 
-RACI critico vencido (Vallen/Alba/conselho/imensIAH):
+RACI critico vencido — ConselhoOS (Vallen/Alba/Despertar — fonte CANONICAL):
 {raci_critical_json}
+
+Tasks INTEL vencidas (imensIAH/Assespro — fallback, PODE TER RUIDO,
+checar contexto antes de propor):
+{tasks_overdue_intel_json}
 
 ==== PROCESSO DE DECISAO ====
 
@@ -1051,7 +1104,8 @@ def _build_system_prompt(cos_config: str, policy: Dict[str, str], context: Dict[
         events_upcoming_json=json.dumps(context.get("events_upcoming", []), default=str, ensure_ascii=False, indent=2)[:3000],
         proposals_open_json=json.dumps(context.get("proposals_open", []), default=str, ensure_ascii=False, indent=2)[:4000],
         scheduled_open_json=json.dumps(context.get("scheduled_open", []), default=str, ensure_ascii=False, indent=2)[:1500],
-        raci_critical_json=json.dumps(context.get("raci_critical", []), default=str, ensure_ascii=False, indent=2)[:1500],
+        raci_critical_json=json.dumps(context.get("raci_critical", []), default=str, ensure_ascii=False, indent=2)[:2000],
+        tasks_overdue_intel_json=json.dumps(context.get("tasks_overdue_intel", []), default=str, ensure_ascii=False, indent=2)[:1500],
     )
 
 
