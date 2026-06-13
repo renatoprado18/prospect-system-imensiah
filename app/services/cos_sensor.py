@@ -1277,7 +1277,7 @@ checar contexto antes de propor):
 - Contato revelou preferencia/fato novo -> update_contact_notes (Auto puro).
 - Compromisso futuro precisa lembrete -> schedule_wa_message com dedup_key (Auto puro).
 - Cliente cobrando draft de proposta -> send_wa_to_renato com proposed_action
-  {action: "send_email", params: {...}} e opcoes ["Aprovar e enviar", "Modificar", "Snooze"].
+  {{action: "send_email", params: {{...}}}} e opcoes ["Aprovar e enviar", "Modificar", "Snooze"].
 
 ==== RESTRICOES ====
 
