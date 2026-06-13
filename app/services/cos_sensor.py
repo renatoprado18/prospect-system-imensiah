@@ -1470,6 +1470,7 @@ class CoSSensorAgent:
 
 def tick_safe() -> Dict[str, Any]:
     """Wrapper que captura excecoes e grava em audit_log."""
+    import traceback
     try:
         from services.audit_log import log as audit_log
     except Exception:
@@ -1491,11 +1492,17 @@ def tick_safe() -> Dict[str, Any]:
             )
         return result
     except Exception as e:
+        tb = traceback.format_exc()
         logger.exception(f"cos_sensor.tick_safe crashed: {e}")
         if audit_log:
             audit_log(
                 "cos_sensor.tick_error",
                 actor="cos_sensor",
-                details={"error": str(e)},
+                details={"error": str(e), "type": type(e).__name__, "traceback": tb[:3000]},
             )
-        return {"status": "error", "error": str(e)}
+        return {
+            "status": "error",
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "traceback": tb.splitlines()[-15:],
+        }
