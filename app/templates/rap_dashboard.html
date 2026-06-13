@@ -3829,9 +3829,13 @@
                 ? `<span class="badge bg-secondary ms-2" title="${groupCount} propostas similares deste contato">+${groupCount - 1}</span>`
                 : '';
 
-            // Detecta texto de briefing — provavel falso positivo do loop
-            const looksLikeBriefing = BRIEFING_LOOP_RE.test(proposal.title || '') ||
-                                       BRIEFING_LOOP_RE.test(proposal.description || '');
+            // Detecta texto de briefing — provavel falso positivo do loop.
+            // Excluir propostas do CoS Sensor (sao analise real, nao loop briefing).
+            const isFromSensor = (proposal.ai_reasoning || '').toLowerCase().includes('sensor');
+            const looksLikeBriefing = !isFromSensor && (
+                BRIEFING_LOOP_RE.test(proposal.title || '') ||
+                BRIEFING_LOOP_RE.test(proposal.description || '')
+            );
             const warningHtml = looksLikeBriefing
                 ? `<div class="alert alert-warning py-1 px-2 mb-2" style="font-size: 0.75rem;">
                        <i class="bi bi-exclamation-triangle"></i>

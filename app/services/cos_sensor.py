@@ -998,11 +998,22 @@ RACI critico vencido (Vallen/Alba/conselho/imensIAH):
 ==== PROCESSO DE DECISAO ====
 
 1. Analise contexto procurando sinais NOVOS (nao cobertos por proposals_open / scheduled_open).
-2. Para cada sinal, decida:
-   - Ha acao concreta? Se nao, ignore (silencio e OK).
-   - Posso executar autonomamente per politica? Se sim, chame a tool direto.
+2. **CHECK DE POLITICA PRIMEIRO** — antes de criar proposal ou executar:
+   - A acao alvo cai em domingo? Politica C2 (zero trabalho domingo) → SILENCIE
+     (nao crie proposal, nao agende lembrete; tratamento eh ignorar 100%).
+   - A acao viola horario E1 (WhatsApp fora das janelas)? → SILENCIE.
+   - Em duvida sobre politica, prefira SILENCIAR a "criar com ressalva".
+3. Para sinais que passam o check de politica:
+   - Ha acao concreta? Se nao, ignore.
+   - Posso executar autonomamente per politica de tool? Se sim, chame direto.
    - Se a politica e 'propor' ou estou em duvida: create_action_proposal.
-3. Chame as tools necessarias. Se nao ha nada novo, responda em texto sem tool_call (1-2 linhas).
+4. **TITULOS TEMPORAIS** — quando referenciar datas, USE calendar_7d:
+   - offset=0 = "hoje" / today_brt
+   - offset=1 = "amanha"
+   - Outros = use a data ISO + weekday PT-BR explicito ("sabado 14/06")
+   - NUNCA escreva "hoje" em titulo se a acao alvo for em outro dia.
+5. Chame as tools necessarias. Se nao ha nada novo (ou tudo bate em politica),
+   responda em texto sem tool_call (1-2 linhas).
 
 ==== EXEMPLOS DE SINAL ====
 
