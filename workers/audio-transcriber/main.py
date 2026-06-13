@@ -1197,6 +1197,67 @@ def _load_history(phone: str, limit: int = 15) -> list:
         return []
 
 
+def _get_active_cos_proposal(phone: str, hours: int = 24) -> dict:
+    """Busca a ultima proposta CoS Patrol ainda 'aberta' pra esse phone.
+
+    "Aberta" = ja enviada via send_wa_to_renato dentro da janela X, e a ultima
+    troca user nao parece ja ter encerrado (heuristica: pega a mais recente
+    cos_patrol cuja timestamp > ultima resposta user a outra cos_patrol).
+
+    Retorna dict {id, content, proposed_action, options, urgency, age_hours}
+    ou {} se nao houver.
+    """
+    if not DATABASE_URL:
+        return {}
+    try:
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, content, tool_calls, created_at
+            FROM bot_conversations
+            WHERE phone = %s
+              AND role = 'assistant'
+              AND tool_calls IS NOT NULL
+              AND tool_calls->>'cos_patrol' = 'true'
+              AND created_at > NOW() - (%s || ' hours')::interval
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (phone, str(hours)),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return {}
+        tc = row.get("tool_calls") or {}
+        # tool_calls vem como dict (jsonb auto-parseado pelo psycopg)
+        if isinstance(tc, str):
+            try:
+                tc = json.loads(tc)
+            except Exception:
+                tc = {}
+        age_hours = None
+        try:
+            from datetime import datetime as _dt
+            now = _dt.now()
+            age_hours = round((now - row["created_at"]).total_seconds() / 3600, 1)
+        except Exception:
+            pass
+        return {
+            "id": row["id"],
+            "content": row["content"],
+            "proposed_action": tc.get("proposed_action") or {},
+            "options": tc.get("options") or [],
+            "urgency": tc.get("urgency"),
+            "contact_id": tc.get("contact_id"),
+            "context_link": tc.get("context_link"),
+            "age_hours": age_hours,
+        }
+    except Exception as e:
+        logger.warning(f"_get_active_cos_proposal failed: {e}")
+        return {}
+
+
 def _save_msg(phone: str, role: str, content: str):
     """Save message to conversation history."""
     if not content or not content.strip():
@@ -1330,10 +1391,49 @@ async def _run_bot(phone: str, message: str, message_id: str) -> str:
     now = _now_sp()
     snapshot = _build_snapshot_block()
 
+    # CoS Patrol: proposta pendente nas ultimas 24h? Injeta contexto pro bot
+    # interpretar a resposta do Renato como decisao sobre a proposta especifica.
+    cos_block = ""
+    try:
+        active = _get_active_cos_proposal(phone, hours=24)
+        if active:
+            opts_str = ", ".join(f'"{o.get("label", "")}"' for o in (active.get("options") or [])[:6])
+            proposed = active.get("proposed_action") or {}
+            proposed_str = json.dumps(proposed, ensure_ascii=False, indent=2)[:1500] if proposed else "(nenhuma)"
+            cos_block = f"""
+## CONTEXTO CRITICO — PROPOSTA CoS PATROL PENDENTE ({active.get('age_hours', '?')}h atras)
+
+Voce (CoS Patrol Agent, rodando 30/30min) mandou esta proposta pra Renato via WA ha {active.get('age_hours', '?')} horas:
+
+\"\"\"
+{active.get('content', '')[:1200]}
+\"\"\"
+
+**Opcoes que voce apresentou:** [{opts_str}]
+
+**proposed_action (executar se Renato aprovar):**
+```json
+{proposed_str}
+```
+
+**Interprete a mensagem ATUAL do Renato como POSSIVEL resposta a essa proposta:**
+
+- Se ele aprovou ("1", "ok", "pode", "manda", "aprovo", "sim", "vai"): EXECUTE proposed_action via tool apropriada (execute_intel/execute_conselhoos/manage_email/web_search conforme o caso). Confirme em 1 linha.
+- Se pediu pra modificar ("muda X", "troca", "reescreve assim"): rascunhe a versao nova e RE-MANDE pra ele aprovar (use trigger_cos_patrol pra gerar novo turno OU envie o draft direto perguntando "manda assim?").
+- Se descartou ("3", "ignora", "deixa", "nao", "depois"): apenas confirme em 1 linha. Nao execute.
+- Se a mensagem dele e ASSUNTO NOVO (nao relacionado): trate normal, ignore essa proposta — nao force o link.
+- Se ele perguntou sobre o assunto: responda contextualizadamente e mantenha aberta.
+
+NAO precisa repetir o conteudo da proposta. Voce JA mandou. Vai direto pra acao.
+
+"""
+    except Exception as _e:
+        logger.warning(f"_run_bot: cos_block build falhou: {_e}")
+
     system_prompt = f"""Voce e o INTEL Bot, assistente pessoal de Renato Almeida Prado (executivo, tecnologia e governanca).
 
 {snapshot}
-
+{cos_block}
 TABELAS INTEL (nomes reais, use EXATAMENTE estes nomes):
 - contacts: id, nome, empresa, cargo, circulo, health_score, telefones, emails, linkedin, ultimo_contato, resumo_ai
 - messages: id, conversation_id, contact_id, direcao ('incoming'/'outgoing'), conteudo, enviado_em

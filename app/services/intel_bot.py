@@ -1548,6 +1548,57 @@ async def _execute_tool(name: str, input_data: Dict) -> str:
 
 # ==================== CONVERSATION MEMORY ====================
 
+def _get_active_cos_proposal(phone: str, hours: int = 24) -> Optional[Dict]:
+    """Ultima proposta CoS Patrol enviada pra este phone nas ultimas N horas.
+
+    Usado em handle_bot_message pra orientar o bot conversacional a interpretar
+    a resposta como decisao sobre a proposta especifica. Retorna dict ou None.
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, content, tool_calls, created_at
+                FROM bot_conversations
+                WHERE phone = %s
+                  AND role = 'assistant'
+                  AND tool_calls IS NOT NULL
+                  AND tool_calls->>'cos_patrol' = 'true'
+                  AND created_at > NOW() - (%s || ' hours')::interval
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (phone, str(hours)),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            row = dict(row)
+            tc = row.get("tool_calls") or {}
+            if isinstance(tc, str):
+                try:
+                    tc = json.loads(tc)
+                except Exception:
+                    tc = {}
+            age_hours = None
+            try:
+                age_hours = round((datetime.now() - row["created_at"]).total_seconds() / 3600, 1)
+            except Exception:
+                pass
+            return {
+                "id": row["id"],
+                "content": row["content"],
+                "proposed_action": tc.get("proposed_action") or {},
+                "options": tc.get("options") or [],
+                "urgency": tc.get("urgency"),
+                "contact_id": tc.get("contact_id"),
+                "age_hours": age_hours,
+            }
+    except Exception as e:
+        logger.warning(f"_get_active_cos_proposal failed: {e}")
+        return None
+
+
 def _load_conversation_history(phone: str, limit: int = 20) -> List[Dict]:
     """Load recent conversation messages for this phone."""
     try:
@@ -2175,6 +2226,32 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
             + "Comandos comuns do user que disparam: 'destrava N' (mark_step ou retomar), 'esquece N' (cancel), 'ja fiz N' (mark_completed).\n"
         )
         system_prompt = system_prompt + intents_block
+
+    # 5c. CoS Patrol pending — se ha proposta enviada nas ultimas 24h sem
+    # resolucao, instrui o bot a interpretar a msg do user como resposta a ela.
+    try:
+        active_cos = _get_active_cos_proposal(phone, hours=24)
+    except Exception as e:
+        logger.warning(f"_get_active_cos_proposal failed: {e}")
+        active_cos = None
+    if active_cos:
+        opts = active_cos.get("options") or []
+        proposed = active_cos.get("proposed_action") or {}
+        opts_str = ", ".join(f'"{(o.get("label") or "")}"' for o in opts[:6])
+        proposed_str = json.dumps(proposed, ensure_ascii=False)[:1500] if proposed else "(nenhuma)"
+        cos_block = (
+            f"\n\n## CoS PATROL — PROPOSTA PENDENTE (ha ~{active_cos.get('age_hours','?')}h)\n\n"
+            f"Voce (CoS Patrol Agent) mandou pra Renato:\n\"\"\"\n"
+            f"{(active_cos.get('content','') or '')[:1200]}\n\"\"\"\n\n"
+            f"**Opcoes apresentadas:** [{opts_str}]\n"
+            f"**proposed_action:** {proposed_str}\n\n"
+            f"Interprete a mensagem ATUAL do Renato como possivel resposta:\n"
+            f"- Aprovou (\"1\", \"ok\", \"pode\", \"manda\", \"aprovo\", \"sim\"): EXECUTE proposed_action via execute_action.\n"
+            f"- Pediu pra modificar (\"muda X\", \"troca\"): rascunhe a versao nova e RE-MANDE pra ele aprovar.\n"
+            f"- Descartou (\"3\", \"ignora\", \"deixa\", \"nao\"): apenas confirme em 1 linha.\n"
+            f"- Assunto novo nao relacionado: ignore essa proposta.\n"
+        )
+        system_prompt = system_prompt + cos_block
 
     # 6. Call Claude with tool_use in a loop
     if not ANTHROPIC_API_KEY:
