@@ -570,7 +570,10 @@ BOT_TOOLS = [
             "- save_note: {project_id, titulo, conteudo}\n"
             "- save_memory: {contact_id, titulo, resumo, tipo?}\n"
             "- save_feedback: {conteudo, tipo? bug|melhoria|ideia}\n"
-            "- save_article: {project_id, url} — busca artigo, resume com IA, salva no projeto"
+            "- save_article: {project_id, url} — busca artigo, resume com IA, salva no projeto\n"
+            "- trigger_cos_patrol: dispara o CoS Patrol Agent (Sonnet 4.6) AGORA. "
+            "**Use quando Renato disser 'patrol', 'patrulha', 'cos agora', 'varre tudo' ou similar.** "
+            "Sem params. Resposta vem em mensagens separadas se houver acao."
         ),
         "input_schema": {
             "type": "object",
@@ -775,6 +778,28 @@ async def _execute_intel_action(action: str, params: dict) -> str:
                 return async_resp
             except Exception as e:
                 return f"Erro ao salvar artigo: {e}"
+
+        elif action == "trigger_cos_patrol":
+            # Dispara CoS Patrol Agent na hora via endpoint Vercel (que tem o Sonnet 4.6 + tools).
+            # Worker NAO executa tick_safe direto (codigo vive no Vercel, nao replicado aqui).
+            conn.close()
+            try:
+                intel_url = INTEL_API_URL or "https://intel.almeida-prado.com"
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    resp = await client.post(
+                        f"{intel_url}/api/cos/patrol/run",
+                        json={"secret": WORKER_SECRET, "triggered_by": "intel_bot.worker"},
+                    )
+                if resp.status_code == 200:
+                    j = resp.json()
+                    if j.get("status") == "aborted_budget":
+                        return f"CoS Patrol abortado por budget (${j.get('today_usd', 0):.3f} > cap diario). Aguarda reset 00h ou bump cap."
+                    if j.get("status") == "error":
+                        return f"CoS Patrol erro: {j.get('error', 'desconhecido')[:200]}"
+                    return f"CoS Patrol disparado. Tokens: {j.get('tokens', {})}. Se houver acao, voce recebe mensagens em instantes."
+                return f"CoS Patrol falhou: HTTP {resp.status_code} — {resp.text[:200]}"
+            except Exception as e:
+                return f"Erro disparando patrol: {e}"
 
         conn.close()
         return f"Acao desconhecida: {action}"

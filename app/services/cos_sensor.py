@@ -52,8 +52,13 @@ COS_SENSOR_MODEL = "claude-sonnet-4-6"
 MAX_ITERATIONS = 8
 MAX_TOKENS_PER_ITER = 3072
 
-# Budget cap diario duro: $0.50/dia
-COS_SENSOR_DAILY_CAP_USD = 0.50
+# Budget cap diario duro. Default $2.00 (subiu de $0.50 em 13/06/26 — Patrol Agent
+# usa send_wa_to_renato com payload maior pra propostas conversacionais).
+# Override via env var COS_SENSOR_DAILY_CAP_USD.
+try:
+    COS_SENSOR_DAILY_CAP_USD = float(os.getenv("COS_SENSOR_DAILY_CAP_USD", "2.00"))
+except (TypeError, ValueError):
+    COS_SENSOR_DAILY_CAP_USD = 2.00
 
 # Caminho da memoria de politica de autonomia (so existe em dev local do Renato)
 POLICY_MEMORY_PATH = Path.home() / ".claude/projects/-Users-rap-prospect-system/memory/feedback_cos_autonomy_policy.md"

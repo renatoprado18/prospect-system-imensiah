@@ -25325,19 +25325,35 @@ async def cron_cos_investigator(request: Request):
 
 @app.post("/api/cos/patrol/run")
 async def manual_cos_patrol_run(request: Request):
-    """Trigger manual do CoS Patrol Agent (autenticado por user, nao cron_secret).
+    """Trigger manual do CoS Patrol Agent.
 
-    Use pra disparar varredura imediata fora do schedule de 30min. Reusa tick_safe
-    que ja tem budget cap + idempotency.
+    Aceita duas formas de auth:
+    - User session (UI/admin)
+    - WORKER_SECRET no body (Railway bot worker chamando quando Renato manda "patrol")
+
+    Reusa tick_safe que ja tem budget cap + idempotency.
     """
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Nao autenticado")
+    worker_secret_env = (os.getenv("WORKER_SECRET", "intel-audio-2026") or "").strip()
+    triggered_by = None
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body_secret = (body.get("secret") or "").strip()
+
+    if body_secret and body_secret == worker_secret_env:
+        triggered_by = body.get("triggered_by") or "worker"
+    else:
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Nao autenticado")
+        triggered_by = user.get("email")
 
     from services.cos_sensor import tick_safe
     try:
         result = tick_safe()
-        return {"job": "cos-patrol-manual", "triggered_by": user.get("email"), **result}
+        return {"job": "cos-patrol-manual", "triggered_by": triggered_by, **result}
     except Exception as e:
         logging.exception("manual cos-patrol-run falhou")
         return {"job": "cos-patrol-manual", "status": "error", "error": str(e)}
