@@ -138,7 +138,7 @@
 - **Inbox unificado**: `/inbox`
 - **Smart Follow-Up**: detecta emails sem resposta, cria FUP automático → `smart_fup.py`
 - **Action Proposals**: dedup por contato+tipo, auto-resolve on reply, expire >7d
-- **Operational Alerts** (10/06/26): detector proativo em cima do cron `classify-messages`. Trigger P1 (operational_risk) detecta menção a cirurgia/internação/afastamento/atestado/luto/demissão de funcionária-chave (Vallen: Veridiana, Katia, Natália, Lara, Thalita) em janela de 80 chars + nome próprio + empresa monitorada. Emite `action_proposal` urgency=high "Alerta operacional [empresa]: [pessoa] ([risco])" via WhatsApp imediato. Service: `app/services/operational_alerts.py`. Wire: `services/message_classifier.classify_pending_batch`. Triggers P2 (recruitment), P3 (kpi discrepancy), P4 (stuck raci) pendentes — ver `docs/COS_DILIGENCIA_NEXT.md`.
+- **CoS Sensor Agent** (11/06/26, substitui Operational Alerts): agent autônomo Sonnet 4.6 que tica 30/30min via Railway scheduler. Lê msgs WA 60min + grupos + calendar 24h + RACI crítico + proposals abertas; decide ações via 5 tools (create_action_proposal, draft_email, update_contact_notes, add_calendar_event, schedule_wa_message) respeitando política de autonomia (`feedback_cos_autonomy_policy.md`). Custo ~$0.06/tick, hard cap $0.50/dia. Service: `app/services/cos_sensor.py`. Endpoint: `/api/cron/cos-sensor-tick`. Cobertura validada 48h: 9 proposals (Sensor) vs 1 (detector rule-based velho), FP rate 11%, ações autônomas em capital relacional + RACI atrasado + violação de política E1. Deprecou `operational_alerts.py` (movido pra `app/services/_deprecated/`) em 13/06/26 após observação paralela.
 
 ## 13. Calendário (`/calendario`)
 - Sync Google Calendar bidirecional

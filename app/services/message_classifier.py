@@ -285,20 +285,16 @@ async def classify(
 async def classify_pending_batch(limit: int = 500, days: int = 7) -> dict:
     """Classifica mensagens incoming ainda nao classificadas (rule -> LLM).
 
-    Em cima da classificacao binaria, roda detectores de alertas operacionais
-    (services.operational_alerts) — emite action_proposals quando detecta
-    sinais criticos (P1: cirurgia/afastamento de funcionaria-chave).
-
-    Usado pelo cron hourly /api/cron/classify-messages e tambem por
-    step_classify_messages dentro do daily-sync (limit menor la).
+    Deteccao de alertas operacionais (cirurgia funcionaria-chave, etc) foi
+    migrada do operational_alerts.py rule-based pro CoS Sensor Agent
+    (services.cos_sensor) em 13/06/26 — 48h observacao confirmaram cobertura
+    superior (9 proposals Sensor vs 1 detector velho + FP rate 11%).
     """
     processed = {
         "rule": 0,
         "llm": 0,
         "errors": 0,
         "skipped": 0,
-        "alerts_created": 0,
-        "alerts_errors": 0,
     }
     try:
         with get_db() as conn:
@@ -340,26 +336,6 @@ async def classify_pending_batch(limit: int = 500, days: int = 7) -> dict:
             except Exception as e:
                 processed["errors"] += 1
                 logger.warning(f"classify msg={row['id']} err: {e}")
-
-            # Operational alerts — independente do resultado da classificacao.
-            # Mensagens cruciais (ex: cirurgia funcionaria-chave) podem nao
-            # ter "?" e nao serem rotuladas como requires_reply, mas ainda
-            # exigem acao proativa do CoS.
-            try:
-                from services.operational_alerts import process_message as _op_process
-                if _op_process(
-                    message_id=row["id"],
-                    contact_id=row["contact_id"],
-                    message_content=row.get("conteudo") or "",
-                    contact_company=row.get("sender_company"),
-                    contact_name=row.get("sender_name"),
-                ):
-                    processed["alerts_created"] += 1
-            except Exception as e:
-                processed["alerts_errors"] += 1
-                logger.warning(
-                    f"operational_alerts msg={row['id']} err: {e}"
-                )
     except Exception as e:
         logger.error(f"classify_pending_batch fatal: {e}")
     return processed
