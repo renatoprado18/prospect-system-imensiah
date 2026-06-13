@@ -465,9 +465,9 @@ def _tool_send_wa_to_renato(
     turno reconheca contexto e atue na resposta do Renato.
     """
     try:
-        import asyncio
+        import httpx
         from services.audit_log import log as audit_log
-        from services.intel_bot import send_intel_notification, RENATO_PHONE
+        from services.intel_bot import RENATO_PHONE, INTEL_BOT_INSTANCE
 
         # Formata mensagem com opcoes numeradas (Renato responde "1" / "ok" / audio).
         lines = [f"🤖 *CoS Patrol*"]
@@ -488,21 +488,34 @@ def _tool_send_wa_to_renato(
 
         text = "\n".join(lines)[:3500]
 
-        async def _run() -> bool:
-            return await send_intel_notification(text, phone=RENATO_PHONE)
+        # Envia via Evolution sync (chamado de tool sync dentro de tick sync —
+        # asyncio.run_coroutine_threadsafe na mesma thread deadlocka, e
+        # asyncio.run dentro do loop FastAPI falha. Sync HTTPx evita o pacto).
+        evo_url = (os.getenv("EVOLUTION_API_URL", "") or "").strip()
+        evo_key = (os.getenv("EVOLUTION_API_KEY", "") or "").strip()
+        if not evo_url or not evo_key:
+            return {"success": False, "error": "Evolution API nao configurada", "audit_log_id": None}
 
+        instance = (INTEL_BOT_INSTANCE or "intel-bot").strip()
         try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            fut = asyncio.run_coroutine_threadsafe(_run(), loop)
-            ok = fut.result(timeout=30)
-        else:
-            ok = asyncio.run(_run())
-
-        if not ok:
-            return {"success": False, "error": "send_intel_notification falhou", "audit_log_id": None}
+            with httpx.Client(timeout=20.0) as client:
+                resp = client.post(
+                    f"{evo_url}/message/sendText/{instance}",
+                    headers={"apikey": evo_key, "Content-Type": "application/json"},
+                    json={"number": RENATO_PHONE, "text": text},
+                )
+            if resp.status_code >= 400:
+                return {
+                    "success": False,
+                    "error": f"Evolution HTTP {resp.status_code}: {resp.text[:200]}",
+                    "audit_log_id": None,
+                }
+        except Exception as send_err:
+            return {
+                "success": False,
+                "error": f"Evolution send falhou: {send_err}",
+                "audit_log_id": None,
+            }
 
         # Salva turn no historico do bot pro fluxo conversacional pegar contexto.
         cos_metadata = {
