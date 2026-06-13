@@ -30,6 +30,65 @@ _BRIEFING_LOOP_REGEX = re.compile(
 )
 
 
+# Padroes que indicam broadcast/forward (devocional, corrente). Auditoria 13/06:
+# #705 (Ana Sylvia) e #748 (Heloisa) eram devocional PAO DA PALAVRA reenviado pra
+# muitos contatos — ZERO necessidade de responder.
+_BROADCAST_REGEX = re.compile(
+    r'('
+    r'\*?\s*p[ãa]o\s+da\s+palavra\s*\*?|'             # devocional título
+    r'medita[çc][ãa]o\s+da\s+palavra\s+de\s+deus|'    # devocional subtítulo
+    r'ir\.\s*maria\s+raquel|'                          # autora frequente
+    r'reflex[ãa]o\s+do\s+dia|'                         # devocional generico
+    r'mensagem\s+de\s+f[ée]'                           # corrente religiosa
+    r')',
+    re.IGNORECASE
+)
+
+# Small talk sem pergunta acionavel. Aplica so se mensagem <80 chars e sem '?'.
+_SMALL_TALK_REGEX = re.compile(
+    r'('
+    r'chovendo|fazendo\s+frio|fazendo\s+calor|'
+    r'como\s+(vc|voc[êe])\s+est[áa]|'
+    r'manda\s+not[íi]cias|'
+    r'feliz\s+(ano|natal|p[áa]scoa|dia\s+das?\s+m[ãa]es?|dia\s+dos?\s+pais?)|'
+    r'tudo\s+bem\??\s*$|'
+    r'aparec[ae]\s+(l[áa]|aqui|na\s+sauna|no\s+ch[ãa]o|no\s+ch[uo]rrasco)|'
+    r'passa\s+em\s+casa|'
+    r'^bom\s+dia\s*[!.]*\s*$|^boa\s+noite\s*[!.]*\s*$|^boa\s+tarde\s*[!.]*\s*$|'
+    r'^\W*abra[çc]os?\s*\W*$|^\W*beijos?\s*\W*$'
+    r')',
+    re.IGNORECASE
+)
+
+_RESPONSE_LIKE_ACTIONS = {
+    'pending_response', 'follow_up_alert', 'urgent_alert',
+    'opportunity_alert', 'follow_up',
+}
+
+
+def _detect_noise(action_type: str, trigger_text: Optional[str]) -> Optional[str]:
+    """Retorna motivo de skip pra propostas response-like que sao lixo claro.
+
+    Aplica: broadcast religioso (devocional reenviado), small talk curto sem '?'.
+    Deixa de fora: pergunta real (>=80 chars OU contem '?'), pedidos de reuniao
+    (smart_message_processor ja filtra meeting passado/domingo/forward).
+    """
+    if action_type not in _RESPONSE_LIKE_ACTIONS:
+        return None
+    text = (trigger_text or '').strip()
+    if not text:
+        return None
+
+    if _BROADCAST_REGEX.search(text):
+        return "broadcast/devocional detectado"
+
+    if len(text) < 80 and '?' not in text:
+        if _SMALL_TALK_REGEX.search(text):
+            return "small talk sem pergunta acionavel"
+
+    return None
+
+
 class ActionProposalsService:
     """Gerencia propostas de acao para o usuario."""
 
@@ -109,6 +168,35 @@ class ActionProposalsService:
                         f"(contato {contact_id}, tipo {action_type}) — proposta nao criada"
                     )
                     return None
+
+            # NOISE FILTER: broadcast/devocional + small talk curto sem '?'.
+            # Aplica antes do dedup pra evitar cluster ocupado por proposta lixo.
+            noise_reason = _detect_noise(action_type, proposal_data.get('trigger_text'))
+            if noise_reason:
+                logger.info(
+                    f"create_proposal: skip {action_type} (contato {contact_id}) — {noise_reason}"
+                )
+                return None
+
+            # BLOCK RULES: usuario clicou "Ignorar e nao sugerir mais" em proposta similar.
+            # Match por (action_type, contact_id) ou (action_type, title_prefix).
+            title_prefix = (proposal_data.get('title') or '')[:60].strip()
+            cursor.execute("""
+                SELECT id, reason FROM proposal_block_rules
+                WHERE action_type = %s
+                  AND (
+                    (contact_id IS NOT NULL AND contact_id = %s)
+                    OR (title_prefix IS NOT NULL AND %s LIKE title_prefix || '%%')
+                  )
+                LIMIT 1
+            """, (action_type, contact_id, title_prefix))
+            blocked = cursor.fetchone()
+            if blocked:
+                logger.info(
+                    f"create_proposal: skip {action_type} (contato {contact_id}) — "
+                    f"block_rule #{blocked['id']} ({blocked['reason']})"
+                )
+                return None
 
             # DEDUP CROSS-CLUSTER: tipos relacionados pro mesmo contato em janela curta
             # viram ruido. Se ja existe alerta no cluster, skip a nova proposta.
@@ -501,29 +589,56 @@ class ActionProposalsService:
             self._audit("executed", proposal_id, {"option_chosen": option_chosen, "result": result})
             return self.get_proposal(proposal_id)
 
-    def dismiss_proposal(self, proposal_id: int) -> Optional[Dict]:
-        """Ignora uma proposta (mesmo que rejeitar mas sem conotacao negativa)"""
+    def dismiss_proposal(self, proposal_id: int, block: bool = False) -> Optional[Dict]:
+        """Ignora uma proposta.
+
+        Se block=True, registra regra em proposal_block_rules pra create_proposal
+        rejeitar novas propostas iguais (mesmo action_type+contact_id, ou mesmo
+        action_type+title_prefix quando nao ha contato). Why: usuario clicava
+        "Ignorar e nao sugerir mais" mas o briefing/sensor recriava igual.
+        """
         with get_db() as conn:
             cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, action_type, contact_id, title
+                FROM action_proposals
+                WHERE id = %s AND status = 'pending'
+            """, (proposal_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+
             cursor.execute("""
                 UPDATE action_proposals
                 SET status = 'rejected',
                     responded_at = NOW(),
-                    ai_reasoning = COALESCE(ai_reasoning, '') || ' | Ignorado pelo usuario'
-                WHERE id = %s AND status = 'pending'
-                RETURNING id
-            """, (proposal_id,))
+                    ai_reasoning = COALESCE(ai_reasoning, '') || %s
+                WHERE id = %s
+            """, (
+                ' | Ignorado pelo usuario' + (' (block)' if block else ''),
+                proposal_id,
+            ))
 
-            result = cursor.fetchone()
-            if not result:
-                return None
+            if block:
+                action_type = row['action_type']
+                contact_id = row['contact_id']
+                title_prefix = (row['title'] or '')[:60].strip() or None
+                cursor.execute("""
+                    INSERT INTO proposal_block_rules
+                        (action_type, contact_id, title_prefix, reason, source_proposal_id)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (
+                    action_type,
+                    contact_id,
+                    None if contact_id else title_prefix,
+                    'dismissed_and_block via UI',
+                    proposal_id,
+                ))
 
             conn.commit()
 
-            # Record feedback for learning (dismissed is different from rejected)
             self._record_feedback(proposal_id, 'dismissed')
-
-            self._audit("dismissed", proposal_id, {})
+            self._audit("dismissed", proposal_id, {"block": block})
             return self.get_proposal(proposal_id)
 
     def expire_old_proposals(self) -> int:
@@ -541,6 +656,59 @@ class ActionProposalsService:
             """)
             count = cursor.rowcount
             conn.commit()
+            return count + self.expire_obsolete_event_proposals()
+
+    def expire_obsolete_event_proposals(self) -> int:
+        """Dismiss propostas pending cujo evento referenciado (data no titulo/desc) ja passou.
+
+        Why: #733/#734/#715 pra call Orioli 12/06 continuaram pending no dashboard apos
+        a call. Heuristica: extrai DD/MM(YYYY) e ano default = ano atual; se data < hoje,
+        dismissa com motivo "evento ja passou".
+        """
+        today = datetime.now().date()
+        date_re = re.compile(r'(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?')
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, title, description
+                FROM action_proposals
+                WHERE status = 'pending'
+                  AND action_type IN ('create_meeting','meeting_request','follow_up',
+                                      'review_decision','reschedule_event','cancel_event')
+            """)
+            rows = cursor.fetchall()
+            obsolete_ids = []
+            for r in rows:
+                text = ((r['title'] or '') + ' ' + (r['description'] or ''))[:600]
+                for m in date_re.finditer(text):
+                    d = int(m.group(1))
+                    mo = int(m.group(2))
+                    yr_raw = m.group(3)
+                    if yr_raw:
+                        yr = int(yr_raw)
+                        if yr < 100:
+                            yr += 2000
+                    else:
+                        yr = today.year
+                    try:
+                        evt = datetime(yr, mo, d).date()
+                    except ValueError:
+                        continue
+                    if evt < today:
+                        obsolete_ids.append(r['id'])
+                        break
+            if not obsolete_ids:
+                return 0
+            cursor.execute("""
+                UPDATE action_proposals
+                SET status='rejected',
+                    responded_at=NOW(),
+                    ai_reasoning = COALESCE(ai_reasoning,'') || ' | Auto-expire: evento referenciado ja passou'
+                WHERE id = ANY(%s) AND status='pending'
+            """, (obsolete_ids,))
+            count = cursor.rowcount
+            conn.commit()
+            logger.info(f"expire_obsolete_event_proposals: dismissed {count} ({obsolete_ids})")
             return count
 
     def dismiss_stale_on_reply(self, contact_id: int, reply_time: datetime = None) -> int:

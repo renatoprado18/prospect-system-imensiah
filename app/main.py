@@ -16099,8 +16099,8 @@ async def execute_action_proposal(
 
 
 @app.post("/api/action-proposals/{proposal_id}/dismiss")
-async def dismiss_action_proposal(request: Request, proposal_id: int):
-    """Ignora uma proposta"""
+async def dismiss_action_proposal(request: Request, proposal_id: int, block: bool = False):
+    """Ignora uma proposta. Se block=true, regista regra pra nao re-sugerir mesmo tipo+contato."""
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Nao autenticado")
@@ -16108,11 +16108,11 @@ async def dismiss_action_proposal(request: Request, proposal_id: int):
     from services.action_proposals import get_action_proposals
     service = get_action_proposals()
 
-    result = service.dismiss_proposal(proposal_id)
+    result = service.dismiss_proposal(proposal_id, block=block)
     if not result:
         raise HTTPException(status_code=404, detail="Proposta nao encontrada ou ja processada")
 
-    return {"success": True, "proposal": result}
+    return {"success": True, "proposal": result, "blocked": block}
 
 
 @app.post("/api/action-proposals/{proposal_id}/reject")
