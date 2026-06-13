@@ -6099,7 +6099,14 @@ async def list_contacts(
 
     # Special filters
     if filter == 'needs_attention':
-        query += " AND COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL"
+        # Exclui owner (Renato) — auditoria 13/06 mostrou que owner aparecia na lista
+        # por ter tasks vencidas vinculadas a si mesmo (RACI proprio).
+        query += (
+            " AND COALESCE(circulo, 5) <= 3"
+            " AND COALESCE(health_score, 50) < 50"
+            " AND ultimo_contato IS NOT NULL"
+            " AND id NOT IN (SELECT contact_id FROM users WHERE contact_id IS NOT NULL)"
+        )
 
     # Filter by first letter of name
     if letter and len(letter) == 1:
@@ -6129,7 +6136,12 @@ async def list_contacts(
     count_query = "SELECT COUNT(*) as count FROM contacts WHERE 1=1"
     count_params = []
     if filter == 'needs_attention':
-        count_query += " AND COALESCE(circulo, 5) <= 3 AND COALESCE(health_score, 50) < 50 AND ultimo_contato IS NOT NULL"
+        count_query += (
+            " AND COALESCE(circulo, 5) <= 3"
+            " AND COALESCE(health_score, 50) < 50"
+            " AND ultimo_contato IS NOT NULL"
+            " AND id NOT IN (SELECT contact_id FROM users WHERE contact_id IS NOT NULL)"
+        )
     if letter and len(letter) == 1:
         count_query += " AND UPPER(LEFT(nome, 1)) = %s"
         count_params.append(letter.upper())
