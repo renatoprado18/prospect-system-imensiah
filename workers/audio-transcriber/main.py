@@ -145,6 +145,14 @@ _SCHEDULER_JOBS = [
     # pra nao mudar comportamento do usuario.
     ("daily-morning-briefing", "/api/cron/daily-morning-briefing", CronTrigger(hour=11, minute=7)),
     ("daily-evening-debriefing", "/api/cron/daily-evening-debriefing", CronTrigger(hour=22, minute=0)),
+    # 13/06/2026: migrados de GH Actions apos frustracao com unreliability
+    # (top-of-hour drift + Vercel Hobby cron limit). Railway scheduler in-process
+    # = 100% reliable, custo $0 adicional (worker ja roda 24/7).
+    ("process-scheduled-actions", "/api/cron/process-scheduled-actions", CronTrigger(minute="*/5")),
+    ("hetzner-evolution-health", "/api/cron/hetzner-evolution-health", CronTrigger(minute="*/10")),
+    ("sync-gmail-outbound", "/api/cron/sync-gmail-outbound", CronTrigger(minute="12,42")),
+    ("email-triage-sweep", "/api/cron/email-triage-sweep", CronTrigger(minute="7,37")),
+    ("catchup", "/api/cron/catchup", CronTrigger(minute=30)),
 ]
 
 

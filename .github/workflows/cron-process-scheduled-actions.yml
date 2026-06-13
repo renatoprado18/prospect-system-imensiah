@@ -6,9 +6,12 @@ name: Cron — Process Scheduled Actions
 # 5min (granularity minima do GH Actions). Vercel Hobby deprioritiza/skipa crons
 # silenciosamente (ver memoria feedback_cron_host_choice.md), nao serve.
 
+# 13/06/2026: schedule MIGRADO pro Railway scheduler in-process
+# (worker audio-transcriber process-scheduled-actions */5min).
+# GH Actions atrasava top-of-hour 5-15min e dependia do endpoint Vercel.
+# Mantido pra workflow_dispatch (trigger manual fallback).
+
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:

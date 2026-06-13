@@ -13,9 +13,11 @@ name: Cron — Email Triage Sweep
 # falhas (caso CRON_SECRET 2026-05-02). GH Actions reporta erro
 # explicitamente.
 
+# 13/06/2026: schedule MIGRADO pro Railway scheduler in-process
+# (worker audio-transcriber email-triage-sweep minute=7,37).
+# Mantido pra workflow_dispatch (trigger manual + backfill).
+
 on:
-  schedule:
-    - cron: '7,37 * * * *'  # a cada 30min, off-peak
   workflow_dispatch:
     inputs:
       hours:

@@ -2,10 +2,12 @@ name: Cron — Hetzner Evolution Health
 
 # Verifica de 10 em 10 min se Hetzner Evolution responde + instancias open.
 # 2 falhas consecutivas -> WhatsApp alert (dedup diario).
+#
+# 13/06/2026: schedule MIGRADO pro Railway scheduler in-process (worker
+# audio-transcriber/main.py:_SCHEDULER_JOBS hetzner-evolution-health */10min).
+# Workflow mantido pra workflow_dispatch (trigger manual fallback).
 
 on:
-  schedule:
-    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:

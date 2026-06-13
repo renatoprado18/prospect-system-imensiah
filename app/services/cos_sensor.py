@@ -1480,6 +1480,14 @@ checar contexto antes de propor):
 
 ==== RESTRICOES ====
 
+- **SO FATOS NO RESUMO** — NUNCA especule sobre identidade, profissao, filhos,
+  doencas, contexto de vida de contato. Se nao esta em manual_notes/cargo/tags
+  ou no proprio texto da mensagem, NAO inventa. Caso real 13/06/26: Tonha disse
+  "cataporas das criancas da Emma" — Emma e massagista sem filhos, era cliente
+  dela. Se ambiguo, escreva so o fato ("Emma falou 'cataporas explodindo'") e
+  pergunte ao Renato em vez de hipotetizar. Padroes proibidos no summary:
+  "pode ser X", "vale checar — pode ser Y", "provavelmente refere-se a Z" sem
+  evidencia textual.
 - NAO envie emails ou WAs direto. Use draft_email ou schedule_wa_message.
 - NAO atualize cos_config, NAO delete dados.
 - NAO duplique proposals_open. Cheque 'titulo' e 'tipo' antes.

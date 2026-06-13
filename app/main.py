@@ -5594,6 +5594,7 @@ async def cron_hetzner_evolution_health(request: Request):
     }
 
 
+@app.get("/api/cron/catchup")
 @app.post("/api/cron/catchup")
 @track_cron_run
 async def cron_catchup(request: Request, background_tasks: BackgroundTasks):

@@ -5,9 +5,11 @@ name: Cron — Catch-up retry
 # /api/cron/catchup hourly (offset minuto 30 pra nao coincidir com crons no top
 # da hora) e o endpoint decide quais crons retentar com filtros (stuck/recent/daily).
 
+# 13/06/2026: schedule MIGRADO pro Railway scheduler in-process
+# (worker audio-transcriber catchup minute=30).
+# Mantido pra workflow_dispatch (trigger manual).
+
 on:
-  schedule:
-    - cron: '30 * * * *'  # minuto 30 de cada hora, UTC
   workflow_dispatch:
 
 jobs:

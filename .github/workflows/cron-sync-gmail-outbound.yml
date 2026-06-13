@@ -12,9 +12,11 @@ name: Cron — Sync Gmail Outbound
 # Vercel Hobby NAO permite cron sub-diario — vercel.json tem fallback daily
 # (0 5 * * *), GH Actions cobre a frequencia real.
 
+# 13/06/2026: schedule MIGRADO pro Railway scheduler in-process
+# (worker audio-transcriber sync-gmail-outbound minute=12,42).
+# Mantido pra workflow_dispatch (trigger manual).
+
 on:
-  schedule:
-    - cron: '12,42 * * * *'
   workflow_dispatch:
 
 jobs:
