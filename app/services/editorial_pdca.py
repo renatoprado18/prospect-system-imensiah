@@ -348,15 +348,22 @@ Responda APENAS com o JSON."""
         cursor = conn.cursor()
 
         def _dedup_or_insert(titulo: str, descricao: str, data_vencimento, prioridade: int, tags: list) -> None:
-            """Verifica se ja existe task pending identica nos ultimos 14d.
-            Se sim, log e skip. Se nao, INSERT."""
+            """Idempotencia 48h + auto-cancel da semana anterior antes de criar nova.
+
+            Bug auditoria 13/06: dedup com janela 14d nao impediu duplicatas semanais
+            (#495 31/05 + #498 07/06 — so 7d apart, ambas pending). Causa nao
+            confirmada (cron rodou 2x?), mas o efeito acumulava lixo no dashboard
+            toda semana. Novo approach: dedup curto (48h, mesma run do cron) +
+            cancela a anterior pending da semana passada antes de criar.
+            """
+            # 1. Idempotencia: mesma execucao do cron (re-run em <48h), nao recria
             cursor.execute(
                 """
                 SELECT id FROM tasks
                 WHERE status = 'pending'
                   AND project_id = %s
                   AND titulo = %s
-                  AND data_criacao > NOW() - INTERVAL '14 days'
+                  AND data_criacao > NOW() - INTERVAL '48 hours'
                 LIMIT 1
                 """,
                 (22, titulo),
@@ -364,10 +371,33 @@ Responda APENAS com o JSON."""
             existing = cursor.fetchone()
             if existing:
                 logger.info(
-                    f"dedup: task '{titulo}' ja existe pendente (id={existing['id']}), pulando criacao"
+                    f"dedup: task '{titulo}' criada ha <48h (id={existing['id']}), pulando re-criacao"
                 )
                 skipped_dedup.append({"id": existing["id"], "titulo": titulo})
                 return
+
+            # 2. Auto-cancel: tasks pending da semana anterior superadas pela nova
+            cursor.execute(
+                """
+                UPDATE tasks
+                SET status = 'cancelled',
+                    atualizado_em = NOW(),
+                    descricao = COALESCE(descricao, '') ||
+                        E'\n\n[CoS auto]: Cancelada pelo cron editorial_briefing — superada por task da semana atual.'
+                WHERE status = 'pending'
+                  AND project_id = %s
+                  AND titulo = %s
+                  AND data_criacao < NOW() - INTERVAL '3 days'
+                RETURNING id
+                """,
+                (22, titulo),
+            )
+            cancelled = [r['id'] for r in cursor.fetchall()]
+            if cancelled:
+                logger.info(
+                    f"editorial_briefing: cancelled stale {cancelled} pra criar nova '{titulo}'"
+                )
+
             cursor.execute(
                 """
                 INSERT INTO tasks (
