@@ -69,6 +69,12 @@
         font-size: 0.62rem; font-weight: 700;
         color: white;
         margin-top: 2px;
+        overflow: hidden;
+    }
+    .intel-chat-widget__msg-avatar img {
+        width: 100%; height: 100%;
+        object-fit: cover;
+        display: block;
     }
     .intel-chat-widget__msg.user .intel-chat-widget__msg-avatar { background: #6366f1; }
     .intel-chat-widget__msg.assistant .intel-chat-widget__msg-avatar { background: linear-gradient(135deg, #10b981, #059669); }
@@ -177,10 +183,12 @@
     function renderMessage(msg) {
         const role = msg.role || 'user';
         if (role === 'system') return '';
-        const initials = role === 'user' ? 'R' : 'IN';
+        const avatarContent = role === 'user'
+            ? 'R'
+            : '<img src="/static/img/tonha_avatar.png" alt="Tonha">';
         return `
             <div class="intel-chat-widget__msg ${role}">
-                <div class="intel-chat-widget__msg-avatar">${initials}</div>
+                <div class="intel-chat-widget__msg-avatar">${avatarContent}</div>
                 <div style="flex:1; min-width:0;">
                     <div class="intel-chat-widget__msg-body">${escapeHtmlLocal(msg.content || '')}</div>
                     <div class="intel-chat-widget__msg-time">${fmtTime(msg.created_at)}</div>
@@ -211,7 +219,7 @@
         div.className = 'intel-chat-widget__msg assistant';
         div.id = id;
         div.innerHTML = `
-            <div class="intel-chat-widget__msg-avatar">IN</div>
+            <div class="intel-chat-widget__msg-avatar"><img src="/static/img/tonha_avatar.png" alt="Tonha"></div>
             <div style="flex:1;">
                 <div class="intel-chat-widget__msg-body">
                     <div class="intel-chat-widget__loading"><span></span><span></span><span></span></div>

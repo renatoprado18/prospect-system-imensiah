@@ -95,7 +95,7 @@ def _format_transcript(rows: list) -> str:
     lines = []
     for r in rows:
         ts = r["created_at"].strftime("%H:%M") if r.get("created_at") else "??:??"
-        role = "Renato" if r["role"] == "user" else "INTEL"
+        role = "Renato" if r["role"] == "user" else "Tonha"
         content = (r["content"] or "").strip()
         if not content:
             continue
