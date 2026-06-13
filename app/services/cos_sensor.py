@@ -447,18 +447,28 @@ def _tool_add_calendar_event(
 
 
 def _tool_send_wa_to_renato(
-    title: str,
-    summary: str,
+    text: Optional[str] = None,
+    title: str = "",
+    summary: str = "",
     options: Optional[List[Dict[str, str]]] = None,
     urgency: str = "medium",
     context_link: Optional[str] = None,
     contact_id: Optional[int] = None,
     proposed_action: Optional[Dict[str, Any]] = None,
+    is_system_alert: bool = False,
 ) -> Dict[str, Any]:
     """Envia proposta conversacional ao Renato via intel-bot (0192 -> 3337).
 
     Why: dashboard cards viraram ruido. Patrol Agent (13/06/26) prefere esse
     canal — Renato responde texto/audio, o bot ja captura no fluxo principal.
+
+    Dois modos de rendering (13/06/26 — voz humanizada da Tonha):
+    - **natural** (preferido): agente passa `text` ja escrito na voz dela.
+      Manda como prosa, sem header "🤖 CoS Patrol", sem footer
+      "_Responda texto ou audio._", sem opcoes numeradas obrigatorias.
+    - **structured** (fallback / system alerts): old way — usa title +
+      summary + options. Mantem header. Usado quando `text` nao vem,
+      ou quando `is_system_alert=True` (cron health, erro de sistema).
 
     A mensagem entra em bot_conversations como role='assistant' com metadata
     {cos_proposal: {action, params}} pra que handle_bot_message no proximo
@@ -469,24 +479,47 @@ def _tool_send_wa_to_renato(
         from services.audit_log import log as audit_log
         from services.intel_bot import RENATO_PHONE, INTEL_BOT_INSTANCE
 
-        # Formata mensagem com opcoes numeradas (Renato responde "1" / "ok" / audio).
-        lines = [f"🤖 *CoS Patrol*"]
-        if urgency == "high":
-            lines[0] += " ⚠️"
-        lines.append("")
-        lines.append(f"*{title.strip()}*")
-        lines.append("")
-        lines.append(summary.strip())
+        # ===== Rendering =====
+        raw_text = (text or "").strip()
+        use_natural = bool(raw_text) and not is_system_alert
 
-        if options:
+        if use_natural:
+            # Modo natural: prosa direto da Tonha. Sem decoracao.
+            final_text = raw_text[:3500]
+            mode_label = "natural"
+        else:
+            # Modo structured: header + title + summary + opcoes.
+            # Reservado pra alertas de sistema OU quando a tool nao recebeu `text`.
+            lines: List[str] = []
+            if is_system_alert:
+                lines.append("⚠ *INTEL alerta*")
+            else:
+                lines.append("🤖 *CoS Patrol*")
+            if urgency == "high" and not is_system_alert:
+                lines[0] += " ⚠️"
             lines.append("")
-            for i, opt in enumerate(options, 1):
-                label = (opt.get("label") or "").strip()
-                lines.append(f"{i}. {label}")
-            lines.append("")
-            lines.append("_Responda texto ou áudio._")
+            if title:
+                lines.append(f"*{title.strip()}*")
+                lines.append("")
+            if summary:
+                lines.append(summary.strip())
+            elif raw_text:
+                # Tinha text mas caiu pro structured (system alert) — usa como summary.
+                lines.append(raw_text.strip())
 
-        text = "\n".join(lines)[:3500]
+            if options:
+                lines.append("")
+                for i, opt in enumerate(options, 1):
+                    label = (opt.get("label") or "").strip()
+                    lines.append(f"{i}. {label}")
+                lines.append("")
+                lines.append("_Responda texto ou áudio._")
+
+            final_text = "\n".join(lines)[:3500]
+            mode_label = "system_alert" if is_system_alert else "structured"
+
+        # Mantem nome historico `text` pro resto da funcao (envio + persistencia).
+        text = final_text
 
         # Envia via Evolution sync (chamado de tool sync dentro de tick sync —
         # asyncio.run_coroutine_threadsafe na mesma thread deadlocka, e
@@ -549,11 +582,13 @@ def _tool_send_wa_to_renato(
             entity_id=bot_msg_id,
             actor="cos_sensor",
             details={
-                "title": title,
+                "mode": mode_label,
+                "title": title or None,
                 "urgency": urgency,
                 "options_count": len(options or []),
                 "has_proposed_action": bool(proposed_action),
                 "contact_id": contact_id,
+                "chars": len(text),
             },
         )
         return {
@@ -737,25 +772,49 @@ SENSOR_TOOLS: List[Dict[str, Any]] = [
     {
         "name": "send_wa_to_renato",
         "description": (
-            "Manda proposta CONVERSACIONAL pra Renato via WA (0192 -> 3337). "
+            "Manda mensagem CONVERSACIONAL pra Renato via WA (0192 -> 3337). "
             "PREFIRA essa tool sobre create_action_proposal quando: detecta sinal "
             "que demanda decisao/aprovacao do Renato (responder, agendar, cobrar, "
             "investir tempo em X). Renato responde texto/audio na mesma thread WA "
             "— o bot conversacional captura e atua na resposta. "
-            "Modo SHADOW 13/06/26: essa e a saida padrao do Patrol. "
-            "POLITICA: sempre Auto (e mensagem, reversivel por outra mensagem)."
+            "\n\nDOIS MODOS de rendering:\n"
+            "- **PREFERIDO (natural):** passe `text` ja escrito na voz da Tonha. "
+            "Sai como prosa, sem header '🤖 CoS Patrol', sem opcoes 1/2/3 "
+            "obrigatorias, sem '_Responda texto ou audio._'. Use esse modo pra "
+            "qualquer comunicacao pessoa-pra-pessoa: aviso, sintese, pergunta, "
+            "rascunho pra aprovar. Aplica as regras da PERSONA/VOZ da Tonha "
+            "(calma, sem entusiasmo performatico, texto corrido, sem emoji "
+            "decorativo, lista numerada SO se decisao for discreta entre opcoes).\n"
+            "- **fallback (structured):** se voce realmente precisa de opcoes "
+            "numeradas explicitas pra Renato escolher por numero, passe "
+            "`title` + `summary` + `options`. Usa header '🤖 CoS Patrol' "
+            "padrao. Reservado pra decisoes binarias/A-B-C onde voce REALMENTE "
+            "quer a UI de opcoes.\n"
+            "- **system_alert:** marque `is_system_alert=true` pra cron health, "
+            "erro de servico, alerta tecnico. Sai com '⚠ INTEL alerta'.\n"
+            "\nPOLITICA: sempre Auto (e mensagem, reversivel por outra mensagem)."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "PREFERIDO. Texto inteiro da mensagem, ja escrito "
+                                   "na voz da Tonha (3-6 linhas tipicas; expanda so "
+                                   "se ajudar). Sem headers, sem opcoes numeradas "
+                                   "obrigatorias, sem rodape. Pode citar evidencia "
+                                   "(msg_id, evento_id) inline quando relevante.",
+                },
                 "title": {
                     "type": "string",
-                    "description": "Titulo curto da proposta (max 100ch).",
+                    "description": "Fallback structured. Titulo curto (max 100ch). "
+                                   "Use SO se passar `summary` + `options` no modo "
+                                   "structured. Vazio quando usar `text`.",
                 },
                 "summary": {
                     "type": "string",
-                    "description": "Contexto factual em 1-3 paragrafos. Cite evidencia "
-                                   "(msg_id, evento_id, task_id) pra rastreabilidade.",
+                    "description": "Fallback structured. Contexto factual em 1-3 "
+                                   "paragrafos. Vazio quando usar `text`.",
                 },
                 "options": {
                     "type": "array",
@@ -767,10 +826,18 @@ SENSOR_TOOLS: List[Dict[str, Any]] = [
                         },
                         "required": ["label"],
                     },
-                    "description": "Opcoes que o Renato pode escolher (ex: "
-                                   "[{label: 'Aprovar e enviar', action_hint: 'send_email:...'}, "
-                                   "{label: 'Modificar texto'}, {label: 'Ignorar'}]). "
-                                   "Max 4 opcoes. Renato pode responder por numero ou texto livre.",
+                    "description": "Opcoes numeradas explicitas (1/2/3) — use SO se "
+                                   "Renato realmente precisa escolher entre opcoes "
+                                   "discretas. Max 4. Se a melhor resposta e uma "
+                                   "pergunta aberta ou uma sintese, NAO use options "
+                                   "— use o modo `text` em prosa.",
+                },
+                "is_system_alert": {
+                    "type": "boolean",
+                    "description": "True pra alerta tecnico/cron/erro de sistema. "
+                                   "Forca rendering com '⚠ INTEL alerta' header. "
+                                   "Default false.",
+                    "default": False,
                 },
                 "urgency": {
                     "type": "string",
@@ -792,7 +859,8 @@ SENSOR_TOOLS: List[Dict[str, Any]] = [
                     "description": "Contato relacionado, se houver.",
                 },
             },
-            "required": ["title", "summary"],
+            # Um de: `text` OU (`title` + `summary`). Schema permissivo — defesa
+            # no _tool_send_wa_to_renato cobre os dois caminhos.
         },
     },
     {
@@ -889,13 +957,15 @@ def execute_sensor_tool(
         )
     if tool_name == "send_wa_to_renato":
         return _tool_send_wa_to_renato(
-            title=tool_input.get("title", "(sem titulo)"),
+            text=tool_input.get("text"),
+            title=tool_input.get("title", ""),
             summary=tool_input.get("summary", ""),
             options=tool_input.get("options"),
             urgency=tool_input.get("urgency", "medium"),
             context_link=tool_input.get("context_link"),
             contact_id=tool_input.get("contact_id"),
             proposed_action=tool_input.get("proposed_action"),
+            is_system_alert=bool(tool_input.get("is_system_alert", False)),
         )
 
     return {"success": False, "error": f"tool_desconhecida: {tool_name}", "audit_log_id": None}
@@ -1063,6 +1133,39 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                 }
                 for r in cur.fetchall()
             ]
+
+            # Pushes recentes da Tonha pro Renato (ultimas 6h) — dedup awareness.
+            # 13/06/26: agente nao via o que ja tinha mandado e duplicava (Vitor 35s,
+            # +5519 11min apart). Agora vai ver e decidir agregar/ignorar/atualizar.
+            cur.execute(
+                """
+                SELECT id, content, created_at, tool_calls
+                FROM bot_conversations
+                WHERE phone = %s
+                  AND role = 'assistant'
+                  AND created_at >= NOW() - INTERVAL '6 hours'
+                  AND (tool_calls::text ILIKE '%%cos_patrol%%' OR tool_calls::text ILIKE '%%cos_proposal%%')
+                ORDER BY created_at DESC
+                LIMIT 20
+                """,
+                ("5511984153337",),
+            )
+            ctx["recent_pushes"] = []
+            for r in cur.fetchall():
+                meta = r.get("tool_calls") or {}
+                # psycopg2 jsonb -> dict; defensivo se vier string
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except (TypeError, ValueError):
+                        meta = {}
+                ctx["recent_pushes"].append({
+                    "id": r["id"],
+                    "content": (r["content"] or "")[:300],
+                    "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                    "contact_id": meta.get("contact_id") if isinstance(meta, dict) else None,
+                    "context_link": meta.get("context_link") if isinstance(meta, dict) else None,
+                })
 
             # RACI criticos pra Vallen/Alba/Despertar — fonte AUTORITATIVA eh
             # ConselhoOS (DB separado). INTEL.tasks tinha dados stale e gerou
@@ -1241,6 +1344,12 @@ Action proposals abertas (NAO DUPLIQUE — se ja existe proposta sobre o sinal, 
 Mensagens WA agendadas pendentes (NAO duplique):
 {scheduled_open_json}
 
+Pushes que VOCE (Tonha) ja mandou pro Renato nas ultimas 6h — NAO REDIGA o mesmo
+push outra vez. Se o sinal ja foi avisado e nao ha mudanca substancial, SILENCIE.
+Se ha mudanca (msg nova do mesmo contato, info adicional), CONSOLIDE com o push
+anterior em vez de mandar push novo do zero:
+{recent_pushes_json}
+
 RACI critico vencido — ConselhoOS (Vallen/Alba/Despertar — fonte CANONICAL):
 {raci_critical_json}
 
@@ -1266,11 +1375,61 @@ checar contexto antes de propor):
      proposta similar em proposals_open e voce quer apenas atualizar/agrupar,
      OU (b) e contexto puramente operacional que NAO precisa decisao do Renato
      (ex: operational_risk pra time monitorar via outro canal).
-   - send_wa_to_renato deve sempre conter:
-     * title (resumo em 1 frase)
-     * summary (1-3 paragrafos com evidencia: msg_id, evento_id, task_id)
-     * options (max 4: ex "Aprovar e enviar" / "Modificar" / "Snooze 3d" / "Ignorar")
-     * proposed_action (JSON da acao concreta — bot conversacional executa se aprovado)
+
+   - **VOZ DA TONHA quando usar send_wa_to_renato**:
+     Voce e a Tonha — matriarca brasileira do interior, calma, presente, sem
+     pressa, sem entusiasmo performatico. Trata Renato por "voce". WhatsApp pede
+     economia: 3-6 linhas e o padrao. Expanda so se ha substancia real.
+
+     PROIBIDO em send_wa_to_renato:
+     - Emojis decorativos (✅ ❌ 🎯 🚀 🤖 banidos). Excecao: ⚠ pra system alert.
+     - "ANOTADO!", "Perfeito!", "Achei!", "Vou registrar!" — CRM transacional.
+     - Listas numeradas 1/2/3 como reflexo. Use SO se a decisao e genuinamente
+       discreta entre opcoes (ex: aceitar/recusar/pedir pauta). Se a melhor
+       resposta e uma pergunta aberta, faca pergunta. Se e aviso, escreva prosa.
+     - Header "🤖 CoS Patrol", footer "_Responda texto ou audio._" — Renato
+       sabe que pode responder, nao precisa lembrete. O `text` mode sai sem
+       header automaticamente.
+     - Negrito como decoracao. Negrito raramente, so pra UMA palavra critica.
+
+   - **COMO USAR send_wa_to_renato — DOIS MODOS**:
+
+     PREFERIDO — `text` mode (prosa natural):
+       Passe o argumento `text` com a mensagem ja escrita na voz da Tonha.
+       Sai direto, sem template, sem header, sem opcoes obrigatorias.
+       Use sempre que possivel.
+
+       Exemplo BOM:
+         text: "Um numero novo (+55 19 99551-2595) pediu reuniao quinta as 9h
+                e mandou o email contato@fazendanovaalianca.com.br. Nao tenho
+                contexto sobre quem e nem sobre o que quer falar. Voce conhece
+                a Fazenda Nova Alianca, ou quer que eu peca pra ele se
+                identificar primeiro?"
+
+       Exemplo BOM (decisao discreta — usa opcoes mas em prosa):
+         text: "O Manoel mandou um audio agora ha pouco. Nao tenho transcricao
+                pra avaliar se e urgente. Te transcrevo e te resumo a noite,
+                ou voce prefere ouvir direto agora?"
+
+     fallback — `title + summary + options` (structured, header CoS Patrol):
+       Use SO quando voce REALMENTE precisa de opcoes numeradas explicitas pra
+       Renato responder por numero (ex: decisao binaria de aceitar/recusar
+       reuniao agendada). Maioria dos casos NAO precisa disso — prefira `text`.
+
+     system_alert — passe `is_system_alert=true`:
+       Reservado pra alerta tecnico (cron falhou, erro de servico). Sai com
+       header "⚠ INTEL alerta". Nao use pra comunicacao com Renato sobre
+       contatos/projetos — isso e conversa, vai em `text` mode.
+
+   - **CONSOLIDACAO**: se voce identifica 2-3 sinais novos pra avisar o Renato
+     no mesmo tick, NAO mande 3 pushes separados. Junte em UMA mensagem em
+     prosa, citando cada um: "tres coisas no fim da tarde: ...". Push em
+     rajada e o que mais irrita ele (regra dele).
+
+   - **DEDUP**: antes de chamar send_wa_to_renato, VEJA recent_pushes acima.
+     Se o sinal ja foi avisado e nao houve mudanca substancial, SILENCIE.
+     Se houve mudanca (nova msg, info adicional), ainda assim NAO mande push
+     novo: deixa pra ele responder o anterior, OU consolide na proxima rajada.
 4. **TITULOS TEMPORAIS** — quando referenciar datas, USE calendar_7d:
    - offset=0 = "hoje" / today_brt
    - offset=1 = "amanha"
@@ -1320,6 +1479,7 @@ def _build_system_prompt(cos_config: str, policy: Dict[str, str], context: Dict[
         events_upcoming_json=json.dumps(context.get("events_upcoming", []), default=str, ensure_ascii=False, indent=2)[:3000],
         proposals_open_json=json.dumps(context.get("proposals_open", []), default=str, ensure_ascii=False, indent=2)[:4000],
         scheduled_open_json=json.dumps(context.get("scheduled_open", []), default=str, ensure_ascii=False, indent=2)[:1500],
+        recent_pushes_json=json.dumps(context.get("recent_pushes", []), default=str, ensure_ascii=False, indent=2)[:3000],
         raci_critical_json=json.dumps(context.get("raci_critical", []), default=str, ensure_ascii=False, indent=2)[:2000],
         tasks_overdue_intel_json=json.dumps(context.get("tasks_overdue_intel", []), default=str, ensure_ascii=False, indent=2)[:1500],
     )
