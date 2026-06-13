@@ -129,6 +129,29 @@ class ActionProposalsService:
                 )
                 return None
 
+        # Retry deadlock: cron CoS sensor + manual trigger via WA podem rodar em
+        # paralelo. Observado 13/06: "deadlock detected, RowShareLock vs ShareLock".
+        # Postgres SQLSTATE 40P01. Retry 2x com backoff curto resolve > 95% dos casos.
+        import time as _time
+        for attempt in range(3):
+            try:
+                return self._create_proposal_inner(proposal_data)
+            except Exception as e:
+                sqlstate = getattr(getattr(e, "diag", None), "sqlstate", None) or ""
+                msg = str(e)
+                is_deadlock = sqlstate == "40P01" or "deadlock detected" in msg.lower()
+                if is_deadlock and attempt < 2:
+                    backoff_ms = 50 * (attempt + 1)
+                    logger.warning(
+                        f"create_proposal: deadlock attempt={attempt+1}, "
+                        f"retrying em {backoff_ms}ms ({sqlstate})"
+                    )
+                    _time.sleep(backoff_ms / 1000.0)
+                    continue
+                raise
+
+    def _create_proposal_inner(self, proposal_data: Dict) -> Optional[Dict]:
+        """Implementacao real do create_proposal — separada pra envelopar com retry deadlock."""
         with get_db() as conn:
             cursor = conn.cursor()
 
