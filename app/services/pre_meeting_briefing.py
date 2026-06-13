@@ -53,11 +53,22 @@ async def check_upcoming_meetings() -> Dict:
         skip_patterns = ['gym', 'treino', 'judô', 'judo', 'tênis', 'tennis',
                          'almoço', 'almoco', 'café', 'cafe', 'banho', 'cama',
                          'dormir', 'pessoal', 'flex', 'deslocamento',
-                         '[tarefa]', '[task]', 'rodízio prado', 'rodizio prado']
+                         '[tarefa]', '[task]', 'rodízio prado', 'rodizio prado',
+                         # 13/06/26: aniversarios entravam como "Reunião em 1h:
+                         # Aniversário do Vitor 🕐 00:00". Aniversario tem fluxo
+                         # proprio no cos_sensor — aqui so pulamos.
+                         'aniversário', 'aniversario', 'birthday', 'bday',
+                         'cumpleaños', 'cumpleanos']
 
         for meeting in meetings:
             summary = (meeting['summary'] or '').lower()
             if any(p in summary for p in skip_patterns):
+                continue
+
+            # Defesa adicional: eventos all-day nunca sao "reuniao em 1h".
+            # Cobre casos onde o summary nao bate em padrao mas o evento
+            # e all-day (start 00:00:00 spanning 24h+).
+            if meeting.get('all_day'):
                 continue
 
             # Check if briefing already sent (avoid duplicates)
