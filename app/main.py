@@ -25323,6 +25323,26 @@ async def cron_cos_investigator(request: Request):
 # Stage 2 do roadmap CoS inteligente — substituira detectors rule-based
 # (operational_alerts.py) em Stage 4 depois de 1-2 dias de paralelo.
 
+@app.post("/api/cos/patrol/run")
+async def manual_cos_patrol_run(request: Request):
+    """Trigger manual do CoS Patrol Agent (autenticado por user, nao cron_secret).
+
+    Use pra disparar varredura imediata fora do schedule de 30min. Reusa tick_safe
+    que ja tem budget cap + idempotency.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.cos_sensor import tick_safe
+    try:
+        result = tick_safe()
+        return {"job": "cos-patrol-manual", "triggered_by": user.get("email"), **result}
+    except Exception as e:
+        logging.exception("manual cos-patrol-run falhou")
+        return {"job": "cos-patrol-manual", "status": "error", "error": str(e)}
+
+
 @app.get("/api/cron/cos-sensor-tick")
 @app.post("/api/cron/cos-sensor-tick")
 @track_cron_run

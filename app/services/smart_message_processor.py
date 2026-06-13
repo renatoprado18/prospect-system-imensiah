@@ -140,13 +140,14 @@ async def process_message_intelligence(
             )
             results.extend(meeting_results)
 
-        # 3. Detectar telefones
-        phones = extract_phones(content)
-        if phones:
-            phone_results = await handle_detected_phones(
-                phones, contact_id, message_id, content
-            )
-            results.extend(phone_results)
+        # 3. Detectar telefones — DESLIGADO 13/06/26: ruido cronico (extrai numeros
+        # aleatorios de bilhetes). Quando relevante de verdade, CoS Patrol cobre via WA.
+        # phones = extract_phones(content)
+        # if phones:
+        #     phone_results = await handle_detected_phones(
+        #         phones, contact_id, message_id, content
+        #     )
+        #     results.extend(phone_results)
 
         # 4. Notificar Renato para cada proposta criada
         for result in results:
@@ -582,7 +583,20 @@ async def handle_meeting_proposal(
     message_id: int,
     content: str
 ) -> List[Dict]:
-    """Cria proposta de acao para reuniao detectada."""
+    """Cria proposta de acao para reuniao detectada.
+
+    DESLIGADO 13/06/26 — origem confirmada de lixo "create_meeting" (weekday
+    solto sem hora, "quarta", "domingo 06:30" forwarded). CoS Patrol Agent
+    (cos_sensor) cobre com contexto consolidado e manda via WA em vez de card.
+    """
+    logger.info(
+        f"handle_meeting_proposal: desligado (contact={contact_id}, "
+        f"msg={message_id}) — CoS Patrol cobre"
+    )
+    return []
+
+    # Codigo legado preservado abaixo (unreachable). Restaurar removendo o return acima
+    # caso desativacao do CoS Patrol seja revertida.
     from services.action_proposals import get_action_proposals
 
     skip_reason = _meeting_should_skip(meeting_info, content)

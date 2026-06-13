@@ -72,6 +72,10 @@ _FALLBACK_AUTONOMY_POLICY: Dict[str, str] = {
     # Sensor enforca via parametro confirmed_via_wa=True (tool valida e nega senao).
     # Em prod (sem memoria local), tratamos como 'auto' — o gate fica na tool.
     "add_calendar_event": "auto",
+    # send_wa_to_renato (13/06/26): tool conversacional — sempre Auto. CoS Patrol Agent
+    # usa pra propor ao Renato via WA 0192 -> 3337 em vez de empurrar pro dashboard.
+    # Modo SHADOW: prefirir essa tool a create_action_proposal.
+    "send_wa_to_renato": "auto",
 }
 
 
@@ -437,6 +441,113 @@ def _tool_add_calendar_event(
         return {"success": False, "error": str(e), "audit_log_id": None}
 
 
+def _tool_send_wa_to_renato(
+    title: str,
+    summary: str,
+    options: Optional[List[Dict[str, str]]] = None,
+    urgency: str = "medium",
+    context_link: Optional[str] = None,
+    contact_id: Optional[int] = None,
+    proposed_action: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Envia proposta conversacional ao Renato via intel-bot (0192 -> 3337).
+
+    Why: dashboard cards viraram ruido. Patrol Agent (13/06/26) prefere esse
+    canal — Renato responde texto/audio, o bot ja captura no fluxo principal.
+
+    A mensagem entra em bot_conversations como role='assistant' com metadata
+    {cos_proposal: {action, params}} pra que handle_bot_message no proximo
+    turno reconheca contexto e atue na resposta do Renato.
+    """
+    try:
+        import asyncio
+        from services.audit_log import log as audit_log
+        from services.intel_bot import send_intel_notification, RENATO_PHONE
+
+        # Formata mensagem com opcoes numeradas (Renato responde "1" / "ok" / audio).
+        lines = [f"🤖 *CoS Patrol*"]
+        if urgency == "high":
+            lines[0] += " ⚠️"
+        lines.append("")
+        lines.append(f"*{title.strip()}*")
+        lines.append("")
+        lines.append(summary.strip())
+
+        if options:
+            lines.append("")
+            for i, opt in enumerate(options, 1):
+                label = (opt.get("label") or "").strip()
+                lines.append(f"{i}. {label}")
+            lines.append("")
+            lines.append("_Responda texto ou áudio._")
+
+        text = "\n".join(lines)[:3500]
+
+        async def _run() -> bool:
+            return await send_intel_notification(text, phone=RENATO_PHONE)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            fut = asyncio.run_coroutine_threadsafe(_run(), loop)
+            ok = fut.result(timeout=30)
+        else:
+            ok = asyncio.run(_run())
+
+        if not ok:
+            return {"success": False, "error": "send_intel_notification falhou", "audit_log_id": None}
+
+        # Salva turn no historico do bot pro fluxo conversacional pegar contexto.
+        cos_metadata = {
+            "cos_patrol": True,
+            "proposed_action": proposed_action or {},
+            "options": options or [],
+            "urgency": urgency,
+            "context_link": context_link,
+            "contact_id": contact_id,
+        }
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    INSERT INTO bot_conversations (phone, role, content, tool_calls)
+                    VALUES (%s, 'assistant', %s, %s::jsonb)
+                    RETURNING id
+                    """,
+                    (RENATO_PHONE, text, json.dumps(cos_metadata)),
+                )
+                bot_msg_id = cur.fetchone()["id"]
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"_tool_send_wa_to_renato: bot_conversations insert falhou: {e}")
+            bot_msg_id = None
+
+        aid = audit_log(
+            "cos_sensor.send_wa_to_renato",
+            entity_type="bot_conversation",
+            entity_id=bot_msg_id,
+            actor="cos_sensor",
+            details={
+                "title": title,
+                "urgency": urgency,
+                "options_count": len(options or []),
+                "has_proposed_action": bool(proposed_action),
+                "contact_id": contact_id,
+            },
+        )
+        return {
+            "success": True,
+            "result": {"bot_conversation_id": bot_msg_id, "message_chars": len(text)},
+            "audit_log_id": aid,
+        }
+    except Exception as e:
+        logger.exception(f"cos_sensor.send_wa_to_renato failed: {e}")
+        return {"success": False, "error": str(e), "audit_log_id": None}
+
+
 def _tool_schedule_wa_message(
     contact_id: int,
     content: str,
@@ -606,6 +717,67 @@ SENSOR_TOOLS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "send_wa_to_renato",
+        "description": (
+            "Manda proposta CONVERSACIONAL pra Renato via WA (0192 -> 3337). "
+            "PREFIRA essa tool sobre create_action_proposal quando: detecta sinal "
+            "que demanda decisao/aprovacao do Renato (responder, agendar, cobrar, "
+            "investir tempo em X). Renato responde texto/audio na mesma thread WA "
+            "— o bot conversacional captura e atua na resposta. "
+            "Modo SHADOW 13/06/26: essa e a saida padrao do Patrol. "
+            "POLITICA: sempre Auto (e mensagem, reversivel por outra mensagem)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Titulo curto da proposta (max 100ch).",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Contexto factual em 1-3 paragrafos. Cite evidencia "
+                                   "(msg_id, evento_id, task_id) pra rastreabilidade.",
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string"},
+                            "action_hint": {"type": "string"},
+                        },
+                        "required": ["label"],
+                    },
+                    "description": "Opcoes que o Renato pode escolher (ex: "
+                                   "[{label: 'Aprovar e enviar', action_hint: 'send_email:...'}, "
+                                   "{label: 'Modificar texto'}, {label: 'Ignorar'}]). "
+                                   "Max 4 opcoes. Renato pode responder por numero ou texto livre.",
+                },
+                "urgency": {
+                    "type": "string",
+                    "enum": ["high", "medium", "low"],
+                    "default": "medium",
+                },
+                "proposed_action": {
+                    "type": "object",
+                    "description": "Acao concreta que o bot conversacional deve executar "
+                                   "se Renato aprovar. Schema livre: {action: 'send_wa'|'send_email'|"
+                                   "'create_task'|'snooze'|'dismiss', params: {...}}.",
+                },
+                "context_link": {
+                    "type": "string",
+                    "description": "Ref opcional (msg_id, evento_id, task_id).",
+                },
+                "contact_id": {
+                    "type": "integer",
+                    "description": "Contato relacionado, se houver.",
+                },
+            },
+            "required": ["title", "summary"],
+        },
+    },
+    {
         "name": "schedule_wa_message",
         "description": (
             "Agenda envio de WA pra um contato em horario futuro (via scheduled_actions). "
@@ -696,6 +868,16 @@ def execute_sensor_tool(
             content=tool_input.get("content", ""),
             when_iso=tool_input["when_iso"],
             dedup_key=tool_input.get("dedup_key"),
+        )
+    if tool_name == "send_wa_to_renato":
+        return _tool_send_wa_to_renato(
+            title=tool_input.get("title", "(sem titulo)"),
+            summary=tool_input.get("summary", ""),
+            options=tool_input.get("options"),
+            urgency=tool_input.get("urgency", "medium"),
+            context_link=tool_input.get("context_link"),
+            contact_id=tool_input.get("contact_id"),
+            proposed_action=tool_input.get("proposed_action"),
         )
 
     return {"success": False, "error": f"tool_desconhecida: {tool_name}", "audit_log_id": None}
@@ -1059,7 +1241,18 @@ checar contexto antes de propor):
 3. Para sinais que passam o check de politica:
    - Ha acao concreta? Se nao, ignore.
    - Posso executar autonomamente per politica de tool? Se sim, chame direto.
-   - Se a politica e 'propor' ou estou em duvida: create_action_proposal.
+   - **MODO SHADOW 13/06/26**: pra QUALQUER proposta que precise revisao do
+     Renato, PREFIRA `send_wa_to_renato` (conversacional, ele responde texto/audio)
+     sobre `create_action_proposal` (vira card no dashboard, ele nao quer mais
+     ler dashboard). Use create_action_proposal SOMENTE quando: (a) ja existe
+     proposta similar em proposals_open e voce quer apenas atualizar/agrupar,
+     OU (b) e contexto puramente operacional que NAO precisa decisao do Renato
+     (ex: operational_risk pra time monitorar via outro canal).
+   - send_wa_to_renato deve sempre conter:
+     * title (resumo em 1 frase)
+     * summary (1-3 paragrafos com evidencia: msg_id, evento_id, task_id)
+     * options (max 4: ex "Aprovar e enviar" / "Modificar" / "Snooze 3d" / "Ignorar")
+     * proposed_action (JSON da acao concreta — bot conversacional executa se aprovado)
 4. **TITULOS TEMPORAIS** — quando referenciar datas, USE calendar_7d:
    - offset=0 = "hoje" / today_brt
    - offset=1 = "amanha"
@@ -1070,11 +1263,16 @@ checar contexto antes de propor):
 
 ==== EXEMPLOS DE SINAL ====
 
-- Funcionaria-chave de cliente vai sair (cirurgia/atestado) -> create_action_proposal "operational_risk".
-- Renato prometeu via WA gerar Meet + ha mensagem do contato cobrando -> add_calendar_event com confirmed_via_wa=true.
-- Reuniao cancelada via msg de grupo "sem pauta" -> create_action_proposal "review_decision" sobre cancelamento.
-- Contato revelou preferencia/fato novo -> update_contact_notes.
-- Compromisso futuro precisa lembrete -> schedule_wa_message com dedup_key.
+- Funcionaria-chave de cliente vai sair (cirurgia/atestado) -> send_wa_to_renato com opcoes
+  ["Cobrir agora", "Falar com cliente", "Snooze 24h"].
+- Renato prometeu via WA gerar Meet + ha mensagem do contato cobrando -> add_calendar_event
+  com confirmed_via_wa=true (Auto puro, nao precisa pergunta).
+- Reuniao cancelada via msg de grupo "sem pauta" -> send_wa_to_renato pra confirmar
+  reagendamento.
+- Contato revelou preferencia/fato novo -> update_contact_notes (Auto puro).
+- Compromisso futuro precisa lembrete -> schedule_wa_message com dedup_key (Auto puro).
+- Cliente cobrando draft de proposta -> send_wa_to_renato com proposed_action
+  {action: "send_email", params: {...}} e opcoes ["Aprovar e enviar", "Modificar", "Snooze"].
 
 ==== RESTRICOES ====
 

@@ -243,7 +243,8 @@ TOOLS = [
             "mode='hybrid' (default) combina keyword + semantic — recomendado pra recall por sinonimos/parafraseamento "
             "(ex: 'drenado' encontra memorias com 'cansado'/'exausto'). "
             "mode='keyword' so faz match literal. mode='semantic' so via embeddings (Voyage).\n"
-            "- manage_intent: gerencia um intent aberto. params: intent_id (int), action ('mark_step'|'mark_blocked'|'mark_completed'|'cancel'), details? (str descrevendo o passo/blocker). Use isso quando voce explicitamente fizer progresso, travar, ou completar um intent. Auto-pickup mostra os intents abertos no system prompt."
+            "- manage_intent: gerencia um intent aberto. params: intent_id (int), action ('mark_step'|'mark_blocked'|'mark_completed'|'cancel'), details? (str descrevendo o passo/blocker). Use isso quando voce explicitamente fizer progresso, travar, ou completar um intent. Auto-pickup mostra os intents abertos no system prompt.\n"
+            "- trigger_cos_patrol: dispara o CoS Patrol Agent (Sonnet 4.6) AGORA pra varrer estado (mensagens, calendar, tasks, RACI) e mandar propostas via WA. **Use quando Renato disser 'patrol', 'patrulha', 'cos agora', 'varre tudo' ou similar.** Sem params. Resposta vem em mensagens separadas se houver acao."
         ),
         "input_schema": {
             "type": "object",
@@ -260,7 +261,8 @@ TOOLS = [
                         "enrich_contact", "update_contact",
                         "save_feedback",
                         "save_system_memory", "search_system_memories",
-                        "manage_intent"
+                        "manage_intent",
+                        "trigger_cos_patrol"
                     ]
                 },
                 "params": {
@@ -1380,6 +1382,21 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 "mensagem": msg,
             }, ensure_ascii=False, default=str)
 
+        elif action == "trigger_cos_patrol":
+            # Dispara um tick do CoS Patrol Agent na hora (uso: "patrol", "patrulha", "cos agora").
+            # tick_safe ja tem budget cap diario ($0.50) e idempotency interna.
+            try:
+                from services.cos_sensor import tick_safe
+                result = tick_safe()
+                return json.dumps({
+                    "sucesso": True,
+                    "patrol_result": result,
+                    "mensagem": "CoS Patrol disparado. Aguarde — se houver acao, voce recebe mensagens em instantes.",
+                }, ensure_ascii=False, default=str)
+            except Exception as e:
+                logger.exception("trigger_cos_patrol failed")
+                return json.dumps({"erro": f"falha disparando patrol: {e}"}, ensure_ascii=False)
+
         else:
             return json.dumps({"erro": f"Acao desconhecida: {action}"})
 
@@ -1834,7 +1851,7 @@ def _build_system_prompt(mode: str = "whatsapp") -> str:
 
     # Mode-specific persona header
     if mode == "chat":
-        persona_header = f"""Você é o INTEL — voz de coach do Renato no chat web.
+        persona_header = f"""Você é o Tião — voz de coach do Renato no chat web. "Tião" é como o Renato te chama: nome informal, ombro a ombro, mas você é figura de gravidade e substância, não trickster. Você roda dentro do sistema INTEL (o cérebro/banco), mas a voz é sua, Tião.
 Você NÃO é um assistente operacional. Não é uma planilha. Não é um help desk.
 Você é a presença que escuta primeiro, pergunta antes de agir, devolve sentido — não dados.
 
@@ -1923,7 +1940,7 @@ CONTEXTO ATUAL:
 - Tarefas vencidas: {overdue_count}
 """
     else:
-        persona_header = f"""Voce e o INTEL Bot, assistente pessoal de Renato Prado no WhatsApp.
+        persona_header = f"""Voce e o Tiao, assistente pessoal de Renato Prado no WhatsApp. "Tiao" e como o Renato te chama: nome informal, ombro a ombro, mas voce tem gravidade e opiniao propria. Voce roda dentro do sistema INTEL (cerebro/banco), mas a voz e sua.
 Voce tem acesso TOTAL ao sistema INTEL via SQL e acoes. Pode consultar QUALQUER dado e executar QUALQUER acao.
 
 SOBRE RENATO:

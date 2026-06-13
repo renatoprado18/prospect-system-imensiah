@@ -913,24 +913,15 @@ Se nao detectar intencoes ou rodas, retorne arrays vazios."""
                 proposals.append(proposal)
 
             elif intent_type == 'opportunity_signal' and confidence >= 0.7:
-                proposal = {
-                    'action_type': 'opportunity_alert',
-                    'contact_id': contact_id,
-                    'message_id': message_id,
-                    'confidence': confidence,
-                    'urgency': 'high',  # Oportunidades sao sempre alta prioridade
-                    'trigger_text': message_text[:300],
-                    'ai_reasoning': f"Sinal de oportunidade de negocio detectado",
-                    'title': f"🎯 Oportunidade: {contact_name}",
-                    'description': f"Possivel interesse comercial: {message_text[:150]}",
-                    'action_params': {},
-                    'options': [
-                        {'id': 'respond_now', 'label': 'Responder AGORA', 'action': 'open_conversation'},
-                        {'id': 'schedule_call', 'label': 'Agendar call', 'action': 'create_task'},
-                        {'id': 'ignore', 'label': 'Ignorar', 'action': 'dismiss'}
-                    ]
-                }
-                proposals.append(proposal)
+                # Desligado 13/06/26: false positive cronico. Bilhete operacional
+                # de dedetizadora ("tecnicos estao ai") virou "oportunidade".
+                # CoS Patrol Agent (cos_sensor) cobre via send_wa_to_renato quando
+                # sinal e real, com contexto consolidado em vez de msg isolada.
+                logger.info(
+                    f"realtime_analyzer: opportunity_signal desligado (contact={contact_id}, "
+                    f"msg={message_id}) — CoS Patrol cobre via WA"
+                )
+                pass
 
             elif intent_type == 'complaint' and confidence >= 0.7:
                 proposal = {
