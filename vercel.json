@@ -107,7 +107,7 @@
     },
     {
       "path": "/api/cron/sync-gmail-outbound",
-      "schedule": "0,30 * * * *"
+      "schedule": "0 5 * * *"
     }
   ]
 }

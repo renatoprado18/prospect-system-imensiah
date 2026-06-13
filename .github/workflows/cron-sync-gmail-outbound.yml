@@ -1,0 +1,32 @@
+name: Cron — Sync Gmail Outbound
+
+# Captura emails enviados pelo Renato (Sent newer_than:1d) e registra como
+# messages outgoing canal=email. Dispara dismiss_stale_on_reply em cascata.
+#
+# Fecha gap action_blindness 13/06/26: Renato responde direto pelo Gmail,
+# INTEL precisa saber pra CoS Patrol nao re-cobrar.
+#
+# Off-peak minutes (12, 42) evita atrasos GH Actions top-of-hour.
+# 2x/hora = janela 30min, alinhada com newer_than:1d generoso.
+#
+# Vercel Hobby NAO permite cron sub-diario — vercel.json tem fallback daily
+# (0 5 * * *), GH Actions cobre a frequencia real.
+
+on:
+  schedule:
+    - cron: '12,42 * * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Hit sync-gmail-outbound endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            --max-time 300 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/sync-gmail-outbound")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)
