@@ -10460,6 +10460,62 @@ async def cron_health_recalc(request: Request):
     }
 
 
+@app.get("/api/cron/circulos-recalc")
+@track_cron_run
+async def cron_circulos_recalc(request: Request):
+    """
+    Cron: Recalcula dual circles (pessoal/profissional) + health_dual.
+
+    Why: recalcular_circulos_dual nao tinha cron — so era chamado ad-hoc.
+    Auditoria 13/06 mostrou 5113 contatos nunca calculados + 6675 stale >30d,
+    com ultimo_calculo_circulo parado em 18/04. Causa: cron health-recalc so
+    atualiza health_score legacy, nao os dual circles.
+
+    Paginado: 200 contatos por run (stale primeiro). Roda 1x/dia. Em ~30 dias
+    cobre os 11k contatos com fluxo natural.
+    Schedule: 0 6 * * * (6h BRT = 9h UTC)
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.circulos import recalcular_circulos_dual
+
+    BATCH = 200
+    updated = 0
+    errors = 0
+    error_samples: List[Dict] = []
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id FROM contacts
+            WHERE COALESCE(circulo, 5) <= 4
+            ORDER BY ultimo_calculo_circulo ASC NULLS FIRST
+            LIMIT %s
+        """, (BATCH,))
+        ids = [r["id"] for r in cursor.fetchall()]
+
+    for cid in ids:
+        try:
+            recalcular_circulos_dual(cid, force=False)
+            updated += 1
+        except Exception as e:
+            errors += 1
+            if len(error_samples) < 5:
+                error_samples.append({"contact_id": cid, "error": str(e)[:200]})
+            logger.warning(f"circulos-recalc failed for contact {cid}: {e}")
+
+    return {
+        "job": "circulos-recalc",
+        "timestamp": datetime.now().isoformat(),
+        "status": "success",
+        "batch_size": BATCH,
+        "contacts_updated": updated,
+        "errors": errors,
+        "error_samples": error_samples,
+    }
+
+
 @app.get("/api/cron/cleanup")
 @track_cron_run
 async def cron_cleanup(request: Request):
