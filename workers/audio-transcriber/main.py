@@ -1226,16 +1226,35 @@ def _get_active_cos_proposal(phone: str, hours: int = 24) -> dict:
             (phone, str(hours)),
         )
         row = cursor.fetchone()
-        conn.close()
         if not row:
+            conn.close()
             return {}
         tc = row.get("tool_calls") or {}
-        # tool_calls vem como dict (jsonb auto-parseado pelo psycopg)
         if isinstance(tc, str):
             try:
                 tc = json.loads(tc)
             except Exception:
                 tc = {}
+        # Auto-resolve por outgoing: se a proposta tem contact_id e Renato JA
+        # enviou outgoing (WA OU email) pra esse contato APOS criar a proposta,
+        # considera fechada. Fecha gap de action blindness — Renato responder
+        # direto pelo celular/Gmail nao deve mais re-cobrar.
+        proposal_contact_id = tc.get("contact_id")
+        if proposal_contact_id:
+            cursor.execute(
+                """
+                SELECT 1 FROM messages m
+                JOIN conversations cv ON cv.id = m.conversation_id
+                WHERE cv.contact_id = %s
+                  AND m.direcao = 'outgoing'
+                  AND m.enviado_em > %s
+                LIMIT 1
+                """,
+                (proposal_contact_id, row["created_at"]),
+            )
+            if cursor.fetchone():
+                conn.close()
+                return {}
         age_hours = None
         try:
             from datetime import datetime as _dt

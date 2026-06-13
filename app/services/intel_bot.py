@@ -1580,6 +1580,24 @@ def _get_active_cos_proposal(phone: str, hours: int = 24) -> Optional[Dict]:
                     tc = json.loads(tc)
                 except Exception:
                     tc = {}
+            # Auto-resolve por outgoing: se proposta tem contact_id e Renato JA
+            # enviou outgoing (WA OU email) pra esse contato APOS criar a proposta,
+            # considera fechada. Fecha gap de action blindness.
+            proposal_contact_id = tc.get("contact_id")
+            if proposal_contact_id:
+                cursor.execute(
+                    """
+                    SELECT 1 FROM messages m
+                    JOIN conversations cv ON cv.id = m.conversation_id
+                    WHERE cv.contact_id = %s
+                      AND m.direcao = 'outgoing'
+                      AND m.enviado_em > %s
+                    LIMIT 1
+                    """,
+                    (proposal_contact_id, row["created_at"]),
+                )
+                if cursor.fetchone():
+                    return None
             age_hours = None
             try:
                 age_hours = round((datetime.now() - row["created_at"]).total_seconds() / 3600, 1)

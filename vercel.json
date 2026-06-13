@@ -104,6 +104,10 @@
     {
       "path": "/api/cron/circulos-recalc",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/sync-gmail-outbound",
+      "schedule": "0,30 * * * *"
     }
   ]
 }

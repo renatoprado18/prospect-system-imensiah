@@ -10460,6 +10460,43 @@ async def cron_health_recalc(request: Request):
     }
 
 
+@app.get("/api/cron/sync-gmail-outbound")
+@track_cron_run
+async def cron_sync_gmail_outbound(request: Request):
+    """
+    Cron: Captura emails enviados pelo Renato e registra como messages outgoing.
+
+    Why: gmail_sync padrao e per-contato com janela "ultimos 100 msgs" — perde
+    outgoing recente (caso Cecilia 13/06: Renato mandou email com draft de
+    sessao Claude anterior, INTEL nao soube). Este cron varre o folder Sent
+    de cada conta conectada (newer_than:1d), insere messages direcao=outgoing
+    e dispara dismiss_stale_on_reply pra cada contato tocado — fecha CoS Patrol
+    proposals automaticamente quando Renato ja agiu.
+
+    Schedule: 0,30 * * * * (a cada 30min). Custo: <50 chamadas Gmail API/run.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.gmail_outbound_sync import sync_all_outbound
+
+    try:
+        result = await sync_all_outbound(hours=24)
+        return {
+            "job": "sync-gmail-outbound",
+            "timestamp": datetime.now().isoformat(),
+            "status": "success",
+            **result,
+        }
+    except Exception as e:
+        logging.exception("sync-gmail-outbound falhou")
+        return {
+            "job": "sync-gmail-outbound",
+            "status": "error",
+            "error": str(e),
+        }
+
+
 @app.get("/api/cron/circulos-recalc")
 @track_cron_run
 async def cron_circulos_recalc(request: Request):

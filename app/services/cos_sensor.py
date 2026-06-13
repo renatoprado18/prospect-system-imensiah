@@ -1159,12 +1159,33 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                         meta = json.loads(meta)
                     except (TypeError, ValueError):
                         meta = {}
+                push_contact_id = meta.get("contact_id") if isinstance(meta, dict) else None
+                # Auto-resolve por outgoing: marca push como resolvido se Renato ja
+                # respondeu pelo canal direto (WA celular OU email) APOS o push.
+                resolved_by_outgoing = False
+                if push_contact_id:
+                    try:
+                        cur.execute(
+                            """
+                            SELECT 1 FROM messages m
+                            JOIN conversations cv ON cv.id = m.conversation_id
+                            WHERE cv.contact_id = %s
+                              AND m.direcao = 'outgoing'
+                              AND m.enviado_em > %s
+                            LIMIT 1
+                            """,
+                            (push_contact_id, r["created_at"]),
+                        )
+                        resolved_by_outgoing = cur.fetchone() is not None
+                    except Exception:
+                        pass
                 ctx["recent_pushes"].append({
                     "id": r["id"],
                     "content": (r["content"] or "")[:300],
                     "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-                    "contact_id": meta.get("contact_id") if isinstance(meta, dict) else None,
+                    "contact_id": push_contact_id,
                     "context_link": meta.get("context_link") if isinstance(meta, dict) else None,
+                    "resolved_by_outgoing": resolved_by_outgoing,
                 })
 
             # RACI criticos pra Vallen/Alba/Despertar — fonte AUTORITATIVA eh
@@ -1430,6 +1451,12 @@ checar contexto antes de propor):
      Se o sinal ja foi avisado e nao houve mudanca substancial, SILENCIE.
      Se houve mudanca (nova msg, info adicional), ainda assim NAO mande push
      novo: deixa pra ele responder o anterior, OU consolide na proxima rajada.
+
+   - **AUTO-RESOLVE POR OUTGOING**: cada item em recent_pushes tem
+     `resolved_by_outgoing`. Se TRUE, Renato JA respondeu direto pelo canal
+     (WA pelo celular OU email pelo Gmail) — fechado. NUNCA refrescar essa
+     proposta nem cobrar de novo. Use isso como dedup prioritario tambem
+     pra novos sinais relacionados ao mesmo contato.
 4. **TITULOS TEMPORAIS** — quando referenciar datas, USE calendar_7d:
    - offset=0 = "hoje" / today_brt
    - offset=1 = "amanha"
