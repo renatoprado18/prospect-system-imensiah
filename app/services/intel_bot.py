@@ -1875,6 +1875,32 @@ def _build_snapshot_block() -> str:
                 titulo = m["titulo"][:80]
                 lines.append(f"  - {d} {tipo_tag} {titulo}")
             sections.append("**Memórias recentes (você lembra disso):**\n" + "\n".join(lines))
+
+        # L1 onipresente: glossario + correcao FULL content (14/06/26).
+        # Tonha precisa SABER esses, nao so listar titulo. Glossario evita
+        # interpretar literal expressao tipo "cataporas estourando"; correcao
+        # garante que ela nao repete erro depois de puxao de orelha.
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT tipo, titulo, conteudo, criado_em
+                FROM system_memories
+                WHERE tipo IN ('glossario', 'correcao', 'relationship_edge')
+                ORDER BY tipo, criado_em DESC
+                LIMIT 50
+            """)
+            l1_full = cur.fetchall()
+            if l1_full:
+                bloco_lines = []
+                for m in l1_full:
+                    cont = (m["conteudo"] or "")[:1500]
+                    bloco_lines.append(
+                        f"### [{m['tipo']}] {m['titulo']}\n{cont}\n"
+                    )
+                sections.append(
+                    "**MEMORIA CORE (sempre carregada — use sem precisar buscar):**\n\n"
+                    + "\n".join(bloco_lines)
+                )
     except Exception as e:
         logger.error(f"Error loading system memories for snapshot: {e}")
 

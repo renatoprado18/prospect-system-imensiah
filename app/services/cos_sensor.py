@@ -1188,6 +1188,61 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                     "resolved_by_outgoing": resolved_by_outgoing,
                 })
 
+            # L1 — Memorias core (Tonha sempre acorda lembrando disso):
+            # cos_config + glossario + correcao + relationship_edge + sintese
+            # mais recente + ultimas decisoes/padroes/reflexoes. Cap ~6-7k tokens
+            # total, cacheado via prompt cache do Sonnet.
+            #
+            # 14/06/26: virou onipresente porque a Tonha do CoS Patrol nao via
+            # o que ela mesma escreveu na sintese diaria nem o glossario que
+            # ela mesma criava — cada tick comecava do zero. Agora nao mais.
+            ctx["l1_memories"] = []
+            _l1_specs = [
+                # (tipo, limit, max_age_days)
+                ("cos_config", 1, None),
+                ("sintese_diaria", 1, None),
+                ("glossario", 50, None),
+                ("relationship_edge", 50, None),
+                ("correcao", 20, 90),
+                ("decisao", 5, 60),
+                ("compromisso", 5, 60),
+                ("padrao", 3, 60),
+                ("reflexao", 3, 60),
+            ]
+            for tipo, lim, age in _l1_specs:
+                try:
+                    if age:
+                        cur.execute(
+                            "SELECT id, titulo, conteudo, tipo, tags, criado_em "
+                            "FROM system_memories WHERE tipo = %s "
+                            "AND criado_em >= NOW() - (%s || ' days')::interval "
+                            "ORDER BY criado_em DESC LIMIT %s",
+                            (tipo, str(age), lim),
+                        )
+                    else:
+                        cur.execute(
+                            "SELECT id, titulo, conteudo, tipo, tags, criado_em "
+                            "FROM system_memories WHERE tipo = %s "
+                            "ORDER BY criado_em DESC LIMIT %s",
+                            (tipo, lim),
+                        )
+                    for row in cur.fetchall():
+                        cont = (row["conteudo"] or "")
+                        # cos_config eh longa por design; outras truncar pra L1
+                        max_len = 3500 if tipo == "cos_config" else 1500
+                        if len(cont) > max_len:
+                            cont = cont[:max_len] + "...[truncado]"
+                        ctx["l1_memories"].append({
+                            "id": row["id"],
+                            "titulo": row["titulo"],
+                            "conteudo": cont,
+                            "tipo": row["tipo"],
+                            "tags": row.get("tags"),
+                            "criado_em": row["criado_em"].isoformat() if row["criado_em"] else None,
+                        })
+                except Exception as e:
+                    logger.warning(f"L1 load failed for tipo={tipo}: {e}")
+
             # RACI criticos pra Vallen/Alba/Despertar — fonte AUTORITATIVA eh
             # ConselhoOS (DB separado). INTEL.tasks tinha dados stale e gerou
             # proposta #714 falsa em 13/06.
@@ -1322,9 +1377,26 @@ def _check_budget() -> Dict[str, Any]:
 
 # ============== Prompts ==============
 
-_SYSTEM_PROMPT_TEMPLATE = """Voce e o CoS Sensor Agent do Renato Almeida Prado.
+_SYSTEM_PROMPT_TEMPLATE = """Voce e o CoS Sensor Agent do Renato Almeida Prado — voce e a Tonha (persona do CoS, matriarca brasileira do interior, calma e com gravidade) operando em modo proativo.
 
 Voce roda a cada 30min. A cada tick voce le o estado do mundo (mensagens, calendar, propostas abertas, RACI critico), DECIDE se ha sinal novo que demanda acao, e EXECUTA via tools (ou propoe pra revisao quando a politica exige).
+
+==== MEMORIA CORE (L1) — sempre carregada, voce JA SABE disso ====
+
+Essas memorias sao a sua base permanente. Voce nao precisa buscar — ja estao
+no seu cerebro. Use livremente: pra interpretar idioms (glossario), respeitar
+correcoes anteriores que o Renato te deu (correcao), reconhecer pessoas e
+relacionamentos (relationship_edge), aplicar suas politicas (cos_config),
+lembrar do dia anterior (sintese_diaria), e respeitar decisoes/padroes ja
+identificados (decisao, compromisso, padrao, reflexao).
+
+REGRA: se uma memoria de tipo='correcao' bate no contexto atual, OBEDECA.
+Renato te ensinou na ocasiao, voce nao repete o erro.
+
+REGRA: se uma memoria de tipo='glossario' bate em algo dito (expressao,
+apelido, gíria), NAO interprete literal. Use o glossario.
+
+{l1_memories_json}
 
 ==== PRIORIDADES (compass) ====
 
@@ -1515,6 +1587,7 @@ def _build_system_prompt(cos_config: str, policy: Dict[str, str], context: Dict[
         proposals_open_json=json.dumps(context.get("proposals_open", []), default=str, ensure_ascii=False, indent=2)[:4000],
         scheduled_open_json=json.dumps(context.get("scheduled_open", []), default=str, ensure_ascii=False, indent=2)[:1500],
         recent_pushes_json=json.dumps(context.get("recent_pushes", []), default=str, ensure_ascii=False, indent=2)[:3000],
+        l1_memories_json=json.dumps(context.get("l1_memories", []), default=str, ensure_ascii=False, indent=2)[:8000],
         raci_critical_json=json.dumps(context.get("raci_critical", []), default=str, ensure_ascii=False, indent=2)[:2000],
         tasks_overdue_intel_json=json.dumps(context.get("tasks_overdue_intel", []), default=str, ensure_ascii=False, indent=2)[:1500],
     )
