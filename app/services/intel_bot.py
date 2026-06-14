@@ -75,6 +75,7 @@ WRITE_ACTIONS = {
     "import_fathom_meeting",
     "enrich_contact", "update_contact",
     "save_feedback", "save_system_memory",
+    "delegate_to_claude_code",
 }
 
 # Verbos em 1a pessoa + objeto direto que indicam acao executada agora.
@@ -228,7 +229,12 @@ TOOLS = [
             "**Se o usuario pediu pra apagar X, apague.** Nao recuse nem peca confirmacao extra. "
             "So pergunte se houver ambiguidade real entre eventos diferentes (ex: 2 eventos com nome similar em datas diferentes — ai pergunte qual). "
             "Pra series recorrentes, se o usuario pediu 'apagar todos' use scope='all' direto. Se pediu 'so essa', use 'single'. Se pediu 'desta data em diante', use 'future'.\n"
-            "- send_whatsapp: envia WhatsApp via rap-whatsapp (contact_id, message)\n"
+            "- send_whatsapp: ENVIA WhatsApp REAL em nome do Renato (instance rap-whatsapp = numero pessoal dele). "
+            "params: contact_id (int) + message (str). VOCE TEM ESSA CAPACIDADE — NUNCA diga 'nao tenho acesso pra mandar WhatsApp'. "
+            "Voce TEM. Quando o Renato pedir 'manda WA pro X', chame a tool e mande. "
+            "Politica: pra C0/C1 (familia, Thalita, Villela, socios) — rascunhe e pergunte 'mando assim?' antes. "
+            "Pra C2+ operacional (RACI status, horario, follow-up) — pode mandar direto e registrar. "
+            "NUNCA alegue 'mensagem enviada' sem ter chamado a tool de fato.\n"
             "- send_email: envia email via Gmail. params: to (email destinatario) OU contact_id (resolve email do contato), subject, body, account? ('personal'|'professional', default 'professional'). "
             "Se passar contact_id, busca o primeiro email do contato. Se passar 'to', usa direto. "
             "**Confirme o destinatario com o usuario antes de enviar** se nao tiver certeza absoluta — emails errados causam dano.\n"
@@ -244,7 +250,19 @@ TOOLS = [
             "(ex: 'drenado' encontra memorias com 'cansado'/'exausto'). "
             "mode='keyword' so faz match literal. mode='semantic' so via embeddings (Voyage).\n"
             "- manage_intent: gerencia um intent aberto. params: intent_id (int), action ('mark_step'|'mark_blocked'|'mark_completed'|'cancel'), details? (str descrevendo o passo/blocker). Use isso quando voce explicitamente fizer progresso, travar, ou completar um intent. Auto-pickup mostra os intents abertos no system prompt.\n"
-            "- trigger_cos_patrol: dispara o CoS Patrol Agent (Sonnet 4.6) AGORA pra varrer estado (mensagens, calendar, tasks, RACI) e mandar propostas via WA. **Use quando Renato disser 'patrol', 'patrulha', 'cos agora', 'varre tudo' ou similar.** Sem params. Resposta vem em mensagens separadas se houver acao."
+            "- trigger_cos_patrol: dispara o CoS Patrol Agent (Sonnet 4.6) AGORA pra varrer estado (mensagens, calendar, tasks, RACI) e mandar propostas via WA. **Use quando Renato disser 'patrol', 'patrulha', 'cos agora', 'varre tudo' ou similar.** Sem params. Resposta vem em mensagens separadas se houver acao.\n"
+            "- delegate_to_claude_code: DELEGA tarefa complexa pra Claude Code (versao com Bash + Read + Edit + Agent + WebSearch + acesso completo ao codigo/DB/logs). USE QUANDO o Renato pedir: "
+            "(a) 'pensa fundo nisso', 'decisao dificil', 'me ajuda a analisar' — ANALISE estrategica; "
+            "(b) 'investiga o bug X', 'debug Y', 'por que Z nao funciona' — DEBUG tecnico; "
+            "(c) 'analisa o codigo de X', 'como funciona X no INTEL' — CODIGO; "
+            "(d) 'pesquisa na web sobre X', 'compara opcoes', 'busca info de Y' — PESQUISA; "
+            "(e) tarefa multi-passo que voce nao consegue fazer com suas tools (ex: ler log Vercel, abrir codigo). "
+            "PARAMS: task (str, descreva claramente o que voce quer — quanto melhor o briefing, melhor o resultado), "
+            "context? (str, evidencia que voce ja colheu — passe sempre que tiver), "
+            "mode? ('investigate' [read-only, default] | 'edit' [pode editar arquivos] | 'full' [bypassa permissoes — so se Renato pediu explicito]). "
+            "ANTES de chamar, AVISE o Renato: 'Vou delegar isso pro Claude Code investigar, te volto em ~1-3min — espera.' "
+            "DEPOIS de receber resultado, REPASSE pro Renato com sua voz (resumo + acao recomendada), nao copie cru. "
+            "Custa cota do plano Max dele — use com criterio, nao pra tarefas triviais (criar task, agendar) que voce ja consegue."
         ),
         "input_schema": {
             "type": "object",
@@ -262,7 +280,8 @@ TOOLS = [
                         "save_feedback",
                         "save_system_memory", "search_system_memories",
                         "manage_intent",
-                        "trigger_cos_patrol"
+                        "trigger_cos_patrol",
+                        "delegate_to_claude_code"
                     ]
                 },
                 "params": {
@@ -1396,6 +1415,76 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
             except Exception as e:
                 logger.exception("trigger_cos_patrol failed")
                 return json.dumps({"erro": f"falha disparando patrol: {e}"}, ensure_ascii=False)
+
+        elif action == "delegate_to_claude_code":
+            # 14/06/26: Delegacao pra Claude Code headless rodando em Railway
+            # (worker claude-code-delegator). Usa SDK @anthropic-ai/claude-code
+            # com auth via CLAUDE_CODE_OAUTH_TOKEN. Custo cai no plano Max do
+            # Renato (subscription, nao API tokens).
+            #
+            # Use quando o usuario pedir:
+            # - "pensa fundo nisso", "decisao dificil", "me ajuda a decidir"
+            # - "investiga o bug X", "debug o cron Y", "ve por que Z nao funciona"
+            # - "analisa o codigo de X", "como funciona X no INTEL?"
+            # - "pesquisa na web sobre X", "compara opcoes de Y"
+            # - tarefas multi-passo que envolvem leitura de codigo + DB + logs
+            task = params.get("task")
+            context = params.get("context", "")
+            mode = params.get("mode", "investigate")  # investigate | edit | full
+            if not task or len(task.strip()) < 5:
+                return json.dumps({"erro": "task obrigatoria (min 5 chars descrevendo o que voce quer)"})
+
+            delegator_url = (os.getenv("CLAUDE_CODE_DELEGATOR_URL") or "").strip()
+            worker_secret = (os.getenv("WORKER_SECRET") or "intel-audio-2026").strip()
+            if not delegator_url:
+                return json.dumps({"erro": "CLAUDE_CODE_DELEGATOR_URL nao configurado"})
+
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=350.0) as client:
+                    resp = await client.post(
+                        f"{delegator_url}/delegate",
+                        headers={
+                            "x-delegator-secret": worker_secret,
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "task": task,
+                            "context": context,
+                            "mode": mode,
+                            "requested_by": "tonha",
+                        },
+                    )
+                if resp.status_code != 200:
+                    return json.dumps({
+                        "erro": f"delegator HTTP {resp.status_code}: {resp.text[:200]}"
+                    })
+                data = resp.json()
+                # Logging pra audit + cost tracking
+                logger.info(
+                    f"delegate_to_claude_code ok mode={mode} "
+                    f"duration={data.get('duration_ms')}ms "
+                    f"turns={data.get('turn_count')} "
+                    f"tools={len(data.get('tools_used') or [])} "
+                    f"cost={data.get('cost_usd')}"
+                )
+                return json.dumps({
+                    "sucesso": True,
+                    "resultado": data.get("result", ""),
+                    "duration_ms": data.get("duration_ms"),
+                    "turn_count": data.get("turn_count"),
+                    "tools_used": data.get("tools_used"),
+                    "cost_usd": data.get("cost_usd"),
+                    "mode": data.get("mode"),
+                    "mensagem": "Resultado do pensamento fundo abaixo — repasse pro usuario com a sua voz.",
+                }, ensure_ascii=False, default=str)
+            except httpx.TimeoutException:
+                return json.dumps({
+                    "erro": "delegator timeout — tarefa demorou >5min. Avise o usuario que precisa quebrar em partes menores.",
+                })
+            except Exception as e:
+                logger.exception("delegate_to_claude_code failed")
+                return json.dumps({"erro": f"falha delegando: {e}"})
 
         else:
             return json.dumps({"erro": f"Acao desconhecida: {action}"})
