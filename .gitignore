@@ -17,6 +17,8 @@ venv/
 credentials/
 *.json
 !vercel.json
+!workers/**/package.json
+!workers/**/package-lock.json
 
 # Database
 data/*.db

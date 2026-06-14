@@ -1,0 +1,17 @@
+{
+  "name": "claude-code-delegator",
+  "version": "0.1.0",
+  "description": "Headless Claude Code worker for Tonha delegation. Tonha dispatches complex tasks (code investigation, multi-step DB analysis, web research) and gets full Claude Code agent (Bash, Read, Write, Edit, Agent, ToolSearch) running on Railway.",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "latest",
+    "express": "^4.21.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
