@@ -1,27 +1,25 @@
 FROM node:20
 
-# Node:20 (full, nao slim) ja vem com git, curl, ca-certificates, bash.
-# Claude Code traz ripgrep bundled. psql/jq podem ser instalados depois se
-# preciso — pra MVP, evita complicacao de apt-get no build.
+# Node:20 (full) ja vem com git, curl, ca-certificates, bash bundled.
+# Claude Code traz ripgrep internamente.
 
 WORKDIR /app
 
-# Instala deps do worker (server.js + SDK Claude Code)
-COPY package.json ./
+# Build context = repo root (Railway nao seta Root Directory por default).
+# Paths abaixo sao relativos ao repo root.
+COPY workers/claude-code-delegator/package.json ./
 RUN npm install --omit=dev
 
-# Clona o INTEL repo no /app/repo — workspace que Claude Code vai usar pra
-# ler/grep/editar codigo. Shallow clone (depth=1) pra rapido.
+# Clona o INTEL repo no /app/repo — workspace que Claude Code vai usar.
 ARG REPO_URL=https://github.com/renatoprado18/prospect-system-imensiah.git
 RUN git clone --depth 1 ${REPO_URL} /app/repo
 
-# Copia codigo do server
-COPY server.js Procfile ./
+COPY workers/claude-code-delegator/server.js workers/claude-code-delegator/Procfile ./
 
 ENV REPO_PATH=/app/repo
 ENV PORT=3000
 
 EXPOSE 3000
 
-# Pull do repo a cada start pra atualizar pra ultima main. ~1-3s no boot.
+# Pull do repo a cada start pra atualizar pra ultima main.
 CMD ["sh", "-c", "cd /app/repo && git fetch --depth 1 origin main && git reset --hard origin/main && cd /app && node server.js"]
