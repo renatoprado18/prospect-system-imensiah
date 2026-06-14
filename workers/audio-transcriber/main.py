@@ -153,6 +153,10 @@ _SCHEDULER_JOBS = [
     ("sync-gmail-outbound", "/api/cron/sync-gmail-outbound", CronTrigger(minute="12,42")),
     ("email-triage-sweep", "/api/cron/email-triage-sweep", CronTrigger(minute="7,37")),
     ("catchup", "/api/cron/catchup", CronTrigger(minute=30)),
+    # CONSELHEIRO Agent — Stage 3 (14/06/26). Especialista em 4 conselhos
+    # (Vallen, Alba, Despertar, Assespro). Cobre RACI + reunioes + grupos WA.
+    # 1x/dia 12 UTC = 9h BRT.
+    ("cos-conselheiro-tick", "/api/cron/cos-conselheiro-tick", CronTrigger(hour=12, minute=0)),
 ]
 
 
