@@ -2333,17 +2333,22 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
         proposed = active_cos.get("proposed_action") or {}
         opts_str = ", ".join(f'"{(o.get("label") or "")}"' for o in opts[:6])
         proposed_str = json.dumps(proposed, ensure_ascii=False)[:1500] if proposed else "(nenhuma)"
+        # 14/06/26: NAO mencione "CoS Patrol Agent" aqui — induzia a Tonha a
+        # responder com header "🤖 CoS Patrol" e estrutura template velha,
+        # ignorando sua persona. So contexto factual: voce mandou X, ele
+        # pode estar respondendo. Sua persona/voz nao muda.
         cos_block = (
-            f"\n\n## CoS PATROL — PROPOSTA PENDENTE (ha ~{active_cos.get('age_hours','?')}h)\n\n"
-            f"Voce (CoS Patrol Agent) mandou pra Renato:\n\"\"\"\n"
+            f"\n\n## SINAL ESPERANDO RESPOSTA (ha ~{active_cos.get('age_hours','?')}h)\n\n"
+            f"Voce mandou pra Renato esta mensagem alguns minutos atras:\n\"\"\"\n"
             f"{(active_cos.get('content','') or '')[:1200]}\n\"\"\"\n\n"
-            f"**Opcoes apresentadas:** [{opts_str}]\n"
-            f"**proposed_action:** {proposed_str}\n\n"
-            f"Interprete a mensagem ATUAL do Renato como possivel resposta:\n"
-            f"- Aprovou (\"1\", \"ok\", \"pode\", \"manda\", \"aprovo\", \"sim\"): EXECUTE proposed_action via execute_action.\n"
-            f"- Pediu pra modificar (\"muda X\", \"troca\"): rascunhe a versao nova e RE-MANDE pra ele aprovar.\n"
-            f"- Descartou (\"3\", \"ignora\", \"deixa\", \"nao\"): apenas confirme em 1 linha.\n"
-            f"- Assunto novo nao relacionado: ignore essa proposta.\n"
+            f"Acoes/opcoes que voce ofereceu: [{opts_str}]\n"
+            f"Acao concreta proposta (se ele aprovar): {proposed_str}\n\n"
+            f"Interprete a mensagem ATUAL do Renato como possivel resposta a isso:\n"
+            f"- Aprovou (\"1\", \"ok\", \"pode\", \"manda\", \"aprovo\", \"sim\"): EXECUTE a acao via execute_action.\n"
+            f"- Pediu pra modificar (\"muda X\", \"troca\"): rascunhe a versao nova e mande pra ele aprovar — sem header, sem template, em prosa.\n"
+            f"- Descartou (\"3\", \"ignora\", \"deixa\", \"nao\"): confirme em 1 linha curta.\n"
+            f"- Assunto novo nao relacionado: ignore esse contexto e responda o que ele pediu agora.\n"
+            f"\nIMPORTANTE: voce continua sendo a Tonha. Mesma voz, mesma persona. NAO mude o tom nem adicione header/etiqueta por causa deste contexto.\n"
         )
         system_prompt = system_prompt + cos_block
 
