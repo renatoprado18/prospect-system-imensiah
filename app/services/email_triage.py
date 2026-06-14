@@ -663,6 +663,67 @@ class EmailTriageService:
                 "rule_hits": rule_hits,
             }
 
+        # R3.55: Critical infra/billing keyword override.
+        # Caso 13/06/26: GCP "Ação necessária / conta de faturamento vencida"
+        # foi classificado como archive_proposed pelo R4 noreply.
+        # Memory feedback_triage_gcp_billing_fp.md. Risco: serviços suspensos
+        # silenciosamente. DEVE vir ANTES de R4 (noreply) pra sobrepor.
+        #
+        # Estratégia: subject com keyword critica (alta precisao) -> must_read.
+        # OU body com 2+ infra keywords E remetente plataforma -> must_read.
+        KW_INFRA_CRITICAL_SUBJECT = (
+            "ação necessária", "acao necessaria", "action required", "action needed",
+            "conta vencida", "billing overdue", "past due", "fatura vencida",
+            "pagamento inválid", "pagamento invalido", "invalid payment", "payment failed",
+            "serviços afetad", "service affected", "serviços suspens",
+            "encerramento da", "account closed", "account suspended",
+            "cobrança falh", "cobranca falh", "charge failed",
+            "corre o risco de ser suspenso", "risk of suspension",
+            "subscription canceled", "assinatura cancelad",
+        )
+        KW_INFRA_BODY = (
+            "billing", "faturamento",
+            "vencid", "overdue",
+            "suspens", "suspend",
+            "atraso de pagamento", "pagamento em atraso",
+            "informações de pagamento inválid",
+            "encerrar", "encerramento",
+            "serviços não sejam interrompidos",
+            "servicos nao sejam interrompidos",
+        )
+        PLATFORM_SENDERS = (
+            "google.com", "cloud.google.com", "cloudplatform-noreply",
+            "amazonaws.com", "aws.amazon.com",
+            "microsoft.com", "azure.com",
+            "vercel.com", "stripe.com", "stripe-noreply",
+            "anthropic.com", "anyscale.com", "supabase.io",
+            "fly.io", "railway.app", "neon.tech", "hetzner.com",
+            "openai.com", "groq.com", "linkdapi.com",
+        )
+        subject_lc_crit = subject.lower().strip()
+        body_lc_crit = body_text[:3000].lower()
+        from_email_lc = (from_email or "").lower()
+        has_critical_subject_kw = any(kw in subject_lc_crit for kw in KW_INFRA_CRITICAL_SUBJECT)
+        body_kw_hits = sum(1 for kw in KW_INFRA_BODY if kw in body_lc_crit)
+        is_platform_sender = any(p in from_email_lc for p in PLATFORM_SENDERS)
+
+        if has_critical_subject_kw or (body_kw_hits >= 2 and is_platform_sender):
+            reasons.append(
+                "Critical infra/billing keyword "
+                + ("(subject)" if has_critical_subject_kw else f"(body kw={body_kw_hits} + platform sender)")
+            )
+            rule_hits.append("R3_55_critical_infra")
+            return {
+                "classification": "must_read",
+                "priority": 9,
+                "ai_confidence": 0.93,
+                "reasons": reasons,
+                "suggested_tags": ["!!Renato", "infra-critico", "billing"],
+                "suggested_actions": [{"type": "respond", "reason": "infra/billing critico"}],
+                "escalation": True,
+                "rule_hits": rule_hits,
+            }
+
         # R3.6: Calendar invite — Andressa deixou passar Poli Angels Round 47
         # Google Calendar invites tem subject "Invitation:" (ou "Convite:")
         # e/ou attachment .ics. Convite real = decisao de agenda pendente.
