@@ -1814,12 +1814,34 @@ async def transcribe_audio(request: Request):
         clean_mime = mimetype.split(";")[0].strip() if mimetype else "audio/ogg"
         ext = ext_map.get(clean_mime, "ogg")
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # 14/06/26: melhoria de transcricao —
+        # 1. modelo whisper-large-v3 (nao turbo) — mais preciso em PT-BR,
+        #    especialmente em audio curto onde turbo aluciana muito;
+        # 2. initial_prompt com nomes proprios + jargao do Renato pra Whisper
+        #    nao trocar "Tonha" por "tonha de ferro", "imensIAH" por "imensa",
+        #    "ConselhoOS" por "conselho/os", etc;
+        # 3. response_format=verbose_json pra pegar avg_logprob e no_speech_prob;
+        # 4. temperature=0 pra menos alucinacao.
+        whisper_prompt = (
+            "Renato Almeida Prado, Tonha (assistente), ImensIAH, ConselhoOS, "
+            "Vallen Clinic, Almeida Prado, Assespro, Wadhwani, Despertar, "
+            "Daniela, Emma Sakamoto, Renato DAP, Manuela, Orestes, Thalita "
+            "Mendes, Cecilia Zanotti, Villela, Itausa, Amadeo, Marcelo, "
+            "Veridiana, RACI, briefing, dossie, CoS, conselheiro, board, "
+            "governanca corporativa."
+        )
+        async with httpx.AsyncClient(timeout=45.0) as client:
             resp = await client.post(
                 "https://api.groq.com/openai/v1/audio/transcriptions",
                 headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
                 files={"file": (f"audio.{ext}", audio_bytes, clean_mime)},
-                data={"model": "whisper-large-v3-turbo", "language": "pt"}
+                data={
+                    "model": "whisper-large-v3",
+                    "language": "pt",
+                    "prompt": whisper_prompt,
+                    "temperature": "0",
+                    "response_format": "verbose_json",
+                }
             )
 
         if resp.status_code != 200:
@@ -1828,12 +1850,27 @@ async def transcribe_audio(request: Request):
             await _send_response(phone, f"Erro na transcricao ({resp.status_code}). Pode digitar?")
             return {"error": f"transcription_failed: {resp.status_code}", "detail": error_detail}
 
-        transcription = resp.json().get("text", "")
+        groq_response = resp.json()
+        transcription = (groq_response.get("text") or "").strip()
+
+        # Filtro anti-alucinacao: se Whisper retorna texto curto + segments com
+        # no_speech_prob alto OU avg_logprob muito negativo, e provavel
+        # alucinacao em audio em silencio/ruido. Avisa e pede digitacao.
+        segments = groq_response.get("segments") or []
+        if segments:
+            avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
+            avg_logprob = sum(s.get("avg_logprob", 0) for s in segments) / len(segments)
+            logger.info(f"Whisper quality: no_speech={avg_no_speech:.2f}, logprob={avg_logprob:.2f}, len={len(transcription)}")
+            if avg_no_speech > 0.6 or avg_logprob < -1.0:
+                logger.warning(f"Whisper hallucination suspected (no_speech={avg_no_speech:.2f}, logprob={avg_logprob:.2f})")
+                await _send_response(phone, "Nao consegui entender o audio (qualidade baixa ou silencio). Pode digitar ou mandar de novo?")
+                return {"error": "hallucination_filter", "no_speech": avg_no_speech, "logprob": avg_logprob}
+
         if not transcription:
             await _send_response(phone, "Nao consegui entender o audio. Pode digitar?")
             return {"error": "empty_transcription"}
 
-        logger.info(f"Transcribed: {transcription[:100]}")
+        logger.info(f"Transcribed ({len(transcription)} chars): {transcription[:120]}")
 
         # Step 3: Send transcribed text to INTEL bot for processing
         content = f"[Audio transcrito] {transcription}"
@@ -1893,7 +1930,7 @@ async def transcribe_raw(request: Request):
                 "https://api.groq.com/openai/v1/audio/transcriptions",
                 headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
                 files={"file": (f"audio.{ext}", audio_bytes, clean_mime)},
-                data={"model": "whisper-large-v3-turbo", "language": language},
+                data={"model": "whisper-large-v3", "language": language, "temperature": "0"},
             )
         if resp.status_code != 200:
             return JSONResponse(status_code=resp.status_code, content={"error": "groq_failed", "detail": resp.text[:500]})
