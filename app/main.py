@@ -26598,6 +26598,29 @@ async def cron_cos_extractor(request: Request):
         return {"job": "cos-extractor", "status": "error", "error": str(e)}
 
 
+@app.get("/api/cron/cos-ear-mode")
+@app.post("/api/cron/cos-ear-mode")
+@track_cron_run
+async def cron_cos_ear_mode(request: Request):
+    """
+    Cron: Tonha pergunta proativa fim de tarde (~18h SP).
+
+    Manda 1 mensagem aberta convidando Renato a falar do dia/semana.
+    Skip domingo (politica C2). Skip se ja teve >=5 turns hoje.
+    Idempotente (1×/dia).
+
+    Schedule: 0 21 * * * (18h SP = 21h UTC).
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.cos_ear_mode import run_ear_mode_prompt
+    try:
+        return {"job": "cos-ear-mode", **run_ear_mode_prompt()}
+    except Exception as e:
+        logging.exception("cos-ear-mode falhou")
+        return {"job": "cos-ear-mode", "status": "error", "error": str(e)}
+
+
 @app.get("/api/cron/pulse")
 async def cron_pulse():
     """Read-only pulse de saude dos crons. Sem auth — so retorna timestamps,
