@@ -24,7 +24,7 @@
  */
 
 import express from "express";
-import { query } from "@anthropic-ai/claude-code";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import crypto from "crypto";
 
 const app = express();
