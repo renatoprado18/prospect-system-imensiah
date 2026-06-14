@@ -986,7 +986,23 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
     now_brt = to_brt(now_utc())
     today_brt = now_brt.date()
     tomorrow_brt = today_brt + timedelta(days=1)
-    since = datetime.now() - timedelta(minutes=window_min)
+    # since: filtro UTC-naive contra colunas TIMESTAMP UTC-naive (consistente
+    # com o DB). 14/06/26: datetime.now() em Vercel ja retorna UTC, igual ao
+    # DB; nao precisa mexer no filtro.
+    from datetime import timezone as _tz
+    since = datetime.now(_tz.utc).replace(tzinfo=None) - timedelta(minutes=window_min)
+
+    # Helper: converte naive UTC -> BRT string YYYY-MM-DD HH:MM (sem segundos)
+    # pra exibir no prompt da Tonha. Sem isso ela ve hora UTC e pensa que e BRT.
+    from zoneinfo import ZoneInfo as _ZI
+    _UTC = _ZI("UTC")
+    _BRT = _ZI("America/Sao_Paulo")
+    def _to_brt_str(dt):
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_UTC)
+        return dt.astimezone(_BRT).strftime("%Y-%m-%d %H:%M BRT")
 
     # Calendario explicito pros proximos 7 dias — evita erro de weekday-arithmetic
     # do agent (ja vimos sex 13/06 em vez de sex 12/06). Lista YYYY-MM-DD + dia da semana
@@ -1042,7 +1058,7 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                     "contact_name": r["contact_name"],
                     "direcao": r["direcao"],
                     "conteudo": (r["conteudo"] or "")[:400],
-                    "enviado_em": r["enviado_em"].isoformat() if r["enviado_em"] else None,
+                    "enviado_em_brt": _to_brt_str(r["enviado_em"]),
                 }
                 for r in cur.fetchall()
             ]
@@ -1065,7 +1081,7 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                     "group_jid": r["group_jid"],
                     "sender_name": r["sender_name"],
                     "content": (r["content"] or "")[:300],
-                    "timestamp": r["timestamp"].isoformat() if r["timestamp"] else None,
+                    "timestamp_brt": _to_brt_str(r["timestamp"]),
                 }
                 for r in cur.fetchall()
             ]
@@ -1085,8 +1101,8 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                 {
                     "id": r["id"],
                     "titulo": r["summary"],
-                    "inicio": r["start_datetime"].isoformat() if r["start_datetime"] else None,
-                    "fim": r["end_datetime"].isoformat() if r["end_datetime"] else None,
+                    "inicio_brt": _to_brt_str(r["start_datetime"]),
+                    "fim_brt": _to_brt_str(r["end_datetime"]),
                     "local": r["location"],
                 }
                 for r in cur.fetchall()
@@ -1109,7 +1125,7 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                     "titulo": (r["title"] or "")[:150],
                     "contact_id": r["contact_id"],
                     "urgency": r["urgency"],
-                    "criado_em": r["criado_em"].isoformat() if r["criado_em"] else None,
+                    "criado_em_brt": _to_brt_str(r["criado_em"]),
                 }
                 for r in cur.fetchall()
             ]
@@ -1127,7 +1143,7 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
             ctx["scheduled_open"] = [
                 {
                     "id": r["id"],
-                    "scheduled_for": r["scheduled_for"].isoformat() if r["scheduled_for"] else None,
+                    "scheduled_for_brt": _to_brt_str(r["scheduled_for"]),
                     "source": r["source"],
                     "dedup_key": r["dedup_key"],
                 }
@@ -1182,7 +1198,7 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                 ctx["recent_pushes"].append({
                     "id": r["id"],
                     "content": (r["content"] or "")[:300],
-                    "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                    "created_at_brt": _to_brt_str(r["created_at"]),
                     "contact_id": push_contact_id,
                     "context_link": meta.get("context_link") if isinstance(meta, dict) else None,
                     "resolved_by_outgoing": resolved_by_outgoing,
@@ -1238,7 +1254,7 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                             "conteudo": cont,
                             "tipo": row["tipo"],
                             "tags": row.get("tags"),
-                            "criado_em": row["criado_em"].isoformat() if row["criado_em"] else None,
+                            "criado_em_brt": _to_brt_str(row["criado_em"]),
                         })
                 except Exception as e:
                     logger.warning(f"L1 load failed for tipo={tipo}: {e}")
@@ -1312,7 +1328,7 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
                 {
                     "task_id": r["id"],
                     "titulo": (r["titulo"] or "")[:100],
-                    "vencimento": r["data_vencimento"].isoformat() if r["data_vencimento"] else None,
+                    "vencimento_brt": _to_brt_str(r["data_vencimento"]),
                     "projeto": r["projeto"],
                     "fonte": "INTEL.tasks (pode ter ruido — checar antes de propor)",
                 }

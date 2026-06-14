@@ -1783,18 +1783,24 @@ def _build_snapshot_block() -> str:
                     lines.append(f"  - [{t['id']}] {t['titulo'][:70]} (venc {t['due']}){proj}")
                 sections.append("**Tarefas urgentes (<=hoje):**\n" + "\n".join(lines))
 
+            # 14/06/26: TZ fix — calendar_events.start_datetime e TIMESTAMP
+            # naive em UTC; CURRENT_DATE/NOW() em Vercel/Neon retornam UTC.
+            # Sem conversao, agenda de "hoje" pega dia errado e horario errado
+            # (Tonha via 14:08 quando era 11:08 BRT).
             cursor.execute("""
-                SELECT id, summary, start_datetime
+                SELECT id, summary,
+                       (start_datetime AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS start_brt
                 FROM calendar_events
-                WHERE start_datetime::date = CURRENT_DATE
+                WHERE (start_datetime AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date
+                      = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
                   AND end_datetime >= NOW()
                 ORDER BY start_datetime ASC
                 LIMIT 5
             """)
             events = cursor.fetchall()
             if events:
-                lines = [f"  - {e['start_datetime'].strftime('%H:%M')} {e['summary'][:70]}" for e in events]
-                sections.append("**Agenda restante hoje:**\n" + "\n".join(lines))
+                lines = [f"  - {e['start_brt'].strftime('%H:%M')} {e['summary'][:70]}" for e in events]
+                sections.append("**Agenda restante hoje (BRT):**\n" + "\n".join(lines))
 
             cursor.execute("""
                 SELECT id, nome, circulo, health_score, ultimo_contato::date AS ultimo
@@ -2155,7 +2161,8 @@ Tabelas:
 - Mensagens recentes de um contato: SELECT m.conteudo, m.direcao, m.enviado_em FROM messages m JOIN conversations cv ON cv.id = m.conversation_id WHERE cv.contact_id = X ORDER BY m.enviado_em DESC LIMIT 10
 - Tarefas pendentes: SELECT id, titulo, data_vencimento FROM tasks WHERE status = 'pending' ORDER BY data_vencimento ASC NULLS LAST
 - Projetos ativos: SELECT id, nome, tipo FROM projects WHERE status = 'ativo' ORDER BY prioridade ASC
-- Eventos de hoje: SELECT summary, start_datetime, end_datetime FROM calendar_events WHERE start_datetime::date = CURRENT_DATE ORDER BY start_datetime
+- Eventos de hoje: SELECT summary, (start_datetime AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS start_brt, end_datetime FROM calendar_events WHERE (start_datetime AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date ORDER BY start_datetime
+- IMPORTANTE TZ: colunas TIMESTAMP no banco sao UTC naive. Pra exibir hora em BRT, sempre converta: (col AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo'). NUNCA exiba hora cru direto da query — vai mostrar 3h a mais.
 - Contatos por circulo: SELECT nome, empresa FROM contacts WHERE circulo = 'C1'
 - Memorias de contato: SELECT titulo, resumo, data_ocorrencia FROM contact_memories WHERE contact_id = X ORDER BY data_ocorrencia DESC
 - Fatos de contato: SELECT categoria, fato FROM contact_facts WHERE contact_id = X
