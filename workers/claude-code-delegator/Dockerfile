@@ -6,6 +6,7 @@ WORKDIR /app
 ADD https://raw.githubusercontent.com/renatoprado18/prospect-system-imensiah/main/workers/claude-code-delegator/package.json ./package.json
 ADD https://raw.githubusercontent.com/renatoprado18/prospect-system-imensiah/main/workers/claude-code-delegator/server.js ./server.js
 ADD https://raw.githubusercontent.com/renatoprado18/prospect-system-imensiah/main/workers/claude-code-delegator/Procfile ./Procfile
+ADD https://raw.githubusercontent.com/renatoprado18/prospect-system-imensiah/main/workers/claude-code-delegator/bootstrap.js ./bootstrap.js
 
 RUN npm install --omit=dev
 
@@ -19,4 +20,4 @@ EXPOSE 3000
 
 # Atualiza o repo a cada start pra pegar ultima main. Usa fetch+reset --hard
 # (nao pull) pra evitar config de merge strategy que o container nao tem.
-CMD ["sh", "-c", "cd /app/repo && git fetch --depth 1 origin main && git reset --hard origin/main && cd /app && node server.js"]
+CMD ["sh", "-c", "cd /app/repo && git fetch --depth 1 origin main && git reset --hard origin/main && cd /app && node bootstrap.js"]
