@@ -1688,29 +1688,53 @@ def _build_messages_from_history(history: List[Dict]) -> List[Dict]:
                 if content:
                     blocks.append({"type": "text", "text": content})
                 tool_calls = row["tool_calls"]
+                # 14/06/26: defesa — alguns turns historicos salvam tool_calls
+                # como dict unico (cos_proposal metadata) em vez de array de
+                # tool_use blocks. Pular esses pra nao quebrar replay com
+                # TypeError: string indices must be integers.
                 if isinstance(tool_calls, str):
-                    tool_calls = json.loads(tool_calls)
-                for tc in tool_calls:
-                    blocks.append({
-                        "type": "tool_use",
-                        "id": tc["id"],
-                        "name": tc["name"],
-                        "input": tc["input"]
-                    })
-                raw_messages.append({"role": "assistant", "content": blocks})
-
-                if row.get("tool_results"):
-                    tool_results = row["tool_results"]
-                    if isinstance(tool_results, str):
-                        tool_results = json.loads(tool_results)
-                    result_blocks = []
-                    for tr in tool_results:
-                        result_blocks.append({
-                            "type": "tool_result",
-                            "tool_use_id": tr["tool_use_id"],
-                            "content": tr["content"]
+                    try:
+                        tool_calls = json.loads(tool_calls)
+                    except (TypeError, ValueError):
+                        tool_calls = None
+                # Se nao for lista de dicts com {id, name, input}, ignore
+                # (provavelmente e metadata como {"cos_patrol": True, ...}).
+                if isinstance(tool_calls, list) and tool_calls and all(
+                    isinstance(tc, dict) and "id" in tc and "name" in tc and "input" in tc
+                    for tc in tool_calls
+                ):
+                    for tc in tool_calls:
+                        blocks.append({
+                            "type": "tool_use",
+                            "id": tc["id"],
+                            "name": tc["name"],
+                            "input": tc["input"]
                         })
-                    raw_messages.append({"role": "user", "content": result_blocks})
+                    raw_messages.append({"role": "assistant", "content": blocks})
+
+                    if row.get("tool_results"):
+                        tool_results = row["tool_results"]
+                        if isinstance(tool_results, str):
+                            try:
+                                tool_results = json.loads(tool_results)
+                            except (TypeError, ValueError):
+                                tool_results = None
+                        if isinstance(tool_results, list):
+                            result_blocks = []
+                            for tr in tool_results:
+                                if isinstance(tr, dict) and "tool_use_id" in tr and "content" in tr:
+                                    result_blocks.append({
+                                        "type": "tool_result",
+                                        "tool_use_id": tr["tool_use_id"],
+                                        "content": tr["content"]
+                                    })
+                            if result_blocks:
+                                raw_messages.append({"role": "user", "content": result_blocks})
+                else:
+                    # tool_calls era metadata (ex: cos_proposal) — turn entra
+                    # como assistant simples so com texto.
+                    if content:
+                        raw_messages.append({"role": "assistant", "content": content})
             else:
                 raw_messages.append({"role": "assistant", "content": content})
 
