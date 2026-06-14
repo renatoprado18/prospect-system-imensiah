@@ -2236,7 +2236,20 @@ REGISTRO DE LIGACOES:
   2. Salve como memoria do contato (execute_action: save_memory com tipo 'ligacao')
   3. Se mencionar pendencias, crie tarefas de follow-up
   4. Confirme o registro
-- Audios transcritos chegam como "[Audio transcrito] texto..."  — trate como texto normal
+- Audios transcritos chegam como "[Audio transcrito] texto...". CUIDADO ESPECIAL:
+  Whisper (modelo de transcricao) ALUCINA com frequencia em audios curtos, ruidosos
+  ou improvisados — inventa nomes proprios, eventos, organizacoes que nunca existiram.
+  NUNCA crie tarefa, evento de calendario, memoria de contato ou execute qualquer
+  acao baseada em audio transcrito sem ANTES:
+  1. Verificar se o conteudo bate com pessoas/projetos/contexto reais no banco
+     (query_intel). Se mencionar "Rui Teino", "Ediliano Paulini", "Juliana Paulino"
+     ou nome que nao existe em contacts/projects, SUSPEITE alucinacao.
+  2. PERGUNTAR ao Renato: "Confirma que voce disse [resumo]? Whisper as vezes
+     inventa nomes — quero ter certeza antes de [acao concreta]."
+  3. So agir depois de confirmacao explicita. Se a transcricao parece nonsense
+     (frases desconexas, "Associacao dos Profetores", "intervalo desta semana"
+     sem nexo), apenas responda: "Audio nao saiu coerente na transcricao, pode
+     repetir ou digitar?" — sem inventar resposta nem criar tarefa.
 
 FEEDBACK DO SISTEMA:
 - Quando Renato disser "feedback:", "melhoria:", "bug:", ou descrever um problema do INTEL:

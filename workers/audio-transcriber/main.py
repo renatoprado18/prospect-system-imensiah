@@ -1872,6 +1872,64 @@ async def transcribe_audio(request: Request):
 
         logger.info(f"Transcribed ({len(transcription)} chars): {transcription[:120]}")
 
+        # 14/06/26: Validacao semantica via Claude antes de mandar pro INTEL.
+        # Whisper-large-v3 ainda aluciana em audio improvisado/curto/baixo SNR
+        # — inventa nomes proprios ("Rui Teino", "Ediliano Paulini",
+        # "Associacao dos Profetores dos Estudantes Unidos") com aparencia
+        # convincente. Filtro de no_speech_prob nao pega (Whisper retorna
+        # logprob "saudavel" mesmo alucinando). Claude faz sanity check
+        # adicional. Se claramente alucinacao, descarta.
+        ANTHROPIC_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        if ANTHROPIC_KEY and len(transcription) > 10:
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    sanity_resp = await client.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": ANTHROPIC_KEY,
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "model": "claude-haiku-4-5-20251001",
+                            "max_tokens": 80,
+                            "messages": [{
+                                "role": "user",
+                                "content": (
+                                    "Voce e um classificador de transcricoes de audio em PT-BR. "
+                                    "O contexto: Renato Almeida Prado mandou audio pra sua assistente "
+                                    "Tonha. Whisper transcreveu o audio. "
+                                    "Diga se a transcricao parece (A) COERENTE — frases com sentido "
+                                    "e nexo, mesmo que improvisada/conversacional; ou (B) ALUCINACAO "
+                                    "— frases desconexas, nomes proprios estranhos sem contexto "
+                                    "(ex: 'Rui Teino', 'Ediliano Paulini'), referencias a "
+                                    "'Associacao dos Profetores', 'Poder da Nova Iorque', "
+                                    "'projeto de explotacao de cafe', frases que nao se conectam.\n\n"
+                                    f"Transcricao: \"{transcription[:600]}\"\n\n"
+                                    "Responda APENAS uma palavra: COERENTE ou ALUCINACAO."
+                                ),
+                            }],
+                        },
+                    )
+                    if sanity_resp.status_code == 200:
+                        verdict = (sanity_resp.json()["content"][0]["text"] or "").strip().upper()
+                        logger.info(f"Sanity check verdict: {verdict}")
+                        if "ALUCINACAO" in verdict or "ALUCINAÇÃO" in verdict:
+                            await _send_response(
+                                phone,
+                                "Whisper alucinou na transcricao do audio (sai com nomes/eventos "
+                                "que nao existem). Pode mandar de novo ou digitar? Audio curto ou "
+                                "baixo volume costuma dar isso."
+                            )
+                            return {
+                                "error": "sanity_check_hallucination",
+                                "transcription": transcription[:200],
+                            }
+                    else:
+                        logger.warning(f"Sanity check API {sanity_resp.status_code}")
+            except Exception as e:
+                logger.warning(f"Sanity check failed (passing through): {e}")
+
         # Step 3: Send transcribed text to INTEL bot for processing
         content = f"[Audio transcrito] {transcription}"
 
