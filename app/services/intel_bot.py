@@ -2599,7 +2599,62 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
         final_text = f"Erro interno: {e}. Tenta de novo?"
         _save_conversation_message(phone, "assistant", final_text)
 
+    # 14/06/26: defesa em profundidade — sanitiza emojis e tokens contaminados
+    # antes de mandar pro WA. Persona ja proibe, mas o modelo escapa. Esse
+    # filtro garante voz limpa mesmo se ela quebrar a regra. So aplica no
+    # modo WhatsApp (chat web pode ter conteudo legitimo com emoji as vezes).
+    if mode == "whatsapp" and final_text:
+        final_text = _sanitize_tonha_response(final_text)
+
     return final_text
+
+
+_BANNED_PREFIXES_RX = re.compile(
+    r"^(✅|❌|🎯|🚀|🤖|👍|🟢|🔴|⚠️\s+|⚠\s+|🎉|📋|🔔|💡|⭐|📊|📌|✨|💪|🙌|👏|❤️|🤝|🔥)+\s*",
+    re.UNICODE,
+)
+_BANNED_EMOJI_RX = re.compile(
+    r"(✅|❌|🎯|🚀|🤖|👍|👎|🟢|🔴|🟡|🎉|📋|🔔|💡|⭐|📊|📌|✨|💪|🙌|👏|❤️|🤝|🔥|🎊|🎈)",
+    re.UNICODE,
+)
+_BANNED_OPENERS_RX = re.compile(
+    r"^(✅\s*)?(Anotado[.!]?\s*|ANOTADO[.!]?\s*|Perfeito[.!]?\s*|Achei[.!]?\s*|Vou registrar[.!]?\s*|Opa[,!]?\s*[A-Z]\w+[,!]?\s*)",
+    re.UNICODE | re.IGNORECASE,
+)
+_COS_PATROL_HEADER_RX = re.compile(
+    r"^🤖\s*\*?CoS\s*Patrol\*?\s*[⚠️]?\s*\n+",
+    re.UNICODE | re.IGNORECASE,
+)
+
+
+def _sanitize_tonha_response(text: str) -> str:
+    """Strip emojis decorativos, header CoS Patrol e openers CRM proibidos.
+
+    Defesa em profundidade: persona prompt ja probe mas o modelo escapa.
+    Filtro mecanico garante voz limpa antes de mandar pro WA.
+
+    NAO toca em emoji funcional de system alert ("⚠ INTEL alerta") porque
+    esse rendering nao passa por aqui (vai direto via cos_sensor).
+    """
+    if not text:
+        return text
+    original = text
+    # 1. Header CoS Patrol em qualquer linha do inicio
+    text = _COS_PATROL_HEADER_RX.sub("", text)
+    # 2. Openers CRM ("Anotado.", "Opa Renato!", etc) no inicio
+    text = _BANNED_OPENERS_RX.sub("", text)
+    # 3. Emojis decorativos no inicio (cluster)
+    text = _BANNED_PREFIXES_RX.sub("", text)
+    # 4. Emojis decorativos em qualquer posicao
+    text = _BANNED_EMOJI_RX.sub("", text)
+    # 5. Limpa multi-spaces e leading whitespace
+    text = re.sub(r"\s+\n", "\n", text).strip()
+    # 6. Capitaliza primeira letra se virou minuscula apos strip
+    if text and text[0].islower():
+        text = text[0].upper() + text[1:]
+    if text != original:
+        logger.info(f"sanitize_tonha: stripped contam tokens ({len(original)} -> {len(text)} chars)")
+    return text
 
 
 # ==================== WEB CHAT WRAPPER ====================

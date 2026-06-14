@@ -1946,12 +1946,12 @@ async def transcribe_audio(request: Request):
             if bot_resp.status_code == 200:
                 return {"status": "success", "transcription": transcription[:200]}
             else:
-                logger.warning(f"Bot API failed: {bot_resp.status_code}")
-                await _send_response(phone, f"Transcrevi seu audio:\n\n_{transcription}_")
+                logger.warning(f"Bot API failed: {bot_resp.status_code} — fallback envia apologia, NAO eco da transcricao (nao e comportamento de CoS).")
+                await _send_response(phone, "Deixa eu reler o que voce mandou — te volto em instantes.")
                 return {"status": "partial", "transcription": transcription[:200]}
         except httpx.TimeoutException:
-            logger.warning("Bot API timeout - sending transcription directly")
-            await _send_response(phone, f"Transcrevi seu audio:\n\n_{transcription}_")
+            logger.warning("Bot API timeout — fallback apologia, sem eco de transcricao.")
+            await _send_response(phone, "Demorei mais que o normal pra processar — te volto em instantes.")
             return {"status": "partial_timeout", "transcription": transcription[:200]}
 
     except Exception as e:
