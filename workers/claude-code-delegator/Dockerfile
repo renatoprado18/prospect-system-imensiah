@@ -17,5 +17,6 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-# Pull do repo a cada start pra atualizar pra ultima main.
-CMD ["sh", "-c", "cd /app/repo && git pull --depth 1 origin main && cd /app && node server.js"]
+# Atualiza o repo a cada start pra pegar ultima main. Usa fetch+reset --hard
+# (nao pull) pra evitar config de merge strategy que o container nao tem.
+CMD ["sh", "-c", "cd /app/repo && git fetch --depth 1 origin main && git reset --hard origin/main && cd /app && node server.js"]
