@@ -25487,6 +25487,43 @@ async def cron_cos_conselheiro_tick(request: Request):
         return {"job": "cos-conselheiro-tick", "status": "error", "error": str(e)}
 
 
+@app.post("/api/debug/wa-send")
+async def debug_wa_send(request: Request):
+    """Debug: chama _tool_send_wa_to_renato isolado pra diagnosticar Evolution.
+    Aceita user session OU {"secret": WORKER_SECRET}.
+    """
+    worker_secret_env = (os.getenv("WORKER_SECRET", "intel-audio-2026") or "").strip()
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body_secret = (body.get("secret") or "").strip()
+    if not (body_secret and body_secret == worker_secret_env):
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.intel_bot import INTEL_BOT_INSTANCE, RENATO_PHONE
+    instance_repr = repr(INTEL_BOT_INSTANCE)  # mostra \n se houver
+    evo_url = (os.getenv("EVOLUTION_API_URL", "") or "").strip()
+    evo_key = (os.getenv("EVOLUTION_API_KEY", "") or "").strip()
+
+    from services.cos_sensor import _tool_send_wa_to_renato
+    result = _tool_send_wa_to_renato(
+        title="DEBUG teste WA",
+        summary="Mensagem de teste enviada via /api/debug/wa-send pra isolar bug Evolution.",
+        urgency="low",
+        options=None,
+        contact_id=None,
+        context_link="debug",
+        proposed_action=None,
+    )
+    return {
+        "intel_bot_instance_repr": instance_repr,
+        "evo_url": evo_url,
+        "evo_key_len": len(evo_key),
+        "renato_phone": RENATO_PHONE,
+        "send_result": result,
+    }
+
+
 @app.post("/api/cos/conselheiro/run")
 async def manual_cos_conselheiro_run(request: Request):
     """Trigger manual do CONSELHEIRO. Aceita user session OU WORKER_SECRET."""
