@@ -5,16 +5,16 @@ FROM node:20
 
 WORKDIR /app
 
-# Build context = repo root (Railway nao seta Root Directory por default).
-# Paths abaixo sao relativos ao repo root.
-COPY workers/claude-code-delegator/package.json ./
+# Build context = workers/claude-code-delegator/ (configurar Root Directory
+# no Railway Settings -> Source apontando pra esse dir).
+COPY package.json ./
 RUN npm install --omit=dev
 
 # Clona o INTEL repo no /app/repo — workspace que Claude Code vai usar.
 ARG REPO_URL=https://github.com/renatoprado18/prospect-system-imensiah.git
 RUN git clone --depth 1 ${REPO_URL} /app/repo
 
-COPY workers/claude-code-delegator/server.js workers/claude-code-delegator/Procfile ./
+COPY server.js Procfile ./
 
 ENV REPO_PATH=/app/repo
 ENV PORT=3000
