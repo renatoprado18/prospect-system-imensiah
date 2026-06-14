@@ -1,25 +1,29 @@
 FROM node:20
 
-# Node:20 (full) ja vem com git, curl, ca-certificates, bash bundled.
-# Claude Code traz ripgrep internamente.
+# Estrategia: NAO depende de COPY do build context (Railway estava enviando
+# context vazio). Pega tudo via git clone do repo inteiro. Robusto sem
+# precisar configurar Root Directory.
 
 WORKDIR /app
 
-# Build context = workers/claude-code-delegator/ (configurar Root Directory
-# no Railway Settings -> Source apontando pra esse dir).
-COPY package.json ./
-RUN npm install --omit=dev
-
-# Clona o INTEL repo no /app/repo — workspace que Claude Code vai usar.
+# Clona INTEL repo — workspace pro Claude Code E fonte do server worker.
 ARG REPO_URL=https://github.com/renatoprado18/prospect-system-imensiah.git
 RUN git clone --depth 1 ${REPO_URL} /app/repo
 
-COPY server.js Procfile ./
+# Copia arquivos do worker DE DENTRO do clone (nao do build context).
+RUN cp /app/repo/workers/claude-code-delegator/package.json ./ \
+    && cp /app/repo/workers/claude-code-delegator/server.js ./ \
+    && cp /app/repo/workers/claude-code-delegator/Procfile ./
+
+# Instala deps (Express + @anthropic-ai/claude-code SDK)
+RUN npm install --omit=dev
 
 ENV REPO_PATH=/app/repo
 ENV PORT=3000
 
 EXPOSE 3000
 
-# Pull do repo a cada start pra atualizar pra ultima main.
-CMD ["sh", "-c", "cd /app/repo && git fetch --depth 1 origin main && git reset --hard origin/main && cd /app && node server.js"]
+# Pull do repo a cada start pra atualizar pra ultima main do INTEL.
+# Tambem re-copia worker files caso server.js/package.json tenham sido
+# atualizados (no caso de hot reload via git push).
+CMD ["sh", "-c", "cd /app/repo && git fetch --depth 1 origin main && git reset --hard origin/main && cp workers/claude-code-delegator/server.js /app/ && cp workers/claude-code-delegator/package.json /app/package.json && cd /app && node server.js"]
