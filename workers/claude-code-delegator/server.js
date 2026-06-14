@@ -32,7 +32,10 @@ app.use(express.json({ limit: "1mb" }));
 
 const PORT = process.env.PORT || 3000;
 const WORKER_SECRET = (process.env.WORKER_SECRET || "").trim();
-const CLAUDE_CODE_OAUTH_TOKEN = (process.env.CLAUDE_CODE_OAUTH_TOKEN || "").trim();
+// 14/06/26: replace(/\s+/g, "") em vez de trim() — copy/paste do dashboard
+// Railway as vezes injeta \n no meio do token (wrapping da UI). OAuth tokens
+// nao tem whitespace legitimo, entao strip global e safe.
+const CLAUDE_CODE_OAUTH_TOKEN = (process.env.CLAUDE_CODE_OAUTH_TOKEN || "").replace(/\s+/g, "");
 const REPO_PATH = process.env.REPO_PATH || "/app/repo";
 const MAX_DURATION_MS = parseInt(process.env.MAX_DURATION_MS || "300000", 10); // 5min
 const DAILY_CALL_CAP = parseInt(process.env.DAILY_CALL_CAP || "50", 10);
