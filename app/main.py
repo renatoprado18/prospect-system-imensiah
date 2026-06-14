@@ -13442,11 +13442,19 @@ async def bot_message_endpoint(request: Request):
     if not phone or not content:
         raise HTTPException(status_code=400, detail="phone and content required")
 
-    from services.intel_bot import handle_bot_message, send_intel_notification
+    from services.intel_bot import handle_bot_message, send_intel_notification, _WA_SENT_VAR
     response = await handle_bot_message(phone, content, message_id)
-    if response:
+    # 14/06/26: handle_bot_message agora envia o final_text via WA dentro dela
+    # pra garantir entrega mesmo se Vercel timeoutar este endpoint. Verifica
+    # _WA_SENT_VAR pra evitar dupla notificacao.
+    already_sent = False
+    try:
+        already_sent = _WA_SENT_VAR.get()
+    except Exception:
+        pass
+    if response and not already_sent:
         await send_intel_notification(response, phone=phone)
-    return {"status": "success", "response": response or ""}
+    return {"status": "success", "response": response or "", "wa_already_sent": already_sent}
 
 
 @app.post("/api/webhooks/whatsapp")

@@ -2586,6 +2586,23 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
                 tool_results=tool_results_data
             )
 
+            # 14/06/26: Envio progressivo pro WA — Vercel Hobby tem timeout 10s
+            # e Claude tool_use loop pode passar disso. Se esperar o final pra
+            # enviar via bot_message_endpoint, Vercel mata a funcao antes do
+            # send. Solucao: envia CADA turn substantivo ao WA conforme rola,
+            # assim user ve progresso E ainda recebe mensagem mesmo se Vercel
+            # matar a funcao depois.
+            #
+            # So mode='whatsapp' (chat web nao envia WA). Filtra texto curto/
+            # ruidoso ("Deixa eu corrigir", "ok", etc <15 chars) pra nao spam.
+            if mode == "whatsapp" and current_text and len(current_text.strip()) >= 15:
+                try:
+                    sanitized = _sanitize_tonha_response(current_text)
+                    if sanitized and len(sanitized.strip()) >= 15:
+                        await send_intel_notification(sanitized, phone=phone)
+                except Exception as e:
+                    logger.warning(f"send progressive WA failed (continuing): {e}")
+
         else:
             # Max iterations reached — summarize what was found
             if not final_text:
@@ -2629,8 +2646,27 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
     # modo WhatsApp (chat web pode ter conteudo legitimo com emoji as vezes).
     if mode == "whatsapp" and final_text:
         final_text = _sanitize_tonha_response(final_text)
+        # 14/06/26: envia FINAL_TEXT pro WA aqui dentro pra garantir que chega
+        # mesmo se bot_message_endpoint timeoutar. Idempotencia: o caller
+        # (bot_message_endpoint) checa flag `_wa_already_sent` pra nao dup.
+        try:
+            await send_intel_notification(final_text, phone=phone)
+            # Anota no contexto thread-local que ja enviou — caller skip.
+            import contextvars
+            try:
+                _WA_SENT_VAR.set(True)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning(f"send final WA failed: {e}")
 
     return final_text
+
+
+# Context var pra sinalizar pro bot_message_endpoint que ja enviou via WA
+# dentro do handle_bot_message (evita duplicacao). Default False por turn.
+import contextvars as _ctxvars
+_WA_SENT_VAR: _ctxvars.ContextVar[bool] = _ctxvars.ContextVar("wa_already_sent", default=False)
 
 
 _BANNED_PREFIXES_RX = re.compile(
