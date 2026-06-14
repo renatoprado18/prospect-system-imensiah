@@ -66,6 +66,10 @@
       "schedule": "0 1 * * *"
     },
     {
+      "path": "/api/cron/cos-extractor",
+      "schedule": "30 1 * * *"
+    },
+    {
       "path": "/api/cron/linkedin-monitor-topics",
       "schedule": "0 9 * * *"
     },

@@ -26565,6 +26565,39 @@ async def cron_daily_synthesis(request: Request):
         return {"job": "daily-synthesis", "status": "error", "error": str(e)}
 
 
+@app.get("/api/cron/cos-extractor")
+@app.post("/api/cron/cos-extractor")
+@track_cron_run
+async def cron_cos_extractor(request: Request):
+    """
+    Cron: Extractor Noturno + Loop de Correcao da Tonha (CoS digital).
+
+    Roda 30min depois da sintese diaria. Le ultimas 24h de:
+    - bot_conversations (turns do Renato)
+    - messages outgoing pra contatos pessoais/C0-C2
+    - sintese noturna (se houver)
+    - ultimas 50 system_memories (pra dedup)
+
+    Extrai 5 buckets via Sonnet 4.6:
+      A. Fatos novos sobre contatos       -> contact_memories
+      B. Padroes/reflexoes do Renato      -> system_memories
+      C. Glossario (girias do Renato)     -> system_memories
+      D. Decisoes/compromissos            -> system_memories
+      E. Correcoes (loop de correcao)     -> system_memories tipo='correcao'
+
+    Schedule: 30 1 * * * (22:30 Sao Paulo).
+    Budget cap: $1.50/dia (override COS_EXTRACTOR_DAILY_CAP_USD).
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.cos_extractor import run_extractor
+    try:
+        return {"job": "cos-extractor", **await run_extractor(window_hours=24)}
+    except Exception as e:
+        logging.exception("cos-extractor falhou")
+        return {"job": "cos-extractor", "status": "error", "error": str(e)}
+
+
 @app.get("/api/cron/pulse")
 async def cron_pulse():
     """Read-only pulse de saude dos crons. Sem auth — so retorna timestamps,
