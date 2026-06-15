@@ -49,8 +49,8 @@ TOOLS = [
             "properties": {
                 "scope": {
                     "type": "string",
-                    "enum": ["contacts", "projects", "tasks", "signals", "delegations", "calendar", "whatsapp", "all"],
-                    "description": "O que buscar. 'calendar' = eventos proximos 14d. 'whatsapp' = msgs WA (DM + grupos) ultimos 30d. 'all' = broad.",
+                    "enum": ["contacts", "projects", "tasks", "signals", "delegations", "calendar", "whatsapp", "attachments", "all"],
+                    "description": "O que buscar. 'calendar' = eventos 14d. 'whatsapp' = msgs WA 30d. 'attachments' = PDFs/audios/imagens recebidos no WA com texto extraido. 'all' = broad.",
                 },
                 "query": {
                     "type": "string",
@@ -278,6 +278,22 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
                 LIMIT %s
             """, (f"%{query}%", f"%{query}%", limit))
             out["results"]["delegations"] = [dict(r) for r in cur.fetchall()]
+
+        if scope in ("attachments", "all"):
+            # Anexos WA com texto extraido (PDF/audio/imagem) ultimos 30d.
+            cur.execute("""
+                SELECT id, message_id, phone, kind, original_filename, mime_type,
+                       LEFT(extracted_text, 2500) AS preview,
+                       LENGTH(extracted_text) AS chars,
+                       extraction_model, criado_em
+                FROM wa_attachments
+                WHERE criado_em > NOW() - INTERVAL '30 days'
+                  AND extracted_text IS NOT NULL
+                  AND (extracted_text ILIKE %s OR original_filename ILIKE %s)
+                ORDER BY criado_em DESC
+                LIMIT %s
+            """, (f"%{query}%", f"%{query}%", limit))
+            out["results"]["attachments"] = [dict(r) for r in cur.fetchall()]
 
         if scope in ("whatsapp", "all"):
             # DMs (whatsapp_messages) + grupos (group_messages) ultimos 30d.

@@ -1954,6 +1954,15 @@ async def transcribe_audio(request: Request):
         groq_response = resp.json()
         transcription = (groq_response.get("text") or "").strip()
 
+        # Persiste em wa_attachments (idempotente). Brain pode buscar depois
+        # via search_context scope='attachments'.
+        if transcription and message_id:
+            _save_wa_attachment(
+                message_id, phone, "audio",
+                mime_type=clean_mime, size_bytes=len(audio_bytes),
+                extracted_text=transcription, extraction_model="whisper-large-v3",
+            )
+
         # Filtro anti-alucinacao: se Whisper retorna texto curto + segments com
         # no_speech_prob alto OU avg_logprob muito negativo, e provavel
         # alucinacao em audio em silencio/ruido. Avisa e pede digitacao.
@@ -2190,6 +2199,14 @@ async def analyze_image(request: Request):
 
         logger.info(f"Image analyzed: {analysis[:100]}")
 
+        # Persiste em wa_attachments
+        if message_id:
+            _save_wa_attachment(
+                message_id, phone, "image",
+                mime_type=mimetype, size_bytes=int(len(image_b64) * 3 / 4),
+                extracted_text=analysis, extraction_model="claude-haiku-4-5-vision",
+            )
+
         # Step 3: Send to intel-bot for processing with CRM context
         content = f"[Imagem analisada] {caption + ': ' if caption else ''}{analysis}"
 
@@ -2212,6 +2229,170 @@ async def analyze_image(request: Request):
     except Exception as e:
         logger.error(f"Image analysis error: {e}")
         await _send_response(phone, "Erro ao processar imagem.")
+        return {"error": str(e)}
+
+
+def _save_wa_attachment(
+    message_id: str, phone: str, kind: str,
+    original_filename: str = None, mime_type: str = None,
+    size_bytes: int = None, extracted_text: str = None,
+    extraction_model: str = None, extraction_cost_usd: float = None,
+    error: str = None,
+) -> Optional[int]:
+    """Persiste anexo WA processado. Idempotente via UNIQUE (message_id, kind)."""
+    if not DATABASE_URL or not message_id:
+        return None
+    try:
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO wa_attachments (
+                message_id, phone, kind, original_filename, mime_type,
+                size_bytes, extracted_text, extraction_model, extraction_cost_usd, error
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (message_id, kind) DO UPDATE
+            SET extracted_text = EXCLUDED.extracted_text,
+                extraction_model = EXCLUDED.extraction_model,
+                extraction_cost_usd = EXCLUDED.extraction_cost_usd,
+                error = EXCLUDED.error
+            RETURNING id
+        """, (
+            message_id, phone, kind, original_filename, mime_type,
+            size_bytes, extracted_text, extraction_model, extraction_cost_usd, error,
+        ))
+        row = cur.fetchone()
+        conn.commit()
+        conn.close()
+        return row["id"] if row else None
+    except Exception as e:
+        logger.warning(f"_save_wa_attachment falhou: {e}")
+        return None
+
+
+@app.post("/analyze-pdf")
+async def analyze_pdf(request: Request):
+    """Recebe PDF do WhatsApp, extrai texto via Claude Sonnet (suporta PDF nativo),
+    persiste em wa_attachments, e encaminha como msg pro bot."""
+    import base64
+
+    data = await request.json()
+    if data.get("secret") != WORKER_SECRET:
+        return JSONResponse(status_code=401, content={"error": "unauthorized"})
+
+    key = data.get("key", {})
+    phone = data.get("phone", "")
+    message_id = data.get("message_id", "")
+    filename = data.get("filename", "documento.pdf")
+    caption = data.get("caption", "")
+
+    if not phone or not key:
+        return JSONResponse(status_code=400, content={"error": "missing phone or key"})
+
+    logger.info(f"PDF analysis request for {phone}, file={filename}")
+
+    try:
+        # 1. Download PDF base64 from Evolution
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            dl_resp = await client.post(
+                f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{INTEL_BOT_INSTANCE}",
+                headers={"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"},
+                json={"message": {"key": key}, "convertToMp4": False}
+            )
+        if dl_resp.status_code not in (200, 201):
+            await _send_response(phone, "Nao consegui baixar o PDF.")
+            _save_wa_attachment(message_id, phone, "pdf", original_filename=filename,
+                                error=f"download_failed {dl_resp.status_code}")
+            return {"error": "download_failed"}
+
+        dl_data = dl_resp.json()
+        pdf_b64 = dl_data.get("base64", "")
+        size_bytes = int(len(pdf_b64) * 3 / 4) if pdf_b64 else 0
+
+        if not pdf_b64:
+            _save_wa_attachment(message_id, phone, "pdf", original_filename=filename, error="empty_pdf")
+            await _send_response(phone, "PDF vazio.")
+            return {"error": "empty_pdf"}
+
+        logger.info(f"PDF downloaded: {size_bytes} bytes, file={filename}")
+
+        # 2. Send to Claude Sonnet com type=document
+        instruction = (
+            caption.strip() if caption.strip() else
+            f"Extraia e resuma o conteudo deste PDF '{filename}'. "
+            "Se for evento/programa: liste datas, local, horarios, participantes/protagonistas com cargos. "
+            "Se for contrato/documento: principais pontos + clausulas relevantes. "
+            "Se for tabela/dados: estrutura + numeros-chave. "
+            "Maximo 800 palavras. Portugues."
+        )
+
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-6",
+                    "max_tokens": 2000,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64}},
+                            {"type": "text", "text": instruction},
+                        ],
+                    }],
+                },
+            )
+        if resp.status_code != 200:
+            logger.error(f"Claude PDF failed: {resp.status_code} - {resp.text[:200]}")
+            _save_wa_attachment(message_id, phone, "pdf", original_filename=filename,
+                                size_bytes=size_bytes, error=f"claude_{resp.status_code}")
+            await _send_response(phone, "Erro ao analisar PDF.")
+            return {"error": f"pdf_failed: {resp.status_code}"}
+
+        result = resp.json()
+        extracted = result.get("content", [{}])[0].get("text", "")
+        usage = result.get("usage", {}) or {}
+        # custo aprox sonnet 4.6: $3/1M in + $15/1M out
+        cost = (usage.get("input_tokens", 0) * 3 + usage.get("output_tokens", 0) * 15) / 1_000_000
+
+        if not extracted:
+            await _send_response(phone, "Nao consegui extrair conteudo do PDF.")
+            return {"error": "empty_extraction"}
+
+        # 3. Persiste
+        att_id = _save_wa_attachment(
+            message_id, phone, "pdf",
+            original_filename=filename, mime_type="application/pdf",
+            size_bytes=size_bytes, extracted_text=extracted,
+            extraction_model="claude-sonnet-4-6", extraction_cost_usd=cost,
+        )
+        logger.info(f"PDF analyzed: attachment #{att_id}, {len(extracted)} chars, ${cost:.4f}")
+
+        # 4. Forward to bot
+        content = f"[PDF anexado: {filename}] {caption + ' — ' if caption else ''}{extracted}"
+
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            bot_resp = await client.post(
+                f"{INTEL_API_URL}/api/webhooks/bot-message",
+                headers={"Content-Type": "application/json"},
+                json={"phone": phone, "content": content, "message_id": message_id, "secret": WORKER_SECRET},
+                timeout=90.0,
+            )
+
+        if bot_resp.status_code == 200:
+            return {"status": "success", "attachment_id": att_id, "chars": len(extracted)}
+        else:
+            await _send_response(phone, f"📄 PDF analisado: {extracted[:1000]}")
+            return {"status": "partial"}
+
+    except Exception as e:
+        logger.exception(f"PDF analysis error: {e}")
+        _save_wa_attachment(message_id, phone, "pdf", original_filename=filename, error=str(e)[:300])
+        await _send_response(phone, "Erro ao processar PDF.")
         return {"error": str(e)}
 
 

@@ -1128,6 +1128,9 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
     content = ""
     is_audio = False
     is_image = False
+    is_pdf = False
+    pdf_filename = ""
+    pdf_caption = ""
     if "conversation" in message:
         content = message["conversation"]
     elif "extendedTextMessage" in message:
@@ -1139,6 +1142,14 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
         is_image = True
         caption = message["imageMessage"].get("caption", "")
         content = caption or "__IMAGE_PENDING__"
+    elif "documentMessage" in message:
+        doc = message["documentMessage"]
+        mime = (doc.get("mimetype") or "").lower()
+        if "pdf" in mime or (doc.get("fileName") or "").lower().endswith(".pdf"):
+            is_pdf = True
+            pdf_filename = doc.get("fileName") or "documento.pdf"
+            pdf_caption = doc.get("caption", "") or ""
+            content = pdf_caption or "__PDF_PENDING__"
 
     if not content:
         return {"processed": False, "reason": "no_text_content"}
@@ -1166,6 +1177,28 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
         # Only if AUDIO_WORKER_URL not configured at all
         logger.warning("AUDIO_WORKER_URL not set, audio not supported")
         return {"processed": False, "reason": "audio_no_worker_url"}
+
+    # For PDFs: dispatch to Railway worker /analyze-pdf
+    if is_pdf:
+        worker_url = os.getenv("AUDIO_WORKER_URL", "")
+        worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026")
+        if worker_url:
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    resp = await client.post(
+                        f"{worker_url}/analyze-pdf",
+                        json={
+                            "key": key, "phone": phone, "message_id": message_id,
+                            "filename": pdf_filename, "caption": pdf_caption,
+                            "secret": worker_secret,
+                        }
+                    )
+                    logger.info(f"PDF dispatched to worker: {resp.status_code}")
+                return {"processed": True, "reason": "pdf_dispatched_to_worker"}
+            except Exception as e:
+                logger.error(f"PDF worker dispatch failed: {e}")
+        logger.warning("AUDIO_WORKER_URL not set, PDF not supported")
+        return {"processed": False, "reason": "pdf_no_worker_url"}
 
     # For images: dispatch to Railway worker for Claude Vision analysis
     if is_image:
