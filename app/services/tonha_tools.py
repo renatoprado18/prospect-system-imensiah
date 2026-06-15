@@ -49,8 +49,8 @@ TOOLS = [
             "properties": {
                 "scope": {
                     "type": "string",
-                    "enum": ["contacts", "projects", "tasks", "signals", "delegations", "calendar", "all"],
-                    "description": "O que buscar. 'calendar' = eventos proximos 14d (ja convertido BRT). 'all' = broad.",
+                    "enum": ["contacts", "projects", "tasks", "signals", "delegations", "calendar", "whatsapp", "all"],
+                    "description": "O que buscar. 'calendar' = eventos proximos 14d. 'whatsapp' = msgs WA (DM + grupos) ultimos 30d. 'all' = broad.",
                 },
                 "query": {
                     "type": "string",
@@ -278,6 +278,36 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
                 LIMIT %s
             """, (f"%{query}%", f"%{query}%", limit))
             out["results"]["delegations"] = [dict(r) for r in cur.fetchall()]
+
+        if scope in ("whatsapp", "all"):
+            # DMs (whatsapp_messages) + grupos (group_messages) ultimos 30d.
+            # Query pode bater no nome do contato OU no conteudo da msg.
+            cur.execute("""
+                SELECT 'dm' AS kind, wm.id, wm.contact_id, ct.nome AS contato_nome,
+                       wm.direction, wm.content, wm.message_date AS ts
+                FROM whatsapp_messages wm
+                LEFT JOIN contacts ct ON ct.id = wm.contact_id
+                WHERE wm.message_date > NOW() - INTERVAL '30 days'
+                  AND (wm.content ILIKE %s OR ct.nome ILIKE %s)
+                ORDER BY wm.message_date DESC
+                LIMIT %s
+            """, (f"%{query}%", f"%{query}%", limit))
+            dms = [dict(r) for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT 'group' AS kind, gm.id, gm.group_jid, gm.sender_name,
+                       gm.contact_id, gm.from_me, gm.content, gm.timestamp AS ts,
+                       pwg.group_name
+                FROM group_messages gm
+                LEFT JOIN project_whatsapp_groups pwg ON pwg.group_jid = gm.group_jid
+                WHERE gm.timestamp > NOW() - INTERVAL '30 days'
+                  AND (gm.content ILIKE %s OR gm.sender_name ILIKE %s OR pwg.group_name ILIKE %s)
+                ORDER BY gm.timestamp DESC
+                LIMIT %s
+            """, (f"%{query}%", f"%{query}%", f"%{query}%", limit))
+            groups = [dict(r) for r in cur.fetchall()]
+
+            out["results"]["whatsapp"] = {"dms": dms, "groups": groups}
 
         if scope in ("calendar", "all"):
             # IMPORTANTE: calendar_events armazena datetime na timezone do campo

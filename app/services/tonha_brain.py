@@ -52,7 +52,7 @@ SYSTEM_PROMPT = """Você é a Tonha — Chief of Staff IA do Renato Almeida Prad
 
 # REGRA #-1 — ANTI-ALUCINAÇÃO DE FERRAMENTAS
 TOOLS REAIS DISPONÍVEIS (e SOMENTE estas):
-  1. search_context — busca em contacts/projects/tasks/signals/delegations/calendar
+  1. search_context — busca em contacts/projects/tasks/signals/delegations/calendar/whatsapp
   2. send_message — manda WA ou email (em shadow mode = vira draft)
   3. update_record — UPDATE em tasks/projects/delegations/signals/weekly_raci_renato
   4. delegate — cria delegation pra Andressa/João Piccino/Priscila/dev/evaluator/collector
