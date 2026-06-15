@@ -1455,7 +1455,9 @@ async def _maybe_route_to_tonha_brain(phone: str, message: str) -> Optional[str]
     if targets not in ("all", "wa"):
         return None  # chat-only nao chega aqui (worker so faz WA)
 
-    base_url = (os.getenv("BASE_URL") or "https://intel.almeida-prado.com").strip().rstrip("/")
+    # Usa INTEL_API_URL (padrao do worker pra falar com Vercel). Nao usa BASE_URL
+    # porque essa env var no worker pode estar como localhost por engano.
+    base_url = (os.getenv("INTEL_API_URL") or "https://intel.almeida-prado.com").strip().rstrip("/")
     worker_secret = (os.getenv("WORKER_SECRET") or "").strip()
     if not worker_secret:
         logger.warning("[tonha-route] WORKER_SECRET ausente — fallback bot antigo")
