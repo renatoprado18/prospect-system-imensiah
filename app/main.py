@@ -5472,6 +5472,28 @@ async def cron_platform_costs_daily(request: Request):
     }
 
 
+@app.get("/api/cron/detectors-run")
+@track_cron_run
+async def cron_detectors_run(request: Request, only: str = ""):
+    """Fase 1 da rebuild Tonha — executa todos detectores deterministas.
+
+    Cada detector le DB, calcula signals, faz INSERT ... ON CONFLICT pra
+    dedup (signal_hash UNIQUE). Tonha brain (Sonnet 4.6) le 'signals' e decide.
+
+    Agendado hourly via Railway scheduler (workers/audio-transcriber/main.py).
+    Query param `only=detector_inbox,detector_editorial` roda subset (debug).
+
+    Ver docs/ARCHITECTURE_REBUILD.md.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.detectors import run_all_detectors
+
+    only_list = [s.strip() for s in only.split(",") if s.strip()] or None
+    return run_all_detectors(only=only_list)
+
+
+
 @app.get("/api/cron/hetzner-evolution-health")
 @track_cron_run
 async def cron_hetzner_evolution_health(request: Request):

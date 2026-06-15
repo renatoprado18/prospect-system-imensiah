@@ -68,6 +68,8 @@ Sucesso = horas devolvidas + decisões melhores + zero ruído.
 | `detector_relacionamento.py` | cos_research, cos_network, cos_sales | contatos esfriando, follow-ups pendentes, aniversários, pipeline imensIAH |
 | `detector_operational.py` | cos_sensor, cos_portfolio | tasks vencidas, conflitos calendar, drift projetos |
 | `detector_financial.py` | cos_financial | custos plataforma > teto mensal, payments vencidos |
+| `detector_governanca_pessoal.py` | (novo — Ritual 3 sec. 4.6) | drift de projetos sem owner/prioridade/update, tasks órfãs, duplicação semântica, frentes CoS Config sem atividade, compromisso verbal detectado em conversa sem virar task |
+| `detector_delegacoes.py` | (novo — sec. 4.5) | delegações vencidas, sem resposta, em escalation, pra cobrança automática |
 
 **Garantias dos detectores:**
 - Determinísticos: mesmo input → mesmo output
@@ -138,7 +140,7 @@ CREATE INDEX idx_decisions_signal ON tonha_decisions(signal_id);
 CREATE INDEX idx_decisions_recent ON tonha_decisions(criado_em DESC);
 ```
 
-### Camada 3 — Tool Catalog (5 tools limpos)
+### Camada 3 — Tool Catalog (8 tools limpos)
 
 Atual: `query_intel`, `execute_action` com 19 sub-actions, `query_conselhoos`, `execute_conselhoos`, `draft_message`, `project_chat` — confuso e Tonha aluciana.
 
@@ -147,16 +149,217 @@ Novo:
 | Tool | Substitui | O que faz |
 |---|---|---|
 | `search_context(query, scope?)` | query_intel, query_conselhoos, search_system_memories | Busca semântica + keyword em contacts, projects, messages, memories, conselhoos. Retorna estruturado. |
+| `search_inbox(query, channel, direction?)` | (novo — gap atual) | Busca em **emails enviados + recebidos** (Gmail via INTEL store) E **WhatsApp 1:1 + grupos**. Params: `query` texto, `channel` ∈ {email, wa, all}, `direction` ∈ {sent, received, both}, `days?` janela. Usa quando Tonha precisa verificar "Roger respondeu?", "mandei pra Amadeo já?", "Veridiana falou algo no grupo?". |
+| `web_research(query, depth?)` | (novo — gap atual) | Pesquisa web ao vivo (WebSearch + WebFetch) pra coisas que ela não sabe: contexto de mercado, dados públicos de empresas, jurisprudência, notícias. `depth` ∈ {quick, deep}. Quick = 1 query. Deep = delegate_to_claude_code com escopo "investigação web". |
 | `send_message(channel, target, content, draft?)` | send_whatsapp, send_email, draft_message | WA (contato/grupo) + email (personal/professional) unificado. `draft=true` salva sem enviar. |
 | `update_record(entity, id, fields)` | update_task, update_contact, update_calendar_event, save_note, save_memory, execute_conselhoos UPDATE/INSERT | Qualquer tabela com schema validator. Audit automático. |
+| `delegate(to, task, context, deadline?)` | (novo — gap atual) | **Delegação real** pra time humano + Dev. `to` ∈ {andressa, joao_piccino, priscila_contadora, dev, evaluator, collector}. Cria tarefa em `delegations` (nova tabela), manda WA/email pra pessoa com contexto, agenda follow-up automático, cobra se não responder até deadline. Ver seção 4.5. |
 | `decide_and_log(decision_type, summary, reasoning, signal_id?)` | (novo) | Registra decisão em `tonha_decisions`. Mandatory pra modo autonomous, opcional pra reactive. |
-| `delegate_to_claude_code(task, mode)` | já existe | Delegação pro Claude Code Railway worker pra tarefas pesadas (debug, análise de código, pesquisa web profunda). |
+| `delegate_to_claude_code(task, mode)` | já existe | (Alias de `delegate(to='dev', ...)` quando a tarefa é técnica). Mantém pra invocação direta de tarefa de código/debug/análise técnica. |
 
 **Princípios do tool catalog:**
 - Schemas restritos (Pydantic-style validation)
 - Descrições com exemplo end-to-end em cada tool
 - Sem `execute_action(action="X", params={...})` wrapper — cada ação é tool própria
 - Nenhuma tool pode mentir sobre o que fez (toda return inclui evidência)
+
+### 4.5 — Delegação a time humano + Dev (capacidade nova)
+
+A Tonha precisa **agir através de outros agentes** — humanos e IA — quando não é ela quem deve executar. CoS de verdade não faz tudo: delega bem.
+
+**Time atual mapeado:**
+
+| Alvo (`to=`) | Quem é | Contact ID | Canal preferido | Função |
+|---|---|---|---|---|
+| `andressa` | Andressa Santos | #313 | WA | Assistente virtual — tarefas operacionais, follow-ups, marcar coisas |
+| `joao_piccino` | João Carlos A P Piccino | #2869 | Email + WA | Advogado — contratos, processos, análise jurídica |
+| `priscila_contadora` | Priscila Aquino | #4734 | WA (+5514991792675) | Contadora — balancetes, demonstrações, questões fiscais |
+| `dev` | Claude Code (Railway delegator) | — | Tool nativa | Código, debug, análise técnica, pesquisa web profunda |
+| `evaluator` | Tonha-mesma em modo análise | — | Interno | Avalia qualidade, viabilidade, risco de algo (loop reflexivo) |
+| `collector` | Tonha-mesma em modo cobrança | — | Interno | Faz follow-up + escalation de delegações abertas |
+
+**Schema sugerido `delegations`:**
+
+```sql
+CREATE TABLE delegations (
+    id BIGSERIAL PRIMARY KEY,
+    delegated_to TEXT NOT NULL,             -- 'andressa' | 'joao_piccino' | 'priscila_contadora' | 'dev' | 'evaluator' | 'collector'
+    contact_id INT,                          -- FK contacts.id quando humano
+    task_summary TEXT NOT NULL,
+    task_full TEXT NOT NULL,                 -- contexto + instrução
+    deadline DATE,
+    status TEXT NOT NULL DEFAULT 'open',     -- open | in_progress | completed | overdue | escalated
+    response TEXT,                           -- resposta humana se houver
+    response_at TIMESTAMP,
+    last_followup_at TIMESTAMP,
+    followup_count INT DEFAULT 0,
+    decision_id BIGINT REFERENCES tonha_decisions(id),
+    signal_id BIGINT REFERENCES signals(id),
+    criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+    atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
+);
+```
+
+**Padrões de uso (instrução no prompt):**
+
+1. **Avaliar algo** (proposta, contrato, número, post): `delegate(to='evaluator', task='avalia este X', context=...)` → loop reflexivo dela mesma com extended thinking, gera laudo estruturado (qualidade, riscos, recomendação).
+
+2. **Cobrar pendência** (alguém ficou de fazer algo e não fez): `delegate(to='collector', task='cobrar Y de X', context=...)` → ela busca o histórico, decide o tom (delicado/firme/escalonar), manda WA/email apropriado, agenda próximo follow-up.
+
+3. **Tarefa operacional** (marcar reunião, atualizar planilha, ligar pra prestador): `delegate(to='andressa', task='...', deadline='...')` → rascunha WA pra Andressa com contexto suficiente pra ela executar sozinha.
+
+4. **Questão jurídica** (revisar contrato, opinião legal): `delegate(to='joao_piccino', task='...', context=...)` → manda email formal com docs anexos OU draft WA dependendo da formalidade.
+
+5. **Questão contábil/fiscal**: `delegate(to='priscila_contadora', ...)`.
+
+6. **Tarefa técnica/código/pesquisa profunda**: `delegate(to='dev', task='...')` → invoca Claude Code Railway delegator.
+
+**Cobrança automática:**
+
+- Cron leve 1x/dia verifica `delegations WHERE status='open' AND deadline < NOW()`.
+- Cria signal tipo `delegacao_vencida` com `contexto` apontando pra delegation_id.
+- Próximo loop da Tonha lê signal, decide: (a) cobrar de novo (delicado se primeira vez, firme se segunda), (b) escalar pro Renato, (c) cancelar/atualizar deadline.
+
+### 4.6 — Governança pessoal do Renato (capacidade nova)
+
+A Tonha não é só CoS dos negócios — ela faz governança **do próprio trabalho dele**. Olha proativamente o portfolio de projetos, tarefas e objetivos. Sugere reorganização. Mantém ritmo.
+
+**3 rituais permanentes:**
+
+#### Ritual 1 — RACI semanal pessoal (toda segunda 7h BRT)
+
+Não confundir com RACI dos conselhos (Vallen/Alba/etc.). Esse é o RACI **dele**.
+
+**Canal: grupo WA "Governança APCE"** (criado 15/06/26 — group_jid `120363408627197480@g.us`, vinculado ao projeto INTEL #34 "Governança APCE", pessoal).
+
+Participantes:
+- Renato (admin)
+- Tonha (intel-bot)
+- Andressa Santos (assistente humana)
+
+Tonha posta toda segunda 7h BRT 1 mensagem agrupada:
+- ✅ **Concluído na semana passada** (do que ele se comprometeu)
+- 🔄 **Em andamento** (prazo + último signal de movimentação)
+- 🔴 **Sem movimento +14d** (precisa decidir: descomprometer ou destravar)
+- 🆕 **Surgiu novo** (decisões da semana, compromissos verbais detectados em conversas, áudios, atas)
+
+Renato responde **assincronamente** ao longo da semana via WA — atualiza item por item, ou em lote. Andressa pode atualizar status do que tocar. Tonha mantém a tabela em `weekly_raci_renato` viva.
+
+#### Ritual 2 — Reunião mensal (1º útil do mês, 8h BRT)
+
+Tonha prepara **pauta no domingo à noite** baseada em:
+- Drift no portfolio (projetos parados >30d, sem owner, sem prioridade)
+- Frentes da CoS Config v5 vs realocação real de horas (audit: ele tá gastando 30% em Vallen mas Vallen é peso 15%?)
+- Pendências de delegações abertas a humanos (Andressa, João, Priscila)
+- Decisões one-way door em maturação (SP/Japão, Wadhwani, etc.)
+- Métricas de saúde (sono, treino, família — política C2)
+
+Ele responde "ok pauta" → Tonha agenda reunião no calendar. Durante a reunião ele dita áudios curtos pra cada item, Tonha sintetiza e atualiza projetos/prioridades/delegações.
+
+#### Ritual 3 — Reorganização proativa contínua
+
+Detector `detector_governanca_pessoal` roda 1x/dia 6h BRT. Emite signals quando:
+- Projeto sem owner_contact_id
+- Projeto sem prioridade definida >7d
+- Projeto sem nota de atualização >30d com tasks ativas
+- Tasks órfãs (sem projeto vinculado) >7d
+- Tasks duplicadas semanticamente (mesmo título variação)
+- Compromisso verbal detectado em conversa (msg WA, áudio transcrito) sem virar task
+- Frente CoS Config com peso alto mas zero atividade no mês
+
+Tonha, no autonomous loop, **decide automaticamente**:
+- Projeto sem prioridade >7d com 0 tasks abertas há 30d → status=pausado (silêncio)
+- Tasks duplicadas → consolida na mais recente, marca a outra resolved (silêncio)
+- Task órfã >30d → propõe ele em 1 frase no próximo RACI semanal (sem push imediato)
+- Frente com peso alto sem atividade → escala uma vez/mês na reunião mensal
+
+**Schema sugerido `weekly_raci_renato`:**
+
+```sql
+CREATE TABLE weekly_raci_renato (
+    id BIGSERIAL PRIMARY KEY,
+    semana_inicio DATE NOT NULL,            -- segunda da semana
+    item_tipo TEXT NOT NULL,                -- 'concluido' | 'em_andamento' | 'sem_movimento' | 'novo'
+    titulo TEXT NOT NULL,
+    fonte_ref JSONB,                        -- {project_id: ..., task_id: ..., conversation_id: ...}
+    frente_cos TEXT,                        -- frente da CoS Config v5
+    status TEXT DEFAULT 'open',
+    renato_response TEXT,                   -- resposta assincrona dele (lote ou item)
+    response_at TIMESTAMP,
+    criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_raci_renato_semana ON weekly_raci_renato(semana_inicio DESC);
+```
+
+---
+
+### 4.7 — Triagem de inbox (email + WhatsApp DM)
+
+**Problema:** Hoje Renato usa label `!!Renato` no Gmail pra marcar emails que ele precisa olhar. Manual, virou bottleneck. WhatsApp DMs idem — chegam misturadas com grupos, sinal alto se perde no volume.
+
+**Princípio:** Tonha NÃO encaminha cada mensagem. Ela classifica, escala só os top 2-3/dia (urgência ≥7) e batela o resto num digest diário 7h BRT.
+
+#### Detector `detector_inbox`
+
+Roda no scheduler (hourly), zero LLM. Lê emails novos (últimas 4h) + WA DMs novas, classifica em 3 baldes:
+
+| Balde | Emite signal? | Critério |
+|---|---|---|
+| **Alto sinal** | `inbox_atencao` (urg 6-9) | Remetente VIP (contact tier=A/B), palavra-chave de decisão/cobrança/RACI, projeto ativo mencionado, Renato citado em grupo |
+| **Médio** | `inbox_digest` (urg 3-5) | Mid-tier, info-only, newsletters relevantes |
+| **Ruído** | (nada) | Marketing, automatizado, social, lista quente sem ação |
+
+Schema dos signals `inbox_atencao` / `inbox_digest`:
+```json
+{
+  "fonte": "gmail|wa_dm",
+  "thread_id": "...",
+  "from": {"name": "...", "email_or_jid": "...", "contact_id": 313, "tier": "A"},
+  "subject": "...",
+  "preview": "primeiros 500 chars",
+  "received_at": "ISO",
+  "match_reason": ["vip_remetente", "palavra_chave:cobranca", "projeto_ativo:Vallen"],
+  "thread_size": 4
+}
+```
+
+#### Tonha brain — ações por signal
+
+Tonha lê `inbox_atencao` + `inbox_digest` e decide por mensagem:
+
+| Decisão | Quando | Ferramenta |
+|---|---|---|
+| `escalate` | urg ≥7 + ação necessária do Renato | post no chat Tonha com contexto + sugestão |
+| `draft` | urg 5-7 + tom já conhecido | `gmail_create_draft` + label `Tonha rascunhou` (FASE 2, ver tradeoff abaixo) |
+| `digest` | urg 3-5 | acumula em `inbox_digest_buffer` (tabela), entra no briefing 7h BRT |
+| `silence` | médio mas já tratado em outra thread | label `tonha tratou` |
+
+#### `!!Renato` como gold-label de treino
+
+Cada vez que Renato labela `!!Renato` num email que Tonha NÃO escalou → `tonha_decisions.reverted_by='user'`, alimenta calibragem. Cada `!!Renato` em email que ela JÁ marcou alto = positivo. Ao longo de 2 semanas isso ajusta limiares por remetente.
+
+#### Fase A vs Fase B (tradeoff)
+
+- **Fase A (lançamento):** só classifica + escala + digesta. Não rascunha resposta. Risco baixo de tom errado.
+- **Fase B (após 2 semanas):** ativa `draft` automático **só pra remetentes onde ela tem ≥10 reverts positivos** (você confirmou tom). Limiar conservador.
+
+#### WA DM (novo, não tinha cobertura)
+
+`detector_inbox` lê `whatsapp_messages` onde `from_jid` é DM (não grupo) e `direction='incoming'`, últimas 4h. Mesma classificação. Bonus: se Renato citado em grupo (`@5511...`) também vira `inbox_atencao`.
+
+```sql
+CREATE TABLE inbox_digest_buffer (
+    id BIGSERIAL PRIMARY KEY,
+    fonte TEXT NOT NULL,                    -- gmail | wa_dm
+    ref_id TEXT NOT NULL,                   -- thread_id ou message_id
+    preview TEXT,
+    from_label TEXT,
+    received_at TIMESTAMP NOT NULL,
+    delivered_in_digest_at TIMESTAMP,       -- quando entrou no briefing 7h
+    criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_inbox_buffer_pending ON inbox_digest_buffer(received_at) WHERE delivered_in_digest_at IS NULL;
+```
 
 ---
 

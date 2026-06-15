@@ -157,6 +157,10 @@ _SCHEDULER_JOBS = [
     ("sync-gmail-outbound", "/api/cron/sync-gmail-outbound", CronTrigger(minute="12,42")),
     ("email-triage-sweep", "/api/cron/email-triage-sweep", CronTrigger(minute="7,37")),
     ("catchup", "/api/cron/catchup", CronTrigger(minute=30)),
+    # 15/06/26 FASE 1 REBUILD — detectores deterministas, zero LLM.
+    # Le DB, emite signals com signal_hash UNIQUE (idempotente). Brain Sonnet
+    # le signals e decide. Ver docs/ARCHITECTURE_REBUILD.md.
+    ("detectors-run", "/api/cron/detectors-run", CronTrigger(minute=22)),
     # 15/06/26 KILL SWITCH — 10 specialists CoS desligados em bloco.
     # Toda a fila abaixo gerava notificacao redundante, alucinacao de tools,
     # listas defensivas, anti-padrao de "trazer tarefa operacional pra Renato".
