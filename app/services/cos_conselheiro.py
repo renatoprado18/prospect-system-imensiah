@@ -68,7 +68,7 @@ CONSELHOS: List[Dict[str, Any]] = [
         "label": "Associação Despertar",
         "intel_project_id": 25,
         "conselhoos_empresa_id": "813709bd-276c-4820-918e-2e9ce6d34e70",
-        "wa_group_jid": None,
+        "wa_group_jid": "5511995982736-1542899989@g.us",  # Conselho Consultivo Despertar (linkado 15/06)
         "is_pagante": False,
         "papel_renato": "Conselheiro pro-bono (capital relacional Villela/Itaúsa)",
     },
