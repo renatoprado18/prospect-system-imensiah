@@ -39,14 +39,14 @@ def run(conn) -> DetectorRun:
 
             # ----- 1. RACI vencido + 2. perto de vencer -----
             co_cur.execute("""
-                SELECT r.id::text AS raci_id, r.acao, r.prazo, r.status,
+                SELECT r.id::text AS raci_id, r.acao, r.prazo, r.status::text AS status,
                        r.responsavel_r, r.responsavel_a, r.notas,
                        r.empresa_id::text AS empresa_id,
                        COALESCE(e.nome, 'sem empresa') AS empresa,
-                       r.atualizado_em
+                       r.updated_at
                 FROM raci_itens r
                 LEFT JOIN empresas e ON e.id = r.empresa_id
-                WHERE r.status NOT IN ('concluido', 'cancelado')
+                WHERE r.status::text NOT IN ('concluido')
                   AND r.prazo IS NOT NULL
                   AND r.prazo <= CURRENT_DATE + INTERVAL '7 days'
                 ORDER BY r.prazo ASC
@@ -82,7 +82,7 @@ def run(conn) -> DetectorRun:
                     "responsavel_r": r["responsavel_r"],
                     "responsavel_a": r["responsavel_a"],
                     "notas": (r["notas"] or "")[:500],
-                    "ultimo_update": r["atualizado_em"].isoformat() if r["atualizado_em"] else None,
+                    "ultimo_update": r["updated_at"].isoformat() if r["updated_at"] else None,
                 }
                 result = emit_signal(conn, tipo=tipo, signal_hash=sh, urgencia=urg, contexto=ctx, detector=DETECTOR_NAME)
                 if result == "emitted":
@@ -92,14 +92,14 @@ def run(conn) -> DetectorRun:
                 else:
                     run.skipped += 1
 
-            # ----- 3. Reuniao proxima sem dossie / 4. sem pauta -----
+            # ----- 3. Reuniao proxima sem pauta (no DB nao tem coluna dossie_md) -----
             co_cur.execute("""
-                SELECT r.id::text AS reuniao_id, r.titulo, r.data, r.status,
-                       r.dossie_md, r.pauta_md, r.empresa_id::text AS empresa_id,
+                SELECT r.id::text AS reuniao_id, r.titulo, r.data, r.status::text AS status,
+                       r.pauta_md, r.ata_md, r.empresa_id::text AS empresa_id,
                        e.nome AS empresa
                 FROM reunioes r
                 JOIN empresas e ON e.id = r.empresa_id
-                WHERE r.status = 'agendada'
+                WHERE r.status::text = 'agendada'
                   AND r.data BETWEEN NOW() AND NOW() + INTERVAL '7 days'
                 ORDER BY r.data ASC
                 LIMIT 30
@@ -109,24 +109,6 @@ def run(conn) -> DetectorRun:
                 if not data_reuniao:
                     continue
                 dias = (data_reuniao - date.today()).days
-
-                if not r["dossie_md"] and dias <= 7:
-                    sh = make_signal_hash("reuniao_sem_dossie", r["empresa_id"], r["reuniao_id"])
-                    current_hashes.append(sh)
-                    urg = max(3, min(9, 10 - dias))  # quanto mais perto, mais urgente
-                    ctx = {
-                        "reuniao_id": r["reuniao_id"],
-                        "empresa": r["empresa"],
-                        "empresa_id": r["empresa_id"],
-                        "titulo": r["titulo"],
-                        "data": data_reuniao.isoformat(),
-                        "dias_ate": dias,
-                        "tem_pauta": bool(r["pauta_md"]),
-                    }
-                    result = emit_signal(conn, tipo="reuniao_sem_dossie", signal_hash=sh, urgencia=urg, contexto=ctx, detector=DETECTOR_NAME)
-                    if result == "emitted": run.emitted += 1
-                    elif result == "updated": run.updated += 1
-                    else: run.skipped += 1
 
                 if not r["pauta_md"] and dias <= 3:
                     sh = make_signal_hash("reuniao_sem_pauta", r["empresa_id"], r["reuniao_id"])

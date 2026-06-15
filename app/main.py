@@ -5472,6 +5472,25 @@ async def cron_platform_costs_daily(request: Request):
     }
 
 
+@app.get("/api/cron/tonha-autonomous-tick")
+@track_cron_run
+async def cron_tonha_autonomous_tick(request: Request, limit: int = 30):
+    """Fase 2A da rebuild Tonha — autonomous loop.
+
+    Pulls signals open + Sonnet 4.6 com extended thinking decide cada um +
+    grava em tonha_decisions. Em SHADOW MODE (TONHA_SHADOW_MODE=1, default)
+    send/update viram drafts/no-ops. Renato revisa decisions.
+
+    Agendado 4x/dia via Railway scheduler (8h/12h/17h/21h BRT).
+    Ver docs/ARCHITECTURE_REBUILD.md sec 4.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.tonha_brain import run_autonomous_tick
+
+    return run_autonomous_tick(triggered_by="cron_loop", limit=limit)
+
+
 @app.get("/api/cron/detectors-run")
 @track_cron_run
 async def cron_detectors_run(request: Request, only: str = ""):

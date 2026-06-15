@@ -161,6 +161,13 @@ _SCHEDULER_JOBS = [
     # Le DB, emite signals com signal_hash UNIQUE (idempotente). Brain Sonnet
     # le signals e decide. Ver docs/ARCHITECTURE_REBUILD.md.
     ("detectors-run", "/api/cron/detectors-run", CronTrigger(minute=22)),
+    # 15/06/26 FASE 2A REBUILD — Tonha brain (Sonnet 4.6 + extended thinking)
+    # autonomous loop 4x/dia BRT: 8h/12h/17h/21h = 11h/15h/20h/00h UTC.
+    # Default em SHADOW MODE (TONHA_SHADOW_MODE=1) — send/update viram drafts.
+    ("tonha-autonomous-morning", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=11, minute=5)),
+    ("tonha-autonomous-noon", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=15, minute=5)),
+    ("tonha-autonomous-afternoon", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=20, minute=5)),
+    ("tonha-autonomous-evening", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=0, minute=5)),
     # 15/06/26 KILL SWITCH — 10 specialists CoS desligados em bloco.
     # Toda a fila abaixo gerava notificacao redundante, alucinacao de tools,
     # listas defensivas, anti-padrao de "trazer tarefa operacional pra Renato".
