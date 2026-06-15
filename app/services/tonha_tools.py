@@ -228,22 +228,25 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
         cur = conn.cursor()
         if scope in ("contacts", "all"):
             cur.execute("""
-                SELECT id, nome, empresa, cargo, contexto, tags
+                SELECT id, nome, empresa, cargo, contexto, tags, manual_notes,
+                       relationship_context, aniversario
                 FROM contacts
                 WHERE nome ILIKE %s OR empresa ILIKE %s OR apelido ILIKE %s
+                   OR manual_notes ILIKE %s
                 ORDER BY ultimo_enriquecimento DESC NULLS LAST
                 LIMIT %s
-            """, (f"%{query}%", f"%{query}%", f"%{query}%", limit))
+            """, (f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%", limit))
             out["results"]["contacts"] = [dict(r) for r in cur.fetchall()]
 
         if scope in ("projects", "all"):
             cur.execute("""
-                SELECT id, nome, tipo, status, prioridade, data_previsao, descricao
+                SELECT id, nome, tipo, status, prioridade, data_previsao,
+                       descricao, notas, tags, owner_contact_id, empresa_relacionada
                 FROM projects
-                WHERE nome ILIKE %s OR descricao ILIKE %s
+                WHERE nome ILIKE %s OR descricao ILIKE %s OR notas ILIKE %s
                 ORDER BY prioridade ASC NULLS LAST, atualizado_em DESC
                 LIMIT %s
-            """, (f"%{query}%", f"%{query}%", limit))
+            """, (f"%{query}%", f"%{query}%", f"%{query}%", limit))
             out["results"]["projects"] = [dict(r) for r in cur.fetchall()]
 
         if scope in ("tasks", "all"):
@@ -330,7 +333,7 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
             # 'timezone' (geralmente America/Sao_Paulo direto, NAO em UTC). NAO
             # converter — retorna raw + label timezone pra Brain interpretar.
             cur.execute("""
-                SELECT id, summary, location,
+                SELECT id, summary, location, description,
                        start_datetime AS start_raw,
                        end_datetime   AS end_raw,
                        timezone, all_day, status, conference_url, contact_id
