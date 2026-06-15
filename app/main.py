@@ -25968,6 +25968,51 @@ async def cron_daily_morning_briefing(request: Request):
         except Exception as _e:
             logging.warning(f"morning-briefing: cost MTD section falhou: {_e}")
 
+        # Tonha pill — stats das ultimas 24h. Em SHADOW MODE pra Renato
+        # calibrar antes do cutover. Linha aparece sempre. Ver
+        # docs/ARCHITECTURE_REBUILD.md.
+        try:
+            with get_db() as _conn:
+                _cur = _conn.cursor()
+                _cur.execute("""
+                    SELECT
+                        COUNT(*) FILTER (WHERE decision_type='silence')         AS n_silence,
+                        COUNT(*) FILTER (WHERE decision_type='auto_execute')    AS n_auto,
+                        COUNT(*) FILTER (WHERE decision_type='draft_and_send')  AS n_draft,
+                        COUNT(*) FILTER (WHERE decision_type='escalate')        AS n_escalate,
+                        COUNT(*) FILTER (WHERE decision_type='delegate')        AS n_delegate,
+                        COUNT(*) FILTER (WHERE reverted_at IS NOT NULL)         AS n_revert,
+                        COUNT(*)                                                AS n_total
+                    FROM tonha_decisions
+                    WHERE criado_em > NOW() - INTERVAL '24 hours'
+                """)
+                _t = _cur.fetchone()
+            n_total = _t["n_total"] or 0
+            shadow_on = (os.getenv("TONHA_SHADOW_MODE") or "1").strip() != "0"
+            shadow_tag = "shadow" if shadow_on else "LIVE"
+            if n_total == 0:
+                sections.append(
+                    "🤖 *Tonha 24h*: 0 decisions — cron pode estar quebrado. Veja /admin/cron-health"
+                )
+            else:
+                parts = []
+                if _t["n_silence"]:   parts.append(f"{_t['n_silence']} silence")
+                if _t["n_auto"]:      parts.append(f"{_t['n_auto']} auto")
+                if _t["n_delegate"]:  parts.append(f"{_t['n_delegate']} delegate")
+                if _t["n_draft"]:     parts.append(f"{_t['n_draft']} draft")
+                if _t["n_escalate"]:  parts.append(f"{_t['n_escalate']} escalate")
+                breakdown = " · ".join(parts)
+                revert_str = ""
+                if _t["n_revert"]:
+                    flag = " ⚠️" if _t["n_revert"] >= 5 else ""
+                    revert_str = f" · *{_t['n_revert']} reverts*{flag}"
+                sections.append(
+                    f"🤖 *Tonha 24h* ({shadow_tag}): {n_total} decisions ({breakdown}){revert_str}\n"
+                    f"_/admin/tonha/decisions_"
+                )
+        except Exception as _e:
+            logging.warning(f"morning-briefing: tonha pill falhou: {_e}")
+
         # M2: consome notificacoes pending (silenciadas desde ultimo digest)
         try:
             from services.notification_router import consume_pending_for_digest
