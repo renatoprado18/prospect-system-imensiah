@@ -25487,6 +25487,45 @@ async def cron_cos_conselheiro_tick(request: Request):
         return {"job": "cos-conselheiro-tick", "status": "error", "error": str(e)}
 
 
+@app.get("/api/cron/cos-editorial-tick")
+@app.post("/api/cron/cos-editorial-tick")
+@track_cron_run
+async def cron_cos_editorial_tick(request: Request):
+    """Cron CoS Editorial Agent (15/06/26). Specialist #3 swarm."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.cos_editorial import tick_safe
+    try:
+        return {"job": "cos-editorial-tick", **tick_safe()}
+    except Exception as e:
+        logging.exception("cos-editorial-tick falhou")
+        return {"job": "cos-editorial-tick", "status": "error", "error": str(e)}
+
+
+@app.post("/api/cos/editorial/run")
+async def manual_cos_editorial_run(request: Request):
+    worker_secret_env = (os.getenv("WORKER_SECRET", "intel-audio-2026") or "").strip()
+    triggered_by = None
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body_secret = (body.get("secret") or "").strip()
+    if body_secret and body_secret == worker_secret_env:
+        triggered_by = body.get("triggered_by") or "worker"
+    else:
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Nao autenticado")
+        triggered_by = user.get("email")
+    from services.cos_editorial import tick_safe
+    try:
+        return {"job": "cos-editorial-manual", "triggered_by": triggered_by, **tick_safe()}
+    except Exception as e:
+        logging.exception("manual cos-editorial falhou")
+        return {"job": "cos-editorial-manual", "status": "error", "error": str(e)}
+
+
 @app.get("/api/cron/cos-portfolio-tick")
 @app.post("/api/cron/cos-portfolio-tick")
 @track_cron_run

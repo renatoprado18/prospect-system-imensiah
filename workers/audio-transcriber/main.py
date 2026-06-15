@@ -161,6 +161,9 @@ _SCHEDULER_JOBS = [
     # horizontal. NAO duplica os 4 conselhos. 1x/dia 13 UTC = 10h BRT (apos
     # CONSELHEIRO).
     ("cos-portfolio-tick", "/api/cron/cos-portfolio-tick", CronTrigger(hour=13, minute=0)),
+    # EDITORIAL Agent — Specialist #3 (15/06/26). Drafts + imagens + métricas.
+    # 1x/dia 14 UTC = 11h BRT (depois Conselheiro 9h + Portfolio 10h).
+    ("cos-editorial-tick", "/api/cron/cos-editorial-tick", CronTrigger(hour=14, minute=0)),
 ]
 
 

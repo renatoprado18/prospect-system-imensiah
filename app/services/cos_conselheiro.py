@@ -156,7 +156,9 @@ def _load_conselho_state(conselho: Dict[str, Any]) -> Dict[str, Any]:
                     SELECT id::text, data, status, pauta_md IS NOT NULL as tem_pauta,
                            ata_md IS NOT NULL as tem_ata
                     FROM reunioes WHERE empresa_id = %s
-                      AND data > NOW() ORDER BY data ASC LIMIT 1
+                      AND data > NOW()
+                      AND status NOT IN ('cancelada', 'concluida')
+                      ORDER BY data ASC LIMIT 1
                     """,
                     (conselho["conselhoos_empresa_id"],),
                 )
