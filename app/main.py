@@ -25968,6 +25968,34 @@ async def cron_daily_morning_briefing(request: Request):
         except Exception as _e:
             logging.warning(f"morning-briefing: cost MTD section falhou: {_e}")
 
+        # Dev radar — fase em curso + backlog count + proximo item.
+        # Mantem Renato lembrado do roadmap dev sem precisar abrir Claude Code.
+        try:
+            from pathlib import Path
+            backlog_path = Path(__file__).resolve().parent.parent / "docs" / "BACKLOG.md"
+            n_pendentes = 0
+            proximo = None
+            in_pendente_section = False
+            if backlog_path.exists():
+                for ln in backlog_path.read_text().splitlines():
+                    if ln.startswith("## Pendente"):
+                        in_pendente_section = True
+                    elif ln.startswith("## ") and "Pendente" not in ln:
+                        in_pendente_section = False
+                    if in_pendente_section and ln.lstrip().startswith("- [ ]"):
+                        n_pendentes += 1
+                        if proximo is None:
+                            proximo = ln.lstrip()[5:].strip()
+            current_phase = os.getenv("DEV_CURRENT_PHASE", "Tonha rebuild Fase 2A+2B live · 2B em wa shadow")
+            radar = f"🔧 *Dev radar*: {current_phase}"
+            if n_pendentes:
+                radar += f" · {n_pendentes} pendentes no backlog"
+            if proximo:
+                radar += f"\n_próx sugerido:_ {proximo[:140]}"
+            sections.append(radar)
+        except Exception as _e:
+            logging.warning(f"morning-briefing: dev radar falhou: {_e}")
+
         # Tonha pill — stats das ultimas 24h. Em SHADOW MODE pra Renato
         # calibrar antes do cutover. Linha aparece sempre. Ver
         # docs/ARCHITECTURE_REBUILD.md.
