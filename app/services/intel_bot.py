@@ -2542,6 +2542,28 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
     # 3. Save user message to history (capture id pra ligar intent ao turn)
     user_msg_id = _save_conversation_message(phone, "user", message)
 
+    # 3b. FASE 2B STRANGLER — rota pra Tonha Brain nova se flag matches.
+    # `TONHA_REACTIVE_TARGETS=none|chat|wa|all` (default none).
+    # Se Brain assume, intel_bot antigo nao roda — falha graceful volta
+    # pro caminho velho.
+    try:
+        from services.tonha_brain import is_reactive_enabled as _tonha_on
+        from services.tonha_brain import run_reactive as _tonha_reactive
+        channel_for_flag = "chat" if mode == "chat" else "whatsapp"
+        if _tonha_on(channel_for_flag, phone):
+            logger.info(f"[tonha-reactive] routing {channel_for_flag} -> Brain")
+            hist_for_brain = _load_conversation_history(phone, limit=10)
+            reply = await _tonha_reactive(
+                message=message,
+                channel=channel_for_flag,
+                phone=phone,
+                history=[{"role": h["role"], "content": h.get("content") or ""} for h in hist_for_brain],
+            )
+            _save_conversation_message(phone, "assistant", reply)
+            return reply
+    except Exception as _e:
+        logger.exception(f"[tonha-reactive] falha — fallback pro bot antigo: {_e}")
+
     # 4. Load conversation history
     history = _load_conversation_history(phone, limit=20)
     messages = _build_messages_from_history(history)

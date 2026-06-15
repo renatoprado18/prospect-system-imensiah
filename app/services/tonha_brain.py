@@ -196,6 +196,147 @@ def _run_one_signal(client: anthropic.Anthropic, signal: Dict[str, Any], ctx: Di
     }
 
 
+# ============================================================================
+# Modo Reactive — Fase 2B (chat web + WA self via flag TONHA_REACTIVE_TARGETS)
+# ============================================================================
+
+REACTIVE_PROMPT_SUFFIX = """
+
+# MODO REACTIVE
+Renato falou agora. Responda diretamente.
+- Se a mensagem é uma pergunta simples (status, fatos), use search_context, responda curto.
+- Se é uma instrução ("manda X pra Y", "marca tal task"), use send_message / update_record / delegate.
+- Se ela menciona signal aberto, use search_context scope='signals' query=<keyword>.
+- Se não souber, escale com substância (1-2 opções) — nunca invente fato.
+- Tom: matriarca direta, sem emoji, sem "Anotado", sem "🤖 CoS".
+- decide_and_log NÃO é obrigatório em reactive — só se você de fato resolveu um signal.
+- A última mensagem da história é a do Renato AGORA. Responda a ela."""
+
+
+def is_reactive_enabled(channel: str, phone: Optional[str] = None) -> bool:
+    """Flag env: none|chat|wa|all. Compatible com bot dispatcher."""
+    targets = (os.getenv("TONHA_REACTIVE_TARGETS") or "none").strip().lower()
+    if targets == "none" or not targets:
+        return False
+    if targets == "all":
+        return True
+    if targets == "chat" and channel == "chat":
+        return True
+    if targets == "wa" and channel in ("whatsapp", "wa"):
+        return True
+    return False
+
+
+async def run_reactive(
+    message: str,
+    channel: str = "chat",
+    phone: Optional[str] = None,
+    history: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """Brain reactive entry. Usa mesmo tool loop do autonomous.
+    Retorna texto final pra enviar ao Renato.
+
+    `history` opcional: lista [{role: 'user'|'assistant', content: str}, ...]
+    Usado pra dar contexto multi-turn.
+    """
+    if not ANTHROPIC_API_KEY:
+        return "Brain offline — ANTHROPIC_API_KEY ausente."
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    sys_prompt = SYSTEM_PROMPT + REACTIVE_PROMPT_SUFFIX
+
+    messages: List[Dict[str, Any]] = []
+    if history:
+        for h in history[-20:]:
+            role = h.get("role")
+            content = h.get("content") or ""
+            if role in ("user", "assistant") and content.strip():
+                messages.append({"role": role, "content": content[:4000]})
+    messages.append({"role": "user", "content": message})
+
+    ctx = {
+        "mode": "reactive",
+        "triggered_by": f"{channel}:{phone or 'unknown'}",
+        "shadow": (os.getenv("TONHA_SHADOW_MODE") or "1").strip() != "0",
+        "started_at": now_utc().isoformat(),
+    }
+
+    total_in = total_out = 0
+    iterations = 0
+    final_text = ""
+    tool_calls_log: List[Dict[str, Any]] = []
+
+    for it in range(MAX_ITERATIONS):
+        iterations += 1
+        try:
+            resp = client.messages.create(
+                model=MODEL,
+                max_tokens=MAX_TOKENS,
+                thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
+                system=sys_prompt,
+                tools=TOOLS,
+                messages=messages,
+            )
+        except Exception as e:
+            logger.exception(f"reactive brain crashed at iter {it}")
+            return f"Tonha tropeçou: {str(e)[:150]}"
+
+        usage = resp.usage
+        total_in += getattr(usage, "input_tokens", 0) or 0
+        total_out += getattr(usage, "output_tokens", 0) or 0
+
+        messages.append({"role": "assistant", "content": resp.content})
+
+        tool_uses = [b for b in resp.content if getattr(b, "type", None) == "tool_use"]
+        for b in resp.content:
+            if getattr(b, "type", None) == "text":
+                t = (getattr(b, "text", "") or "").strip()
+                if t:
+                    final_text = t
+
+        if not tool_uses:
+            break
+
+        tool_results = []
+        for tu in tool_uses:
+            res = dispatch(tu.name, tu.input or {}, ctx)
+            tool_calls_log.append({"tool": tu.name, "ok": res.get("ok")})
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": str(res)[:3000],
+            })
+        messages.append({"role": "user", "content": tool_results})
+
+        if resp.stop_reason == "end_turn":
+            break
+
+    # Log decision summary pra audit (modo reactive)
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            import json as _json
+            cur.execute("""
+                INSERT INTO tonha_decisions (
+                    decision_type, decision_summary, action_taken, mode, triggered_by
+                )
+                VALUES ('auto_execute', %s, %s::jsonb, 'reactive', %s)
+            """, (
+                f"reactive reply ({iterations} iter)",
+                _json.dumps({
+                    "user_message_preview": message[:200],
+                    "tool_calls": tool_calls_log,
+                    "tokens": {"in": total_in, "out": total_out},
+                }),
+                ctx["triggered_by"],
+            ))
+            conn.commit()
+    except Exception as _e:
+        logger.warning(f"reactive log falhou: {_e}")
+
+    return final_text or "Sem resposta gerada."
+
+
 def run_autonomous_tick(triggered_by: str = "cron_loop", limit: int = MAX_SIGNALS_PER_TICK) -> Dict[str, Any]:
     """Pull signals -> Brain decide cada um -> grava decisions."""
     if not ANTHROPIC_API_KEY:
