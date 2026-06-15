@@ -1,0 +1,250 @@
+{% extends "rap_base.html" %}
+{% block title %}Tonha Decisions - INTEL{% endblock %}
+{% block page_title %}Tonha · Decisions{% endblock %}
+{% block page_subtitle %}<div class="page-subtitle">Decisões da Tonha (Sonnet 4.6 autonomous loop). Em SHADOW MODE: send_message vira draft, update_record vira no-op com log.</div>{% endblock %}
+
+{% block extra_css %}
+<style>
+    .td-summary { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+    .td-stat {
+        background: white; border-radius: 8px; padding: 10px 14px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        border-left: 3px solid #94a3b8;
+        min-width: 110px;
+    }
+    .td-stat.silence       { border-left-color: #94a3b8; }
+    .td-stat.auto_execute  { border-left-color: #16a34a; }
+    .td-stat.draft         { border-left-color: #f59e0b; }
+    .td-stat.escalate      { border-left-color: #dc2626; }
+    .td-stat.delegate      { border-left-color: #6366f1; }
+    .td-stat .label { font-size: 0.7rem; text-transform: uppercase; color: #64748b; font-weight: 600; }
+    .td-stat .value { font-size: 1.3rem; font-weight: 700; color: #0f172a; }
+
+    .td-filters {
+        background: white; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px;
+        display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .td-filters select, .td-filters input {
+        padding: 6px 10px; border: 1px solid #e5e7eb; border-radius: 6px;
+        font-size: 0.85rem;
+    }
+    .td-filters .clear-btn {
+        background: #fff; border: 1px solid #e5e7eb; color: #64748b;
+        padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+    }
+
+    .td-row {
+        background: white; border-radius: 10px; padding: 12px 14px;
+        margin-bottom: 8px; border-left: 4px solid #e5e7eb;
+    }
+    .td-row.type-silence       { border-left-color: #94a3b8; }
+    .td-row.type-auto_execute  { border-left-color: #16a34a; }
+    .td-row.type-draft_and_send{ border-left-color: #f59e0b; background: #fffbeb; }
+    .td-row.type-escalate      { border-left-color: #dc2626; background: #fef2f2; }
+    .td-row.type-delegate      { border-left-color: #6366f1; }
+    .td-row.reverted           { opacity: 0.55; }
+
+    .td-row-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .td-badge {
+        display: inline-block; padding: 3px 8px; border-radius: 12px;
+        font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .td-badge.silence       { background: #f1f5f9; color: #475569; }
+    .td-badge.auto_execute  { background: #dcfce7; color: #166534; }
+    .td-badge.draft_and_send{ background: #fef3c7; color: #92400e; }
+    .td-badge.escalate      { background: #fee2e2; color: #991b1b; }
+    .td-badge.delegate      { background: #e0e7ff; color: #3730a3; }
+
+    .td-time { font-size: 0.75rem; color: #64748b; font-family: monospace; }
+    .td-summary-text { color: #0f172a; font-size: 0.9rem; margin-top: 6px; }
+    .td-reasoning { color: #475569; font-size: 0.8rem; margin-top: 4px; font-style: italic; }
+    .td-sigref { font-size: 0.75rem; color: #6366f1; cursor: pointer; }
+    .td-sigref:hover { text-decoration: underline; }
+
+    .td-actions { margin-top: 8px; display: flex; gap: 6px; align-items: center; }
+    .td-actions .show-action {
+        background: #fff; border: 1px solid #e5e7eb; color: #475569;
+        padding: 3px 10px; border-radius: 6px; font-size: 0.75rem; cursor: pointer;
+    }
+    .td-actions .revert-btn {
+        background: #fff; border: 1px solid #fecaca; color: #dc2626;
+        padding: 3px 10px; border-radius: 6px; font-size: 0.75rem; cursor: pointer;
+    }
+    .td-action-body, .td-sig-body {
+        margin-top: 8px; padding: 8px 10px; background: #f8fafc; border-radius: 6px;
+        font-family: monospace; font-size: 0.75rem; color: #334155;
+        white-space: pre-wrap; word-break: break-all;
+    }
+
+    .td-reverted-tag {
+        background: #fef2f2; color: #991b1b; padding: 2px 6px; border-radius: 4px;
+        font-size: 0.7rem; font-weight: 600;
+    }
+
+    .empty { text-align: center; color: #94a3b8; padding: 40px; }
+    .load-more {
+        margin: 20px auto; display: block; padding: 8px 20px;
+        background: #6366f1; color: white; border: none; border-radius: 8px;
+        cursor: pointer; font-weight: 600;
+    }
+    .load-more:disabled { opacity: 0.5; cursor: default; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="td-summary" class="td-summary"></div>
+
+<div class="td-filters">
+    <label>Tipo:
+        <select id="filter-type">
+            <option value="">todos</option>
+            <option value="silence">silence</option>
+            <option value="auto_execute">auto_execute</option>
+            <option value="draft_and_send">draft_and_send</option>
+            <option value="escalate">escalate</option>
+            <option value="delegate">delegate</option>
+        </select>
+    </label>
+    <label>Mode:
+        <select id="filter-mode">
+            <option value="">todos</option>
+            <option value="autonomous">autonomous</option>
+            <option value="reactive">reactive</option>
+        </select>
+    </label>
+    <label>Signal #:
+        <input type="number" id="filter-signal" placeholder="ID" style="width: 90px">
+    </label>
+    <button class="clear-btn" onclick="clearFilters()">Limpar</button>
+    <span style="margin-left: auto; color: #64748b; font-size: 0.85rem;">
+        Total: <span id="td-total">—</span>
+    </span>
+</div>
+
+<div id="td-list"></div>
+<button id="load-more" class="load-more" style="display: none" onclick="loadMore()">Carregar mais</button>
+
+<script>
+const state = { offset: 0, limit: 50, decisionType: '', mode: '', signalId: 0 };
+
+function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function fmtTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+}
+function renderStats(stats) {
+    const types = ['silence', 'auto_execute', 'draft_and_send', 'escalate', 'delegate'];
+    const html = types.map(t => `
+        <div class="td-stat ${t.startsWith('draft') ? 'draft' : t}">
+            <div class="label">${t}</div>
+            <div class="value">${stats.by_type[t] || 0}</div>
+        </div>
+    `).join('');
+    document.getElementById('td-summary').innerHTML = html + `
+        <div class="td-stat" style="border-left-color:#6366f1">
+            <div class="label">total 7d</div>
+            <div class="value">${Object.values(stats.by_type).reduce((a,b)=>a+b,0)}</div>
+        </div>
+    `;
+}
+function renderRow(d) {
+    const reverted = !!d.reverted_at;
+    const sigInfo = d.signal_id
+        ? `<span class="td-sigref" onclick="toggleSig(${d.id})">signal #${d.signal_id} · ${escapeHtml(d.signal_tipo||'?')} · urg ${d.signal_urgencia||'?'}</span>`
+        : `<span style="color:#94a3b8">sem signal</span>`;
+    const actionTaken = JSON.stringify(d.action_taken || {}, null, 2);
+    const signalCtx = JSON.stringify(d.signal_contexto || {}, null, 2);
+    return `
+        <div class="td-row type-${d.decision_type} ${reverted ? 'reverted' : ''}" id="row-${d.id}">
+            <div class="td-row-head">
+                <span class="td-badge ${d.decision_type}">${d.decision_type}</span>
+                ${sigInfo}
+                <span class="td-time">${fmtTime(d.criado_em)}</span>
+                <span class="td-time" style="margin-left:auto">${escapeHtml(d.mode||'')} · ${escapeHtml(d.triggered_by||'')}</span>
+                ${reverted ? `<span class="td-reverted-tag">REVERTED: ${escapeHtml(d.reverted_reason||'')}</span>` : ''}
+            </div>
+            <div class="td-summary-text">${escapeHtml(d.decision_summary)}</div>
+            ${d.reasoning ? `<div class="td-reasoning">${escapeHtml(d.reasoning)}</div>` : ''}
+            <div class="td-actions">
+                <button class="show-action" onclick="toggleAction(${d.id})">action_taken</button>
+                ${!reverted ? `<button class="revert-btn" onclick="revertDecision(${d.id})">reverter</button>` : ''}
+            </div>
+            <div id="action-${d.id}" class="td-action-body" style="display:none">${escapeHtml(actionTaken)}</div>
+            <div id="sig-${d.id}" class="td-sig-body" style="display:none">${escapeHtml(signalCtx)}</div>
+        </div>
+    `;
+}
+function toggleAction(id) {
+    const el = document.getElementById('action-' + id);
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+function toggleSig(id) {
+    const el = document.getElementById('sig-' + id);
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+async function revertDecision(id) {
+    const reason = prompt('Motivo da reversao (audit):');
+    if (!reason || !reason.trim()) return;
+    const r = await fetch(`/api/admin/tonha/decisions/${id}/revert`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({reason: reason.trim()}),
+    });
+    if (r.ok) {
+        location.reload();
+    } else {
+        alert('Falha: ' + r.status);
+    }
+}
+async function load(reset=false) {
+    if (reset) {
+        state.offset = 0;
+        document.getElementById('td-list').innerHTML = '';
+    }
+    const qs = new URLSearchParams({
+        limit: state.limit, offset: state.offset,
+        decision_type: state.decisionType,
+        mode: state.mode,
+        signal_id: state.signalId || 0,
+    });
+    const r = await fetch('/api/admin/tonha/decisions?' + qs);
+    const data = await r.json();
+    if (state.offset === 0) {
+        renderStats(data.stats_7d);
+        document.getElementById('td-total').textContent = data.total;
+    }
+    const list = document.getElementById('td-list');
+    if (!data.decisions.length && state.offset === 0) {
+        list.innerHTML = '<div class="empty">Nenhuma decisão ainda. Os crons rodam 8h/12h/17h/21h BRT.</div>';
+        document.getElementById('load-more').style.display = 'none';
+        return;
+    }
+    list.insertAdjacentHTML('beforeend', data.decisions.map(renderRow).join(''));
+    state.offset += data.decisions.length;
+    document.getElementById('load-more').style.display =
+        state.offset < data.total ? 'block' : 'none';
+}
+function loadMore() { load(false); }
+function applyFilters() {
+    state.decisionType = document.getElementById('filter-type').value;
+    state.mode = document.getElementById('filter-mode').value;
+    state.signalId = parseInt(document.getElementById('filter-signal').value || '0');
+    load(true);
+}
+function clearFilters() {
+    document.getElementById('filter-type').value = '';
+    document.getElementById('filter-mode').value = '';
+    document.getElementById('filter-signal').value = '';
+    applyFilters();
+}
+document.getElementById('filter-type').addEventListener('change', applyFilters);
+document.getElementById('filter-mode').addEventListener('change', applyFilters);
+document.getElementById('filter-signal').addEventListener('change', applyFilters);
+load(true);
+</script>
+{% endblock %}

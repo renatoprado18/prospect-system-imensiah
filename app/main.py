@@ -5472,6 +5472,126 @@ async def cron_platform_costs_daily(request: Request):
     }
 
 
+@app.get("/admin/tonha/decisions", response_class=HTMLResponse)
+async def admin_tonha_decisions(request: Request):
+    """Lista decisoes da Tonha — review pro Renato em shadow mode."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("admin_tonha_decisions.html", {
+        "request": request,
+        "user": user,
+    })
+
+
+@app.get("/api/admin/tonha/decisions")
+async def api_admin_tonha_decisions(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    decision_type: str = "",
+    mode: str = "",
+    signal_id: int = 0,
+):
+    """JSON paginado das decisoes Tonha + signal context."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    where = ["1=1"]
+    params: list = []
+    if decision_type:
+        where.append("d.decision_type = %s")
+        params.append(decision_type)
+    if mode:
+        where.append("d.mode = %s")
+        params.append(mode)
+    if signal_id:
+        where.append("d.signal_id = %s")
+        params.append(signal_id)
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT
+                d.id, d.signal_id, d.decision_type, d.decision_summary,
+                d.reasoning, d.action_taken, d.cost_usd, d.model,
+                d.iteration_count, d.mode, d.triggered_by,
+                d.reverted_at, d.reverted_by, d.reverted_reason,
+                d.criado_em,
+                s.tipo AS signal_tipo,
+                s.urgencia AS signal_urgencia,
+                s.detector AS signal_detector,
+                s.contexto AS signal_contexto,
+                s.status AS signal_status
+            FROM tonha_decisions d
+            LEFT JOIN signals s ON s.id = d.signal_id
+            WHERE {' AND '.join(where)}
+            ORDER BY d.criado_em DESC
+            LIMIT %s OFFSET %s
+        """, params + [limit, offset])
+        decisions = [dict(r) for r in cur.fetchall()]
+
+        cur.execute(f"""
+            SELECT COUNT(*) AS n
+            FROM tonha_decisions d
+            WHERE {' AND '.join(where)}
+        """, params)
+        total = cur.fetchone()["n"]
+
+        cur.execute("""
+            SELECT decision_type, COUNT(*) AS n
+            FROM tonha_decisions
+            WHERE criado_em > NOW() - INTERVAL '7 days'
+            GROUP BY decision_type
+        """)
+        stats_by_type = {r["decision_type"]: r["n"] for r in cur.fetchall()}
+
+        cur.execute("""
+            SELECT mode, COUNT(*) AS n
+            FROM tonha_decisions
+            WHERE criado_em > NOW() - INTERVAL '7 days'
+            GROUP BY mode
+        """)
+        stats_by_mode = {r["mode"]: r["n"] for r in cur.fetchall()}
+
+    return {
+        "ok": True,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "decisions": decisions,
+        "stats_7d": {"by_type": stats_by_type, "by_mode": stats_by_mode},
+    }
+
+
+@app.post("/api/admin/tonha/decisions/{decision_id}/revert")
+async def api_admin_tonha_revert(decision_id: int, request: Request):
+    """Marca decision como revertida (audit). NAO desfaz acao real — log only."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="forbidden")
+    body = await request.json()
+    reason = (body.get("reason") or "").strip()[:500]
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason obrigatorio")
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE tonha_decisions
+            SET reverted_at = NOW(),
+                reverted_by = %s,
+                reverted_reason = %s
+            WHERE id = %s
+            RETURNING id
+        """, (user.get("email", "admin"), reason, decision_id))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="decision not found")
+        conn.commit()
+    return {"ok": True, "decision_id": decision_id}
+
+
 @app.get("/api/cron/tonha-autonomous-tick")
 @track_cron_run
 async def cron_tonha_autonomous_tick(request: Request, limit: int = 30):
