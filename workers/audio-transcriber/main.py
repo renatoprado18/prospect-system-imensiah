@@ -134,9 +134,13 @@ _SCHEDULER_JOBS = [
     ("run-social-groups", "/api/cron/run-social-groups", CronTrigger(minute=20)),
     ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
     ("wa-catchup", "/api/cron/wa-catchup", CronTrigger(minute="*/30")),
-    # CoS Sensor Agent — Stage 2 (11/jun/2026). Roda 30/30min, le estado do
-    # mundo e age via LLM (Sonnet 4.6) + 5 tools. Budget cap $0.50/dia.
-    ("cos-sensor-tick", "/api/cron/cos-sensor-tick", CronTrigger(minute="*/30")),
+    # 15/06/26 KILL SWITCH ARQUITETURA — TODOS jobs CoS proativos desligados.
+    # Motivo: 11 agentes LLM rodando em cron geravam 8+ proposals/dia, conflito
+    # de propostas, alucinacoes de tools, defesa em recuo. Em rebuild estrutural
+    # pra Tonha unica (Sonnet 4.6, single loop, executa silenciosa). Veja
+    # ARCHITECTURE_REBUILD.md (a criar). Restaurar SO se rebuild abortar.
+    #
+    # ("cos-sensor-tick", "/api/cron/cos-sensor-tick", CronTrigger(minute="*/30")),
     # Migrado de vercel.json (Hobby cron limit bloqueava deploy) — 11/06/26
     ("monitor-cron-health", "/api/cron/monitor-cron-health", CronTrigger(minute=0)),
     # Briefings — migrados de GH Actions em 10/06/2026 apos drift acumulado
@@ -153,17 +157,21 @@ _SCHEDULER_JOBS = [
     ("sync-gmail-outbound", "/api/cron/sync-gmail-outbound", CronTrigger(minute="12,42")),
     ("email-triage-sweep", "/api/cron/email-triage-sweep", CronTrigger(minute="7,37")),
     ("catchup", "/api/cron/catchup", CronTrigger(minute=30)),
-    # CONSELHEIRO Agent — Stage 3 (14/06/26). Especialista em 4 conselhos
-    # (Vallen, Alba, Despertar, Assespro). Cobre RACI + reunioes + grupos WA.
-    # 1x/dia 12 UTC = 9h BRT.
-    ("cos-conselheiro-tick", "/api/cron/cos-conselheiro-tick", CronTrigger(hour=12, minute=0)),
-    # PORTFOLIO Agent — Specialist #2 swarm CoS (15/06/26). Drift detector
-    # horizontal. NAO duplica os 4 conselhos. 1x/dia 13 UTC = 10h BRT (apos
-    # CONSELHEIRO).
-    ("cos-portfolio-tick", "/api/cron/cos-portfolio-tick", CronTrigger(hour=13, minute=0)),
-    # EDITORIAL Agent — Specialist #3 (15/06/26). Drafts + imagens + métricas.
-    # 1x/dia 14 UTC = 11h BRT (depois Conselheiro 9h + Portfolio 10h).
-    ("cos-editorial-tick", "/api/cron/cos-editorial-tick", CronTrigger(hour=14, minute=0)),
+    # 15/06/26 KILL SWITCH — 10 specialists CoS desligados em bloco.
+    # Toda a fila abaixo gerava notificacao redundante, alucinacao de tools,
+    # listas defensivas, anti-padrao de "trazer tarefa operacional pra Renato".
+    # Em rebuild pra Tonha unica. Restaurar SO se rebuild abortar.
+    #
+    # ("cos-tonha-digest", "/api/cron/cos-tonha-digest", CronTrigger(hour=10, minute=0)),
+    # ("cos-conselheiro-tick", "/api/cron/cos-conselheiro-tick", CronTrigger(hour=12, minute=0)),
+    # ("cos-portfolio-tick", "/api/cron/cos-portfolio-tick", CronTrigger(hour=13, minute=0)),
+    # ("cos-editorial-tick", "/api/cron/cos-editorial-tick", CronTrigger(hour=14, minute=0)),
+    # ("cos-research-tick", "/api/cron/cos-research-tick", CronTrigger(hour=15, minute=0)),
+    # ("cos-cs-tick", "/api/cron/cos-cs-tick", CronTrigger(hour=16, minute=0)),
+    # ("cos-sales-tick", "/api/cron/cos-sales-tick", CronTrigger(hour=17, minute=0)),
+    # ("cos-financial-tick", "/api/cron/cos-financial-tick", CronTrigger(hour=18, minute=0)),
+    # ("cos-memory-tick", "/api/cron/cos-memory-tick", CronTrigger(hour=19, minute=0)),
+    # ("cos-network-tick", "/api/cron/cos-network-tick", CronTrigger(hour=20, minute=0)),
 ]
 
 
