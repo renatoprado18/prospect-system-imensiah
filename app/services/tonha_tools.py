@@ -49,8 +49,8 @@ TOOLS = [
             "properties": {
                 "scope": {
                     "type": "string",
-                    "enum": ["contacts", "projects", "tasks", "signals", "delegations", "all"],
-                    "description": "O que buscar. 'all' faz broad search.",
+                    "enum": ["contacts", "projects", "tasks", "signals", "delegations", "calendar", "all"],
+                    "description": "O que buscar. 'calendar' = eventos proximos 14d (ja convertido BRT). 'all' = broad.",
                 },
                 "query": {
                     "type": "string",
@@ -137,6 +137,33 @@ TOOLS = [
         },
     },
     {
+        "name": "manage_calendar_event",
+        "description": (
+            "Cancela ou apaga um evento do calendar. Em SHADOW MODE, salva como draft de cancelamento "
+            "(nao apaga real). Real: chama Google Calendar API + remove da tabela local. "
+            "Use quando Renato dizer 'deleta a reuniao X', 'cancela tal evento', 'nao vou participar'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_id": {"type": "integer", "description": "id local do calendar_events"},
+                "action": {
+                    "type": "string",
+                    "enum": ["delete", "cancel"],
+                    "description": "'delete' apaga do Google + local. 'cancel' marca status='cancelled' apenas (mantem registro).",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["single", "future", "all"],
+                    "default": "single",
+                    "description": "Pra eventos recorrentes. Default 'single'.",
+                },
+                "reason": {"type": "string", "description": "Por que cancelou — vai no audit log."},
+            },
+            "required": ["event_id", "action"],
+        },
+    },
+    {
         "name": "decide_and_log",
         "description": (
             "MANDATORIO em modo autonomous — registra cada decisao tomada sobre um signal. "
@@ -187,6 +214,8 @@ def dispatch(name: str, params: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str
             return _tool_delegate(ctx=ctx, **params)
         if name == "decide_and_log":
             return _tool_decide_and_log(ctx=ctx, **params)
+        if name == "manage_calendar_event":
+            return _tool_manage_calendar_event(ctx=ctx, **params)
         return {"ok": False, "error": f"tool '{name}' nao reconhecida"}
     except Exception as e:
         logger.exception(f"tool {name} crashed")
@@ -249,6 +278,30 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
                 LIMIT %s
             """, (f"%{query}%", f"%{query}%", limit))
             out["results"]["delegations"] = [dict(r) for r in cur.fetchall()]
+
+        if scope in ("calendar", "all"):
+            # IMPORTANTE: calendar_events armazena datetime na timezone do campo
+            # 'timezone' (geralmente America/Sao_Paulo direto, NAO em UTC). NAO
+            # converter — retorna raw + label timezone pra Brain interpretar.
+            cur.execute("""
+                SELECT id, summary, location,
+                       start_datetime AS start_raw,
+                       end_datetime   AS end_raw,
+                       timezone, all_day, status, conference_url, contact_id
+                FROM calendar_events
+                WHERE start_datetime > NOW() - INTERVAL '1 hour'
+                  AND start_datetime < NOW() + INTERVAL '14 days'
+                  AND status IN ('confirmed', 'tentative')
+                  AND (summary ILIKE %s OR description ILIKE %s OR location ILIKE %s OR %s = '')
+                ORDER BY start_datetime ASC
+                LIMIT %s
+            """, (f"%{query}%", f"%{query}%", f"%{query}%", query, limit))
+            out["results"]["calendar"] = [dict(r) for r in cur.fetchall()]
+            # Inclui nota interpretativa pra Brain
+            out["calendar_note"] = (
+                "start_raw/end_raw estao na timezone do campo timezone (geralmente "
+                "America/Sao_Paulo = BRT). NAO converter. Mostrar como-eh."
+            )
 
     return {"ok": True, **out}
 
@@ -381,6 +434,66 @@ def _tool_delegate(
         "decision_id": decision_id,
         "message": f"Delegation criada pra {to}. Em SHADOW: mensagem nao foi enviada — proximo loop do collector cobra.",
     }
+
+
+def _tool_manage_calendar_event(
+    *, event_id: int, action: str, scope: str = "single",
+    reason: str = "", ctx: Dict[str, Any]
+) -> Dict[str, Any]:
+    shadow = _shadow_mode()
+    record = {
+        "event_id": event_id, "action": action, "scope": scope,
+        "reason": reason[:300], "shadow": shadow,
+    }
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, summary, start_datetime, status, google_event_id FROM calendar_events WHERE id = %s",
+            (event_id,),
+        )
+        ev = cur.fetchone()
+        if not ev:
+            return {"ok": False, "error": f"calendar_event #{event_id} nao encontrado"}
+        record["summary"] = ev["summary"]
+        record["previous_status"] = ev["status"]
+
+        if not shadow:
+            if action == "cancel":
+                cur.execute(
+                    "UPDATE calendar_events SET status='cancelled', atualizado_em=NOW() WHERE id = %s",
+                    (event_id,),
+                )
+                record["local_rowcount"] = cur.rowcount
+            elif action == "delete":
+                # Google delete e async, precisa await fora desta call.
+                # Marca pra batch async ou retorna instrucao.
+                try:
+                    import asyncio
+                    from services.calendar_events import get_calendar_events
+                    cal = get_calendar_events()
+                    ok = asyncio.run(cal.delete_event(event_id, delete_from_google=True, scope=scope))
+                    record["google_delete_ok"] = ok
+                except RuntimeError:
+                    record["google_delete_ok"] = "skipped_event_loop_running"
+                    cur.execute("DELETE FROM calendar_events WHERE id = %s", (event_id,))
+                except Exception as e:
+                    record["google_delete_error"] = str(e)[:200]
+
+        cur.execute("""
+            INSERT INTO tonha_decisions (decision_type, decision_summary, action_taken, mode, triggered_by)
+            VALUES ('auto_execute', %s, %s::jsonb, %s, %s)
+            RETURNING id
+        """, (
+            f"{'shadow_' if shadow else ''}{action} calendar #{event_id} ({ev['summary'][:60]})",
+            json.dumps(record, default=str),
+            ctx.get("mode", "autonomous"),
+            ctx.get("triggered_by", "cron_loop"),
+        ))
+        decision_id = cur.fetchone()["id"]
+        conn.commit()
+
+    return {"ok": True, "shadow": shadow, "decision_id": decision_id, **record}
 
 
 def _tool_decide_and_log(

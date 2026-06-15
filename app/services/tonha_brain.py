@@ -52,15 +52,30 @@ SYSTEM_PROMPT = """Você é a Tonha — Chief of Staff IA do Renato Almeida Prad
 
 # REGRA #-1 — ANTI-ALUCINAÇÃO DE FERRAMENTAS
 TOOLS REAIS DISPONÍVEIS (e SOMENTE estas):
-  1. search_context — busca em contacts/projects/tasks/signals/delegations
+  1. search_context — busca em contacts/projects/tasks/signals/delegations/calendar
   2. send_message — manda WA ou email (em shadow mode = vira draft)
   3. update_record — UPDATE em tasks/projects/delegations/signals/weekly_raci_renato
   4. delegate — cria delegation pra Andressa/João Piccino/Priscila/dev/evaluator/collector
-  5. decide_and_log — registra decisão + marca signal resolved/dismissed
+  5. manage_calendar_event — cancela ou apaga evento do calendar (Google + local)
+  6. decide_and_log — registra decisão + marca signal resolved/dismissed
 
 NÃO EXISTEM: web_search, fetch_url, execute_intel, query_intel, query_conselhoos,
 delegate_to_claude_code (use delegate(to='dev') em vez), gmail_create_draft (use send_message).
 Se precisar de algo fora desse catálogo, decide_and_log com type=escalate explicando o gap.
+
+# REGRA #0 — HORÁRIOS E TIMEZONE
+TIMEZONE OFICIAL DO RENATO: BRT (America/Sao_Paulo, UTC-3).
+
+- NUNCA cite hora ou data sem checar fonte de verdade. Snapshots, briefings antigos,
+  e bot history podem estar com TZ errado.
+- Pra eventos: SEMPRE use `search_context(scope='calendar', query=...)`. Retorna
+  `start_raw` na timezone do campo `timezone` (geralmente America/Sao_Paulo). NÃO
+  converter. Mostre como-é. Se timezone='America/Sao_Paulo', start_raw JÁ É BRT.
+- Pra agora: use o "horário atual BRT" no contexto da mensagem do usuário (vem no prompt).
+- Se o histórico cita uma hora suspeita (ex: "04:45 AMANHÃ" pra evento que parece de manhã),
+  desconfia: faz search_context calendar pra confirmar.
+- NUNCA inventa conversão de UTC→BRT por conta própria. O storage do INTEL é
+  inconsistente. Confie no que o tool retorna + timezone label.
 
 # AUTONOMY POLICY (não viola)
 - 95% silence/auto_execute: hot take velho 30d → dismiss; task duplicada → auto_execute fechar; projeto stale → update_record status='paused'; aniversario de tier baixo sem histórico próximo → silence.
@@ -107,7 +122,10 @@ def _load_signals(limit: int = MAX_SIGNALS_PER_TICK) -> List[Dict[str, Any]]:
 
 
 def _signal_user_prompt(signal: Dict[str, Any]) -> str:
+    from services.tz import to_brt
+    now_brt = to_brt(now_utc()).strftime("%Y-%m-%d %H:%M BRT")
     return (
+        f"[Horário atual: {now_brt}]\n\n"
         f"# SIGNAL #{signal['id']}\n"
         f"- tipo: {signal['tipo']}\n"
         f"- urgência: {signal['urgencia']}/10\n"
@@ -245,6 +263,11 @@ async def run_reactive(
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     sys_prompt = SYSTEM_PROMPT + REACTIVE_PROMPT_SUFFIX
 
+    # Injeta horario atual BRT no contexto pra Brain nao precisar inferir
+    from services.tz import to_brt
+    now_brt_str = to_brt(now_utc()).strftime("%Y-%m-%d %H:%M BRT (%A)")
+    user_msg_with_time = f"[Horário atual: {now_brt_str}]\n\n{message}"
+
     messages: List[Dict[str, Any]] = []
     if history:
         for h in history[-20:]:
@@ -252,7 +275,7 @@ async def run_reactive(
             content = h.get("content") or ""
             if role in ("user", "assistant") and content.strip():
                 messages.append({"role": role, "content": content[:4000]})
-    messages.append({"role": "user", "content": message})
+    messages.append({"role": "user", "content": user_msg_with_time})
 
     ctx = {
         "mode": "reactive",
