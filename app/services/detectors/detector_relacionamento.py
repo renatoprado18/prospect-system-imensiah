@@ -23,14 +23,27 @@ def run(conn) -> DetectorRun:
     cur = conn.cursor()
 
     # ----- 1. Aniversarios hoje + proximos 7d -----
+    # Dedupe por (nome normalizado, aniversario): contatos duplicados (ex:
+    # Ricardo Lemos professional + personal) viram UM signal so. Primary id =
+    # MIN(id); all_contact_ids leva o array completo pra Brain referenciar.
     try:
         with savepoint(conn, "aniversario"):
             cur.execute("""
-                SELECT id, nome, apelido, empresa, cargo, aniversario, contexto, tags
+                SELECT
+                    MIN(id) AS id,
+                    (array_agg(id ORDER BY id))::int[] AS all_contact_ids,
+                    (array_agg(nome ORDER BY LENGTH(nome) DESC, id))[1] AS nome,
+                    (array_agg(apelido ORDER BY apelido NULLS LAST, id))[1] AS apelido,
+                    (array_agg(DISTINCT empresa) FILTER (WHERE empresa IS NOT NULL)) AS empresas,
+                    (array_agg(DISTINCT cargo)   FILTER (WHERE cargo   IS NOT NULL)) AS cargos,
+                    aniversario,
+                    (array_agg(DISTINCT contexto) FILTER (WHERE contexto IS NOT NULL)) AS contextos,
+                    (array_agg(tags ORDER BY id))[1] AS tags
                 FROM contacts
                 WHERE aniversario IS NOT NULL
                   AND TO_CHAR(aniversario, 'MM-DD') BETWEEN TO_CHAR(CURRENT_DATE, 'MM-DD')
                                                       AND TO_CHAR(CURRENT_DATE + 7, 'MM-DD')
+                GROUP BY LOWER(TRIM(nome)), aniversario
                 ORDER BY TO_CHAR(aniversario, 'MM-DD')
                 LIMIT 50
             """)
@@ -44,16 +57,19 @@ def run(conn) -> DetectorRun:
                     tipo, urg = "relacionamento_aniversario_hoje", 8
                 else:
                     tipo, urg = "relacionamento_aniversario_proximo", 4
+                # Hash usa primary id — se dedupe muda primary (ex: contato removido),
+                # signal antigo expira e novo emite. OK.
                 sh = make_signal_hash(tipo, r["id"], date.today().year)
                 current_hashes.append(sh)
                 ctx = {
                     "contact_id": r["id"],
+                    "all_contact_ids": list(r["all_contact_ids"] or []),
                     "nome": r["nome"],
                     "apelido": r["apelido"],
-                    "empresa": r["empresa"],
-                    "cargo": r["cargo"],
+                    "empresa": " / ".join(r["empresas"] or []) or None,
+                    "cargo": " / ".join(r["cargos"] or []) or None,
                     "aniversario": ani.isoformat(),
-                    "contexto": r["contexto"],
+                    "contextos": list(r["contextos"] or []),
                     "tags": r["tags"],
                 }
                 _bump(res, emit_signal(conn, tipo=tipo, signal_hash=sh, urgencia=urg, contexto=ctx, detector=DETECTOR_NAME))

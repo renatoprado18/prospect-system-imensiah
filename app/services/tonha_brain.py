@@ -34,6 +34,23 @@ THINKING_BUDGET = 4000       # extended thinking tokens
 MAX_TOKENS = THINKING_BUDGET + 4096  # texto+tools depois do thinking
 MAX_SIGNALS_PER_TICK = 30
 
+# Sonnet 4.6 pricing — USD per milhao de tokens. Fonte: Anthropic pricing page.
+# Atualizar quando model bump (cf. memory project_ai_stack_decision_140626).
+PRICE_INPUT_PER_M = 3.00
+PRICE_OUTPUT_PER_M = 15.00
+PRICE_CACHE_READ_PER_M = 0.30
+PRICE_CACHE_WRITE_PER_M = 3.75  # ephemeral 5min default
+
+
+def _compute_cost(usage_in: int, usage_out: int, cache_read: int = 0, cache_create: int = 0) -> float:
+    """Total USD da chamada. cache_read e cache_create sao input_tokens cacheados."""
+    return (
+        usage_in * PRICE_INPUT_PER_M
+        + usage_out * PRICE_OUTPUT_PER_M
+        + cache_read * PRICE_CACHE_READ_PER_M
+        + cache_create * PRICE_CACHE_WRITE_PER_M
+    ) / 1_000_000
+
 
 SYSTEM_PROMPT = """Você é a Tonha — Chief of Staff IA do Renato Almeida Prado.
 
@@ -143,8 +160,10 @@ def _run_one_signal(client: anthropic.Anthropic, signal: Dict[str, Any], ctx: Di
     messages: List[Dict[str, Any]] = [{"role": "user", "content": user_prompt}]
 
     total_in = total_out = total_thinking = 0
+    total_cache_read = total_cache_create = 0
     iterations = 0
     decision_logged = False
+    decision_id: Optional[int] = None
     tool_calls_log: List[Dict[str, Any]] = []
     final_text = ""
 
@@ -171,6 +190,8 @@ def _run_one_signal(client: anthropic.Anthropic, signal: Dict[str, Any], ctx: Di
         usage = resp.usage
         total_in += getattr(usage, "input_tokens", 0) or 0
         total_out += getattr(usage, "output_tokens", 0) or 0
+        total_cache_read += getattr(usage, "cache_read_input_tokens", 0) or 0
+        total_cache_create += getattr(usage, "cache_creation_input_tokens", 0) or 0
 
         messages.append({"role": "assistant", "content": resp.content})
 
@@ -193,6 +214,8 @@ def _run_one_signal(client: anthropic.Anthropic, signal: Dict[str, Any], ctx: Di
             res = dispatch(tname, tinput, ctx)
             if tname == "decide_and_log":
                 decision_logged = True
+                if isinstance(res, dict) and res.get("decision_id"):
+                    decision_id = res["decision_id"]
             tool_calls_log.append({"tool": tname, "input_keys": list(tinput.keys()), "ok": res.get("ok")})
             tool_results.append({
                 "type": "tool_result",
@@ -204,12 +227,35 @@ def _run_one_signal(client: anthropic.Anthropic, signal: Dict[str, Any], ctx: Di
         if resp.stop_reason == "end_turn":
             break
 
+    cost_usd = _compute_cost(total_in, total_out, total_cache_read, total_cache_create)
+
+    # Persiste cost+iter na row da decide_and_log. Sem isso /admin/tonha/decisions
+    # e o dashboard de custo ficam cegos. Se decide_and_log nao foi chamada,
+    # n/d — sinal ficou orfao.
+    if decision_id:
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "UPDATE tonha_decisions SET cost_usd = %s, iteration_count = %s WHERE id = %s",
+                    (cost_usd, iterations, decision_id),
+                )
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"signal {signal['id']} cost update failed: {e}")
+
     return {
         "signal_id": signal["id"],
         "iterations": iterations,
         "decision_logged": decision_logged,
+        "decision_id": decision_id,
+        "cost_usd": round(cost_usd, 6),
         "tool_calls": tool_calls_log,
-        "tokens": {"in": total_in, "out": total_out, "thinking_chars": total_thinking},
+        "tokens": {
+            "in": total_in, "out": total_out,
+            "cache_read": total_cache_read, "cache_create": total_cache_create,
+            "thinking_chars": total_thinking,
+        },
         "final_text": final_text[:300],
     }
 
@@ -285,6 +331,7 @@ async def run_reactive(
     }
 
     total_in = total_out = 0
+    total_cache_read = total_cache_create = 0
     iterations = 0
     final_text = ""
     tool_calls_log: List[Dict[str, Any]] = []
@@ -307,6 +354,8 @@ async def run_reactive(
         usage = resp.usage
         total_in += getattr(usage, "input_tokens", 0) or 0
         total_out += getattr(usage, "output_tokens", 0) or 0
+        total_cache_read += getattr(usage, "cache_read_input_tokens", 0) or 0
+        total_cache_create += getattr(usage, "cache_creation_input_tokens", 0) or 0
 
         messages.append({"role": "assistant", "content": resp.content})
 
@@ -334,6 +383,8 @@ async def run_reactive(
         if resp.stop_reason == "end_turn":
             break
 
+    cost_usd = _compute_cost(total_in, total_out, total_cache_read, total_cache_create)
+
     # Log decision summary pra audit (modo reactive)
     try:
         with get_db() as conn:
@@ -341,17 +392,23 @@ async def run_reactive(
             import json as _json
             cur.execute("""
                 INSERT INTO tonha_decisions (
-                    decision_type, decision_summary, action_taken, mode, triggered_by
+                    decision_type, decision_summary, action_taken, mode, triggered_by,
+                    cost_usd, iteration_count
                 )
-                VALUES ('auto_execute', %s, %s::jsonb, 'reactive', %s)
+                VALUES ('auto_execute', %s, %s::jsonb, 'reactive', %s, %s, %s)
             """, (
                 f"reactive reply ({iterations} iter)",
                 _json.dumps({
                     "user_message_preview": message[:200],
                     "tool_calls": tool_calls_log,
-                    "tokens": {"in": total_in, "out": total_out},
+                    "tokens": {
+                        "in": total_in, "out": total_out,
+                        "cache_read": total_cache_read, "cache_create": total_cache_create,
+                    },
                 }),
                 ctx["triggered_by"],
+                cost_usd,
+                iterations,
             ))
             conn.commit()
     except Exception as _e:
