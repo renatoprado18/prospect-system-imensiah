@@ -274,36 +274,54 @@ SENSOR_TOOLS = [
 
 
 def _tool_generate_post_image(post_id: int, prompt: str, style: str = "minimalist professional") -> Dict[str, Any]:
-    """Chama Genspark image_generation e atualiza editorial_posts.imagem_url."""
+    """Chama Genspark image_generation (endpoint /api/tool_cli/image_generation,
+    NDJSON streaming) e atualiza editorial_posts.imagem_url."""
     if not GENSPARK_API_KEY:
         return {"success": False, "error": "GENSPARK_API_KEY ausente"}
     try:
         import httpx
         from services.audit_log import log as audit_log
 
-        # Genspark API tools endpoint (CLI usa o mesmo path)
-        full_prompt = f"{prompt} — {style} style"
-        with httpx.Client(timeout=120.0) as client:
+        full_prompt = f"{prompt}, {style} style, editorial cover"
+        with httpx.Client(timeout=180.0) as client:
             resp = client.post(
-                "https://www.genspark.ai/api/v1/tools/image_generation/execute",
+                "https://www.genspark.ai/api/tool_cli/image_generation",
                 headers={
                     "Authorization": f"Bearer {GENSPARK_API_KEY}",
                     "Content-Type": "application/json",
                 },
-                json={"prompt": full_prompt, "aspect_ratio": "16:9"},
+                json={"query": full_prompt},
             )
         if resp.status_code >= 400:
             return {"success": False, "error": f"Genspark HTTP {resp.status_code}: {resp.text[:300]}"}
-        body = resp.json()
-        # Genspark retorna formato variável — tenta varias chaves
-        image_url = (
-            body.get("image_url")
-            or (body.get("data", {}) or {}).get("image_url")
-            or (body.get("result", {}) or {}).get("url")
-            or (body.get("images", [{}])[0].get("url") if body.get("images") else None)
-        )
+
+        # NDJSON streaming: várias linhas JSON. A última com status=ok contém o resultado.
+        last_payload = None
+        for line in resp.text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if obj.get("status") == "ok":
+                last_payload = obj
+        if not last_payload:
+            return {"success": False, "error": f"Genspark sem status=ok: {resp.text[:300]}"}
+
+        gen = (last_payload.get("data", {}) or {}).get("generated_images") or []
+        if not gen:
+            return {"success": False, "error": "Genspark resposta sem generated_images"}
+        first = gen[0]
+        if first.get("status") != "SUCCESS":
+            reason = first.get("failure_reason") or "sem failure_reason"
+            return {"success": False, "error": f"Genspark gen FAILURE: {reason}"}
+        urls_nowm = first.get("image_urls_nowatermark") or []
+        urls_wm = first.get("image_urls") or []
+        image_url = (urls_nowm[0] if urls_nowm else None) or (urls_wm[0] if urls_wm else None)
         if not image_url:
-            return {"success": False, "error": f"Genspark sem image_url: {json.dumps(body)[:300]}"}
+            return {"success": False, "error": "Genspark sem image_urls"}
 
         with get_db() as conn:
             cur = conn.cursor()
