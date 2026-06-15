@@ -52,6 +52,86 @@ def _compute_cost(usage_in: int, usage_out: int, cache_read: int = 0, cache_crea
     ) / 1_000_000
 
 
+# Caso real (15/06/26 WA chat): Tonha criou draft 50 → 5 turnos depois esqueceu →
+# criou draft 55 com mesmo conteudo. Brain stateless entre turnos do reactive nao
+# enxerga decisoes recentes. Injetamos os ultimos shadow_drafts do mesmo trigger
+# como contexto pra evitar duplicacao.
+def _recent_pending_drafts(triggered_by: str, minutes: int = 60) -> List[Dict[str, Any]]:
+    """Drafts shadow ainda nao executados deste trigger nos ultimos N min.
+
+    Filtra os que foram enviados real (decision_summary comeca com 'sent:')
+    ou que `action_taken.shadow` veio false. So 'shadow_draft:' aparece.
+    """
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT id, decision_summary, action_taken, criado_em
+                FROM tonha_decisions
+                WHERE triggered_by = %s
+                  AND decision_type = 'draft_and_send'
+                  AND decision_summary LIKE 'shadow_draft:%%'
+                  AND criado_em > NOW() - (%s || ' minutes')::interval
+                ORDER BY criado_em DESC
+                LIMIT 5
+            """, (triggered_by, str(minutes)))
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.warning(f"pending_drafts query failed: {e}")
+        return []
+
+
+# Strip silencioso de emoji + log de padroes de evasao ("nao tenho acesso"...).
+# Caso real (15/06 WA): Tonha usou 👋 e disse "calendar externo nao integrado"
+# mesmo com manage_calendar_event deployed. Validador nao corrige a resposta
+# (custaria retry), so loga pra Renato ver via /admin/tonha/decisions ou DB.
+_EMOJI_RE = None  # lazy compile
+
+_EVASION_PHRASES = [
+    "não tenho acesso",
+    "nao tenho acesso",
+    "limitação real",
+    "limitacao real",
+    "sistema externo não",
+    "sistema externo nao",
+    "calendar externo",
+    "fora da minha ferramenta",
+    "não implementado",
+    "nao implementado",
+    "limitação de indexação",
+    "limitacao de indexacao",
+]
+
+
+def _validate_response(text: str) -> Dict[str, Any]:
+    """Retorna {clean_text, emojis_removed, evasion_flags}.
+
+    NAO retry — so strip emoji + flag pattern de evasao pra audit.
+    """
+    if not text:
+        return {"clean_text": text, "emojis_removed": 0, "evasion_flags": []}
+
+    global _EMOJI_RE
+    if _EMOJI_RE is None:
+        import re
+        # Unicode emoji ranges (BMP + supplementary). Cobre 👋 🤖 ✅ etc.
+        _EMOJI_RE = re.compile(
+            "[\U0001F600-\U0001F64F"   # emoticons
+            "\U0001F300-\U0001F5FF"    # symbols & pictographs
+            "\U0001F680-\U0001F6FF"    # transport & map
+            "\U0001F1E0-\U0001F1FF"    # flags
+            "\U00002600-\U000027BF"    # misc symbols + dingbats
+            "\U0001F900-\U0001F9FF"    # supplemental symbols
+            "\U0001FA70-\U0001FAFF"    # symbols extended-A
+            "]+",
+            flags=re.UNICODE,
+        )
+
+    cleaned, n = _EMOJI_RE.subn("", text)
+    flags = [p for p in _EVASION_PHRASES if p in text.lower()]
+    return {"clean_text": cleaned, "emojis_removed": n, "evasion_flags": flags}
+
+
 SYSTEM_PROMPT = """Você é a Tonha — Chief of Staff IA do Renato Almeida Prado.
 
 # IDENTIDADE
@@ -79,6 +159,31 @@ TOOLS REAIS DISPONÍVEIS (e SOMENTE estas):
 NÃO EXISTEM: web_search, fetch_url, execute_intel, query_intel, query_conselhoos,
 delegate_to_claude_code (use delegate(to='dev') em vez), gmail_create_draft (use send_message).
 Se precisar de algo fora desse catálogo, decide_and_log com type=escalate explicando o gap.
+
+# REGRA #-2 — TOOL USE OBRIGATÓRIO QUANDO RENATO PEDE (NÃO INVENTE LIMITAÇÃO)
+O REACTIVE tem TODAS as tools do AUTONOMOUS. Nunca diga "não tenho acesso", "limitação real",
+"sistema externo não integrado", "calendar externo fora da minha ferramenta". É sempre falso.
+Sequências obrigatórias:
+
+- "deleta/cancela reunião/evento X" → search_context(scope='calendar', query=X) PRIMEIRO →
+  com event_id em mãos, manage_calendar_event(event_id=N, action='delete', reason=...).
+  NÃO peça pro Renato "confirmar onde está o registro".
+
+- "ver WhatsApp da pessoa X" / "histórico WA" / "veja se tem algo no WA" →
+  search_context(scope='whatsapp', query=nome_ou_palavra_chave). Retorna DMs+grupos 30d.
+  Se vazio, diga "sem mensagens recentes nesse termo" — não "limitação de indexação".
+
+- "ver PDF/áudio/imagem que mandei" → search_context(scope='attachments', query=tema_ou_nome_arquivo).
+
+- "manda email pra X" → send_message(channel='email', target=email). Em shadow vira draft —
+  isso É funcionar, não "não implementado".
+
+- "põe no Google Calendar" → manage_calendar_event nao CRIA, so apaga/cancela. Pra criar
+  evento novo, use decide_and_log type=escalate explicando que precisa de tool nova
+  (create_calendar_event ainda não existe) — esse é o único caso onde "ainda não tem" é honesto.
+
+Se você se pegar prestes a dizer "não tenho acesso a Y" sem ter chamado a tool Y, PARA.
+Chama a tool primeiro. Se a tool retornar vazio, ai sim relata "vazio".
 
 # REGRA #0 — HORÁRIOS E TIMEZONE
 TIMEZONE OFICIAL DO RENATO: BRT (America/Sao_Paulo, UTC-3).
@@ -312,7 +417,21 @@ async def run_reactive(
     # Injeta horario atual BRT no contexto pra Brain nao precisar inferir
     from services.tz import to_brt
     now_brt_str = to_brt(now_utc()).strftime("%Y-%m-%d %H:%M BRT (%A)")
-    user_msg_with_time = f"[Horário atual: {now_brt_str}]\n\n{message}"
+
+    # Drafts pendentes deste chat (ultimos 60min) — evita Tonha esquecer e
+    # recriar (vide draft 50 → 55 duplicado 15/06).
+    triggered_by_key = f"{channel}:{phone or 'unknown'}"
+    pending = _recent_pending_drafts(triggered_by=triggered_by_key, minutes=60)
+    drafts_block = ""
+    if pending:
+        lines = [f"- Draft #{d['id']}: {d['decision_summary'][:140]}" for d in pending]
+        drafts_block = (
+            "\n[DRAFTS PENDENTES desta conversa — NAO recrie. Se Renato confirmar "
+            "envio, use send_message com force_send=true referenciando o draft.]\n"
+            + "\n".join(lines) + "\n"
+        )
+
+    user_msg_with_time = f"[Horário atual: {now_brt_str}]{drafts_block}\n{message}"
 
     messages: List[Dict[str, Any]] = []
     if history:
@@ -385,6 +504,15 @@ async def run_reactive(
 
     cost_usd = _compute_cost(total_in, total_out, total_cache_read, total_cache_create)
 
+    # Validador: strip emoji + flag evasao. NAO retry (custo). Log no action_taken
+    # pra Renato monitorar via /admin/tonha/decisions.
+    validation = _validate_response(final_text)
+    if validation["emojis_removed"]:
+        logger.info(f"reactive: stripped {validation['emojis_removed']} emojis")
+    if validation["evasion_flags"]:
+        logger.warning(f"reactive: evasion patterns detected: {validation['evasion_flags']}")
+    final_text = validation["clean_text"]
+
     # Log decision summary pra audit (modo reactive)
     try:
         with get_db() as conn:
@@ -404,6 +532,10 @@ async def run_reactive(
                     "tokens": {
                         "in": total_in, "out": total_out,
                         "cache_read": total_cache_read, "cache_create": total_cache_create,
+                    },
+                    "validation": {
+                        "emojis_removed": validation["emojis_removed"],
+                        "evasion_flags": validation["evasion_flags"],
                     },
                 }),
                 ctx["triggered_by"],
