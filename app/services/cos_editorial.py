@@ -103,24 +103,25 @@ def _load_editorial_state() -> Dict[str, Any]:
             }
 
             # Hot takes nao virados em post >7d
-            cur.execute(
-                """
-                SELECT id, titulo, criado_em::date
-                FROM hot_takes
-                WHERE status = 'active'
-                  AND criado_em < NOW() - INTERVAL '7 days'
-                  AND id NOT IN (SELECT DISTINCT hot_take_id FROM editorial_posts WHERE hot_take_id IS NOT NULL)
-                ORDER BY criado_em ASC LIMIT 5
-                """
-            )
+            # Schema real: news_title, status='draft', created_at, editorial_post_id (FK reversa)
             try:
+                cur.execute(
+                    """
+                    SELECT id, news_title, created_at::date as created
+                    FROM hot_takes
+                    WHERE status = 'draft'
+                      AND created_at < NOW() - INTERVAL '7 days'
+                      AND editorial_post_id IS NULL
+                    ORDER BY created_at ASC LIMIT 5
+                    """
+                )
                 state["hot_takes_orfaos"] = [
-                    {"id": r["id"], "titulo": (r["titulo"] or "")[:120],
-                     "criado_em": r["criado_em"].isoformat() if r["criado_em"] else None}
+                    {"id": r["id"], "titulo": (r["news_title"] or "")[:120],
+                     "criado_em": r["created"].isoformat() if r["created"] else None}
                     for r in cur.fetchall()
                 ]
-            except Exception:
-                # hot_take_id pode nao existir na editorial_posts (defensivo)
+            except Exception as e:
+                logger.warning(f"hot_takes query falhou: {e}")
                 state["hot_takes_orfaos"] = []
 
             # Últimas métricas
