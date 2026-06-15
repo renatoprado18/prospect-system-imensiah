@@ -456,6 +456,7 @@ def _tool_send_wa_to_renato(
     contact_id: Optional[int] = None,
     proposed_action: Optional[Dict[str, Any]] = None,
     is_system_alert: bool = False,
+    agent_label: str = "CoS Patrol",
 ) -> Dict[str, Any]:
     """Envia proposta conversacional ao Renato via intel-bot (0192 -> 3337).
 
@@ -479,24 +480,48 @@ def _tool_send_wa_to_renato(
         from services.audit_log import log as audit_log
         from services.intel_bot import RENATO_PHONE, INTEL_BOT_INSTANCE
 
+        # ===== Reserva proximo ID do bot_conversations pra embutir no texto =====
+        # Why: Renato recebe varias propostas em sequencia e nao sabe a qual
+        # esta respondendo. ID curto #P{n} no header permite correlacionar
+        # "P742 1" -> proposta #742 opcao 1. Reply do WhatsApp tb funciona mas
+        # nem todo cliente envia stanzaId no webhook.
+        proposal_id: Optional[int] = None
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT nextval('bot_conversations_id_seq') AS id")
+                row = cur.fetchone()
+                proposal_id = int(row["id"]) if row else None
+        except Exception as e:
+            logger.warning(f"_tool_send_wa_to_renato: nextval falhou: {e}")
+            proposal_id = None
+        proposal_tag = f"#P{proposal_id}" if proposal_id else ""
+
         # ===== Rendering =====
         raw_text = (text or "").strip()
         use_natural = bool(raw_text) and not is_system_alert
 
         if use_natural:
             # Modo natural: prosa direto da Tonha. Sem decoracao.
-            final_text = raw_text[:3500]
+            # Adiciona ID curto no topo se houver options (necessario pra
+            # correlacao da resposta), senao prefere prosa limpa.
+            if options and proposal_tag:
+                final_text = f"{proposal_tag}\n\n{raw_text}"[:3500]
+            else:
+                final_text = raw_text[:3500]
             mode_label = "natural"
         else:
             # Modo structured: header + title + summary + opcoes.
-            # Reservado pra alertas de sistema OU quando a tool nao recebeu `text`.
             lines: List[str] = []
             if is_system_alert:
-                lines.append("⚠ *INTEL alerta*")
+                header = "⚠ *INTEL alerta*"
             else:
-                lines.append("🤖 *CoS Patrol*")
+                header = f"🤖 *{agent_label}*"
+            if proposal_tag:
+                header += f"  ·  {proposal_tag}"
             if urgency == "high" and not is_system_alert:
-                lines[0] += " ⚠️"
+                header += " ⚠️"
+            lines.append(header)
             lines.append("")
             if title:
                 lines.append(f"*{title.strip()}*")
@@ -504,7 +529,6 @@ def _tool_send_wa_to_renato(
             if summary:
                 lines.append(summary.strip())
             elif raw_text:
-                # Tinha text mas caiu pro structured (system alert) — usa como summary.
                 lines.append(raw_text.strip())
 
             if options:
@@ -513,7 +537,12 @@ def _tool_send_wa_to_renato(
                     label = (opt.get("label") or "").strip()
                     lines.append(f"{i}. {label}")
                 lines.append("")
-                lines.append("_Responda texto ou áudio._")
+                if proposal_tag:
+                    lines.append(
+                        f"_↩️ Reply nessa msg, OU digite_ `{proposal_tag} 1` _(ou 2/3/4 ou texto livre)._"
+                    )
+                else:
+                    lines.append("_Responda texto ou áudio._")
 
             final_text = "\n".join(lines)[:3500]
             mode_label = "system_alert" if is_system_alert else "structured"
@@ -553,28 +582,40 @@ def _tool_send_wa_to_renato(
         # Salva turn no historico do bot pro fluxo conversacional pegar contexto.
         cos_metadata = {
             "cos_patrol": True,
+            "agent_label": agent_label,
             "proposed_action": proposed_action or {},
             "options": options or [],
             "urgency": urgency,
             "context_link": context_link,
             "contact_id": contact_id,
+            "proposal_tag": proposal_tag or None,
         }
         try:
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute(
-                    """
-                    INSERT INTO bot_conversations (phone, role, content, tool_calls)
-                    VALUES (%s, 'assistant', %s, %s::jsonb)
-                    RETURNING id
-                    """,
-                    (RENATO_PHONE, text, json.dumps(cos_metadata)),
-                )
-                bot_msg_id = cur.fetchone()["id"]
+                if proposal_id:
+                    cur.execute(
+                        """
+                        INSERT INTO bot_conversations (id, phone, role, content, tool_calls)
+                        VALUES (%s, %s, 'assistant', %s, %s::jsonb)
+                        """,
+                        (proposal_id, RENATO_PHONE, text, json.dumps(cos_metadata)),
+                    )
+                    bot_msg_id = proposal_id
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO bot_conversations (phone, role, content, tool_calls)
+                        VALUES (%s, 'assistant', %s, %s::jsonb)
+                        RETURNING id
+                        """,
+                        (RENATO_PHONE, text, json.dumps(cos_metadata)),
+                    )
+                    bot_msg_id = cur.fetchone()["id"]
                 conn.commit()
         except Exception as e:
             logger.warning(f"_tool_send_wa_to_renato: bot_conversations insert falhou: {e}")
-            bot_msg_id = None
+            bot_msg_id = proposal_id
 
         aid = audit_log(
             "cos_sensor.send_wa_to_renato",

@@ -296,8 +296,16 @@ sem chamar tool. Silencio e OK.
 Quando precisar propor algo pro Renato, use **send_wa_to_renato** (tool) com:
 - title curto e factual ("Alba — reuniao segunda 16/06, sem pauta")
 - summary objetivo com numeros (quantos RACI, dias desde reuniao, etc)
-- options [Aprovar, Modificar, Snooze, Ignorar]
-- proposed_action {action, params}
+- **options CONCRETAS, NUNCA genéricas** — diga a ACAO especifica em cada label:
+  - RUIM: ["Aprovar", "Modificar", "Snooze", "Ignorar"]
+  - BOM:  ["Manda WA pra Sandra propondo reagendar 23/06",
+           "Cobra os 8 RACI vencidos no grupo Alba",
+           "Snooze ate quarta",
+           "Descartar"]
+  - Renato precisa entender ANTES de clicar o que cada opcao faz.
+  - Maximo 4 opcoes. Ultima sempre "Descartar" (catch-all silenciar).
+- proposed_action {action, params}: JSON estruturado do que sera executado
+  se Renato aprovar a opcao 1 (default).
 
 Restricoes:
 - **NAO PUBLIQUE pauta/dossie/ata sem revisao do Renato.** Sempre propor via WA.
@@ -372,6 +380,7 @@ def _exec_tool(name: str, params: Dict[str, Any]) -> Dict[str, Any]:
             contact_id=None,
             context_link=f"conselheiro:{params.get('conselho_slug','')}",
             proposed_action=pa,
+            agent_label="CoS Conselheiro",
         )
     except Exception as e:
         logger.exception(f"_exec_tool send_wa_to_renato falhou: {e}")
