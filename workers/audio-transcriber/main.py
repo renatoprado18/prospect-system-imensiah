@@ -11,6 +11,7 @@ import httpx
 import psycopg
 from psycopg.rows import dict_row
 from datetime import datetime, timedelta
+from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 SP_TZ = ZoneInfo("America/Sao_Paulo")
@@ -1443,8 +1444,76 @@ def _build_snapshot_block() -> str:
     return "## SITUACAO ATUAL (snapshot — voce JA SABE disso, NAO precisa de tool call pra coisas obvias)\n\n" + "\n\n".join(sections) + "\n\n"
 
 
+async def _maybe_route_to_tonha_brain(phone: str, message: str) -> Optional[str]:
+    """FASE 2B STRANGLER — chama Brain Vercel via HTTP se flag TONHA_REACTIVE_TARGETS
+    bater. Retorna texto pra enviar via Evolution, ou None se nao deve usar Brain.
+    Falha graceful: se Brain timeout/erro, volta None e _run_bot antigo assume.
+    """
+    targets = (os.getenv("TONHA_REACTIVE_TARGETS") or "none").strip().lower()
+    if targets in ("none", ""):
+        return None
+    if targets not in ("all", "wa"):
+        return None  # chat-only nao chega aqui (worker so faz WA)
+
+    base_url = (os.getenv("BASE_URL") or "https://intel.almeida-prado.com").strip().rstrip("/")
+    worker_secret = (os.getenv("WORKER_SECRET") or "").strip()
+    if not worker_secret:
+        logger.warning("[tonha-route] WORKER_SECRET ausente — fallback bot antigo")
+        return None
+
+    # Pega ultimos 10 turnos pra dar contexto
+    history: List[Dict[str, str]] = []
+    try:
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT role, content
+            FROM bot_conversations
+            WHERE phone = %s
+              AND role IN ('user', 'assistant')
+              AND content IS NOT NULL AND content != ''
+            ORDER BY created_at DESC
+            LIMIT 10
+        """, (phone,))
+        rows = list(reversed(cur.fetchall()))
+        history = [{"role": r["role"], "content": (r["content"] or "")[:3000]} for r in rows]
+        conn.close()
+    except Exception as e:
+        logger.warning(f"[tonha-route] history load falhou: {e}")
+
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.post(
+                f"{base_url}/api/internal/tonha-reactive",
+                json={
+                    "secret": worker_secret,
+                    "phone": phone,
+                    "message": message,
+                    "channel": "whatsapp",
+                    "history": history,
+                },
+            )
+            if resp.status_code != 200:
+                logger.error(f"[tonha-route] Vercel returned {resp.status_code}: {resp.text[:200]}")
+                return None
+            data = resp.json()
+            if not data.get("ok"):
+                logger.error(f"[tonha-route] not ok: {data}")
+                return None
+            return data.get("reply") or None
+    except Exception as e:
+        logger.exception(f"[tonha-route] excecao — fallback bot antigo: {e}")
+        return None
+
+
 async def _run_bot(phone: str, message: str, message_id: str) -> str:
     """Full bot processing with tool_use loop. Runs on Railway (no timeout)."""
+    # FASE 2B — tenta Brain Vercel primeiro se flag matches
+    brain_reply = await _maybe_route_to_tonha_brain(phone, message)
+    if brain_reply:
+        logger.info(f"[tonha-route] Brain respondeu ({len(brain_reply)} chars)")
+        return brain_reply
+
     now = _now_sp()
     snapshot = _build_snapshot_block()
 

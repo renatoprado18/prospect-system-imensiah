@@ -5472,6 +5472,38 @@ async def cron_platform_costs_daily(request: Request):
     }
 
 
+@app.post("/api/internal/tonha-reactive")
+async def internal_tonha_reactive(request: Request):
+    """Brain reactive — chamado pelo Railway worker via HTTP.
+
+    Auth: WORKER_SECRET. Worker POSTa {phone, message, history?} e Brain
+    devolve texto pra worker enviar via Evolution.
+
+    Endpoint INTERNO — nao expor publicamente.
+    """
+    body = await request.json()
+    secret = body.get("secret") or ""
+    expected = (os.getenv("WORKER_SECRET") or "").strip()
+    if not expected or secret != expected:
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    from services.tonha_brain import run_reactive
+    phone = body.get("phone") or ""
+    message = body.get("message") or ""
+    channel = body.get("channel") or "whatsapp"
+    history = body.get("history") or []
+    if not message.strip():
+        return {"ok": False, "error": "empty message"}
+
+    reply = await run_reactive(
+        message=message,
+        channel=channel,
+        phone=phone,
+        history=history,
+    )
+    return {"ok": True, "reply": reply}
+
+
 @app.get("/admin/tonha/decisions", response_class=HTMLResponse)
 async def admin_tonha_decisions(request: Request):
     """Lista decisoes da Tonha — review pro Renato em shadow mode."""
