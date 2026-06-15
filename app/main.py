@@ -25487,6 +25487,53 @@ async def cron_cos_conselheiro_tick(request: Request):
         return {"job": "cos-conselheiro-tick", "status": "error", "error": str(e)}
 
 
+@app.get("/api/cron/cos-portfolio-tick")
+@app.post("/api/cron/cos-portfolio-tick")
+@track_cron_run
+async def cron_cos_portfolio_tick(request: Request):
+    """Cron CoS Portfolio Agent (15/06/26). Specialist #2 do swarm.
+
+    Drift detector + revisao estrategica horizontal de TODOS os projetos INTEL
+    ativos. NAO duplica analise dos 4 conselhos (CONSELHEIRO cobre).
+    Schedule via Railway: 1x/dia 13 UTC = 10h BRT. Budget cap: $0.50/dia.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.cos_portfolio import tick_safe
+    try:
+        result = tick_safe()
+        return {"job": "cos-portfolio-tick", **result}
+    except Exception as e:
+        logging.exception("cos-portfolio-tick falhou")
+        return {"job": "cos-portfolio-tick", "status": "error", "error": str(e)}
+
+
+@app.post("/api/cos/portfolio/run")
+async def manual_cos_portfolio_run(request: Request):
+    """Trigger manual do PORTFOLIO. Aceita user session OU WORKER_SECRET."""
+    worker_secret_env = (os.getenv("WORKER_SECRET", "intel-audio-2026") or "").strip()
+    triggered_by = None
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body_secret = (body.get("secret") or "").strip()
+    if body_secret and body_secret == worker_secret_env:
+        triggered_by = body.get("triggered_by") or "worker"
+    else:
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Nao autenticado")
+        triggered_by = user.get("email")
+    from services.cos_portfolio import tick_safe
+    try:
+        result = tick_safe()
+        return {"job": "cos-portfolio-manual", "triggered_by": triggered_by, **result}
+    except Exception as e:
+        logging.exception("manual cos-portfolio falhou")
+        return {"job": "cos-portfolio-manual", "status": "error", "error": str(e)}
+
+
 @app.post("/api/cos/conselheiro/run")
 async def manual_cos_conselheiro_run(request: Request):
     """Trigger manual do CONSELHEIRO. Aceita user session OU WORKER_SECRET."""

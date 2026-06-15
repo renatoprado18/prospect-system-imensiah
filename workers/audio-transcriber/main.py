@@ -157,6 +157,10 @@ _SCHEDULER_JOBS = [
     # (Vallen, Alba, Despertar, Assespro). Cobre RACI + reunioes + grupos WA.
     # 1x/dia 12 UTC = 9h BRT.
     ("cos-conselheiro-tick", "/api/cron/cos-conselheiro-tick", CronTrigger(hour=12, minute=0)),
+    # PORTFOLIO Agent — Specialist #2 swarm CoS (15/06/26). Drift detector
+    # horizontal. NAO duplica os 4 conselhos. 1x/dia 13 UTC = 10h BRT (apos
+    # CONSELHEIRO).
+    ("cos-portfolio-tick", "/api/cron/cos-portfolio-tick", CronTrigger(hour=13, minute=0)),
 ]
 
 
