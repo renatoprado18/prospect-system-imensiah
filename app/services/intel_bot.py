@@ -233,10 +233,11 @@ TOOLS = [
             "So pergunte se houver ambiguidade real entre eventos diferentes (ex: 2 eventos com nome similar em datas diferentes — ai pergunte qual). "
             "Pra series recorrentes, se o usuario pediu 'apagar todos' use scope='all' direto. Se pediu 'so essa', use 'single'. Se pediu 'desta data em diante', use 'future'.\n"
             "- send_whatsapp: ENVIA WhatsApp REAL em nome do Renato (instance rap-whatsapp = numero pessoal dele). "
-            "params: contact_id (int) + message (str). VOCE TEM ESSA CAPACIDADE — NUNCA diga 'nao tenho acesso pra mandar WhatsApp'. "
-            "Voce TEM. Quando o Renato pedir 'manda WA pro X', chame a tool e mande. "
+            "params: message (str, OBRIGATORIO) + UM dos seguintes alvos: contact_id (int, pra 1:1) OU group_jid (str XXX@g.us, pra grupo) OU group_name (str, busca fuzzy em grupos ativos vinculados a projetos — ex: 'vallen' acha o Conselho Vallen). "
+            "VOCE TEM ESSA CAPACIDADE — NUNCA diga 'nao tenho acesso pra mandar WhatsApp'. NUNCA invente uma lista de tools que voce NAO tem. "
+            "Quando o Renato pedir 'manda WA pro X' ou 'envia no grupo Y', chame a tool e mande. Se faltar dado, PERGUNTE 1 coisa especifica (ex: 'qual grupo? Vallen, Despertar, Assespro?') — nao recuse. "
             "Politica: pra C0/C1 (familia, Thalita, Villela, socios) — rascunhe e pergunte 'mando assim?' antes. "
-            "Pra C2+ operacional (RACI status, horario, follow-up) — pode mandar direto e registrar. "
+            "Pra C2+ operacional (RACI status, horario, follow-up, mensagem em grupo de trabalho) — pode mandar direto e registrar. "
             "NUNCA alegue 'mensagem enviada' sem ter chamado a tool de fato.\n"
             "- send_email: envia email via Gmail. params: to (email destinatario) OU contact_id (resolve email do contato), subject, body, account? ('personal'|'professional', default 'professional'). "
             "Se passar contact_id, busca o primeiro email do contato. Se passar 'to', usa direto. "
@@ -1017,36 +1018,86 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
 
         elif action == "send_whatsapp":
             contact_id = params.get("contact_id")
+            group_jid = params.get("group_jid")
+            group_name = params.get("group_name")
             message = params.get("message")
-            if not contact_id or not message:
-                return json.dumps({"erro": "contact_id e message sao obrigatorios"})
+            if not message:
+                return json.dumps({"erro": "message obrigatorio"})
 
             from integrations.evolution_api import get_evolution_client
 
-            with get_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT id, nome, telefones FROM contacts WHERE id = %s", (contact_id,))
-                contact = cursor.fetchone()
+            # 15/06/26: extendido pra suportar GRUPOS — pode passar:
+            # - contact_id (int): envia pra contato 1:1
+            # - group_jid (str, "XXX@g.us"): envia direto pro grupo
+            # - group_name (str): busca em project_whatsapp_groups ativos com
+            #   ILIKE %nome% e usa o group_jid resolvido
+            target_jid = None
+            target_label = None
 
-            if not contact:
-                return json.dumps({"erro": f"Contato #{contact_id} nao encontrado"})
+            if group_jid:
+                target_jid = group_jid if "@g.us" in group_jid else f"{group_jid}@g.us"
+                target_label = f"grupo {group_jid}"
 
-            contact = dict(contact)
-            phones = contact.get("telefones")
-            if isinstance(phones, str):
-                try:
-                    phones = json.loads(phones)
-                except:
-                    phones = []
+            elif group_name:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        SELECT pwg.group_jid, pwg.group_name, p.nome AS projeto
+                        FROM project_whatsapp_groups pwg
+                        LEFT JOIN projects p ON p.id = pwg.project_id
+                        WHERE pwg.ativo = TRUE
+                          AND (pwg.group_name ILIKE %s OR p.nome ILIKE %s)
+                        LIMIT 5
+                        """,
+                        (f"%{group_name}%", f"%{group_name}%"),
+                    )
+                    matches = [dict(r) for r in cursor.fetchall()]
+                if not matches:
+                    return json.dumps({
+                        "erro": f"Nenhum grupo ativo encontrado matching '{group_name}'. "
+                                "Veja project_whatsapp_groups pra grupos disponiveis."
+                    })
+                if len(matches) > 1:
+                    return json.dumps({
+                        "erro": f"Multiplos grupos matching '{group_name}': "
+                                + ", ".join(f"{m['group_name']} ({m.get('projeto')})" for m in matches)
+                                + ". Passe group_jid explicito pra desambiguar."
+                    })
+                target_jid = matches[0]["group_jid"]
+                target_label = f"grupo '{matches[0]['group_name']}'"
 
-            if not phones or (isinstance(phones, list) and not phones):
-                return json.dumps({"erro": f"Contato {contact['nome']} nao tem telefone"})
+            elif contact_id:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT id, nome, telefones FROM contacts WHERE id = %s", (contact_id,))
+                    contact = cursor.fetchone()
+                if not contact:
+                    return json.dumps({"erro": f"Contato #{contact_id} nao encontrado"})
+                contact = dict(contact)
+                phones = contact.get("telefones")
+                if isinstance(phones, str):
+                    try:
+                        phones = json.loads(phones)
+                    except Exception:
+                        phones = []
+                if not phones or (isinstance(phones, list) and not phones):
+                    return json.dumps({"erro": f"Contato {contact['nome']} nao tem telefone"})
+                phone = phones[0] if isinstance(phones, list) else str(phones)
+                phone_clean = ''.join(filter(str.isdigit, str(phone)))
+                target_jid = phone_clean
+                target_label = f"{contact['nome']} (contact #{contact_id})"
 
-            phone = phones[0] if isinstance(phones, list) else str(phones)
-            phone_clean = ''.join(filter(str.isdigit, str(phone)))
+            else:
+                return json.dumps({
+                    "erro": "Passe contact_id (1:1) OU group_jid (XXX@g.us) OU group_name (busca fuzzy)"
+                })
 
             client = get_evolution_client()
-            result = await client.send_text(phone_clean, message, instance_name="rap-whatsapp")
+            result = await client.send_text(target_jid, message, instance_name="rap-whatsapp")
+            # Replace contact label for the rest of the block
+            contact = {"nome": target_label}
+            phone_clean = target_jid
 
             if "error" not in result:
                 # Auto-resolve matching tasks
@@ -2178,6 +2229,31 @@ NUNCA (regras INVIOLAVEIS — nao negociaveis):
 - "Proximo?", "Qual e o proximo?" — gatilho de CRM. NUNCA. Se nao ha nada pra dizer, nao fale.
 - Cadastrar dado sem Renato pedir explicito.
 - Notificar tudo que entra no sistema. Filtre pela politica CoS Config (frentes ativas, circulos, assunto de interesse). Ruido em WhatsApp e pior que silencio.
+
+REGRA ANTI-RECUO DEFENSIVO (INVIOLAVEL — 15/06/26):
+NUNCA, JAMAIS liste suas tools, suas capacidades, ou suas limitacoes pro Renato
+como justificativa pra nao agir. Pessoa de verdade nao para no meio de uma
+conversa e diz "olha, minhas habilidades sao: pesquisar, ler, escrever..." —
+isso e burocratico, defensivo, e em 90% dos casos voce VAI ESTAR ERRADA
+listando (o modelo aluciana nomes de tool). Em vez disso:
+
+1. Se Renato pediu algo concreto, TENTE chamar a tool diretamente. Se a action
+   nao existir, o sistema retorna erro estruturado e ai sim voce explica
+   especificamente o que faltou.
+2. Se faltou um dado pra agir (contact_id, qual grupo, qual conta), PERGUNTE
+   1 coisa especifica em 1 frase. Sem listar 5 alternativas.
+3. NUNCA invente uma tool que voce nao tem. NUNCA negue uma tool que tem
+   sem antes TENTAR usar. Se voce nao tem certeza, TENTE — o erro estruturado
+   e melhor que falsa negativa.
+4. Voce tem 4 grandes ferramentas (query_intel, execute_action, query_conselhoos,
+   execute_conselhoos) + 19 sub-acoes em execute_action. Entre elas:
+   send_whatsapp (grupos E 1:1), send_email, create_task, update_task,
+   schedule_meeting, update_calendar_event, save_memory, enrich_contact,
+   delegate_to_claude_code, e mais. Voce tem MUITO poder. Use.
+5. Caso classico de erro recente: Renato pediu "manda WA pro grupo" e voce
+   respondeu "minhas tools sao web_search, fetch_url, execute_intel..." (lista
+   INVENTADA, voce NAO tem essas tools assim). Era pra ter chamado
+   send_whatsapp(group_name=..., message=...).
 
 REGRA DE OURO (LEIA): ignore COMPLETAMENTE o estilo de respostas anteriores
 neste historico se voce ver "✅", "🤖 *CoS Patrol*", "Anotado.", "Task #NNN",
