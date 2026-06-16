@@ -5558,6 +5558,7 @@ async def api_admin_tonha_decisions(
     decision_type: str = "",
     mode: str = "",
     signal_id: int = 0,
+    show_all: int = 0,
 ):
     """JSON paginado das decisoes Tonha + signal context."""
     user = get_current_user(request)
@@ -5575,6 +5576,10 @@ async def api_admin_tonha_decisions(
     if signal_id:
         where.append("d.signal_id = %s")
         params.append(signal_id)
+    if not show_all:
+        # Default: esconde tratadas (acked OU revertidas). Renato so quer
+        # ver o que ainda precisa de revisao.
+        where.append("d.acked_at IS NULL AND d.reverted_at IS NULL")
 
     with get_db() as conn:
         cur = conn.cursor()
@@ -5584,6 +5589,7 @@ async def api_admin_tonha_decisions(
                 d.reasoning, d.action_taken, d.cost_usd, d.model,
                 d.iteration_count, d.mode, d.triggered_by,
                 d.reverted_at, d.reverted_by, d.reverted_reason,
+                d.acked_at, d.acked_by,
                 d.criado_em,
                 s.tipo AS signal_tipo,
                 s.urgencia AS signal_urgencia,
@@ -5654,6 +5660,27 @@ async def api_admin_tonha_revert(decision_id: int, request: Request):
         """, (user.get("email", "admin"), reason, decision_id))
         if not cur.fetchone():
             raise HTTPException(status_code=404, detail="decision not found")
+        conn.commit()
+    return {"ok": True, "decision_id": decision_id}
+
+
+@app.post("/api/admin/tonha/decisions/{decision_id}/ack")
+async def api_admin_tonha_ack(decision_id: int, request: Request):
+    """Renato confirma 'OK, vi, segue como esta'. Marca acked sem reverter.
+    Default UI esconde acked — limpa visualmente sem perder o registro."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="forbidden")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE tonha_decisions
+            SET acked_at = NOW(), acked_by = %s
+            WHERE id = %s AND acked_at IS NULL
+            RETURNING id
+        """, (user.get("email", "admin"), decision_id))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="decision not found or already acked")
         conn.commit()
     return {"ok": True, "decision_id": decision_id}
 

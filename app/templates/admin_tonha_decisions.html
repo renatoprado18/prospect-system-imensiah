@@ -5,20 +5,19 @@
 
 {% block extra_css %}
 <style>
-    .td-summary { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
-    .td-stat {
-        background: white; border-radius: 8px; padding: 10px 14px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-        border-left: 3px solid #94a3b8;
-        min-width: 110px;
+    /* Stats compactos — chips inline na barra de filtros, nao cards grandes */
+    .td-stats-inline { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .td-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 3px 8px; border-radius: 12px; font-size: 0.75rem;
+        background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0;
     }
-    .td-stat.silence       { border-left-color: #94a3b8; }
-    .td-stat.auto_execute  { border-left-color: #16a34a; }
-    .td-stat.draft         { border-left-color: #f59e0b; }
-    .td-stat.escalate      { border-left-color: #dc2626; }
-    .td-stat.delegate      { border-left-color: #6366f1; }
-    .td-stat .label { font-size: 0.7rem; text-transform: uppercase; color: #64748b; font-weight: 600; }
-    .td-stat .value { font-size: 1.3rem; font-weight: 700; color: #0f172a; }
+    .td-chip .v { font-weight: 700; color: #0f172a; }
+    .td-chip.silence       { background: #f1f5f9; }
+    .td-chip.auto_execute  { background: #dcfce7; color: #166534; }
+    .td-chip.draft         { background: #fef3c7; color: #92400e; }
+    .td-chip.escalate      { background: #fee2e2; color: #991b1b; }
+    .td-chip.delegate      { background: #e0e7ff; color: #3730a3; }
 
     .td-filters {
         background: white; border-radius: 8px; padding: 12px 14px; margin-bottom: 14px;
@@ -71,6 +70,11 @@
         background: #fff; border: 1px solid #fecaca; color: #dc2626;
         padding: 3px 10px; border-radius: 6px; font-size: 0.75rem; cursor: pointer;
     }
+    .td-actions .ack-btn {
+        background: #fff; border: 1px solid #cbd5e1; color: #475569;
+        padding: 3px 10px; border-radius: 6px; font-size: 0.75rem; cursor: pointer;
+    }
+    .td-actions .ack-btn:hover { background: #f1f5f9; }
     .td-actions .execute-btn {
         background: #16a34a; border: 1px solid #15803d; color: #fff;
         padding: 3px 10px; border-radius: 6px; font-size: 0.75rem; cursor: pointer;
@@ -91,6 +95,10 @@
         background: #fef2f2; color: #991b1b; padding: 2px 6px; border-radius: 4px;
         font-size: 0.7rem; font-weight: 600;
     }
+    .td-acked-tag {
+        background: #e2e8f0; color: #475569; padding: 2px 6px; border-radius: 4px;
+        font-size: 0.7rem; font-weight: 600;
+    }
 
     .empty { text-align: center; color: #94a3b8; padding: 40px; }
     .load-more {
@@ -103,40 +111,39 @@
 {% endblock %}
 
 {% block content %}
-<div id="td-summary" class="td-summary"></div>
-
 <div class="td-filters">
     <label>Tipo:
-        <select id="filter-type">
+        <select id="filter-type" onchange="applyFilters()">
             <option value="">todos</option>
             <option value="silence">silence</option>
             <option value="auto_execute">auto_execute</option>
-            <option value="draft_and_send">draft_and_send</option>
+            <option value="draft_and_send">draft</option>
             <option value="escalate">escalate</option>
             <option value="delegate">delegate</option>
         </select>
     </label>
     <label>Mode:
-        <select id="filter-mode">
+        <select id="filter-mode" onchange="applyFilters()">
             <option value="">todos</option>
             <option value="autonomous">autonomous</option>
             <option value="reactive">reactive</option>
         </select>
     </label>
     <label>Signal #:
-        <input type="number" id="filter-signal" placeholder="ID" style="width: 90px">
+        <input type="number" id="filter-signal" placeholder="ID" style="width: 90px" onchange="applyFilters()">
+    </label>
+    <label style="font-size: 0.8rem; color: #475569;">
+        <input type="checkbox" id="filter-show-all" onchange="applyFilters()"> mostrar tratadas
     </label>
     <button class="clear-btn" onclick="clearFilters()">Limpar</button>
-    <span style="margin-left: auto; color: #64748b; font-size: 0.85rem;">
-        Total: <span id="td-total">—</span>
-    </span>
+    <span id="td-summary" class="td-stats-inline" style="margin-left: auto"></span>
 </div>
 
 <div id="td-list"></div>
 <button id="load-more" class="load-more" style="display: none" onclick="loadMore()">Carregar mais</button>
 
 <script>
-const state = { offset: 0, limit: 50, decisionType: '', mode: '', signalId: 0 };
+const state = { offset: 0, limit: 50, decisionType: '', mode: '', signalId: 0, showAll: false };
 
 function escapeHtml(s) {
     if (s == null) return '';
@@ -147,23 +154,23 @@ function fmtTime(iso) {
     const d = new Date(iso);
     return d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
 }
-function renderStats(stats) {
+function renderStats(stats, totalShown) {
     const types = ['silence', 'auto_execute', 'draft_and_send', 'escalate', 'delegate'];
+    const labels = { silence: 'silence', auto_execute: 'auto', draft_and_send: 'draft', escalate: 'escalate', delegate: 'delegate' };
     const html = types.map(t => `
-        <div class="td-stat ${t.startsWith('draft') ? 'draft' : t}">
-            <div class="label">${t}</div>
-            <div class="value">${stats.by_type[t] || 0}</div>
-        </div>
+        <span class="td-chip ${t.startsWith('draft') ? 'draft' : t}">
+            <span>${labels[t]}</span><span class="v">${stats.by_type[t] || 0}</span>
+        </span>
     `).join('');
     document.getElementById('td-summary').innerHTML = html + `
-        <div class="td-stat" style="border-left-color:#6366f1">
-            <div class="label">total 7d</div>
-            <div class="value">${Object.values(stats.by_type).reduce((a,b)=>a+b,0)}</div>
-        </div>
+        <span class="td-chip" title="Visiveis nesta view (filtrados)">
+            <span>vis</span><span class="v">${totalShown||0}</span>
+        </span>
     `;
 }
 function renderRow(d) {
     const reverted = !!d.reverted_at;
+    const acked = !!d.acked_at;
     const sigInfo = d.signal_id
         ? `<span class="td-sigref" onclick="toggleSig(${d.id})">signal #${d.signal_id} · ${escapeHtml(d.signal_tipo||'?')} · urg ${d.signal_urgencia||'?'}</span>`
         : `<span style="color:#94a3b8">sem signal</span>`;
@@ -176,14 +183,16 @@ function renderRow(d) {
                 ${sigInfo}
                 <span class="td-time">${fmtTime(d.criado_em)}</span>
                 <span class="td-time" style="margin-left:auto">${escapeHtml(d.mode||'')} · ${escapeHtml(d.triggered_by||'')}</span>
-                ${reverted ? `<span class="td-reverted-tag">REVERTED: ${escapeHtml(d.reverted_reason||'')}</span>` : ''}
+                ${reverted ? `<span class="td-reverted-tag" title="${escapeHtml(d.reverted_by||'')}">REVERTED: ${escapeHtml(d.reverted_reason||'')}</span>` : ''}
+                ${acked ? `<span class="td-acked-tag" title="${escapeHtml(d.acked_by||'')}">CIENTE</span>` : ''}
             </div>
             <div class="td-summary-text">${escapeHtml(d.decision_summary)}</div>
             ${d.reasoning ? `<div class="td-reasoning">${escapeHtml(d.reasoning)}</div>` : ''}
             <div class="td-actions">
                 <button class="show-action" onclick="toggleAction(${d.id})">action_taken</button>
-                ${!reverted && isExecutable(d) ? `<button class="execute-btn" onclick="executeDecision(${d.id})" title="Aprovar e fazer de verdade (manda WA / roda UPDATE / apaga evento)">executar agora</button>` : ''}
-                ${!reverted ? `<button class="revert-btn" onclick="revertDecision(${d.id})">reverter</button>` : ''}
+                ${!reverted && !acked && isExecutable(d) ? `<button class="execute-btn" onclick="executeDecision(${d.id})" title="Aprovar e fazer de verdade (manda WA / roda UPDATE / apaga evento)">executar agora</button>` : ''}
+                ${!reverted && !acked ? `<button class="ack-btn" onclick="ackDecision(${d.id})" title="OK, vi, segue como esta — esconde da lista">ciente</button>` : ''}
+                ${!reverted && !acked ? `<button class="revert-btn" onclick="revertDecision(${d.id})">reverter</button>` : ''}
                 ${(d.action_taken && d.action_taken.executed_at) ? `<span class="td-executed-tag" title="Executado por ${escapeHtml(d.action_taken.executed_by||'')} em ${escapeHtml(d.action_taken.executed_at||'')}">EXECUTADO</span>` : ''}
             </div>
             <div id="action-${d.id}" class="td-action-body" style="display:none">${escapeHtml(actionTaken)}</div>
@@ -213,6 +222,25 @@ function isExecutable(d) {
     return !!tool;
 }
 
+function removeRowFromView(id) {
+    // Remove DOM da linha + atualiza contador 'vis'. Mantem scroll position.
+    const row = document.getElementById('row-' + id);
+    if (!row) return;
+    row.style.transition = 'opacity 0.15s, transform 0.15s';
+    row.style.opacity = '0';
+    row.style.transform = 'translateX(20px)';
+    setTimeout(() => {
+        row.remove();
+        const visEl = document.querySelector('#td-summary .td-chip:last-child .v');
+        if (visEl) visEl.textContent = Math.max(0, (parseInt(visEl.textContent)||0) - 1);
+        // Se esvaziou a lista, mostra empty
+        const list = document.getElementById('td-list');
+        if (!list.children.length) {
+            list.innerHTML = '<div class="empty">Sem decisões pendentes. ✓</div>';
+        }
+    }, 160);
+}
+
 async function executeDecision(id) {
     const ok = confirm('EXECUTAR de verdade?\n\nIsso vai mandar WA, rodar UPDATE ou apagar evento conforme o action_taken. Sem volta.');
     if (!ok) return;
@@ -221,12 +249,22 @@ async function executeDecision(id) {
         headers: {'Content-Type': 'application/json'},
     });
     if (r.ok) {
-        const j = await r.json();
-        alert('Executado: ' + (j.tool || 'OK'));
-        location.reload();
+        removeRowFromView(id);
     } else {
         const txt = await r.text();
         alert('Falha (' + r.status + '): ' + txt);
+    }
+}
+
+async function ackDecision(id) {
+    const r = await fetch(`/api/admin/tonha/decisions/${id}/ack`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+    });
+    if (r.ok) {
+        removeRowFromView(id);
+    } else {
+        alert('Falha (' + r.status + ')');
     }
 }
 
@@ -239,7 +277,7 @@ async function revertDecision(id) {
         body: JSON.stringify({reason: reason.trim()}),
     });
     if (r.ok) {
-        location.reload();
+        removeRowFromView(id);
     } else {
         alert('Falha: ' + r.status);
     }
@@ -254,16 +292,16 @@ async function load(reset=false) {
         decision_type: state.decisionType,
         mode: state.mode,
         signal_id: state.signalId || 0,
+        show_all: state.showAll ? 1 : 0,
     });
     const r = await fetch('/api/admin/tonha/decisions?' + qs);
     const data = await r.json();
     if (state.offset === 0) {
-        renderStats(data.stats_7d);
-        document.getElementById('td-total').textContent = data.total;
+        renderStats(data.stats_7d, data.total);
     }
     const list = document.getElementById('td-list');
     if (!data.decisions.length && state.offset === 0) {
-        list.innerHTML = '<div class="empty">Nenhuma decisão ainda. Os crons rodam 8h/12h/17h/21h BRT.</div>';
+        list.innerHTML = '<div class="empty">Sem decisões pendentes de revisão. ✓<br><small style="color:#94a3b8">Marca "mostrar tratadas" pra ver o historico.</small></div>';
         document.getElementById('load-more').style.display = 'none';
         return;
     }
@@ -277,11 +315,13 @@ function applyFilters() {
     state.decisionType = document.getElementById('filter-type').value;
     state.mode = document.getElementById('filter-mode').value;
     state.signalId = parseInt(document.getElementById('filter-signal').value || '0');
+    state.showAll = document.getElementById('filter-show-all').checked;
     load(true);
 }
 function clearFilters() {
     document.getElementById('filter-type').value = '';
     document.getElementById('filter-mode').value = '';
+    document.getElementById('filter-show-all').checked = false;
     document.getElementById('filter-signal').value = '';
     applyFilters();
 }
