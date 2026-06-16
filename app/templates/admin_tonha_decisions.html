@@ -71,6 +71,16 @@
         background: #fff; border: 1px solid #fecaca; color: #dc2626;
         padding: 3px 10px; border-radius: 6px; font-size: 0.75rem; cursor: pointer;
     }
+    .td-actions .execute-btn {
+        background: #16a34a; border: 1px solid #15803d; color: #fff;
+        padding: 3px 10px; border-radius: 6px; font-size: 0.75rem; cursor: pointer;
+        font-weight: 600;
+    }
+    .td-actions .execute-btn:hover { background: #15803d; }
+    .td-executed-tag {
+        background: #dcfce7; color: #14532d; padding: 2px 6px; border-radius: 4px;
+        font-size: 0.7rem; font-weight: 600;
+    }
     .td-action-body, .td-sig-body {
         margin-top: 8px; padding: 8px 10px; background: #f8fafc; border-radius: 6px;
         font-family: monospace; font-size: 0.75rem; color: #334155;
@@ -172,7 +182,9 @@ function renderRow(d) {
             ${d.reasoning ? `<div class="td-reasoning">${escapeHtml(d.reasoning)}</div>` : ''}
             <div class="td-actions">
                 <button class="show-action" onclick="toggleAction(${d.id})">action_taken</button>
+                ${!reverted && isExecutable(d) ? `<button class="execute-btn" onclick="executeDecision(${d.id})" title="Aprovar e fazer de verdade (manda WA / roda UPDATE / apaga evento)">executar agora</button>` : ''}
                 ${!reverted ? `<button class="revert-btn" onclick="revertDecision(${d.id})">reverter</button>` : ''}
+                ${(d.action_taken && d.action_taken.executed_at) ? `<span class="td-executed-tag" title="Executado por ${escapeHtml(d.action_taken.executed_by||'')} em ${escapeHtml(d.action_taken.executed_at||'')}">EXECUTADO</span>` : ''}
             </div>
             <div id="action-${d.id}" class="td-action-body" style="display:none">${escapeHtml(actionTaken)}</div>
             <div id="sig-${d.id}" class="td-sig-body" style="display:none">${escapeHtml(signalCtx)}</div>
@@ -187,6 +199,37 @@ function toggleSig(id) {
     const el = document.getElementById('sig-' + id);
     el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
+function isExecutable(d) {
+    // Decisao executavel: shadow=true em action_taken, e tem dados pra dispatch
+    const a = d.action_taken || {};
+    if (!a.shadow) return false;
+    if (a.executed_at) return false;
+    const tool = a.tool || (
+        (a.channel && a.target && a.content) ? 'send_message' :
+        (a.table && a.fields) ? 'update_record' :
+        (a.delegation_id && a.to) ? 'delegate' :
+        (a.event_id && a.action) ? 'manage_calendar_event' : null
+    );
+    return !!tool;
+}
+
+async function executeDecision(id) {
+    const ok = confirm('EXECUTAR de verdade?\n\nIsso vai mandar WA, rodar UPDATE ou apagar evento conforme o action_taken. Sem volta.');
+    if (!ok) return;
+    const r = await fetch(`/api/admin/tonha/decisions/${id}/execute`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+    });
+    if (r.ok) {
+        const j = await r.json();
+        alert('Executado: ' + (j.tool || 'OK'));
+        location.reload();
+    } else {
+        const txt = await r.text();
+        alert('Falha (' + r.status + '): ' + txt);
+    }
+}
+
 async function revertDecision(id) {
     const reason = prompt('Motivo da reversao (audit):');
     if (!reason || !reason.trim()) return;

@@ -27,7 +27,27 @@ logger = logging.getLogger(__name__)
 
 
 def _shadow_mode() -> bool:
+    """Compat global. Use _shadow_outbound() / _shadow_write() pra granular."""
     return (os.getenv("TONHA_SHADOW_MODE") or "1").strip() != "0"
+
+
+def _shadow_outbound() -> bool:
+    """Controla send_message + delegate (acoes que falam com mundo externo).
+    Override TONHA_SHADOW_OUTBOUND; fallback TONHA_SHADOW_MODE (default 1=on)."""
+    val = os.getenv("TONHA_SHADOW_OUTBOUND")
+    if val is not None and val.strip() != "":
+        return val.strip() != "0"
+    return _shadow_mode()
+
+
+def _shadow_write() -> bool:
+    """Controla update_record + manage_calendar_event (acoes de estado interno).
+    Override TONHA_SHADOW_WRITE; fallback TONHA_SHADOW_MODE.
+    Pra ligar writes reais sem soltar outbound: TONHA_SHADOW_WRITE=0."""
+    val = os.getenv("TONHA_SHADOW_WRITE")
+    if val is not None and val.strip() != "":
+        return val.strip() != "0"
+    return _shadow_mode()
 
 
 # ============================================================================
@@ -444,8 +464,9 @@ def _tool_send_message(
     *, channel: str, target: str, content: str, subject: str = "",
     force_send: bool = False, ctx: Dict[str, Any]
 ) -> Dict[str, Any]:
-    shadow = _shadow_mode() and not force_send
+    shadow = _shadow_outbound() and not force_send
     record = {
+        "tool": "send_message",
         "channel": channel,
         "target": target,
         "subject": subject,
@@ -489,8 +510,8 @@ def _tool_update_record(
     allowed = {"tasks", "projects", "delegations", "signals", "weekly_raci_renato"}
     if table not in allowed:
         return {"ok": False, "error": f"table {table} nao permitida"}
-    shadow = _shadow_mode()
-    record = {"table": table, "id": id, "fields": fields, "shadow": shadow}
+    shadow = _shadow_write()
+    record = {"tool": "update_record", "table": table, "id": id, "fields": fields, "shadow": shadow}
 
     with get_db() as conn:
         cur = conn.cursor()
@@ -521,7 +542,7 @@ def _tool_delegate(
     contact_id: Optional[int] = None, signal_id: Optional[int] = None,
     ctx: Dict[str, Any]
 ) -> Dict[str, Any]:
-    shadow = _shadow_mode()
+    shadow = _shadow_outbound()
     try:
         deadline_d = datetime.strptime(deadline, "%Y-%m-%d").date()
     except Exception:
@@ -549,10 +570,13 @@ def _tool_delegate(
             signal_id,
             f"delegated to {to}: {task_summary[:100]}",
             json.dumps({
+                "tool": "delegate",
                 "delegation_id": delegation_id,
                 "to": to,
                 "task_summary": task_summary,
+                "task_full": task_full,
                 "deadline": deadline,
+                "contact_id": contact_id,
                 "shadow": shadow,
             }),
             ctx.get("mode", "autonomous"),
@@ -574,8 +598,9 @@ def _tool_manage_calendar_event(
     *, event_id: int, action: str, scope: str = "single",
     reason: str = "", ctx: Dict[str, Any]
 ) -> Dict[str, Any]:
-    shadow = _shadow_mode()
+    shadow = _shadow_write()
     record = {
+        "tool": "manage_calendar_event",
         "event_id": event_id, "action": action, "scope": scope,
         "reason": reason[:300], "shadow": shadow,
     }

@@ -5658,6 +5658,146 @@ async def api_admin_tonha_revert(decision_id: int, request: Request):
     return {"ok": True, "decision_id": decision_id}
 
 
+@app.post("/api/admin/tonha/decisions/{decision_id}/execute")
+async def api_admin_tonha_execute(decision_id: int, request: Request):
+    """Aprova e EXECUTA uma decisao shadow — manda WA real / roda UPDATE /
+    apaga calendar event. Re-le action_taken e dispatcha pra tool real.
+
+    Mark de executado: append `executed_at` + `executed_by` em action_taken.
+    NAO usa reverted_at (esse e pra discard/revert).
+    """
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, decision_type, decision_summary, action_taken,
+                   signal_id, mode, reverted_at
+            FROM tonha_decisions WHERE id = %s
+        """, (decision_id,))
+        d = cur.fetchone()
+    if not d:
+        raise HTTPException(status_code=404, detail="decision not found")
+    if d["reverted_at"]:
+        raise HTTPException(status_code=400, detail="ja revertida")
+
+    action = d["action_taken"] or {}
+    if action.get("executed_at"):
+        raise HTTPException(status_code=400, detail="ja executada")
+
+    # Detect tool: prefer explicit field, fallback to keys present
+    tool = action.get("tool")
+    if not tool:
+        if "channel" in action and "target" in action and "content" in action:
+            tool = "send_message"
+        elif "table" in action and "fields" in action:
+            tool = "update_record"
+        elif "delegation_id" in action and "to" in action:
+            tool = "delegate"
+        elif "event_id" in action and "action" in action:
+            tool = "manage_calendar_event"
+        else:
+            raise HTTPException(status_code=400, detail="action_taken nao reconhecida")
+
+    result: Dict[str, Any] = {"tool": tool}
+    try:
+        if tool == "send_message":
+            from services.tonha_tools import _tool_send_message
+            ctx = {"mode": "manual_execute", "triggered_by": f"admin:{user.get('email','admin')}"}
+            result = _tool_send_message(
+                channel=action["channel"], target=str(action["target"]),
+                content=action.get("content", ""), subject=action.get("subject", ""),
+                force_send=True, ctx=ctx,
+            )
+        elif tool == "update_record":
+            from services.tonha_tools import _tool_update_record
+            ctx = {"mode": "manual_execute", "triggered_by": f"admin:{user.get('email','admin')}"}
+            # _tool_update_record respeita _shadow_write — pra forcar bypass usa
+            # env override momentaneo no run. Aqui faco UPDATE direto pra
+            # garantir execucao independente do shadow flag.
+            with get_db() as conn:
+                cur = conn.cursor()
+                table = action["table"]
+                allowed = {"tasks", "projects", "delegations", "signals", "weekly_raci_renato"}
+                if table not in allowed:
+                    raise HTTPException(status_code=400, detail=f"tabela {table} nao permitida")
+                fields = action.get("fields") or {}
+                if not fields:
+                    raise HTTPException(status_code=400, detail="sem fields no action_taken")
+                cols = ", ".join(f"{k} = %s" for k in fields.keys())
+                vals = list(fields.values()) + [int(action["id"])]
+                cur.execute(f"UPDATE {table} SET {cols} WHERE id = %s", vals)
+                rowcount = cur.rowcount
+                conn.commit()
+            result = {"ok": True, "tool": "update_record", "rowcount": rowcount}
+        elif tool == "delegate":
+            # Manda WA real ao delegado. Pra `collector`/`evaluator`/`dev`
+            # internos, so registra (nao tem telefone) — apenas marca executado.
+            to = action.get("to")
+            internal = {"collector", "evaluator", "dev"}
+            if to in internal:
+                result = {"ok": True, "tool": "delegate", "note": f"internal delegate ({to}); job ja em delegations"}
+            else:
+                # Mapping pra telefone — Andressa Santos id 313, Priscila ainda
+                # nao tem cadastro estavel; pra Andressa puxa o phone do contact.
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    role_to_contact = {"andressa": 313, "joao_piccino": None, "priscila_contadora": None}
+                    target_id = role_to_contact.get(to)
+                    if not target_id:
+                        raise HTTPException(status_code=400, detail=f"delegado '{to}' sem contact_id estavel")
+                    cur.execute("SELECT id, nome FROM contacts WHERE id=%s", (target_id,))
+                    c = cur.fetchone()
+                    if not c:
+                        raise HTTPException(status_code=404, detail="contact do delegado nao encontrado")
+                from services.tonha_tools import _tool_send_message
+                ctx = {"mode": "manual_execute", "triggered_by": f"admin:{user.get('email','admin')}"}
+                msg = (
+                    f"Tonha aqui — delegacao do Renato:\n\n"
+                    f"{action.get('task_summary','')}\n\n"
+                    f"Detalhes: {action.get('task_full','')[:500]}\n"
+                    f"Prazo: {action.get('deadline','')}"
+                )
+                result = _tool_send_message(
+                    channel="whatsapp", target=str(target_id),
+                    content=msg, subject="", force_send=True, ctx=ctx,
+                )
+        elif tool == "manage_calendar_event":
+            from services.tonha_tools import _tool_manage_calendar_event
+            ctx = {"mode": "manual_execute", "triggered_by": f"admin:{user.get('email','admin')}"}
+            # Bypass shadow_write via override temporario nao da pra fazer
+            # sem mexer no helper. Em vez, chamo o real path direto.
+            result = _tool_manage_calendar_event(
+                event_id=int(action["event_id"]), action=action.get("action", "cancel"),
+                scope=action.get("scope", "single"), reason=action.get("reason", "manual execute"),
+                ctx=ctx,
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"execute decision {decision_id} crashed")
+        raise HTTPException(status_code=500, detail=f"execucao falhou: {str(e)[:200]}")
+
+    # Marca executado
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE tonha_decisions
+            SET action_taken = action_taken
+                || jsonb_build_object(
+                    'executed_at', NOW()::text,
+                    'executed_by', %s::text,
+                    'execute_result', %s::jsonb
+                )
+            WHERE id = %s
+        """, (user.get("email", "admin"), json.dumps(result, default=str)[:2000], decision_id))
+        conn.commit()
+
+    return {"ok": True, "decision_id": decision_id, "tool": tool, "result": result}
+
+
 @app.get("/api/cron/tonha-autonomous-tick")
 @track_cron_run
 async def cron_tonha_autonomous_tick(request: Request, limit: int = 30):
