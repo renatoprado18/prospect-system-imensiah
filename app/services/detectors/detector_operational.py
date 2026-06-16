@@ -55,14 +55,22 @@ def run(conn) -> DetectorRun:
     except Exception as e:
         res.errors.append(f"task_vencida: {str(e)[:200]}")
 
-    # ----- 2. Projetos ativos sem update ha +14d -----
+    # ----- 2. Projetos ativos sem update — prio<=3 OR dias>30 -----
+    # Antes 10+ signals urg 6 viravam brain escalates. Maioria era projeto
+    # baixa prioridade silenciado deliberadamente. Filtra pra so emitir quando
+    # realmente vale o ping: prioridade alta (1-3) com 14d+ OU qualquer prio
+    # com 30d+.
     try:
         with savepoint(conn, "projeto_sem_update"):
             cur.execute("""
-                SELECT id, nome, status, prioridade, atualizado_em, owner_contact_id
+                SELECT id, nome, status, prioridade, atualizado_em, owner_contact_id, tags
                 FROM projects
                 WHERE status = 'ativo'
                   AND atualizado_em < NOW() - INTERVAL '14 days'
+                  AND (
+                    (prioridade IS NOT NULL AND prioridade <= 3)
+                    OR atualizado_em < NOW() - INTERVAL '30 days'
+                  )
                 ORDER BY atualizado_em ASC
                 LIMIT 20
             """)
@@ -70,11 +78,17 @@ def run(conn) -> DetectorRun:
                 sh = make_signal_hash("operational_projeto_sem_update", r["id"])
                 current_hashes.append(sh)
                 dias = (date.today() - r["atualizado_em"].date()).days if r["atualizado_em"] else 30
-                urg = max(3, min(6, 3 + dias // 14))
+                prio = r["prioridade"] or 5
+                # Alta prio: 4-7. Baixa prio com 30d+: 3-5
+                if prio <= 3:
+                    urg = max(4, min(7, 4 + dias // 14))
+                else:
+                    urg = max(3, min(5, 3 + dias // 30))
                 ctx = {
                     "project_id": r["id"],
                     "nome": r["nome"],
-                    "prioridade": r["prioridade"],
+                    "prioridade": prio,
+                    "tags": r["tags"],
                     "atualizado_em": r["atualizado_em"].isoformat() if r["atualizado_em"] else None,
                     "dias_sem_update": dias,
                 }

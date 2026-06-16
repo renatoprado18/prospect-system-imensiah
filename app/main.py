@@ -628,6 +628,40 @@ async def intel_home(request: Request):
     })
 
 
+@app.get("/api/dashboard/tonha-pendings")
+async def api_dashboard_tonha_pendings(request: Request):
+    """Statcard 'Tonha pediu sua ação': conta escalates autonomos das ultimas
+    24h ainda nao revertidos cujo signal de origem segue 'open'. Renato clica
+    -> /admin/tonha/decisions filtrado.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                COUNT(*) AS pending,
+                COUNT(*) FILTER (WHERE d.criado_em > NOW() - INTERVAL '6 hours') AS fresh_6h,
+                MAX(d.criado_em) AS last_at
+            FROM tonha_decisions d
+            LEFT JOIN signals s ON s.id = d.signal_id
+            WHERE d.decision_type = 'escalate'
+              AND d.mode = 'autonomous'
+              AND d.reverted_at IS NULL
+              AND d.criado_em > NOW() - INTERVAL '48 hours'
+              AND (s.id IS NULL OR s.status = 'open')
+        """)
+        row = cur.fetchone()
+    return {
+        "ok": True,
+        "pending": row["pending"] or 0,
+        "fresh_6h": row["fresh_6h"] or 0,
+        "last_at": row["last_at"].isoformat() if row["last_at"] else None,
+    }
+
+
 @app.get("/admin/costs", response_class=HTMLResponse)
 async def intel_admin_costs(request: Request):
     """Cost Tracker UI — tabela provider×meses + chart histórico + form."""

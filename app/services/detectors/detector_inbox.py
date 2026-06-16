@@ -50,6 +50,12 @@ def run(conn) -> DetectorRun:
                 base = 6 if r["classification"] == "must_read" else 8
                 prio = r["priority"] or 5
                 urg = min(9, base + max(0, (prio - 5)))
+                # unknown_sender: contato nao mapeado no CRM. Brain usa pra
+                # default-escalar-light (ack registro) em vez de gastar tokens
+                # rascunhando resposta sem contexto. Caso 16/06/26: IBGC
+                # pesquisa institucional virou urg 9 + sem contato -> Tonha
+                # gastou 4 iters pra escalate.
+                unknown_sender = r["contact_id"] is None
                 ctx = {
                     "fonte": "gmail",
                     "triage_id": r["id"],
@@ -57,6 +63,7 @@ def run(conn) -> DetectorRun:
                     "contact_id": r["contact_id"],
                     "contato_nome": r["contato_nome"],
                     "empresa": r["empresa"],
+                    "unknown_sender": unknown_sender,
                     "assunto": (r["assunto"] or "")[:200],
                     "classification": r["classification"],
                     "reasons": r["classification_reasons"],

@@ -76,18 +76,30 @@ def run(conn) -> DetectorRun:
     except Exception as e:
         res.errors.append(f"aniversario: {str(e)[:200]}")
 
-    # ----- 2. Conversations requer_resposta ha +3d -----
+    # ----- 2. Conversations requer_resposta ha +3d (VIP) ou +7d (geral) -----
+    # Antes emitia 19+ signals/ciclo, maioria virava escalate-vazio do brain
+    # por ser contato com baixo contexto. Agora: VIP (c-level/founder/parceiro/
+    # familia/conselheiro) entra em 3d; resto so 7d+. Reduz noise sem perder
+    # casos importantes.
     try:
         with savepoint(conn, "requer_resposta"):
             cur.execute("""
                 SELECT c.id AS conv_id, c.contact_id, c.canal, c.assunto, c.ultimo_mensagem,
-                       c.resumo_ai, ct.nome AS contato_nome, ct.empresa, ct.contexto
+                       c.resumo_ai, ct.nome AS contato_nome, ct.empresa, ct.contexto, ct.tags,
+                       CASE WHEN ct.tags::text ~* '(c-level|founder|socio|parceiro|familia|conselheiro|diretor|vip)'
+                            THEN TRUE ELSE FALSE END AS is_vip
                 FROM conversations c
                 JOIN contacts ct ON ct.id = c.contact_id
                 WHERE c.requer_resposta = TRUE
                   AND c.status = 'open'
                   AND c.ultimo_mensagem < NOW() - INTERVAL '3 days'
                   AND c.ultimo_mensagem > NOW() - INTERVAL '30 days'
+                  AND (
+                    -- VIP entra em 3d+
+                    ct.tags::text ~* '(c-level|founder|socio|parceiro|familia|conselheiro|diretor|vip)'
+                    -- Resto so apos 7d
+                    OR c.ultimo_mensagem < NOW() - INTERVAL '7 days'
+                  )
                 ORDER BY c.ultimo_mensagem ASC
                 LIMIT 30
             """)
@@ -95,7 +107,11 @@ def run(conn) -> DetectorRun:
                 sh = make_signal_hash("relacionamento_requer_resposta", r["conv_id"])
                 current_hashes.append(sh)
                 dias = (date.today() - r["ultimo_mensagem"].date()).days if r["ultimo_mensagem"] else 0
-                urg = max(4, min(8, 4 + dias // 4))
+                # VIP: 5-8; nao-VIP: 3-6 (downscale pra brain silenciar mais)
+                if r["is_vip"]:
+                    urg = max(5, min(8, 5 + dias // 5))
+                else:
+                    urg = max(3, min(6, 3 + dias // 7))
                 ctx = {
                     "conversation_id": r["conv_id"],
                     "contact_id": r["contact_id"],
@@ -106,6 +122,8 @@ def run(conn) -> DetectorRun:
                     "assunto": r["assunto"],
                     "ultimo_mensagem": r["ultimo_mensagem"].isoformat() if r["ultimo_mensagem"] else None,
                     "dias_sem_resposta": dias,
+                    "is_vip": bool(r["is_vip"]),
+                    "tags": r["tags"],
                     "resumo_ai": (r["resumo_ai"] or "")[:300],
                 }
                 _bump(res, emit_signal(conn, tipo="relacionamento_requer_resposta", signal_hash=sh, urgencia=urg, contexto=ctx, detector=DETECTOR_NAME))
