@@ -164,6 +164,23 @@ TOOLS = [
         },
     },
     {
+        "name": "get_attachment_full",
+        "description": (
+            "Retorna texto completo extraido de um attachment WA (PDF, audio, imagem). "
+            "Use SO se preview de search_context(scope='attachments') for insuficiente — "
+            "texto completo gasta tokens. Util pra briefings detalhados (programa de evento, "
+            "edital, contrato)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "attachment_id": {"type": "integer"},
+                "max_chars": {"type": "integer", "default": 20000},
+            },
+            "required": ["attachment_id"],
+        },
+    },
+    {
         "name": "decide_and_log",
         "description": (
             "MANDATORIO em modo autonomous — registra cada decisao tomada sobre um signal. "
@@ -216,6 +233,8 @@ def dispatch(name: str, params: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str
             return _tool_decide_and_log(ctx=ctx, **params)
         if name == "manage_calendar_event":
             return _tool_manage_calendar_event(ctx=ctx, **params)
+        if name == "get_attachment_full":
+            return _tool_get_attachment_full(**params)
         return {"ok": False, "error": f"tool '{name}' nao reconhecida"}
     except Exception as e:
         logger.exception(f"tool {name} crashed")
@@ -229,6 +248,8 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
         if scope in ("contacts", "all"):
             # Cross-link projetos onde o contato e owner — caso 16/06/26 Tonha
             # achou Lilian Schiavo mas nao surfaceou project #35 "Rede CAMBRAPER".
+            # Tambem varre tags + relationship_context: abreviacoes como
+            # "CAMBRAPER" / "G100" geralmente vivem em tags, nao no nome.
             cur.execute("""
                 SELECT c.id, c.nome, c.empresa, c.cargo, c.contexto, c.tags,
                        c.manual_notes, c.relationship_context, c.aniversario,
@@ -242,9 +263,12 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
                 FROM contacts c
                 WHERE c.nome ILIKE %s OR c.empresa ILIKE %s OR c.apelido ILIKE %s
                    OR c.manual_notes ILIKE %s
+                   OR c.tags::text ILIKE %s
+                   OR c.relationship_context ILIKE %s
                 ORDER BY c.ultimo_enriquecimento DESC NULLS LAST
                 LIMIT %s
-            """, (f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%", limit))
+            """, (f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%",
+                  f"%{query}%", f"%{query}%", limit))
             out["results"]["contacts"] = [dict(r) for r in cur.fetchall()]
 
         if scope in ("projects", "all"):
@@ -386,7 +410,34 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
                 "Eventos do dia ja iniciados continuam aqui ate 2h apos end."
             )
 
+    # Auto-fallback: se Brain pediu scope especifico e nada bateu, tenta `all`.
+    # Evita desistir apos 1 query vazia (caso CAMBRAPER: Tonha buscou calendar
+    # vazio, nao tentou attachments/projects que tinham match).
+    if scope != "all" and _count_search_hits(out["results"]) == 0:
+        fb = _tool_search_context(scope="all", query=query, limit=limit)
+        if _count_search_hits(fb.get("results", {})) > 0:
+            fb["auto_fallback_from"] = scope
+            fb["fallback_note"] = (
+                f"scope='{scope}' veio vazio para query='{query}'. "
+                "Resultados abaixo sao de scope='all' (auto-fallback). "
+                "Brain: nao culpe a tool — alguma outra scope tinha o contexto."
+            )
+            return fb
+
     return {"ok": True, **out}
+
+
+def _count_search_hits(results: Dict[str, Any]) -> int:
+    """Soma rows em todos os scopes de uma resposta search_context."""
+    n = 0
+    for v in (results or {}).values():
+        if isinstance(v, list):
+            n += len(v)
+        elif isinstance(v, dict):  # whatsapp = {dms: [...], groups: [...]}
+            for sub in v.values():
+                if isinstance(sub, list):
+                    n += len(sub)
+    return n
 
 
 def _tool_send_message(
@@ -577,6 +628,32 @@ def _tool_manage_calendar_event(
         conn.commit()
 
     return {"ok": True, "shadow": shadow, "decision_id": decision_id, **record}
+
+
+def _tool_get_attachment_full(*, attachment_id: int, max_chars: int = 20000) -> Dict[str, Any]:
+    """Retorna texto completo de um wa_attachments por id.
+
+    Search_context devolve so preview (2500 chars). Brain chama essa pra ler
+    PDFs/audios/imagens longos quando precisa do detalhe (programa de evento,
+    contrato, transcrição completa).
+    """
+    max_chars = max(1000, min(int(max_chars or 20000), 50000))
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, kind, original_filename, mime_type, extraction_model,
+                   LENGTH(extracted_text) AS total_chars,
+                   LEFT(extracted_text, %s) AS text,
+                   criado_em
+            FROM wa_attachments
+            WHERE id = %s
+        """, (max_chars, attachment_id))
+        row = cur.fetchone()
+    if not row:
+        return {"ok": False, "error": f"attachment #{attachment_id} nao encontrado"}
+    out = dict(row)
+    out["truncated"] = (out["total_chars"] or 0) > max_chars
+    return {"ok": True, **out}
 
 
 def _tool_decide_and_log(
