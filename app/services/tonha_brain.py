@@ -56,6 +56,56 @@ def _compute_cost(usage_in: int, usage_out: int, cache_read: int = 0, cache_crea
 # criou draft 55 com mesmo conteudo. Brain stateless entre turnos do reactive nao
 # enxerga decisoes recentes. Injetamos os ultimos shadow_drafts do mesmo trigger
 # como contexto pra evitar duplicacao.
+def _recent_similar_decisions(signal_tipo: str, days: int = 30, limit: int = 5) -> List[Dict[str, Any]]:
+    """L1 RAG — busca decisoes resolved/reverted/acked do mesmo tipo nos
+    ultimos N dias. Brain le isso ANTES de decidir; aprende dos feedbacks
+    sem precisar reedicao manual de prompt.
+
+    Prioriza: reverted (Renato discordou) + acked (Renato OK) acima de
+    decisoes simplesmente fechadas. Ordena por mais recente.
+    """
+    if not signal_tipo:
+        return []
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT d.id, d.decision_type, d.decision_summary, d.reasoning,
+                       d.reverted_reason, d.reverted_at IS NOT NULL AS was_reverted,
+                       d.acked_at IS NOT NULL AS was_acked,
+                       d.criado_em, s.contexto AS signal_contexto
+                FROM tonha_decisions d
+                JOIN signals s ON s.id = d.signal_id
+                WHERE s.tipo = %s
+                  AND d.criado_em > NOW() - (%s || ' days')::interval
+                  AND (d.reverted_at IS NOT NULL OR d.acked_at IS NOT NULL OR s.status = 'resolved' OR s.status = 'dismissed')
+                ORDER BY (d.reverted_at IS NOT NULL OR d.acked_at IS NOT NULL) DESC,
+                         d.criado_em DESC
+                LIMIT %s
+            """, (signal_tipo, str(days), limit))
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.warning(f"recent_similar_decisions query failed: {e}")
+        return []
+
+
+def _format_history_for_prompt(rows: List[Dict[str, Any]]) -> str:
+    """Formata historico de feedback pra injetar no user_prompt do brain."""
+    if not rows:
+        return ""
+    lines = []
+    for r in rows:
+        if r["was_reverted"]:
+            tag = f"REVERTED por Renato — motivo: \"{(r.get('reverted_reason') or '?')[:140]}\""
+        elif r["was_acked"]:
+            tag = "Renato marcou CIENTE (concordou)"
+        else:
+            tag = "fechado sem feedback"
+        summ = (r.get("decision_summary") or "")[:140]
+        lines.append(f"  - [{r['decision_type']}] {summ} → {tag}")
+    return "\n## HISTÓRICO RECENTE DESTE TIPO (use como guia, não copie cego)\n" + "\n".join(lines) + "\n"
+
+
 def _recent_pending_drafts(triggered_by: str, minutes: int = 60) -> List[Dict[str, Any]]:
     """Drafts shadow ainda nao executados deste trigger nos ultimos N min.
 
@@ -219,6 +269,11 @@ TIMEZONE OFICIAL DO RENATO: BRT (America/Sao_Paulo, UTC-3).
 NUNCA escale signal sem ler contexto completo. NUNCA invente fatos sobre contato (cargo, papel, família). Se faltar dado, usa search_context primeiro.
 
 # REGRAS DE SILENCE AGRESSIVO (gold feedback 16/06/26)
+- `raci_vencido` / `raci_perto_vencer` → **NUNCA delegate ao collector**. Collector é placeholder que não age. Padrão correto:
+    a. Se R = Renato → escalate (decisão dele)
+    b. Se R != Renato E R tem contact_id + telefone/email → **draft_and_send direto pra R** (shadow vira draft, Renato revisa e manda)
+    c. Se R != Renato E R não cadastrado → search_context contacts pelo primeiro nome (REGRA #-2). Se achar, draft_and_send. Se não achar, escalate UMA vez com nome buscado explícito.
+    d. **NUNCA** escolha delegate to='collector' pra RACI. Renato disse 16/06: "não quero mais ver RACI delegado pra cobrança."
 - `inbox_atencao` com `unknown_sender=true` E (`assunto` contém: pesquisa / survey / IBGC institucional / newsletter / boletim) → SILENCE direto. Não vale token escalar.
 - `inbox_atencao` de **boletos do C6 Bank** (`account_email` ou `reasons` mencionam c6bank) → SILENCE. Renato monitora em outra fonte; emails são ruído.
 - `inbox_atencao` de **fornecedores administrativos** (Agilize Tecnologia, contabilidade rotineira, utilities) → **delegate to andressa** com email_id. NÃO escalate pra Renato. Andressa Santos (Almeida Prado Conselhos) cuida da relação + valida pagamentos. (contact_id resolvido por nome+empresa, NUNCA hardcode — IDs mudam por dedupe).
@@ -277,6 +332,8 @@ def _load_signals(limit: int = MAX_SIGNALS_PER_TICK) -> List[Dict[str, Any]]:
 def _signal_user_prompt(signal: Dict[str, Any]) -> str:
     from services.tz import to_brt
     now_brt = to_brt(now_utc()).strftime("%Y-%m-%d %H:%M BRT")
+    # L1 RAG: aprendizado dos reverts/acks dos ultimos 30d pra este tipo
+    history = _format_history_for_prompt(_recent_similar_decisions(signal["tipo"]))
     return (
         f"[Horário atual: {now_brt}]\n\n"
         f"# SIGNAL #{signal['id']}\n"
@@ -284,9 +341,11 @@ def _signal_user_prompt(signal: Dict[str, Any]) -> str:
         f"- urgência: {signal['urgencia']}/10\n"
         f"- detector: {signal['detector']}\n"
         f"- emitido: {signal['criado_em'].isoformat() if signal['criado_em'] else 'agora'}\n"
-        f"- contexto:\n```json\n{signal['contexto']}\n```\n\n"
+        f"- contexto:\n```json\n{signal['contexto']}\n```\n"
+        f"{history}\n"
         f"Decida o que fazer. Use search_context se faltar dado. "
-        f"TERMINE com decide_and_log."
+        f"Se historico mostrar Renato discordou de padrão anterior parecido, evite "
+        f"repetir o mesmo erro. TERMINE com decide_and_log."
     )
 
 
