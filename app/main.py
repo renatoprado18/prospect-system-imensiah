@@ -5740,18 +5740,41 @@ async def api_admin_tonha_execute(decision_id: int, request: Request):
             if to in internal:
                 result = {"ok": True, "tool": "delegate", "note": f"internal delegate ({to}); job ja em delegations"}
             else:
-                # Mapping pra telefone — Andressa Santos id 313, Priscila ainda
-                # nao tem cadastro estavel; pra Andressa puxa o phone do contact.
+                # Mapa role -> contact_id. Priscila/Joao tem phone em
+                # contacts.telefones JSONB; Andressa so tem email (delega so
+                # vira draft de email enquanto nao cadastrar phone).
+                role_to_contact = {
+                    "andressa": 313,
+                    "joao_piccino": 21313,
+                    "priscila_contadora": 4734,
+                }
+                target_id = role_to_contact.get(to)
+                if not target_id:
+                    raise HTTPException(status_code=400, detail=f"delegado '{to}' sem mapeamento de contact_id")
                 with get_db() as conn:
                     cur = conn.cursor()
-                    role_to_contact = {"andressa": 313, "joao_piccino": None, "priscila_contadora": None}
-                    target_id = role_to_contact.get(to)
-                    if not target_id:
-                        raise HTTPException(status_code=400, detail=f"delegado '{to}' sem contact_id estavel")
-                    cur.execute("SELECT id, nome FROM contacts WHERE id=%s", (target_id,))
+                    cur.execute("SELECT id, nome, telefones FROM contacts WHERE id=%s", (target_id,))
                     c = cur.fetchone()
-                    if not c:
-                        raise HTTPException(status_code=404, detail="contact do delegado nao encontrado")
+                if not c:
+                    raise HTTPException(status_code=404, detail="contact do delegado nao encontrado")
+                # Extrai primeiro telefone disponivel (preferir whatsapp=true)
+                phones = c.get("telefones") or []
+                phone = None
+                for p in phones:
+                    if isinstance(p, dict) and p.get("whatsapp"):
+                        phone = p.get("number")
+                        break
+                if not phone and phones:
+                    p0 = phones[0] if isinstance(phones[0], dict) else None
+                    if p0:
+                        phone = p0.get("number")
+                if not phone:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"contact #{target_id} ({c['nome']}) sem telefone em contacts.telefones — cadastra primeiro",
+                    )
+                # Normaliza: remove + e nao-digitos
+                wa_target = "".join(ch for ch in phone if ch.isdigit())
                 from services.tonha_tools import _tool_send_message
                 ctx = {"mode": "manual_execute", "triggered_by": f"admin:{user.get('email','admin')}"}
                 msg = (
@@ -5761,7 +5784,7 @@ async def api_admin_tonha_execute(decision_id: int, request: Request):
                     f"Prazo: {action.get('deadline','')}"
                 )
                 result = _tool_send_message(
-                    channel="whatsapp", target=str(target_id),
+                    channel="whatsapp", target=wa_target,
                     content=msg, subject="", force_send=True, ctx=ctx,
                 )
         elif tool == "manage_calendar_event":
