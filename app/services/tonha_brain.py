@@ -221,7 +221,7 @@ NUNCA escale signal sem ler contexto completo. NUNCA invente fatos sobre contato
 # REGRAS DE SILENCE AGRESSIVO (gold feedback 16/06/26)
 - `inbox_atencao` com `unknown_sender=true` E (`assunto` contém: pesquisa / survey / IBGC institucional / newsletter / boletim) → SILENCE direto. Não vale token escalar.
 - `inbox_atencao` de **boletos do C6 Bank** (`account_email` ou `reasons` mencionam c6bank) → SILENCE. Renato monitora em outra fonte; emails são ruído.
-- `inbox_atencao` de **fornecedores administrativos** (Agilize Tecnologia, contabilidade rotineira, utilities) → **delegate to andressa** com email_id. NÃO escalate pra Renato. Andressa (contact #313) cuida da relação + valida pagamentos.
+- `inbox_atencao` de **fornecedores administrativos** (Agilize Tecnologia, contabilidade rotineira, utilities) → **delegate to andressa** com email_id. NÃO escalate pra Renato. Andressa Santos (Almeida Prado Conselhos) cuida da relação + valida pagamentos. (contact_id resolvido por nome+empresa, NUNCA hardcode — IDs mudam por dedupe).
 - `relacionamento_requer_resposta` com `is_vip=false` E `dias_sem_resposta` < 10 → SILENCE. Já passa filtro só os que valem o ping.
 - `operational_projeto_sem_update` urg ≤ 4 → SILENCE default. Se prio ≤ 3 + 30d+, aí escalate.
 

@@ -5740,23 +5740,24 @@ async def api_admin_tonha_execute(decision_id: int, request: Request):
             if to in internal:
                 result = {"ok": True, "tool": "delegate", "note": f"internal delegate ({to}); job ja em delegations"}
             else:
-                # Mapa role -> contact_id. Priscila/Joao tem phone em
-                # contacts.telefones JSONB; Andressa so tem email (delega so
-                # vira draft de email enquanto nao cadastrar phone).
-                role_to_contact = {
-                    "andressa": 313,
-                    "joao_piccino": 21313,
-                    "priscila_contadora": 4734,
-                }
-                target_id = role_to_contact.get(to)
-                if not target_id:
-                    raise HTTPException(status_code=400, detail=f"delegado '{to}' sem mapeamento de contact_id")
+                # Resolve role -> contact via tabela tonha_role_contacts (migration 033).
+                # Renato edita UMA linha quando merge/dedupe acontece. NAO hardcode
+                # em codigo — IDs mudam (caso 16/06 Andressa #313 → #25737).
                 with get_db() as conn:
                     cur = conn.cursor()
-                    cur.execute("SELECT id, nome, telefones FROM contacts WHERE id=%s", (target_id,))
+                    cur.execute("""
+                        SELECT rc.contact_id, c.nome, c.telefones
+                        FROM tonha_role_contacts rc
+                        JOIN contacts c ON c.id = rc.contact_id
+                        WHERE rc.role = %s
+                    """, (to,))
                     c = cur.fetchone()
                 if not c:
-                    raise HTTPException(status_code=404, detail="contact do delegado nao encontrado")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"delegado '{to}' sem mapeamento em tonha_role_contacts — cadastra primeiro via INSERT/UPDATE",
+                    )
+                target_id = c["contact_id"]
                 # Extrai primeiro telefone disponivel (preferir whatsapp=true)
                 phones = c.get("telefones") or []
                 phone = None
