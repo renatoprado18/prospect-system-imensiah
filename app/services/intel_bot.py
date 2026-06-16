@@ -1784,7 +1784,13 @@ def _load_conversation_history(phone: str, limit: int = 20) -> List[Dict]:
 
 def _save_conversation_message(phone: str, role: str, content: str,
                                 tool_calls: Any = None, tool_results: Any = None):
-    """Save a single message to conversation history. Retorna o id inserido (ou None se garbage/erro)."""
+    """Save a single message to conversation history. Retorna o id inserido (ou None se garbage/erro/dup).
+
+    Pra role='user', usa ON CONFLICT (dedup_key) DO NOTHING — Evolution entrega
+    webhook ate 3x e ja deu triplo-fire do brain (caso 16/06/26 msg 780 ->
+    decisoes 116/117/118 = $0.087 num turn). Bucket de 1 minuto.
+    Se INSERT nao retorna id (conflict), caller deve retornar "" sem invocar Brain.
+    """
     # Don't save garbage messages
     if not content or not content.strip():
         return None
@@ -1793,6 +1799,14 @@ def _save_conversation_message(phone: str, role: str, content: str,
     if any(g in content for g in garbage):
         return None
 
+    dedup_key = None
+    if role == "user":
+        import hashlib, time
+        minute_bucket = int(time.time()) // 60
+        dedup_key = hashlib.md5(
+            f"{phone}:{content}:{minute_bucket}".encode("utf-8")
+        ).hexdigest()
+
     try:
         tc_json = json.dumps(tool_calls) if tool_calls else None
         tr_json = json.dumps(tool_results) if tool_results else None
@@ -1800,10 +1814,11 @@ def _save_conversation_message(phone: str, role: str, content: str,
         with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO bot_conversations (phone, role, content, tool_calls, tool_results)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO bot_conversations (phone, role, content, tool_calls, tool_results, dedup_key)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (dedup_key) DO NOTHING
                 RETURNING id
-            """, (phone, role, content, tc_json, tr_json))
+            """, (phone, role, content, tc_json, tr_json, dedup_key))
             row = cursor.fetchone()
             conn.commit()
         return row["id"] if row else None
@@ -2523,24 +2538,14 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
         logger.debug(f"Skipping trivial message: {message}")
         return ""
 
-    # 2b. Dedup: skip if identical message was received in last 30s
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT id FROM bot_conversations
-                WHERE phone = %s AND role = 'user' AND content = %s
-                  AND created_at > NOW() - INTERVAL '30 seconds'
-                LIMIT 1
-            """, (phone, message))
-            if cursor.fetchone():
-                logger.info(f"Skipping duplicate bot message: {message[:50]}")
-                return ""
-    except Exception as e:
-        logger.warning(f"Dedup check error: {e}")
-
-    # 3. Save user message to history (capture id pra ligar intent ao turn)
+    # 3. Save user message com dedup atomico (ON CONFLICT dedup_key).
+    # Substitui check-then-act anterior que sofria race entre SELECT e INSERT —
+    # 3 webhooks paralelos do Evolution todos passavam dedup e cada um
+    # disparava o brain. Caso 16/06/26 msg 780: 3 reactive_decisions em 13s.
     user_msg_id = _save_conversation_message(phone, "user", message)
+    if user_msg_id is None:
+        logger.info(f"dedup: skipping duplicate webhook delivery for {phone}: {message[:50]}")
+        return ""
 
     # 3b. FASE 2B STRANGLER — rota pra Tonha Brain nova se flag matches.
     # `TONHA_REACTIVE_TARGETS=none|chat|wa|all` (default none).

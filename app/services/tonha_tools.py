@@ -227,26 +227,41 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
     with get_db() as conn:
         cur = conn.cursor()
         if scope in ("contacts", "all"):
+            # Cross-link projetos onde o contato e owner — caso 16/06/26 Tonha
+            # achou Lilian Schiavo mas nao surfaceou project #35 "Rede CAMBRAPER".
             cur.execute("""
-                SELECT id, nome, empresa, cargo, contexto, tags, manual_notes,
-                       relationship_context, aniversario
-                FROM contacts
-                WHERE nome ILIKE %s OR empresa ILIKE %s OR apelido ILIKE %s
-                   OR manual_notes ILIKE %s
-                ORDER BY ultimo_enriquecimento DESC NULLS LAST
+                SELECT c.id, c.nome, c.empresa, c.cargo, c.contexto, c.tags,
+                       c.manual_notes, c.relationship_context, c.aniversario,
+                       COALESCE(
+                           (SELECT jsonb_agg(jsonb_build_object(
+                                'id', p.id, 'nome', p.nome, 'status', p.status, 'tags', p.tags
+                            ) ORDER BY p.atualizado_em DESC)
+                            FROM projects p WHERE p.owner_contact_id = c.id AND p.status != 'archived'),
+                           '[]'::jsonb
+                       ) AS projetos_owner
+                FROM contacts c
+                WHERE c.nome ILIKE %s OR c.empresa ILIKE %s OR c.apelido ILIKE %s
+                   OR c.manual_notes ILIKE %s
+                ORDER BY c.ultimo_enriquecimento DESC NULLS LAST
                 LIMIT %s
             """, (f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%", limit))
             out["results"]["contacts"] = [dict(r) for r in cur.fetchall()]
 
         if scope in ("projects", "all"):
+            # JOIN com contacts pra mostrar owner_nome ao Brain — antes so vinha
+            # owner_contact_id numerico, Tonha nao linkava com pessoa.
             cur.execute("""
-                SELECT id, nome, tipo, status, prioridade, data_previsao,
-                       descricao, notas, tags, owner_contact_id, empresa_relacionada
-                FROM projects
-                WHERE nome ILIKE %s OR descricao ILIKE %s OR notas ILIKE %s
-                ORDER BY prioridade ASC NULLS LAST, atualizado_em DESC
+                SELECT p.id, p.nome, p.tipo, p.status, p.prioridade, p.data_previsao,
+                       p.descricao, p.notas, p.tags, p.owner_contact_id,
+                       p.empresa_relacionada,
+                       c.nome AS owner_nome, c.empresa AS owner_empresa
+                FROM projects p
+                LEFT JOIN contacts c ON c.id = p.owner_contact_id
+                WHERE p.nome ILIKE %s OR p.descricao ILIKE %s OR p.notas ILIKE %s
+                   OR p.tags::text ILIKE %s
+                ORDER BY p.prioridade ASC NULLS LAST, p.atualizado_em DESC
                 LIMIT %s
-            """, (f"%{query}%", f"%{query}%", f"%{query}%", limit))
+            """, (f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%", limit))
             out["results"]["projects"] = [dict(r) for r in cur.fetchall()]
 
         if scope in ("tasks", "all"):
@@ -332,14 +347,32 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
             # IMPORTANTE: calendar_events armazena datetime na timezone do campo
             # 'timezone' (geralmente America/Sao_Paulo direto, NAO em UTC). NAO
             # converter — retorna raw + label timezone pra Brain interpretar.
+            #
+            # Janela: eventos do mesmo dia continuam visiveis ate 2h apos end_datetime
+            # (caso 16/06/26: Tonha as 11:16 BRT nao achou Cafe CAMBRAPER 08:30 BRT
+            # pq filtro `start > NOW() - 1h` ja tinha cortado fora). Fallback pra
+            # start+8h se end_datetime null.
+            # NOW() vem em UTC e Neon session TIMEZONE=GMT. start/end_datetime
+            # sao TIMESTAMP naive em BRT (memory: calendar_events TZ exception).
+            # Comparar diretamente da off-by-3h — usa NOW() AT TIME ZONE 'BRT'
+            # pra alinhar wall-clock antes do interval arithmetic.
             cur.execute("""
+                WITH ref AS (
+                    SELECT (NOW() AT TIME ZONE 'America/Sao_Paulo')::timestamp AS now_brt
+                )
                 SELECT id, summary, location, description,
                        start_datetime AS start_raw,
                        end_datetime   AS end_raw,
                        timezone, all_day, status, conference_url, contact_id
-                FROM calendar_events
-                WHERE start_datetime > NOW() - INTERVAL '1 hour'
-                  AND start_datetime < NOW() + INTERVAL '14 days'
+                FROM calendar_events, ref
+                WHERE (
+                        -- Eventos do mesmo dia (post-mortem ainda relevante)
+                        start_datetime::date = ref.now_brt::date
+                        -- Ou ainda em janela ativa
+                        OR (end_datetime IS NOT NULL AND end_datetime > ref.now_brt - INTERVAL '2 hours')
+                        OR (end_datetime IS NULL AND start_datetime > ref.now_brt - INTERVAL '8 hours')
+                      )
+                  AND start_datetime < ref.now_brt + INTERVAL '14 days'
                   AND status IN ('confirmed', 'tentative')
                   AND (summary ILIKE %s OR description ILIKE %s OR location ILIKE %s OR %s = '')
                 ORDER BY start_datetime ASC
@@ -349,7 +382,8 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
             # Inclui nota interpretativa pra Brain
             out["calendar_note"] = (
                 "start_raw/end_raw estao na timezone do campo timezone (geralmente "
-                "America/Sao_Paulo = BRT). NAO converter. Mostrar como-eh."
+                "America/Sao_Paulo = BRT). NAO converter. Mostrar como-eh. "
+                "Eventos do dia ja iniciados continuam aqui ate 2h apos end."
             )
 
     return {"ok": True, **out}
