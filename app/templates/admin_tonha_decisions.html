@@ -99,6 +99,45 @@
         background: #e2e8f0; color: #475569; padding: 2px 6px; border-radius: 4px;
         font-size: 0.7rem; font-weight: 600;
     }
+    /* Group sections */
+    .td-group { margin-bottom: 14px; }
+    .td-group-head {
+        display: flex; align-items: center; gap: 10px;
+        padding: 8px 12px; background: #fff; border-radius: 8px;
+        border: 1px solid #e5e7eb; margin-bottom: 6px;
+        cursor: pointer; user-select: none;
+    }
+    .td-group-head:hover { background: #f8fafc; }
+    .td-group-head .caret { color: #94a3b8; font-size: 0.85rem; width: 14px; }
+    .td-group-head .title { font-weight: 700; color: #0f172a; font-size: 0.9rem; }
+    .td-group-head .count {
+        background: #f1f5f9; color: #475569; padding: 2px 8px; border-radius: 10px;
+        font-size: 0.75rem; font-weight: 600;
+    }
+    .td-group-head .bulk { margin-left: auto; display: flex; gap: 6px; }
+    .td-group-head .bulk button {
+        background: #fff; border: 1px solid #cbd5e1; color: #475569;
+        padding: 3px 10px; border-radius: 6px; font-size: 0.72rem; cursor: pointer;
+    }
+    .td-group-head .bulk button:hover { background: #f1f5f9; }
+    .td-group-head .bulk button.danger { color: #dc2626; border-color: #fecaca; }
+    .td-group-head .bulk button.danger:hover { background: #fef2f2; }
+    .td-group-body { padding-left: 8px; }
+    .td-group.collapsed .td-group-body { display: none; }
+    .td-row-check {
+        margin-right: 8px; vertical-align: middle;
+    }
+    .td-bulkbar {
+        position: sticky; top: 0; z-index: 10; background: #1e293b; color: #fff;
+        padding: 8px 14px; border-radius: 8px; margin-bottom: 10px;
+        display: none; align-items: center; gap: 10px;
+    }
+    .td-bulkbar.active { display: flex; }
+    .td-bulkbar button {
+        background: #fff; color: #0f172a; border: 0; padding: 5px 12px;
+        border-radius: 6px; font-size: 0.8rem; cursor: pointer; font-weight: 600;
+    }
+    .td-bulkbar button.danger { background: #dc2626; color: #fff; }
 
     .empty { text-align: center; color: #94a3b8; padding: 40px; }
     .load-more {
@@ -133,17 +172,35 @@
         <input type="number" id="filter-signal" placeholder="ID" style="width: 90px" onchange="applyFilters()">
     </label>
     <label style="font-size: 0.8rem; color: #475569;">
+        Agrupar:
+        <select id="filter-group-by" onchange="rerender()">
+            <option value="signal_tipo">por tipo</option>
+            <option value="empresa">por empresa</option>
+            <option value="decision_type">por decisão</option>
+            <option value="none">nenhum</option>
+        </select>
+    </label>
+    <label style="font-size: 0.8rem; color: #475569;">
         <input type="checkbox" id="filter-show-all" onchange="applyFilters()"> mostrar tratadas
     </label>
     <button class="clear-btn" onclick="clearFilters()">Limpar</button>
     <span id="td-summary" class="td-stats-inline" style="margin-left: auto"></span>
 </div>
 
+<div id="td-bulkbar" class="td-bulkbar">
+    <span><span id="bulk-count">0</span> selecionadas</span>
+    <button onclick="bulkAck()">ciente todas</button>
+    <button class="danger" onclick="bulkRevert()">reverter todas</button>
+    <button onclick="clearSelection()">limpar</button>
+</div>
+
 <div id="td-list"></div>
 <button id="load-more" class="load-more" style="display: none" onclick="loadMore()">Carregar mais</button>
 
 <script>
-const state = { offset: 0, limit: 50, decisionType: '', mode: '', signalId: 0, showAll: false };
+const state = { offset: 0, limit: 100, decisionType: '', mode: '', signalId: 0, showAll: false, groupBy: 'signal_tipo' };
+let allDecisions = [];
+let selectedIds = new Set();
 
 function escapeHtml(s) {
     if (s == null) return '';
@@ -168,9 +225,26 @@ function renderStats(stats, totalShown) {
         </span>
     `;
 }
+function decisionGroupKey(d) {
+    const gb = state.groupBy;
+    if (gb === 'none') return '__all__';
+    if (gb === 'decision_type') return d.decision_type || 'sem tipo';
+    if (gb === 'signal_tipo') return d.signal_tipo || 'sem signal';
+    if (gb === 'empresa') {
+        const ctx = d.signal_contexto || {};
+        return ctx.empresa || ctx.empresa_relacionada || ctx.contato_nome || 'sem empresa';
+    }
+    return '__all__';
+}
+function groupLabel(key) {
+    if (key === '__all__') return 'Todas';
+    return key;
+}
+
 function renderRow(d) {
     const reverted = !!d.reverted_at;
     const acked = !!d.acked_at;
+    const checked = selectedIds.has(d.id) ? 'checked' : '';
     const sigInfo = d.signal_id
         ? `<span class="td-sigref" onclick="toggleSig(${d.id})">signal #${d.signal_id} · ${escapeHtml(d.signal_tipo||'?')} · urg ${d.signal_urgencia||'?'}</span>`
         : `<span style="color:#94a3b8">sem signal</span>`;
@@ -179,6 +253,7 @@ function renderRow(d) {
     return `
         <div class="td-row type-${d.decision_type} ${reverted ? 'reverted' : ''}" id="row-${d.id}">
             <div class="td-row-head">
+                <input type="checkbox" class="td-row-check" ${checked} ${(reverted||acked)?'disabled':''} onchange="toggleSelect(${d.id}, this.checked)">
                 <span class="td-badge ${d.decision_type}">${d.decision_type}</span>
                 ${sigInfo}
                 <span class="td-time">${fmtTime(d.criado_em)}</span>
@@ -231,14 +306,117 @@ function removeRowFromView(id) {
     row.style.transform = 'translateX(20px)';
     setTimeout(() => {
         row.remove();
+        selectedIds.delete(id);
+        allDecisions = allDecisions.filter(d => d.id !== id);
+        // Atualiza header do grupo se ficou vazio
+        document.querySelectorAll('.td-group').forEach(g => {
+            const body = g.querySelector('.td-group-body');
+            if (body && !body.children.length) g.remove();
+        });
         const visEl = document.querySelector('#td-summary .td-chip:last-child .v');
         if (visEl) visEl.textContent = Math.max(0, (parseInt(visEl.textContent)||0) - 1);
-        // Se esvaziou a lista, mostra empty
+        updateBulkBar();
         const list = document.getElementById('td-list');
         if (!list.children.length) {
             list.innerHTML = '<div class="empty">Sem decisões pendentes. ✓</div>';
         }
     }, 160);
+}
+
+function toggleSelect(id, on) {
+    if (on) selectedIds.add(id); else selectedIds.delete(id);
+    updateBulkBar();
+}
+function clearSelection() {
+    selectedIds.clear();
+    document.querySelectorAll('.td-row-check').forEach(cb => cb.checked = false);
+    updateBulkBar();
+}
+function updateBulkBar() {
+    const bar = document.getElementById('td-bulkbar');
+    const cnt = document.getElementById('bulk-count');
+    cnt.textContent = selectedIds.size;
+    bar.classList.toggle('active', selectedIds.size > 0);
+}
+function selectAllInGroup(key) {
+    allDecisions.forEach(d => {
+        if (decisionGroupKey(d) === key && !d.reverted_at && !d.acked_at) {
+            selectedIds.add(d.id);
+            const cb = document.querySelector(`#row-${d.id} .td-row-check`);
+            if (cb) cb.checked = true;
+        }
+    });
+    updateBulkBar();
+}
+function toggleGroup(key) {
+    const safe = key.replace(/[^a-z0-9]/gi, '_');
+    const g = document.getElementById('grp-' + safe);
+    if (g) g.classList.toggle('collapsed');
+}
+
+async function bulkAck() {
+    if (!selectedIds.size) return;
+    const ids = Array.from(selectedIds);
+    const r = await fetch('/api/admin/tonha/decisions/bulk-ack', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ids}),
+    });
+    if (r.ok) {
+        ids.forEach(id => removeRowFromView(id));
+    } else alert('Falha bulk-ack: ' + r.status);
+}
+async function bulkRevert() {
+    if (!selectedIds.size) return;
+    const reason = prompt(`Motivo da reversao para ${selectedIds.size} decisoes:`);
+    if (!reason || !reason.trim()) return;
+    const ids = Array.from(selectedIds);
+    const r = await fetch('/api/admin/tonha/decisions/bulk-revert', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ids, reason: reason.trim()}),
+    });
+    if (r.ok) {
+        ids.forEach(id => removeRowFromView(id));
+    } else alert('Falha bulk-revert: ' + r.status);
+}
+
+function rerender() {
+    state.groupBy = document.getElementById('filter-group-by').value;
+    renderList();
+}
+function renderList() {
+    const list = document.getElementById('td-list');
+    list.innerHTML = '';
+    if (!allDecisions.length) {
+        list.innerHTML = '<div class="empty">Sem decisões pendentes de revisão. ✓<br><small style="color:#94a3b8">Marca "mostrar tratadas" pra ver o historico.</small></div>';
+        return;
+    }
+    // Bucket
+    const groups = new Map();
+    allDecisions.forEach(d => {
+        const k = decisionGroupKey(d);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(d);
+    });
+    // Render
+    const sortedKeys = Array.from(groups.keys()).sort((a, b) => groups.get(b).length - groups.get(a).length);
+    sortedKeys.forEach(key => {
+        const items = groups.get(key);
+        const safe = key.replace(/[^a-z0-9]/gi, '_');
+        const grpHtml = `
+            <div class="td-group" id="grp-${safe}">
+                <div class="td-group-head">
+                    <span class="caret" onclick="toggleGroup('${escapeHtml(key)}')">▼</span>
+                    <span class="title" onclick="toggleGroup('${escapeHtml(key)}')">${escapeHtml(groupLabel(key))}</span>
+                    <span class="count">${items.length}</span>
+                    <span class="bulk">
+                        <button onclick="selectAllInGroup('${escapeHtml(key)}')">selecionar todas</button>
+                    </span>
+                </div>
+                <div class="td-group-body">${items.map(renderRow).join('')}</div>
+            </div>
+        `;
+        list.insertAdjacentHTML('beforeend', grpHtml);
+    });
 }
 
 async function executeDecision(id) {
@@ -285,7 +463,8 @@ async function revertDecision(id) {
 async function load(reset=false) {
     if (reset) {
         state.offset = 0;
-        document.getElementById('td-list').innerHTML = '';
+        allDecisions = [];
+        clearSelection();
     }
     const qs = new URLSearchParams({
         limit: state.limit, offset: state.offset,
@@ -299,14 +478,9 @@ async function load(reset=false) {
     if (state.offset === 0) {
         renderStats(data.stats_7d, data.total);
     }
-    const list = document.getElementById('td-list');
-    if (!data.decisions.length && state.offset === 0) {
-        list.innerHTML = '<div class="empty">Sem decisões pendentes de revisão. ✓<br><small style="color:#94a3b8">Marca "mostrar tratadas" pra ver o historico.</small></div>';
-        document.getElementById('load-more').style.display = 'none';
-        return;
-    }
-    list.insertAdjacentHTML('beforeend', data.decisions.map(renderRow).join(''));
-    state.offset += data.decisions.length;
+    allDecisions = allDecisions.concat(data.decisions || []);
+    renderList();
+    state.offset += (data.decisions || []).length;
     document.getElementById('load-more').style.display =
         state.offset < data.total ? 'block' : 'none';
 }

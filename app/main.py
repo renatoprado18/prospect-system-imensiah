@@ -5664,6 +5664,54 @@ async def api_admin_tonha_revert(decision_id: int, request: Request):
     return {"ok": True, "decision_id": decision_id}
 
 
+@app.post("/api/admin/tonha/decisions/bulk-ack")
+async def api_admin_tonha_bulk_ack(request: Request):
+    """Marca multiplas decisions como acked. Body: {ids: [int, ...]}.
+    Pra instrucao em lote (Renato olha 10 RACIs do mesmo tipo e marca todos)."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="forbidden")
+    body = await request.json()
+    ids = body.get("ids") or []
+    if not ids or not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="ids list obrigatoria")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE tonha_decisions
+            SET acked_at = NOW(), acked_by = %s
+            WHERE id = ANY(%s) AND acked_at IS NULL
+            RETURNING id
+        """, (user.get("email", "admin"), [int(i) for i in ids]))
+        updated = [r["id"] for r in cur.fetchall()]
+        conn.commit()
+    return {"ok": True, "acked": updated, "count": len(updated)}
+
+
+@app.post("/api/admin/tonha/decisions/bulk-revert")
+async def api_admin_tonha_bulk_revert(request: Request):
+    """Reverte multiplas decisions com mesmo motivo. Body: {ids, reason}."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="forbidden")
+    body = await request.json()
+    ids = body.get("ids") or []
+    reason = (body.get("reason") or "").strip()[:500]
+    if not ids or not reason:
+        raise HTTPException(status_code=400, detail="ids + reason obrigatorios")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE tonha_decisions
+            SET reverted_at = NOW(), reverted_by = %s, reverted_reason = %s
+            WHERE id = ANY(%s) AND reverted_at IS NULL
+            RETURNING id
+        """, (user.get("email", "admin"), reason, [int(i) for i in ids]))
+        updated = [r["id"] for r in cur.fetchall()]
+        conn.commit()
+    return {"ok": True, "reverted": updated, "count": len(updated)}
+
+
 @app.post("/api/admin/tonha/decisions/{decision_id}/ack")
 async def api_admin_tonha_ack(decision_id: int, request: Request):
     """Renato confirma 'OK, vi, segue como esta'. Marca acked sem reverter.
