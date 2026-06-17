@@ -918,6 +918,19 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
             analyze_message_in_background(new_msg_id, contact_id, content)
         )
 
+    # Audio inbound na instancia principal: dispara Groq Whisper no Railway worker.
+    # Why: o handler do bot Tonha (intel-bot) ja faz isso, mas audios pra instancia
+    # principal (audios da Cica, Marson, Emma etc. pro Renato direto) ficavam orfaos
+    # como [Áudio] em messages, sem transcricao em wa_attachments. Resultado: Tonha
+    # nao tem visibilidade do conteudo. Fire-and-forget — falha nao bloqueia ingest.
+    if direction == "incoming" and message_type == "audio":
+        audio_worker_url = os.getenv("AUDIO_WORKER_URL", "").strip()
+        worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026").strip()
+        if audio_worker_url:
+            asyncio.create_task(_dispatch_audio_transcribe(
+                audio_worker_url, worker_secret, key, phone, message_id, new_msg_id
+            ))
+
     _audit("processed", f"ok:{direction}", resulting_id=new_msg_id)
     return {
         "processed": True,
@@ -977,6 +990,37 @@ async def analyze_message_in_background(message_id: int, contact_id: int, conten
         )
     except Exception as e:
         logger.error(f"Error in smart message processor for msg {message_id}: {e}")
+
+
+async def _dispatch_audio_transcribe(
+    worker_url: str,
+    secret: str,
+    key: Dict,
+    phone: str,
+    wa_message_id: str,
+    db_message_id: int,
+) -> None:
+    """Dispara /transcribe do Railway worker pra audio inbound na instancia principal.
+
+    Worker baixa de Evolution, manda Groq Whisper, grava transcricao em wa_attachments
+    via _save_wa_attachment. Fire-and-forget — erros so logados.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(
+                f"{worker_url.rstrip('/')}/transcribe",
+                json={
+                    "key": key,
+                    "phone": phone,
+                    "message_id": wa_message_id,
+                    "secret": secret,
+                    "source": "main_instance_audio",
+                    "db_message_id": db_message_id,
+                },
+            )
+            logger.info(f"main-audio dispatch -> worker status={resp.status_code} msg={db_message_id}")
+    except Exception as e:
+        logger.warning(f"main-audio dispatch failed (msg={db_message_id}): {e}")
 
 
 async def process_sent_message(data: Dict) -> Dict:

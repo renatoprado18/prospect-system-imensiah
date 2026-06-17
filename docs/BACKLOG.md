@@ -117,6 +117,13 @@
 
 ## Pendente — Média Prioridade
 
+### Briefing matinal via Tonha (registrado 17/06/2026)
+Pedido Renato: briefing matinal não deve ir direto pro WA dele — deve passar pela Tonha, ela checa tudo, resolve o que pode e só manda o necessário. Hoje (17/06) só o bug `get_db` foi corrigido; o roteamento via Tonha é redesign separado.
+- [ ] Definir canal: signal injetado em `signals` (consumido pelo próximo `tonha-autonomous-tick`) ou trigger inline do `cos_sensor.tick_safe()` com briefing como contexto?
+- [ ] Garantir que Tonha em SHADOW não suprima o briefing inteiro (fallback: se Tonha decide silence em tudo, mandar versão original mínima).
+- [ ] Dependência: aguardar Tonha sair do shadow (memória `project_tonha_rebuild_status_16_06.md`) antes de cortar o canal direto.
+- [ ] Quando ligar: substituir `send_intel_notification(msg)` em `cron_daily_morning_briefing` (main.py linha ~26283) pelo enqueue/trigger Tonha.
+
 ### Timezone consistency (iniciado 07/05/2026)
 Refactor incremental. Helpers `app/services/tz.py` + filtros Jinja `|brt`/`|iso` prontos. 13 queries SQL convertidas pra `AT TIME ZONE 'America/Sao_Paulo'`. Memória: `project_tz_consistency.md`.
 - [ ] Verificar `formatTimeAgo()` em action proposals (`app/templates/rap_dashboard.html`) — pode mostrar "agora" errado

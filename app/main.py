@@ -26278,7 +26278,9 @@ async def cron_daily_morning_briefing(request: Request):
             }
 
             # Pre-check: cycle ja existe pra hoje? Conta items.
-            from database import get_db
+            # (`get_db` ja vem do escopo do modulo — nao reimportar local pra
+            # nao virar UnboundLocalError no `get_db()` que aparece antes nessa
+            # mesma funcao — bug 13-17/jun que travou o briefing por 5 dias.)
             with get_db() as _conn:
                 _cur = _conn.cursor()
                 _cur.execute(

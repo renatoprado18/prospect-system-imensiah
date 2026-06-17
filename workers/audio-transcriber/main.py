@@ -1931,24 +1931,38 @@ async def transcribe_audio(request: Request):
     key = data.get("key", {})
     phone = data.get("phone", "")
     message_id = data.get("message_id", "")
+    # source=main_instance_audio: audio chegou na instancia principal (rap-whatsapp),
+    # nao no bot Tonha. Worker so transcreve+salva em wa_attachments; NAO manda feedback
+    # pro remetente e NAO repassa pro /api/webhooks/bot-message. So enriquece o RAG.
+    source = data.get("source", "bot")
+    instance = data.get("instance") or (
+        os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp") if source == "main_instance_audio"
+        else INTEL_BOT_INSTANCE
+    )
+    silent = source == "main_instance_audio"
 
     if not phone or not key:
         return JSONResponse(status_code=400, content={"error": "missing phone or key"})
 
-    logger.info(f"Transcription request for {phone}")
+    logger.info(f"Transcription request for {phone} source={source} instance={instance}")
+
+    async def _maybe_respond(msg: str) -> None:
+        """Helper: so envia feedback pro remetente se nao for audio silent (instancia principal)."""
+        if not silent:
+            await _send_response(phone, msg)
 
     try:
-        # Step 1: Download audio from Evolution API
+        # Step 1: Download audio from Evolution API (instancia variavel)
         async with httpx.AsyncClient(timeout=30.0) as client:
             dl_resp = await client.post(
-                f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{INTEL_BOT_INSTANCE}",
+                f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{instance}",
                 headers={"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"},
                 json={"message": {"key": key}, "convertToMp4": False}
             )
 
         if dl_resp.status_code not in (200, 201):
             logger.error(f"Download failed: {dl_resp.status_code}")
-            await _send_response(phone, "Nao consegui baixar o audio. Pode digitar?")
+            await _maybe_respond("Nao consegui baixar o audio. Pode digitar?")
             return {"error": "download_failed"}
 
         dl_data = dl_resp.json()
@@ -1956,7 +1970,7 @@ async def transcribe_audio(request: Request):
         mimetype = dl_data.get("mimetype", "audio/ogg")
 
         if not audio_b64:
-            await _send_response(phone, "Audio vazio. Pode digitar?")
+            await _maybe_respond("Audio vazio. Pode digitar?")
             return {"error": "empty_audio"}
 
         logger.info(f"Audio downloaded: {len(audio_b64)} chars, type={mimetype}")
@@ -2003,7 +2017,7 @@ async def transcribe_audio(request: Request):
         if resp.status_code != 200:
             error_detail = resp.text[:500]
             logger.error(f"Groq transcription failed: {resp.status_code} - {error_detail}")
-            await _send_response(phone, f"Erro na transcricao ({resp.status_code}). Pode digitar?")
+            await _maybe_respond(f"Erro na transcricao ({resp.status_code}). Pode digitar?")
             return {"error": f"transcription_failed: {resp.status_code}", "detail": error_detail}
 
         groq_response = resp.json()
@@ -2028,11 +2042,11 @@ async def transcribe_audio(request: Request):
             logger.info(f"Whisper quality: no_speech={avg_no_speech:.2f}, logprob={avg_logprob:.2f}, len={len(transcription)}")
             if avg_no_speech > 0.6 or avg_logprob < -1.0:
                 logger.warning(f"Whisper hallucination suspected (no_speech={avg_no_speech:.2f}, logprob={avg_logprob:.2f})")
-                await _send_response(phone, "Nao consegui entender o audio (qualidade baixa ou silencio). Pode digitar ou mandar de novo?")
+                await _maybe_respond("Nao consegui entender o audio (qualidade baixa ou silencio). Pode digitar ou mandar de novo?")
                 return {"error": "hallucination_filter", "no_speech": avg_no_speech, "logprob": avg_logprob}
 
         if not transcription:
-            await _send_response(phone, "Nao consegui entender o audio. Pode digitar?")
+            await _maybe_respond("Nao consegui entender o audio. Pode digitar?")
             return {"error": "empty_transcription"}
 
         logger.info(f"Transcribed ({len(transcription)} chars): {transcription[:120]}")
@@ -2080,8 +2094,7 @@ async def transcribe_audio(request: Request):
                         verdict = (sanity_resp.json()["content"][0]["text"] or "").strip().upper()
                         logger.info(f"Sanity check verdict: {verdict}")
                         if "ALUCINACAO" in verdict or "ALUCINAÇÃO" in verdict:
-                            await _send_response(
-                                phone,
+                            await _maybe_respond(
                                 "Whisper alucinou na transcricao do audio (sai com nomes/eventos "
                                 "que nao existem). Pode mandar de novo ou digitar? Audio curto ou "
                                 "baixo volume costuma dar isso."
@@ -2094,6 +2107,12 @@ async def transcribe_audio(request: Request):
                         logger.warning(f"Sanity check API {sanity_resp.status_code}")
             except Exception as e:
                 logger.warning(f"Sanity check failed (passing through): {e}")
+
+        # main_instance_audio: ja gravamos em wa_attachments; NAO repassar pro bot
+        # nem responder ao remetente. Apenas enriquece o RAG pra Tonha consultar.
+        if silent:
+            logger.info(f"silent transcribe done — msg={message_id} len={len(transcription)}")
+            return {"status": "success_silent", "transcription": transcription[:200]}
 
         # Step 3: Send transcribed text to INTEL bot for processing
         content = f"[Audio transcrito] {transcription}"
@@ -2116,16 +2135,16 @@ async def transcribe_audio(request: Request):
                 return {"status": "success", "transcription": transcription[:200]}
             else:
                 logger.warning(f"Bot API failed: {bot_resp.status_code} — fallback envia apologia, NAO eco da transcricao (nao e comportamento de CoS).")
-                await _send_response(phone, "Deixa eu reler o que voce mandou — te volto em instantes.")
+                await _maybe_respond("Deixa eu reler o que voce mandou — te volto em instantes.")
                 return {"status": "partial", "transcription": transcription[:200]}
         except httpx.TimeoutException:
             logger.warning("Bot API timeout — fallback apologia, sem eco de transcricao.")
-            await _send_response(phone, "Demorei mais que o normal pra processar — te volto em instantes.")
+            await _maybe_respond("Demorei mais que o normal pra processar — te volto em instantes.")
             return {"status": "partial_timeout", "transcription": transcription[:200]}
 
     except Exception as e:
         logger.error(f"Transcription error: {e}")
-        await _send_response(phone, "Erro ao processar audio. Tenta digitar?")
+        await _maybe_respond("Erro ao processar audio. Tenta digitar?")
         return {"error": str(e)}
 
 
