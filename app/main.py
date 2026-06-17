@@ -5725,6 +5725,109 @@ async def api_admin_tonha_bulk_revert(request: Request):
     return {"ok": True, "reverted": updated, "count": len(updated)}
 
 
+@app.get("/api/admin/tonha/weekly-monitor")
+async def api_tonha_weekly_monitor(request: Request):
+    """Endpoint pra routine remoto (CCR via /schedule) que monitora saude
+    pos-deploy do Tonha rebuild. Auth via header X-Monitor-Token (MONITOR_TOKEN
+    env var). Retorna JSON agregado com 3 queries + diagnostico "ok_to_cutover".
+
+    Routine remoto nao tem acesso a Neon — esse endpoint cobre o gap.
+    """
+    token = (request.headers.get("X-Monitor-Token") or "").strip()
+    expected = (os.getenv("MONITOR_TOKEN") or "").strip()
+    if not expected or token != expected:
+        raise HTTPException(status_code=401, detail="invalid monitor token")
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT status, COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS total_usd
+            FROM dev_delegation_runs
+            WHERE started_at > NOW() - INTERVAL '7 days'
+            GROUP BY status
+            ORDER BY n DESC
+        """)
+        dev_runs = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT job_id, MAX(fired_at) AS last_at, COUNT(*) AS n_24h,
+                   MAX(http_status) AS last_http
+            FROM cron_heartbeats
+            WHERE job_id IN (
+                'daily-sync', 'run-daily-ai', 'run-auto-enrich', 'run-daily-clipping',
+                'daily-synthesis', 'cos-investigator', 'sync-conselhoos-raci',
+                'linkedin-monitor-topics', 'linkedin-curator'
+            )
+              AND fired_at > NOW() - INTERVAL '24 hours'
+            GROUP BY job_id
+            ORDER BY job_id
+        """)
+        crons = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT decision_type, COUNT(*) AS n
+            FROM tonha_decisions
+            WHERE criado_em > NOW() - INTERVAL '24 hours'
+            GROUP BY decision_type
+            ORDER BY n DESC
+        """)
+        decisions = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT COUNT(*) AS n_unacked_escalates
+            FROM tonha_decisions
+            WHERE decision_type = 'escalate'
+              AND acked_at IS NULL AND reverted_at IS NULL
+        """)
+        pending = cur.fetchone()
+        n_pending = int(pending["n_unacked_escalates"] or 0) if pending else 0
+
+    n_dev_total = sum(r["n"] for r in dev_runs)
+    n_dev_errors = sum(r["n"] for r in dev_runs if r["status"] in ("error", "timeout"))
+    n_dev_success = sum(r["n"] for r in dev_runs if r["status"] == "success")
+    n_dev_shadow = sum(r["n"] for r in dev_runs if r["status"] == "skipped")
+    total_cost_7d = float(sum(r["total_usd"] or 0 for r in dev_runs))
+
+    expected_crons = {
+        "daily-sync", "run-daily-ai", "daily-synthesis", "cos-investigator",
+    }
+    present_crons = {r["job_id"] for r in crons}
+    missing_crons = sorted(expected_crons - present_crons)
+
+    ok_to_cutover = (
+        n_dev_errors == 0
+        and n_dev_total >= 5
+        and not missing_crons
+    )
+
+    flags = []
+    if missing_crons:
+        flags.append(f"crons silenciosos 24h: {missing_crons}")
+    if n_dev_errors:
+        flags.append(f"{n_dev_errors} runs com erro/timeout em 7d")
+    if total_cost_7d > 30:
+        flags.append(f"custo dev_delegation 7d = ${total_cost_7d:.2f} (acima de $30)")
+    if n_pending > 5:
+        flags.append(f"{n_pending} escalates Tonha sem ack")
+
+    return {
+        "dev_delegation_runs_7d": dev_runs,
+        "cron_heartbeats_24h": crons,
+        "tonha_decisions_24h": decisions,
+        "diagnostics": {
+            "n_dev_runs_7d": n_dev_total,
+            "n_dev_success_7d": n_dev_success,
+            "n_dev_shadow_7d": n_dev_shadow,
+            "n_dev_errors_7d": n_dev_errors,
+            "total_cost_usd_7d": round(total_cost_7d, 4),
+            "missing_crons_24h": missing_crons,
+            "n_pending_escalates": n_pending,
+            "ok_to_cutover": ok_to_cutover,
+            "flags": flags,
+        },
+    }
+
+
 @app.post("/api/admin/tonha/decisions/{decision_id}/ack")
 async def api_admin_tonha_ack(decision_id: int, request: Request):
     """Renato confirma 'OK, vi, segue como esta'. Marca acked sem reverter.
