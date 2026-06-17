@@ -225,7 +225,12 @@ async def process_due() -> Dict[str, Any]:
     """Entry point do cron. Returns summary dict pra cron_runs.result_json."""
     shadow = _env_bool("DEV_DELEGATION_SHADOW", "1")
     cap_usd = _env_float("DEV_DELEGATION_MAX_USD_DAY", 5.0)
-    cap_cycle = _env_int("DEV_DELEGATION_MAX_PER_CYCLE", 3)
+    # Shadow runs sao rapidos (so loga). Real call ao delegator pode demorar
+    # 30-350s. Vercel mata em 300s — 3 em serie passa do limite. Quando
+    # shadow=off, cap_cycle baixa pra 1 (default override) pra caber.
+    # TODO pre-cutover: migrar endpoint pro Railway worker (sem Vercel limit).
+    cap_cycle_default = 3 if shadow else 1
+    cap_cycle = _env_int("DEV_DELEGATION_MAX_PER_CYCLE", cap_cycle_default)
     mode = (os.getenv("DEV_DELEGATION_MODE") or "investigate").strip()
 
     now_brt = to_brt(now_utc())

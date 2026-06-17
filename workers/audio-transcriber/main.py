@@ -558,7 +558,7 @@ async def _drive_export_text(file_id: str, headers: dict) -> str | None:
 
 
 async def _run_bot_and_respond(phone: str, content: str, message_id: str) -> Optional[str]:
-    """Runner usado pelo debounce: roda _run_bot e envia resposta via Evolution."""
+    """Runner usado pelo debounce do path texto: _run_bot local + send_response."""
     try:
         response = await _run_bot(phone, content, message_id)
         if response:
@@ -568,6 +568,32 @@ async def _run_bot_and_respond(phone: str, content: str, message_id: str) -> Opt
         logger.exception(f"_run_bot_and_respond crashed: {e}")
         await _send_response(phone, "Desculpa, tive um erro. Tenta de novo?")
         return None
+
+
+async def _post_to_intel_bot_webhook(phone: str, content: str, message_id: str) -> Optional[str]:
+    """Runner usado pelo debounce do path audio: POSTa pra /api/webhooks/bot-message
+    no Vercel, mesmo flow do path sem debounce. Preserva engine completo
+    (services.intel_bot.handle_bot_message + _WA_SENT_VAR guard + persistencia)."""
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            bot_resp = await client.post(
+                f"{INTEL_API_URL}/api/webhooks/bot-message",
+                headers={"Content-Type": "application/json"},
+                json={"phone": phone, "content": content, "message_id": message_id,
+                      "secret": WORKER_SECRET},
+                timeout=55.0,
+            )
+        if bot_resp.status_code == 200:
+            return None
+        logger.warning(f"_post_to_intel_bot_webhook HTTP {bot_resp.status_code}")
+        await _send_response(phone, "Deixa eu reler o que voce mandou — te volto em instantes.")
+    except httpx.TimeoutException:
+        logger.warning("_post_to_intel_bot_webhook timeout")
+        await _send_response(phone, "Demorei mais que o normal pra processar — te volto em instantes.")
+    except Exception as e:
+        logger.exception(f"_post_to_intel_bot_webhook crashed: {e}")
+        await _send_response(phone, "Desculpa, tive um erro. Tenta de novo?")
+    return None
 
 
 @app.post("/process-message")
@@ -2118,7 +2144,9 @@ async def transcribe_audio(request: Request):
         content = f"[Audio transcrito] {transcription}"
 
         if debounce.is_enabled():
-            queued = await debounce.enqueue(phone, content, message_id, _run_bot_and_respond)
+            # Path audio: runner mantem POST pro Vercel /api/webhooks/bot-message
+            # preservando engine legacy (vs path texto que roda _run_bot local).
+            queued = await debounce.enqueue(phone, content, message_id, _post_to_intel_bot_webhook)
             return {"status": "queued", "transcription": transcription[:200], **queued}
 
         # Step 3: Send to intel-bot for full processing (has query_intel, save_memory, etc)
