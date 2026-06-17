@@ -495,9 +495,10 @@ def _tool_send_message(
 
     # Real send (so quando force_send ou shadow off)
     if channel == "whatsapp":
-        from services.cos_tools import send_whatsapp as _send_wa
-        sent = _send_wa(target, content)
-        return {"ok": True, "shadow": False, "draft_id": draft_id, "send_result": sent}
+        from integrations.evolution_api import get_evolution_client
+        sent = get_evolution_client().send_text_sync(target, content)
+        ok = "error" not in (sent or {})
+        return {"ok": ok, "shadow": False, "draft_id": draft_id, "send_result": sent}
     if channel == "email":
         return {"ok": False, "error": "email send ainda nao implementado fora de shadow"}
 

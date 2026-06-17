@@ -116,6 +116,41 @@ class EvolutionAPIClient:
         """Verifica se a API está configurada"""
         return bool(self.base_url and self.api_key)
 
+    def send_text_sync(
+        self,
+        phone: str,
+        message: str,
+        instance_name: str = None,
+        timeout: float = 30.0,
+    ) -> Dict:
+        """Versao sync de send_text. Usado por callers sem event loop (dispatcher
+        sync do Tonha brain). Mesma normalizacao de phone."""
+        if not self.is_configured:
+            return {"error": "Evolution API nao configurada"}
+
+        name = instance_name or self.instance_name
+        phone_clean = ''.join(filter(str.isdigit, phone))
+        if not phone_clean.startswith('55') and len(phone_clean) <= 11:
+            phone_clean = '55' + phone_clean
+
+        url = f"{self.base_url}/message/sendText/{name}"
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                resp = client.post(url, headers=self.headers, json={
+                    "number": phone_clean,
+                    "text": message,
+                    "delay": 1200,
+                })
+                if resp.status_code in (200, 201):
+                    return resp.json()
+                logger.error(f"Evolution sync send error: {resp.status_code} - {resp.text}")
+                return {"error": resp.text, "status_code": resp.status_code}
+        except httpx.TimeoutException:
+            return {"error": "Timeout na requisicao"}
+        except Exception as e:
+            logger.exception(f"Evolution sync send exception: {e}")
+            return {"error": str(e)}
+
     async def _request(
         self,
         method: str,
