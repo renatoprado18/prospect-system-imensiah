@@ -18,36 +18,12 @@
   "regions": ["iad1"],
   "crons": [
     {
-      "path": "/api/cron/daily-sync",
-      "schedule": "0 5 * * *"
-    },
-    {
       "path": "/api/cron/health-recalc",
       "schedule": "0 18 * * *"
     },
     {
-      "path": "/api/cron/weekly-digest",
-      "schedule": "0 8 * * 1"
-    },
-    {
       "path": "/api/cron/cleanup",
       "schedule": "0 4 * * 0"
-    },
-    {
-      "path": "/api/cron/sync-whatsapp-history",
-      "schedule": "0 6 * * *"
-    },
-    {
-      "path": "/api/cron/editorial-weekly-briefing",
-      "schedule": "0 21 * * 0"
-    },
-    {
-      "path": "/api/cron/index-drive-documents",
-      "schedule": "0 7 * * *"
-    },
-    {
-      "path": "/api/cron/sync-conselhoos-raci",
-      "schedule": "0 6 * * *"
     },
     {
       "path": "/api/cron/editorial-metrics-reminder-evening",
@@ -58,56 +34,12 @@
       "schedule": "0 0 * * *"
     },
     {
-      "path": "/api/cron/raci-weekly-report",
-      "schedule": "0 11 * * 1"
-    },
-    {
-      "path": "/api/cron/daily-synthesis",
-      "schedule": "0 1 * * *"
-    },
-    {
-      "path": "/api/cron/linkedin-monitor-topics",
-      "schedule": "0 9 * * *"
-    },
-    {
-      "path": "/api/cron/linkedin-outbound-check",
-      "schedule": "0 11 * * *"
-    },
-    {
-      "path": "/api/cron/linkedin-engagement-prospecting",
-      "schedule": "30 11 * * *"
-    },
-    {
       "path": "/api/cron/platform-costs-snapshot",
       "schedule": "0 12 2 * *"
     },
     {
-      "path": "/api/cron/run-daily-ai",
-      "schedule": "15 5 * * *"
-    },
-    {
-      "path": "/api/cron/run-auto-enrich",
-      "schedule": "25 5 * * *"
-    },
-    {
-      "path": "/api/cron/run-daily-clipping",
-      "schedule": "35 5 * * *"
-    },
-    {
-      "path": "/api/cron/linkedin-curator",
-      "schedule": "0 10 * * *"
-    },
-    {
-      "path": "/api/cron/auto-resolve-editorial",
-      "schedule": "30 15 * * *"
-    },
-    {
       "path": "/api/cron/circulos-recalc",
       "schedule": "0 9 * * *"
-    },
-    {
-      "path": "/api/cron/sync-gmail-outbound",
-      "schedule": "0 5 * * *"
     }
   ]
 }
