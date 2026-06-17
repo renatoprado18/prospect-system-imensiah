@@ -60,8 +60,12 @@ def _in_window_brt(now_brt: datetime, start_hour: int = 9, end_hour: int = 22) -
 
 
 def _today_cost_usd() -> float:
-    """Soma cost_usd de hoje (UTC day) — pra cap diario."""
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    """Soma cost_usd de hoje (BRT day) — pra cap diario. Comparacao contra
+    started_at TIMESTAMP (naive UTC) feita em UTC pra compatibilidade do
+    storage, mas baseline e meianoite BRT pra evitar reset cedo as 21h BRT
+    (P2 do code review 17/06)."""
+    midnight_brt = to_brt(now_utc()).replace(hour=0, minute=0, second=0, microsecond=0)
+    midnight_utc = midnight_brt.astimezone(now_utc().tzinfo).replace(tzinfo=None)
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -70,7 +74,7 @@ def _today_cost_usd() -> float:
             FROM dev_delegation_runs
             WHERE started_at >= %s AND status='success'
             """,
-            (today_start,),
+            (midnight_utc,),
         )
         row = cur.fetchone()
         return float(row["total"] or 0)
@@ -242,81 +246,11 @@ async def process_due() -> Dict[str, Any]:
     results: List[Dict[str, Any]] = []
     for row in rows:
         deleg_id = row["id"]
-        task = row["task_summary"]
-        full = row["task_full"]
-        contact_id = row.get("contact_id")
-        deadline = row.get("deadline")
-
-        ctx_text = (
-            f"delegation_id: {deleg_id}\n"
-            f"deadline: {deadline}\n"
-            f"contact_id: {contact_id}\n"
-            f"\n# task_full\n{full or '(vazio)'}"
-        )
-        payload = {
-            "delegation_id": deleg_id,
-            "mode": mode,
-            "task_summary": task,
-            "task_full": full,
-            "shadow": shadow,
-        }
-
-        run_id = _insert_run(
-            delegation_id=deleg_id, shadow=shadow, mode=mode, payload=payload
-        )
-
-        if shadow:
-            _finalize_run(
-                run_id=run_id,
-                status="skipped",
-                response_summary="SHADOW: payload registrado, worker nao chamado",
-            )
-            results.append({"delegation_id": deleg_id, "status": "shadow_skipped"})
-            continue
-
-        started = datetime.utcnow()
-        data = await _call_delegator(task=task, context=ctx_text, mode=mode)
-        duration_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
-
-        if "_error" in data:
-            err = data["_error"]
-            _finalize_run(
-                run_id=run_id,
-                status="error" if "timeout" not in err.lower() else "timeout",
-                error_message=err,
-                duration_ms=duration_ms,
-            )
-            results.append({"delegation_id": deleg_id, "status": "error", "error": err})
-            continue
-
-        response_text = (data.get("result") or "").strip()
-        cost_usd = data.get("cost_usd")
-        turn_count = data.get("turn_count")
-        tools_used = data.get("tools_used") or []
-        summary = response_text[:300]
-
-        _finalize_run(
-            run_id=run_id,
-            status="success",
-            response_text=response_text,
-            response_summary=summary,
-            cost_usd=cost_usd,
-            turn_count=turn_count,
-            tools_used=tools_used,
-            duration_ms=duration_ms,
-        )
-        _close_delegation(delegation_id=deleg_id, response=response_text)
-        _emit_concluida_signal(
-            delegation_id=deleg_id, summary=summary, contact_id=contact_id
-        )
-        results.append(
-            {
-                "delegation_id": deleg_id,
-                "status": "success",
-                "cost_usd": cost_usd,
-                "duration_ms": duration_ms,
-            }
-        )
+        try:
+            await _process_one(row, shadow=shadow, mode=mode, results=results)
+        except Exception as e:
+            logger.exception(f"dev_delegation_pickup: row {deleg_id} crashed: {e}")
+            results.append({"delegation_id": deleg_id, "status": "crashed", "error": str(e)[:300]})
 
     return {
         "processed": len(results),
@@ -324,3 +258,84 @@ async def process_due() -> Dict[str, Any]:
         "today_cost_usd": today_cost,
         "results": results,
     }
+
+
+async def _process_one(
+    row: Dict[str, Any], *, shadow: bool, mode: str, results: List[Dict[str, Any]]
+) -> None:
+    deleg_id = row["id"]
+    task = row["task_summary"]
+    full = row["task_full"]
+    contact_id = row.get("contact_id")
+    deadline = row.get("deadline")
+
+    ctx_text = (
+        f"delegation_id: {deleg_id}\n"
+        f"deadline: {deadline}\n"
+        f"contact_id: {contact_id}\n"
+        f"\n# task_full\n{full or '(vazio)'}"
+    )
+    payload = {
+        "delegation_id": deleg_id,
+        "mode": mode,
+        "task_summary": task,
+        "task_full": full,
+        "shadow": shadow,
+    }
+
+    run_id = _insert_run(
+        delegation_id=deleg_id, shadow=shadow, mode=mode, payload=payload
+    )
+
+    if shadow:
+        _finalize_run(
+            run_id=run_id,
+            status="skipped",
+            response_summary="SHADOW: payload registrado, worker nao chamado",
+        )
+        results.append({"delegation_id": deleg_id, "status": "shadow_skipped"})
+        return
+
+    started = now_utc()
+    data = await _call_delegator(task=task, context=ctx_text, mode=mode)
+    duration_ms = int((now_utc() - started).total_seconds() * 1000)
+
+    if "_error" in data:
+        err = data["_error"]
+        _finalize_run(
+            run_id=run_id,
+            status="error" if "timeout" not in err.lower() else "timeout",
+            error_message=err,
+            duration_ms=duration_ms,
+        )
+        results.append({"delegation_id": deleg_id, "status": "error", "error": err})
+        return
+
+    response_text = (data.get("result") or "").strip()
+    cost_usd = data.get("cost_usd")
+    turn_count = data.get("turn_count")
+    tools_used = data.get("tools_used") or []
+    summary = response_text[:300]
+
+    _finalize_run(
+        run_id=run_id,
+        status="success",
+        response_text=response_text,
+        response_summary=summary,
+        cost_usd=cost_usd,
+        turn_count=turn_count,
+        tools_used=tools_used,
+        duration_ms=duration_ms,
+    )
+    _close_delegation(delegation_id=deleg_id, response=response_text)
+    _emit_concluida_signal(
+        delegation_id=deleg_id, summary=summary, contact_id=contact_id
+    )
+    results.append(
+        {
+            "delegation_id": deleg_id,
+            "status": "success",
+            "cost_usd": cost_usd,
+            "duration_ms": duration_ms,
+        }
+    )
