@@ -158,6 +158,11 @@ _SCHEDULER_JOBS = [
     ("sync-gmail-outbound", "/api/cron/sync-gmail-outbound", CronTrigger(minute="12,42")),
     ("email-triage-sweep", "/api/cron/email-triage-sweep", CronTrigger(minute="7,37")),
     ("catchup", "/api/cron/catchup", CronTrigger(minute=30)),
+    # 17/06/2026: migrado de GH Actions (cron-cos-investigator.yml).
+    # Daily critico que alimenta briefing 8h — politica feedback_cron_host_choice
+    # manda Railway in-process pra criticos que nao podem ser silently dropped.
+    # Horario mantido identico (10:10 UTC = 07:10 BRT, 50min antes do briefing).
+    ("cos-investigator", "/api/cron/cos-investigator", CronTrigger(hour=10, minute=10)),
     # 15/06/26 FASE 1 REBUILD — detectores deterministas, zero LLM.
     # Le DB, emite signals com signal_hash UNIQUE (idempotente). Brain Sonnet
     # le signals e decide. Ver docs/ARCHITECTURE_REBUILD.md.
