@@ -70,6 +70,8 @@ CRON_SECRET = (os.getenv("CRON_SECRET") or "").strip()
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+import debounce
+
 scheduler = AsyncIOScheduler(timezone="UTC")
 
 
@@ -535,11 +537,27 @@ async def _drive_export_text(file_id: str, headers: dict) -> str | None:
         return resp.text if resp.status_code == 200 else None
 
 
+async def _run_bot_and_respond(phone: str, content: str, message_id: str) -> Optional[str]:
+    """Runner usado pelo debounce: roda _run_bot e envia resposta via Evolution."""
+    try:
+        response = await _run_bot(phone, content, message_id)
+        if response:
+            await _send_response(phone, response)
+        return response
+    except Exception as e:
+        logger.exception(f"_run_bot_and_respond crashed: {e}")
+        await _send_response(phone, "Desculpa, tive um erro. Tenta de novo?")
+        return None
+
+
 @app.post("/process-message")
 async def process_message(request: Request):
     """
     Process bot message directly on Railway with full DB access.
     No timeout limit. Has access to INTEL + ConselhoOS databases.
+
+    Quando BOT_DEBOUNCE_ENABLED=1, msgs viram batch (janela ~6s) antes de
+    chamar _run_bot — agrupa rajadas do mesmo phone.
     """
     data = await request.json()
     if data.get("secret") != WORKER_SECRET:
@@ -553,6 +571,10 @@ async def process_message(request: Request):
         return JSONResponse(status_code=400, content={"error": "missing phone or content"})
 
     logger.info(f"Processing bot message for {phone}: {content[:80]}")
+
+    if debounce.is_enabled():
+        queued = await debounce.enqueue(phone, content, message_id, _run_bot_and_respond)
+        return {"status": "queued", **queued}
 
     try:
         response = await _run_bot(phone, content, message_id)
@@ -2055,6 +2077,10 @@ async def transcribe_audio(request: Request):
 
         # Step 3: Send transcribed text to INTEL bot for processing
         content = f"[Audio transcrito] {transcription}"
+
+        if debounce.is_enabled():
+            queued = await debounce.enqueue(phone, content, message_id, _run_bot_and_respond)
+            return {"status": "queued", "transcription": transcription[:200], **queued}
 
         # Step 3: Send to intel-bot for full processing (has query_intel, save_memory, etc)
         try:
