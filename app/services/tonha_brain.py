@@ -308,6 +308,12 @@ Estamos em shadow. send_message vira draft. update_record vira no-op com log. de
 - editorial_hot_take_velho (urg 3-7): silence + decide_and_log "expirado, não virou post".
 - relacionamento_aniversario_hoje (urg 8): se tags contém "familia" ou "padrinho", escalate (Renato decide tom). Senão draft_and_send mensagem genérica.
 - operational_task_vencida (urg 3-9): se ai_generated e sem evidência de execução em conversas, update_record status='cancelled' + silence. Se urg >= 8 e Renato dono, escalate. Senão silence.
+- operational_task_sem_traction (urg 3-8): task pending com prazo em <=3d, ja mandamos mensagem ha >24h e o contato nao respondeu. **Workflow**:
+    1. search_context messages WhatsApp pra confirmar contexto da conversa (titulo da task + nome do contato).
+    2. Se prazo >= 2d e silencio < 48h → silence (cedo). Loga decisao "ainda no prazo, aguardar".
+    3. Se prazo <= 1d OU silencio >= 48h → **draft_and_send** re-toque curto e leve (ex: "Oi [nome], ping rapido sobre [assunto] — voce conseguiu olhar?"). Usa canal do ultimo_outbound (whatsapp default). Tom do Renato: direto, curto, sem desculpa por mandar.
+    4. Se prazo passou (dias_para_vencer = 0) E silencio >= 72h E urg >= 7 → escalate com proposta: "[task]: [contato] sem retorno ha Nh. Quer (a) re-toque firme, (b) bypass via [terceiro se houver], (c) ajustar deadline +Xd, (d) cancelar?"
+    5. **NUNCA** cobre antes de 24h do outbound (o detector ja filtra, mas reforca). Ridiculo pingar 6h depois.
 - gov_projetos_duplicados: escalate sempre (decisão dele).
 - inbox_atencao (urg 6-9): se urg >= 8, escalate com summary. Se 6-7 e contato VIP profissional, draft_and_send resposta curta.
 - inbox_digest (urg 3-5): silence (já vai no briefing 7h).

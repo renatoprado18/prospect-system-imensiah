@@ -4,6 +4,7 @@ detector_operational — substitui partes de cos_portfolio + cos_sensor agendado
 Sinais:
 - operational_task_vencida          — tasks.data_vencimento < hoje, status pending/in_progress
 - operational_task_alta_prio_parada — tasks prioridade<=3 sem update ha +7d
+- operational_task_sem_traction     — task pending prazo<=+3d c/ contact_id, outbound>24h, zero incoming desde
 - operational_projeto_sem_update    — projects ativos sem atualizado_em ha +14d
 - operational_milestone_vencido     — milestone data_prevista < hoje, status pendente
 - operational_conflito_agenda       — 2+ calendar_events sobrepostos
@@ -16,6 +17,10 @@ from typing import List
 from services.detectors._base import DetectorRun, emit_signal, expire_stale_signals, make_signal_hash, savepoint
 
 DETECTOR_NAME = "detector_operational"
+
+# Constante segue padrao do resto do codebase (evolution_api, editorial_*, smart_message_processor).
+# Renato = dono do sistema; tasks com contact_id=ele sao pessoais, nao se "cobra" do proprio.
+OWNER_CONTACT_ID = 14911
 
 
 def run(conn) -> DetectorRun:
@@ -54,6 +59,114 @@ def run(conn) -> DetectorRun:
                 _bump(res, emit_signal(conn, tipo="operational_task_vencida", signal_hash=sh, urgencia=urg, contexto=ctx, detector=DETECTOR_NAME))
     except Exception as e:
         res.errors.append(f"task_vencida: {str(e)[:200]}")
+
+    # ----- 1b. Task com prazo iminente sem traction (outbound recente sem resposta) -----
+    # Cobre o gap "mandei pra X, prazo amanha, X nao respondeu" que cai entre
+    # operational_task_vencida (so dispara DEPOIS) e relacionamento_requer_resposta
+    # (so dispara apos 3-7d sem reply). Aqui pega 0-3 dias antes do prazo.
+    #
+    # NAO COBRE (TODO v1):
+    # - Triangulacao: task.contact_id=X mas mensagem foi pra terceiro Y
+    #   (ex: "decidir Rodrigo via Lilian" — outbound foi pra Lilian, nao Rodrigo)
+    # - Outbound em grupo WA (conversations.canal='whatsapp_group')
+    #
+    # ANTI-LOOP: filtra outbound com padroes de mensagem do bot/INTEL
+    # (mesma whitelist do cos_sensor.py:1086). Nao filtra 'from_webhook'
+    # porque Renato manda do celular pessoal e isso vem como from_webhook=true.
+    try:
+        with savepoint(conn, "task_sem_traction"):
+            cur.execute("""
+                WITH alvos AS (
+                    SELECT
+                        t.id, t.titulo, t.data_vencimento, t.prioridade,
+                        t.contexto, t.project_id, t.contact_id,
+                        ct.nome AS contato_nome,
+                        ct.empresa AS contato_empresa,
+                        EXTRACT(DAY FROM (t.data_vencimento - NOW()))::int AS dias_para_vencer
+                    FROM tasks t
+                    JOIN contacts ct ON ct.id = t.contact_id
+                    WHERE t.status IN ('pending', 'in_progress')
+                      AND t.data_vencimento IS NOT NULL
+                      AND t.data_vencimento >= NOW()
+                      AND t.data_vencimento <= NOW() + INTERVAL '3 days'
+                      AND t.contact_id IS NOT NULL
+                      AND t.contact_id != %s  -- nao cobra do proprio Renato
+                ),
+                ultimo_out AS (
+                    SELECT DISTINCT ON (m.contact_id)
+                        m.contact_id,
+                        m.id AS msg_id,
+                        COALESCE(m.enviado_em, m.criado_em) AS ts,
+                        m.conversation_id,
+                        LEFT(m.conteudo, 240) AS preview
+                    FROM messages m
+                    WHERE m.contact_id IN (SELECT contact_id FROM alvos)
+                      AND m.direcao = 'outgoing'
+                      -- anti-loop: ignora mensagens do bot/INTEL
+                      AND NOT (
+                        m.conteudo ILIKE 'Bom dia, Renato%%'
+                        OR m.conteudo ILIKE '%%*Briefing*%%'
+                        OR m.conteudo ILIKE '%%INTEL Proativo%%'
+                        OR m.conteudo ILIKE '%%[Tonha]%%'
+                      )
+                    ORDER BY m.contact_id, COALESCE(m.enviado_em, m.criado_em) DESC
+                )
+                SELECT
+                    a.*,
+                    uo.ts AS outbound_ts,
+                    uo.preview AS outbound_preview,
+                    uo.conversation_id,
+                    conv.canal AS conversation_canal,
+                    EXTRACT(EPOCH FROM (NOW() - uo.ts))/3600 AS horas_desde_outbound
+                FROM alvos a
+                JOIN ultimo_out uo ON uo.contact_id = a.contact_id
+                LEFT JOIN conversations conv ON conv.id = uo.conversation_id
+                WHERE uo.ts < NOW() - INTERVAL '24 hours'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM messages m3
+                      WHERE m3.contact_id = a.contact_id
+                        AND m3.direcao = 'incoming'
+                        AND COALESCE(m3.recebido_em, m3.criado_em) > uo.ts
+                  )
+                ORDER BY a.data_vencimento ASC
+                LIMIT 30
+            """, (OWNER_CONTACT_ID,))
+            for r in cur.fetchall():
+                sh = make_signal_hash("operational_task_sem_traction", r["id"])
+                current_hashes.append(sh)
+                dias_pv = r["dias_para_vencer"] or 0
+                horas_out = float(r["horas_desde_outbound"] or 0)
+                prio = r["prioridade"] or 5
+                # Base 4; sobe se prazo proximo + silencio longo + prio alta
+                urg = 4
+                if dias_pv <= 1: urg += 2
+                elif dias_pv <= 2: urg += 1
+                if horas_out >= 48: urg += 1
+                if horas_out >= 96: urg += 1
+                if prio <= 3: urg += 1
+                urg = max(3, min(8, urg))
+                ctx = {
+                    "task_id": r["id"],
+                    "titulo": r["titulo"],
+                    "data_vencimento": r["data_vencimento"].isoformat() if r["data_vencimento"] else None,
+                    "dias_para_vencer": dias_pv,
+                    "prioridade": prio,
+                    "contexto": r["contexto"],
+                    "project_id": r["project_id"],
+                    "contact_id": r["contact_id"],
+                    "contato_nome": r["contato_nome"],
+                    "contato_empresa": r["contato_empresa"],
+                    "ultimo_outbound": {
+                        "ts": r["outbound_ts"].isoformat() if r["outbound_ts"] else None,
+                        "horas_atras": round(horas_out, 1),
+                        "canal": r["conversation_canal"],
+                        "conversation_id": r["conversation_id"],
+                        "preview": r["outbound_preview"],
+                    },
+                }
+                _bump(res, emit_signal(conn, tipo="operational_task_sem_traction", signal_hash=sh, urgencia=urg, contexto=ctx, detector=DETECTOR_NAME))
+    except Exception as e:
+        res.errors.append(f"task_sem_traction: {str(e)[:200]}")
 
     # ----- 2. Projetos ativos sem update — prio<=3 OR dias>30 -----
     # Antes 10+ signals urg 6 viravam brain escalates. Maioria era projeto
