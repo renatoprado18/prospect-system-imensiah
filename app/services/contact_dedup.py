@@ -14,6 +14,113 @@ from collections import defaultdict
 import unicodedata
 
 
+# ============== Reference migration on merge ==============
+#
+# Tabelas com FK para contacts(id). Antes de deletar um contato secundario
+# durante o merge, precisamos repontar as referencias pro primario — caso
+# contrario as FK CASCADE apagam o historico em cascata (vide incidente
+# 16/06/26 com merge do Eduardo Marson: ~17 msgs/PDF/anexos perdidos).
+#
+# Lista derivada de:
+#   SELECT tc.table_name, kcu.column_name, rc.delete_rule
+#   FROM information_schema.referential_constraints rc
+#   JOIN information_schema.table_constraints tc ON tc.constraint_name = rc.constraint_name
+#   JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = rc.constraint_name
+#   JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = rc.constraint_name
+#   WHERE ccu.table_name='contacts' AND ccu.column_name='id';
+#
+# Inclui CASCADE, SET NULL e NO ACTION — em todos os 3 casos a migracao
+# preserva o vinculo do dado historico ao contato primario.
+
+_FK_TABLES_TO_CONTACTS = [
+    # ON DELETE CASCADE (sem migracao, dados sao apagados)
+    'action_proposals',
+    'ai_suggestions',
+    'campaign_enrollments',
+    'conselhoos_links',
+    'contact_briefings',
+    'contact_facts',
+    'contact_interactions',
+    'contact_memories',
+    'contact_prospect_link',
+    'contact_rodas',
+    'contact_snoozes',
+    'contact_today_manual',
+    'conversations',
+    'health_predictions',
+    'linkedin_enrichment_history',
+    'messages',
+    'project_members',
+    'proposal_block_rules',
+    'timeline_summaries',
+    'whatsapp_messages',
+    # ON DELETE SET NULL (sem migracao, vinculo se perde)
+    'calendar_events',
+    'cos_draft_responses',
+    'delegations',
+    'email_triage',
+    'group_messages',
+    'linkedin_engagement_signals',
+    'users',
+    # ON DELETE NO ACTION (sem migracao, DELETE em contacts falha)
+    'conselhoos_board_members',
+    'reminders',
+    'tasks',
+]
+
+# Tabelas com unique constraint composta envolvendo contact_id.
+# Antes do UPDATE em massa, precisamos deletar as rows do secundario
+# que conflitariam com as do primario (politica: primario vence).
+# Valores = colunas que compoem a unique junto com contact_id.
+_COMPOSITE_UNIQUE_PARTNERS = {
+    'campaign_enrollments': ['campaign_id'],
+    'contact_prospect_link': ['prospect_id'],
+    'contact_today_manual': ['data'],
+    'project_members': ['project_id'],
+    'timeline_summaries': ['cache_hash'],
+}
+
+
+def _migrate_contact_references(cursor, primary_id: int, other_ids: List[int]) -> None:
+    """
+    Repontar todas as referencias FK contact_id de other_ids -> primary_id,
+    de forma segura para uniques compostas.
+
+    Deve ser chamada ANTES de DELETE FROM contacts. Sem isso, FKs CASCADE
+    apagam historico irrecuperavel e FKs NO ACTION fazem o DELETE explodir.
+
+    Trata tambem projects.owner_contact_id (coluna fora do padrao).
+    """
+    if not other_ids:
+        return
+
+    # 1) Tabelas com unique composta — deletar rows do secundario que
+    #    duplicariam o primario, antes do UPDATE
+    for tbl, partner_cols in _COMPOSITE_UNIQUE_PARTNERS.items():
+        partner_join = ' AND '.join(f't1.{c} = t2.{c}' for c in partner_cols)
+        cursor.execute(f'''
+            DELETE FROM {tbl} t1
+            WHERE t1.contact_id = ANY(%s)
+              AND EXISTS (
+                SELECT 1 FROM {tbl} t2
+                WHERE t2.contact_id = %s AND {partner_join}
+              )
+        ''', (other_ids, primary_id))
+
+    # 2) UPDATE contact_id em todas as tabelas com FK pra contacts(id)
+    for tbl in _FK_TABLES_TO_CONTACTS:
+        cursor.execute(
+            f"UPDATE {tbl} SET contact_id = %s WHERE contact_id = ANY(%s)",
+            (primary_id, other_ids)
+        )
+
+    # 3) projects.owner_contact_id (coluna fora do padrao)
+    cursor.execute(
+        "UPDATE projects SET owner_contact_id = %s WHERE owner_contact_id = ANY(%s)",
+        (primary_id, other_ids)
+    )
+
+
 # ============== Phone Number Normalization ==============
 
 def normalize_phone(phone: str) -> str:
@@ -619,6 +726,10 @@ def merge_duplicate_contacts(duplicate_group: List[Dict], db_connection) -> Dict
         primary_id
     ))
 
+    # Repontar referencias dos secundarios pro primario ANTES de deletar
+    # (sem isso, FKs CASCADE apagam historico irrecuperavel)
+    _migrate_contact_references(cursor, primary_id, other_ids)
+
     # Delete other contacts
     if other_ids:
         cursor.execute(
@@ -924,6 +1035,10 @@ async def merge_duplicate_contacts_with_propagation(
         merged['contexto'],
         primary_id
     ))
+
+    # Repontar referencias dos secundarios pro primario ANTES de deletar
+    # (sem isso, FKs CASCADE apagam historico irrecuperavel)
+    _migrate_contact_references(cursor, primary_id, other_ids)
 
     # Delete other contacts from local DB
     if other_ids:

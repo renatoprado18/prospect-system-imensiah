@@ -4,6 +4,7 @@ Batch Operations Service - Operacoes em lote para contatos
 from typing import List, Dict, Optional
 from datetime import datetime
 from database import get_db
+from services.contact_dedup import _migrate_contact_references
 
 
 class BatchOperationsService:
@@ -221,19 +222,11 @@ class BatchOperationsService:
                     primary_id
                 ))
 
-                # Reassign messages to primary
-                cursor.execute("""
-                    UPDATE messages
-                    SET contact_id = %s
-                    WHERE contact_id = %s
-                """, (primary_id, secondary_id))
-
-                # Reassign conversations to primary
-                cursor.execute("""
-                    UPDATE conversations
-                    SET contact_id = %s
-                    WHERE contact_id = %s
-                """, (primary_id, secondary_id))
+                # Repontar TODAS as referencias FK contact_id antes de deletar
+                # (substitui o reassign incompleto anterior que so cobria
+                # messages+conversations e deixava as outras ~25 tabelas
+                # serem apagadas em cascata)
+                _migrate_contact_references(cursor, primary_id, [secondary_id])
 
                 # Delete secondary
                 cursor.execute("DELETE FROM contacts WHERE id = %s", (secondary_id,))
