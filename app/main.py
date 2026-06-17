@@ -4311,6 +4311,19 @@ async def cron_linkedin_monitor_topics(request: Request):
     return {"job": "linkedin-monitor-topics", **summary}
 
 
+@app.get("/api/cron/dev-delegation-pickup")
+@track_cron_run
+async def cron_dev_delegation_pickup(request: Request):
+    """Consumer cron pra delegations(delegated_to='dev'). Fecha critério 6 do
+    ARCHITECTURE_REBUILD. Default em SHADOW (DEV_DELEGATION_SHADOW=1) — primeiro
+    semana so loga payload sem chamar worker."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.dev_delegation_pickup import process_due
+    summary = await process_due()
+    return {"job": "dev-delegation-pickup", **summary}
+
+
 @app.get("/api/admin/linkedin-topics")
 async def linkedin_topics_admin(
     limit: int = 50,

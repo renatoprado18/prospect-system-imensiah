@@ -174,6 +174,14 @@ _SCHEDULER_JOBS = [
     ("tonha-autonomous-noon", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=15, minute=5)),
     ("tonha-autonomous-afternoon", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=20, minute=5)),
     ("tonha-autonomous-evening", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=0, minute=5)),
+    # 17/06/26 — consumer pra delegations(delegated_to='dev'). Fecha criterio 6
+    # do ARCHITECTURE_REBUILD. Roda 4x dentro da janela 9-22 BRT (12,15,18,21 BRT
+    # = 15,18,21,00 UTC). Default em SHADOW (DEV_DELEGATION_SHADOW=1) — sem custo
+    # ate cutover. Cap diario USD + cap por cycle aplicados dentro do service.
+    ("dev-delegation-pickup-12", "/api/cron/dev-delegation-pickup", CronTrigger(hour=15, minute=20)),
+    ("dev-delegation-pickup-15", "/api/cron/dev-delegation-pickup", CronTrigger(hour=18, minute=20)),
+    ("dev-delegation-pickup-18", "/api/cron/dev-delegation-pickup", CronTrigger(hour=21, minute=20)),
+    ("dev-delegation-pickup-21", "/api/cron/dev-delegation-pickup", CronTrigger(hour=0, minute=20)),
     # 15/06/26 KILL SWITCH — 10 specialists CoS desligados em bloco.
     # Toda a fila abaixo gerava notificacao redundante, alucinacao de tools,
     # listas defensivas, anti-padrao de "trazer tarefa operacional pra Renato".
