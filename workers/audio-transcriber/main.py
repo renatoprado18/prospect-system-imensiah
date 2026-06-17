@@ -184,6 +184,26 @@ _SCHEDULER_JOBS = [
     ("dev-delegation-pickup-15", "/api/cron/dev-delegation-pickup", CronTrigger(hour=18, minute=20)),
     ("dev-delegation-pickup-18", "/api/cron/dev-delegation-pickup", CronTrigger(hour=21, minute=20)),
     ("dev-delegation-pickup-21", "/api/cron/dev-delegation-pickup", CronTrigger(hour=0, minute=20)),
+    # 17/06/26 — migracao em bloco de 16 crons Vercel daily/weekly pro Railway.
+    # Politica feedback_cron_host_choice: criticos que nao podem ser silently
+    # dropped → Railway in-process. Horarios UTC identicos aos do vercel.json
+    # (remocao do vercel.json na mesma PR pra evitar trigger duplicado).
+    ("daily-sync", "/api/cron/daily-sync", CronTrigger(hour=5, minute=0)),
+    ("run-daily-ai", "/api/cron/run-daily-ai", CronTrigger(hour=5, minute=15)),
+    ("run-auto-enrich", "/api/cron/run-auto-enrich", CronTrigger(hour=5, minute=25)),
+    ("run-daily-clipping", "/api/cron/run-daily-clipping", CronTrigger(hour=5, minute=35)),
+    ("sync-conselhoos-raci", "/api/cron/sync-conselhoos-raci", CronTrigger(hour=6, minute=0)),
+    ("sync-whatsapp-history", "/api/cron/sync-whatsapp-history", CronTrigger(hour=6, minute=0)),
+    ("index-drive-documents", "/api/cron/index-drive-documents", CronTrigger(hour=7, minute=0)),
+    ("linkedin-monitor-topics", "/api/cron/linkedin-monitor-topics", CronTrigger(hour=9, minute=0)),
+    ("linkedin-curator", "/api/cron/linkedin-curator", CronTrigger(hour=10, minute=0)),
+    ("linkedin-outbound-check", "/api/cron/linkedin-outbound-check", CronTrigger(hour=11, minute=0)),
+    ("linkedin-engagement-prospecting", "/api/cron/linkedin-engagement-prospecting", CronTrigger(hour=11, minute=30)),
+    ("raci-weekly-report", "/api/cron/raci-weekly-report", CronTrigger(day_of_week="mon", hour=11, minute=0)),
+    ("weekly-digest", "/api/cron/weekly-digest", CronTrigger(day_of_week="mon", hour=8, minute=0)),
+    ("editorial-weekly-briefing", "/api/cron/editorial-weekly-briefing", CronTrigger(day_of_week="sun", hour=21, minute=0)),
+    ("daily-synthesis", "/api/cron/daily-synthesis", CronTrigger(hour=1, minute=0)),
+    ("auto-resolve-editorial", "/api/cron/auto-resolve-editorial", CronTrigger(hour=15, minute=30)),
     # 15/06/26 KILL SWITCH — 10 specialists CoS desligados em bloco.
     # Toda a fila abaixo gerava notificacao redundante, alucinacao de tools,
     # listas defensivas, anti-padrao de "trazer tarefa operacional pra Renato".
