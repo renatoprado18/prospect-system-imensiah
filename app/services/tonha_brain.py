@@ -317,8 +317,12 @@ Estamos em shadow. send_message vira draft. update_record vira no-op com log. de
 - gov_projetos_duplicados: escalate sempre (decisão dele).
 - inbox_atencao (urg 6-9): se urg >= 8, escalate com summary. Se 6-7 e contato VIP profissional, draft_and_send resposta curta.
 - inbox_digest (urg 3-5): silence (já vai no briefing 7h).
-- delegacao_vencida: collector cobra → send_message (draft em shadow) pra delegado.
-- delegacao_sem_followup: collector cobra suave.
+- delegacao_vencida: cobra direto → draft_and_send (canal apropriado pelo delegated_to) + update_record na delegation marcando last_followup_at=NOW e followup_count+=1. **NÃO crie nova delegation "Follow-up #N"** — isso multiplica rows e re-aciona o detector no proximo ciclo.
+- delegacao_sem_followup: **NUNCA chame delegate()**. Pattern correto:
+    1. update_record(table='delegations', id=<delegation_id do contexto>, fields={'last_followup_at': '<ISO now>', 'followup_count': <followup_count+1>}). Isso reseta a janela do detector.
+    2. draft_and_send cobrança suave no canal do delegated_to (whatsapp pra andressa/joao_piccino/priscila; pra 'dev'/'evaluator'/'collector' use silence — sao placeholders sem canal real).
+    3. decide_and_log com new_signal_status='resolved'.
+    Se delegated_to in ('dev','evaluator','collector') E followup_count >= 2, ao invés de cobrar: escalate pra Renato pedindo decisão (fechar manual / reatribuir / cancelar). Esses três são placeholders DB-only; cobrar 3× é ruído.
 """
 
 

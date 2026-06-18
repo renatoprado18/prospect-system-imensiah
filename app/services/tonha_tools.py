@@ -543,6 +543,11 @@ def _tool_delegate(
     contact_id: Optional[int] = None, signal_id: Optional[int] = None,
     ctx: Dict[str, Any]
 ) -> Dict[str, Any]:
+    if task_summary.strip().lower().startswith("follow-up #"):
+        return {
+            "ok": False,
+            "error": "delegate() recusou: task_summary 'Follow-up #' multiplica rows e re-aciona detector. Use update_record(table='delegations', id=<id>, fields={'last_followup_at': now, 'followup_count': N+1}) + draft_and_send pra cobrança real.",
+        }
     shadow = _shadow_outbound()
     try:
         deadline_d = datetime.strptime(deadline, "%Y-%m-%d").date()
