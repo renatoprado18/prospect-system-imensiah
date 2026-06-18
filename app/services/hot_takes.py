@@ -308,22 +308,35 @@ async def filter_news_with_ai(news_items: list[dict], limit: int = 10) -> list[d
         for i, item in enumerate(news_items[:30])  # Analisa até 30
     ])
 
-    prompt = f"""Analise estas notícias e selecione as {limit} mais relevantes para criar "hot takes" sobre Governança Corporativa, NeoGovernança e Gestão na Complexidade.
+    prompt = f"""Voce seleciona noticias pra hot takes do Renato Almeida Prado — conselheiro independente + founder do imensIAH (SaaS de AI agentic pra execucao estrategica de PMEs).
 
-CRITÉRIOS DE SELEÇÃO:
-- Notícias que permitem uma conexão criativa/irreverente com governança
-- Decisões de líderes/governos que impactam empresas
-- Mudanças tecnológicas com impacto em conselhos/gestão
-- Crises ou oportunidades corporativas
-- Temas de ESG, M&A, liderança
+POSICIONAMENTO ATUAL (pivot Q2-Q3 2026):
+- Audiencia primaria: founder/CEO de PME
+- Audiencia secundaria: conselheiros independentes, executivos senior, investidores
+- Mensagem central: "AI acelera execucao estrategica"
+- Temas-chave da marca: AI aplicada · agentes AI · estrategia + AI · IA pra PMEs · governanca nascente · board governance · conselheiro independente · IA etica
 
-NOTÍCIAS:
+CRITERIOS DE SELECAO (selecione {limit} noticias):
+PRIORIZAR fortemente:
+- Casos de empresas usando AI pra acelerar decisao/execucao estrategica
+- Lancamentos/mudancas em AI agentic, LLMs, ferramentas pra founders
+- Founder de PME tomando decisao corajosa (entrar/sair de mercado, M&A, capital)
+- Conselhos consultivos/administracao de PMEs em mudanca
+- Falhas de governanca nascente em scaleups (lesson learned acionavel)
+
+DESPRIORIZAR (esses geraram dismiss alto historicamente):
+- Macro/politica pura (Selic, eleicoes, BC) sem angulo de execucao
+- Regulacao setorial densa sem leitura pra founder
+- Crises de estatais/grandes corporacoes longe da realidade PME
+- "Governanca corporativa" generica sem caso concreto
+
+NOTICIAS:
 {news_list}
 
 Responda APENAS com JSON:
 {{
-  "selected": [1, 5, 8, ...],  // números das notícias selecionadas em ordem de relevância
-  "reasoning": "breve explicação da seleção"
+  "selected": [1, 5, 8, ...],
+  "reasoning": "breve explicacao da selecao (mencione angulo de marca pra cada uma)"
 }}"""
 
     try:
@@ -412,7 +425,7 @@ async def generate_hot_take(news_item: dict, articles: list[dict] = None) -> dic
         logger.error(f"Error accessing news_item: {type(pe).__name__}: {pe}, news_item type: {type(news_item)}")
         return {"error": f"Error accessing news_item: {pe}"}
 
-    prompt = f"""Você é Renato Almeida Prado, especialista em NeoGovernança e Governança na Era da Complexidade.
+    prompt = f"""Você é Renato Almeida Prado: conselheiro independente, ex-CEO, founder do imensIAH (SaaS de AI agentic pra execução estratégica de PMEs). Sua audiência principal no LinkedIn é founder/CEO de PME; secundária, conselheiros e executivos sênior.
 
 NOTÍCIA:
 Título: {news_title}
@@ -421,24 +434,30 @@ Descrição: {news_desc}
 ARTIGOS DISPONÍVEIS:
 {articles_text}
 
+POSICIONAMENTO (use como ângulo):
+- "AI acelera execução estratégica" é a tese central
+- Conecte: AI aplicada · agentes AI · decisão de founder · governança nascente · board governance
+- Evite: jargão "NeoGovernança", textão institucional, tom de manifesto teórico
+
 TAREFA:
-Crie um "hot take" irreverente para LinkedIn que:
-1. Comenta a notícia de forma provocativa
-2. Conecta com conceitos de NeoGovernança/Complexidade
-3. Oferece um insight valioso
-4. Termina com link para artigo relevante (se houver)
+Escreva um hot take pra LinkedIn que:
+1. Lê a notícia pelo ângulo de quem decide (founder PME ou conselheiro)
+2. Conecta — quando couber — com AI/execução acelerada
+3. Entrega 1 insight prático que muda como o leitor age amanhã
+4. Termina com pergunta provocativa OU link pra artigo (se relevante)
 
 ESTILO:
-- Tom irreverente mas inteligente
-- Provocativo sem ser ofensivo
-- Direto e conciso (max 200 palavras)
-- Use emojis com moderação (1-2)
+- Voz: ombro a ombro, experiente, sem ser professoral
+- Provocativo mas concreto (ex: nome empresa, número, decisão observável)
+- 150-200 palavras
+- Português com acentuação correta (não use "tambem", "decisao" — escreva "também", "decisão")
+- Emojis com moderação (0-2, só quando agregam)
 
 Responda em JSON:
 {{
   "hook": "frase de abertura impactante (1 linha)",
-  "body": "desenvolvimento do hot take (2-3 parágrafos curtos)",
-  "cta": "call to action final",
+  "body": "desenvolvimento (2-3 parágrafos curtos)",
+  "cta": "call to action final (pergunta ou convite)",
   "article_slug": "slug do artigo relacionado ou null",
   "hashtags": ["hashtag1", "hashtag2", "hashtag3"],
   "linkedin_post": "post completo formatado para LinkedIn"
