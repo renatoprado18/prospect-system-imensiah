@@ -5782,6 +5782,15 @@ async def api_tonha_weekly_monitor(request: Request):
         pending = cur.fetchone()
         n_pending = int(pending["n_unacked_escalates"] or 0) if pending else 0
 
+        cur.execute("""
+            SELECT COUNT(*) AS n_stuck
+            FROM dev_delegation_runs
+            WHERE status='running'
+              AND started_at < NOW() - INTERVAL '10 minutes'
+        """)
+        stuck = cur.fetchone()
+        n_dev_stuck = int(stuck["n_stuck"] or 0) if stuck else 0
+
     n_dev_total = sum(r["n"] for r in dev_runs)
     n_dev_errors = sum(r["n"] for r in dev_runs if r["status"] in ("error", "timeout"))
     n_dev_success = sum(r["n"] for r in dev_runs if r["status"] == "success")
@@ -5798,6 +5807,7 @@ async def api_tonha_weekly_monitor(request: Request):
         n_dev_errors == 0
         and n_dev_total >= 5
         and not missing_crons
+        and n_dev_stuck == 0
     )
 
     flags = []
@@ -5809,6 +5819,8 @@ async def api_tonha_weekly_monitor(request: Request):
         flags.append(f"custo dev_delegation 7d = ${total_cost_7d:.2f} (acima de $30)")
     if n_pending > 5:
         flags.append(f"{n_pending} escalates Tonha sem ack")
+    if n_dev_stuck:
+        flags.append(f"{n_dev_stuck} dev_delegation_runs stuck running >10min — sinal de Vercel timeout, considerar Variant 2 (Railway)")
 
     return {
         "dev_delegation_runs_7d": dev_runs,
@@ -5819,6 +5831,7 @@ async def api_tonha_weekly_monitor(request: Request):
             "n_dev_success_7d": n_dev_success,
             "n_dev_shadow_7d": n_dev_shadow,
             "n_dev_errors_7d": n_dev_errors,
+            "n_dev_runs_stuck": n_dev_stuck,
             "total_cost_usd_7d": round(total_cost_7d, 4),
             "missing_crons_24h": missing_crons,
             "n_pending_escalates": n_pending,
