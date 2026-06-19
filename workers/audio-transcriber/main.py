@@ -180,10 +180,12 @@ _SCHEDULER_JOBS = [
     # do ARCHITECTURE_REBUILD. Roda 4x dentro da janela 9-22 BRT (12,15,18,21 BRT
     # = 15,18,21,00 UTC). Default em SHADOW (DEV_DELEGATION_SHADOW=1) — sem custo
     # ate cutover. Cap diario USD + cap por cycle aplicados dentro do service.
-    ("dev-delegation-pickup-12", "/api/cron/dev-delegation-pickup", CronTrigger(hour=15, minute=20)),
-    ("dev-delegation-pickup-15", "/api/cron/dev-delegation-pickup", CronTrigger(hour=18, minute=20)),
-    ("dev-delegation-pickup-18", "/api/cron/dev-delegation-pickup", CronTrigger(hour=21, minute=20)),
-    ("dev-delegation-pickup-21", "/api/cron/dev-delegation-pickup", CronTrigger(hour=0, minute=20)),
+    #
+    # 19/06/26 VARIANT 2: portado pra in-process (Railway, sem teto 300s) apos
+    # monitor detectar 2 runs stuck em status='running' (id 15, 16) por timeout
+    # Vercel mid-call ao claude-code-delegator. Lista em _LOCAL_DEV_DELEGATION_JOBS
+    # registrada no _start_scheduler — handler local chama
+    # dev_delegation_pickup.process_due() direto via psycopg.
     # 17/06/26 — migracao em bloco de 16 crons Vercel daily/weekly pro Railway.
     # Politica feedback_cron_host_choice: criticos que nao podem ser silently
     # dropped → Railway in-process. Horarios UTC identicos aos do vercel.json
@@ -222,6 +224,37 @@ _SCHEDULER_JOBS = [
 ]
 
 
+async def _run_local_dev_delegation(job_id: str) -> None:
+    """Handler in-process pros 4 disparos de dev_delegation_pickup.
+
+    Substitui o pattern HTTP _call_vercel_cron pra esse cron especifico —
+    no worker nao tem teto 300s, entao process_due pode executar a chamada
+    _call_delegator (30-350s) sem ser cortada mid-flight. Mantemos heartbeat
+    em cron_heartbeats pro monitor de saude continuar funcionando.
+    """
+    started = datetime.now()
+    http_status: int | None = None
+    try:
+        from dev_delegation_pickup import process_due
+        summary = await process_due()
+        http_status = 200
+        logger.info(f"scheduler local: {job_id} -> {summary}")
+    except Exception as e:
+        http_status = 500
+        logger.exception(f"scheduler local: {job_id} failed: {e}")
+    finally:
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        _record_cron_heartbeat(job_id, http_status, duration_ms)
+
+
+_LOCAL_DEV_DELEGATION_JOBS = [
+    ("dev-delegation-pickup-12", CronTrigger(hour=15, minute=20)),
+    ("dev-delegation-pickup-15", CronTrigger(hour=18, minute=20)),
+    ("dev-delegation-pickup-18", CronTrigger(hour=21, minute=20)),
+    ("dev-delegation-pickup-21", CronTrigger(hour=0, minute=20)),
+]
+
+
 @app.on_event("startup")
 async def _start_scheduler():
     if not CRON_SECRET:
@@ -237,8 +270,23 @@ async def _start_scheduler():
             misfire_grace_time=600,
             replace_existing=True,
         )
+    for job_id, trigger in _LOCAL_DEV_DELEGATION_JOBS:
+        scheduler.add_job(
+            _run_local_dev_delegation,
+            trigger=trigger,
+            args=[job_id],
+            id=job_id,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=600,
+            replace_existing=True,
+        )
     scheduler.start()
-    logger.info(f"scheduler: started with {len(_SCHEDULER_JOBS)} jobs")
+    n_total = len(_SCHEDULER_JOBS) + len(_LOCAL_DEV_DELEGATION_JOBS)
+    logger.info(
+        f"scheduler: started with {n_total} jobs "
+        f"({len(_SCHEDULER_JOBS)} http + {len(_LOCAL_DEV_DELEGATION_JOBS)} local)"
+    )
 
 
 @app.on_event("shutdown")
