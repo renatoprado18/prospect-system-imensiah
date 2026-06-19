@@ -104,6 +104,33 @@ def fetch_anthropic_cost(period_start: date, period_end: date) -> Dict:
     }
 
 
+def fetch_anthropic_daily(target_date: date) -> float:
+    """Custo Anthropic do dia UTC `target_date` em USD. Cents do cost_report /100.
+    Lag de ~24h — chamar pra D-1 ou anterior. Devolve 0.0 se sem token ou sem dados."""
+    api_key = (os.getenv("ANTHROPIC_ADMIN_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_ADMIN_API_KEY nao configurada")
+
+    from datetime import timedelta
+    next_day = target_date + timedelta(days=1)
+    params = {
+        "starting_at": _iso_z(target_date),
+        "ending_at": _iso_z(next_day),
+        "limit": 2,
+    }
+    headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.get(ANTHROPIC_ADMIN_URL, params=params, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+
+    total_cents = Decimal("0")
+    for day in data.get("data", []):
+        for r in day.get("results", []):
+            total_cents += Decimal(str(r.get("amount", "0")))
+    return float((total_cents / Decimal("100")).quantize(Decimal("0.01")))
+
+
 # ============================================================================
 # Railway
 # ============================================================================

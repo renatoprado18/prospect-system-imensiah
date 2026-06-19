@@ -5502,11 +5502,15 @@ async def cron_platform_costs_daily(request: Request):
     nao Vercel — Hobby deprioritiza."""
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
-    from services.platform_costs import auto_snapshot_month, check_budget_threshold, get_mtd_summary
+    from services.platform_costs import (
+        auto_snapshot_month, check_budget_threshold, check_anthropic_daily_spike,
+        get_mtd_summary,
+    )
     from datetime import date as _date
 
     snap = auto_snapshot_month(period_start=_date.today().replace(day=1))
     budget = await check_budget_threshold()
+    spike = await check_anthropic_daily_spike(threshold_usd=2.0)
     summary = get_mtd_summary()
 
     return {
@@ -5516,6 +5520,7 @@ async def cron_platform_costs_daily(request: Request):
         "over_budget": summary["over_budget"],
         "snapshot": snap,
         "budget_check": budget,
+        "anthropic_daily_spike": spike,
     }
 
 

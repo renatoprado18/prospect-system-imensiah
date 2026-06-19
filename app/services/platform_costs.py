@@ -500,6 +500,73 @@ async def check_budget_threshold(budget_usd: float = MONTHLY_BUDGET_USD) -> Dict
         }
 
 
+async def check_anthropic_daily_spike(threshold_usd: float = 2.0) -> Dict:
+    """Verifica se Anthropic gastou >threshold ontem (UTC). Se sim, alerta WA.
+
+    Threshold padrao $2 = ~3x baseline observado (junho 1-7 ficou em $0.10-0.30/dia).
+    Resposta a memo cost_net_negative_13_06 — pico 13-17/jun chegou a $7.79/dia
+    sem alerta especifico (so MTD budget que dispara em $100).
+
+    Dedup via system_memories ('anthropic_daily_spike_<YYYY-MM-DD>') —
+    nao re-alerta o mesmo dia, mas dias consecutivos disparam separados
+    (sinal claro de tendencia).
+    """
+    from datetime import date as _date, timedelta
+    from services.platform_costs_integrations import fetch_anthropic_daily
+
+    target = _date.today() - timedelta(days=1)  # D-1 UTC, ja fechado
+    try:
+        spend = fetch_anthropic_daily(target)
+    except Exception as e:
+        logger.warning(f"check_anthropic_daily_spike: fetch falhou: {e}")
+        return {"checked": False, "reason": f"fetch_failed:{type(e).__name__}"}
+
+    if spend < threshold_usd:
+        return {"checked": True, "spike": False, "spend_usd": spend,
+                "threshold_usd": threshold_usd, "date": target.isoformat()}
+
+    alert_key = f"anthropic_daily_spike_{target.isoformat()}"
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM system_memories WHERE titulo = %s AND tipo = 'cost_spike' LIMIT 1",
+            (alert_key,),
+        )
+        if cur.fetchone():
+            return {"checked": True, "spike": True, "spend_usd": spend,
+                    "threshold_usd": threshold_usd, "date": target.isoformat(),
+                    "alerted": False, "reason": "already_alerted"}
+
+    sent = False
+    try:
+        from services.intel_bot import send_intel_notification
+        msg = (
+            f"💸 *Anthropic daily spike — {target.strftime('%d/%m')}*\n\n"
+            f"Gasto ontem: *${spend:.2f}* (threshold ${threshold_usd:.2f})\n"
+            f"Baseline maio: ~$0.66/dia. Pico jun 13-17: $3-8/dia.\n\n"
+            "Audit: /admin/costs ou cost_report API"
+        )
+        sent = await send_intel_notification(msg)
+    except Exception as e:
+        logger.warning(f"check_anthropic_daily_spike: send failed: {e}")
+
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """INSERT INTO system_memories (titulo, conteudo, tipo, fonte, criado_em)
+                   VALUES (%s, %s, 'cost_spike', 'cost_tracker', NOW())""",
+                (alert_key, f"Anthropic ${spend:.2f} em {target.isoformat()} (>${threshold_usd})"),
+            )
+            conn.commit()
+    except Exception:
+        logger.exception("check_anthropic_daily_spike: dedupe write falhou")
+
+    return {"checked": True, "spike": True, "spend_usd": spend,
+            "threshold_usd": threshold_usd, "date": target.isoformat(),
+            "alerted": sent}
+
+
 async def check_and_notify_alerts() -> Dict:
     """Verifica alerts ativos e manda WhatsApp se algum for novo.
 

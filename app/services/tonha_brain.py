@@ -42,6 +42,24 @@ PRICE_CACHE_READ_PER_M = 0.30
 PRICE_CACHE_WRITE_PER_M = 3.75  # ephemeral 5min default
 
 
+def _cached_system(prompt: str) -> List[Dict[str, Any]]:
+    """Wrap system prompt num bloco com cache_control=ephemeral.
+    Prompt grande e estavel (~3k tokens) — cacheia entre iteracoes do tool loop
+    e entre signals dentro do mesmo tick. TTL ephemeral default 5min, cobre
+    runs autonomous (4x/dia, batch curto) e reactive (turnos rapidos)."""
+    return [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
+
+
+def _cached_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Marca o ultimo tool com cache_control — ativa cache do array tools
+    inteiro segundo SDK Anthropic. Copy-on-write pra nao mutar TOOLS global."""
+    if not tools:
+        return tools
+    out = list(tools)
+    out[-1] = {**out[-1], "cache_control": {"type": "ephemeral"}}
+    return out
+
+
 def _compute_cost(usage_in: int, usage_out: int, cache_read: int = 0, cache_create: int = 0) -> float:
     """Total USD da chamada. cache_read e cache_create sao input_tokens cacheados."""
     return (
@@ -379,8 +397,8 @@ def _run_one_signal(client: anthropic.Anthropic, signal: Dict[str, Any], ctx: Di
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
                 thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
+                system=_cached_system(SYSTEM_PROMPT),
+                tools=_cached_tools(TOOLS),
                 messages=messages,
             )
         except Exception as e:
@@ -562,8 +580,8 @@ async def run_reactive(
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
                 thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET},
-                system=sys_prompt,
-                tools=TOOLS,
+                system=_cached_system(sys_prompt),
+                tools=_cached_tools(TOOLS),
                 messages=messages,
             )
         except Exception as e:
