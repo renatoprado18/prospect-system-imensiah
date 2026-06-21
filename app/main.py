@@ -26085,26 +26085,33 @@ async def cos_context(request: Request, hours: int = 4):
     # TIMESTAMP colunas são naive — strip timezone antes de comparar
     since = (_now - timedelta(hours=hours)).replace(tzinfo=None)
 
+    wa_msgs = []
+    pending_actions = []
+    projects = []
+    unread_emails = []
+    calendar = []
+
+    # Cada query em conexão separada para isolar falhas (PG aborta transação inteira no 1º erro)
     with get_pg_db() as conn:
         cursor = conn.cursor()
-
-        # WhatsApp: msgs incoming recentes (timestamp armazena UTC naive)
         try:
+            # WhatsApp: msgs incoming recentes (message_date armazena UTC naive)
             cursor.execute("""
-                SELECT wm.id, wm.contact_id, c.nome, wm.conteudo, wm.timestamp,
-                       wm.direction, wm.status
+                SELECT wm.id, wm.contact_id, c.nome, wm.content, wm.message_date,
+                       wm.direction
                 FROM whatsapp_messages wm
                 LEFT JOIN contacts c ON c.id = wm.contact_id
-                WHERE wm.timestamp >= %s
+                WHERE wm.message_date >= %s
                   AND wm.direction = 'incoming'
-                ORDER BY wm.timestamp DESC
+                ORDER BY wm.message_date DESC
                 LIMIT 50
             """, (since,))
             wa_msgs = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
         except Exception:
-            wa_msgs = []
+            conn.rollback()
 
-        # Ações pendentes (propostas CoS não resolvidas)
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
         try:
             cursor.execute("""
                 SELECT id, contact_id, tipo, titulo, descricao, criado_em, prioridade
@@ -26115,25 +26122,27 @@ async def cos_context(request: Request, hours: int = 4):
             """)
             pending_actions = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
         except Exception:
-            pending_actions = []
+            conn.rollback()
 
-        # Projetos ativos com tarefas pendentes
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
         try:
             cursor.execute("""
                 SELECT p.id, p.nome, p.status, p.fase,
                        COUNT(pt.id) FILTER (WHERE pt.status = 'pending') AS pending_tasks
                 FROM projects p
                 LEFT JOIN project_tasks pt ON pt.project_id = p.id
-                WHERE p.status = 'active'
+                WHERE p.status = 'ativo'
                 GROUP BY p.id, p.nome, p.status, p.fase
                 ORDER BY pending_tasks DESC
                 LIMIT 20
             """)
             projects = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
         except Exception:
-            projects = []
+            conn.rollback()
 
-        # Emails triados como must_read ainda pendentes
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
         try:
             cursor.execute("""
                 SELECT et.id, cv.assunto AS subject, c.nome AS sender_name,
@@ -26149,10 +26158,12 @@ async def cos_context(request: Request, hours: int = 4):
             """, (since,))
             unread_emails = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
         except Exception:
-            unread_emails = []
+            conn.rollback()
 
-        # Calendar: próximas 24h (start_datetime armazena BRT naive)
+    with get_pg_db() as conn:
+        cursor = conn.cursor()
         try:
+            # calendar_events.start_datetime armazena BRT naive (exceção de TZ do sistema)
             now_brt = to_brt(_now).replace(tzinfo=None)
             next_24h_brt = now_brt + timedelta(hours=24)
             cursor.execute("""
@@ -26164,7 +26175,7 @@ async def cos_context(request: Request, hours: int = 4):
             """, (now_brt, next_24h_brt))
             calendar = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
         except Exception:
-            calendar = []
+            conn.rollback()
 
     return {
         "generated_at": now_utc().isoformat(),
