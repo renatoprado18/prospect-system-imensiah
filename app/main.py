@@ -26128,12 +26128,12 @@ async def cos_context(request: Request, hours: int = 4):
         cursor = conn.cursor()
         try:
             cursor.execute("""
-                SELECT p.id, p.nome, p.status, p.fase,
+                SELECT p.id, p.nome, p.status,
                        COUNT(t.id) FILTER (WHERE t.status = 'pending') AS pending_tasks
                 FROM projects p
                 LEFT JOIN tasks t ON t.project_id = p.id
                 WHERE p.status = 'ativo'
-                GROUP BY p.id, p.nome, p.status, p.fase
+                GROUP BY p.id, p.nome, p.status
                 ORDER BY pending_tasks DESC
                 LIMIT 20
             """)
