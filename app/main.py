@@ -26080,83 +26080,91 @@ async def cos_context(request: Request, hours: int = 4):
         if not user:
             raise HTTPException(status_code=401, detail="Nao autenticado")
 
-    from services.tz import now_utc
-    since = now_utc() - timedelta(hours=hours)
+    from services.tz import now_utc, to_brt
+    _now = now_utc()
+    # TIMESTAMP colunas são naive — strip timezone antes de comparar
+    since = (_now - timedelta(hours=hours)).replace(tzinfo=None)
 
     with get_pg_db() as conn:
         cursor = conn.cursor()
 
-        # WhatsApp: msgs incoming não respondidas + recentes
-        cursor.execute("""
-            SELECT wm.id, wm.contact_id, c.nome, wm.conteudo, wm.timestamp,
-                   wm.direction, wm.status
-            FROM whatsapp_messages wm
-            LEFT JOIN contacts c ON c.id = wm.contact_id
-            WHERE wm.timestamp >= %s
-              AND wm.direction = 'incoming'
-            ORDER BY wm.timestamp DESC
-            LIMIT 50
-        """, (since,))
-        wa_msgs = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
+        # WhatsApp: msgs incoming recentes (timestamp armazena UTC naive)
+        try:
+            cursor.execute("""
+                SELECT wm.id, wm.contact_id, c.nome, wm.conteudo, wm.timestamp,
+                       wm.direction, wm.status
+                FROM whatsapp_messages wm
+                LEFT JOIN contacts c ON c.id = wm.contact_id
+                WHERE wm.timestamp >= %s
+                  AND wm.direction = 'incoming'
+                ORDER BY wm.timestamp DESC
+                LIMIT 50
+            """, (since,))
+            wa_msgs = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
+        except Exception:
+            wa_msgs = []
 
         # Ações pendentes (propostas CoS não resolvidas)
-        cursor.execute("""
-            SELECT id, contact_id, tipo, titulo, descricao, criado_em, prioridade
-            FROM ai_suggestions
-            WHERE status = 'pending'
-            ORDER BY prioridade DESC, criado_em DESC
-            LIMIT 30
-        """)
-        pending_actions = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
+        try:
+            cursor.execute("""
+                SELECT id, contact_id, tipo, titulo, descricao, criado_em, prioridade
+                FROM ai_suggestions
+                WHERE status = 'pending'
+                ORDER BY prioridade DESC, criado_em DESC
+                LIMIT 30
+            """)
+            pending_actions = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
+        except Exception:
+            pending_actions = []
 
-        # Projetos ativos com milestone próximo
-        cursor.execute("""
-            SELECT p.id, p.nome, p.status, p.fase,
-                   COUNT(pt.id) FILTER (WHERE pt.status = 'pending') AS pending_tasks
-            FROM projects p
-            LEFT JOIN project_tasks pt ON pt.project_id = p.id
-            WHERE p.status = 'active'
-            GROUP BY p.id, p.nome, p.status, p.fase
-            ORDER BY pending_tasks DESC
-            LIMIT 20
-        """)
-        projects = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
+        # Projetos ativos com tarefas pendentes
+        try:
+            cursor.execute("""
+                SELECT p.id, p.nome, p.status, p.fase,
+                       COUNT(pt.id) FILTER (WHERE pt.status = 'pending') AS pending_tasks
+                FROM projects p
+                LEFT JOIN project_tasks pt ON pt.project_id = p.id
+                WHERE p.status = 'active'
+                GROUP BY p.id, p.nome, p.status, p.fase
+                ORDER BY pending_tasks DESC
+                LIMIT 20
+            """)
+            projects = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
+        except Exception:
+            projects = []
 
         # Emails triados como must_read ainda pendentes
-        cursor.execute("""
-            SELECT et.id, cv.assunto AS subject, c.nome AS sender_name,
-                   et.criado_em, et.classification, et.priority
-            FROM email_triage et
-            LEFT JOIN conversations cv ON cv.id = et.conversation_id
-            LEFT JOIN contacts c ON c.id = et.contact_id
-            WHERE et.classification = 'must_read'
-              AND et.status = 'pending'
-              AND et.criado_em >= %s
-            ORDER BY et.priority DESC, et.criado_em DESC
-            LIMIT 20
-        """, (since,))
-        unread_emails = []
         try:
+            cursor.execute("""
+                SELECT et.id, cv.assunto AS subject, c.nome AS sender_name,
+                       et.criado_em, et.classification, et.priority
+                FROM email_triage et
+                LEFT JOIN conversations cv ON cv.id = et.conversation_id
+                LEFT JOIN contacts c ON c.id = et.contact_id
+                WHERE et.classification = 'must_read'
+                  AND et.status = 'pending'
+                  AND et.criado_em >= %s
+                ORDER BY et.priority DESC, et.criado_em DESC
+                LIMIT 20
+            """, (since,))
             unread_emails = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
         except Exception:
-            pass
+            unread_emails = []
 
-        # Calendar: próximas 24h
-        from services.tz import now_utc, BRT
-        now = now_utc()
-        next_24h = now + timedelta(hours=24)
-        cursor.execute("""
-            SELECT id, summary, start_time, end_time, location
-            FROM calendar_events
-            WHERE start_time BETWEEN %s AND %s
-            ORDER BY start_time
-            LIMIT 20
-        """, (now, next_24h))
-        calendar = []
+        # Calendar: próximas 24h (start_datetime armazena BRT naive)
         try:
+            now_brt = to_brt(_now).replace(tzinfo=None)
+            next_24h_brt = now_brt + timedelta(hours=24)
+            cursor.execute("""
+                SELECT id, summary, start_datetime, end_datetime, location
+                FROM calendar_events
+                WHERE start_datetime BETWEEN %s AND %s
+                ORDER BY start_datetime
+                LIMIT 20
+            """, (now_brt, next_24h_brt))
             calendar = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
         except Exception:
-            pass
+            calendar = []
 
     return {
         "generated_at": now_utc().isoformat(),
