@@ -26106,7 +26106,7 @@ async def cos_context(request: Request, hours: int = 4):
                 ORDER BY wm.message_date DESC
                 LIMIT 50
             """, (since,))
-            wa_msgs = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
+            wa_msgs = [dict(row) for row in cursor.fetchall()]
         except Exception:
             conn.rollback()
 
@@ -26120,7 +26120,7 @@ async def cos_context(request: Request, hours: int = 4):
                 ORDER BY prioridade DESC, criado_em DESC
                 LIMIT 30
             """)
-            pending_actions = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
+            pending_actions = [dict(row) for row in cursor.fetchall()]
         except Exception:
             conn.rollback()
 
@@ -26137,7 +26137,7 @@ async def cos_context(request: Request, hours: int = 4):
                 ORDER BY pending_tasks DESC
                 LIMIT 20
             """)
-            projects = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
+            projects = [dict(row) for row in cursor.fetchall()]
         except Exception:
             conn.rollback()
 
@@ -26156,7 +26156,7 @@ async def cos_context(request: Request, hours: int = 4):
                 ORDER BY et.priority DESC, et.criado_em DESC
                 LIMIT 20
             """, (since,))
-            unread_emails = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
+            unread_emails = [dict(row) for row in cursor.fetchall()]
         except Exception:
             conn.rollback()
 
@@ -26173,7 +26173,7 @@ async def cos_context(request: Request, hours: int = 4):
                 ORDER BY start_datetime
                 LIMIT 20
             """, (now_brt, next_24h_brt))
-            calendar = [dict(zip([d[0] for d in cursor.description], row)) for row in cursor.fetchall()]
+            calendar = [dict(row) for row in cursor.fetchall()]
         except Exception:
             conn.rollback()
 
