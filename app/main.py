@@ -27612,5 +27612,182 @@ async def api_intel_chat_send(request: Request):
     }
 
 
+# =============================================================================
+# CoS CONTEXT AGENT — cron endpoints (Railway scheduler, sem egress CCR)
+# =============================================================================
+
+def _cos_agent_call_claude(prompt: str, max_tokens: int = 600) -> dict:
+    """Chama Claude (single-shot, sem tool loop) e parseia JSON da resposta."""
+    import re
+    try:
+        import anthropic as _ant
+        api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        if not api_key:
+            return {"error": "no_api_key"}
+        client = _ant.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = (resp.content[0].text or "").strip()
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        return json.loads(m.group()) if m else {"raw": raw}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _cos_agent_send_wa(message: str, urgency: str = "normal") -> bool:
+    """Envia WA para Renato via Evolution. Retorna True se enviou."""
+    try:
+        with get_pg_db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT c.whatsapp_phone FROM tonha_role_contacts trc
+                JOIN contacts c ON c.id = trc.contact_id
+                WHERE trc.role = 'renato' LIMIT 1
+            """)
+            row = cur.fetchone()
+        if not row or not row[0]:
+            return False
+        prefix = "🔴 " if urgency == "high" else "🔵 "
+        from integrations.evolution_api import get_evolution_client
+        client = get_evolution_client()
+        await client.send_text(row[0], f"{prefix}[CoS Agent]\n{message}")
+        return True
+    except Exception:
+        logging.exception("_cos_agent_send_wa falhou")
+        return False
+
+
+def _cos_agent_save_digest(summary: str, processed: int, actioned: int) -> None:
+    from services.tz import now_utc as _now_utc
+    try:
+        with get_pg_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO system_feedback (tipo, conteudo, status, criado_em) VALUES ('cos_digest', %s, 'processed', %s)",
+                (f"processed={processed} actioned={actioned}\n\n{summary}", _now_utc()),
+            )
+            conn.commit()
+    except Exception:
+        logging.exception("_cos_agent_save_digest falhou")
+
+
+@app.get("/api/cron/cos-context-agent")
+async def cron_cos_context_agent(request: Request):
+    """Patrol horário do CoS Context Agent (agendado no Railway worker).
+
+    1h de contexto → Claude decide → notifica se urgente → salva digest.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401)
+
+    from services.cos_sensor import _load_context
+    ctx = _load_context(window_min=60)
+
+    wa_count = len(ctx.get("wa_messages") or [])
+    email_count = len(ctx.get("email_triage") or [])
+    cal_count = len(ctx.get("calendar") or [])
+    action_count = len(ctx.get("ai_suggestions") or [])
+
+    ctx_json = json.dumps(ctx, default=str, ensure_ascii=False)
+    if len(ctx_json) > 8000:
+        ctx_json = ctx_json[:7990] + "...[trunc]"
+
+    prompt = f"""Você é o CoS Context Agent de Renato Prado. Analise o snapshot e decida.
+
+SNAPSHOT (última 1h):
+{ctx_json}
+
+Responda SOMENTE com JSON válido:
+{{"notify": true/false, "urgency": "high"|"normal"|null, "message": "texto curto se notify=true, else null", "summary": "2-3 linhas descrevendo o ciclo"}}
+
+NOTIFY=true urgency=high: WA incoming de pessoa nomeada (nao grupo) sem resposta >2h; email must_read priority=high; evento em <2h.
+NOTIFY=true urgency=normal: >5 ai_suggestions pending de alta prioridade novas.
+SILENCIAR: grupos WA, alertas [Sistema]/[CRON]/[Bot], pendências >48h sem mudança, ciclos sem novidade."""
+
+    decision = _cos_agent_call_claude(prompt)
+    actioned = 0
+
+    if decision.get("notify") and decision.get("message"):
+        sent = await _cos_agent_send_wa(decision["message"], decision.get("urgency") or "normal")
+        if sent:
+            actioned = 1
+
+    summary = decision.get("summary") or f"Ciclo patrol: {wa_count} WA, {email_count} emails, {action_count} ações. Sem urgências."
+    _cos_agent_save_digest(summary, wa_count + email_count + cal_count + action_count, actioned)
+
+    return {
+        "status": "ok",
+        "notify": decision.get("notify", False),
+        "urgency": decision.get("urgency"),
+        "actioned": actioned,
+        "summary": summary,
+    }
+
+
+@app.get("/api/cron/cos-digest")
+async def cron_cos_digest(request: Request, mode: str = "morning"):
+    """Digest narrativo do CoS (agendado no Railway: 7h e 18h BRT).
+
+    12h de contexto → Claude escreve briefing → envia WA → salva digest.
+    mode=morning (padrão) ou mode=evening.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401)
+
+    from services.cos_sensor import _load_context
+    ctx = _load_context(window_min=720)
+
+    wa_count = len(ctx.get("wa_messages") or [])
+    email_count = len(ctx.get("email_triage") or [])
+    cal_count = len(ctx.get("calendar") or [])
+    action_count = len(ctx.get("ai_suggestions") or [])
+
+    ctx_json = json.dumps(ctx, default=str, ensure_ascii=False)
+    if len(ctx_json) > 10000:
+        ctx_json = ctx_json[:9990] + "...[trunc]"
+
+    if mode == "morning":
+        framing = """Ciclo MATINAL (7h BRT). Escreva um briefing para o dia que começa (max 15 linhas):
+1. Agenda do dia: eventos calendar próximas 24h (hora, título, local)
+2. Mensagens em aberto: WA incoming sem resposta nas últimas 12h, por contato
+3. E-mails must_read: assunto + remetente, por prioridade
+4. Projetos com atenção: >3 tarefas pending ou travados
+5. Ações acumuladas: top-3 ai_suggestions mais prioritárias
+Sem cumprimentos. Números concretos. Silenciar grupos WA e alertas automáticos."""
+    else:
+        framing = """Ciclo NOTURNO (18h BRT). Escreva o fechamento do dia (max 15 linhas):
+1. Pendências do dia: WA + emails sem resposta hoje
+2. Ações para amanhã: ai_suggestions prioritárias ainda abertas
+3. Projetos em risco: tarefas vencidas ou paradas >3 dias
+4. Agenda amanhã: próximos 3 eventos
+5. Número do dia: "X msgs WA, Y emails, Z ações pendentes"
+Sem cumprimentos. Foco no incompleto, não no feito. Silenciar grupos e alertas."""
+
+    prompt = f"""Você é o CoS Digest Agent de Renato Prado.
+
+SNAPSHOT (últimas 12h):
+{ctx_json}
+
+{framing}
+
+Responda SOMENTE com JSON válido:
+{{"summary": "briefing aqui (max 15 linhas)"}}"""
+
+    decision = _cos_agent_call_claude(prompt, max_tokens=800)
+    summary = decision.get("summary") or f"Digest {mode}: {wa_count} WA, {email_count} emails, {action_count} ações."
+
+    await _cos_agent_send_wa(summary, "normal")
+    _cos_agent_save_digest(summary, wa_count + email_count + cal_count + action_count, 1)
+
+    return {
+        "status": "ok",
+        "mode": mode,
+        "summary": summary,
+    }
+
+
 # Vercel handler
 app_handler = app

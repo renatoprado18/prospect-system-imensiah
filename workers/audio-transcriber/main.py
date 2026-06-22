@@ -169,6 +169,12 @@ _SCHEDULER_JOBS = [
     # Le DB, emite signals com signal_hash UNIQUE (idempotente). Brain Sonnet
     # le signals e decide. Ver docs/ARCHITECTURE_REBUILD.md.
     ("detectors-run", "/api/cron/detectors-run", CronTrigger(minute=22)),
+    # 21/06/26 — CoS Context Agent (substituiu CCR routines que tem egress restrito).
+    # Patrol horário: 1h de contexto → Claude decide → notifica se urgente → salva digest.
+    # Digests narrativos: 12h de contexto → briefing WA. 7h BRT=10h UTC, 18h BRT=21h UTC.
+    ("cos-context-agent", "/api/cron/cos-context-agent", CronTrigger(minute=8)),
+    ("cos-digest-morning", "/api/cron/cos-digest?mode=morning", CronTrigger(hour=10, minute=8)),
+    ("cos-digest-evening", "/api/cron/cos-digest?mode=evening", CronTrigger(hour=21, minute=8)),
     # 15/06/26 FASE 2A REBUILD — Tonha brain (Sonnet 4.6 + extended thinking)
     # autonomous loop 4x/dia BRT: 8h/12h/17h/21h = 11h/15h/20h/00h UTC.
     # Default em SHADOW MODE (TONHA_SHADOW_MODE=1) — send/update viram drafts.
