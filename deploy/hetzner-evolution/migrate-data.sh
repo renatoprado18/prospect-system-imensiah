@@ -13,7 +13,7 @@
 set -euo pipefail
 
 VPS_IP="${VPS_IP:?defina VPS_IP=<ip-do-hetzner>}"
-RAILWAY_PG="${RAILWAY_PG:-postgresql://postgres:fRQREIzMCNqSTITkYfFtWgjMcMmqoxrH@ballast.proxy.rlwy.net:53325/railway}"
+RAILWAY_PG="${RAILWAY_PG:?defina RAILWAY_PG=<connection-string-do-railway>}"
 
 DUMP_FILE="/tmp/evolution_migration_$(date +%Y%m%d_%H%M%S).sql"
 
