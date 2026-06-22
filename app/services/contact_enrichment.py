@@ -21,7 +21,7 @@ from typing import Optional, Dict, List, Any
 
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 import logging
 logger = logging.getLogger(__name__)

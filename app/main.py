@@ -2868,7 +2868,7 @@ Retorne APENAS o JSON, sem explicacoes."""
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-6",
                     "max_tokens": 1024,
                     "messages": [{"role": "user", "content": prompt}]
                 },
@@ -20307,7 +20307,7 @@ REGRAS:
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-6",
                     "max_tokens": 1000,
                     "messages": [{"role": "user", "content": prompt}],
                 },
@@ -20869,7 +20869,7 @@ Instrucoes:
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-6",
                     "max_tokens": 2000,
                     "messages": [{"role": "user", "content": prompt}]
                 }
@@ -21010,7 +21010,7 @@ INSTRUCOES:
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "messages": [{"role": "user", "content": prompt}]}
+                json={"model": "claude-sonnet-4-6", "max_tokens": 1500, "messages": [{"role": "user", "content": prompt}]}
             )
         if resp.status_code != 200:
             raise HTTPException(status_code=500, detail=f"Erro API: {resp.status_code}")
@@ -21661,7 +21661,7 @@ Responda JSON puro, sem markdown:
         resp = await client.post(
             "https://api.anthropic.com/v1/messages",
             headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": "claude-sonnet-4-20250514", "max_tokens": 1500, "messages": [{"role": "user", "content": prompt}]},
+            json={"model": "claude-sonnet-4-6", "max_tokens": 1500, "messages": [{"role": "user", "content": prompt}]},
         )
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Claude API {resp.status_code}: {resp.text[:300]}")
@@ -25558,7 +25558,7 @@ Retorne APENAS o JSON válido."""
     try:
         client = anthropic.Anthropic()
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=8000,
             messages=[{"role": "user", "content": prompt}],
         )

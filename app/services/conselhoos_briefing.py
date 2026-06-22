@@ -21,7 +21,7 @@ from database import get_db
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 CONSELHOOS_DATABASE_URL = os.getenv("CONSELHOOS_DATABASE_URL")
 CONSELHOOS_USER_ID = os.getenv("CONSELHOOS_USER_ID", "")
 

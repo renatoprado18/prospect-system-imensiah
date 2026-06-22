@@ -112,7 +112,7 @@ Se nao houver reuniao:
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-6",
                     "max_tokens": 1000,
                     "messages": [{"role": "user", "content": prompt}]
                 }
@@ -281,7 +281,7 @@ async def _find_address_on_website(website_url: str, company_name: str) -> Optio
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-6",
                     "max_tokens": 300,
                     "messages": [{
                         "role": "user",

@@ -26,7 +26,7 @@ from database import get_db
 from services.rodas_service import get_rodas_service
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # Tipos de intencao suportados
 INTENT_TYPES = [

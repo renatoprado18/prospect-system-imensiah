@@ -23,7 +23,7 @@ from database import get_connection
 from integrations.gmail import GmailIntegration
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 
 async def call_claude_api(prompt: str, max_tokens: int = 500, retries: int = 2) -> Dict[str, Any]:

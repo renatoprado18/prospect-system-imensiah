@@ -230,7 +230,7 @@ IMPORTANTE:
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-6",
                     "max_tokens": 1500,
                     "messages": [{"role": "user", "content": prompt}]
                 }
@@ -778,7 +778,7 @@ REGRAS sobre a memória:
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-6",
                     "max_tokens": 2000,
                     "messages": [{"role": "user", "content": prompt}]
                 }
