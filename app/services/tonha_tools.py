@@ -69,8 +69,14 @@ TOOLS = [
             "properties": {
                 "scope": {
                     "type": "string",
-                    "enum": ["contacts", "projects", "tasks", "signals", "delegations", "calendar", "whatsapp", "attachments", "all"],
-                    "description": "O que buscar. 'calendar' = eventos 14d. 'whatsapp' = msgs WA 30d. 'attachments' = PDFs/audios/imagens recebidos no WA com texto extraido. 'all' = broad.",
+                    "enum": ["contacts", "projects", "tasks", "signals", "delegations", "calendar", "whatsapp", "whatsapp_thread", "attachments", "all"],
+                    "description": (
+                        "O que buscar. 'calendar' = eventos 14d. "
+                        "'whatsapp' = msgs WA 30d (busca por conteudo ou nome, DMs + grupos, limit padrao 10). "
+                        "'whatsapp_thread' = conversa COMPLETA com um contato pelo nome, em ordem cronologica (ASC), "
+                        "so DMs, limit padrao 60. Use pra analisar o fio da conversa ('avalie o WA com X', 'o que combinamos', 'como ta o relacionamento'). "
+                        "'attachments' = PDFs/audios/imagens recebidos no WA com texto extraido. 'all' = broad."
+                    ),
                 },
                 "query": {
                     "type": "string",
@@ -358,18 +364,33 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
             out["results"]["attachments"] = [dict(r) for r in cur.fetchall()]
 
         if scope in ("whatsapp", "all"):
-            # DMs (whatsapp_messages) + grupos (group_messages) ultimos 30d.
-            # Query pode bater no nome do contato OU no conteudo da msg.
+            # DMs: UNION de duas fontes distintas (pipelines separados, sem overlap):
+            # 1. whatsapp_messages — importacao em lote (histórico exportado)
+            # 2. messages via conversations — mensagens recebidas em tempo real pelo webhook
+            # Ambas precisam ser consultadas; buscar so uma deixa mensagens recentes invisiveis.
             cur.execute("""
-                SELECT 'dm' AS kind, wm.id, wm.contact_id, ct.nome AS contato_nome,
-                       wm.direction, wm.content, wm.message_date AS ts
-                FROM whatsapp_messages wm
-                LEFT JOIN contacts ct ON ct.id = wm.contact_id
-                WHERE wm.message_date > NOW() - INTERVAL '30 days'
-                  AND (wm.content ILIKE %s OR ct.nome ILIKE %s)
-                ORDER BY wm.message_date DESC
+                SELECT kind, id, contact_id, contato_nome, direction, content, ts
+                FROM (
+                    SELECT 'dm' AS kind, wm.id, wm.contact_id, ct.nome AS contato_nome,
+                           wm.direction, wm.content, wm.message_date AS ts
+                    FROM whatsapp_messages wm
+                    LEFT JOIN contacts ct ON ct.id = wm.contact_id
+                    WHERE wm.message_date > NOW() - INTERVAL '30 days'
+                      AND (wm.content ILIKE %s OR ct.nome ILIKE %s)
+
+                    UNION ALL
+
+                    SELECT 'dm' AS kind, m.id, ct.id AS contact_id, ct.nome AS contato_nome,
+                           m.direcao AS direction, m.conteudo AS content, m.enviado_em AS ts
+                    FROM messages m
+                    JOIN conversations conv ON conv.id = m.conversation_id AND conv.canal = 'whatsapp'
+                    JOIN contacts ct ON ct.id = m.contact_id
+                    WHERE m.enviado_em > NOW() - INTERVAL '30 days'
+                      AND (m.conteudo ILIKE %s OR ct.nome ILIKE %s)
+                ) combined
+                ORDER BY ts DESC
                 LIMIT %s
-            """, (f"%{query}%", f"%{query}%", limit))
+            """, (f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%", limit))
             dms = [dict(r) for r in cur.fetchall()]
 
             cur.execute("""
@@ -386,6 +407,57 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
             groups = [dict(r) for r in cur.fetchall()]
 
             out["results"]["whatsapp"] = {"dms": dms, "groups": groups}
+
+        if scope == "whatsapp_thread":
+            # Conversa completa com um contato pelo nome, em ordem cronologica.
+            # Util pra analisar o fio de uma negociacao, avaliar o relacionamento,
+            # ou entender o que foi combinado. Nao mistura grupos.
+            # UNION de duas fontes: whatsapp_messages (lote) + messages (tempo real via webhook).
+            thread_limit = limit if limit != 10 else 60
+            cur.execute("""
+                SELECT id, direction, content, ts, contato_nome, contact_id
+                FROM (
+                    SELECT wm.id, wm.direction, wm.content, wm.message_date AS ts,
+                           ct.nome AS contato_nome, ct.id AS contact_id
+                    FROM whatsapp_messages wm
+                    JOIN contacts ct ON ct.id = wm.contact_id
+                    WHERE ct.nome ILIKE %s
+
+                    UNION ALL
+
+                    SELECT m.id, m.direcao AS direction, m.conteudo AS content,
+                           m.enviado_em AS ts, ct.nome AS contato_nome, ct.id AS contact_id
+                    FROM messages m
+                    JOIN conversations conv ON conv.id = m.conversation_id AND conv.canal = 'whatsapp'
+                    JOIN contacts ct ON ct.id = m.contact_id
+                    WHERE ct.nome ILIKE %s
+                ) combined
+                ORDER BY ts ASC
+                LIMIT %s
+            """, (f"%{query}%", f"%{query}%", thread_limit))
+            thread = [dict(r) for r in cur.fetchall()]
+
+            # Estatisticas do fio pra contextualizar o brain
+            total = len(thread)
+            outgoing = sum(1 for m in thread if m.get("direction") == "outgoing")
+            incoming = total - outgoing
+            first_ts = thread[0]["ts"].isoformat() if thread else None
+            last_ts = thread[-1]["ts"].isoformat() if thread else None
+
+            out["results"]["whatsapp_thread"] = {
+                "messages": thread,
+                "stats": {
+                    "total": total,
+                    "outgoing_renato": outgoing,
+                    "incoming_contato": incoming,
+                    "first_message": first_ts,
+                    "last_message": last_ts,
+                },
+                "note": (
+                    "Mensagens em ordem cronologica (ASC). "
+                    "direction='outgoing' = Renato enviou; 'incoming' = contato enviou."
+                ),
+            }
 
         if scope in ("calendar", "all"):
             # IMPORTANTE: calendar_events armazena datetime na timezone do campo
@@ -433,7 +505,9 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
     # Auto-fallback: se Brain pediu scope especifico e nada bateu, tenta `all`.
     # Evita desistir apos 1 query vazia (caso CAMBRAPER: Tonha buscou calendar
     # vazio, nao tentou attachments/projects que tinham match).
-    if scope != "all" and _count_search_hits(out["results"]) == 0:
+    # whatsapp_thread nao entra no fallback — tem semantica propria (thread ASC);
+    # se vier vazio, o contato nao existe ou nao tem DMs.
+    if scope not in ("all", "whatsapp_thread") and _count_search_hits(out["results"]) == 0:
         fb = _tool_search_context(scope="all", query=query, limit=limit)
         if _count_search_hits(fb.get("results", {})) > 0:
             fb["auto_fallback_from"] = scope
