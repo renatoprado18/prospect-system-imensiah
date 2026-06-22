@@ -27743,6 +27743,13 @@ SNAPSHOT (últimas 12h):
 
 {framing}
 
+REGRA ANTI-ALUCINAÇÃO (obrigatória):
+- Cite APENAS dados explicitamente presentes no snapshot acima.
+- NUNCA invente: datas, prazos, números de processo, documentos enviados, urgências, detalhes que não estão no JSON.
+- Para ai_suggestions: use só titulo + descricao exatos. Não adicione contexto, urgência ou prazo que não conste ali.
+- Se uma sugestão diz "100 dias sem contato", escreva isso — não invente "processo ativo" ou "prazo judicial".
+- Dúvida se algo está no dado → omita.
+
 Responda SOMENTE com JSON válido:
 {{"summary": "briefing aqui (max 15 linhas)"}}"""
 
