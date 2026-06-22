@@ -46,7 +46,7 @@ ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 # .strip(): Vercel UI cola env vars com \n no final (feedback_env_var_whitespace).
 # Sem strip(), Evolution rebatava HTTP 400 ("Connection Closed") em chamadas
 # /message/sendText/intel-bot%0A. Caso 14/06: CONSELHEIRO mandou WA, falhou.
-INTEL_BOT_INSTANCE = (os.getenv("INTEL_BOT_INSTANCE") or "intel-bot").strip()
+INTEL_BOT_INSTANCE = (os.getenv("INTEL_BOT_INSTANCE") or "intel-bot-v2").strip()
 INTEL_BOT_NUMBER = (os.getenv("INTEL_BOT_NUMBER") or "5511915020192").strip()
 RENATO_PHONE = "5511984153337"
 RENATO_PHONE_SUFFIXES = ["11984153337", "984153337"]

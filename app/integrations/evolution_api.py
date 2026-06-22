@@ -548,7 +548,7 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
     logger.info(f"Evolution webhook: {event} from {instance}")
 
     # Route intel-bot messages to the bot handler
-    intel_bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot").strip()
+    intel_bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot-v2").strip()
     instance_name = instance if isinstance(instance, str) else (instance or {}).get("instanceName", "")
     if instance_name == intel_bot_instance and event == "messages.upsert":
         result = await _handle_intel_bot_message(data)
@@ -1117,7 +1117,7 @@ async def _transcribe_bot_audio(key: Dict, data: Dict) -> str:
 
     evo_url = os.getenv("EVOLUTION_API_URL", "").replace('\\n', '').replace('\\r', '').strip().rstrip("/")
     evo_key = os.getenv("EVOLUTION_API_KEY", "").strip()
-    bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot").strip()
+    bot_instance = os.getenv("INTEL_BOT_INSTANCE", "intel-bot-v2").strip()
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
     if not evo_url or not api_key:
