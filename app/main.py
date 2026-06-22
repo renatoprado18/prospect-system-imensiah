@@ -26224,22 +26224,7 @@ async def cos_notify(request: Request, body: CosNotifyBody):
     if not authed:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
-    # Busca número do Renato via tonha_role_contacts
-    with get_pg_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT c.whatsapp_phone
-            FROM tonha_role_contacts trc
-            JOIN contacts c ON c.id = trc.contact_id
-            WHERE trc.role = 'renato'
-            LIMIT 1
-        """)
-        row = cursor.fetchone()
-
-    if not row or not row[0]:
-        raise HTTPException(status_code=500, detail="Telefone do Renato nao encontrado em tonha_role_contacts")
-
-    phone = row[0]
+    phone = (os.getenv("RENATO_PHONE") or "5511984153337").strip()
     prefix = "🔴 " if body.urgency == "high" else "🔵 "
     full_msg = f"{prefix}[CoS Agent]\n{body.message}"
 
@@ -26302,25 +26287,13 @@ async def cos_digest(request: Request, body: CosDigestBody):
             urgency="normal",
             secret=body.secret
         )
-        # Reutiliza lógica de envio mas sem re-autenticar
-        with get_pg_db() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT c.whatsapp_phone
-                FROM tonha_role_contacts trc
-                JOIN contacts c ON c.id = trc.contact_id
-                WHERE trc.role = 'renato'
-                LIMIT 1
-            """)
-            row = cursor.fetchone()
-
-        if row and row[0]:
-            from integrations.evolution_api import get_evolution_client
-            try:
-                client = get_evolution_client()
-                await client.send_text(row[0], f"📋 [Digest CoS]\n{body.summary}")
-            except Exception:
-                logging.exception("cos_digest: falhou ao enviar WA digest")
+        phone = (os.getenv("RENATO_PHONE") or "5511984153337").strip()
+        from integrations.evolution_api import get_evolution_client
+        try:
+            client = get_evolution_client()
+            await client.send_text(phone, f"📋 [Digest CoS]\n{body.summary}")
+        except Exception:
+            logging.exception("cos_digest: falhou ao enviar WA digest")
 
     return {"saved": True, "send_wa": body.send_wa, "processed": body.processed, "actioned": body.actioned}
 
@@ -27640,20 +27613,11 @@ def _cos_agent_call_claude(prompt: str, max_tokens: int = 600) -> dict:
 async def _cos_agent_send_wa(message: str, urgency: str = "normal") -> bool:
     """Envia WA para Renato via Evolution. Retorna True se enviou."""
     try:
-        with get_pg_db() as conn:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT c.whatsapp_phone FROM tonha_role_contacts trc
-                JOIN contacts c ON c.id = trc.contact_id
-                WHERE trc.role = 'renato' LIMIT 1
-            """)
-            row = cur.fetchone()
-        if not row or not row[0]:
-            return False
+        phone = (os.getenv("RENATO_PHONE") or "5511984153337").strip()
         prefix = "🔴 " if urgency == "high" else "🔵 "
         from integrations.evolution_api import get_evolution_client
         client = get_evolution_client()
-        await client.send_text(row[0], f"{prefix}[CoS Agent]\n{message}")
+        await client.send_text(phone, f"{prefix}[CoS Agent]\n{message}")
         return True
     except Exception:
         logging.exception("_cos_agent_send_wa falhou")
