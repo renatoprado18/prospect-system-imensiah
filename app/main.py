@@ -27664,18 +27664,24 @@ async def cron_cos_context_agent(request: Request):
 SNAPSHOT (última 1h):
 {ctx_json}
 
-Responda SOMENTE com JSON válido:
-{{"notify": true/false, "urgency": "high"|"normal"|null, "message": "texto curto se notify=true, else null", "summary": "2-3 linhas descrevendo o ciclo"}}
+REGRAS DE NOTIFICAÇÃO — aplique literalmente, sem interpretação criativa:
+- urgency=high SOMENTE SE: (a) WA incoming de pessoa nomeada sem resposta nas ÚLTIMAS 2h, OU (b) email must_read priority=high, OU (c) evento de calendário começa em MENOS DE 2h a partir de agora (não para preparação, não para amanhã)
+- urgency=normal SOMENTE SE: >5 ai_suggestions novas de alta prioridade na última 1h
+- Em qualquer outro caso: notify=false
 
-NOTIFY=true urgency=high: WA incoming de pessoa nomeada (nao grupo) sem resposta >2h; email must_read priority=high; evento em <2h.
-NOTIFY=true urgency=normal: >5 ai_suggestions pending de alta prioridade novas.
-SILENCIAR: grupos WA, alertas [Sistema]/[CRON]/[Bot], pendências >48h sem mudança, ciclos sem novidade."""
+SILÊNCIO OBRIGATÓRIO: grupos WA, alertas automáticos, eventos que começam em >2h, pendências antigas (>48h), ciclos sem novidade.
+
+Responda SOMENTE com este JSON (sem markdown, sem texto fora do JSON):
+{{"notify": true, "urgency": "high", "message": "frase direta: o que, de quem, há quanto tempo", "summary": "2-3 linhas do ciclo"}}
+ou
+{{"notify": false, "urgency": null, "message": null, "summary": "2-3 linhas do ciclo"}}"""
 
     decision = _cos_agent_call_claude(prompt)
     actioned = 0
 
-    if decision.get("notify") and decision.get("message"):
-        sent = await _cos_agent_send_wa(decision["message"], decision.get("urgency") or "normal")
+    notify_msg = decision.get("message") or ""
+    if decision.get("notify") and notify_msg:
+        sent = await _cos_agent_send_wa(notify_msg, decision.get("urgency") or "normal")
         if sent:
             actioned = 1
 
