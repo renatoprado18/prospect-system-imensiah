@@ -6,7 +6,7 @@ Missao: consolidar as ultimas 12h em briefing narrativo para o dia que comeca.
 
 ```bash
 curl -s \
-  -H "X-API-Key: 68fa46aa5ad0aa01bd942a6022cc660aa6aabf7d7d48f2123a77ead4aa4d96a3" \
+  -H "X-API-Key: b4a0ade96cabf17f4662841d126af7a83a0db59aac0f12435c92194c4cd7e258" \
   "https://intel.almeida-prado.com/api/cos/context?hours=12"
 ```
 
@@ -34,7 +34,7 @@ Substitua SUMMARY pelo briefing, N pelo total de itens analisados:
 
 ```bash
 curl -s -X POST \
-  -H "X-API-Key: 68fa46aa5ad0aa01bd942a6022cc660aa6aabf7d7d48f2123a77ead4aa4d96a3" \
+  -H "X-API-Key: b4a0ade96cabf17f4662841d126af7a83a0db59aac0f12435c92194c4cd7e258" \
   -H "Content-Type: application/json" \
   -d "{\"summary\": \"SUMMARY\", \"processed\": N, \"actioned\": 1, \"send_wa\": true}" \
   "https://intel.almeida-prado.com/api/cos/digest"
