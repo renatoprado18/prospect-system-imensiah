@@ -69,8 +69,14 @@ TOOLS = [
             "properties": {
                 "scope": {
                     "type": "string",
-                    "enum": ["contacts", "projects", "tasks", "signals", "delegations", "calendar", "whatsapp", "attachments", "all"],
-                    "description": "O que buscar. 'calendar' = eventos 14d. 'whatsapp' = msgs WA 30d. 'attachments' = PDFs/audios/imagens recebidos no WA com texto extraido. 'all' = broad.",
+                    "enum": ["contacts", "projects", "tasks", "signals", "delegations", "calendar", "whatsapp", "whatsapp_thread", "attachments", "all"],
+                    "description": (
+                        "O que buscar. 'calendar' = eventos 14d. "
+                        "'whatsapp' = msgs WA 30d (busca por conteudo ou nome, DMs + grupos, limit padrao 10). "
+                        "'whatsapp_thread' = conversa COMPLETA com um contato pelo nome, em ordem cronologica (ASC), "
+                        "so DMs, limit padrao 60. Use pra analisar o fio da conversa ('avalie o WA com X', 'o que combinamos', 'como ta o relacionamento'). "
+                        "'attachments' = PDFs/audios/imagens recebidos no WA com texto extraido. 'all' = broad."
+                    ),
                 },
                 "query": {
                     "type": "string",
@@ -387,6 +393,44 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
 
             out["results"]["whatsapp"] = {"dms": dms, "groups": groups}
 
+        if scope == "whatsapp_thread":
+            # Conversa completa com um contato pelo nome, em ordem cronologica.
+            # Util pra analisar o fio de uma negociacao, avaliar o relacionamento,
+            # ou entender o que foi combinado. Nao mistura grupos.
+            thread_limit = limit if limit != 10 else 60
+            cur.execute("""
+                SELECT wm.id, wm.direction, wm.content, wm.message_date AS ts,
+                       ct.nome AS contato_nome, ct.id AS contact_id
+                FROM whatsapp_messages wm
+                JOIN contacts ct ON ct.id = wm.contact_id
+                WHERE ct.nome ILIKE %s
+                ORDER BY wm.message_date ASC
+                LIMIT %s
+            """, (f"%{query}%", thread_limit))
+            thread = [dict(r) for r in cur.fetchall()]
+
+            # Estatisticas do fio pra contextualizar o brain
+            total = len(thread)
+            outgoing = sum(1 for m in thread if m.get("direction") == "outgoing")
+            incoming = total - outgoing
+            first_ts = thread[0]["ts"].isoformat() if thread else None
+            last_ts = thread[-1]["ts"].isoformat() if thread else None
+
+            out["results"]["whatsapp_thread"] = {
+                "messages": thread,
+                "stats": {
+                    "total": total,
+                    "outgoing_renato": outgoing,
+                    "incoming_contato": incoming,
+                    "first_message": first_ts,
+                    "last_message": last_ts,
+                },
+                "note": (
+                    "Mensagens em ordem cronologica (ASC). "
+                    "direction='outgoing' = Renato enviou; 'incoming' = contato enviou."
+                ),
+            }
+
         if scope in ("calendar", "all"):
             # IMPORTANTE: calendar_events armazena datetime na timezone do campo
             # 'timezone' (geralmente America/Sao_Paulo direto, NAO em UTC). NAO
@@ -433,7 +477,9 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
     # Auto-fallback: se Brain pediu scope especifico e nada bateu, tenta `all`.
     # Evita desistir apos 1 query vazia (caso CAMBRAPER: Tonha buscou calendar
     # vazio, nao tentou attachments/projects que tinham match).
-    if scope != "all" and _count_search_hits(out["results"]) == 0:
+    # whatsapp_thread nao entra no fallback — tem semantica propria (thread ASC);
+    # se vier vazio, o contato nao existe ou nao tem DMs.
+    if scope not in ("all", "whatsapp_thread") and _count_search_hits(out["results"]) == 0:
         fb = _tool_search_context(scope="all", query=query, limit=limit)
         if _count_search_hits(fb.get("results", {})) > 0:
             fb["auto_fallback_from"] = scope
