@@ -168,6 +168,10 @@ _EVASION_PHRASES = [
     "nao implementado",
     "limitação de indexação",
     "limitacao de indexacao",
+    "delay de indexação",
+    "delay de indexacao",
+    "fora da janela",
+    "conversa aconteceu fora",
 ]
 
 
