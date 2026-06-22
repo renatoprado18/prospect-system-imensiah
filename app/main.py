@@ -5760,7 +5760,7 @@ async def api_tonha_weekly_monitor(request: Request):
             FROM cron_heartbeats
             WHERE job_id IN (
                 'daily-sync', 'run-daily-ai', 'run-auto-enrich', 'run-daily-clipping',
-                'daily-synthesis', 'cos-investigator', 'sync-conselhoos-raci',
+                'daily-synthesis', 'sync-conselhoos-raci',
                 'linkedin-monitor-topics', 'linkedin-curator'
             )
               AND fired_at > NOW() - INTERVAL '24 hours'
@@ -5803,7 +5803,7 @@ async def api_tonha_weekly_monitor(request: Request):
     total_cost_7d = float(sum(r["total_usd"] or 0 for r in dev_runs))
 
     expected_crons = {
-        "daily-sync", "run-daily-ai", "daily-synthesis", "cos-investigator",
+        "daily-sync", "run-daily-ai", "daily-synthesis",
     }
     present_crons = {r["job_id"] for r in crons}
     missing_crons = sorted(expected_crons - present_crons)
@@ -20143,6 +20143,92 @@ async def api_get_project(project_id: int):
     return project
 
 
+@app.get("/api/projects/{project_id}/export")
+async def api_project_export(project_id: int):
+    """Exporta contexto do projeto como markdown estruturado para Claude Projects."""
+    from services.projects import get_project_briefing_context
+    from services.tz import to_brt
+
+    ctx = get_project_briefing_context(project_id)
+    if not ctx:
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+
+    p = ctx
+    lines = []
+
+    # Header
+    lines.append(f"# Projeto: {p['nome']}")
+    lines.append(f"\n**Tipo:** {p.get('tipo', '—')}  ")
+    lines.append(f"**Status:** {p.get('status', '—')}  ")
+    if p.get('data_previsao'):
+        prazo = to_brt(p['data_previsao']).strftime('%d/%m/%Y') if p.get('data_previsao') else '—'
+        lines.append(f"**Prazo:** {prazo}  ")
+    if p.get('descricao'):
+        lines.append(f"\n{p['descricao']}")
+
+    # Members
+    membros = p.get('membros') or []
+    if membros:
+        lines.append("\n## Membros")
+        for m in membros:
+            papel = m.get('papel') or 'membro'
+            empresa = f" ({m['empresa']})" if m.get('empresa') else ''
+            cargo = f" — {m['cargo']}" if m.get('cargo') else ''
+            lines.append(f"- **{m['nome']}**{empresa}{cargo} [{papel}]")
+
+    # Milestones
+    marcos = p.get('marcos') or []
+    if marcos:
+        lines.append("\n## Marcos")
+        for m in marcos:
+            dt = to_brt(m['data_prevista']).strftime('%d/%m/%Y') if m.get('data_prevista') else 'sem data'
+            status_m = m.get('status', 'pendente')
+            lines.append(f"- [{status_m}] {m['titulo']} — {dt}")
+
+    # Tasks (open only)
+    tarefas = [t for t in (p.get('tarefas') or []) if t.get('status') not in ('done', 'cancelled')]
+    if tarefas:
+        lines.append("\n## Tarefas Abertas")
+        for t in tarefas:
+            prazo_t = to_brt(t['data_vencimento']).strftime('%d/%m/%Y') if t.get('data_vencimento') else 'sem prazo'
+            resp = t.get('responsavel') or t.get('contact_nome') or '—'
+            lines.append(f"- [{t.get('status','pending')}] {t['titulo']} | prazo: {prazo_t} | resp: {resp}")
+
+    # Recent notes
+    notas = (p.get('notas') or [])[:10]
+    if notas:
+        lines.append("\n## Notas Recentes")
+        for n in notas:
+            dt_n = to_brt(n['criado_em']).strftime('%d/%m/%Y') if n.get('criado_em') else ''
+            titulo = n.get('titulo') or ''
+            corpo = (n.get('conteudo') or '').strip()[:300]
+            header = f"### {titulo} ({dt_n})" if titulo else f"### {dt_n}"
+            lines.append(header)
+            if corpo:
+                lines.append(corpo)
+
+    # Recent messages from members
+    mensagens = (p.get('mensagens_recentes') or [])[:15]
+    if mensagens:
+        lines.append("\n## Mensagens Recentes (membros)")
+        for msg in mensagens:
+            dt_msg = to_brt(msg['enviado_em']).strftime('%d/%m %H:%M') if msg.get('enviado_em') else ''
+            nome = msg.get('contact_nome') or msg.get('remetente') or '?'
+            corpo_msg = (msg.get('conteudo') or '').strip()[:200]
+            lines.append(f"**{nome}** ({dt_msg}): {corpo_msg}")
+
+    # Calendar events
+    eventos = (p.get('eventos') or [])[:5]
+    if eventos:
+        lines.append("\n## Eventos do Calendário")
+        for e in eventos:
+            dt_e = to_brt(e['start_datetime']).strftime('%d/%m/%Y %H:%M') if e.get('start_datetime') else '?'
+            lines.append(f"- {dt_e} — {e.get('summary','(sem título)')}")
+
+    md = "\n".join(lines)
+    return Response(content=md, media_type="text/plain; charset=utf-8")
+
+
 @app.get("/api/projects/{project_id}/briefing")
 async def api_project_briefing(request: Request, project_id: int):
     """AI-generated briefing: why this project needs attention, recent activity, next actions."""
@@ -26647,36 +26733,13 @@ async def cron_daily_morning_briefing(request: Request):
                 )
                 _existing = _cur.fetchone()["n"] or 0
 
-            if _existing == 0:
-                # Investigator ainda nao rodou hoje (atraso GH Actions). Dispara
-                # inline pra briefing nao consumir items velhos do dia anterior.
-                # +60-90s latencia, mas garante coerencia. 12/06: briefing rodou
-                # 3h atrasado E ANTES do investigator -> items velhos -> #484
-                # marcado DRIFT mesmo BLOCKED ontem.
-                logging.info(f"morning-briefing: cycle {cycle_id} vazio — disparando investigator inline")
-                try:
-                    from services.cos_investigator import run_investigator_cycle
-                    inline_result = await run_investigator_cycle()
-                    cos_mode_detail = f"inline_investigator:{inline_result.get('items_created', {}).get('total', 0)}"
-                except Exception as _inv_e:
-                    logging.warning(f"morning-briefing: inline investigator falhou: {_inv_e}")
-                    cos_mode_detail = f"inline_investigator_failed:{type(_inv_e).__name__}"
-
             cos_text = compose_briefing_from_items(cycle_id, dados_meta)
 
             if cos_text:
                 n_reported = mark_items_reported(cycle_id)
-                # Se ja tinha detail (inline_investigator), append o consumed
-                if cos_mode_detail and cos_mode_detail.startswith("inline_investigator"):
-                    cos_mode_detail = f"{cos_mode_detail}|items_consumed:{n_reported}"
-                else:
-                    cos_mode_detail = f"items_consumed:{n_reported}"
+                cos_mode_detail = f"items_consumed:{n_reported}"
             else:
-                cos_mode_detail = cos_mode_detail or "no_items_in_cycle"
-                logging.warning(
-                    f"morning-briefing: cycle {cycle_id} sem items pos inline trigger. "
-                    f"Caindo pro template estatico."
-                )
+                cos_mode_detail = "no_items_in_cycle"
         except Exception as _e:
             logging.warning(f"morning-briefing: cos compose failed: {_e}")
             cos_text = None

@@ -46,6 +46,11 @@ ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 # .strip(): Vercel UI cola env vars com \n no final (feedback_env_var_whitespace).
 # Sem strip(), Evolution rebatava HTTP 400 ("Connection Closed") em chamadas
 # /message/sendText/intel-bot%0A. Caso 14/06: CONSELHEIRO mandou WA, falhou.
+# Arquitetura de instâncias Evolution (22/06/26):
+# - intel-bot-v2 (5511915020192): SOMENTE notificações sistema→Renato (send_intel_notification).
+#   NÃO entra em grupos de conselho — é número do bot, não do Renato.
+# - rap-whatsapp (5511984153337): mensagens de Renato → contatos/grupos (execute_action send_whatsapp).
+#   Canal correto pra grupos Vallen, Alba, Despertar e qualquer WA em nome do Renato.
 INTEL_BOT_INSTANCE = (os.getenv("INTEL_BOT_INSTANCE") or "intel-bot-v2").strip()
 INTEL_BOT_NUMBER = (os.getenv("INTEL_BOT_NUMBER") or "5511915020192").strip()
 RENATO_PHONE = "5511984153337"

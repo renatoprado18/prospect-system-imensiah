@@ -43,6 +43,8 @@ def run(conn) -> DetectorRun:
                 WHERE aniversario IS NOT NULL
                   AND TO_CHAR(aniversario, 'MM-DD') BETWEEN TO_CHAR(CURRENT_DATE, 'MM-DD')
                                                       AND TO_CHAR(CURRENT_DATE + 7, 'MM-DD')
+                  AND NOT (datas_importantes @> '[{"tipo": "falecimento"}]')
+                  AND NOT (tags @> '["in_memoriam"]')
                 GROUP BY LOWER(TRIM(nome)), aniversario
                 ORDER BY TO_CHAR(aniversario, 'MM-DD')
                 LIMIT 50
