@@ -582,7 +582,7 @@ def _tool_send_message(
 def _tool_update_record(
     *, table: str, id: int, fields: Dict[str, Any], ctx: Dict[str, Any]
 ) -> Dict[str, Any]:
-    allowed = {"tasks", "projects", "delegations", "signals", "weekly_raci_renato"}
+    allowed = {"tasks", "projects", "delegations", "signals", "weekly_raci_renato", "conversations"}
     if table not in allowed:
         return {"ok": False, "error": f"table {table} nao permitida"}
     shadow = _shadow_write()

@@ -89,17 +89,39 @@ def run(conn) -> DetectorRun:
                 SELECT c.id AS conv_id, c.contact_id, c.canal, c.assunto, c.ultimo_mensagem,
                        c.resumo_ai, ct.nome AS contato_nome, ct.empresa, ct.contexto, ct.tags,
                        CASE WHEN ct.tags::text ~* '(c-level|founder|socio|parceiro|familia|conselheiro|diretor|vip)'
-                            THEN TRUE ELSE FALSE END AS is_vip
+                            THEN TRUE ELSE FALSE END AS is_vip,
+                       -- últimas 3 mensagens: Tonha avalia se REALMENTE pede resposta
+                       msgs.ultimas_mensagens,
+                       msgs.ultima_direcao
                 FROM conversations c
                 JOIN contacts ct ON ct.id = c.contact_id
+                -- lateral: 1 subquery por conversa (max 30 linhas), ok em prod
+                LEFT JOIN LATERAL (
+                    SELECT
+                        json_agg(
+                            json_build_object(
+                                'direcao', m.direcao,
+                                'conteudo', LEFT(m.conteudo, 200),
+                                'enviado_em', m.enviado_em
+                            ) ORDER BY m.enviado_em DESC
+                        ) AS ultimas_mensagens,
+                        (SELECT m2.direcao FROM messages m2
+                         WHERE m2.conversation_id = c.id
+                         ORDER BY m2.enviado_em DESC LIMIT 1) AS ultima_direcao
+                    FROM (
+                        SELECT direcao, conteudo, enviado_em
+                        FROM messages
+                        WHERE conversation_id = c.id
+                        ORDER BY enviado_em DESC
+                        LIMIT 3
+                    ) m
+                ) msgs ON TRUE
                 WHERE c.requer_resposta = TRUE
                   AND c.status = 'open'
                   AND c.ultimo_mensagem < NOW() - INTERVAL '3 days'
                   AND c.ultimo_mensagem > NOW() - INTERVAL '30 days'
                   AND (
-                    -- VIP entra em 3d+
                     ct.tags::text ~* '(c-level|founder|socio|parceiro|familia|conselheiro|diretor|vip)'
-                    -- Resto so apos 7d
                     OR c.ultimo_mensagem < NOW() - INTERVAL '7 days'
                   )
                 ORDER BY c.ultimo_mensagem ASC
@@ -109,7 +131,6 @@ def run(conn) -> DetectorRun:
                 sh = make_signal_hash("relacionamento_requer_resposta", r["conv_id"])
                 current_hashes.append(sh)
                 dias = (date.today() - r["ultimo_mensagem"].date()).days if r["ultimo_mensagem"] else 0
-                # VIP: 5-8; nao-VIP: 3-6 (downscale pra brain silenciar mais)
                 if r["is_vip"]:
                     urg = max(5, min(8, 5 + dias // 5))
                 else:
@@ -127,6 +148,10 @@ def run(conn) -> DetectorRun:
                     "is_vip": bool(r["is_vip"]),
                     "tags": r["tags"],
                     "resumo_ai": (r["resumo_ai"] or "")[:300],
+                    # thread context: avalie se a última msg realmente pede resposta
+                    # se ultima_direcao='outgoing', Renato já respondeu (flag stale)
+                    "ultima_direcao": r["ultima_direcao"],
+                    "ultimas_mensagens": r["ultimas_mensagens"] or [],
                 }
                 _bump(res, emit_signal(conn, tipo="relacionamento_requer_resposta", signal_hash=sh, urgencia=urg, contexto=ctx, detector=DETECTOR_NAME))
     except Exception as e:
