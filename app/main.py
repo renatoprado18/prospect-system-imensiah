@@ -2759,6 +2759,81 @@ async def fix_whatsapp_contact(request: Request):
     return {"status": "ok", **stats}
 
 
+@app.post("/api/whatsapp/ingest-screenshot")
+async def ingest_whatsapp_screenshot(request: Request):
+    """
+    Ingere screenshot de conversa WhatsApp via Claude Vision OCR.
+
+    Aceita JSON com:
+      - image_base64: imagem em base64
+      - mime: (opcional, default image/jpeg)
+      - contact_id, phone, contact_name, context_note, trigger_analysis
+      - worker_secret: auth alternativa para Railway worker
+
+    Aceita multipart/form-data com:
+      - image: arquivo de imagem
+      - demais campos como form fields
+    """
+    import os as _os
+    import base64 as _b64
+    _worker_secret = _os.getenv("WORKER_SECRET", "intel-audio-2026").strip()
+
+    content_type = request.headers.get("content-type", "")
+    is_multipart = "multipart/form-data" in content_type
+
+    if is_multipart:
+        form = await request.form()
+        secret_check = form.get("worker_secret", "")
+        user = get_current_user(request)
+        if not user and secret_check != _worker_secret:
+            raise HTTPException(status_code=401, detail="Nao autenticado")
+        image_file = form.get("image")
+        if not image_file:
+            raise HTTPException(status_code=400, detail="Campo 'image' obrigatório")
+        image_bytes = await image_file.read()
+        mime = image_file.content_type or "image/jpeg"
+        contact_id = int(form.get("contact_id")) if form.get("contact_id") else None
+        phone = form.get("phone")
+        contact_name = form.get("contact_name")
+        context_note = form.get("context_note")
+        trigger_analysis = form.get("trigger_analysis", "true").lower() != "false"
+    else:
+        body = await request.json()
+        secret_check = body.get("worker_secret", "")
+        user = get_current_user(request)
+        if not user and secret_check != _worker_secret:
+            raise HTTPException(status_code=401, detail="Nao autenticado")
+        image_b64 = body.get("image_base64", "")
+        if not image_b64:
+            raise HTTPException(status_code=400, detail="Campo 'image_base64' obrigatório")
+        try:
+            image_bytes = _b64.b64decode(image_b64)
+        except Exception:
+            raise HTTPException(status_code=400, detail="image_base64 inválido")
+        mime = body.get("mime", "image/jpeg")
+        contact_id = body.get("contact_id")
+        phone = body.get("phone")
+        contact_name = body.get("contact_name")
+        context_note = body.get("context_note")
+        trigger_analysis = body.get("trigger_analysis", True)
+
+    from services.screenshot_ingest import ingest_screenshot
+    result = await ingest_screenshot(
+        image_bytes=image_bytes,
+        mime=mime,
+        contact_id=contact_id,
+        phone=phone,
+        contact_name=contact_name,
+        context_note=context_note,
+        trigger_analysis=trigger_analysis,
+    )
+
+    return {
+        "status": "ok" if result["messages_saved"] > 0 else "empty",
+        **result,
+    }
+
+
 @app.get("/api/whatsapp/chats")
 async def get_whatsapp_chats():
     """
@@ -26431,7 +26506,8 @@ async def cron_daily_morning_briefing(request: Request):
     from services.intel_bot import send_intel_notification
 
     try:
-        now = datetime.now()
+        from services.tz import now_utc as _now_utc, to_brt as _to_brt
+        now = _to_brt(_now_utc())
         date_str = now.strftime("%d/%m")
         dias_semana = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"]
         dia_semana = dias_semana[now.weekday()]
@@ -27819,8 +27895,37 @@ Responda SOMENTE com JSON válido:
     decision = _cos_agent_call_claude(prompt, max_tokens=800)
     summary = decision.get("summary") or f"Digest {mode}: {wa_count} WA, {email_count} emails, {action_count} ações."
 
-    await _cos_agent_send_wa(summary, "normal")
-    _cos_agent_save_digest(summary, wa_count + email_count + cal_count + action_count, 1)
+    _cos_agent_save_digest(summary, wa_count + email_count + cal_count + action_count, 0)
+
+    # Emite signal para Tonha entregar o briefing (em vez de enviar WA direto).
+    # Tonha processa no tick 7h15 (morning) ou 18h15 (evening), executa o que
+    # puder autonomamente e envia para Renato só o que precisa de decisão dele.
+    try:
+        import hashlib as _hl
+        from services.tz import now_utc as _now_utc, to_brt as _to_brt
+        _today = _to_brt(_now_utc()).strftime("%Y-%m-%d")
+        _tipo = f"{mode}_briefing"
+        _sig_hash = _hl.sha256(f"{_tipo}::{_today}".encode()).hexdigest()[:32]
+        with get_pg_db() as _conn:
+            _cur = _conn.cursor()
+            _cur.execute(
+                """
+                INSERT INTO signals (signal_hash, tipo, urgencia, contexto, detector, status)
+                VALUES (%s, %s, %s, %s::jsonb, 'cos_digest', 'open')
+                ON CONFLICT (signal_hash) DO UPDATE
+                SET urgencia = EXCLUDED.urgencia,
+                    contexto = EXCLUDED.contexto,
+                    atualizado_em = NOW()
+                WHERE signals.status = 'open'
+                """,
+                (_sig_hash, _tipo, 8 if mode == "morning" else 7,
+                 json.dumps({"summary": summary, "mode": mode, "wa_count": wa_count,
+                             "email_count": email_count, "action_count": action_count})),
+            )
+            _conn.commit()
+    except Exception:
+        logging.exception("cos_digest: falhou ao emitir signal para Tonha — enviando WA direto como fallback")
+        await _cos_agent_send_wa(summary, "normal")
 
     return {
         "status": "ok",

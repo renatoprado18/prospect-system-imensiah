@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 import httpx
 
 from database import get_db
+from services.tz import now_utc, to_brt
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,8 @@ async def check_upcoming_meetings() -> Dict:
     with get_db() as conn:
         cursor = conn.cursor()
 
-        now = datetime.now()
+        # calendar_events armazena naive BRT — strip tzinfo antes de passar pro SQL
+        now = to_brt(now_utc()).replace(tzinfo=None)
         # Find ALL meetings for today (runs once in the morning)
         today_start = now.replace(hour=0, minute=0, second=0)
         today_end = today_start + timedelta(days=1)

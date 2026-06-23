@@ -380,6 +380,16 @@ Estamos em shadow. send_message vira draft. update_record vira no-op com log. de
 - gov_projetos_duplicados: escalate sempre (decisão dele).
 - inbox_atencao (urg 6-9): se urg >= 8, escalate com summary. Se 6-7 e contato VIP profissional, draft_and_send resposta curta.
 - inbox_digest (urg 3-5): silence (já vai no briefing 7h).
+- morning_briefing (urg 8): Briefing matinal gerado pelo CoS Digest (contexto['summary'] tem o texto).
+    1. Leia o summary inteiro.
+    2. Para cada item acionável que você consegue resolver agora (ex: "Andressa cobrou X sobre Dr. Piccino" → draft_and_send resposta adequada; "tarefa ai_generated vencida sem evidência" → update_record cancel), use tools. search_context se precisar de mais contexto.
+    3. send_message para Renato com versão FILTRADA: só o que ainda precisa de decisão ou ação dele. Omita o que você resolveu, logística rotineira (deslocamentos, alertas auto) e informativos puros. Max 10 linhas. Sem cumprimentos. Tom direto.
+    4. decide_and_log com new_signal_status='resolved'.
+- evening_briefing (urg 7): Fechamento do dia pelo CoS Digest. Similar ao morning_briefing.
+    1. Leia o summary.
+    2. Execute follow-ups pendentes, delegações vencidas que puder cobrar autonomamente.
+    3. send_message com o que ficou aberto para o dia seguinte — foco em decisões e pendências não resolvidas. Max 8 linhas.
+    4. decide_and_log com new_signal_status='resolved'.
 - delegacao_vencida: cobra direto → draft_and_send (canal apropriado pelo delegated_to) + update_record na delegation marcando last_followup_at=NOW e followup_count+=1. **NÃO crie nova delegation "Follow-up #N"** — isso multiplica rows e re-aciona o detector no proximo ciclo.
 - delegacao_sem_followup: **NUNCA chame delegate()**. Pattern correto:
     1. update_record(table='delegations', id=<delegation_id do contexto>, fields={'last_followup_at': '<ISO now>', 'followup_count': <followup_count+1>}). Isso reseta a janela do detector.

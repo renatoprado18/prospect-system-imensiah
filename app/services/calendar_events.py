@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from database import get_db
 from services.calendar_sync import get_calendar_sync
+from services.tz import now_utc, to_brt
 
 
 class CalendarEventsService:
@@ -53,7 +54,7 @@ class CalendarEventsService:
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'system', %s)
                 RETURNING id
             """, (
-                f"local-{datetime.now().timestamp()}",  # ID temporario
+                f"local-{now_utc().timestamp()}",  # ID temporario
                 account_email,
                 summary, description, location,
                 start_datetime, end_datetime,
@@ -287,13 +288,15 @@ class CalendarEventsService:
 
     def get_today_events(self) -> List[Dict]:
         """Lista eventos de hoje"""
-        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        # calendar_events armazena naive BRT — strip tzinfo antes de passar pro SQL
+        today = to_brt(now_utc()).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
         tomorrow = today + timedelta(days=1)
         return self.get_events_for_period(today, tomorrow)
 
     def get_upcoming_events(self, days: int = 7, limit: int = 20) -> List[Dict]:
         """Lista proximos eventos"""
-        now = datetime.now()
+        # calendar_events armazena naive BRT — strip tzinfo antes de passar pro SQL
+        now = to_brt(now_utc()).replace(tzinfo=None)
         end_date = now + timedelta(days=days)
 
         with get_db() as conn:
@@ -352,7 +355,8 @@ class CalendarEventsService:
         """Retorna contagem de eventos"""
         with get_db() as conn:
             cursor = conn.cursor()
-            start_date = datetime.now() - timedelta(days=days)
+            # calendar_events armazena naive BRT — strip tzinfo antes de passar pro SQL
+            start_date = to_brt(now_utc()).replace(tzinfo=None) - timedelta(days=days)
 
             cursor.execute("""
                 SELECT

@@ -24,6 +24,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 from database import get_db
 from services.rodas_service import get_rodas_service
+from services.tz import now_utc, to_brt
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = "claude-sonnet-4-6"
@@ -146,8 +147,10 @@ class RealtimeAnalyzer:
         with get_db() as conn:
             cursor = conn.cursor()
 
-            start_date = datetime.now() - timedelta(days=days_range)
-            end_date = datetime.now() + timedelta(days=7)
+            # calendar_events armazena naive BRT — strip tzinfo antes de passar pro SQL
+            _now_brt = to_brt(now_utc()).replace(tzinfo=None)
+            start_date = _now_brt - timedelta(days=days_range)
+            end_date = _now_brt + timedelta(days=7)
 
             # Buscar eventos do contato
             cursor.execute("""
@@ -994,7 +997,8 @@ Se nao detectar intencoes ou rodas, retorne arrays vazios."""
             return None
 
         # Priorizar eventos de hoje ou proximos
-        now = datetime.now()
+        # calendar_events armazena BRT naive; usar now_brt naive p/ comparacao correta
+        now = to_brt(now_utc()).replace(tzinfo=None)
         today_events = []
         upcoming_events = []
 

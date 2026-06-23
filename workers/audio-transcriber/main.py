@@ -146,12 +146,10 @@ _SCHEDULER_JOBS = [
     # ("cos-sensor-tick", "/api/cron/cos-sensor-tick", CronTrigger(minute="*/30")),
     # Migrado de vercel.json (Hobby cron limit bloqueava deploy) — 11/06/26
     ("monitor-cron-health", "/api/cron/monitor-cron-health", CronTrigger(minute=0)),
-    # Briefings — migrados de GH Actions em 10/06/2026 apos drift acumulado
-    # (1h->3h->5h ao longo de 03-09/jun) e drop total nos dias 10 e 11/jun.
-    # Horarios mantidos identicos aos workflows .github/workflows/cron-daily-*.yml
-    # pra nao mudar comportamento do usuario.
-    ("daily-morning-briefing", "/api/cron/daily-morning-briefing", CronTrigger(hour=11, minute=7)),
-    ("daily-evening-debriefing", "/api/cron/daily-evening-debriefing", CronTrigger(hour=22, minute=0)),
+    # Briefings — legados aposentados em 23/06/2026.
+    # cos-digest-morning/evening emitem signals; Tonha entrega via tick dedicado.
+    # ("daily-morning-briefing", "/api/cron/daily-morning-briefing", CronTrigger(hour=11, minute=7)),
+    # ("daily-evening-debriefing", "/api/cron/daily-evening-debriefing", CronTrigger(hour=22, minute=0)),
     # 13/06/2026: migrados de GH Actions apos frustracao com unreliability
     # (top-of-hour drift + Vercel Hobby cron limit). Railway scheduler in-process
     # = 100% reliable, custo $0 adicional (worker ja roda 24/7).
@@ -174,12 +172,14 @@ _SCHEDULER_JOBS = [
     ("cos-digest-morning", "/api/cron/cos-digest?mode=morning", CronTrigger(hour=10, minute=8)),
     ("cos-digest-evening", "/api/cron/cos-digest?mode=evening", CronTrigger(hour=21, minute=8)),
     # 15/06/26 FASE 2A REBUILD — Tonha brain (Sonnet 4.6 + extended thinking)
-    # autonomous loop 4x/dia BRT: 8h/12h/17h/21h = 11h/15h/20h/00h UTC.
-    # Default em SHADOW MODE (TONHA_SHADOW_MODE=1) — send/update viram drafts.
-    ("tonha-autonomous-morning", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=11, minute=5)),
+    # autonomous loop 4x/dia BRT. Ticks de briefing dedicados (23/06/26):
+    # morning: 7h15 BRT (10h15 UTC) = 7min após cos-digest-morning (10h08 UTC).
+    # evening: 18h15 BRT (21h15 UTC) = 7min após cos-digest-evening (21h08 UTC).
+    # Demais ticks processam signals gerais.
+    ("tonha-autonomous-morning", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=10, minute=15)),
     ("tonha-autonomous-noon", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=15, minute=5)),
     ("tonha-autonomous-afternoon", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=20, minute=5)),
-    ("tonha-autonomous-evening", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=0, minute=5)),
+    ("tonha-autonomous-evening", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=21, minute=15)),
     # 17/06/26 — consumer pra delegations(delegated_to='dev'). Fecha criterio 6
     # do ARCHITECTURE_REBUILD. Roda 4x dentro da janela 9-22 BRT (12,15,18,21 BRT
     # = 15,18,21,00 UTC). Default em SHADOW (DEV_DELEGATION_SHADOW=1) — sem custo
