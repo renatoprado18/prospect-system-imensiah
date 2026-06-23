@@ -75,6 +75,7 @@ def _identify_contacts_for_event(event: Dict) -> List[Dict]:
             "id": event["contact_id"],
             "nome": event["contact_nome"],
             "empresa": event.get("contact_empresa"),
+            "circulo": event.get("contact_circulo"),
             "_source": "contact_id",
         }
 
@@ -131,15 +132,15 @@ def _identify_contacts_for_event(event: Dict) -> List[Dict]:
                         "id": cid,
                         "nome": row["nome"],
                         "empresa": row["empresa"],
+                        "circulo": row["circulo"],
                         "_source": "attendees",
-                        "_circulo": row["circulo"],
                     }
         except Exception as e:
             logger.warning(f"_identify_contacts attendees match err: {e}")
 
     # Ordena por circulo (C1 primeiro), depois por nome
     result = list(matches.values())
-    result.sort(key=lambda c: (c.get("_circulo", 5), c["nome"]))
+    result.sort(key=lambda c: (c.get("circulo") or 5, c["nome"]))
     return result
 
 
@@ -174,6 +175,7 @@ async def check_post_meeting() -> Dict:
                 SELECT e.id, e.summary, e.start_datetime, e.end_datetime,
                        e.contact_id, e.status, e.location, e.attendees,
                        c.nome AS contact_nome, c.empresa AS contact_empresa,
+                       c.circulo AS contact_circulo,
                        EXTRACT(EPOCH FROM (NOW() - e.end_datetime))/60 AS min_atras,
                        EXTRACT(EPOCH FROM (e.end_datetime - e.start_datetime))/60 AS duracao_min
                 FROM calendar_events e
@@ -181,6 +183,7 @@ async def check_post_meeting() -> Dict:
                 WHERE e.end_datetime BETWEEN NOW() - INTERVAL '180 minutes' AND NOW() - INTERVAL '15 minutes'
                   AND COALESCE(e.status, 'confirmed') = 'confirmed'
                   AND EXTRACT(EPOCH FROM (e.end_datetime - e.start_datetime))/60 >= 15
+                  AND (e.contact_id IS NOT NULL OR jsonb_array_length(COALESCE(e.attendees, '[]'::jsonb)) > 0)
                 ORDER BY e.end_datetime DESC
                 """
             )
