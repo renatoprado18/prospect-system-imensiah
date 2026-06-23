@@ -918,18 +918,11 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
             analyze_message_in_background(new_msg_id, contact_id, content)
         )
 
-    # Audio inbound na instancia principal: dispara Groq Whisper no Railway worker.
-    # Why: o handler do bot Tonha (intel-bot) ja faz isso, mas audios pra instancia
-    # principal (audios da Cica, Marson, Emma etc. pro Renato direto) ficavam orfaos
-    # como [Áudio] em messages, sem transcricao em wa_attachments. Resultado: Tonha
-    # nao tem visibilidade do conteudo. Fire-and-forget — falha nao bloqueia ingest.
+    # Audio inbound na instancia principal: transcreve inline via Groq (fire-and-forget).
+    # Groq Whisper large-v3 leva ~2s pra 76s de audio — bem dentro do limite Vercel.
+    # Substitui dispatch pro Railway worker (deletado 23/06/26).
     if direction == "incoming" and message_type == "audio":
-        audio_worker_url = os.getenv("AUDIO_WORKER_URL", "").strip()
-        worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026").strip()
-        if audio_worker_url:
-            asyncio.create_task(_dispatch_audio_transcribe(
-                audio_worker_url, worker_secret, key, phone, message_id, new_msg_id
-            ))
+        asyncio.create_task(_transcribe_audio_inline(key, phone, message_id, new_msg_id))
 
     _audit("processed", f"ok:{direction}", resulting_id=new_msg_id)
     return {
@@ -992,35 +985,114 @@ async def analyze_message_in_background(message_id: int, contact_id: int, conten
         logger.error(f"Error in smart message processor for msg {message_id}: {e}")
 
 
-async def _dispatch_audio_transcribe(
-    worker_url: str,
-    secret: str,
+async def _transcribe_audio_inline(
     key: Dict,
     phone: str,
     wa_message_id: str,
     db_message_id: int,
 ) -> None:
-    """Dispara /transcribe do Railway worker pra audio inbound na instancia principal.
+    """Baixa audio da Evolution, transcreve via Groq Whisper, salva em wa_attachments.
 
-    Worker baixa de Evolution, manda Groq Whisper, grava transcricao em wa_attachments
-    via _save_wa_attachment. Fire-and-forget — erros so logados.
+    Fire-and-forget — erros so logados, nunca bloqueiam o ingest principal.
+    Substituiu o dispatch pro Railway worker (deletado 23/06/26).
     """
+    import base64
+    evo_url = os.getenv("EVOLUTION_API_URL", "").strip().rstrip("/")
+    evo_key = os.getenv("EVOLUTION_API_KEY", "").strip()
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    instance = os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp").strip()
+
+    if not evo_url or not groq_key:
+        logger.warning(f"inline-audio: EVOLUTION_API_URL ou GROQ_API_KEY ausente — skip msg={db_message_id}")
+        return
+
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(
-                f"{worker_url.rstrip('/')}/transcribe",
-                json={
-                    "key": key,
-                    "phone": phone,
-                    "message_id": wa_message_id,
-                    "secret": secret,
-                    "source": "main_instance_audio",
-                    "db_message_id": db_message_id,
+        # 1. Download audio como base64
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            dl = await client.post(
+                f"{evo_url}/chat/getBase64FromMediaMessage/{instance}",
+                headers={"apikey": evo_key, "Content-Type": "application/json"},
+                json={"message": {"key": key}, "convertToMp4": False},
+            )
+        if dl.status_code not in (200, 201):
+            logger.warning(f"inline-audio: download failed status={dl.status_code} msg={db_message_id}")
+            return
+        dl_data = dl.json()
+        audio_b64 = dl_data.get("base64", "")
+        mimetype = dl_data.get("mimetype", "audio/ogg")
+        if not audio_b64:
+            logger.warning(f"inline-audio: base64 vazio msg={db_message_id}")
+            return
+
+        audio_bytes = base64.b64decode(audio_b64)
+        ext_map = {"audio/ogg": "ogg", "audio/mp4": "mp4", "audio/mpeg": "mp3", "audio/wav": "wav"}
+        clean_mime = mimetype.split(";")[0].strip()
+        ext = ext_map.get(clean_mime, "ogg")
+
+        # 2. Transcreve via Groq Whisper large-v3
+        whisper_prompt = (
+            "Renato Almeida Prado, Tonha, ImensIAH, ConselhoOS, Vallen Clinic, "
+            "Almeida Prado, Assespro, Wadhwani, Despertar, Emma, Orestes, "
+            "RACI, briefing, CoS, conselheiro, board, governanca corporativa."
+        )
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            gr = await client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {groq_key}"},
+                files={"file": (f"audio.{ext}", audio_bytes, clean_mime)},
+                data={
+                    "model": "whisper-large-v3",
+                    "language": "pt",
+                    "prompt": whisper_prompt,
+                    "temperature": "0",
+                    "response_format": "verbose_json",
                 },
             )
-            logger.info(f"main-audio dispatch -> worker status={resp.status_code} msg={db_message_id}")
+        if gr.status_code != 200:
+            logger.warning(f"inline-audio: groq failed status={gr.status_code} msg={db_message_id}")
+            return
+
+        gr_data = gr.json()
+        transcription = (gr_data.get("text") or "").strip()
+
+        # Filtro anti-alucinacao: no_speech_prob alto ou avg_logprob muito negativo
+        segments = gr_data.get("segments") or []
+        if segments:
+            avg_no_speech = sum(s.get("no_speech_prob", 0) for s in segments) / len(segments)
+            avg_logprob = sum(s.get("avg_logprob", 0) for s in segments) / len(segments)
+            if avg_no_speech > 0.6 or avg_logprob < -1.0:
+                logger.warning(f"inline-audio: hallucination filter triggered (no_speech={avg_no_speech:.2f} logprob={avg_logprob:.2f}) msg={db_message_id}")
+                return
+
+        if not transcription:
+            logger.warning(f"inline-audio: transcricao vazia msg={db_message_id}")
+            return
+
+        logger.info(f"inline-audio: transcribed {len(transcription)} chars msg={db_message_id}: {transcription[:80]}")
+
+        # 3. Salva em wa_attachments (idempotente via ON CONFLICT)
+        try:
+            from database import get_db
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO wa_attachments (
+                            message_id, phone, kind, mime_type, size_bytes,
+                            extracted_text, extraction_model
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (message_id, kind) DO UPDATE
+                            SET extracted_text   = EXCLUDED.extracted_text,
+                                extraction_model = EXCLUDED.extraction_model
+                    """, (
+                        wa_message_id, phone, "audio", clean_mime, len(audio_bytes),
+                        transcription, "whisper-large-v3",
+                    ))
+                conn.commit()
+        except Exception as db_err:
+            logger.warning(f"inline-audio: db save failed msg={db_message_id}: {db_err}")
+
     except Exception as e:
-        logger.warning(f"main-audio dispatch failed (msg={db_message_id}): {e}")
+        logger.warning(f"inline-audio: unexpected error msg={db_message_id}: {e}")
 
 
 async def process_sent_message(data: Dict) -> Dict:
