@@ -16404,6 +16404,43 @@ async def cron_email_triage_sweep(request: Request, hours: int = 1):
         }
 
 
+@app.get("/api/cron/email-triage-aging")
+@app.post("/api/cron/email-triage-aging")
+@track_cron_run
+async def cron_email_triage_aging(request: Request, retroactive: bool = False, dry_run: bool = False):
+    """Cron: aplica política de aging em pendings velhos.
+
+    Janelas (config em AGING_POLICY):
+      - urgent/must_read: 14 dias
+      - important: 7 dias
+      - silent: 2 dias
+      - archive_proposed: 3 dias (também arquiva no Gmail)
+
+    Args:
+      retroactive=true: processa TODOS os pendings velhos (limpa backlog 1x).
+      dry_run=true: só conta, sem alterar.
+
+    Schedule: 1x/dia via Railway worker scheduler.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.email_triage import apply_aging_policy
+
+    try:
+        result = await apply_aging_policy(retroactive=retroactive, dry_run=dry_run)
+        return {"job": "email-triage-aging", "ok": True, **result}
+    except Exception as e:
+        import traceback
+        logging.exception("email-triage-aging falhou")
+        return {
+            "job": "email-triage-aging",
+            "ok": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()[:2000],
+        }
+
+
 @app.get("/api/email-triage/archive-proposals/review")
 async def list_archive_proposals_review(
     request: Request,

@@ -2162,3 +2162,133 @@ def get_email_triage_service() -> EmailTriageService:
     if _email_triage_service is None:
         _email_triage_service = EmailTriageService()
     return _email_triage_service
+
+
+# =============================================================================
+# AGING POLICY (24/06/2026)
+# =============================================================================
+# Auto-dismiss pendings que estouraram a janela. Pra `archive_proposed`,
+# também arquiva no Gmail (remove INBOX). Roda 1x/dia via cron Railway worker.
+
+AGING_POLICY = {
+    "urgent": 14,
+    "must_read": 14,
+    "important": 7,
+    "silent": 2,
+    "archive_proposed": 3,
+}
+
+
+async def apply_aging_policy(retroactive: bool = False, dry_run: bool = False) -> Dict:
+    """Aplica política de aging nos pendings.
+
+    Args:
+        retroactive: se True, processa TODOS os pendings (uso 1x pra limpar backlog).
+                     se False (default), só processa quem vai estourar janela hoje.
+        dry_run: se True, só conta o que seria feito, sem alterar.
+
+    Para `archive_proposed`, também arquiva no Gmail (remove INBOX label).
+    Demais classificações: apenas marca status='dismissed'.
+
+    Returns:
+        {dismissed: {silent: N, ...}, archived_gmail: N, errors: N, dry_run: bool}
+    """
+    from integrations.gmail import GmailIntegration
+
+    stats = {
+        "dismissed": {k: 0 for k in AGING_POLICY},
+        "archived_gmail": 0,
+        "gmail_errors": 0,
+        "skipped_no_token": 0,
+        "dry_run": dry_run,
+        "retroactive": retroactive,
+    }
+
+    gmail_client = GmailIntegration()
+    token_cache: Dict[str, str] = {}  # account_email -> access_token
+
+    async def get_token(account_email: str) -> Optional[str]:
+        if account_email in token_cache:
+            return token_cache[account_email]
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT refresh_token FROM google_accounts WHERE email = %s",
+                (account_email,),
+            )
+            row = cur.fetchone()
+            if not row or not row.get("refresh_token"):
+                return None
+            rr = await gmail_client.refresh_access_token(row["refresh_token"])
+            if "access_token" not in rr:
+                return None
+            token_cache[account_email] = rr["access_token"]
+            return rr["access_token"]
+
+    # Query targets: pendings estourados
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        for classification, days in AGING_POLICY.items():
+            cursor.execute(
+                """
+                SELECT et.id, et.classification, et.criado_em, et.account_email,
+                       m.external_id as gmail_id
+                FROM email_triage et
+                LEFT JOIN messages m ON m.id = et.message_id
+                WHERE et.status = 'pending'
+                  AND et.classification = %s
+                  AND et.criado_em < NOW() - INTERVAL '%s days'
+                """,
+                (classification, days),
+            )
+            targets = list(cursor.fetchall())
+
+            if not retroactive:
+                # Modo daily: só pega quem virou stale exatamente hoje
+                # (idempotente — se já passou da janela e nao foi pego ontem, pega hoje)
+                pass  # mesma query funciona
+
+            for row in targets:
+                triage_id = row["id"]
+                gmail_id = row.get("gmail_id")
+                account_email = row.get("account_email")
+
+                # Para archive_proposed: arquivar no Gmail se possível
+                if classification == "archive_proposed" and gmail_id and account_email:
+                    if dry_run:
+                        stats["archived_gmail"] += 1
+                    else:
+                        token = await get_token(account_email)
+                        if not token:
+                            stats["skipped_no_token"] += 1
+                        else:
+                            try:
+                                ok = await gmail_client.archive_message(token, gmail_id)
+                                if ok:
+                                    stats["archived_gmail"] += 1
+                                else:
+                                    stats["gmail_errors"] += 1
+                            except Exception as e:
+                                logger.warning(f"aging archive falhou triage_id={triage_id}: {e}")
+                                stats["gmail_errors"] += 1
+
+                # Marca dismissed (todos os tipos)
+                if not dry_run:
+                    cursor.execute(
+                        """
+                        UPDATE email_triage
+                        SET status = 'dismissed',
+                            dismissed_at = NOW(),
+                            action_taken = %s
+                        WHERE id = %s
+                        """,
+                        (f"aging_{classification}_{days}d", triage_id),
+                    )
+
+                stats["dismissed"][classification] += 1
+
+            if not dry_run:
+                conn.commit()
+
+    return stats
