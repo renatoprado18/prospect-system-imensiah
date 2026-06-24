@@ -12097,6 +12097,142 @@ async def send_gmail_message(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/admin/gmail-proxy")
+async def admin_gmail_proxy(request: Request):
+    """
+    Proxy genérico pra Gmail API usando tokens stored em google_accounts.
+    Permite operar em qualquer conta conectada (professional/personal).
+
+    Auth: session admin OU INTEL_API_KEY no header X-API-Key.
+
+    Body:
+        account: 'personal' | 'professional' | <email> | <account_id>
+        action: search_threads | get_thread | list_labels | label_thread |
+                unlabel_thread | archive_thread | create_draft | send_message
+        params: dict action-specific
+    """
+    import base64 as _b64
+
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    if api_key and intel_api_key and api_key == intel_api_key:
+        pass
+    else:
+        user = get_current_user(request)
+        if not user or user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Acesso restrito a admin")
+
+    body = await request.json()
+    account_key = body.get("account")
+    action = body.get("action")
+    params = body.get("params", {}) or {}
+
+    if not account_key or not action:
+        raise HTTPException(400, "account e action sao obrigatorios")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    if isinstance(account_key, int) or (isinstance(account_key, str) and account_key.isdigit()):
+        cursor.execute("SELECT * FROM google_accounts WHERE id = %s", (int(account_key),))
+    elif isinstance(account_key, str) and "@" in account_key:
+        cursor.execute("SELECT * FROM google_accounts WHERE email = %s", (account_key,))
+    else:
+        cursor.execute("SELECT * FROM google_accounts WHERE tipo = %s", (account_key,))
+
+    account = cursor.fetchone()
+    conn.close()
+
+    if not account:
+        raise HTTPException(404, f"Conta '{account_key}' nao encontrada em google_accounts")
+
+    account_dict = dict(account)
+    refresh_token = account_dict.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(500, "Conta sem refresh_token")
+
+    token_result = await gmail.refresh_access_token(refresh_token)
+    if "error" in token_result:
+        raise HTTPException(500, f"Token refresh falhou: {token_result['error']}")
+
+    access_token = token_result.get("access_token")
+    base_url = "https://gmail.googleapis.com/gmail/v1/users/me"
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        if action == "search_threads":
+            q = {"maxResults": params.get("max_results", 20)}
+            if params.get("query"):
+                q["q"] = params["query"]
+            if params.get("page_token"):
+                q["pageToken"] = params["page_token"]
+            r = await client.get(f"{base_url}/threads", headers=headers, params=q)
+            return r.json()
+
+        if action == "get_thread":
+            thread_id = params.get("thread_id")
+            if not thread_id:
+                raise HTTPException(400, "thread_id obrigatorio")
+            r = await client.get(
+                f"{base_url}/threads/{thread_id}",
+                headers=headers,
+                params={"format": params.get("format", "metadata")},
+            )
+            return r.json()
+
+        if action == "list_labels":
+            r = await client.get(f"{base_url}/labels", headers=headers)
+            return r.json()
+
+        if action in ("label_thread", "unlabel_thread", "archive_thread"):
+            thread_id = params.get("thread_id")
+            if not thread_id:
+                raise HTTPException(400, "thread_id obrigatorio")
+            payload = {}
+            if action == "archive_thread":
+                payload["removeLabelIds"] = ["INBOX"]
+            else:
+                label_ids = params.get("label_ids") or []
+                if not label_ids:
+                    raise HTTPException(400, "label_ids obrigatorio")
+                payload["addLabelIds" if action == "label_thread" else "removeLabelIds"] = label_ids
+            r = await client.post(
+                f"{base_url}/threads/{thread_id}/modify",
+                headers={**headers, "Content-Type": "application/json"},
+                json=payload,
+            )
+            return r.json()
+
+        if action == "create_draft":
+            import email.mime.text as mime_text
+            msg = mime_text.MIMEText(params.get("body", ""))
+            msg["To"] = params.get("to", "")
+            msg["Subject"] = params.get("subject", "")
+            raw = _b64.urlsafe_b64encode(msg.as_bytes()).decode()
+            payload = {"message": {"raw": raw}}
+            if params.get("thread_id"):
+                payload["message"]["threadId"] = params["thread_id"]
+            r = await client.post(
+                f"{base_url}/drafts",
+                headers={**headers, "Content-Type": "application/json"},
+                json=payload,
+            )
+            return r.json()
+
+        if action == "send_message":
+            result = await gmail.send_message(
+                access_token=access_token,
+                to=params.get("to", ""),
+                subject=params.get("subject", ""),
+                body=params.get("body", ""),
+                html_body=params.get("html_body"),
+                thread_id=params.get("thread_id"),
+            )
+            return result
+
+        raise HTTPException(400, f"action '{action}' desconhecida")
+
+
 @app.get("/api/gmail/threads/{contact_id}")
 async def get_gmail_threads_for_contact(request: Request, contact_id: int, limit: int = 20):
     """
