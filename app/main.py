@@ -28063,9 +28063,10 @@ async def cron_cos_digest(request: Request, mode: str = "morning"):
         framing = """Ciclo MATINAL (7h BRT). Escreva um briefing para o dia que começa (max 15 linhas):
 1. Agenda do dia: eventos calendar próximas 24h (hora, título, local)
 2. Mensagens em aberto: WA incoming sem resposta nas últimas 12h, por contato
-3. E-mails must_read: assunto + remetente, por prioridade
-4. Projetos com atenção: >3 tarefas pending ou travados
-5. Ações acumuladas: top-3 ai_suggestions mais prioritárias
+3. E-mails must_read: assunto + remetente, por prioridade (destaque os P9-10 — são urgentes; abaixo disso liste só os top 3)
+4. Triage stats: conte os emails em email_triage e reporte em UMA linha: "Triage: X must_read pending (Y P9+), Z archive_proposed pending"
+5. Projetos com atenção: >3 tarefas pending ou travados
+6. Ações acumuladas: top-3 ai_suggestions mais prioritárias
 Sem cumprimentos. Números concretos. Silenciar grupos WA e alertas automáticos."""
     else:
         framing = """Ciclo NOTURNO (18h BRT). Escreva o fechamento do dia (max 15 linhas):

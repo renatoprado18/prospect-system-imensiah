@@ -1955,6 +1955,28 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
                     except Exception as e:
                         stats["errors"].append(f"label {gmail_id[:12]}: {str(e)[:80]}")
 
+            # 4f-bis. WA push pra urgents (24/06/2026) — priority>=9 sao
+            # imprensa/jornalista (R1) ou C1 contato (R2). Notifica Renato
+            # imediatamente via intel-bot-v2 (instancia de notificacoes CoS).
+            priority_val = int(decision.get("priority", 5))
+            if classification == "must_read" and priority_val >= 9:
+                try:
+                    from services.intel_bot import send_intel_notification
+                    sender_short = (headers.get("from") or "")[:60]
+                    subj_short = (headers.get("subject") or "(sem assunto)")[:70]
+                    reasons_short = "; ".join(decision.get("reasons", [])[:2])[:120]
+                    notif_text = (
+                        f"📧 Email urgente (P{priority_val})\n"
+                        f"De: {sender_short}\n"
+                        f"Assunto: {subj_short}\n"
+                        f"Por que: {reasons_short}"
+                    )
+                    pushed = await send_intel_notification(notif_text)
+                    if pushed:
+                        stats["wa_urgents_pushed"] = stats.get("wa_urgents_pushed", 0) + 1
+                except Exception as e:
+                    stats["errors"].append(f"wa_push {gmail_id[:12]}: {str(e)[:80]}")
+
             # 4g. Shadow archive proposals (Commit 5)
             if classification == "archive_proposed":
                 try:
