@@ -12230,6 +12230,34 @@ async def admin_gmail_proxy(request: Request):
             )
             return result
 
+        if action == "list_filters":
+            r = await client.get(f"{base_url}/settings/filters", headers=headers)
+            return r.json()
+
+        if action == "create_filter":
+            # criteria: {from, to, subject, query, hasAttachment, ...}
+            # action: {addLabelIds, removeLabelIds, forward}
+            criteria = params.get("criteria") or {}
+            filter_action = params.get("filter_action") or {}
+            if not criteria:
+                raise HTTPException(400, "criteria obrigatorio")
+            payload = {"criteria": criteria, "action": filter_action}
+            r = await client.post(
+                f"{base_url}/settings/filters",
+                headers={**headers, "Content-Type": "application/json"},
+                json=payload,
+            )
+            return r.json()
+
+        if action == "delete_filter":
+            filter_id = params.get("filter_id")
+            if not filter_id:
+                raise HTTPException(400, "filter_id obrigatorio")
+            r = await client.delete(
+                f"{base_url}/settings/filters/{filter_id}", headers=headers
+            )
+            return {"status": r.status_code}
+
         raise HTTPException(400, f"action '{action}' desconhecida")
 
 
