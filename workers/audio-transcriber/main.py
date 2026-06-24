@@ -160,6 +160,9 @@ _SCHEDULER_JOBS = [
     # 24/06/2026 — aging policy: auto-dismiss pendings estourados (silent>2d,
     # important>7d, must_read/urgent>14d, archive_proposed>3d com archive Gmail).
     ("email-triage-aging", "/api/cron/email-triage-aging", CronTrigger(hour=6, minute=0)),
+    # 24/06/2026 — gate de auto-archive: avalia FP rate per conta, notifica
+    # WA quando elegivel pra ligar (manual via /api/admin/auto-archive-enable).
+    ("auto-archive-gate-eval", "/api/cron/auto-archive-gate-eval", CronTrigger(hour=5, minute=0)),
     ("catchup", "/api/cron/catchup", CronTrigger(minute=30)),
     # 22/06/2026: APOSENTADO — cos-digest-morning (10:08 UTC) ja cobre LLM
     # narrative. daily-morning-briefing volta ao static template que e suficiente.

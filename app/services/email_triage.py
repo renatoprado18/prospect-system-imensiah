@@ -30,10 +30,139 @@ logger = logging.getLogger(__name__)
 # agent_actions.action_type='gmail_label_add'.
 MAX_LABELS_PER_DAY = 50
 
-# Shadow mode toggle (Commit 5). Quando True, archive_proposed NAO
-# arquiva no Gmail — so propoe em email_archive_proposals. Vira False
-# manualmente depois de 14d com FP rate <1%.
-AUTO_ARCHIVE_ENABLED = False
+# Auto-archive gate (24/06/2026) — substitui o flag global por config
+# per conta em google_accounts.auto_archive_enabled. Lido a cada sweep.
+# Criterio destrava: FP rate < 1% em 14d (manual via Renato).
+def is_auto_archive_enabled(account_email: str) -> bool:
+    """Le google_accounts.auto_archive_enabled pra conta."""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT auto_archive_enabled FROM google_accounts WHERE email = %s",
+                (account_email,),
+            )
+            row = cur.fetchone()
+            return bool(row and row.get("auto_archive_enabled"))
+    except Exception as e:
+        logger.warning(f"is_auto_archive_enabled falhou: {e}")
+        return False
+
+
+# Gate: parametros do criterio
+AUTO_ARCHIVE_GATE = {
+    "window_days": 14,
+    "min_decisions": 30,         # precisa amostra minima pra decidir
+    "max_fp_rate": 0.01,         # 1% de FP libera
+    "high_fp_alert_rate": 0.05,  # >5% gera alerta de "desabilitar"
+}
+
+
+def compute_auto_archive_gate(account_email: str, window_days: int = None) -> Dict:
+    """Computa status do gate de auto-archive pra uma conta.
+
+    FP rate = rejected / decided (decided = archived + approved + rejected).
+    Eligible quando: decided >= min_decisions AND fp_rate < max_fp_rate.
+
+    Returns:
+        {
+          account_email, window_days,
+          total_proposed, archived, approved, rejected, shadow,
+          decided, fp_rate, eligible,
+          current_enabled, recommendation
+        }
+    """
+    days = window_days or AUTO_ARCHIVE_GATE["window_days"]
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT status, COUNT(*) as n
+            FROM email_archive_proposals
+            WHERE account_email = %s
+              AND criado_em > NOW() - INTERVAL '%s days'
+            GROUP BY status
+            """,
+            (account_email, days),
+        )
+        by_status = {r["status"]: int(r["n"]) for r in cur.fetchall()}
+
+        cur.execute(
+            "SELECT auto_archive_enabled FROM google_accounts WHERE email = %s",
+            (account_email,),
+        )
+        acc = cur.fetchone()
+
+    archived = by_status.get("archived", 0)
+    approved = by_status.get("approved", 0)
+    rejected = by_status.get("rejected", 0)
+    shadow = by_status.get("shadow", 0)
+    decided = archived + approved + rejected
+    total = decided + shadow
+
+    fp_rate = (rejected / decided) if decided > 0 else None
+    eligible = (
+        decided >= AUTO_ARCHIVE_GATE["min_decisions"]
+        and fp_rate is not None
+        and fp_rate < AUTO_ARCHIVE_GATE["max_fp_rate"]
+    )
+
+    current_enabled = bool(acc and acc.get("auto_archive_enabled"))
+
+    # Recomendacao
+    if current_enabled:
+        if fp_rate is not None and fp_rate >= AUTO_ARCHIVE_GATE["high_fp_alert_rate"]:
+            rec = "disable_high_fp"
+        else:
+            rec = "keep_enabled"
+    else:
+        if decided < AUTO_ARCHIVE_GATE["min_decisions"]:
+            rec = "need_more_data"
+        elif eligible:
+            rec = "ready_to_enable"
+        else:
+            rec = "fp_too_high"
+
+    return {
+        "account_email": account_email,
+        "window_days": days,
+        "total_proposed": total,
+        "archived": archived,
+        "approved": approved,
+        "rejected": rejected,
+        "shadow": shadow,
+        "decided": decided,
+        "fp_rate": fp_rate,
+        "eligible": eligible,
+        "current_enabled": current_enabled,
+        "recommendation": rec,
+    }
+
+
+def record_gate_eval(status: Dict) -> None:
+    """Salva snapshot em auto_archive_gate_evals."""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO auto_archive_gate_evals
+                  (account_email, window_days, total_proposed, decided,
+                   archived, rejected, fp_rate, eligible, recommendation)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    status["account_email"], status["window_days"],
+                    status["total_proposed"], status["decided"],
+                    status["archived"], status["rejected"],
+                    status["fp_rate"], status["eligible"],
+                    status["recommendation"],
+                ),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"record_gate_eval falhou: {e}")
 
 
 def _normalize_email_dates(item: Dict) -> Dict:
@@ -1977,18 +2106,54 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
                 except Exception as e:
                     stats["errors"].append(f"wa_push {gmail_id[:12]}: {str(e)[:80]}")
 
-            # 4g. Shadow archive proposals (Commit 5)
+            # 4g. Archive proposals — shadow OU real (gate per-conta, 24/06/2026)
             if classification == "archive_proposed":
+                acct_email = ref["account_email"]
+                acct_auto_enabled = is_auto_archive_enabled(acct_email)
                 try:
-                    prop_result = await _create_shadow_proposal(
-                        triage_id=triage_id,
-                        gmail_id=gmail_id,
-                        account_email=ref["account_email"],
-                        headers=headers,
-                        decision=decision,
-                    )
-                    if prop_result.get("created"):
-                        stats["shadow_proposals"] += 1
+                    if acct_auto_enabled:
+                        # Auto-archive ATIVADO pra essa conta — arquiva real no Gmail
+                        try:
+                            archived_ok = await gmail.archive_message(
+                                ref["access_token"], gmail_id
+                            )
+                        except Exception as e:
+                            archived_ok = False
+                            stats["errors"].append(f"auto_archive {gmail_id[:12]}: {str(e)[:80]}")
+                        prop_result = await _create_shadow_proposal(
+                            triage_id=triage_id,
+                            gmail_id=gmail_id,
+                            account_email=acct_email,
+                            headers=headers,
+                            decision=decision,
+                        )
+                        # Marca proposal como archived direto
+                        if prop_result.get("created") and archived_ok:
+                            with get_db() as _conn:
+                                _cur = _conn.cursor()
+                                _cur.execute(
+                                    """
+                                    UPDATE email_archive_proposals
+                                    SET status = 'archived',
+                                        ratified_at = NOW(),
+                                        ratified_by = 'auto_gate'
+                                    WHERE id = %s
+                                    """,
+                                    (prop_result.get("proposal_id"),),
+                                )
+                                _conn.commit()
+                            stats["auto_archived"] = stats.get("auto_archived", 0) + 1
+                    else:
+                        # Shadow mode (default — gate ainda nao destravou)
+                        prop_result = await _create_shadow_proposal(
+                            triage_id=triage_id,
+                            gmail_id=gmail_id,
+                            account_email=acct_email,
+                            headers=headers,
+                            decision=decision,
+                        )
+                        if prop_result.get("created"):
+                            stats["shadow_proposals"] += 1
                 except Exception as e:
                     stats["errors"].append(f"shadow {gmail_id[:12]}: {str(e)[:80]}")
 
@@ -2171,7 +2336,9 @@ def compute_archive_fp_rate(days: int = 14) -> Dict:
         "rejected": rejected,
         "decided": decided,
         "fp_rate": fp_rate,
-        "auto_archive_enabled": AUTO_ARCHIVE_ENABLED,
+        # auto_archive_enabled deprecated aqui — agora per-conta em
+        # google_accounts.auto_archive_enabled. Use compute_auto_archive_gate().
+        "auto_archive_enabled_global_deprecated": False,
     }
 
 

@@ -16404,6 +16404,151 @@ async def cron_email_triage_sweep(request: Request, hours: int = 1):
         }
 
 
+@app.get("/api/admin/auto-archive-gate")
+async def admin_auto_archive_gate_status(request: Request):
+    """Status do gate de auto-archive por conta.
+
+    Auth: session admin OU INTEL_API_KEY no header X-API-Key.
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    if not (api_key and intel_api_key and api_key == intel_api_key):
+        user = get_current_user(request)
+        if not user or user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Acesso restrito a admin")
+
+    from services.email_triage import compute_auto_archive_gate, AUTO_ARCHIVE_GATE
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE ORDER BY id")
+    accounts = [r["email"] for r in cursor.fetchall()]
+    conn.close()
+
+    by_account = {acc: compute_auto_archive_gate(acc) for acc in accounts}
+    return {"params": AUTO_ARCHIVE_GATE, "accounts": by_account}
+
+
+@app.post("/api/admin/auto-archive-enable")
+async def admin_auto_archive_enable(request: Request):
+    """Liga/desliga auto-archive pra uma conta.
+
+    Body: {account_email: str, enabled: bool}
+    Auth: session admin OU INTEL_API_KEY.
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    if not (api_key and intel_api_key and api_key == intel_api_key):
+        user = get_current_user(request)
+        if not user or user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Acesso restrito a admin")
+
+    body = await request.json()
+    account_email = body.get("account_email")
+    enabled = bool(body.get("enabled", False))
+    actor = body.get("actor", "renato")
+    if not account_email:
+        raise HTTPException(400, "account_email obrigatorio")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE google_accounts
+        SET auto_archive_enabled = %s,
+            auto_archive_enabled_at = CASE WHEN %s THEN NOW() ELSE NULL END,
+            auto_archive_enabled_by = CASE WHEN %s THEN %s ELSE NULL END
+        WHERE email = %s
+        RETURNING email, auto_archive_enabled, auto_archive_enabled_at
+        """,
+        (enabled, enabled, enabled, actor, account_email),
+    )
+    row = cursor.fetchone()
+    conn.commit()
+    conn.close()
+
+    if not row:
+        raise HTTPException(404, f"Conta {account_email} nao encontrada")
+
+    return {"ok": True, "account": dict(row)}
+
+
+@app.get("/api/cron/auto-archive-gate-eval")
+@app.post("/api/cron/auto-archive-gate-eval")
+@track_cron_run
+async def cron_auto_archive_gate_eval(request: Request):
+    """Cron diario que avalia gate por conta e notifica Renato quando
+    estado mudar (ex.: pessoal virou ready_to_enable; ou enabled subiu
+    FP rate).
+
+    Schedule: 1x/dia 5h UTC (2h BRT) — antes do digest morning (10h UTC).
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.email_triage import compute_auto_archive_gate, record_gate_eval
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT email FROM google_accounts WHERE conectado = TRUE ORDER BY id")
+    accounts = [r["email"] for r in cursor.fetchall()]
+
+    results = {}
+    notifications = []
+    for acc in accounts:
+        status = compute_auto_archive_gate(acc)
+        record_gate_eval(status)
+        results[acc] = status
+
+        rec = status["recommendation"]
+        # Comparar com avaliacao do dia anterior (mesma conta) — so notifica em mudancas
+        cursor.execute(
+            """
+            SELECT recommendation FROM auto_archive_gate_evals
+            WHERE account_email = %s
+            ORDER BY criado_em DESC OFFSET 1 LIMIT 1
+            """,
+            (acc,),
+        )
+        prev = cursor.fetchone()
+        prev_rec = prev["recommendation"] if prev else None
+        if rec != prev_rec and rec in ("ready_to_enable", "disable_high_fp"):
+            notifications.append({"account": acc, "from": prev_rec, "to": rec, "status": status})
+
+    conn.close()
+
+    # Notifica via WA pra mudancas
+    for n in notifications:
+        try:
+            from services.intel_bot import send_intel_notification
+            acc_short = n["account"].split("@")[0]
+            if n["to"] == "ready_to_enable":
+                fp_pct = (n["status"]["fp_rate"] or 0) * 100
+                text = (
+                    f"🟢 Auto-archive elegivel: {acc_short}\n"
+                    f"FP rate: {fp_pct:.2f}% em {n['status']['decided']} decisoes (14d)\n"
+                    f"Pra liberar: POST /api/admin/auto-archive-enable "
+                    f"{{account_email: '{n['account']}', enabled: true}}"
+                )
+            else:  # disable_high_fp
+                fp_pct = (n["status"]["fp_rate"] or 0) * 100
+                text = (
+                    f"⚠️ Auto-archive risco: {acc_short}\n"
+                    f"FP rate subiu para {fp_pct:.2f}% (cap alerta 5%)\n"
+                    f"Considere desabilitar."
+                )
+            await send_intel_notification(text)
+        except Exception as e:
+            logging.warning(f"gate notify falhou: {e}")
+
+    return {
+        "job": "auto-archive-gate-eval",
+        "ok": True,
+        "accounts": results,
+        "notified": len(notifications),
+    }
+
+
 @app.get("/api/cron/email-triage-aging")
 @app.post("/api/cron/email-triage-aging")
 @track_cron_run
