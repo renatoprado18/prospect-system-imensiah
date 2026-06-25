@@ -735,6 +735,10 @@ class EmailTriageService:
             "tim.com.br",
             "claude.ai",                  # Anthropic billing
             "anthropic.com",
+            # 25/06/2026: faturas locais que cairam em archive_proposed
+            "meres.com.br",               # fatura Méres
+            "comgas.com.br",              # fatura gás
+            "quintoandar.com.br",         # fatura aluguel
         )
         GOV_DOMAINS = (".gov.br", ".jus.br")
         financial_keywords = (
@@ -788,6 +792,40 @@ class EmailTriageService:
                 "reasons": reasons,
                 "suggested_tags": ["!!Renato", tag_kind],
                 "suggested_actions": [{"type": "respond", "reason": "financeiro/gov"}],
+                "escalation": False,
+                "rule_hits": rule_hits,
+            }
+
+        # R3.5b (25/06/2026): financial alert SUBJECT de qualquer sender.
+        # Caso Méres 25/06: "Sua fatura vence em N dias" + "Pagamento Confirmado"
+        # cairam em archive_proposed pq meres.com.br nao estava no whitelist.
+        # FINANCIAL_DOMAINS agora inclui Méres+Comgas+QuintoAndar como cinto-suspensorio.
+        # Esta regra cobre o caso geral: qualquer sender com PHRASES financeiras
+        # explicitas no subject -> must_read p7. Phrases (nao single keywords)
+        # pra reduzir FP em copy promo.
+        FINANCIAL_SUBJECT_PHRASES = (
+            "fatura vence", "boleto vence", "fatura venc",
+            "sua fatura", "pagamento devido", "pagamento confirmado",
+            "pagamento recebido", "fatura em aberto",
+            "segunda via", "2a via",
+            "your invoice", "invoice for",
+            "fatura disponível", "boleto disponível",
+            "receipt for", "your receipt",
+            "vencimento da", "vence em", "vence amanha", "vence amanhã",
+            "fatura de ", "boleto de ",
+        )
+        subject_lc_finsubj = subject.lower().strip()
+        has_strong_fin_subj = any(p in subject_lc_finsubj for p in FINANCIAL_SUBJECT_PHRASES)
+        if has_strong_fin_subj:
+            reasons.append(f"Financial alert subject (qualquer sender — {sender_domain or 'unknown'})")
+            rule_hits.append("R3_5b_financial_subject")
+            return {
+                "classification": "must_read",
+                "priority": 7,
+                "ai_confidence": 0.85,
+                "reasons": reasons,
+                "suggested_tags": ["!!Renato", "financeiro"],
+                "suggested_actions": [{"type": "respond", "reason": "fatura/pagamento subject"}],
                 "escalation": False,
                 "rule_hits": rule_hits,
             }
@@ -2017,7 +2055,42 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
             stats["by_classification"][classification] = \
                 stats["by_classification"].get(classification, 0) + 1
 
-            # 4e. Inserir em email_triage (UPSERT por message_id)
+            # 4e. Dedup por (sender, subject_norm) em 24h. Caso 16/06 Vallen
+            # Pauta Conselho: 8 cópias identicas com priority=10. Mata burst.
+            sender_for_dedup = (headers.get("from") or "").strip()
+            subj_norm = re.sub(
+                r"^\s*(re|fwd?|res|fw)\s*:\s*",
+                "",
+                (headers.get("subject") or "").strip().lower(),
+                flags=re.IGNORECASE,
+            )
+            dup_status = "pending"
+            dup_reason = None
+            if sender_for_dedup and subj_norm:
+                with get_db() as _conn:
+                    _cur = _conn.cursor()
+                    _cur.execute(
+                        """
+                        SELECT et.id
+                        FROM email_triage et
+                        LEFT JOIN messages m ON m.id = et.message_id
+                        LEFT JOIN conversations c ON c.id = et.conversation_id
+                        WHERE et.account_email = %s
+                          AND et.criado_em > NOW() - INTERVAL '24 hours'
+                          AND (m.metadata->>'from') = %s
+                          AND REGEXP_REPLACE(LOWER(COALESCE(c.assunto, '')), '^\\s*(re|fwd?|res|fw)\\s*:\\s*', '', 'i') = %s
+                          AND et.status != 'dismissed'
+                        LIMIT 1
+                        """,
+                        (ref["account_email"], sender_for_dedup, subj_norm),
+                    )
+                    dup_row = _cur.fetchone()
+                    if dup_row:
+                        dup_status = "dismissed"
+                        dup_reason = f"duplicate_of_{dup_row['id']}_in_24h"
+                        stats["dedup_skipped"] = stats.get("dedup_skipped", 0) + 1
+
+            # 4e-bis. Inserir em email_triage (UPSERT por message_id)
             with get_db() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
@@ -2027,13 +2100,13 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
                         needs_attention, priority, classification,
                         classification_reasons, suggested_tags, suggested_actions,
                         status, account_type, account_email, ai_confidence,
-                        expires_at
+                        action_taken, expires_at
                     ) VALUES (
                         %s, %s, %s,
                         %s, %s, %s,
                         %s, %s, %s,
                         %s, %s, %s, %s,
-                        NOW() + INTERVAL '14 days'
+                        %s, NOW() + INTERVAL '14 days'
                     )
                     ON CONFLICT (message_id) DO NOTHING
                     RETURNING id
@@ -2042,21 +2115,26 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
                         msg_id,
                         conv_id,
                         contact_id,
-                        classification in ("must_read",),
+                        classification in ("must_read",) and dup_status == "pending",
                         decision.get("priority", 5),
                         classification,
                         json.dumps(decision.get("reasons", [])),
                         json.dumps(decision.get("suggested_tags", [])),
                         json.dumps(decision.get("suggested_actions", [])),
-                        "pending",
+                        dup_status,
                         ref["account_type"],
                         ref["account_email"],
                         confidence,
+                        dup_reason,
                     ),
                 )
                 row = cursor.fetchone()
                 triage_id = row["id"] if row else None
                 conn.commit()
+
+            # Skip downstream actions se for duplicata
+            if dup_status == "dismissed":
+                continue
 
             if not triage_id:
                 continue  # conflict — outra conta processou primeiro
