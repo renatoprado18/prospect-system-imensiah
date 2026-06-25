@@ -16550,11 +16550,10 @@ async def admin_bulk_ratify_proposals(request: Request):
                     )
 
                 if r.status_code in (200, 204):
-                    # Update proposal status
                     new_status = "rejected" if action == "mark_renato" else "archived"
-                    ratified_by = "bulk_ratify_mark_renato" if action == "mark_renato" else f"bulk_ratify_{action}"
-                    conn = get_connection()
-                    c2 = conn.cursor()
+                    ratified_by = f"bulk_ratify_{action}"
+                    conn2 = get_connection()
+                    c2 = conn2.cursor()
                     c2.execute(
                         """
                         UPDATE email_archive_proposals
@@ -16563,13 +16562,8 @@ async def admin_bulk_ratify_proposals(request: Request):
                         """,
                         (new_status, ratified_by, prop["id"]),
                     )
-                    # Atualizar email_triage tambem
-                    cursor.execute(
-                        "SELECT email_triage_id FROM email_archive_proposals WHERE id = %s",
-                        (prop["id"],),
-                    )
-                    conn.commit()
-                    conn.close()
+                    conn2.commit()
+                    conn2.close()
                     stats["ok"] += 1
                 else:
                     stats["errors"].append(
