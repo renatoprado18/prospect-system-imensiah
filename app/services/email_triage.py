@@ -1798,15 +1798,17 @@ async def _fetch_recent_messages_for_account(
     except Exception as e:
         logger.warning(f"sweep: persist access_token {account_email} falhou: {e}")
 
-    # Gmail query: inbox, ultimas N horas. newer_than:Xh tem granularidade
-    # de horas (1h, 2h, ..., 24h). >24h cai pra dias.
+    # Gmail query: SO inbox, ultimas N horas (25/06/2026: in:inbox filtra
+    # emails que filtros nativos do Gmail ja arquivaram, evitando classificar
+    # ruido conhecido). newer_than:Xh tem granularidade de horas; >24h vai pra dias.
     if hours <= 1:
-        query = "newer_than:1h"
+        time_q = "newer_than:1h"
     elif hours <= 24:
-        query = f"newer_than:{hours}h"
+        time_q = f"newer_than:{hours}h"
     else:
         days = max(1, hours // 24)
-        query = f"newer_than:{days}d"
+        time_q = f"newer_than:{days}d"
+    query = f"in:inbox {time_q}"
 
     try:
         result = await gmail_integration.list_messages(
