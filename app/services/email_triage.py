@@ -796,6 +796,33 @@ class EmailTriageService:
                 "rule_hits": rule_hits,
             }
 
+        # R3.6 (25/06/2026): Andressa admin senders. Roteia direto pra
+        # label !Andressa sem precisar !!Renato. Caracteristica: dominios
+        # que ela tradicionalmente cuida.
+        ANDRESSA_DOMAINS = (
+            "agilize.com.br",
+            "cora.com.br",
+            "fireflies.ai",  # transcripts de calls que ela organiza
+        )
+        ANDRESSA_SENDER_PATTERNS = ("andressa@",)  # andressa@almeida-prado.com etc
+        is_andressa_domain = bool(sender_domain) and any(
+            sender_domain.endswith(d) for d in ANDRESSA_DOMAINS
+        )
+        is_andressa_sender = any(p in (from_email or "").lower() for p in ANDRESSA_SENDER_PATTERNS)
+        if is_andressa_domain or is_andressa_sender:
+            reasons.append(f"Andressa admin sender ({sender_domain or from_email})")
+            rule_hits.append("R3_6_andressa")
+            return {
+                "classification": "must_read",
+                "priority": 6,
+                "ai_confidence": 0.88,
+                "reasons": reasons,
+                "suggested_tags": ["!Andressa", "admin"],
+                "suggested_actions": [{"type": "delegate", "to": "andressa"}],
+                "escalation": False,
+                "rule_hits": rule_hits,
+            }
+
         # R3.5b (25/06/2026): financial alert SUBJECT de qualquer sender.
         # Caso Méres 25/06: "Sua fatura vence em N dias" + "Pagamento Confirmado"
         # cairam em archive_proposed pq meres.com.br nao estava no whitelist.
@@ -2141,26 +2168,40 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
 
             stats["processed"] += 1
 
-            # 4f. Aplicar label !!Renato se must_read + conf >= 0.85
-            # (Commit 4: extracao real; aqui ja preparado mas com cap)
-            if (
-                classification == "must_read"
-                and confidence >= 0.85
-                and "!!Renato" not in [l for l in label_ids if isinstance(l, str)]
-            ):
-                if labels_today >= MAX_LABELS_PER_DAY:
-                    stats["label_skipped_cap"] += 1
+            # 4f. Aplicar label apropriado se must_read + conf >= 0.85
+            # 25/06/2026: roteamento por suggested_tags em vez de sempre !!Renato.
+            # - tags inclui !Andressa/andressa/admin -> !Andressa
+            # - tags inclui financeiro/billing/infra-critico -> !Recibos/Financeiro
+            #   (ou 7-Financeiro/Recibos profissional). infra-critico ALEM disso ganha !!Renato.
+            # - resto must_read -> !!Renato (default)
+            if classification == "must_read" and confidence >= 0.85:
+                tags_lower = [str(t).lower() for t in (decision.get("suggested_tags") or [])]
+                labels_to_apply = []
+                if any(t in tags_lower for t in ("!andressa", "andressa", "admin")):
+                    labels_to_apply.append("!Andressa")
+                elif any(t in tags_lower for t in ("financeiro", "billing", "gov", "infra-critico")):
+                    labels_to_apply.append(_label_name_financeiro(ref["account_email"]))
+                    if "infra-critico" in tags_lower:
+                        labels_to_apply.append("!!Renato")
                 else:
+                    labels_to_apply.append("!!Renato")
+
+                for label_name in labels_to_apply:
+                    if labels_today >= MAX_LABELS_PER_DAY:
+                        stats["label_skipped_cap"] += 1
+                        break
+                    if label_name in [l for l in label_ids if isinstance(l, str)]:
+                        continue  # ja aplicado
                     try:
-                        label_result = await _apply_renato_label(
+                        label_result = await _apply_generic_label(
                             gmail, ref["access_token"], gmail_id,
-                            ref["account_email"], triage_id, msg_id,
+                            ref["account_email"], triage_id, msg_id, label_name,
                         )
                         if label_result.get("applied"):
                             stats["label_applied"] += 1
                             labels_today += 1
                     except Exception as e:
-                        stats["errors"].append(f"label {gmail_id[:12]}: {str(e)[:80]}")
+                        stats["errors"].append(f"label {label_name} {gmail_id[:12]}: {str(e)[:80]}")
 
             # 4f-bis. WA push pra urgents (24/06/2026) — priority>=9 sao
             # imprensa/jornalista (R1) ou C1 contato (R2). Notifica Renato
@@ -2241,6 +2282,94 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
 
     stats["duration_ms"] = int((time.time() - started) * 1000)
     return stats
+
+
+def _label_name_financeiro(account_email: str) -> str:
+    """Label de financeiro por conta. Nomes diferentes nas 2 contas."""
+    if account_email == "renato.almeida.prado@gmail.com":
+        return "!Recibos/Financeiro"
+    return "7-Financeiro/Recibos"
+
+
+async def _apply_generic_label(
+    gmail_integration,
+    access_token: str,
+    gmail_id: str,
+    account_email: str,
+    triage_id: int,
+    message_id: int,
+    label_name: str,
+) -> Dict:
+    """Aplica qualquer label via gmail.add_gmail_label + log em agent_actions.
+
+    Idempotente (helper le current labels e skip se ja aplicado).
+    """
+    try:
+        result = await gmail_integration.add_gmail_label(
+            access_token=access_token,
+            message_id_gmail=gmail_id,
+            label_name=label_name,
+        )
+    except Exception as e:
+        return {"applied": False, "reason": f"call_exc: {e}"}
+
+    if not result.get("applied"):
+        if result.get("reason") == "already_labeled":
+            try:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        UPDATE email_triage
+                        SET action_taken = 'label_pre_existing'
+                        WHERE id = %s AND action_taken IS NULL
+                        """,
+                        (triage_id,),
+                    )
+                    conn.commit()
+            except Exception:
+                pass
+        return result
+
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE email_triage
+                SET action_taken = %s, actioned_at = NOW()
+                WHERE id = %s
+                """,
+                (f"label_applied:{label_name}", triage_id),
+            )
+            cursor.execute(
+                """
+                INSERT INTO agent_actions
+                    (action_type, category, title, details, scope_ref, source, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    "gmail_label_add",
+                    "email_triage",
+                    f"Label {label_name} em email [{_short_account(account_email)}]",
+                    f"triage_id={triage_id} gmail_id={gmail_id}",
+                    json.dumps({
+                        "triage_id": triage_id,
+                        "message_id": message_id,
+                        "gmail_id": gmail_id,
+                        "account_email": account_email,
+                        "label": label_name,
+                        "label_id": result.get("label_id"),
+                    }),
+                    "email_triage_sweep",
+                    "done",
+                ),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"_apply_generic_label log falhou: {e}")
+
+    return result
 
 
 async def _apply_renato_label(
