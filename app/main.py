@@ -12203,6 +12203,27 @@ async def admin_gmail_proxy(request: Request):
             )
             return r.json()
 
+        if action == "trash_thread":
+            # Move thread inteira pra Trash (30d auto-delete = safety net)
+            thread_id = params.get("thread_id")
+            if not thread_id:
+                raise HTTPException(400, "thread_id obrigatorio")
+            r = await client.post(
+                f"{base_url}/threads/{thread_id}/trash",
+                headers=headers,
+            )
+            return r.json()
+
+        if action == "trash_message":
+            message_id = params.get("message_id")
+            if not message_id:
+                raise HTTPException(400, "message_id obrigatorio")
+            r = await client.post(
+                f"{base_url}/messages/{message_id}/trash",
+                headers=headers,
+            )
+            return r.json()
+
         if action == "create_draft":
             import email.mime.text as mime_text
             msg = mime_text.MIMEText(params.get("body", ""))
