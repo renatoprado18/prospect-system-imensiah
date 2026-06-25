@@ -16450,6 +16450,137 @@ async def admin_auto_archive_gate_status(request: Request):
     return {"params": AUTO_ARCHIVE_GATE, "accounts": by_account}
 
 
+@app.post("/api/admin/archive-proposals/bulk-ratify")
+async def admin_bulk_ratify_proposals(request: Request):
+    """Ratifica em lote shadows por sender_email.
+
+    Body: {
+      account_email: str,
+      sender_email: str (LIKE pattern OK),
+      action: 'trash' | 'archive' | 'mark_renato',
+      label_id: str (obrigatorio se action=mark_renato)
+    }
+
+    - trash: messages.trash (30d safety) + status='archived' (decidiu)
+    - archive: removeLabelIds=[INBOX] + status='archived'
+    - mark_renato: addLabelIds=[Renato_label_id] + status='rejected' (FP)
+
+    Auth: session admin OU INTEL_API_KEY.
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    if not (api_key and intel_api_key and api_key == intel_api_key):
+        user = get_current_user(request)
+        if not user or user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Acesso restrito a admin")
+
+    body = await request.json()
+    account_email = body.get("account_email")
+    sender_email = body.get("sender_email")
+    action = body.get("action")
+    label_id = body.get("label_id")
+
+    if not all([account_email, sender_email, action]):
+        raise HTTPException(400, "account_email, sender_email, action obrigatorios")
+    if action == "mark_renato" and not label_id:
+        raise HTTPException(400, "label_id obrigatorio para mark_renato")
+    if action not in ("trash", "archive", "mark_renato"):
+        raise HTTPException(400, "action invalida")
+
+    # Get refresh token
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT refresh_token FROM google_accounts WHERE email = %s",
+        (account_email,),
+    )
+    acc = cursor.fetchone()
+    if not acc or not acc.get("refresh_token"):
+        conn.close()
+        raise HTTPException(404, f"Conta {account_email} sem refresh_token")
+
+    from integrations.gmail import GmailIntegration
+    gmail_client = GmailIntegration()
+    tr = await gmail_client.refresh_access_token(acc["refresh_token"])
+    if "access_token" not in tr:
+        conn.close()
+        raise HTTPException(500, f"Token refresh falhou: {tr.get('error')}")
+    access_token = tr["access_token"]
+
+    # Buscar shadows do sender
+    cursor.execute(
+        """
+        SELECT id, message_id, sender, subject
+        FROM email_archive_proposals
+        WHERE account_email = %s
+          AND sender ILIKE %s
+          AND status = 'shadow'
+        """,
+        (account_email, f"%{sender_email}%"),
+    )
+    proposals = list(cursor.fetchall())
+    conn.close()
+
+    stats = {"matched": len(proposals), "ok": 0, "errors": []}
+    if not proposals:
+        return stats
+
+    base_url = "https://gmail.googleapis.com/gmail/v1/users/me"
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for prop in proposals:
+            msg_id = prop["message_id"]
+            try:
+                if action == "trash":
+                    r = await client.post(
+                        f"{base_url}/messages/{msg_id}/trash", headers=headers
+                    )
+                elif action == "archive":
+                    r = await client.post(
+                        f"{base_url}/messages/{msg_id}/modify",
+                        headers={**headers, "Content-Type": "application/json"},
+                        json={"removeLabelIds": ["INBOX"]},
+                    )
+                else:  # mark_renato
+                    r = await client.post(
+                        f"{base_url}/messages/{msg_id}/modify",
+                        headers={**headers, "Content-Type": "application/json"},
+                        json={"addLabelIds": [label_id]},
+                    )
+
+                if r.status_code in (200, 204):
+                    # Update proposal status
+                    new_status = "rejected" if action == "mark_renato" else "archived"
+                    ratified_by = "bulk_ratify_mark_renato" if action == "mark_renato" else f"bulk_ratify_{action}"
+                    conn = get_connection()
+                    c2 = conn.cursor()
+                    c2.execute(
+                        """
+                        UPDATE email_archive_proposals
+                        SET status = %s, ratified_at = NOW(), ratified_by = %s
+                        WHERE id = %s
+                        """,
+                        (new_status, ratified_by, prop["id"]),
+                    )
+                    # Atualizar email_triage tambem
+                    cursor.execute(
+                        "SELECT email_triage_id FROM email_archive_proposals WHERE id = %s",
+                        (prop["id"],),
+                    )
+                    conn.commit()
+                    conn.close()
+                    stats["ok"] += 1
+                else:
+                    stats["errors"].append(
+                        f"prop {prop['id']} msg {msg_id[:8]}: HTTP {r.status_code} {r.text[:100]}"
+                    )
+            except Exception as e:
+                stats["errors"].append(f"prop {prop['id']}: {str(e)[:120]}")
+
+    return stats
+
+
 @app.post("/api/admin/auto-archive-enable")
 async def admin_auto_archive_enable(request: Request):
     """Liga/desliga auto-archive pra uma conta.
