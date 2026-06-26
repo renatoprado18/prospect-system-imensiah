@@ -13,8 +13,17 @@ import os
 import json
 import logging
 import re
+import textwrap
 from datetime import datetime, date
 from typing import Dict, List, Optional
+
+
+def _clip(s: Optional[str], width: int = 120) -> str:
+    """Quebra em palavra com reticencias, evita cortar frases no meio."""
+    s = (s or '').strip()
+    if not s:
+        return ''
+    return textwrap.shorten(s, width=width, placeholder='…')
 
 logger = logging.getLogger(__name__)
 
@@ -188,12 +197,11 @@ def format_raci_whatsapp(report: Dict) -> str:
         lines.append(f"📝 *Atualizações desta semana ({len(report['recent_updates'])}):*")
         for u in report['recent_updates']:
             resp = _short_name(u['responsavel'])
-            acao = (u['acao'] or '')[:60]
+            acao = _clip(u['acao'], 100)
             note = u['last_note']
             # Strip prefixo de data se vier "[DD/MM] texto"
-            import re as _re
-            note = _re.sub(r'^\[\d{1,2}/\d{1,2}\]\s*', '', note).strip()
-            note = note[:140]
+            note = re.sub(r'^\[\d{1,2}/\d{1,2}\]\s*', '', note or '').strip()
+            note = _clip(note, 180)
             status_emoji = {'concluido': '✅', 'em_andamento': '🔄', 'pendente': '⏳', 'atrasado': '⚠️'}.get(u['new_status'], '')
             lines.append(f"• {status_emoji} _{acao}_ — *{resp}*")
             lines.append(f"   {note}")
@@ -206,7 +214,7 @@ def format_raci_whatsapp(report: Dict) -> str:
         for item in report['urgentes']:
             n += 1
             resp = _short_name(item['responsavel'])
-            lines.append(f"{n}. {item['acao'][:80]} — *{resp}* (prazo: {item['prazo']})")
+            lines.append(f"{n}. {_clip(item['acao'])} — *{resp}* (prazo: {item['prazo']})")
         lines.append("")
 
     if report.get('atrasadas_mov'):
@@ -214,7 +222,7 @@ def format_raci_whatsapp(report: Dict) -> str:
         for item in report['atrasadas_mov']:
             n += 1
             resp = _short_name(item['responsavel'])
-            lines.append(f"{n}. {item['acao'][:80]} — *{resp}* (prazo: {item['prazo']})")
+            lines.append(f"{n}. {_clip(item['acao'])} — *{resp}* (prazo: {item['prazo']})")
         lines.append("")
 
     if report.get('no_prazo'):
@@ -222,7 +230,7 @@ def format_raci_whatsapp(report: Dict) -> str:
         for item in report['no_prazo']:
             n += 1
             resp = _short_name(item['responsavel'])
-            lines.append(f"{n}. {item['acao'][:80]} — *{resp}* ({item['prazo']})")
+            lines.append(f"{n}. {_clip(item['acao'])} — *{resp}* ({item['prazo']})")
         lines.append("")
 
     if report.get('concluidas'):
@@ -230,7 +238,7 @@ def format_raci_whatsapp(report: Dict) -> str:
         for item in report['concluidas']:
             n += 1
             resp = _short_name(item['responsavel'])
-            lines.append(f"{n}. {item['acao'][:80]} — *{resp}* ✓")
+            lines.append(f"{n}. {_clip(item['acao'])} — *{resp}* ✓")
         lines.append("")
 
     lines.append(f"_Total: {report['total']} | Responda com o nº + status (ex: \"3 concluído\")_")
