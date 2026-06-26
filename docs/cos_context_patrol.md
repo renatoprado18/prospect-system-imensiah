@@ -6,7 +6,7 @@ Missao: verificar estado do sistema, filtrar ruido e escalar so o que precisa de
 
 ```bash
 curl -s \
-  -H "X-API-Key: b4a0ade96cabf17f4662841d126af7a83a0db59aac0f12435c92194c4cd7e258" \
+  -H "X-API-Key: $INTEL_API_KEY" \
   "https://intel.almeida-prado.com/api/cos/context?hours=1"
 ```
 
@@ -34,7 +34,7 @@ Substitua MENSAGEM e URGENCY (high ou normal):
 
 ```bash
 curl -s -X POST \
-  -H "X-API-Key: b4a0ade96cabf17f4662841d126af7a83a0db59aac0f12435c92194c4cd7e258" \
+  -H "X-API-Key: $INTEL_API_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"message\": \"MENSAGEM\", \"urgency\": \"URGENCY\"}" \
   "https://intel.almeida-prado.com/api/cos/notify"
@@ -49,7 +49,7 @@ Substitua SUMMARY, N (total itens analisados) e M (quantos geraram notificacao):
 
 ```bash
 curl -s -X POST \
-  -H "X-API-Key: b4a0ade96cabf17f4662841d126af7a83a0db59aac0f12435c92194c4cd7e258" \
+  -H "X-API-Key: $INTEL_API_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"summary\": \"SUMMARY\", \"processed\": N, \"actioned\": M, \"send_wa\": false}" \
   "https://intel.almeida-prado.com/api/cos/digest"

@@ -6,7 +6,7 @@ Missao: consolidar o dia que termina e preparar terreno para amanha.
 
 ```bash
 curl -s \
-  -H "X-API-Key: b4a0ade96cabf17f4662841d126af7a83a0db59aac0f12435c92194c4cd7e258" \
+  -H "X-API-Key: $INTEL_API_KEY" \
   "https://intel.almeida-prado.com/api/cos/context?hours=12"
 ```
 
@@ -35,7 +35,7 @@ Substitua SUMMARY pelo fechamento, N pelo total de itens analisados:
 
 ```bash
 curl -s -X POST \
-  -H "X-API-Key: b4a0ade96cabf17f4662841d126af7a83a0db59aac0f12435c92194c4cd7e258" \
+  -H "X-API-Key: $INTEL_API_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"summary\": \"SUMMARY\", \"processed\": N, \"actioned\": 1, \"send_wa\": true}" \
   "https://intel.almeida-prado.com/api/cos/digest"
