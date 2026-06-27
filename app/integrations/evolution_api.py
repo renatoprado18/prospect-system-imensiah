@@ -752,10 +752,13 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
                 # participant existe pra incoming; pra outgoing fallback no group_jid
                 participant = key.get("participant", "") or remote_jid
                 sender_phone = participant.split("@")[0] if "@" in participant else participant
-                asyncio.create_task(dispatch_attachment_to_worker(
+                # Bloqueante (~500ms): worker ACK fast quando silent, processa
+                # em background do lado dele. Evita CancelledError do Vercel
+                # serverless que matava asyncio.create_task fire-and-forget.
+                await dispatch_attachment_to_worker(
                     message_obj_g, key, sender_phone, message_id,
                     source="main_group",
-                ))
+                )
             except Exception as e:
                 logger.warning(f"wa_attachment dispatch (group) failed: {e}")
 
@@ -961,10 +964,11 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
     if should_dispatch_attachment:
         try:
             from services.wa_attachment_dispatch import dispatch_attachment_to_worker
-            asyncio.create_task(dispatch_attachment_to_worker(
+            # Bloqueante (~500ms): worker ACK fast quando silent.
+            await dispatch_attachment_to_worker(
                 message, key, phone, message_id,
                 source="main_instance",
-            ))
+            )
         except Exception as e:
             logger.warning(f"wa_attachment dispatch (DM) failed: {e}")
 

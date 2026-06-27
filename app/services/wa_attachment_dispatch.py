@@ -84,6 +84,8 @@ async def dispatch_attachment_to_worker(
         payload["caption"] = img.get("caption") or ""
 
     try:
+        # Worker fast-ACK quando silent: retorna 200 em <500ms e processa em
+        # background. Timeout 8s e folga generosa pro ACK.
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(f"{worker_url}{endpoint}", json=payload)
         logger.info(
@@ -94,6 +96,6 @@ async def dispatch_attachment_to_worker(
     except Exception as e:
         logger.warning(
             f"wa_attachment_dispatch: failed kind={kind} source={source} "
-            f"msg={message_id} err={e}"
+            f"msg={message_id} err_type={type(e).__name__} err={e!r}"
         )
-        return {"dispatched": False, "kind": kind, "error": str(e)}
+        return {"dispatched": False, "kind": kind, "error": f"{type(e).__name__}: {e}"}

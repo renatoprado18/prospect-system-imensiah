@@ -2007,16 +2007,25 @@ REGRAS CRÍTICAS:
 
 @app.post("/transcribe")
 async def transcribe_audio(request: Request):
-    """
-    Receive audio transcription request from Vercel webhook.
-    Downloads audio, transcribes, processes bot message, sends response.
-    """
+    """Fast-ACK quando silent (source != "bot"): retorna 200 em <500ms e
+    processa em background. Resolve cancelamento de async tasks no Vercel
+    caller. Bot path (source='bot') segue sync — bot precisa do resultado."""
     data = await request.json()
-
-    # Verify secret
     if data.get("secret") != WORKER_SECRET:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not data.get("phone") or not data.get("key"):
+        return JSONResponse(status_code=400, content={"error": "missing phone or key"})
 
+    silent = data.get("source", "bot") != "bot"
+    if silent:
+        asyncio.create_task(_transcribe_audio_inner(data))
+        return {"status": "accepted", "message_id": data.get("message_id", ""), "queued": True}
+    return await _transcribe_audio_inner(data)
+
+
+async def _transcribe_audio_inner(data: dict) -> dict:
+    """Logica interna: download + Groq Whisper + persist wa_attachments + sanity check
+    + (opcionalmente) forward pro bot quando source='bot'."""
     key = data.get("key", {})
     phone = data.get("phone", "")
     message_id = data.get("message_id", "")
@@ -2030,9 +2039,6 @@ async def transcribe_audio(request: Request):
         else INTEL_BOT_INSTANCE
     )
     silent = source != "bot"
-
-    if not phone or not key:
-        return JSONResponse(status_code=400, content={"error": "missing phone or key"})
 
     logger.info(f"Transcription request for {phone} source={source} instance={instance}")
 
@@ -2280,22 +2286,30 @@ async def transcribe_raw(request: Request):
 
 @app.post("/analyze-image")
 async def analyze_image(request: Request):
-    """
-    Receive image from WhatsApp, analyze with Claude Vision,
-    send to intel-bot for processing.
-    """
-    import base64
-
+    """Fast-ACK quando silent (source != "bot"): retorna 200 em <500ms e
+    processa em background. Resolve cancelamento de async tasks no Vercel
+    caller. Bot path (source='bot') segue sync."""
     data = await request.json()
     if data.get("secret") != WORKER_SECRET:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not data.get("phone") or not data.get("key"):
+        return JSONResponse(status_code=400, content={"error": "missing phone or key"})
+
+    silent = data.get("source", "bot") != "bot"
+    if silent:
+        asyncio.create_task(_analyze_image_inner(data))
+        return {"status": "accepted", "message_id": data.get("message_id", ""), "queued": True}
+    return await _analyze_image_inner(data)
+
+
+async def _analyze_image_inner(data: dict) -> dict:
+    """Logica interna: download + Claude Haiku Vision + persist + forward (bot path)."""
+    import base64
 
     key = data.get("key", {})
     phone = data.get("phone", "")
     message_id = data.get("message_id", "")
     caption = data.get("caption", "")
-    # F4' — main-instance dispatch passes source != "bot" e instance="rap-whatsapp".
-    # silent suppresses _send_response (Renato nao recebe feedback no chat).
     source = data.get("source", "bot")
     instance = data.get("instance") or (
         os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp") if source != "bot"
@@ -2306,9 +2320,6 @@ async def analyze_image(request: Request):
     async def _maybe_respond(msg: str) -> None:
         if not silent:
             await _send_response(phone, msg)
-
-    if not phone or not key:
-        return JSONResponse(status_code=400, content={"error": "missing phone or key"})
 
     logger.info(f"Image analysis request for {phone} source={source} instance={instance}, caption: {caption[:50]}")
 
@@ -2459,20 +2470,32 @@ def _save_wa_attachment(
 
 @app.post("/analyze-pdf")
 async def analyze_pdf(request: Request):
-    """Recebe PDF do WhatsApp, extrai texto via Claude Sonnet (suporta PDF nativo),
-    persiste em wa_attachments, e encaminha como msg pro bot."""
-    import base64
-
+    """Recebe PDF do WhatsApp. Fast-ACK quando silent (source != "bot"):
+    retorna 200 em <500ms e processa em background (Railway sustenta loop).
+    Resolve cancelamento de async tasks no Vercel serverless caller."""
     data = await request.json()
     if data.get("secret") != WORKER_SECRET:
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    if not data.get("phone") or not data.get("key"):
+        return JSONResponse(status_code=400, content={"error": "missing phone or key"})
+
+    silent = data.get("source", "bot") != "bot"
+    if silent:
+        asyncio.create_task(_analyze_pdf_inner(data))
+        return {"status": "accepted", "message_id": data.get("message_id", ""), "queued": True}
+    return await _analyze_pdf_inner(data)
+
+
+async def _analyze_pdf_inner(data: dict) -> dict:
+    """Logica interna: download Evolution + Claude Sonnet PDF + persist wa_attachments
+    + (opcionalmente) forward pro bot quando source='bot'."""
+    import base64
 
     key = data.get("key", {})
     phone = data.get("phone", "")
     message_id = data.get("message_id", "")
     filename = data.get("filename", "documento.pdf")
     caption = data.get("caption", "")
-    # F4' — main-instance dispatch passes source != "bot" e instance="rap-whatsapp".
     source = data.get("source", "bot")
     instance = data.get("instance") or (
         os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp") if source != "bot"
@@ -2483,9 +2506,6 @@ async def analyze_pdf(request: Request):
     async def _maybe_respond(msg: str) -> None:
         if not silent:
             await _send_response(phone, msg)
-
-    if not phone or not key:
-        return JSONResponse(status_code=400, content={"error": "missing phone or key"})
 
     logger.info(f"PDF analysis request for {phone} source={source} instance={instance}, file={filename}")
 
