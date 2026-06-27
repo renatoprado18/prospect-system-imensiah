@@ -502,6 +502,30 @@ def _tool_search_context(scope: str, query: str, limit: int = 10) -> Dict[str, A
                 "Eventos do dia ja iniciados continuam aqui ate 2h apos end."
             )
 
+        if scope in ("memories", "all"):
+            # F1 — system_memories migradas do Claude Code (feedback/project/reference)
+            # + sinteses + decisoes + padroes do cos_extractor. Busca hibrida (semantic
+            # via embedding + keyword fallback). Use pra "qual foi a decisao sobre X",
+            # "como Renato gosta de X", "qual a politica de Y".
+            try:
+                from services.system_memory import search_memories
+                memos = search_memories(query=query, limit=limit, mode="hybrid")
+                out["results"]["memories"] = [
+                    {
+                        "id": m.get("id"),
+                        "titulo": m.get("titulo"),
+                        "tipo": m.get("tipo"),
+                        "fonte": m.get("fonte"),
+                        "preview": (m.get("conteudo") or "")[:800],
+                        "similarity": m.get("similarity"),
+                        "criado_em": m.get("criado_em"),
+                    }
+                    for m in (memos or [])
+                ]
+            except Exception as e:
+                logger.warning(f"search_context memories scope error: {e}")
+                out["results"]["memories"] = []
+
     # Auto-fallback: se Brain pediu scope especifico e nada bateu, tenta `all`.
     # Evita desistir apos 1 query vazia (caso CAMBRAPER: Tonha buscou calendar
     # vazio, nao tentou attachments/projects que tinham match).
