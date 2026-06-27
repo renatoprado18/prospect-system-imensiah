@@ -2020,15 +2020,16 @@ async def transcribe_audio(request: Request):
     key = data.get("key", {})
     phone = data.get("phone", "")
     message_id = data.get("message_id", "")
-    # source=main_instance_audio: audio chegou na instancia principal (rap-whatsapp),
-    # nao no bot Tonha. Worker so transcreve+salva em wa_attachments; NAO manda feedback
-    # pro remetente e NAO repassa pro /api/webhooks/bot-message. So enriquece o RAG.
+    # source != "bot" (main_instance_audio, main_instance, main_group): audio chegou
+    # fora do bot Tonha. Worker so transcreve+salva em wa_attachments; NAO manda
+    # feedback pro remetente e NAO repassa pro /api/webhooks/bot-message. So
+    # enriquece o RAG. Default "bot" preserva comportamento intel-bot.
     source = data.get("source", "bot")
     instance = data.get("instance") or (
-        os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp") if source == "main_instance_audio"
+        os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp") if source != "bot"
         else INTEL_BOT_INSTANCE
     )
-    silent = source == "main_instance_audio"
+    silent = source != "bot"
 
     if not phone or not key:
         return JSONResponse(status_code=400, content={"error": "missing phone or key"})
@@ -2293,23 +2294,35 @@ async def analyze_image(request: Request):
     phone = data.get("phone", "")
     message_id = data.get("message_id", "")
     caption = data.get("caption", "")
+    # F4' — main-instance dispatch passes source != "bot" e instance="rap-whatsapp".
+    # silent suppresses _send_response (Renato nao recebe feedback no chat).
+    source = data.get("source", "bot")
+    instance = data.get("instance") or (
+        os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp") if source != "bot"
+        else INTEL_BOT_INSTANCE
+    )
+    silent = source != "bot"
+
+    async def _maybe_respond(msg: str) -> None:
+        if not silent:
+            await _send_response(phone, msg)
 
     if not phone or not key:
         return JSONResponse(status_code=400, content={"error": "missing phone or key"})
 
-    logger.info(f"Image analysis request for {phone}, caption: {caption[:50]}")
+    logger.info(f"Image analysis request for {phone} source={source} instance={instance}, caption: {caption[:50]}")
 
     try:
-        # Step 1: Download image from Evolution API
+        # Step 1: Download image from Evolution API (instancia variavel)
         async with httpx.AsyncClient(timeout=30.0) as client:
             dl_resp = await client.post(
-                f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{INTEL_BOT_INSTANCE}",
+                f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{instance}",
                 headers={"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"},
                 json={"message": {"key": key}, "convertToMp4": False}
             )
 
         if dl_resp.status_code not in (200, 201):
-            await _send_response(phone, "Nao consegui baixar a imagem.")
+            await _maybe_respond("Nao consegui baixar a imagem.")
             return {"error": "download_failed"}
 
         dl_data = dl_resp.json()
@@ -2317,7 +2330,7 @@ async def analyze_image(request: Request):
         mimetype = dl_data.get("mimetype", "image/jpeg").split(";")[0].strip()
 
         if not image_b64:
-            await _send_response(phone, "Imagem vazia.")
+            await _maybe_respond("Imagem vazia.")
             return {"error": "empty_image"}
 
         logger.info(f"Image downloaded: {len(image_b64)} chars, type={mimetype}")
@@ -2358,12 +2371,12 @@ async def analyze_image(request: Request):
 
         if resp.status_code != 200:
             logger.error(f"Claude Vision failed: {resp.status_code} - {resp.text[:200]}")
-            await _send_response(phone, "Erro ao analisar imagem.")
+            await _maybe_respond("Erro ao analisar imagem.")
             return {"error": f"vision_failed: {resp.status_code}"}
 
         analysis = resp.json().get("content", [{}])[0].get("text", "")
         if not analysis:
-            await _send_response(phone, "Nao consegui analisar a imagem.")
+            await _maybe_respond("Nao consegui analisar a imagem.")
             return {"error": "empty_analysis"}
 
         logger.info(f"Image analyzed: {analysis[:100]}")
@@ -2375,6 +2388,11 @@ async def analyze_image(request: Request):
                 mime_type=mimetype, size_bytes=int(len(image_b64) * 3 / 4),
                 extracted_text=analysis, extraction_model="claude-haiku-4-5-vision",
             )
+
+        # Silent (main instance/group): so persiste em wa_attachments. NAO encaminha
+        # pro bot — instancia principal ja roda analyze_message_in_background propria.
+        if silent:
+            return {"status": "success", "silent": True, "analysis_chars": len(analysis)}
 
         # Step 3: Send to intel-bot for processing with CRM context
         content = f"[Imagem analisada] {caption + ': ' if caption else ''}{analysis}"
@@ -2397,7 +2415,7 @@ async def analyze_image(request: Request):
 
     except Exception as e:
         logger.error(f"Image analysis error: {e}")
-        await _send_response(phone, "Erro ao processar imagem.")
+        await _maybe_respond("Erro ao processar imagem.")
         return {"error": str(e)}
 
 
@@ -2454,22 +2472,33 @@ async def analyze_pdf(request: Request):
     message_id = data.get("message_id", "")
     filename = data.get("filename", "documento.pdf")
     caption = data.get("caption", "")
+    # F4' — main-instance dispatch passes source != "bot" e instance="rap-whatsapp".
+    source = data.get("source", "bot")
+    instance = data.get("instance") or (
+        os.getenv("EVOLUTION_INSTANCE", "rap-whatsapp") if source != "bot"
+        else INTEL_BOT_INSTANCE
+    )
+    silent = source != "bot"
+
+    async def _maybe_respond(msg: str) -> None:
+        if not silent:
+            await _send_response(phone, msg)
 
     if not phone or not key:
         return JSONResponse(status_code=400, content={"error": "missing phone or key"})
 
-    logger.info(f"PDF analysis request for {phone}, file={filename}")
+    logger.info(f"PDF analysis request for {phone} source={source} instance={instance}, file={filename}")
 
     try:
-        # 1. Download PDF base64 from Evolution
+        # 1. Download PDF base64 from Evolution (instancia variavel)
         async with httpx.AsyncClient(timeout=60.0) as client:
             dl_resp = await client.post(
-                f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{INTEL_BOT_INSTANCE}",
+                f"{EVOLUTION_API_URL}/chat/getBase64FromMediaMessage/{instance}",
                 headers={"apikey": EVOLUTION_API_KEY, "Content-Type": "application/json"},
                 json={"message": {"key": key}, "convertToMp4": False}
             )
         if dl_resp.status_code not in (200, 201):
-            await _send_response(phone, "Nao consegui baixar o PDF.")
+            await _maybe_respond("Nao consegui baixar o PDF.")
             _save_wa_attachment(message_id, phone, "pdf", original_filename=filename,
                                 error=f"download_failed {dl_resp.status_code}")
             return {"error": "download_failed"}
@@ -2480,7 +2509,7 @@ async def analyze_pdf(request: Request):
 
         if not pdf_b64:
             _save_wa_attachment(message_id, phone, "pdf", original_filename=filename, error="empty_pdf")
-            await _send_response(phone, "PDF vazio.")
+            await _maybe_respond("PDF vazio.")
             return {"error": "empty_pdf"}
 
         logger.info(f"PDF downloaded: {size_bytes} bytes, file={filename}")
@@ -2519,7 +2548,7 @@ async def analyze_pdf(request: Request):
             logger.error(f"Claude PDF failed: {resp.status_code} - {resp.text[:200]}")
             _save_wa_attachment(message_id, phone, "pdf", original_filename=filename,
                                 size_bytes=size_bytes, error=f"claude_{resp.status_code}")
-            await _send_response(phone, "Erro ao analisar PDF.")
+            await _maybe_respond("Erro ao analisar PDF.")
             return {"error": f"pdf_failed: {resp.status_code}"}
 
         result = resp.json()
@@ -2529,7 +2558,7 @@ async def analyze_pdf(request: Request):
         cost = (usage.get("input_tokens", 0) * 3 + usage.get("output_tokens", 0) * 15) / 1_000_000
 
         if not extracted:
-            await _send_response(phone, "Nao consegui extrair conteudo do PDF.")
+            await _maybe_respond("Nao consegui extrair conteudo do PDF.")
             return {"error": "empty_extraction"}
 
         # 3. Persiste
@@ -2540,6 +2569,11 @@ async def analyze_pdf(request: Request):
             extraction_model="claude-sonnet-4-6", extraction_cost_usd=cost,
         )
         logger.info(f"PDF analyzed: attachment #{att_id}, {len(extracted)} chars, ${cost:.4f}")
+
+        # Silent (main instance/group): so persiste em wa_attachments. NAO encaminha
+        # pro bot — instancia principal ja roda analyze_message_in_background propria.
+        if silent:
+            return {"status": "success", "silent": True, "attachment_id": att_id, "chars": len(extracted)}
 
         # 4. Forward to bot
         content = f"[PDF anexado: {filename}] {caption + ' — ' if caption else ''}{extracted}"
@@ -2561,7 +2595,7 @@ async def analyze_pdf(request: Request):
     except Exception as e:
         logger.exception(f"PDF analysis error: {e}")
         _save_wa_attachment(message_id, phone, "pdf", original_filename=filename, error=str(e)[:300])
-        await _send_response(phone, "Erro ao processar PDF.")
+        await _maybe_respond("Erro ao processar PDF.")
         return {"error": str(e)}
 
 
