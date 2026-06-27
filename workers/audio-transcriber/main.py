@@ -182,10 +182,15 @@ _SCHEDULER_JOBS = [
     # morning: 7h15 BRT (10h15 UTC) = 7min após cos-digest-morning (10h08 UTC).
     # evening: 18h15 BRT (21h15 UTC) = 7min após cos-digest-evening (21h08 UTC).
     # Demais ticks processam signals gerais.
-    ("tonha-autonomous-morning", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=10, minute=15)),
-    ("tonha-autonomous-noon", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=15, minute=5)),
-    ("tonha-autonomous-afternoon", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=20, minute=5)),
-    ("tonha-autonomous-evening", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=21, minute=15)),
+    #
+    # 27/06/26 EXPERIMENTO 7 DIAS — autonomous tick desligado pra medir valor
+    # percebido vs custo (~$1.30/dia = ~$40/mes). Reactive (Renato chama via WA
+    # "patrol" → /api/cos/patrol/run) continua ativo. Digest morning/evening
+    # tambem segue. Religar comentando descomentando as 4 linhas abaixo.
+    # ("tonha-autonomous-morning", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=10, minute=15)),
+    # ("tonha-autonomous-noon", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=15, minute=5)),
+    # ("tonha-autonomous-afternoon", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=20, minute=5)),
+    # ("tonha-autonomous-evening", "/api/cron/tonha-autonomous-tick", CronTrigger(hour=21, minute=15)),
     # 17/06/26 — consumer pra delegations(delegated_to='dev'). Fecha criterio 6
     # do ARCHITECTURE_REBUILD. Roda 4x dentro da janela 9-22 BRT (12,15,18,21 BRT
     # = 15,18,21,00 UTC). Default em SHADOW (DEV_DELEGATION_SHADOW=1) — sem custo
