@@ -736,20 +736,27 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
                 except Exception as e:
                     logger.warning(f"RACI group update error: {e}")
 
-            # F4' — anexos WA sempre-on (grupos):
-            # Persiste PDFs/imagens/audios de grupo em wa_attachments via worker
-            # (independente do RACI, idempotente por (message_id, kind)).
-            if has_media:
-                try:
-                    from services.wa_attachment_dispatch import dispatch_attachment_to_worker
-                    participant = key.get("participant", "") or remote_jid
-                    sender_phone = participant.split("@")[0] if "@" in participant else participant
-                    asyncio.create_task(dispatch_attachment_to_worker(
-                        message_obj, key, sender_phone, message_id,
-                        source="main_group",
-                    ))
-                except Exception as e:
-                    logger.warning(f"wa_attachment dispatch (group) failed: {e}")
+        # F4' — anexos WA sempre-on em grupos (incoming + outgoing):
+        # Persiste anexos via worker independente do RACI (que so roda em
+        # incoming + grupo c/ projeto). Idempotente por (message_id, kind).
+        msg_data_g = data.get("data", {})
+        message_obj_g = msg_data_g.get("message", {}) or {}
+        has_media_g = any(
+            k in message_obj_g
+            for k in ("audioMessage", "imageMessage", "documentMessage")
+        )
+        if has_media_g:
+            try:
+                from services.wa_attachment_dispatch import dispatch_attachment_to_worker
+                # participant existe pra incoming; pra outgoing fallback no group_jid
+                participant = key.get("participant", "") or remote_jid
+                sender_phone = participant.split("@")[0] if "@" in participant else participant
+                asyncio.create_task(dispatch_attachment_to_worker(
+                    message_obj_g, key, sender_phone, message_id,
+                    source="main_group",
+                ))
+            except Exception as e:
+                logger.warning(f"wa_attachment dispatch (group) failed: {e}")
 
         _audit("skipped", "group_message")
         return {"processed": False, "reason": "group_message"}
@@ -939,10 +946,18 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
     if direction == "incoming" and message_type == "audio":
         asyncio.create_task(_transcribe_audio_inline(key, phone, message_id, new_msg_id))
 
-    # F4' — anexos WA sempre-on (DM rap-whatsapp):
-    # PDF e imagem dispatcham pra Railway worker (Claude Sonnet/Haiku Vision)
-    # que persiste em wa_attachments. Audio ja foi tratado inline acima.
-    if direction == "incoming" and message_type in ("image", "document"):
+    # F4' — anexos WA sempre-on (DM rap-whatsapp, qualquer direcao):
+    # PDF/imagem in+out e audio outgoing dispatcham pro Railway worker (audio
+    # incoming ja foi tratado inline acima). Skip se contraparte for o bot —
+    # intel-bot dispatcha do proprio lado, evita extração duplicada.
+    should_dispatch_attachment = (
+        not _is_bot_phone(phone)
+        and (
+            message_type in ("image", "document")
+            or (message_type == "audio" and direction == "outgoing")
+        )
+    )
+    if should_dispatch_attachment:
         try:
             from services.wa_attachment_dispatch import dispatch_attachment_to_worker
             asyncio.create_task(dispatch_attachment_to_worker(
