@@ -6,6 +6,7 @@ Runs on Railway with no timeout limit.
 import os
 import sys
 import json
+import asyncio
 import logging
 import httpx
 import psycopg
