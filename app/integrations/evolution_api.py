@@ -739,8 +739,9 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
         # F4' — anexos WA sempre-on em grupos (incoming + outgoing):
         # Persiste anexos via worker independente do RACI (que so roda em
         # incoming + grupo c/ projeto). Idempotente por (message_id, kind).
-        msg_data_g = data.get("data", {})
-        message_obj_g = msg_data_g.get("message", {}) or {}
+        # NOTA: payload real e data.message — NAO data.data.message (RACI legacy
+        # usa o caminho errado desde Evolution v2.x, deve estar silently dead).
+        message_obj_g = data.get("message") or {}
         has_media_g = any(
             k in message_obj_g
             for k in ("audioMessage", "imageMessage", "documentMessage")
