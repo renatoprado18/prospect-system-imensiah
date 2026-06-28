@@ -274,6 +274,174 @@ def _persist_classification(
         return row["id"] if row else 0
 
 
+def list_recent(
+    status: Optional[str] = None,
+    classification: Optional[str] = None,
+    circulo: Optional[int] = None,
+    days: int = 7,
+    limit: int = 100,
+) -> List[Dict]:
+    """Lista shadows recentes com join contact+msg pra UI admin."""
+    where = ["wt.criado_em > NOW() - (%s || ' days')::interval"]
+    params: list = [days]
+    if status:
+        where.append("wt.status = %s")
+        params.append(status)
+    if classification:
+        where.append("wt.classification = %s")
+        params.append(classification)
+    if circulo is not None:
+        where.append("wt.contact_circulo = %s")
+        params.append(circulo)
+
+    sql = f"""
+        SELECT wt.id, wt.message_id, wt.contact_id, wt.contact_circulo,
+               wt.classification, wt.intent, wt.priority, wt.ai_confidence,
+               wt.reasoning, wt.status, wt.batch_id, wt.criado_em,
+               wt.processed_em, wt.thread_window_size,
+               c.nome AS contact_nome, c.apelido,
+               LEFT(m.conteudo, 200) AS msg_preview,
+               m.enviado_em AS msg_at
+        FROM wa_triage wt
+        LEFT JOIN contacts c ON c.id = wt.contact_id
+        LEFT JOIN messages m ON m.id = wt.message_id
+        WHERE {' AND '.join(where)}
+        ORDER BY wt.criado_em DESC
+        LIMIT %s
+    """
+    params.append(limit)
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def mark_feedback(triage_id: int, action: str, reason: Optional[str] = None) -> Dict:
+    """Marca concordo (action='agree') ou discordo (action='disagree') na
+    classificacao. status='actioned' se agree, 'dismissed' se disagree.
+    reason vai pro reasoning suffix pra calibracao futura."""
+    if action not in ("agree", "disagree"):
+        return {"error": "action invalido (use agree|disagree)"}
+
+    new_status = "actioned" if action == "agree" else "dismissed"
+    reason_suffix = f"\n[FEEDBACK {action.upper()}] {reason or '(sem motivo)'}"
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE wa_triage
+               SET status = %s,
+                   reasoning = COALESCE(reasoning, '') || %s,
+                   processed_em = NOW()
+             WHERE id = %s
+            RETURNING id, status
+            """,
+            (new_status, reason_suffix, triage_id),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        if not row:
+            return {"error": f"wa_triage #{triage_id} nao encontrada"}
+        return {"id": row["id"], "status": row["status"], "action": action}
+
+
+def stats(days: int = 7) -> Dict:
+    """Stats da janela: distribuicao por classe, custo total, feedback,
+    comparacao com action_proposals do realtime_analyzer."""
+    with get_db() as conn:
+        cur = conn.cursor()
+
+        # Distribuicao por classification
+        cur.execute(
+            """
+            SELECT classification, COUNT(*) AS n
+            FROM wa_triage
+            WHERE criado_em > NOW() - (%s || ' days')::interval
+            GROUP BY classification
+            ORDER BY classification
+            """,
+            (days,),
+        )
+        by_class = {r["classification"] or "(null)": r["n"] for r in cur.fetchall()}
+
+        # Distribuicao por circulo
+        cur.execute(
+            """
+            SELECT contact_circulo, COUNT(*) AS n
+            FROM wa_triage
+            WHERE criado_em > NOW() - (%s || ' days')::interval
+            GROUP BY contact_circulo
+            ORDER BY contact_circulo NULLS LAST
+            """,
+            (days,),
+        )
+        by_circulo = {str(r["contact_circulo"] or "null"): r["n"] for r in cur.fetchall()}
+
+        # Status (feedback)
+        cur.execute(
+            """
+            SELECT status, COUNT(*) AS n
+            FROM wa_triage
+            WHERE criado_em > NOW() - (%s || ' days')::interval
+            GROUP BY status
+            """,
+            (days,),
+        )
+        by_status = {r["status"]: r["n"] for r in cur.fetchall()}
+
+        # Custo total (soma input/output/cache, em USD)
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(llm_input_tokens), 0) AS in_tok,
+                   COALESCE(SUM(llm_output_tokens), 0) AS out_tok,
+                   COALESCE(SUM(llm_cache_read_tokens), 0) AS cr_tok,
+                   COALESCE(SUM(llm_cache_creation_tokens), 0) AS cw_tok,
+                   COUNT(DISTINCT batch_id) AS n_batches
+            FROM wa_triage
+            WHERE criado_em > NOW() - (%s || ' days')::interval
+            """,
+            (days,),
+        )
+        usage = dict(cur.fetchone() or {})
+        total_cost = _compute_cost(
+            usage.get("in_tok", 0), usage.get("out_tok", 0),
+            usage.get("cr_tok", 0), usage.get("cw_tok", 0),
+        )
+
+        # Comparacao com action_proposals do realtime_analyzer (mesmas janela WA incoming)
+        # action_proposals nao tem contact_circulo direto, vou contar por window
+        cur.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM action_proposals
+            WHERE criado_em > NOW() - (%s || ' days')::interval
+            """,
+            (days,),
+        )
+        action_proposals_n = (cur.fetchone() or {}).get("n", 0)
+
+        # Total wa_triage
+        total_wt = sum(by_class.values())
+
+    return {
+        "window_days": days,
+        "total_classified": total_wt,
+        "by_class": by_class,
+        "by_circulo": by_circulo,
+        "by_status": by_status,
+        "usage_tokens": {
+            "input": usage.get("in_tok", 0),
+            "output": usage.get("out_tok", 0),
+            "cache_read": usage.get("cr_tok", 0),
+            "cache_creation": usage.get("cw_tok", 0),
+            "batches": usage.get("n_batches", 0),
+        },
+        "total_cost_usd": round(total_cost, 6),
+        "action_proposals_same_window": action_proposals_n,
+    }
+
+
 def sweep_wa_triage(window_hours: int = DEFAULT_WINDOW_HOURS) -> Dict:
     """Sweep entry. Pega msgs incoming nao classificadas, batched Claude call,
     persist shadow. Retorna stats."""

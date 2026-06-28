@@ -1,0 +1,223 @@
+{% extends "rap_base.html" %}
+{% block title %}WA Triage Shadow - INTEL{% endblock %}
+{% block page_title %}WA Triage — Shadow Classifier (F3.1){% endblock %}
+{% block page_subtitle %}<div class="page-subtitle">Sweep 4h GH Actions classifica msgs WA incoming (must_read/follow_up/silent/archive) com janela 5 turnos contexto. Concordo = sinal pos pra calibração; Discordo = FP, marca pra ajustar prompt.</div>{% endblock %}
+
+{% block extra_css %}
+<style>
+.wt-header {
+    background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;
+    padding:12px 16px; margin-bottom:14px; display:flex;
+    justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;
+    font-size:0.85rem;
+}
+.wt-telemetry { display:flex; gap:14px; flex-wrap:wrap; color:#475569; }
+.wt-telemetry strong { color:#0f172a; }
+.wt-filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.wt-filters select, .wt-filters button {
+    padding:4px 8px; border-radius:4px; border:1px solid #cbd5e1;
+    font-size:0.8rem; background:white;
+}
+.wt-row {
+    display:grid;
+    grid-template-columns: 80px 50px 50px 1fr 200px;
+    gap:10px; align-items:start;
+    padding:10px 12px; background:white; border:1px solid #e2e8f0;
+    border-radius:6px; margin-bottom:6px; font-size:0.85rem;
+}
+.wt-row.actioned { opacity:0.4; background:#f0fdf4; }
+.wt-row.dismissed { opacity:0.4; background:#fef2f2; }
+.wt-row .cls-badge {
+    display:inline-block; padding:3px 8px; border-radius:10px;
+    font-size:0.7rem; font-weight:600; text-align:center;
+}
+.cls-must_read { background:#fee2e2; color:#991b1b; }
+.cls-follow_up { background:#fef3c7; color:#92400e; }
+.cls-silent    { background:#e0e7ff; color:#3730a3; }
+.cls-archive   { background:#f3f4f6; color:#4b5563; }
+.wt-row .conf {
+    font-family:monospace; font-size:0.78rem; color:#64748b; text-align:center;
+}
+.wt-row .circulo {
+    display:inline-block; width:24px; height:24px; line-height:24px; text-align:center;
+    border-radius:50%; background:#e2e8f0; color:#0f172a; font-weight:600; font-size:0.75rem;
+}
+.wt-row .circulo-1 { background:#fee2e2; color:#991b1b; }
+.wt-row .circulo-2 { background:#fed7aa; color:#9a3412; }
+.wt-row .circulo-3 { background:#fef3c7; color:#92400e; }
+.wt-row .circulo-4 { background:#e0e7ff; color:#3730a3; }
+.wt-row .circulo-5 { background:#f3f4f6; color:#6b7280; }
+.wt-row .contact-name { font-weight:600; color:#0f172a; }
+.wt-row .msg-preview {
+    color:#1e293b; font-size:0.83rem; margin-top:3px;
+    white-space:pre-wrap; max-height:60px; overflow:hidden; text-overflow:ellipsis;
+}
+.wt-row .reason {
+    font-size:0.72rem; color:#64748b; margin-top:4px; font-style:italic;
+}
+.wt-row .meta { font-size:0.7rem; color:#94a3b8; margin-top:3px; }
+.wt-row .actions { display:flex; gap:6px; justify-content:flex-end; align-items:start; flex-wrap:wrap; }
+.wt-row .actions button {
+    padding:4px 10px; border-radius:4px; border:1px solid;
+    font-size:0.75rem; cursor:pointer; transition:all 0.15s;
+}
+.btn-agree {
+    background:#10b981; border-color:#059669; color:white;
+}
+.btn-agree:hover { background:#059669; }
+.btn-disagree {
+    background:white; border-color:#dc2626; color:#dc2626;
+}
+.btn-disagree:hover { background:#fef2f2; }
+.wt-row .actions button:disabled { opacity:0.5; cursor:not-allowed; }
+.empty-state { text-align:center; padding:60px 20px; color:#94a3b8; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="wt-header">
+    <div class="wt-telemetry" id="telemetry">Carregando…</div>
+    <div class="wt-filters">
+        <select id="fStatus">
+            <option value="shadow">Pendentes (shadow)</option>
+            <option value="">Todos status</option>
+            <option value="actioned">Concordados</option>
+            <option value="dismissed">Discordados</option>
+        </select>
+        <select id="fClass">
+            <option value="">Todas classes</option>
+            <option value="must_read">must_read</option>
+            <option value="follow_up">follow_up</option>
+            <option value="silent">silent</option>
+            <option value="archive">archive</option>
+        </select>
+        <select id="fCirculo">
+            <option value="">Todos círculos</option>
+            <option value="1">1 família</option>
+            <option value="2">2 próximo</option>
+            <option value="3">3 trabalho</option>
+            <option value="4">4 network</option>
+            <option value="5">5 cold</option>
+        </select>
+        <button onclick="loadAll()">↻ Reload</button>
+    </div>
+</div>
+
+<div id="list"><div class="empty-state">Carregando…</div></div>
+
+<script>
+let _items = [];
+
+async function loadAll() {
+    await Promise.all([loadStats(), loadList()]);
+}
+
+async function loadStats() {
+    const r = await fetch('/api/admin/wa-triage/stats?days=7');
+    const s = await r.json();
+    const byCls = s.by_class || {};
+    const byStatus = s.by_status || {};
+    document.getElementById('telemetry').innerHTML = `
+        <span><strong>Total 7d:</strong> ${s.total_classified || 0}</span>
+        <span><strong>must_read:</strong> ${byCls.must_read || 0}</span>
+        <span><strong>follow_up:</strong> ${byCls.follow_up || 0}</span>
+        <span><strong>silent:</strong> ${byCls.silent || 0}</span>
+        <span><strong>archive:</strong> ${byCls.archive || 0}</span>
+        <span><strong>Concordo:</strong> ${byStatus.actioned || 0}</span>
+        <span><strong>Discordo:</strong> ${byStatus.dismissed || 0}</span>
+        <span><strong>Custo 7d:</strong> $${(s.total_cost_usd || 0).toFixed(4)}</span>
+        <span><strong>vs realtime AP:</strong> ${s.action_proposals_same_window || 0}</span>
+    `;
+}
+
+async function loadList() {
+    const status = document.getElementById('fStatus').value;
+    const cls = document.getElementById('fClass').value;
+    const circ = document.getElementById('fCirculo').value;
+    let url = '/api/admin/wa-triage/list?days=7&limit=200';
+    if (status) url += `&status=${status}`;
+    if (cls) url += `&classification=${cls}`;
+    if (circ) url += `&circulo=${circ}`;
+    const r = await fetch(url);
+    const data = await r.json();
+    _items = data.items || [];
+    render();
+}
+
+function render() {
+    const list = document.getElementById('list');
+    if (_items.length === 0) {
+        list.innerHTML = '<div class="empty-state">Nenhuma classificacao com esses filtros.</div>';
+        return;
+    }
+    list.innerHTML = _items.map(it => {
+        const cls = it.classification || '?';
+        const conf = (it.ai_confidence || 0).toFixed(2);
+        const circulo = it.contact_circulo || '–';
+        const reason = it.reasoning || '';
+        const reasonClean = reason.split('[FEEDBACK')[0].trim();
+        const feedbackTag = reason.match(/\[FEEDBACK (\w+)\]/);
+        const feedbackHint = feedbackTag ? `<div class="meta">Feedback: ${feedbackTag[1]}</div>` : '';
+        const stClass = it.status === 'actioned' ? 'actioned' : (it.status === 'dismissed' ? 'dismissed' : '');
+        const msgAt = it.msg_at ? new Date(it.msg_at).toLocaleString('pt-BR', {timeZone:'America/Sao_Paulo', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
+        const disabled = it.status !== 'shadow' ? 'disabled' : '';
+        return `
+            <div class="wt-row ${stClass}" id="row-${it.id}">
+                <div>
+                    <span class="cls-badge cls-${cls}">${cls}</span>
+                    <div class="meta">p${it.priority || '?'} · ${it.intent || '?'}</div>
+                </div>
+                <div class="conf">${conf}</div>
+                <div><span class="circulo circulo-${circulo}">${circulo}</span></div>
+                <div>
+                    <div class="contact-name">${escapeHtml(it.contact_nome || 'Desconhecido')}</div>
+                    <div class="msg-preview">${escapeHtml(it.msg_preview || '')}</div>
+                    <div class="reason">${escapeHtml(reasonClean.substring(0, 200))}</div>
+                    <div class="meta">${msgAt} BRT · win=${it.thread_window_size || 0} · batch=${(it.batch_id || '').substring(0,20)}</div>
+                    ${feedbackHint}
+                </div>
+                <div class="actions">
+                    <button class="btn-agree" onclick="feedback(${it.id}, 'agree', this)" ${disabled}>✓ Concordo</button>
+                    <button class="btn-disagree" onclick="feedback(${it.id}, 'disagree', this)" ${disabled}>✗ Discordo</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function escapeHtml(s) {
+    return (s || '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function feedback(id, action, btn) {
+    const row = document.getElementById('row-' + id);
+    row.querySelectorAll('button').forEach(b => b.disabled = true);
+    const reason = action === 'disagree' ? (prompt('Motivo (opcional):') || '') : '';
+    try {
+        const r = await fetch(`/api/admin/wa-triage/${id}/feedback`, {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({action, reason})
+        });
+        if (!r.ok) {
+            const err = await r.text();
+            alert('Erro: ' + err);
+            row.querySelectorAll('button').forEach(b => b.disabled = false);
+            return;
+        }
+        row.classList.add(action === 'agree' ? 'actioned' : 'dismissed');
+        setTimeout(() => row.remove(), 600);
+        loadStats();
+    } catch (e) {
+        alert('Falha: ' + e.message);
+        row.querySelectorAll('button').forEach(b => b.disabled = false);
+    }
+}
+
+document.getElementById('fStatus').onchange = loadList;
+document.getElementById('fClass').onchange = loadList;
+document.getElementById('fCirculo').onchange = loadList;
+
+loadAll();
+</script>
+{% endblock %}

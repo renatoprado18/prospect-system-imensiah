@@ -16524,6 +16524,63 @@ async def emails_page(request: Request):
     return templates.TemplateResponse("rap_emails.html", {"request": request, "user": user})
 
 
+@app.get("/admin/wa-triage", response_class=HTMLResponse)
+async def admin_wa_triage_page(request: Request):
+    """F3.2 — Admin UI pra wa_triage shadow. Lista classifications recentes,
+    permite concordo/discordo, mostra stats + comparacao realtime_analyzer."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("admin_wa_triage.html", {"request": request, "user": user})
+
+
+@app.get("/api/admin/wa-triage/list")
+async def api_admin_wa_triage_list(
+    request: Request,
+    status: Optional[str] = None,
+    classification: Optional[str] = None,
+    circulo: Optional[int] = None,
+    days: int = 7,
+    limit: int = 100,
+):
+    """Lista shadows com filtros."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    from services.wa_triage import list_recent
+    items = list_recent(
+        status=status, classification=classification, circulo=circulo,
+        days=days, limit=limit,
+    )
+    return {"items": items, "count": len(items)}
+
+
+@app.post("/api/admin/wa-triage/{triage_id}/feedback")
+async def api_admin_wa_triage_feedback(triage_id: int, request: Request):
+    """Marca concordo/discordo. Body: {action: 'agree'|'disagree', reason?: str}."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    from services.wa_triage import mark_feedback
+    body = await request.json()
+    action = (body.get("action") or "").strip()
+    reason = (body.get("reason") or "").strip() or None
+    result = mark_feedback(triage_id, action, reason)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.get("/api/admin/wa-triage/stats")
+async def api_admin_wa_triage_stats(request: Request, days: int = 7):
+    """Stats: distribuicao + custo + comparacao realtime."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    from services.wa_triage import stats
+    return stats(days=days)
+
+
 @app.get("/admin/email-shadow", response_class=HTMLResponse)
 async def admin_email_shadow_page(request: Request):
     """Shadow review: ratifica propostas de auto-archive (approve = arquiva no
