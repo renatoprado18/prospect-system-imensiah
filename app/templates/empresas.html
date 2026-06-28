@@ -1,0 +1,190 @@
+{% extends "rap_base.html" %}
+{% block title %}Empresas — INTEL{% endblock %}
+{% block page_title %}Empresas{% endblock %}
+{% block page_subtitle %}<div class="page-subtitle">F2 CoS v2 — entidade unificada. Empresas nascem on-demand; ligacao opcional com ConselhoOS via UUID.</div>{% endblock %}
+
+{% block extra_css %}
+<style>
+    .emp-summary { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+    .emp-stat {
+        background: white; border-radius: 8px; padding: 10px 14px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        border-left: 3px solid #6366f1;
+        min-width: 130px;
+    }
+    .emp-stat .label { font-size: 0.7rem; text-transform: uppercase; color: #64748b; font-weight: 600; }
+    .emp-stat .value { font-size: 1.4rem; font-weight: 700; color: #0f172a; }
+
+    .emp-row {
+        background: white; border-radius: 10px; padding: 14px 16px;
+        margin-bottom: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        display: flex; align-items: center; gap: 12px;
+    }
+    .emp-row:hover { background: #f8fafc; cursor: pointer; }
+    .emp-name { font-weight: 600; font-size: 1rem; color: #0f172a; flex: 1; }
+    .emp-name small { display: block; font-weight: 400; font-size: 0.75rem; color: #64748b; margin-top: 2px; }
+    .emp-meta { display: flex; gap: 18px; font-size: 0.85rem; color: #475569; }
+    .emp-meta b { color: #0f172a; }
+    .emp-badge {
+        display: inline-block; padding: 2px 8px; border-radius: 4px;
+        font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+    }
+    .emp-badge.conselho { background: #fef3c7; color: #92400e; }
+    .emp-badge.setor { background: #e0e7ff; color: #3730a3; }
+
+    .new-emp-btn {
+        background: #6366f1; color: white; padding: 8px 16px;
+        border-radius: 6px; border: none; font-weight: 600;
+        cursor: pointer; font-size: 0.9rem;
+    }
+    .new-emp-btn:hover { background: #4f46e5; }
+
+    #emp-detail { display: none; background: white; border-radius: 10px;
+        padding: 18px 20px; margin-top: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
+    #emp-detail h3 { margin: 0 0 8px; color: #0f172a; }
+    .detail-contatos { margin-top: 14px; }
+    .detail-contatos .contato-row {
+        padding: 8px 10px; border-bottom: 1px solid #e2e8f0;
+        display: flex; justify-content: space-between; font-size: 0.88rem;
+    }
+    .detail-contatos .contato-row:last-child { border-bottom: none; }
+
+    .empty { text-align: center; padding: 40px 20px; color: #64748b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="emp-summary">
+    <div class="emp-stat">
+        <div class="label">Total empresas</div>
+        <div class="value" id="stat-total">—</div>
+    </div>
+    <div class="emp-stat">
+        <div class="label">Ligadas ConselhoOS</div>
+        <div class="value" id="stat-conselho">—</div>
+    </div>
+    <div class="emp-stat">
+        <div class="label">Com contatos</div>
+        <div class="value" id="stat-with-contacts">—</div>
+    </div>
+</div>
+
+<div style="margin-bottom: 14px;">
+    <button class="new-emp-btn" onclick="showNewForm()">+ Nova empresa</button>
+</div>
+
+<div id="new-emp-form" style="display: none; background: white; padding: 16px;
+        border-radius: 10px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+    <h4 style="margin-top: 0;">Nova empresa</h4>
+    <input id="new-nome" placeholder="Nome (ex: Acme Corp)" style="width: 100%; padding: 8px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+    <input id="new-setor" placeholder="Setor (opcional)" style="width: 100%; padding: 8px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+    <input id="new-website" placeholder="Website (opcional)" style="width: 100%; padding: 8px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+    <button onclick="createEmpresa()" class="new-emp-btn">Criar</button>
+    <button onclick="document.getElementById('new-emp-form').style.display='none'" style="margin-left:8px; padding: 8px 16px; border: 1px solid #cbd5e1; background: white; border-radius: 6px; cursor: pointer;">Cancelar</button>
+</div>
+
+<div id="emp-list"><div class="empty">Carregando...</div></div>
+
+<div id="emp-detail"></div>
+
+<script>
+async function loadList() {
+    const res = await fetch('/api/empresas?limit=200');
+    if (!res.ok) {
+        document.getElementById('emp-list').innerHTML = '<div class="empty">Falha ao carregar.</div>';
+        return;
+    }
+    const data = await res.json();
+    const emps = data.empresas || [];
+
+    document.getElementById('stat-total').textContent = emps.length;
+    document.getElementById('stat-conselho').textContent = emps.filter(e => e.conselhoos_empresa_id).length;
+    document.getElementById('stat-with-contacts').textContent = emps.filter(e => (e.count_contatos || 0) > 0).length;
+
+    if (emps.length === 0) {
+        document.getElementById('emp-list').innerHTML = '<div class="empty">Nenhuma empresa ainda. Cria a primeira acima.</div>';
+        return;
+    }
+
+    document.getElementById('emp-list').innerHTML = emps.map(e => `
+        <div class="emp-row" onclick="showDetail(${e.id})">
+            <div class="emp-name">
+                ${escapeHtml(e.nome_canonico)}
+                <small>${e.setor ? `<span class="emp-badge setor">${escapeHtml(e.setor)}</span>` : ''}
+                ${e.conselhoos_empresa_id ? '<span class="emp-badge conselho">ConselhoOS</span>' : ''}
+                ${e.website ? ` • <a href="${escapeHtml(e.website)}" target="_blank" onclick="event.stopPropagation()">${escapeHtml(e.website)}</a>` : ''}
+                </small>
+            </div>
+            <div class="emp-meta">
+                <span><b>${e.count_contatos || 0}</b> contatos</span>
+                ${e.health_avg !== null && e.health_avg !== undefined ? `<span>health <b>${e.health_avg}</b></span>` : ''}
+            </div>
+        </div>
+    `).join('');
+}
+
+async function showDetail(id) {
+    const res = await fetch(`/api/empresas/${id}`);
+    if (!res.ok) return;
+    const e = await res.json();
+    const det = document.getElementById('emp-detail');
+    det.style.display = 'block';
+    det.innerHTML = `
+        <h3>${escapeHtml(e.nome_canonico)}</h3>
+        <div style="color: #64748b; font-size: 0.85rem;">
+            ${e.setor ? `<span class="emp-badge setor">${escapeHtml(e.setor)}</span> ` : ''}
+            ${e.conselhoos_empresa_id ? `<span class="emp-badge conselho">ConselhoOS · ${e.conselhoos_empresa_id.slice(0,8)}…</span> ` : ''}
+            ${e.website ? `<a href="${escapeHtml(e.website)}" target="_blank">${escapeHtml(e.website)}</a>` : ''}
+        </div>
+        ${e.notas ? `<p style="margin-top: 12px; color: #475569;">${escapeHtml(e.notas)}</p>` : ''}
+        <div class="detail-contatos">
+            <h4 style="margin: 14px 0 8px; font-size: 0.95rem;">Contatos vinculados (${e.count_contatos})</h4>
+            ${(e.contatos || []).map(c => `
+                <div class="contato-row">
+                    <span>${escapeHtml(c.nome)}${c.cargo ? ` <small style="color:#64748b">— ${escapeHtml(c.cargo)}</small>` : ''}</span>
+                    <span style="color:#64748b">${c.health_score !== null ? `health ${c.health_score}` : ''}</span>
+                </div>
+            `).join('') || '<div style="color:#94a3b8; font-size: 0.85rem;">Nenhum contato vinculado ainda.</div>'}
+        </div>
+        <div style="margin-top: 14px;">
+            <button onclick="document.getElementById('emp-detail').style.display='none'" style="padding: 6px 14px; border: 1px solid #cbd5e1; background: white; border-radius: 6px; cursor: pointer;">Fechar</button>
+        </div>
+    `;
+    det.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function showNewForm() {
+    document.getElementById('new-emp-form').style.display = 'block';
+    document.getElementById('new-nome').focus();
+}
+
+async function createEmpresa() {
+    const nome = document.getElementById('new-nome').value.trim();
+    if (!nome) { alert('Nome obrigatorio'); return; }
+    const body = {nome: nome};
+    const setor = document.getElementById('new-setor').value.trim();
+    const website = document.getElementById('new-website').value.trim();
+    if (setor) body.setor = setor;
+    if (website) body.website = website;
+
+    const res = await fetch('/api/empresas', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+    });
+    if (!res.ok) { alert('Falha: ' + await res.text()); return; }
+    document.getElementById('new-emp-form').style.display = 'none';
+    document.getElementById('new-nome').value = '';
+    document.getElementById('new-setor').value = '';
+    document.getElementById('new-website').value = '';
+    loadList();
+}
+
+function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+loadList();
+</script>
+{% endblock %}

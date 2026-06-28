@@ -12280,6 +12280,120 @@ async def api_system_memories_sync_file(request: Request):
     }
 
 
+# =========================================================================
+# F2 — Empresas como entidade (CoS v2)
+# Service em services/empresas.py. ConselhoOS continua external, ligamos via
+# conselhoos_empresa_id quando ha match.
+# =========================================================================
+@app.get("/empresas", response_class=HTMLResponse)
+async def empresas_page(request: Request):
+    """Pagina F2 — lista + detalhe de empresas. Admin-only."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("empresas.html", {"request": request, "user": user})
+
+
+def _empresas_require_auth(request: Request):
+    """Admin session OU X-API-Key == INTEL_API_KEY."""
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    if api_key and intel_api_key and api_key == intel_api_key:
+        return
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Acesso restrito a admin")
+
+
+@app.post("/api/empresas")
+async def api_empresas_create(request: Request):
+    """Cria empresa. Idempotente — se nome ja existe (case/acento-insens),
+    retorna a existente. Body: nome (req), cnpj?, website?, setor?, notas?,
+    aliases?[], auto_match_conselhoos? (default true)."""
+    _empresas_require_auth(request)
+    from services import empresas as svc
+
+    body = await request.json()
+    nome = (body.get("nome") or "").strip()
+    if not nome:
+        raise HTTPException(400, "nome obrigatorio")
+
+    emp = svc.create(
+        nome=nome,
+        cnpj=body.get("cnpj"),
+        website=body.get("website"),
+        setor=body.get("setor"),
+        notas=body.get("notas"),
+        aliases=body.get("aliases"),
+        auto_match_conselhoos=bool(body.get("auto_match_conselhoos", True)),
+    )
+    if not emp:
+        raise HTTPException(500, "falha ao criar empresa")
+    return emp
+
+
+@app.get("/api/empresas")
+async def api_empresas_list(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    setor: Optional[str] = None,
+):
+    """Lista empresas com agregados (count_contatos, health_avg,
+    last_interaction). Filtro opcional por setor."""
+    _empresas_require_auth(request)
+    from services import empresas as svc
+    return {
+        "empresas": svc.list_paginated(limit=limit, offset=offset, setor=setor),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@app.get("/api/empresas/{empresa_id}")
+async def api_empresas_get(empresa_id: int, request: Request):
+    """Detalhe da empresa + contatos linkados ordenados por health."""
+    _empresas_require_auth(request)
+    from services import empresas as svc
+    emp = svc.get_with_contacts(empresa_id)
+    if not emp:
+        raise HTTPException(404, f"empresa #{empresa_id} nao encontrada")
+    return emp
+
+
+@app.patch("/api/empresas/{empresa_id}")
+async def api_empresas_update(empresa_id: int, request: Request):
+    """Update parcial. Campos: nome_canonico, cnpj, website, setor, notas,
+    aliases."""
+    _empresas_require_auth(request)
+    from services import empresas as svc
+    body = await request.json()
+    emp = svc.update_fields(empresa_id, **body)
+    if not emp:
+        raise HTTPException(404, f"empresa #{empresa_id} nao encontrada")
+    return emp
+
+
+@app.post("/api/empresas/{empresa_id}/link-contact")
+async def api_empresas_link_contact(empresa_id: int, request: Request):
+    """Associa contact_id -> empresa_id. Body: {contact_id}."""
+    _empresas_require_auth(request)
+    from services import empresas as svc
+
+    body = await request.json()
+    contact_id = body.get("contact_id")
+    if not contact_id:
+        raise HTTPException(400, "contact_id obrigatorio")
+
+    if not svc.get_by_id(empresa_id):
+        raise HTTPException(404, f"empresa #{empresa_id} nao encontrada")
+
+    ok = svc.link_contact(empresa_id, int(contact_id))
+    if not ok:
+        raise HTTPException(404, f"contato #{contact_id} nao encontrado")
+    return {"empresa_id": empresa_id, "contact_id": int(contact_id), "linked": True}
+
+
 @app.post("/api/admin/gmail-proxy")
 async def admin_gmail_proxy(request: Request):
     """

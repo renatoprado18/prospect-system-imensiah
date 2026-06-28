@@ -1239,6 +1239,72 @@ def init_db():
         ''')
 
         # =========================================================================
+        # EMPRESAS (F2 CoS v2) — entidade unificada pra agregar contatos/sinais
+        # ConselhoOS continua em app externo (CONSELHOOS_DATABASE_URL); F2 liga
+        # via conselhoos_empresa_id quando aplicavel. Nasce on-demand: nao
+        # migracao retroativa de contacts.empresa.
+        # =========================================================================
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS empresas (
+                id SERIAL PRIMARY KEY,
+                nome_canonico TEXT NOT NULL,
+                aliases JSONB DEFAULT '[]',
+                cnpj TEXT,
+                website TEXT,
+                setor TEXT,
+                logo_url TEXT,
+                notas TEXT,
+                conselhoos_empresa_id UUID,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Unique parcial em lower(nome_canonico) pra dedup case-insensitive
+        # sem quebrar inserts com diferenca de espaco/acento (caller normaliza)
+        cursor.execute('''
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_empresas_nome_canonico_lower
+            ON empresas (LOWER(nome_canonico))
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_empresas_conselhoos_id
+            ON empresas (conselhoos_empresa_id)
+            WHERE conselhoos_empresa_id IS NOT NULL
+        ''')
+
+        # FK opcional em contacts.empresa_id. TEXT empresa continua coexistindo
+        # como fallback/legado. ON DELETE SET NULL pra nao perder contato.
+        cursor.execute('''
+            ALTER TABLE contacts
+            ADD COLUMN IF NOT EXISTS empresa_id INTEGER
+        ''')
+
+        # Add FK constraint only if missing — ALTER ADD CONSTRAINT nao tem
+        # IF NOT EXISTS, e raise dentro de transacao quebra todo o init_db.
+        # DO block faz check antes do ALTER.
+        cursor.execute('''
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.table_constraints
+                    WHERE constraint_name = 'fk_contacts_empresa_id'
+                      AND table_name = 'contacts'
+                ) THEN
+                    ALTER TABLE contacts
+                    ADD CONSTRAINT fk_contacts_empresa_id
+                    FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_contacts_empresa_id
+            ON contacts (empresa_id)
+            WHERE empresa_id IS NOT NULL
+        ''')
+
+        # =========================================================================
         # PROJECTS TABLES - Sistema de Projetos Pessoais/Profissionais
         # =========================================================================
 

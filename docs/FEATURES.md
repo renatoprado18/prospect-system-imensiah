@@ -51,6 +51,16 @@
 - Merge duplicatas → `contact_dedup.py`
 - Exportar CSV/JSON → `export.py`
 
+## 2.1. Empresas (`/empresas`) — F2 CoS v2
+- Entidade unificada pra agregar contatos/sinais por empresa → `services/empresas.py`
+- Tabela `empresas` (id, nome_canonico, aliases jsonb, cnpj, website, setor, conselhoos_empresa_id UUID nullable)
+- `contacts.empresa_id` FK opcional (TEXT empresa coexiste como legado/fallback)
+- Auto-match com ConselhoOS externo: ao criar, busca por nome no `CONSELHOOS_DATABASE_URL` e popula UUID se achar (Vallen Clinic já linkada)
+- Endpoints: `POST /api/empresas` (idempotente case-insens), `GET /api/empresas` (list + agregados), `GET /api/empresas/{id}` (detalhe + contatos), `PATCH /api/empresas/{id}`, `POST /api/empresas/{id}/link-contact`
+- UI minimal: lista com stats (total, ligadas ConselhoOS, com contatos), criar inline, detalhe com contatos vinculados ordenados por health
+- Empresas nascem on-demand (sem backfill retroativo de 11800 contatos)
+- Auth: admin session OU INTEL_API_KEY
+
 ## 3. Círculos (`/circulos`)
 - Dashboard C1-C5 com health médio → `circulos.py`
 - Frequências: C1=7d, C2=30d, C3=30d, C4=90d, C5=180d
