@@ -1255,34 +1255,41 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
             # ela mesma criava — cada tick comecava do zero. Agora nao mais.
             ctx["l1_memories"] = []
             _l1_specs = [
-                # (tipo, limit, max_age_days)
-                ("cos_config", 1, None),
-                ("sintese_diaria", 1, None),
-                ("glossario", 50, None),
-                ("relationship_edge", 50, None),
-                ("correcao", 20, 90),
-                ("decisao", 5, 60),
-                ("compromisso", 5, 60),
-                ("padrao", 3, 60),
-                ("reflexao", 3, 60),
+                # (tipo, limit, max_age_days, fonte_filter)
+                # Memos vivos do CoS — Tonha sempre acorda lembrando disso:
+                ("cos_config", 1, None, None),
+                ("sintese_diaria", 1, None, None),
+                ("glossario", 50, None, None),
+                ("relationship_edge", 50, None, None),
+                ("correcao", 20, 90, None),
+                ("decisao", 5, 60, None),
+                ("compromisso", 5, 60, None),
+                ("padrao", 3, 60, None),
+                ("reflexao", 3, 60, None),
+                # F1+Patrol wire (28/06/26): memos sincronizados do Claude Code
+                # via hook PostToolUse. feedback=regras explicitas (pega tudo —
+                # ~60 memos × 800c = 48k), project=contexto vivo (TOP 12),
+                # reference=lookups raros (TOP 8). Cap json 80k cobre.
+                ("feedback", 80, None, "claude_code_migration"),
+                ("project", 12, None, "claude_code_migration"),
+                ("reference", 8, None, "claude_code_migration"),
             ]
-            for tipo, lim, age in _l1_specs:
+            for tipo, lim, age, fonte in _l1_specs:
                 try:
+                    sql_parts = [
+                        "SELECT id, titulo, conteudo, tipo, tags, criado_em "
+                        "FROM system_memories WHERE tipo = %s"
+                    ]
+                    params: list = [tipo]
+                    if fonte:
+                        sql_parts.append("AND fonte = %s")
+                        params.append(fonte)
                     if age:
-                        cur.execute(
-                            "SELECT id, titulo, conteudo, tipo, tags, criado_em "
-                            "FROM system_memories WHERE tipo = %s "
-                            "AND criado_em >= NOW() - (%s || ' days')::interval "
-                            "ORDER BY criado_em DESC LIMIT %s",
-                            (tipo, str(age), lim),
-                        )
-                    else:
-                        cur.execute(
-                            "SELECT id, titulo, conteudo, tipo, tags, criado_em "
-                            "FROM system_memories WHERE tipo = %s "
-                            "ORDER BY criado_em DESC LIMIT %s",
-                            (tipo, lim),
-                        )
+                        sql_parts.append("AND criado_em >= NOW() - (%s || ' days')::interval")
+                        params.append(str(age))
+                    sql_parts.append("ORDER BY criado_em DESC LIMIT %s")
+                    params.append(lim)
+                    cur.execute(" ".join(sql_parts), tuple(params))
                     for row in cur.fetchall():
                         cont = (row["conteudo"] or "")
                         # cos_config eh longa por design; outras truncar pra L1
@@ -1644,7 +1651,7 @@ def _build_system_prompt(cos_config: str, policy: Dict[str, str], context: Dict[
         proposals_open_json=json.dumps(context.get("proposals_open", []), default=str, ensure_ascii=False, indent=2)[:4000],
         scheduled_open_json=json.dumps(context.get("scheduled_open", []), default=str, ensure_ascii=False, indent=2)[:1500],
         recent_pushes_json=json.dumps(context.get("recent_pushes", []), default=str, ensure_ascii=False, indent=2)[:3000],
-        l1_memories_json=json.dumps(context.get("l1_memories", []), default=str, ensure_ascii=False, indent=2)[:8000],
+        l1_memories_json=json.dumps(context.get("l1_memories", []), default=str, ensure_ascii=False, indent=2)[:150000],
         raci_critical_json=json.dumps(context.get("raci_critical", []), default=str, ensure_ascii=False, indent=2)[:2000],
         tasks_overdue_intel_json=json.dumps(context.get("tasks_overdue_intel", []), default=str, ensure_ascii=False, indent=2)[:1500],
     )
