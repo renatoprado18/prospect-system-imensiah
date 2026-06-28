@@ -30,8 +30,16 @@ class ConselhoOSSyncService:
     """
 
     def __init__(self):
-        # ConselhoOS database URL (separada do INTEL)
-        self.conselhoos_url = os.getenv("CONSELHOOS_DATABASE_URL")
+        # Vercel as vezes guarda env com "\n" LITERAL no final (chars \ + n,
+        # nao newline real). Strip defensivo: rstrip whitespace -> rstrip
+        # literal "\n" -> strip final. Ver memo feedback_env_var_whitespace.
+        def _clean(v: Optional[str]) -> str:
+            if not v:
+                return ""
+            return v.strip().rstrip("\\n").strip()
+
+        self.conselhoos_url = _clean(os.getenv("CONSELHOOS_DATABASE_URL"))
+        self.conselhoos_user_id = _clean(os.getenv("CONSELHOOS_USER_ID"))
         self._cached_empresas = None
         self._cache_time = None
 
@@ -75,7 +83,7 @@ class ConselhoOSSyncService:
                     FROM empresas
                     WHERE user_id = %s
                     ORDER BY nome
-                """, (os.getenv("CONSELHOOS_USER_ID", ""),))
+                """, (self.conselhoos_user_id,))
 
                 empresas = [dict(row) for row in cursor.fetchall()]
 
