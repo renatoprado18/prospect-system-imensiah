@@ -97,6 +97,7 @@
     .nw-row .info .mode-pill.silent { background: #e2e8f0; color: #475569; }
     .nw-row .info .mode-pill.critical_push { background: #fee2e2; color: #991b1b; }
     .nw-row .info .mode-pill.digest_weekly { background: #fef3c7; color: #92400e; }
+    .nw-row .info .mode-pill.digest_daily { background: #dbeafe; color: #1e40af; }
 
     .nw-mode-controls {
         margin-top: 8px; padding: 8px 10px; background: #f8fafc;
@@ -186,6 +187,9 @@
                             &middot; threshold <code>{{ "%.2f"|format(w.criticality_threshold or 0.7) }}</code>
                             {% if w.last_push_at %}&middot; ultimo push {{ w.last_push_at|brt("%d/%m %H:%M") }}{% endif %}
                         {% endif %}
+                        {% if w.delivery_mode == 'digest_daily' %}
+                            &middot; digest target <code>{{ w.digest_target or '+5511984153337 (default)' }}</code>
+                        {% endif %}
                     </div>
                 </div>
                 <div class="nw-actions">
@@ -202,22 +206,27 @@
             <div id="modeControls-{{ w.id }}" class="nw-mode-controls hidden">
                 <div>
                     <label>Modo de entrega</label>
-                    <select id="mode-{{ w.id }}">
+                    <select id="mode-{{ w.id }}" onchange="onModeChange({{ w.id }})">
                         <option value="silent" {% if (w.delivery_mode or 'silent') == 'silent' %}selected{% endif %}>silent (so proposal)</option>
                         <option value="critical_push" {% if w.delivery_mode == 'critical_push' %}selected{% endif %}>critical_push (IA + WA)</option>
+                        <option value="digest_daily" {% if w.delivery_mode == 'digest_daily' %}selected{% endif %}>digest_daily (1x/dia agregado)</option>
                         <option value="digest_weekly" {% if w.delivery_mode == 'digest_weekly' %}selected{% endif %}>digest_weekly (TODO)</option>
                     </select>
                 </div>
-                <div>
+                <div id="threshold-wrap-{{ w.id }}" class="{% if w.delivery_mode != 'critical_push' %}hidden{% endif %}">
                     <label>Threshold IA</label>
                     <input type="range" id="threshold-{{ w.id }}" min="0" max="1" step="0.05"
                            value="{{ w.criticality_threshold or 0.7 }}"
                            oninput="document.getElementById('threshold-display-{{ w.id }}').textContent = parseFloat(this.value).toFixed(2)">
                     <div class="threshold-display"><span id="threshold-display-{{ w.id }}">{{ "%.2f"|format(w.criticality_threshold or 0.7) }}</span></div>
                 </div>
-                <div>
+                <div id="watarget-wrap-{{ w.id }}" class="{% if w.delivery_mode != 'critical_push' %}hidden{% endif %}">
                     <label>WA target (vazio = Renato)</label>
                     <input type="text" id="watarget-{{ w.id }}" placeholder="+5511..." value="{{ w.wa_target or '' }}">
+                </div>
+                <div id="digesttarget-wrap-{{ w.id }}" class="{% if w.delivery_mode != 'digest_daily' %}hidden{% endif %}">
+                    <label>Digest target (vazio = Renato)</label>
+                    <input type="text" id="digesttarget-{{ w.id }}" placeholder="+5511..." value="{{ w.digest_target or '' }}">
                 </div>
                 <div>
                     <button onclick="saveModeConfig({{ w.id }})">Salvar</button>
@@ -346,14 +355,31 @@ function toggleModeControls(id) {
     if (el) el.classList.toggle('hidden');
 }
 
+function onModeChange(id) {
+    const mode = document.getElementById('mode-' + id).value;
+    const thresholdEl = document.getElementById('threshold-wrap-' + id);
+    const waTargetEl = document.getElementById('watarget-wrap-' + id);
+    const digestTargetEl = document.getElementById('digesttarget-wrap-' + id);
+    // Threshold + wa_target so pra critical_push
+    if (thresholdEl) thresholdEl.classList.toggle('hidden', mode !== 'critical_push');
+    if (waTargetEl) waTargetEl.classList.toggle('hidden', mode !== 'critical_push');
+    // digest_target so pra digest_daily
+    if (digestTargetEl) digestTargetEl.classList.toggle('hidden', mode !== 'digest_daily');
+}
+
 async function saveModeConfig(id) {
     const mode = document.getElementById('mode-' + id).value;
-    const threshold = parseFloat(document.getElementById('threshold-' + id).value);
-    const waTarget = document.getElementById('watarget-' + id).value.trim();
+    const thresholdInput = document.getElementById('threshold-' + id);
+    const waTargetInput = document.getElementById('watarget-' + id);
+    const digestTargetInput = document.getElementById('digesttarget-' + id);
+    const threshold = thresholdInput ? parseFloat(thresholdInput.value) : 0.7;
+    const waTarget = waTargetInput ? waTargetInput.value.trim() : '';
+    const digestTarget = digestTargetInput ? digestTargetInput.value.trim() : '';
     const payload = {
         delivery_mode: mode,
         criticality_threshold: threshold,
         wa_target: waTarget || null,
+        digest_target: digestTarget || null,
     };
     try {
         const resp = await fetch('/api/admin/news-watchers/' + id, {

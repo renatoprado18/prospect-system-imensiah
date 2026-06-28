@@ -1367,6 +1367,22 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
 
     logger.info(f"Intel bot message from {phone}: {'[audio]' if is_audio else content[:100]}")
 
+    # ===== News Watcher Digest Reply (Modo D, 28/06/2026) =====
+    # Se Renato responde a um digest pendente ("ok" / numero / nome do projeto),
+    # curto-circuita o bot principal. Sai antes do worker dispatch pra evitar
+    # bot interpretar "ok" como confirmacao de outra coisa.
+    # So pra mensagens de texto (audio/image/pdf cai no fluxo normal).
+    if not (is_audio or is_image or is_pdf) and content and content.strip():
+        try:
+            from services.project_news_watcher import handle_digest_response
+            digest_reply = await handle_digest_response(content, phone)
+            if digest_reply:
+                logger.info(f"intel_bot: digest reply handled, curto-circuita worker")
+                return {"processed": True, "reason": "news_digest_reply"}
+        except Exception as e:
+            # Falha silenciosa: deixa o bot processar normalmente
+            logger.warning(f"intel_bot: handle_digest_response falhou: {e}")
+
     # For audio: dispatch to Railway worker (Vercel 10s timeout is too short)
     if is_audio:
         audio_worker_url = os.getenv("AUDIO_WORKER_URL", "")
