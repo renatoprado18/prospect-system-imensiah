@@ -88,6 +88,49 @@
     }
     .nw-result.error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
     .nw-result pre { margin: 6px 0 0; font-size: 0.78rem; white-space: pre-wrap; word-break: break-word; }
+
+    /* Modo B controls */
+    .nw-row .info .mode-pill {
+        display: inline-block; padding: 1px 7px; border-radius: 10px;
+        font-size: 0.7rem; font-weight: 600; margin-left: 6px;
+    }
+    .nw-row .info .mode-pill.silent { background: #e2e8f0; color: #475569; }
+    .nw-row .info .mode-pill.critical_push { background: #fee2e2; color: #991b1b; }
+    .nw-row .info .mode-pill.digest_weekly { background: #fef3c7; color: #92400e; }
+
+    .nw-mode-controls {
+        margin-top: 8px; padding: 8px 10px; background: #f8fafc;
+        border-radius: 6px; border: 1px solid #e2e8f0;
+        display: grid; grid-template-columns: 160px 140px 1fr auto; gap: 8px;
+        align-items: end; font-size: 0.8rem;
+    }
+    .nw-mode-controls.hidden { display: none; }
+    .nw-mode-controls label {
+        display: block; font-size: 0.68rem; text-transform: uppercase;
+        color: #64748b; font-weight: 600; margin-bottom: 2px;
+    }
+    .nw-mode-controls select, .nw-mode-controls input {
+        width: 100%; padding: 5px 7px; border: 1px solid #cbd5e1;
+        border-radius: 4px; font-size: 0.82rem;
+    }
+    .nw-mode-controls button {
+        padding: 6px 12px; background: #2563eb; color: white;
+        border: none; border-radius: 4px; font-weight: 600; cursor: pointer;
+        font-size: 0.8rem;
+    }
+    .nw-mode-controls button:hover { background: #1d4ed8; }
+    .nw-mode-controls .threshold-display {
+        font-family: monospace; color: #475569; font-size: 0.75rem;
+    }
+
+    .nw-hit .meta .score-pill {
+        display: inline-block; padding: 1px 6px; border-radius: 10px;
+        background: #ede9fe; color: #5b21b6; font-weight: 600;
+    }
+    .nw-hit .meta .pushed-pill {
+        display: inline-block; padding: 1px 6px; border-radius: 10px;
+        background: #fee2e2; color: #991b1b; font-weight: 600;
+    }
 </style>
 {% endblock %}
 
@@ -126,27 +169,59 @@
     <div class="empty">Nenhum watcher cadastrado. Adicione acima.</div>
     {% else %}
         {% for w in watchers %}
-        <div class="nw-row {% if w.active %}active{% else %}inactive{% endif %}">
-            <div class="info">
-                <span class="project">{{ w.project_name or ('project#' ~ w.project_id) }}</span>
-                &middot;
-                <span class="query">{{ w.query }}</span>
-                <div class="meta">
-                    id <code>{{ w.id }}</code>
-                    &middot; total hits {{ w.total_hits or 0 }}
-                    {% if w.last_check %}&middot; ultima checagem {{ w.last_check|brt("%d/%m %H:%M") }}{% endif %}
-                    {% if not w.last_check %}&middot; nunca rodou{% endif %}
-                    {% if w.feed_url %}&middot; feed custom{% else %}&middot; Google News RSS{% endif %}
+        <div class="nw-row {% if w.active %}active{% else %}inactive{% endif %}" style="display:block;">
+            <div style="display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;">
+                <div class="info">
+                    <span class="project">{{ w.project_name or ('project#' ~ w.project_id) }}</span>
+                    &middot;
+                    <span class="query">{{ w.query }}</span>
+                    <span class="mode-pill {{ w.delivery_mode or 'silent' }}">{{ w.delivery_mode or 'silent' }}</span>
+                    <div class="meta">
+                        id <code>{{ w.id }}</code>
+                        &middot; total hits {{ w.total_hits or 0 }}
+                        {% if w.last_check %}&middot; ultima checagem {{ w.last_check|brt("%d/%m %H:%M") }}{% endif %}
+                        {% if not w.last_check %}&middot; nunca rodou{% endif %}
+                        {% if w.feed_url %}&middot; feed custom{% else %}&middot; Google News RSS{% endif %}
+                        {% if w.delivery_mode == 'critical_push' %}
+                            &middot; threshold <code>{{ "%.2f"|format(w.criticality_threshold or 0.7) }}</code>
+                            {% if w.last_push_at %}&middot; ultimo push {{ w.last_push_at|brt("%d/%m %H:%M") }}{% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="nw-actions">
+                    <button class="primary" onclick="testWatcher({{ w.id }})">Test now</button>
+                    <button onclick="toggleModeControls({{ w.id }})">Config</button>
+                    {% if w.active %}
+                    <button onclick="toggleWatcher({{ w.id }}, false)">Pausar</button>
+                    {% else %}
+                    <button onclick="toggleWatcher({{ w.id }}, true)">Ativar</button>
+                    {% endif %}
+                    <button class="danger" onclick="deleteWatcher({{ w.id }})">Remover</button>
                 </div>
             </div>
-            <div class="nw-actions">
-                <button class="primary" onclick="testWatcher({{ w.id }})">Test now</button>
-                {% if w.active %}
-                <button onclick="toggleWatcher({{ w.id }}, false)">Pausar</button>
-                {% else %}
-                <button onclick="toggleWatcher({{ w.id }}, true)">Ativar</button>
-                {% endif %}
-                <button class="danger" onclick="deleteWatcher({{ w.id }})">Remover</button>
+            <div id="modeControls-{{ w.id }}" class="nw-mode-controls hidden">
+                <div>
+                    <label>Modo de entrega</label>
+                    <select id="mode-{{ w.id }}">
+                        <option value="silent" {% if (w.delivery_mode or 'silent') == 'silent' %}selected{% endif %}>silent (so proposal)</option>
+                        <option value="critical_push" {% if w.delivery_mode == 'critical_push' %}selected{% endif %}>critical_push (IA + WA)</option>
+                        <option value="digest_weekly" {% if w.delivery_mode == 'digest_weekly' %}selected{% endif %}>digest_weekly (TODO)</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Threshold IA</label>
+                    <input type="range" id="threshold-{{ w.id }}" min="0" max="1" step="0.05"
+                           value="{{ w.criticality_threshold or 0.7 }}"
+                           oninput="document.getElementById('threshold-display-{{ w.id }}').textContent = parseFloat(this.value).toFixed(2)">
+                    <div class="threshold-display"><span id="threshold-display-{{ w.id }}">{{ "%.2f"|format(w.criticality_threshold or 0.7) }}</span></div>
+                </div>
+                <div>
+                    <label>WA target (vazio = Renato)</label>
+                    <input type="text" id="watarget-{{ w.id }}" placeholder="+5511..." value="{{ w.wa_target or '' }}">
+                </div>
+                <div>
+                    <button onclick="saveModeConfig({{ w.id }})">Salvar</button>
+                </div>
             </div>
         </div>
         {% endfor %}
@@ -170,6 +245,12 @@
                     <span class="pill">{{ h.project_name or ('project#' ~ h.project_id) }}</span>
                     {% if h.source %}&middot; {{ h.source }}{% endif %}
                     {% if h.published_at %}&middot; publicado {{ h.published_at|brt("%d/%m %H:%M") }}{% endif %}
+                    {% if h.ai_relevance_score is not none %}
+                        &middot; <span class="score-pill">score {{ "%.2f"|format(h.ai_relevance_score) }}</span>
+                    {% endif %}
+                    {% if h.pushed_at %}
+                        &middot; <span class="pushed-pill">pushed WA {{ h.pushed_at|brt("%d/%m %H:%M") }}</span>
+                    {% endif %}
                     {% if h.proposal_id %}
                         &middot; proposal <code>#{{ h.proposal_id }}</code>
                         <span class="pill {{ h.proposal_status or 'pending' }}">{{ h.proposal_status or 'pending' }}</span>
@@ -258,6 +339,38 @@ async function deleteWatcher(id) {
         if (resp.ok) location.reload();
         else alert('Falha: ' + resp.status);
     } catch (e) { alert('Erro: ' + e.message); }
+}
+
+function toggleModeControls(id) {
+    const el = document.getElementById('modeControls-' + id);
+    if (el) el.classList.toggle('hidden');
+}
+
+async function saveModeConfig(id) {
+    const mode = document.getElementById('mode-' + id).value;
+    const threshold = parseFloat(document.getElementById('threshold-' + id).value);
+    const waTarget = document.getElementById('watarget-' + id).value.trim();
+    const payload = {
+        delivery_mode: mode,
+        criticality_threshold: threshold,
+        wa_target: waTarget || null,
+    };
+    try {
+        const resp = await fetch('/api/admin/news-watchers/' + id, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const json = await resp.json();
+        if (resp.ok) {
+            showResult('testResult', {saved: id, fields: json.fields}, false);
+            setTimeout(() => location.reload(), 800);
+        } else {
+            showResult('testResult', json, true);
+        }
+    } catch (e) {
+        showResult('testResult', {error: e.message}, true);
+    }
 }
 </script>
 {% endblock %}

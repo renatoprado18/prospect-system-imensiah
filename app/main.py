@@ -28920,6 +28920,11 @@ class _NewsWatcherCreatePayload(BaseModel):
 
 class _NewsWatcherUpdatePayload(BaseModel):
     active: Optional[bool] = None
+    query: Optional[str] = None
+    feed_url: Optional[str] = None
+    delivery_mode: Optional[str] = None
+    criticality_threshold: Optional[float] = None
+    wa_target: Optional[str] = None
 
 
 @app.post("/api/admin/news-watchers")
@@ -28954,20 +28959,33 @@ async def api_admin_news_watchers_create(request: Request, payload: _NewsWatcher
 async def api_admin_news_watchers_update(
     request: Request, watcher_id: int, payload: _NewsWatcherUpdatePayload
 ):
-    """Update parcial (V0: so toggle active)."""
+    """Update parcial: toggle active + campos Modo B (delivery_mode etc)."""
     user = get_current_user(request)
     if not user or user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
 
-    from services.project_news_watcher import update_watcher_active
+    from services.project_news_watcher import update_watcher_fields
 
-    if payload.active is None:
+    # Coleta so os campos enviados (nao-None) — payload.dict(exclude_unset=True)
+    # nao funciona pq Pydantic v1/v2 difere; uso dump manual.
+    fields = {}
+    for key in ("active", "query", "feed_url", "delivery_mode",
+                "criticality_threshold", "wa_target"):
+        val = getattr(payload, key, None)
+        if val is not None:
+            fields[key] = val
+
+    if not fields:
         raise HTTPException(status_code=400, detail="nada a atualizar")
 
-    ok = update_watcher_active(watcher_id, payload.active)
+    try:
+        ok = update_watcher_fields(watcher_id, fields)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     if not ok:
         raise HTTPException(status_code=404, detail="watcher nao encontrado")
-    return {"updated": True, "id": watcher_id, "active": payload.active}
+    return {"updated": True, "id": watcher_id, "fields": list(fields.keys())}
 
 
 @app.delete("/api/admin/news-watchers/{watcher_id}")
