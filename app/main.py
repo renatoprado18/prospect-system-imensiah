@@ -4386,6 +4386,19 @@ async def cron_linkedin_monitor_topics(request: Request):
     return {"job": "linkedin-monitor-topics", **summary}
 
 
+@app.get("/api/cron/wa-triage-sweep")
+@track_cron_run
+async def cron_wa_triage_sweep(request: Request, window_hours: int = 4):
+    """F3.1 — WA window classifier shadow mode. Cron 4/4h Vercel. Classifica
+    msgs incoming WA da janela com 5 turnos contexto, batched Claude call
+    com prompt cache. Registra em wa_triage (status='shadow') sem criar
+    action_proposal ainda."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.wa_triage import sweep_wa_triage
+    return sweep_wa_triage(window_hours=window_hours)
+
+
 @app.get("/api/cron/dev-delegation-pickup")
 @track_cron_run
 async def cron_dev_delegation_pickup(request: Request):
