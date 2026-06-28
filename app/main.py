@@ -12097,6 +12097,178 @@ async def send_gmail_message(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _parse_memory_md(text: str, filename: str) -> dict | None:
+    """Parse YAML frontmatter + body de memo .md. Mirror de
+    scripts/migrate_memory_to_db.py:parse_md_file pra hook calls — recebe
+    content cru em vez de path."""
+    import yaml as _yaml
+
+    if not text.startswith("---"):
+        return None
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return None
+    meta = None
+    try:
+        loaded = _yaml.safe_load(parts[1])
+        if isinstance(loaded, dict):
+            meta = loaded
+    except _yaml.YAMLError:
+        pass
+    if meta is None:
+        # Fallback line-based — cobre colons unquoted em description
+        meta = {}
+        for line in parts[1].split("\n"):
+            line = line.rstrip()
+            if not line or ":" not in line:
+                continue
+            if line[0] in " \t":
+                continue
+            key, _, value = line.partition(":")
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in '"\'':
+                value = value[1:-1]
+            meta[key] = value
+    if not meta:
+        return None
+    body = parts[2].strip()
+    stem = filename[:-3] if filename.endswith(".md") else filename
+    return {
+        "name": meta.get("name") or stem,
+        "description": meta.get("description") or "",
+        "type": meta.get("type") or "unknown",
+        "body": body,
+    }
+
+
+@app.post("/api/system-memories/sync-file")
+async def api_system_memories_sync_file(request: Request):
+    """F1 — Sync de memo .md (Claude Code) -> system_memories.
+
+    Chamado pelo hook PostToolUse no laptop do Renato sempre que ele
+    escreve/edita um .md em ~/.claude/.../memory/. Faz UPSERT por (titulo,
+    fonte='claude_code_migration'), regen embedding via Voyage so se conteudo
+    mudou (no-op caso bate byte-a-byte).
+
+    Auth: X-API-Key header == INTEL_API_KEY.
+
+    Body:
+        filename: nome do arquivo (.md). MEMORY.md eh ignorado (indice).
+        content:  conteudo cru com frontmatter YAML.
+
+    Returns:
+        status: 'inserted' | 'updated' | 'unchanged' | 'skipped'
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    if not (api_key and intel_api_key and api_key == intel_api_key):
+        raise HTTPException(status_code=403, detail="auth requerida")
+
+    body = await request.json()
+    filename = (body.get("filename") or "").strip()
+    content = body.get("content") or ""
+
+    if not filename or not content:
+        raise HTTPException(400, "filename e content sao obrigatorios")
+    if not filename.endswith(".md"):
+        raise HTTPException(400, "filename deve terminar com .md")
+    if filename == "MEMORY.md":
+        return {"status": "skipped", "reason": "MEMORY.md eh indice, nao memo"}
+
+    parsed = _parse_memory_md(content, filename)
+    if parsed is None:
+        raise HTTPException(400, "frontmatter invalido ou ausente")
+
+    if parsed["type"] == "user":
+        return {"status": "skipped", "reason": "type=user redundante (CLAUDE.md)"}
+
+    # Conteudo final espelha logica da F1: description + body (ou um deles)
+    if parsed["body"] and parsed["description"]:
+        conteudo = f"{parsed['description']}\n\n{parsed['body']}"
+    else:
+        conteudo = parsed["body"] or parsed["description"]
+
+    titulo = parsed["name"][:500]
+    tipo = parsed["type"]
+    fonte = "claude_code_migration"
+    tags_json = json.dumps([filename])
+
+    from services.embeddings import (
+        embed_sync,
+        embedding_to_pg_literal,
+        is_enabled as embeddings_enabled,
+    )
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, conteudo FROM system_memories "
+            "WHERE titulo = %s AND fonte = %s "
+            "ORDER BY id DESC LIMIT 1",
+            (titulo, fonte),
+        )
+        existing = cur.fetchone()
+
+    if existing and existing["conteudo"] == conteudo:
+        return {"status": "unchanged", "id": existing["id"], "filename": filename}
+
+    # Regen embedding (best-effort — falha nao bloqueia upsert)
+    embedding_literal = None
+    if embeddings_enabled():
+        try:
+            vec = embed_sync(f"{titulo}\n\n{conteudo}", input_type="document")
+            if vec:
+                embedding_literal = embedding_to_pg_literal(vec)
+        except Exception as e:
+            logger.warning(f"sync-file: embed falhou pra {filename}: {e}")
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        if existing:
+            if embedding_literal:
+                cur.execute(
+                    "UPDATE system_memories SET conteudo=%s, tipo=%s, "
+                    "tags=%s::jsonb, embedding=%s::vector WHERE id=%s",
+                    (conteudo, tipo, tags_json, embedding_literal, existing["id"]),
+                )
+            else:
+                cur.execute(
+                    "UPDATE system_memories SET conteudo=%s, tipo=%s, "
+                    "tags=%s::jsonb, embedding=NULL WHERE id=%s",
+                    (conteudo, tipo, tags_json, existing["id"]),
+                )
+            conn.commit()
+            return {
+                "status": "updated",
+                "id": existing["id"],
+                "filename": filename,
+                "has_embedding": bool(embedding_literal),
+            }
+        if embedding_literal:
+            cur.execute(
+                "INSERT INTO system_memories (titulo, conteudo, tipo, tags, fonte, embedding) "
+                "VALUES (%s, %s, %s, %s::jsonb, %s, %s::vector) RETURNING id",
+                (titulo, conteudo, tipo, tags_json, fonte, embedding_literal),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO system_memories (titulo, conteudo, tipo, tags, fonte) "
+                "VALUES (%s, %s, %s, %s::jsonb, %s) RETURNING id",
+                (titulo, conteudo, tipo, tags_json, fonte),
+            )
+        new_id = cur.fetchone()["id"]
+        conn.commit()
+        return {
+            "status": "inserted",
+            "id": new_id,
+            "filename": filename,
+            "has_embedding": bool(embedding_literal),
+        }
+
+
 @app.post("/api/admin/gmail-proxy")
 async def admin_gmail_proxy(request: Request):
     """
@@ -12182,6 +12354,17 @@ async def admin_gmail_proxy(request: Request):
 
         if action == "list_labels":
             r = await client.get(f"{base_url}/labels", headers=headers)
+            return r.json()
+
+        if action == "get_attachment":
+            message_id = params.get("message_id")
+            attachment_id = params.get("attachment_id")
+            if not message_id or not attachment_id:
+                raise HTTPException(400, "message_id e attachment_id obrigatorios")
+            r = await client.get(
+                f"{base_url}/messages/{message_id}/attachments/{attachment_id}",
+                headers=headers,
+            )
             return r.json()
 
         if action in ("label_thread", "unlabel_thread", "archive_thread"):
