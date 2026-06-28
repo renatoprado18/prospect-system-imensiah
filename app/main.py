@@ -28989,6 +28989,7 @@ class _NewsWatcherUpdatePayload(BaseModel):
     delivery_mode: Optional[str] = None
     criticality_threshold: Optional[float] = None
     wa_target: Optional[str] = None
+    digest_target: Optional[str] = None
 
 
 @app.post("/api/admin/news-watchers")
@@ -29034,7 +29035,7 @@ async def api_admin_news_watchers_update(
     # nao funciona pq Pydantic v1/v2 difere; uso dump manual.
     fields = {}
     for key in ("active", "query", "feed_url", "delivery_mode",
-                "criticality_threshold", "wa_target"):
+                "criticality_threshold", "wa_target", "digest_target"):
         val = getattr(payload, key, None)
         if val is not None:
             fields[key] = val
@@ -29123,6 +29124,53 @@ async def cron_run_project_news_watchers(request: Request):
         return {
             "status": "error",
             "job": "run-project-news-watchers",
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+@app.get("/api/cron/run-daily-news-digest")
+@track_cron_run
+async def cron_run_daily_news_digest(request: Request):
+    """
+    Cron: monta digest diario de todos watchers em delivery_mode='digest_daily'
+    e manda 1 WA agregado pro Renato.
+
+    Schedule sugerido: 11h UTC (= 8h BRT). NAO esta no vercel.json ainda —
+    Renato decide ativacao.
+
+    Auth: cron Vercel (User-Agent / Bearer) OU X-API-Key == INTEL_API_KEY.
+
+    Anti-spam: 0 hits novos = nao manda WA.
+    """
+    api_key_header = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    api_key_ok = bool(api_key_header) and bool(intel_api_key) and api_key_header == intel_api_key
+
+    if not (verify_cron_auth(request) or api_key_ok):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.project_news_watcher import send_daily_digest
+
+    try:
+        result = await _aio.wait_for(send_daily_digest(), timeout=180.0)
+        return {
+            "status": "ok" if not result.get("error") else "error",
+            "job": "run-daily-news-digest",
+            **result,
+        }
+    except _aio.TimeoutError:
+        logger.error("cron_run_daily_news_digest: > 180s")
+        return {
+            "status": "error",
+            "job": "run-daily-news-digest",
+            "error": "timeout > 180s",
+        }
+    except Exception as e:
+        logger.exception("cron_run_daily_news_digest: exception fatal")
+        return {
+            "status": "error",
+            "job": "run-daily-news-digest",
             "error": f"{type(e).__name__}: {e}",
         }
 
