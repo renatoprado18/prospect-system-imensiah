@@ -45,3 +45,8 @@ Thumbs.db
 
 # Generated reports (one-shot script outputs)
 reports/
+
+# Generated docs (fonte = .md ao lado)
+docs/*.docx
+docs/Pitangueiras_Solicitacao_Secretario.pdf
+docs/ARCHITECTURE_REBUILD.html
