@@ -12394,6 +12394,60 @@ async def api_empresas_link_contact(empresa_id: int, request: Request):
     return {"empresa_id": empresa_id, "contact_id": int(contact_id), "linked": True}
 
 
+@app.get("/api/empresas/{empresa_id}/suggest-contacts")
+async def api_empresas_suggest_contacts(
+    empresa_id: int,
+    request: Request,
+    confidence: Optional[str] = None,
+    limit: int = 100,
+):
+    """Sugere contatos pra linkar via fuzzy match em contacts.empresa TEXT.
+    Filtra por confidence opcional ('high'|'medium'|'low'). So retorna
+    contatos sem empresa_id (candidatos novos)."""
+    _empresas_require_auth(request)
+    from services import empresas as svc
+
+    if not svc.get_by_id(empresa_id):
+        raise HTTPException(404, f"empresa #{empresa_id} nao encontrada")
+
+    suggestions = svc.suggest_contacts(empresa_id, limit=limit)
+    if confidence:
+        suggestions = [s for s in suggestions if s["confidence"] == confidence]
+    return {
+        "empresa_id": empresa_id,
+        "count": len(suggestions),
+        "by_confidence": {
+            "high": sum(1 for s in suggestions if s["confidence"] == "high"),
+            "medium": sum(1 for s in suggestions if s["confidence"] == "medium"),
+            "low": sum(1 for s in suggestions if s["confidence"] == "low"),
+        },
+        "suggestions": suggestions,
+    }
+
+
+@app.post("/api/empresas/{empresa_id}/link-contacts-bulk")
+async def api_empresas_link_contacts_bulk(empresa_id: int, request: Request):
+    """Linka N contatos a uma empresa. Body: {contact_ids: [int]}."""
+    _empresas_require_auth(request)
+    from services import empresas as svc
+
+    if not svc.get_by_id(empresa_id):
+        raise HTTPException(404, f"empresa #{empresa_id} nao encontrada")
+
+    body = await request.json()
+    contact_ids = body.get("contact_ids") or []
+    if not isinstance(contact_ids, list) or not contact_ids:
+        raise HTTPException(400, "contact_ids deve ser lista nao-vazia")
+
+    contact_ids = [int(cid) for cid in contact_ids]
+    updated = svc.link_contacts_bulk(empresa_id, contact_ids)
+    return {
+        "empresa_id": empresa_id,
+        "requested": len(contact_ids),
+        "updated": updated,
+    }
+
+
 @app.post("/api/admin/gmail-proxy")
 async def admin_gmail_proxy(request: Request):
     """

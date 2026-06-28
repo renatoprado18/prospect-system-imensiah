@@ -212,6 +212,133 @@ def link_contact(empresa_id: int, contact_id: int) -> bool:
         return cur.rowcount > 0
 
 
+def suggest_contacts(empresa_id: int, limit: int = 100) -> List[Dict]:
+    """Sugere contatos pra linkar via fuzzy match em contacts.empresa TEXT.
+
+    3 niveis de confidence:
+    - 'high'   : unaccent(lower(empresa)) bate exato com nome ou alias
+    - 'medium' : unaccent(lower(empresa)) bate substring estreita (len ate 1.5x)
+    - 'low'    : bate primeira palavra forte (>3 chars) do nome
+
+    Filtra contacts.empresa_id IS NULL (so candidatos sem vinculo).
+    Requer extension unaccent no Postgres.
+    """
+    emp = get_by_id(empresa_id)
+    if not emp:
+        return []
+
+    # Pool de nomes pra match: canonical + aliases
+    aliases = emp.get("aliases") or []
+    if isinstance(aliases, str):
+        try:
+            aliases = json.loads(aliases)
+        except Exception:
+            aliases = []
+    nomes = [emp["nome_canonico"]] + [a for a in aliases if isinstance(a, str)]
+
+    # Normalizacao Python (lower, sem acento, pontuacao trivial)
+    nomes_norm = [_normalize_name(n) for n in nomes if n]
+    nomes_norm = [n for n in nomes_norm if n]
+    if not nomes_norm:
+        return []
+
+    # Primeira palavra forte pra fallback low — pega de cada nome
+    palavras_low = []
+    for n in nomes_norm:
+        for p in n.split():
+            if len(p) > 3 and p not in palavras_low:
+                palavras_low.append(p)
+                break
+
+    results: Dict[int, Dict] = {}
+
+    with get_db() as conn:
+        cur = conn.cursor()
+
+        # HIGH: match exato apos normalize
+        for nome_norm in nomes_norm:
+            cur.execute(
+                """
+                SELECT id, nome, apelido, cargo, empresa, foto_url,
+                       health_score, ultimo_contato, circulo
+                FROM contacts
+                WHERE empresa_id IS NULL
+                  AND empresa IS NOT NULL
+                  AND unaccent(LOWER(TRIM(empresa))) = %s
+                ORDER BY health_score DESC NULLS LAST
+                LIMIT %s
+                """,
+                (nome_norm, limit),
+            )
+            for r in cur.fetchall():
+                if r["id"] not in results:
+                    results[r["id"]] = {**dict(r), "confidence": "high",
+                                        "match_term": nome_norm}
+
+        # MEDIUM: substring estreita
+        for nome_norm in nomes_norm:
+            cur.execute(
+                """
+                SELECT id, nome, apelido, cargo, empresa, foto_url,
+                       health_score, ultimo_contato, circulo
+                FROM contacts
+                WHERE empresa_id IS NULL
+                  AND empresa IS NOT NULL
+                  AND unaccent(LOWER(empresa)) LIKE %s
+                  AND LENGTH(unaccent(LOWER(empresa))) <= %s
+                ORDER BY health_score DESC NULLS LAST
+                LIMIT %s
+                """,
+                (f"%{nome_norm}%", int(len(nome_norm) * 1.5) + 5, limit),
+            )
+            for r in cur.fetchall():
+                if r["id"] not in results:
+                    results[r["id"]] = {**dict(r), "confidence": "medium",
+                                        "match_term": nome_norm}
+
+        # LOW: palavra forte
+        for palavra in palavras_low:
+            cur.execute(
+                """
+                SELECT id, nome, apelido, cargo, empresa, foto_url,
+                       health_score, ultimo_contato, circulo
+                FROM contacts
+                WHERE empresa_id IS NULL
+                  AND empresa IS NOT NULL
+                  AND unaccent(LOWER(empresa)) ~ %s
+                ORDER BY health_score DESC NULLS LAST
+                LIMIT %s
+                """,
+                (rf"\m{palavra}\M", limit),  # \m \M = word boundaries no PG regex
+            )
+            for r in cur.fetchall():
+                if r["id"] not in results:
+                    results[r["id"]] = {**dict(r), "confidence": "low",
+                                        "match_term": palavra}
+
+    # Ordena: high > medium > low, depois health_score desc
+    order = {"high": 0, "medium": 1, "low": 2}
+    return sorted(
+        results.values(),
+        key=lambda x: (order[x["confidence"]], -(x.get("health_score") or 0)),
+    )[:limit]
+
+
+def link_contacts_bulk(empresa_id: int, contact_ids: List[int]) -> int:
+    """Linka multiplos contatos a uma empresa. Retorna count atualizado.
+    Sobrescreve empresa_id existente caso ja tenha (caller decide se filtra)."""
+    if not contact_ids:
+        return 0
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE contacts SET empresa_id = %s WHERE id = ANY(%s)",
+            (empresa_id, contact_ids),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
 def update_fields(empresa_id: int, **fields) -> Optional[Dict]:
     """Update parcial. Campos suportados: nome_canonico, cnpj, website,
     setor, notas, aliases (lista, vira jsonb)."""
