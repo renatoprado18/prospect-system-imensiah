@@ -937,8 +937,19 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
 
         conn.commit()
 
-    # Analisar mensagem com IA em background (apenas mensagens recebidas de contatos, não do próprio Renato)
     OWNER_CONTACT_ID = 14911
+
+    # Outbound (Renato respondeu): auto-resolve action_proposals pendentes.
+    # Webhook é caminho real-time; sem isso, propostas ficam pending mesmo após resposta
+    # (whatsapp_sync.py:248 já faz isso no path de polling, mas webhook não passava por lá).
+    if direction == "outgoing" and contact_id and contact_id != OWNER_CONTACT_ID:
+        try:
+            from services.action_proposals import ActionProposalsService
+            ActionProposalsService().dismiss_stale_on_reply(contact_id, timestamp)
+        except Exception as e:
+            logger.warning(f"dismiss_stale_on_reply via webhook falhou (contact={contact_id}): {e}")
+
+    # Analisar mensagem com IA em background (apenas mensagens recebidas de contatos, não do próprio Renato)
     if direction == "incoming" and content and contact_id != OWNER_CONTACT_ID:
         asyncio.create_task(
             analyze_message_in_background(new_msg_id, contact_id, content)
