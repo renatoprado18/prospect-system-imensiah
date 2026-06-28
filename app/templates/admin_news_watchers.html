@@ -1,0 +1,263 @@
+{% extends "rap_base.html" %}
+{% block title %}News Watchers - INTEL{% endblock %}
+{% block page_title %}News Watchers{% endblock %}
+{% block page_subtitle %}<div class="page-subtitle">Monitora noticias por projeto via RSS. Hits viram action_proposals (Propor, nao Auto).</div>{% endblock %}
+
+{% block extra_css %}
+<style>
+    .nw-section { margin-bottom: 28px; }
+    .nw-section h3 {
+        font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.04em;
+        color: #475569; margin-bottom: 12px; font-weight: 700;
+    }
+
+    .nw-card {
+        background: white; border-radius: 10px; padding: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        margin-bottom: 8px;
+    }
+
+    .nw-form {
+        background: white; border-radius: 10px; padding: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        display: grid; grid-template-columns: 1fr 1fr 80px auto; gap: 10px; align-items: end;
+    }
+    .nw-form label {
+        display: block; font-size: 0.75rem; text-transform: uppercase;
+        color: #64748b; font-weight: 600; margin-bottom: 4px;
+    }
+    .nw-form input, .nw-form select {
+        width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1;
+        border-radius: 6px; font-size: 0.9rem;
+    }
+    .nw-form button {
+        padding: 8px 16px; background: #2563eb; color: white;
+        border: none; border-radius: 6px; font-weight: 600; cursor: pointer;
+    }
+    .nw-form button:hover { background: #1d4ed8; }
+
+    .nw-row {
+        background: white; border-radius: 8px; padding: 12px 14px;
+        margin-bottom: 6px; border-left: 4px solid #e5e7eb;
+        display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
+    }
+    .nw-row.inactive { opacity: 0.55; border-left-color: #94a3b8; }
+    .nw-row.active { border-left-color: #16a34a; }
+
+    .nw-row .info { font-size: 0.92rem; }
+    .nw-row .info .project { font-weight: 600; color: #0f172a; }
+    .nw-row .info .query { color: #475569; font-family: monospace; }
+    .nw-row .info .meta { font-size: 0.75rem; color: #64748b; margin-top: 3px; }
+    .nw-row .info .meta code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
+
+    .nw-actions { display: flex; gap: 6px; }
+    .nw-actions button {
+        padding: 5px 10px; font-size: 0.78rem; border-radius: 5px;
+        border: 1px solid #cbd5e1; background: white; cursor: pointer;
+    }
+    .nw-actions button:hover { background: #f1f5f9; }
+    .nw-actions button.danger { color: #dc2626; border-color: #fecaca; }
+    .nw-actions button.danger:hover { background: #fef2f2; }
+    .nw-actions button.primary { color: #2563eb; border-color: #bfdbfe; }
+    .nw-actions button.primary:hover { background: #eff6ff; }
+
+    .nw-hit {
+        background: white; border-radius: 8px; padding: 10px 12px;
+        margin-bottom: 4px; font-size: 0.85rem;
+        display: grid; grid-template-columns: 100px 1fr auto; gap: 10px; align-items: center;
+    }
+    .nw-hit .when { font-family: monospace; font-size: 0.78rem; color: #475569; }
+    .nw-hit .title { color: #0f172a; word-break: break-word; }
+    .nw-hit .title a { color: #2563eb; text-decoration: none; }
+    .nw-hit .title a:hover { text-decoration: underline; }
+    .nw-hit .meta { font-size: 0.72rem; color: #64748b; margin-top: 3px; }
+    .nw-hit .meta .pill {
+        display: inline-block; padding: 1px 6px; border-radius: 10px;
+        background: #f1f5f9; color: #475569; font-weight: 600;
+    }
+    .nw-hit .meta .pill.pending { background: #fef3c7; color: #92400e; }
+    .nw-hit .meta .pill.accepted { background: #dcfce7; color: #166534; }
+    .nw-hit .meta .pill.rejected { background: #fee2e2; color: #991b1b; }
+
+    .empty { text-align: center; color: #94a3b8; padding: 30px; font-size: 0.9rem; }
+
+    .nw-result {
+        margin-top: 10px; padding: 12px; border-radius: 6px;
+        background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46;
+        font-size: 0.85rem; display: none;
+    }
+    .nw-result.error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+    .nw-result pre { margin: 6px 0 0; font-size: 0.78rem; white-space: pre-wrap; word-break: break-word; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="nw-section">
+    <h3>Adicionar novo watcher</h3>
+    <form class="nw-form" id="addWatcherForm" onsubmit="addWatcher(event)">
+        <div>
+            <label>Projeto</label>
+            <select name="project_id" required>
+                <option value="">— escolha —</option>
+                {% for p in projects %}
+                <option value="{{ p.id }}">{{ p.nome }} (#{{ p.id }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>Query (ex: "Fictor")</label>
+            <input type="text" name="query" required placeholder="termo de busca">
+        </div>
+        <div>
+            <label>Ativo</label>
+            <input type="checkbox" name="active" checked style="width: auto; height: 32px;">
+        </div>
+        <div>
+            <button type="submit">Criar</button>
+        </div>
+    </form>
+    <div id="addResult" class="nw-result"></div>
+</div>
+
+<div class="nw-section">
+    <h3>Watchers ({{ watchers|length }})</h3>
+    {% if not watchers %}
+    <div class="empty">Nenhum watcher cadastrado. Adicione acima.</div>
+    {% else %}
+        {% for w in watchers %}
+        <div class="nw-row {% if w.active %}active{% else %}inactive{% endif %}">
+            <div class="info">
+                <span class="project">{{ w.project_name or ('project#' ~ w.project_id) }}</span>
+                &middot;
+                <span class="query">{{ w.query }}</span>
+                <div class="meta">
+                    id <code>{{ w.id }}</code>
+                    &middot; total hits {{ w.total_hits or 0 }}
+                    {% if w.last_check %}&middot; ultima checagem {{ w.last_check|brt("%d/%m %H:%M") }}{% endif %}
+                    {% if not w.last_check %}&middot; nunca rodou{% endif %}
+                    {% if w.feed_url %}&middot; feed custom{% else %}&middot; Google News RSS{% endif %}
+                </div>
+            </div>
+            <div class="nw-actions">
+                <button class="primary" onclick="testWatcher({{ w.id }})">Test now</button>
+                {% if w.active %}
+                <button onclick="toggleWatcher({{ w.id }}, false)">Pausar</button>
+                {% else %}
+                <button onclick="toggleWatcher({{ w.id }}, true)">Ativar</button>
+                {% endif %}
+                <button class="danger" onclick="deleteWatcher({{ w.id }})">Remover</button>
+            </div>
+        </div>
+        {% endfor %}
+    {% endif %}
+    <div id="testResult" class="nw-result"></div>
+</div>
+
+<div class="nw-section">
+    <h3>Ultimos {{ hits|length }} hits</h3>
+    {% if not hits %}
+    <div class="empty">Nenhum hit ainda. Clique "Test now" num watcher pra capturar.</div>
+    {% else %}
+        {% for h in hits %}
+        <div class="nw-hit">
+            <div class="when">{{ h.hit_at|brt("%d/%m %H:%M") }}</div>
+            <div>
+                <div class="title">
+                    <a href="{{ h.url }}" target="_blank" rel="noopener noreferrer">{{ h.title }}</a>
+                </div>
+                <div class="meta">
+                    <span class="pill">{{ h.project_name or ('project#' ~ h.project_id) }}</span>
+                    {% if h.source %}&middot; {{ h.source }}{% endif %}
+                    {% if h.published_at %}&middot; publicado {{ h.published_at|brt("%d/%m %H:%M") }}{% endif %}
+                    {% if h.proposal_id %}
+                        &middot; proposal <code>#{{ h.proposal_id }}</code>
+                        <span class="pill {{ h.proposal_status or 'pending' }}">{{ h.proposal_status or 'pending' }}</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    {% endif %}
+</div>
+
+<script>
+function showResult(elId, data, isError) {
+    const el = document.getElementById(elId);
+    el.className = 'nw-result' + (isError ? ' error' : '');
+    el.style.display = 'block';
+    el.innerHTML = '<strong>' + (isError ? 'Erro' : 'OK') + '</strong><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+}
+
+async function addWatcher(event) {
+    event.preventDefault();
+    const form = event.target;
+    const data = {
+        project_id: parseInt(form.project_id.value),
+        query: form.query.value.trim(),
+        active: form.active.checked
+    };
+    try {
+        const resp = await fetch('/api/admin/news-watchers', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        const json = await resp.json();
+        if (resp.ok) {
+            showResult('addResult', json, false);
+            setTimeout(() => location.reload(), 800);
+        } else {
+            showResult('addResult', json, true);
+        }
+    } catch (e) {
+        showResult('addResult', {error: e.message}, true);
+    }
+}
+
+async function testWatcher(id) {
+    const el = document.getElementById('testResult');
+    el.style.display = 'block';
+    el.className = 'nw-result';
+    el.innerHTML = '<strong>Rodando watcher #' + id + '...</strong>';
+    try {
+        const resp = await fetch('/api/admin/news-watchers/' + id + '/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        const json = await resp.json();
+        if (resp.ok) {
+            showResult('testResult', json, false);
+            if (json.new_hits > 0) {
+                setTimeout(() => location.reload(), 1500);
+            }
+        } else {
+            showResult('testResult', json, true);
+        }
+    } catch (e) {
+        showResult('testResult', {error: e.message}, true);
+    }
+}
+
+async function toggleWatcher(id, active) {
+    try {
+        const resp = await fetch('/api/admin/news-watchers/' + id, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({active: active})
+        });
+        if (resp.ok) location.reload();
+        else alert('Falha: ' + resp.status);
+    } catch (e) { alert('Erro: ' + e.message); }
+}
+
+async function deleteWatcher(id) {
+    if (!confirm('Remover watcher #' + id + ' e todos os hits dele?')) return;
+    try {
+        const resp = await fetch('/api/admin/news-watchers/' + id, {method: 'DELETE'});
+        if (resp.ok) location.reload();
+        else alert('Falha: ' + resp.status);
+    } catch (e) { alert('Erro: ' + e.message); }
+}
+</script>
+{% endblock %}

@@ -28871,5 +28871,178 @@ Responda SOMENTE com JSON válido:
     }
 
 
+
+
+# =============================================================================
+# PROJECT NEWS WATCHERS
+# =============================================================================
+# Monitora noticias por projeto via RSS. Hits viram action_proposals.
+# Migration: scripts/migrations/039_project_news_watchers.sql
+# Cron NAO ativado em prod por default — Renato decide via vercel.json.
+
+@app.get("/admin/news-watchers", response_class=HTMLResponse)
+async def admin_news_watchers_page(request: Request):
+    """UI admin: gerencia watchers de noticias por projeto."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    if user.get("role") != "admin":
+        return RedirectResponse(url="/", status_code=302)
+
+    from services.project_news_watcher import list_all_watchers, list_recent_hits
+
+    watchers = list_all_watchers()
+    hits = list_recent_hits(limit=20)
+
+    # Lista projetos ativos pro dropdown do form
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, nome FROM projects WHERE status = 'ativo' ORDER BY nome ASC"
+        )
+        projects = [dict(r) for r in cursor.fetchall()]
+
+    return templates.TemplateResponse("admin_news_watchers.html", {
+        "request": request,
+        "user": user,
+        "watchers": watchers,
+        "hits": hits,
+        "projects": projects,
+    })
+
+
+class _NewsWatcherCreatePayload(BaseModel):
+    project_id: int
+    query: str
+    feed_url: Optional[str] = None
+    active: bool = True
+
+
+class _NewsWatcherUpdatePayload(BaseModel):
+    active: Optional[bool] = None
+
+
+@app.post("/api/admin/news-watchers")
+async def api_admin_news_watchers_create(request: Request, payload: _NewsWatcherCreatePayload):
+    """Cria um novo watcher."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    if not payload.query.strip():
+        raise HTTPException(status_code=400, detail="query obrigatoria")
+
+    from services.project_news_watcher import create_watcher
+
+    # Valida que projeto existe
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, nome FROM projects WHERE id = %s", (payload.project_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="projeto nao encontrado")
+
+    watcher = create_watcher(
+        project_id=payload.project_id,
+        query=payload.query,
+        feed_url=payload.feed_url,
+        active=payload.active,
+    )
+    return {"watcher": watcher}
+
+
+@app.patch("/api/admin/news-watchers/{watcher_id}")
+async def api_admin_news_watchers_update(
+    request: Request, watcher_id: int, payload: _NewsWatcherUpdatePayload
+):
+    """Update parcial (V0: so toggle active)."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from services.project_news_watcher import update_watcher_active
+
+    if payload.active is None:
+        raise HTTPException(status_code=400, detail="nada a atualizar")
+
+    ok = update_watcher_active(watcher_id, payload.active)
+    if not ok:
+        raise HTTPException(status_code=404, detail="watcher nao encontrado")
+    return {"updated": True, "id": watcher_id, "active": payload.active}
+
+
+@app.delete("/api/admin/news-watchers/{watcher_id}")
+async def api_admin_news_watchers_delete(request: Request, watcher_id: int):
+    """Remove watcher (cascata deleta hits)."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from services.project_news_watcher import delete_watcher
+
+    ok = delete_watcher(watcher_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="watcher nao encontrado")
+    return {"deleted": True, "id": watcher_id}
+
+
+@app.post("/api/admin/news-watchers/{watcher_id}/test")
+async def api_admin_news_watchers_test(request: Request, watcher_id: int):
+    """Roda check_watcher agora (botao 'Test now' da UI)."""
+    user = get_current_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from services.project_news_watcher import check_watcher
+
+    stats = await check_watcher(watcher_id)
+    return stats
+
+
+@app.get("/api/cron/run-project-news-watchers")
+@track_cron_run
+async def cron_run_project_news_watchers(request: Request):
+    """
+    Cron: roda todos os watchers ativos de project_news_watchers.
+
+    Auth: verify_cron_auth (User-Agent vercel-cron OU Bearer CRON_SECRET)
+          OU X-API-Key == INTEL_API_KEY (pra trigger manual de scripts).
+
+    NAO esta no vercel.json ainda (MVP — Renato decide ativacao).
+    Sugestao de schedule quando ativar: '15 */6 * * *' (a cada 6h) ou diario.
+    """
+    # Auth: cron Vercel OU API key
+    api_key_header = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    api_key_ok = bool(api_key_header) and bool(intel_api_key) and api_key_header == intel_api_key
+
+    if not (verify_cron_auth(request) or api_key_ok):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.project_news_watcher import check_all_active_watchers
+
+    try:
+        # Timeout xenofobico: 20 watchers * ~3s = 60s pior caso. 180s e folga.
+        result = await _aio.wait_for(check_all_active_watchers(), timeout=180.0)
+        return {
+            "status": "ok",
+            "job": "run-project-news-watchers",
+            **result,
+        }
+    except _aio.TimeoutError:
+        logger.error("cron_run_project_news_watchers: > 180s")
+        return {
+            "status": "error",
+            "job": "run-project-news-watchers",
+            "error": "timeout > 180s",
+        }
+    except Exception as e:
+        logger.exception("cron_run_project_news_watchers: exception fatal")
+        return {
+            "status": "error",
+            "job": "run-project-news-watchers",
+            "error": f"{type(e).__name__}: {e}",
+        }
+
 # Vercel handler
 app_handler = app
