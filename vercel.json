@@ -40,10 +40,6 @@
     {
       "path": "/api/cron/circulos-recalc",
       "schedule": "0 9 * * *"
-    },
-    {
-      "path": "/api/cron/run-project-news-watchers",
-      "schedule": "15 */6 * * *"
     }
   ]
 }

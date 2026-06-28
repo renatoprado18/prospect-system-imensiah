@@ -165,6 +165,17 @@ _SCHEDULER_JOBS = [
     # WA quando elegivel pra ligar (manual via /api/admin/auto-archive-enable).
     ("auto-archive-gate-eval", "/api/cron/auto-archive-gate-eval", CronTrigger(hour=5, minute=0)),
     ("catchup", "/api/cron/catchup", CronTrigger(minute=30)),
+    # 28/06/26 — F3.1 WA Triage sweep. Janela 4h batched Sonnet classifica
+    # msgs incoming nao classificadas. Shadow mode (status=shadow), sem
+    # action_proposal. Migrado de GH Actions (criado nesta mesma sessao por
+    # erro de leitura do memo feedback_cron_host_choice). Custo ~$0.50/dia.
+    ("wa-triage-sweep", "/api/cron/wa-triage-sweep?window_hours=4",
+     CronTrigger(hour="*/4", minute=3)),
+    # 28/06/26 — News watchers sessao paralela (4x/dia, modo silent default).
+    # Migrado de vercel.json (Hobby plan limita 1 cron/dia, estava bloqueando
+    # deploy). 5 watchers ativos, ~15s/run total (modo silent nao chama LLM).
+    ("run-project-news-watchers", "/api/cron/run-project-news-watchers",
+     CronTrigger(hour="*/6", minute=15)),
     # 22/06/2026: APOSENTADO — cos-digest-morning (10:08 UTC) ja cobre LLM
     # narrative. daily-morning-briefing volta ao static template que e suficiente.
     # ("cos-investigator", "/api/cron/cos-investigator", CronTrigger(hour=10, minute=10)),
