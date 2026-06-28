@@ -12394,6 +12394,18 @@ async def api_empresas_link_contact(empresa_id: int, request: Request):
     return {"empresa_id": empresa_id, "contact_id": int(contact_id), "linked": True}
 
 
+@app.post("/api/empresas/{empresa_id}/refresh-conselhoos-match")
+async def api_empresas_refresh_conselhoos_match(empresa_id: int, request: Request):
+    """Re-tenta match com ConselhoOS sem DELETE/recreate. Retorna diagnostico
+    {matched, uuid, reason, updated}. Util quando create silent-failed em prod."""
+    _empresas_require_auth(request)
+    from services import empresas as svc
+    result = svc.refresh_conselhoos_match(empresa_id)
+    if result.get("error") == "empresa nao encontrada":
+        raise HTTPException(404, f"empresa #{empresa_id} nao encontrada")
+    return result
+
+
 @app.get("/api/empresas/{empresa_id}/suggest-contacts")
 async def api_empresas_suggest_contacts(
     empresa_id: int,

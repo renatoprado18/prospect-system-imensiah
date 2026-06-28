@@ -40,9 +40,12 @@ class ConselhoOSSyncService:
         if not self.conselhoos_url:
             raise ValueError("CONSELHOOS_DATABASE_URL not configured")
 
+        # connect_timeout=3: cold start Vercel nao pode pendurar request inteira
+        # esperando Neon externo. Falha rapida -> caller decide.
         return psycopg2.connect(
             self.conselhoos_url,
-            cursor_factory=RealDictCursor
+            cursor_factory=RealDictCursor,
+            connect_timeout=3,
         )
 
     def get_empresas(self, force_refresh: bool = False) -> List[Dict]:

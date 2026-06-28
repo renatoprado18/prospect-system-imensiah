@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import unicodedata
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from database import get_db
 
@@ -137,22 +138,80 @@ def get_with_contacts(empresa_id: int) -> Optional[Dict]:
     return emp
 
 
-def _match_conselhoos_uuid(nome: str) -> Optional[str]:
-    """Tenta achar UUID correspondente no ConselhoOS externo. Best-effort:
-    falha silenciosa se CONSELHOOS_DATABASE_URL nao configurado ou conexao
-    falhar."""
-    try:
-        from services.conselhoos_sync import ConselhoOSSyncService
+def _match_conselhoos_uuid(nome: str) -> Tuple[Optional[str], str]:
+    """Tenta achar UUID correspondente no ConselhoOS externo.
 
-        svc = ConselhoOSSyncService()
-        nome_norm = _normalize_name(nome)
-        for emp in svc.get_empresas():
-            if _normalize_name(emp.get("nome", "")) == nome_norm:
-                eid = emp.get("id")
-                return str(eid) if eid else None
+    Retorna (uuid_or_none, reason). reasons:
+    - 'env_missing': CONSELHOOS_DATABASE_URL nao setado
+    - 'conn_error: <details>': falha conexao/timeout Neon externo
+    - 'no_empresas': endpoint OK mas lista vazia (user_id errado?)
+    - 'no_match': listou N empresas, nenhuma bate nome
+    - 'matched': achou, uuid valido retornado
+    """
+    if not (os.getenv("CONSELHOOS_DATABASE_URL") or "").strip():
+        logger.info(f"_match_conselhoos_uuid({nome!r}): env_missing")
+        return None, "env_missing"
+
+    try:
+        from services.conselhoos_sync import get_conselhoos_sync_service
+
+        svc = get_conselhoos_sync_service()
+        empresas = svc.get_empresas()
     except Exception as e:
-        logger.warning(f"_match_conselhoos_uuid falhou: {e}")
-    return None
+        logger.warning(f"_match_conselhoos_uuid({nome!r}): conn_error: {e}")
+        return None, f"conn_error: {e}"
+
+    if not empresas:
+        logger.info(f"_match_conselhoos_uuid({nome!r}): no_empresas")
+        return None, "no_empresas"
+
+    nome_norm = _normalize_name(nome)
+    for emp in empresas:
+        if _normalize_name(emp.get("nome", "")) == nome_norm:
+            eid = emp.get("id")
+            uuid = str(eid) if eid else None
+            logger.info(
+                f"_match_conselhoos_uuid({nome!r}): matched uuid={uuid}"
+            )
+            return uuid, "matched"
+
+    logger.info(
+        f"_match_conselhoos_uuid({nome!r}): no_match (viu {len(empresas)} empresas)"
+    )
+    return None, "no_match"
+
+
+def refresh_conselhoos_match(empresa_id: int) -> Dict:
+    """Tenta (re)matchar empresa local com ConselhoOS externo. Diagnostica
+    motivo se falha. UPDATE conselhoos_empresa_id soh se achou match.
+    Retorna {empresa_id, nome, matched, uuid, reason}."""
+    emp = get_by_id(empresa_id)
+    if not emp:
+        return {"empresa_id": empresa_id, "error": "empresa nao encontrada"}
+
+    nome = emp.get("nome_canonico", "")
+    uuid, reason = _match_conselhoos_uuid(nome)
+    updated = False
+    if uuid and uuid != emp.get("conselhoos_empresa_id"):
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE empresas SET conselhoos_empresa_id = %s, "
+                "atualizado_em = NOW() WHERE id = %s",
+                (uuid, empresa_id),
+            )
+            conn.commit()
+            updated = cur.rowcount > 0
+
+    return {
+        "empresa_id": empresa_id,
+        "nome": nome,
+        "matched": uuid is not None,
+        "uuid": uuid,
+        "reason": reason,
+        "updated": updated,
+        "previous_uuid": emp.get("conselhoos_empresa_id"),
+    }
 
 
 def create(
@@ -176,7 +235,10 @@ def create(
     if existing:
         return existing
 
-    conselhoos_uuid = _match_conselhoos_uuid(nome) if auto_match_conselhoos else None
+    if auto_match_conselhoos:
+        conselhoos_uuid, _reason = _match_conselhoos_uuid(nome)
+    else:
+        conselhoos_uuid = None
     aliases_json = json.dumps(aliases or [])
 
     with get_db() as conn:
@@ -275,7 +337,10 @@ def suggest_contacts(empresa_id: int, limit: int = 100) -> List[Dict]:
                     results[r["id"]] = {**dict(r), "confidence": "high",
                                         "match_term": nome_norm}
 
-        # MEDIUM: substring estreita
+        # MEDIUM: substring bidirecional
+        # (a) empresa CONTEM nome_canonico  -> "Despertar" bate "Associacao Despertar"
+        # (b) nome_canonico CONTEM empresa  -> "Associacao Despertar" bate empresa="Despertar"
+        # Filtro min length 3 evita match espurio com empresa "SA"/"BR"/etc.
         for nome_norm in nomes_norm:
             cur.execute(
                 """
@@ -284,12 +349,15 @@ def suggest_contacts(empresa_id: int, limit: int = 100) -> List[Dict]:
                 FROM contacts
                 WHERE empresa_id IS NULL
                   AND empresa IS NOT NULL
-                  AND unaccent(LOWER(empresa)) LIKE %s
-                  AND LENGTH(unaccent(LOWER(empresa))) <= %s
+                  AND LENGTH(unaccent(LOWER(TRIM(empresa)))) >= 3
+                  AND (
+                    unaccent(LOWER(empresa)) LIKE %s
+                    OR %s LIKE '%%' || unaccent(LOWER(TRIM(empresa))) || '%%'
+                  )
                 ORDER BY health_score DESC NULLS LAST
                 LIMIT %s
                 """,
-                (f"%{nome_norm}%", int(len(nome_norm) * 1.5) + 5, limit),
+                (f"%{nome_norm}%", nome_norm, limit),
             )
             for r in cur.fetchall():
                 if r["id"] not in results:
