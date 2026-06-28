@@ -176,6 +176,13 @@ _SCHEDULER_JOBS = [
     # deploy). 5 watchers ativos, ~15s/run total (modo silent nao chama LLM).
     ("run-project-news-watchers", "/api/cron/run-project-news-watchers",
      CronTrigger(hour="*/6", minute=15)),
+    # 28/06/26 — News digest diario (Modo D). 8h BRT = 11h UTC.
+    # Agrupa hits 24h por watcher em digest_daily, resume via Sonnet 4.6,
+    # manda WA. Renato responde "ok" (arquiva) ou nome/numero (drill).
+    # Custo ~$0.005/digest, hits NAO viram action_proposals (skip_proposal
+    # no check_watcher). Cron skipado se 0 hits novos.
+    ("run-daily-news-digest", "/api/cron/run-daily-news-digest",
+     CronTrigger(hour=11, minute=0)),
     # 22/06/2026: APOSENTADO — cos-digest-morning (10:08 UTC) ja cobre LLM
     # narrative. daily-morning-briefing volta ao static template que e suficiente.
     # ("cos-investigator", "/api/cron/cos-investigator", CronTrigger(hour=10, minute=10)),
