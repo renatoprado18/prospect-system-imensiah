@@ -12202,20 +12202,8 @@ async def api_system_memories_sync_file(request: Request):
         is_enabled as embeddings_enabled,
     )
 
-    with get_db() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT id, conteudo FROM system_memories "
-            "WHERE titulo = %s AND fonte = %s "
-            "ORDER BY id DESC LIMIT 1",
-            (titulo, fonte),
-        )
-        existing = cur.fetchone()
-
-    if existing and existing["conteudo"] == conteudo:
-        return {"status": "unchanged", "id": existing["id"], "filename": filename}
-
-    # Regen embedding (best-effort — falha nao bloqueia upsert)
+    # Regen embedding (best-effort — falha NAO apaga o embedding existente,
+    # o branch sem-embedding abaixo nao toca a coluna)
     embedding_literal = None
     if embeddings_enabled():
         try:
@@ -12225,48 +12213,71 @@ async def api_system_memories_sync_file(request: Request):
         except Exception as e:
             logger.warning(f"sync-file: embed falhou pra {filename}: {e}")
 
+    # UPSERT atomico via ON CONFLICT no indice parcial (titulo) WHERE
+    # fonte='claude_code_migration'. xmax=0 distingue insert (xmax sempre 0
+    # pra row recem-inserida) de update.
     with get_db() as conn:
         cur = conn.cursor()
-        if existing:
-            if embedding_literal:
-                cur.execute(
-                    "UPDATE system_memories SET conteudo=%s, tipo=%s, "
-                    "tags=%s::jsonb, embedding=%s::vector WHERE id=%s",
-                    (conteudo, tipo, tags_json, embedding_literal, existing["id"]),
-                )
-            else:
-                cur.execute(
-                    "UPDATE system_memories SET conteudo=%s, tipo=%s, "
-                    "tags=%s::jsonb, embedding=NULL WHERE id=%s",
-                    (conteudo, tipo, tags_json, existing["id"]),
-                )
-            conn.commit()
-            return {
-                "status": "updated",
-                "id": existing["id"],
-                "filename": filename,
-                "has_embedding": bool(embedding_literal),
-            }
         if embedding_literal:
             cur.execute(
-                "INSERT INTO system_memories (titulo, conteudo, tipo, tags, fonte, embedding) "
-                "VALUES (%s, %s, %s, %s::jsonb, %s, %s::vector) RETURNING id",
+                """
+                INSERT INTO system_memories (titulo, conteudo, tipo, tags, fonte, embedding)
+                VALUES (%s, %s, %s, %s::jsonb, %s, %s::vector)
+                ON CONFLICT (titulo) WHERE fonte='claude_code_migration'
+                DO UPDATE SET
+                    conteudo = EXCLUDED.conteudo,
+                    tipo = EXCLUDED.tipo,
+                    tags = EXCLUDED.tags,
+                    embedding = EXCLUDED.embedding
+                WHERE system_memories.conteudo IS DISTINCT FROM EXCLUDED.conteudo
+                RETURNING id, (xmax = 0) AS inserted
+                """,
                 (titulo, conteudo, tipo, tags_json, fonte, embedding_literal),
             )
         else:
+            # Voyage falhou (ou desabilitado). NAO toca embedding — preserva o
+            # antigo. Backfill via scripts/migrate_memory_to_db.py --only-embed
+            # pega rows com embedding=NULL.
             cur.execute(
-                "INSERT INTO system_memories (titulo, conteudo, tipo, tags, fonte) "
-                "VALUES (%s, %s, %s, %s::jsonb, %s) RETURNING id",
+                """
+                INSERT INTO system_memories (titulo, conteudo, tipo, tags, fonte)
+                VALUES (%s, %s, %s, %s::jsonb, %s)
+                ON CONFLICT (titulo) WHERE fonte='claude_code_migration'
+                DO UPDATE SET
+                    conteudo = EXCLUDED.conteudo,
+                    tipo = EXCLUDED.tipo,
+                    tags = EXCLUDED.tags
+                WHERE system_memories.conteudo IS DISTINCT FROM EXCLUDED.conteudo
+                RETURNING id, (xmax = 0) AS inserted
+                """,
                 (titulo, conteudo, tipo, tags_json, fonte),
             )
-        new_id = cur.fetchone()["id"]
+        result = cur.fetchone()
         conn.commit()
+
+    if result is None:
+        # Conteudo igual ao DB — RETURNING vazio quando WHERE do DO UPDATE
+        # falha. Pega o id pra resposta.
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id FROM system_memories "
+                "WHERE titulo=%s AND fonte=%s LIMIT 1",
+                (titulo, fonte),
+            )
+            existing = cur.fetchone()
         return {
-            "status": "inserted",
-            "id": new_id,
+            "status": "unchanged",
+            "id": existing["id"] if existing else None,
             "filename": filename,
-            "has_embedding": bool(embedding_literal),
         }
+
+    return {
+        "status": "inserted" if result["inserted"] else "updated",
+        "id": result["id"],
+        "filename": filename,
+        "has_embedding": bool(embedding_literal),
+    }
 
 
 @app.post("/api/admin/gmail-proxy")
