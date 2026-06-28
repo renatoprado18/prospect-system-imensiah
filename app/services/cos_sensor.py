@@ -1254,25 +1254,31 @@ def _load_context(window_min: int = 60, mock: Optional[Dict] = None) -> Dict[str
             # o que ela mesma escreveu na sintese diaria nem o glossario que
             # ela mesma criava — cada tick comecava do zero. Agora nao mais.
             ctx["l1_memories"] = []
+            # Ordem de append importa: cap json no _build_system_prompt
+            # trunca o JSON final. Coloca primeiros os tipos pequenos e raros
+            # (reference/project/cos_config) pra garantir que cabem; deixa
+            # feedback (alto volume, ~60-80 memos × 1500c = 90-120k chars)
+            # por último — se faltar espaco, perde feedback (regras explicitas
+            # menos criticas que reference de mapas/IDs).
+            # Fix 28/06/26 debt: antes reference ficava por ultimo apos
+            # feedback, so cabiam 2/8.
             _l1_specs = [
                 # (tipo, limit, max_age_days, fonte_filter)
-                # Memos vivos do CoS — Tonha sempre acorda lembrando disso:
+                # CORE pequeno — cabe sempre:
                 ("cos_config", 1, None, None),
                 ("sintese_diaria", 1, None, None),
-                ("glossario", 50, None, None),
-                ("relationship_edge", 50, None, None),
-                ("correcao", 20, 90, None),
+                ("reference", 8, None, "claude_code_migration"),
+                ("project", 12, None, "claude_code_migration"),
                 ("decisao", 5, 60, None),
                 ("compromisso", 5, 60, None),
                 ("padrao", 3, 60, None),
                 ("reflexao", 3, 60, None),
-                # F1+Patrol wire (28/06/26): memos sincronizados do Claude Code
-                # via hook PostToolUse. feedback=regras explicitas (pega tudo —
-                # ~60 memos × 800c = 48k), project=contexto vivo (TOP 12),
-                # reference=lookups raros (TOP 8). Cap json 80k cobre.
+                # Volumoso (glossario+edges+correcao+feedback) — pode ser
+                # truncado pelo cap final se houver muita pressao.
+                ("glossario", 50, None, None),
+                ("relationship_edge", 50, None, None),
+                ("correcao", 20, 90, None),
                 ("feedback", 80, None, "claude_code_migration"),
-                ("project", 12, None, "claude_code_migration"),
-                ("reference", 8, None, "claude_code_migration"),
             ]
             for tipo, lim, age, fonte in _l1_specs:
                 try:

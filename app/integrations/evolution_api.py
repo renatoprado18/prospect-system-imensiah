@@ -669,8 +669,11 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
     if "@g.us" in remote_jid:
         if not from_me:
             text_content = ""
-            msg_data = data.get("data", {})
-            message_obj = msg_data.get("message", {}) or {}
+            # Fix 28/06/26: payload['data'] ja eh passado como `data` (ver
+            # handle_evolution_webhook). Acesso era data.data.message — paih
+            # extra de 'data' que sempre retornava {}. RACI smart_updates
+            # estava dead silently desde commit b846825 (Evolution v2.x).
+            message_obj = data.get("message", {}) or {}
             caption = ""
             if message_obj.get("conversation"):
                 text_content = message_obj["conversation"]
@@ -739,8 +742,6 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
         # F4' — anexos WA sempre-on em grupos (incoming + outgoing):
         # Persiste anexos via worker independente do RACI (que so roda em
         # incoming + grupo c/ projeto). Idempotente por (message_id, kind).
-        # NOTA: payload real e data.message — NAO data.data.message (RACI legacy
-        # usa o caminho errado desde Evolution v2.x, deve estar silently dead).
         message_obj_g = data.get("message") or {}
         has_media_g = any(
             k in message_obj_g

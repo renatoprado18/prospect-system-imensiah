@@ -12157,6 +12157,70 @@ def _parse_memory_md(text: str, filename: str) -> dict | None:
     }
 
 
+@app.post("/api/system-memories/gc-orphans")
+async def api_system_memories_gc_orphans(request: Request):
+    """F1 — GC de memos orfaos: deleta rows system_memories cujo .md ja nao
+    existe mais no laptop. Body: {filenames: ["a.md", ...]} = lista ATUAL de
+    .md no diretorio memory/ local. Endpoint compara com DB
+    (WHERE fonte='claude_code_migration') e deleta orfaos.
+
+    Safety: rejeita body vazio (evita apagar tudo se hook quebrar).
+
+    Auth: X-API-Key == INTEL_API_KEY (mesmo do sync-file).
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    if not (api_key and intel_api_key and api_key == intel_api_key):
+        raise HTTPException(status_code=403, detail="auth requerida")
+
+    body = await request.json()
+    filenames = body.get("filenames") or []
+    if not isinstance(filenames, list) or len(filenames) < 5:
+        # Safety: lista <5 .md indica problema no caller. Memory hoje tem ~133.
+        raise HTTPException(400, "filenames must be list >=5 (safety: evita apagar tudo)")
+
+    filenames_set = set(filenames)
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, titulo, tags
+            FROM system_memories
+            WHERE fonte = 'claude_code_migration'
+            """
+        )
+        rows = cur.fetchall()
+
+        orphan_ids = []
+        for r in rows:
+            tags = r.get("tags") or []
+            if isinstance(tags, str):
+                try:
+                    tags = json.loads(tags)
+                except Exception:
+                    tags = []
+            fn = tags[0] if tags else None
+            if fn and fn not in filenames_set:
+                orphan_ids.append({"id": r["id"], "titulo": r["titulo"], "filename": fn})
+
+        deleted = 0
+        if orphan_ids:
+            cur.execute(
+                "DELETE FROM system_memories WHERE id = ANY(%s)",
+                ([o["id"] for o in orphan_ids],),
+            )
+            deleted = cur.rowcount
+            conn.commit()
+
+    return {
+        "checked": len(rows),
+        "filenames_received": len(filenames_set),
+        "deleted": deleted,
+        "deleted_items": orphan_ids[:20],  # preview p log
+    }
+
+
 @app.post("/api/system-memories/sync-file")
 async def api_system_memories_sync_file(request: Request):
     """F1 — Sync de memo .md (Claude Code) -> system_memories.
