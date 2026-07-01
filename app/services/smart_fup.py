@@ -40,6 +40,11 @@ async def check_pending_fups(access_token: str) -> Dict:
         {checked: int, fups_created: int, details: [...]}
     """
     from integrations.gmail import GmailIntegration
+    from services.action_proposals import is_proposals_frozen
+
+    if is_proposals_frozen():
+        logger.info("check_pending_fups: FROZEN — pulando geracao de FUPs")
+        return {"checked": 0, "fups_created": 0, "details": [], "frozen": True}
 
     gmail = GmailIntegration()
     results = {"checked": 0, "fups_created": 0, "details": []}

@@ -7,10 +7,33 @@ import json
 import re
 import logging
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from database import get_db
 
 logger = logging.getLogger(__name__)
+
+
+def is_proposals_frozen() -> bool:
+    """
+    Kill switch global — retorna True se `analyzer_settings.proposals_frozen_until`
+    contem uma data futura (ISO yyyy-mm-dd). Serve pra congelar geracao de propostas
+    em periodos de sobrecarga sem precisar deploy. Passou a data → destrava sozinho.
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT setting_value FROM analyzer_settings WHERE setting_key = 'proposals_frozen_until' LIMIT 1"
+            )
+            row = cursor.fetchone()
+            if not row or not row['setting_value']:
+                return False
+            raw = row['setting_value']
+            iso = raw.strip('"') if isinstance(raw, str) else str(raw).strip('"')
+            frozen_until = date.fromisoformat(iso)
+            return date.today() < frozen_until
+    except Exception:
+        return False
 
 
 # Anti-loop: regex que detecta texto 100% bot-only (briefing + comandos).
@@ -115,6 +138,13 @@ class ActionProposalsService:
         Returns:
             Proposta criada com ID
         """
+        if is_proposals_frozen():
+            logger.info(
+                f"create_proposal: FROZEN — skip {proposal_data.get('action_type')} "
+                f"(contact {proposal_data.get('contact_id')})"
+            )
+            return None
+
         # Guard anti-loop: rejeita proposta cujo titulo ou descricao parece
         # output do proprio bot (briefing diario). Defesa em profundidade —
         # filtros principais ficam em evolution_api e analyzers.

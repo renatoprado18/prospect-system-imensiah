@@ -146,8 +146,12 @@ def _tool_create_action_proposal(
 ) -> Dict[str, Any]:
     """Cria proposal via ActionProposalsService (com dedup interno por 24h)."""
     try:
-        from services.action_proposals import get_action_proposals
+        from services.action_proposals import get_action_proposals, is_proposals_frozen
         from services.audit_log import log as audit_log
+
+        if is_proposals_frozen():
+            logger.info(f"cos_sensor.create_action_proposal: FROZEN — skip {action_type}")
+            return {"success": False, "error": "proposals_frozen", "audit_log_id": None}
 
         svc = get_action_proposals()
         proposal_data = {
