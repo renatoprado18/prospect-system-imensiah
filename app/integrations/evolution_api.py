@@ -792,6 +792,21 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
         _audit("skipped", f"bot_origin_skipped:{phone}")
         return {"processed": False, "reason": "bot_origin_skipped", "phone": phone}
 
+    # Persistência 1:1 ao vivo (S08 follow-up): grava DM direta de contato
+    # relevante em whatsapp_messages. Side-effect independente do fluxo de
+    # proposta/IA abaixo. Escopado (mesma política do backfill) + feature-flag.
+    #   WA_PERSIST_1TO1=on     -> grava
+    #   WA_PERSIST_1TO1=shadow -> só loga o que faria (rollout seguro)
+    #   (não setado)           -> desligado; o cron de backfill cobre o gap
+    _wa_persist_mode = os.getenv("WA_PERSIST_1TO1", "").strip().lower()
+    if _wa_persist_mode in ("on", "shadow"):
+        try:
+            from services.wa_backfill import persist_live_direct_message
+            _pres = persist_live_direct_message(data, shadow=(_wa_persist_mode == "shadow"))
+            logger.info(f"wa_persist_1to1[{_wa_persist_mode}] msg={message_id}: {_pres}")
+        except Exception as e:
+            logger.warning(f"wa_persist_1to1 falhou msg={message_id}: {e}")
+
     # Extrair conteúdo
     content = ""
     message_type = "text"

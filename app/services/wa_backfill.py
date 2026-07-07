@@ -58,6 +58,20 @@ _UPSERT = """
     ON CONFLICT (message_id) DO NOTHING
 """
 
+# Resolve contato por sufixo do telefone + flag de relevância (mesma política
+# do backfill: círculo<=2 OU projeto ativo). Usado pela persistência ao vivo.
+_RESOLVE_CONTACT = """
+    SELECT c.id, c.nome,
+           (COALESCE(c.circulo, 9) <= 2 OR EXISTS (
+               SELECT 1 FROM tasks t JOIN projects p ON p.id = t.project_id
+                WHERE t.contact_id = c.id AND p.status = 'ativo')) AS relevant
+      FROM contacts c
+     WHERE c.telefones::text LIKE %s
+     LIMIT 5
+"""
+
+LIVE_IMPORTED_FROM = "evolution_live_1to1"
+
 
 def _first_wa_phone(telefones: Any) -> Optional[str]:
     """Extrai o primeiro número marcado whatsapp:true. Retorna só dígitos."""
@@ -117,6 +131,52 @@ def _parse_record(rec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "message_date": msg_date,
         "phone": phone,
     }
+
+
+def _resolve_relevant_contact(phone: str) -> Optional[Dict[str, Any]]:
+    """Acha contato relevante (círculo<=2 OU projeto ativo) por sufixo do
+    telefone. Retorna {id, nome} ou None (desconhecido/irrelevante)."""
+    digits = "".join(ch for ch in str(phone) if ch.isdigit())
+    if len(digits) < 8:
+        return None
+    suffix = digits[-9:] if len(digits) >= 9 else digits[-8:]
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(_RESOLVE_CONTACT, (f"%{suffix}%",))
+        for row in cur.fetchall():
+            if row["relevant"]:
+                return {"id": row["id"], "nome": row["nome"]}
+    return None
+
+
+def persist_live_direct_message(data: Dict[str, Any], shadow: bool = False) -> Dict[str, Any]:
+    """
+    Persiste UMA DM 1:1 vinda do webhook (payload['data']), se o contato for
+    relevante. Chamado pelo webhook Evolution como side-effect. Idempotente
+    (ON CONFLICT message_id). Reusa _parse_record/_UPSERT do backfill.
+
+    shadow=True: resolve e diz o que FARIA, sem escrever (rollout seguro).
+    """
+    parsed = _parse_record(data)
+    if not parsed:
+        return {"skipped": "no_text"}
+    if not parsed.get("phone"):
+        return {"skipped": "no_phone"}
+
+    contact = _resolve_relevant_contact(parsed["phone"])
+    if not contact:
+        return {"skipped": "unknown_or_irrelevant"}
+
+    if shadow:
+        return {"shadow_would_persist": contact["nome"], "dir": parsed["direction"]}
+
+    parsed["contact_id"] = contact["id"]
+    parsed["imported_from"] = LIVE_IMPORTED_FROM
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(_UPSERT, parsed)
+        conn.commit()
+        return {"persisted": cur.rowcount, "contact": contact["nome"], "dir": parsed["direction"]}
 
 
 async def backfill_direct_messages(
