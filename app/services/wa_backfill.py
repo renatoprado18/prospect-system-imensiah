@@ -135,11 +135,16 @@ def _parse_record(rec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 def _resolve_relevant_contact(phone: str) -> Optional[Dict[str, Any]]:
     """Acha contato relevante (círculo<=2 OU projeto ativo) por sufixo do
-    telefone. Retorna {id, nome} ou None (desconhecido/irrelevante)."""
+    telefone. Retorna {id, nome} ou None (desconhecido/irrelevante).
+
+    Casa pelos últimos 8 dígitos (não 9): tolera a variância do 9º dígito
+    brasileiro no WhatsApp (número chega sem o 9, cadastro tem — mesma pessoa).
+    Alinha com o fallback do find_contact do backfill. Colisão de 8 dígitos
+    dentro do conjunto de relevantes (~55) é desprezível."""
     digits = "".join(ch for ch in str(phone) if ch.isdigit())
     if len(digits) < 8:
         return None
-    suffix = digits[-9:] if len(digits) >= 9 else digits[-8:]
+    suffix = digits[-8:]
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(_RESOLVE_CONTACT, (f"%{suffix}%",))
