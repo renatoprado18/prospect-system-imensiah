@@ -4399,6 +4399,20 @@ async def cron_wa_triage_sweep(request: Request, window_hours: int = 4):
     return sweep_wa_triage(window_hours=window_hours)
 
 
+@app.get("/api/cron/wa-backfill-1to1")
+@track_cron_run
+async def cron_wa_backfill_1to1(request: Request, max_contacts: int = 80, msg_limit: int = 50):
+    """Cron diário (06:30 BRT): puxa DMs 1:1 do WhatsApp pessoal pra
+    whatsapp_messages. Fecha o gap descoberto na formação S08 — o webhook
+    ao vivo só persiste grupos; conversas 1:1 ficavam congeladas em 13/06.
+    Escopo: contatos whatsapp:true com círculo<=2 OU projeto ativo (~55).
+    Idempotente (ON CONFLICT message_id)."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.wa_backfill import backfill_direct_messages
+    return await backfill_direct_messages(max_contacts=max_contacts, msg_limit=msg_limit)
+
+
 @app.get("/api/cron/dev-delegation-pickup")
 @track_cron_run
 async def cron_dev_delegation_pickup(request: Request):

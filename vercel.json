@@ -40,6 +40,10 @@
     {
       "path": "/api/cron/circulos-recalc",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/wa-backfill-1to1",
+      "schedule": "30 9 * * *"
     }
   ]
 }
