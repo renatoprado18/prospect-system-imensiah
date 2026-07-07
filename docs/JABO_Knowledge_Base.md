@@ -90,7 +90,7 @@
 | Canal | Descrição | Status |
 |-------|-----------|--------|
 | Orioli Coffee | Importadora/exportadora PT, hub principal, possível franquia | Em negociação |
-| Typica (typica.coffee) | Plataforma online Europa sem virar trader | Investigar |
+| Typica (typica.coffee) | Plataforma direct-trade de café verde **global** (escritórios incl. EUA, ~57 países) — compra a partir de **1 saca de 60kg**, consolida vários torradores num container, sem trader. Alcança micro-torrador direto (ex.: Dry Heat Coffee/EUA). Corrigido 07/07: **não é "Europa"** | Investigar |
 | Algrano (algrano.com) | Plataforma B2B indicada por Orioli pós-call 12/06 | Investigar |
 | Ugrano | Plataforma online Europa | Investigar |
 | SCA / BSCA / Apex / SECOM | Feiras internacionais — Orioli já participa | Via Orioli |
@@ -296,7 +296,7 @@
 - **FOB:** Free on Board — preço na origem sem frete internacional
 - **Container 20 pés:** ~320 sacas de 60kg = ~19.200 kg de café verde
 - **Hub Portugal:** ponto de entrada UE com isenções tarifárias específicas
-- **Tipica / Ugrano / Algrano:** plataformas B2B online que conectam produtor a torrador europeu sem intermediário trader
+- **Typica / Ugrano / Algrano:** plataformas B2B online que conectam produtor a torrador sem intermediário trader. **Typica é global** (opera EUA, ~57 países, mínimo 1 saca) — não Europa-only. Ugrano e Algrano são europeias.
 
 ---
 
