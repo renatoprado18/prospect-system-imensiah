@@ -130,10 +130,16 @@ class TasksSyncService:
         """Envia todas as tasks pendentes de sync para Google."""
         with get_db() as conn:
             cursor = conn.cursor()
+            # Conclusoes PRECISAM subir pro Google (update_task manda
+            # status='completed'). Antes eram excluidas aqui: o Google seguia
+            # vendo needsAction e o pull seguinte reabria a task localmente,
+            # deixando data_conclusao para tras (20 tasks-fantasma, 09/07).
+            # Ressalva: completed sem google_task_id iria pro create_task, que
+            # nao aceita status — nasceria aberta no Google. Essas ficam de fora.
             cursor.execute("""
                 SELECT id FROM tasks
                 WHERE sync_status IN ('local_only', 'pending_push')
-                AND status != 'completed'
+                AND (status != 'completed' OR google_task_id IS NOT NULL)
             """)
             pending = cursor.fetchall()
 
@@ -232,12 +238,21 @@ class TasksSyncService:
                     conn.commit()
                     return "skipped"
 
+                # data_conclusao acompanha o status que estamos gravando: se o
+                # pull reabre a task, o fossil da conclusao anterior tem que
+                # sair junto. Sem isso, status='pending' convive com
+                # data_conclusao preenchida e a task vira fantasma no briefing.
                 cursor.execute("""
                     UPDATE tasks
                     SET titulo = %s,
                         descricao = %s,
                         data_vencimento = %s,
                         status = %s,
+                        data_conclusao = CASE
+                            WHEN %s = 'completed'
+                            THEN COALESCE(data_conclusao, CURRENT_TIMESTAMP)
+                            ELSE NULL
+                        END,
                         last_synced_at = CURRENT_TIMESTAMP,
                         sync_status = 'synced',
                         etag = %s
@@ -246,6 +261,7 @@ class TasksSyncService:
                     google_task.get("title"),
                     google_task.get("notes"),
                     due_date,
+                    local_status,
                     local_status,
                     google_task.get("etag"),
                     google_id
@@ -258,14 +274,20 @@ class TasksSyncService:
                 cursor.execute("""
                     INSERT INTO tasks (
                         titulo, descricao, data_vencimento, status,
+                        data_conclusao,
                         origem, google_task_id, google_tasklist_id,
                         last_synced_at, sync_status, etag
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, 'synced', %s)
+                    ) VALUES (
+                        %s, %s, %s, %s,
+                        CASE WHEN %s = 'completed' THEN CURRENT_TIMESTAMP END,
+                        %s, %s, %s, CURRENT_TIMESTAMP, 'synced', %s
+                    )
                     RETURNING id
                 """, (
                     google_task.get("title"),
                     google_task.get("notes"),
                     due_date,
+                    local_status,
                     local_status,
                     "google_tasks",
                     google_id,
