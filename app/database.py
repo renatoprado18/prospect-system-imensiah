@@ -2,39 +2,92 @@
 PostgreSQL Database Module for Vercel Postgres
 With connection pooling for local development performance
 """
+import logging
 import os
 import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2 import pool
 from contextlib import contextmanager
+from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 # Local PostgreSQL for development (much faster)
 LOCAL_DB_URL = "postgresql://rap@localhost:5432/intel"
 
-# Vercel Postgres connection string (production)
-DATABASE_URL = os.getenv("POSTGRES_URL", os.getenv("DATABASE_URL", ""))
-
 # Connection pool for local development (reuse connections)
 _connection_pool = None
+_logged_target = False
+
+
+def _running_on_vercel() -> bool:
+    """Plataforma seta VERCEL sozinha. Nao colocar no .env local — ver DB_TARGET."""
+    return bool(os.getenv("VERCEL"))
 
 
 def _get_conn_string():
-    """Get formatted connection string - prefers local DB for development"""
-    # Check if local PostgreSQL is available
-    if os.getenv("USE_LOCAL_DB") == "1" or not os.getenv("VERCEL"):
-        try:
-            # Test local connection
-            test_conn = psycopg2.connect(LOCAL_DB_URL)
-            test_conn.close()
-            return LOCAL_DB_URL
-        except:
-            pass  # Fall back to remote
+    """
+    Devolve a DSN do banco. O alvo e DECLARADO, nunca deduzido.
 
-    if not DATABASE_URL:
-        raise Exception("POSTGRES_URL environment variable not set")
-    # Vercel uses postgres:// but psycopg2 needs postgresql://
-    return DATABASE_URL.replace("postgres://", "postgresql://")
+    DB_TARGET=local  -> Postgres local. Se estiver fora do ar, ERRO — jamais
+                        cai em producao por acidente.
+    DB_TARGET=prod   -> Neon. Fora da Vercel exige ALLOW_PROD_FROM_LOCAL=1
+                        (duas chaves pra armar).
+    ausente          -> na Vercel assume 'prod'; fora dela, ERRO.
+
+    Historia (09/07/26): a versao antiga inferia o alvo de `not VERCEL` e
+    caia em prod silenciosamente quando o local falhava. Resultado: uma env
+    var da Tonia (USE_LOCAL_DB=1) vazou pro processo e fez codigo do INTEL
+    ler o snapshot local achando que era prod. Duas vezes no mesmo dia.
+    """
+    target = (os.getenv("DB_TARGET") or "").strip().lower()
+
+    if not target:
+        if _running_on_vercel():
+            target = "prod"
+        else:
+            raise RuntimeError(
+                "DB_TARGET nao definido. Use DB_TARGET=local (dev) ou "
+                "DB_TARGET=prod ALLOW_PROD_FROM_LOCAL=1 (producao). "
+                "Nao ha default — adivinhar banco custou caro em 09/07/26."
+            )
+
+    if target == "local":
+        # Sem fallback: local fora do ar e erro, nao convite pra usar prod.
+        _log_target("local", LOCAL_DB_URL)
+        return LOCAL_DB_URL
+
+    if target == "prod":
+        if not _running_on_vercel() and os.getenv("ALLOW_PROD_FROM_LOCAL") != "1":
+            raise RuntimeError(
+                "DB_TARGET=prod fora da Vercel exige ALLOW_PROD_FROM_LOCAL=1. "
+                "Voce esta prestes a escrever no banco de producao."
+            )
+        # Lazy: env definida depois do import tem que valer.
+        url = os.getenv("POSTGRES_URL", os.getenv("DATABASE_URL", ""))
+        if not url:
+            raise RuntimeError("DB_TARGET=prod mas POSTGRES_URL/DATABASE_URL ausente")
+        url = url.replace("postgres://", "postgresql://")
+        _log_target("prod", url)
+        return url
+
+    raise RuntimeError(f"DB_TARGET invalido: {target!r}. Use 'local' ou 'prod'.")
+
+
+def _log_target(target: str, url: str) -> None:
+    """Uma linha, uma vez por processo. Sem credenciais."""
+    global _logged_target
+    if _logged_target:
+        return
+    _logged_target = True
+    try:
+        p = urlparse(url)
+        where = f"{(p.path or '/').lstrip('/')} @ {p.hostname}"
+    except Exception:
+        where = "?"
+    logger.info("db: %s (target=%s)", where, target)
+    print(f"[DB] {where} (target={target})")
 
 
 def _get_pool():

@@ -105,7 +105,7 @@ start_server() {
     cd app
     # BASE_URL=localhost: catchup/trigger fan-out NAO bate em prod por engano.
     # Sem isso, agentes/testes locais ja causaram 401 fan-out em prod (2026-05-05).
-    USE_LOCAL_DB=1 BASE_URL=http://localhost:8000 ../.venv/bin/uvicorn main:app --reload --port 8000
+    DB_TARGET=local BASE_URL=http://localhost:8000 ../.venv/bin/uvicorn main:app --reload --port 8000
 }
 
 # Main
