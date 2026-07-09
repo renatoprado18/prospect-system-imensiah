@@ -11040,7 +11040,12 @@ async def cron_sync_calendar(request: Request):
 async def cron_sync_tasks(request: Request):
     """
     Cron: Sincronizacao bidirecional de tarefas com Google Tasks.
-    Schedule: 0 7,13,19 * * * (7h, 13h, 19h)
+
+    Agendador: .github/workflows/cron-sync-tasks.yml — 09:30/16:30/22:30 UTC
+    (06:30/13:30/19:30 BRT). NAO esta em vercel.json.
+
+    Ate 09/07/26 esta docstring prometia '0 7,13,19 * * *' e nao havia
+    agendador algum — o sync so rodava se alguem disparasse a mao.
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")

@@ -1,0 +1,36 @@
+name: Cron — Sync Tasks (Google)
+
+# Sincronizacao bidirecional de tasks com Google Tasks.
+#
+# Ate 09/07/26 este endpoint NAO TINHA AGENDADOR NENHUM: a docstring prometia
+# 7h/13h/19h mas nao havia entrada em vercel.json nem workflow. Resultado: 94
+# tasks acumuladas em pending_push e o Google Tasks do Renato semanas atras.
+#
+# Ordem interna do full_sync: push local->Google, depois pull Google->local.
+# Se um push falha, o guard de conflito (atualizado_em > last_synced_at) faz o
+# local vencer no pull — a task nao e revertida em silencio.
+#
+# GH Actions (nao Vercel) — Hobby deprioritiza cron silenciosamente.
+
+on:
+  schedule:
+    # 09:30, 16:30, 22:30 UTC = 06:30, 13:30, 19:30 BRT.
+    # O das 06:30 BRT roda antes do briefing da Tonia (07h BRT).
+    - cron: '30 9,16,22 * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Hit sync-tasks endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            --max-time 300 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/sync-tasks")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)
+          # status:error vem com HTTP 200 — falha explicita aqui.
+          echo "$response" | grep -q '"status":"error"' && (echo "::error::sync-tasks retornou erro" && exit 1) || true
