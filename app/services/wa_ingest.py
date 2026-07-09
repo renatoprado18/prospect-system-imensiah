@@ -100,8 +100,11 @@ def ingest_evolution_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"wa_ingest: webhook_audit falhou: {e}")
 
-    # Eventos não-upsert (connection.update, messages.update etc.): ignora.
-    if event != "messages.upsert":
+    # Aceita upsert (mensagem recebida) e send.message (mensagem enviada via
+    # API — é assim que a resposta da Tonia chega: Evolution NÃO emite
+    # messages.upsert com fromMe pra sends via API, só SEND_MESSAGE).
+    # Demais eventos (connection.update, messages.update etc.): ignora.
+    if event not in ("messages.upsert", "send.message"):
         _audit("ignored_event")
         return {"stored": False, "reason": "ignored_event"}
 
