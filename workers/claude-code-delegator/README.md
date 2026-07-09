@@ -31,7 +31,7 @@ No projeto `intel` no Railway:
 
 ```
 CLAUDE_CODE_OAUTH_TOKEN=<seu token>
-WORKER_SECRET=<igual ao do audio worker, intel-audio-2026>
+WORKER_SECRET=<igual ao do audio worker — mesmo valor do env WORKER_SECRET, sem default>
 REPO_PATH=/app/repo
 PORT=3000
 ```
@@ -78,7 +78,7 @@ curl https://claude-code-delegator-production.up.railway.app/health
 Teste manual:
 ```bash
 curl -X POST https://claude-code-delegator-production.up.railway.app/delegate \
-  -H "x-delegator-secret: intel-audio-2026" \
+  -H "x-delegator-secret: $WORKER_SECRET" \
   -H "content-type: application/json" \
   -d '{"task":"liste os 5 arquivos mais recentes em app/services/ por mtime","mode":"investigate"}'
 ```

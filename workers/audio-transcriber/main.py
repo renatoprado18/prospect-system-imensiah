@@ -56,8 +56,21 @@ EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "")
 EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "")
 INTEL_BOT_INSTANCE = os.getenv("INTEL_BOT_INSTANCE", "intel-bot")
 INTEL_API_URL = os.getenv("INTEL_API_URL", "https://intel.almeida-prado.com")
-WORKER_SECRET = os.getenv("WORKER_SECRET", "intel-audio-2026")
+# WORKER_SECRET sem fallback hardcoded (08/07/2026). Env ausente:
+# validators rejeitam 401, senders falham no destino (Vercel valida).
+WORKER_SECRET = (os.getenv("WORKER_SECRET") or "").strip()
 CRON_SECRET = (os.getenv("CRON_SECRET") or "").strip()
+
+if not WORKER_SECRET:
+    logger.error("WORKER_SECRET não configurado — auth de/para o worker vai falhar (sem fallback)")
+
+
+def _check_worker_secret(provided) -> bool:
+    """Validator: env ausente => rejeita (401) e loga erro. Nunca aceita default."""
+    if not WORKER_SECRET:
+        logger.error("WORKER_SECRET não configurado — request rejeitado (401)")
+        return False
+    return bool(provided) and str(provided).strip() == WORKER_SECRET
 
 # ============================================================================
 # Scheduler (substitui GH Actions crons high-freq)
@@ -410,7 +423,7 @@ async def organize_empresa(request: Request):
     Called by ConselhoOS or directly.
     """
     data = await request.json()
-    if data.get("secret") != WORKER_SECRET:
+    if not _check_worker_secret(data.get("secret")):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     empresa_id = data.get("empresa_id", "")
@@ -688,7 +701,7 @@ async def process_message(request: Request):
     chamar _run_bot — agrupa rajadas do mesmo phone.
     """
     data = await request.json()
-    if data.get("secret") != WORKER_SECRET:
+    if not _check_worker_secret(data.get("secret")):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     phone = data.get("phone", "")
@@ -2030,7 +2043,7 @@ async def transcribe_audio(request: Request):
     processa em background. Resolve cancelamento de async tasks no Vercel
     caller. Bot path (source='bot') segue sync — bot precisa do resultado."""
     data = await request.json()
-    if data.get("secret") != WORKER_SECRET:
+    if not _check_worker_secret(data.get("secret")):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
     if not data.get("phone") or not data.get("key"):
         return JSONResponse(status_code=400, content={"error": "missing phone or key"})
@@ -2276,7 +2289,7 @@ async def transcribe_raw(request: Request):
     """
     import base64
     data = await request.json()
-    if data.get("secret") != WORKER_SECRET:
+    if not _check_worker_secret(data.get("secret")):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
     audio_b64 = data.get("audio_b64", "")
     mimetype = data.get("mimetype", "audio/ogg")
@@ -2309,7 +2322,7 @@ async def analyze_image(request: Request):
     processa em background. Resolve cancelamento de async tasks no Vercel
     caller. Bot path (source='bot') segue sync."""
     data = await request.json()
-    if data.get("secret") != WORKER_SECRET:
+    if not _check_worker_secret(data.get("secret")):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
     if not data.get("phone") or not data.get("key"):
         return JSONResponse(status_code=400, content={"error": "missing phone or key"})
@@ -2493,7 +2506,7 @@ async def analyze_pdf(request: Request):
     retorna 200 em <500ms e processa em background (Railway sustenta loop).
     Resolve cancelamento de async tasks no Vercel serverless caller."""
     data = await request.json()
-    if data.get("secret") != WORKER_SECRET:
+    if not _check_worker_secret(data.get("secret")):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
     if not data.get("phone") or not data.get("key"):
         return JSONResponse(status_code=400, content={"error": "missing phone or key"})
@@ -3124,7 +3137,7 @@ async def sync_gmail(request: Request, background_tasks: BackgroundTasks):
       - continuation: bool (true se for self-dispatch do proximo chunk)
     """
     data = await request.json()
-    if data.get("secret") != WORKER_SECRET:
+    if not _check_worker_secret(data.get("secret")):
         return JSONResponse(status_code=401, content={"error": "unauthorized"})
 
     job_id = data.get("job_id")

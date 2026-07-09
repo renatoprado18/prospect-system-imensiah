@@ -121,6 +121,7 @@ from services.briefing_context import (
 )
 from services.linkedin_enrichment import get_linkedin_enrichment_service
 from services.search import get_search_service
+from services.worker_secret import check_worker_secret
 from services.rodas_service import get_rodas_service, RODA_TYPES
 from services.cron_telemetry import track_cron_run
 from auth import (
@@ -2774,9 +2775,7 @@ async def ingest_whatsapp_screenshot(request: Request):
       - image: arquivo de imagem
       - demais campos como form fields
     """
-    import os as _os
     import base64 as _b64
-    _worker_secret = _os.getenv("WORKER_SECRET", "intel-audio-2026").strip()
 
     content_type = request.headers.get("content-type", "")
     is_multipart = "multipart/form-data" in content_type
@@ -2785,7 +2784,7 @@ async def ingest_whatsapp_screenshot(request: Request):
         form = await request.form()
         secret_check = form.get("worker_secret", "")
         user = get_current_user(request)
-        if not user and secret_check != _worker_secret:
+        if not user and not check_worker_secret(secret_check):
             raise HTTPException(status_code=401, detail="Nao autenticado")
         image_file = form.get("image")
         if not image_file:
@@ -2801,7 +2800,7 @@ async def ingest_whatsapp_screenshot(request: Request):
         body = await request.json()
         secret_check = body.get("worker_secret", "")
         user = get_current_user(request)
-        if not user and secret_check != _worker_secret:
+        if not user and not check_worker_secret(secret_check):
             raise HTTPException(status_code=401, detail="Nao autenticado")
         image_b64 = body.get("image_base64", "")
         if not image_b64:
@@ -5637,8 +5636,7 @@ async def internal_tonha_reactive(request: Request):
     """
     body = await request.json()
     secret = body.get("secret") or ""
-    expected = (os.getenv("WORKER_SECRET") or "").strip()
-    if not expected or secret != expected:
+    if not check_worker_secret(secret):
         raise HTTPException(status_code=401, detail="unauthorized")
 
     from services.tonha_brain import run_reactive
@@ -14738,7 +14736,7 @@ async def worker_contact_lookup(request: Request):
     """Lookup contacts by name for external workers (authenticated by secret)."""
     data = await request.json()
     secret = data.get("secret", "")
-    if secret != os.getenv("WORKER_SECRET", "intel-audio-2026"):
+    if not check_worker_secret(secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
     name = data.get("name", "")
     if not name or len(name) < 2:
@@ -14762,7 +14760,7 @@ async def bot_message_endpoint(request: Request):
     content = data.get("content", "")
     message_id = data.get("message_id", "")
     secret = data.get("secret", "")
-    if secret != os.getenv("WORKER_SECRET", "intel-audio-2026"):
+    if not check_worker_secret(secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
     if not phone or not content:
         raise HTTPException(status_code=400, detail="phone and content required")
@@ -27210,7 +27208,6 @@ async def manual_cos_patrol_run(request: Request):
 
     Reusa tick_safe que ja tem budget cap + idempotency.
     """
-    worker_secret_env = (os.getenv("WORKER_SECRET", "intel-audio-2026") or "").strip()
     triggered_by = None
 
     try:
@@ -27219,7 +27216,7 @@ async def manual_cos_patrol_run(request: Request):
         body = {}
     body_secret = (body.get("secret") or "").strip()
 
-    if body_secret and body_secret == worker_secret_env:
+    if body_secret and check_worker_secret(body_secret):
         triggered_by = body.get("triggered_by") or "worker"
     else:
         user = get_current_user(request)
@@ -27384,12 +27381,11 @@ async def cos_notify(request: Request, body: CosNotifyBody):
     """
     api_key = request.headers.get("X-API-Key", "").strip()
     intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
-    worker_secret = (os.getenv("WORKER_SECRET", "intel-audio-2026") or "").strip()
 
     authed = False
     if api_key and intel_api_key and api_key == intel_api_key:
         authed = True
-    elif body.secret and body.secret == worker_secret:
+    elif body.secret and check_worker_secret(body.secret):
         authed = True
     else:
         user = get_current_user(request)
@@ -27429,12 +27425,11 @@ async def cos_digest(request: Request, body: CosDigestBody):
     """
     api_key = request.headers.get("X-API-Key", "").strip()
     intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
-    worker_secret = (os.getenv("WORKER_SECRET", "intel-audio-2026") or "").strip()
 
     authed = False
     if api_key and intel_api_key and api_key == intel_api_key:
         authed = True
-    elif body.secret and body.secret == worker_secret:
+    elif body.secret and check_worker_secret(body.secret):
         authed = True
     else:
         user = get_current_user(request)

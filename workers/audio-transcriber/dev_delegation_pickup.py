@@ -199,9 +199,12 @@ async def _call_delegator(
     task: str, context: str, mode: str = "investigate", timeout: float = 350.0
 ) -> Dict[str, Any]:
     url = (os.getenv("CLAUDE_CODE_DELEGATOR_URL") or "").strip()
-    secret = (os.getenv("WORKER_SECRET") or "intel-audio-2026").strip()
+    secret = (os.getenv("WORKER_SECRET") or "").strip()
     if not url:
         return {"_error": "CLAUDE_CODE_DELEGATOR_URL ausente"}
+    if not secret:
+        logger.error("dev_delegation_pickup: WORKER_SECRET não configurado — call abortada (sem fallback)")
+        return {"_error": "WORKER_SECRET ausente"}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(

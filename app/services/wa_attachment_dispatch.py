@@ -14,6 +14,8 @@ from typing import Dict, Optional
 
 import httpx
 
+from services.worker_secret import get_worker_secret
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,13 +56,19 @@ async def dispatch_attachment_to_worker(
         return {"dispatched": False, "reason": "no_attachment"}
 
     worker_url = os.getenv("AUDIO_WORKER_URL", "").strip()
-    worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026").strip()
+    worker_secret = get_worker_secret()
     if not worker_url:
         logger.warning(
             f"wa_attachment_dispatch: AUDIO_WORKER_URL not set — "
             f"skip kind={kind} source={source} msg={message_id}"
         )
         return {"dispatched": False, "reason": "worker_url_missing", "kind": kind}
+    if not worker_secret:
+        logger.error(
+            f"wa_attachment_dispatch: WORKER_SECRET não configurado — "
+            f"dispatch abortado (sem fallback) kind={kind} msg={message_id}"
+        )
+        return {"dispatched": False, "reason": "worker_secret_missing", "kind": kind}
 
     endpoint_map = {"audio": "/transcribe", "pdf": "/analyze-pdf", "image": "/analyze-image"}
     endpoint = endpoint_map[kind]

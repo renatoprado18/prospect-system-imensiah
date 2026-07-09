@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional, Tuple
 import httpx
 
 from database import get_db
+from services.worker_secret import get_worker_secret
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def _worker_url() -> str:
 
 
 def _worker_secret() -> str:
-    return (os.getenv("WORKER_SECRET") or "intel-audio-2026").strip()
+    return get_worker_secret()
 
 
 async def enqueue_job(
@@ -97,7 +98,23 @@ async def enqueue_job(
             pass
         return job_id, False, "worker_url_missing"
 
-    body = {**payload, "job_id": job_id, "secret": _worker_secret()}
+    secret = _worker_secret()
+    if not secret:
+        logger.error("enqueue_job: WORKER_SECRET não configurado — dispatch abortado (sem fallback)")
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "UPDATE background_jobs SET status='error', error=%s, "
+                    "completed_at=NOW() WHERE id=%s",
+                    ("WORKER_SECRET not configured", job_id),
+                )
+                conn.commit()
+        except Exception:
+            pass
+        return job_id, False, "worker_secret_missing"
+
+    body = {**payload, "job_id": job_id, "secret": secret}
     try:
         async with httpx.AsyncClient(timeout=dispatch_timeout) as client:
             resp = await client.post(f"{url}{dispatch_path}", json=body)

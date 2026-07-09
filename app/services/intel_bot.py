@@ -1494,9 +1494,13 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 return json.dumps({"erro": "task obrigatoria (min 5 chars descrevendo o que voce quer)"})
 
             delegator_url = (os.getenv("CLAUDE_CODE_DELEGATOR_URL") or "").strip()
-            worker_secret = (os.getenv("WORKER_SECRET") or "intel-audio-2026").strip()
+            from services.worker_secret import get_worker_secret
+            worker_secret = get_worker_secret()
             if not delegator_url:
                 return json.dumps({"erro": "CLAUDE_CODE_DELEGATOR_URL nao configurado"})
+            if not worker_secret:
+                logger.error("intel_bot: WORKER_SECRET não configurado — delegacao abortada (sem fallback)")
+                return json.dumps({"erro": "WORKER_SECRET nao configurado"})
 
             try:
                 import httpx

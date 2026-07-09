@@ -13,6 +13,8 @@ import logging
 from typing import Optional, Dict, List, Any
 from datetime import datetime
 
+from services.worker_secret import get_worker_secret
+
 logger = logging.getLogger(__name__)
 
 
@@ -1401,7 +1403,10 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
     # For audio: dispatch to Railway worker (Vercel 10s timeout is too short)
     if is_audio:
         audio_worker_url = os.getenv("AUDIO_WORKER_URL", "")
-        worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026")
+        worker_secret = get_worker_secret()
+        if audio_worker_url and not worker_secret:
+            logger.error("WORKER_SECRET não configurado — audio dispatch abortado (sem fallback)")
+            return {"processed": False, "reason": "worker_secret_missing"}
         if audio_worker_url:
             try:
                 # Fire-and-forget: don't wait for response (Railway processes async)
@@ -1423,7 +1428,10 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
     # For PDFs: dispatch to Railway worker /analyze-pdf
     if is_pdf:
         worker_url = os.getenv("AUDIO_WORKER_URL", "")
-        worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026")
+        worker_secret = get_worker_secret()
+        if worker_url and not worker_secret:
+            logger.error("WORKER_SECRET não configurado — pdf dispatch abortado (sem fallback)")
+            return {"processed": False, "reason": "worker_secret_missing"}
         if worker_url:
             try:
                 async with httpx.AsyncClient(timeout=8.0) as client:
@@ -1445,7 +1453,10 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
     # For images: dispatch to Railway worker for Claude Vision analysis
     if is_image:
         worker_url = os.getenv("AUDIO_WORKER_URL", "")
-        worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026")
+        worker_secret = get_worker_secret()
+        if worker_url and not worker_secret:
+            logger.error("WORKER_SECRET não configurado — image dispatch abortado (sem fallback)")
+            return {"processed": False, "reason": "worker_secret_missing"}
         if worker_url:
             try:
                 async with httpx.AsyncClient(timeout=8.0) as client:
@@ -1462,7 +1473,10 @@ async def _handle_intel_bot_message(data: Dict) -> Dict:
 
     # Dispatch ALL bot messages to Railway worker (Vercel 10s timeout is too short for tool_use)
     worker_url = os.getenv("AUDIO_WORKER_URL", "")
-    worker_secret = os.getenv("WORKER_SECRET", "intel-audio-2026")
+    worker_secret = get_worker_secret()
+    if worker_url and not worker_secret:
+        logger.error("WORKER_SECRET não configurado — bot dispatch abortado (sem fallback)")
+        return {"processed": False, "reason": "worker_secret_missing"}
     if worker_url:
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
