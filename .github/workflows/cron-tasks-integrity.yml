@@ -1,0 +1,26 @@
+name: Cron — Tasks Integrity
+
+# Vigia a invariante: task com status aberto nunca tem data_conclusao.
+# Violacao = task-fantasma (concluida reaparecendo como atrasada no briefing).
+# Zerado por backfill em 09/07/26 apos fix no tasks_sync; isto prova que segue
+# zerado. Alerta via notification_router (digest matinal), 1x por dia.
+#
+# GH Actions (nao Vercel) — a cota de crons do Hobby ja esta ocupada.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # 06h UTC = 03h BRT — depois de qualquer sync noturno
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit tasks-integrity endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/tasks-integrity")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)

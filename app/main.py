@@ -11066,6 +11066,56 @@ async def cron_sync_tasks(request: Request):
         return {"job": "sync-tasks", "status": "error", "error": str(e)}
 
 
+@app.get("/api/cron/tasks-integrity")
+@track_cron_run
+async def cron_tasks_integrity(request: Request):
+    """
+    Cron: vigia a invariante `status aberto => data_conclusao IS NULL`.
+
+    Violacao = task-fantasma (concluida reaparecendo como atrasada). Zerado
+    por backfill em 09/07/26 apos fix no tasks_sync. Alerta se voltar a >0.
+    Read-only: nunca corrige — reabrir/fechar task e decisao do Renato.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.tasks_integrity import build_alert_text, check_tasks_integrity
+
+    try:
+        result = check_tasks_integrity()
+
+        if result["violations"] == 0:
+            return {"job": "tasks-integrity", "status": "ok", "violations": 0}
+
+        logger.warning(
+            "tasks-integrity: %s violacoes da invariante status/data_conclusao",
+            result["violations"],
+        )
+        from services.notification_router import route_to_renato
+
+        routed = await route_to_renato(
+            source="tasks_integrity",
+            payload={"violations": result["violations"], "sample": result["sample"]},
+            msg_type="invariante_violada",
+            urgency_score=6,
+            digest_target="morning",
+            # 1 alerta por dia — o ruido diario nao ajuda a investigar.
+            dedup_key=f"tasks_integrity:{datetime.now().date().isoformat()}",
+            message_text=build_alert_text(result),
+        )
+        return {
+            "job": "tasks-integrity",
+            "status": "violations_found",
+            "violations": result["violations"],
+            "sample": result["sample"],
+            "routed": routed.get("action"),
+        }
+
+    except Exception as e:
+        logger.exception("tasks-integrity falhou")
+        return {"job": "tasks-integrity", "status": "error", "error": str(e)}
+
+
 @app.get("/api/cron/daily-ai")
 @track_cron_run
 async def cron_daily_ai(request: Request):
