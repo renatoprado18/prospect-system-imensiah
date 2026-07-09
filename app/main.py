@@ -14795,6 +14795,33 @@ async def whatsapp_webhook(request: Request):
         return {"error": str(e)}
 
 
+@app.post("/api/webhooks/wa-ingest")
+async def wa_ingest_webhook(request: Request):
+    """
+    Ingestão persist-only de upserts da instância da Tonia (intel-bot-v2).
+
+    A Tonia repassa TODOS os webhooks da instância dela pra cá; este endpoint
+    APENAS PERSISTE (parse + INSERT em messages + webhook_audit) — nunca
+    roteia pra bot/IA/analyzer, tornando resposta dupla impossível.
+
+    Auth: header X-Ingest-Secret == env WA_INGEST_SECRET (sem fallback).
+    Response: {"stored": bool, "reason": str} — 200 sempre que autenticado.
+    """
+    from services.wa_ingest import check_ingest_secret, ingest_evolution_payload
+
+    secret = request.headers.get("X-Ingest-Secret", "")
+    if not check_ingest_secret(secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"stored": False, "reason": "invalid_json"}
+
+    # to_thread: ingest é sync (psycopg2) — não bloquear o event loop.
+    return await asyncio.to_thread(ingest_evolution_payload, payload)
+
+
 @app.get("/api/evolution/status")
 async def evolution_status(request: Request):
     """Status da conexão com Evolution API"""
