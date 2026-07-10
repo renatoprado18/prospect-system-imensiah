@@ -1,0 +1,29 @@
+name: Cron — RACI Process Groups (shadow)
+
+# Fecha o fantasma do updater de RACI (fix 10/07): process_group_message so
+# rodava no webhook, mas as mensagens de grupo chegam pelo sync (lote). Este
+# cron varre group_messages nao-processados e gera PROPOSTAS de update de RACI
+# pra revisao do Renato (shadow — nada auto-aplica no RACI do cliente).
+#
+# GH Actions (nao Vercel cron): Vercel Hobby skipa cron silenciosamente
+# (caso briefing 07-10/07). 2x/dia = 11h e 23h UTC (8h e 20h BRT), depois das
+# janelas tipicas de relatorio da manha e da noite dos conselheiros.
+
+on:
+  schedule:
+    - cron: '0 11 * * *'
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit raci-process-groups endpoint
+        run: |
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}\n" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://intel.almeida-prado.com/api/cron/raci-process-groups")
+          echo "$response"
+          echo "$response" | grep -E "HTTP_CODE:2" || (echo "::error::Endpoint failed" && exit 1)
