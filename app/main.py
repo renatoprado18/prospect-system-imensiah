@@ -15223,6 +15223,38 @@ async def raci_update_from_message(request: Request):
     return {"status": "no_match"}
 
 
+# ── RACI Group Shadow (fix 10/07 — fecha o fantasma do updater) ──────────────
+# process_group_message so roda no webhook; as mensagens chegam pelo sync (lote).
+# Este cron varre group_messages nao-processados e gera PROPOSTAS pra revisao do
+# Renato (shadow-first — nada auto-aplica no RACI do cliente).
+@app.get("/api/cron/raci-process-groups")
+@track_cron_run
+async def cron_raci_process_groups(request: Request):
+    """Cron: processa mensagens de grupo nao-vistas pelo webhook e propoe updates
+    de RACI pra revisao do Renato (shadow, sem aplicar)."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.raci_group_shadow import process_unreviewed_groups
+    return await process_unreviewed_groups()
+
+
+@app.get("/api/raci/group-proposals")
+async def raci_group_proposals_list(request: Request):
+    """Lista propostas de RACI pendentes de revisao (geradas do grupo)."""
+    from services.raci_group_shadow import list_pending_proposals
+    return {"pending": list_pending_proposals()}
+
+
+@app.post("/api/raci/group-proposals/{proposal_id}/apply")
+async def raci_group_proposal_apply(proposal_id: int, request: Request):
+    """Aplica UMA proposta shadow no RACI (apos aprovacao do Renato)."""
+    from services.raci_group_shadow import apply_group_proposal
+    result = apply_group_proposal(proposal_id)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
 # ---------- ConselhoOS Pre-Meeting Briefing ----------
 
 from services.conselhoos_briefing import generate_pre_meeting_briefing, check_and_generate_briefings_tomorrow
