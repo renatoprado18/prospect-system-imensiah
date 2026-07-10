@@ -51,3 +51,4 @@ docs/*.docx
 docs/Pitangueiras_Solicitacao_Secretario.pdf
 docs/ARCHITECTURE_REBUILD.html
 .env.bak*
+mcp/.venv/
