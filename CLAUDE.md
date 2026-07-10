@@ -96,19 +96,26 @@ SELECT id, tipo, conteudo, criado_em FROM system_feedback WHERE status = 'pendin
 ```
 Se houver feedback pendente, informar ao usuário e priorizar na sessão.
 
-**RECOMENDADO**: Pra abertura estruturada com cockpit (estado CoS v2 + checks + proposta), o user pode invocar `/abre`. Lê o board `~/.claude/.../memory/project_cos_v2_status.md` e roda checks dinâmicos. Usar em vez de status check manual no prompt.
+**RECOMENDADO**: Pra abertura estruturada com cockpit (estado CoS + dev + checks + proposta), o user pode invocar `/abre`. Lê os boards `project_cos_status.md` (executivo) + `project_dev_backlog.md` (dev) e roda checks dinâmicos. Usar em vez de status check manual no prompt.
 
 ## No Fim de Cada Sessão
 
-Quando user invocar `/fim`, **OBRIGATÓRIO** atualizar o board `~/.claude/projects/-Users-rap-prospect-system/memory/project_cos_v2_status.md` como parte do encerramento:
+Quando user invocar `/fim`, **OBRIGATÓRIO** atualizar os DOIS boards em `~/.claude/projects/-Users-rap-prospect-system/memory/` como parte do encerramento:
 
-1. **Mover frente concluída** de "⏳ Em curso" pra "✅ Fechado últimos 14 dias"
-2. **Atualizar backlog** — marcar `[x]` itens P1/P2/P3 resolvidos, adicionar novos descobertos
-3. **Atualizar "📅 Próximos 14 dias"** se novos compromissos surgiram
-4. **Atualizar "🧭 Decisões pendentes"** se houve nova decisão ou se uma decisão pendente foi resolvida
+**`project_cos_status.md` (executivo):**
+1. **Atualizar "📅 Próximos 14 dias"** se novos compromissos surgiram, ou remover atendidos
+2. **Atualizar "🧭 Decisões pendentes"** se houve nova decisão ou se uma pendente foi resolvida (gate batido)
+3. **Atualizar "📊 Monitoramento"** se adoção/uso mudou
+4. **Mover compromissos atendidos** pra "✅ Fechado executivo últimos 14 dias"
 5. **Atualizar timestamp** no topo
 
-Esse memo é o single source of truth do roadmap CoS v2 — `/abre` o lê no início, `/fim` o escreve no fim. Manter atual.
+**`project_dev_backlog.md` (dev):**
+1. **Mover frente concluída** de "⏳ Em curso" pra "✅ Fechado dev últimos 14 dias"
+2. **Atualizar backlog P1/P2/P3** — marcar `[x]` itens resolvidos, adicionar novos descobertos
+3. **Atualizar "Em curso"** se mudou fase
+4. **Atualizar timestamp** no topo
+
+Esses dois memos são o single source of truth do roadmap CoS v2 — `/abre` os lê no início, `/fim` os escreve no fim. Manter atuais.
 
 ## Timezone — Convenção (07/05/2026)
 
