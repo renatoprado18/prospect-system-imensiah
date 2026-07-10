@@ -41,8 +41,11 @@ DATABASE_URL = _env("DATABASE_URL", "postgresql://rap@localhost/intel")
 CONSELHOOS_DATABASE_URL = _env("CONSELHOOS_DATABASE_URL")
 RENATO_CONTACT_ID = int(_env("RENATO_CONTACT_ID", "25613") or "25613")
 
-# Voyage (embeddings semanticos) — reutiliza o mesmo padrao de app/services/embeddings.py
-VOYAGE_API_URL = "https://api.voyageai.com/v1/embeddings"
+# Voyage (embeddings semanticos) — endpoint Atlas (ai.mongodb.com) por padrao,
+# que a chave `al-` (Tier 1, 2000 RPM) exige. Drop-in do api.voyageai.com:
+# mesmo /v1/embeddings, mesmo modelo/schema. Override por env VOYAGE_API_URL.
+# (chave `pa-` da Voyage direto so funciona em api.voyageai.com — free 3 RPM.)
+VOYAGE_API_URL = (os.getenv("VOYAGE_API_URL") or "https://ai.mongodb.com/v1/embeddings").strip()
 VOYAGE_MODEL = "voyage-4-lite"
 VOYAGE_DIMS = 1024
 VOYAGE_TIMEOUT_S = 15.0
