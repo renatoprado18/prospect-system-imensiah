@@ -142,66 +142,6 @@ def get_business_match(
     return None
 
 
-def get_business_briefing(contact_id: int) -> Optional[Dict[str, Any]]:
-    """
-    Gera briefing de negócio para um contato específico.
-    Busca dados do contato e suas rodas para fazer o match.
-    """
-    with get_db() as conn:
-        cursor = conn.cursor()
-
-        # Buscar contato
-        cursor.execute("""
-            SELECT nome, empresa, cargo, tags
-            FROM contacts
-            WHERE id = %s
-        """, (contact_id,))
-        contact = cursor.fetchone()
-
-        if not contact:
-            return None
-
-        c = dict(contact)
-
-        # Buscar rodas pendentes
-        cursor.execute("""
-            SELECT tipo, conteudo, tags
-            FROM contact_rodas
-            WHERE contact_id = %s AND status = 'pendente'
-            ORDER BY criado_em DESC
-            LIMIT 3
-        """, (contact_id,))
-        rodas = cursor.fetchall()
-
-        # Combinar tags das rodas
-        roda_tags = []
-        roda_conteudo = ""
-        for r in rodas:
-            rd = dict(r)
-            if rd.get('tags'):
-                roda_tags.extend(rd['tags'])
-            if rd.get('conteudo'):
-                roda_conteudo += " " + rd['conteudo']
-
-        # Fazer match
-        match = get_business_match(
-            contact_tags=c.get('tags'),
-            contact_cargo=c.get('cargo'),
-            contact_empresa=c.get('empresa'),
-            roda_tags=roda_tags,
-            roda_conteudo=roda_conteudo
-        )
-
-        if match:
-            return {
-                "contact_nome": c['nome'],
-                "contact_empresa": c.get('empresa'),
-                **match
-            }
-
-        return None
-
-
 # Teste direto
 if __name__ == "__main__":
     # Testar com Mauricio (Pactor - M&A)
