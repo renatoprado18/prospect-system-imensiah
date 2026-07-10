@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 # Local PostgreSQL for development (much faster)
 LOCAL_DB_URL = "postgresql://rap@localhost:5432/intel"
 
+# Hostname vazio = socket unix local. Tratado como local, nao como "sei la".
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", ""}
+
 # Connection pool for local development (reuse connections)
 _connection_pool = None
 _logged_target = False
@@ -26,9 +29,40 @@ def _running_on_vercel() -> bool:
     return bool(os.getenv("VERCEL"))
 
 
+def _assert_coerente(target: str, url: str) -> None:
+    """
+    O alvo declarado tem que BATER com a URL resolvida. Gemeo de
+    tonia/app/db.py::_assert_coerente — mesma regra nos dois repos.
+
+    Declarar o alvo nao basta: `set -a && . tonia/.env` exporta um
+    `DATABASE_URL` que aponta pro Postgres LOCAL. Sem esta checagem, um
+    processo do INTEL com DB_TARGET=prod herdaria essa var e leria o snapshot
+    local imprimindo `target=prod` — a mesma armadilha de 09/07, um andar
+    acima. (POSTGRES_URL tem precedencia e normalmente salva, mas so quando
+    esta definida.)
+    """
+    host = (urlparse(url).hostname or "").lower()
+    is_local = host in _LOCAL_HOSTS
+
+    if target == "prod" and is_local:
+        raise RuntimeError(
+            f"DB_TARGET=prod mas a URL resolvida aponta pro host local "
+            f"({host or 'socket unix'!r}). Voce leria um snapshot velho "
+            f"achando que e producao. Provavel vazamento de DATABASE_URL do "
+            f".env da Tonia — confira POSTGRES_URL/DATABASE_URL no ambiente."
+        )
+
+    if target == "local" and not is_local:
+        raise RuntimeError(
+            f"DB_TARGET=local mas a URL resolvida aponta pro host remoto "
+            f"({host!r}). Recusando — 'local' nunca escreve fora da maquina."
+        )
+
+
 def _get_conn_string():
     """
-    Devolve a DSN do banco. O alvo e DECLARADO, nunca deduzido.
+    Devolve a DSN do banco. O alvo e DECLARADO, nunca deduzido — e VERIFICADO
+    contra a URL que ele resolve (_assert_coerente).
 
     DB_TARGET=local  -> Postgres local. Se estiver fora do ar, ERRO — jamais
                         cai em producao por acidente.
@@ -55,6 +89,7 @@ def _get_conn_string():
 
     if target == "local":
         # Sem fallback: local fora do ar e erro, nao convite pra usar prod.
+        _assert_coerente("local", LOCAL_DB_URL)
         _log_target("local", LOCAL_DB_URL)
         return LOCAL_DB_URL
 
@@ -69,6 +104,7 @@ def _get_conn_string():
         if not url:
             raise RuntimeError("DB_TARGET=prod mas POSTGRES_URL/DATABASE_URL ausente")
         url = url.replace("postgres://", "postgresql://")
+        _assert_coerente("prod", url)
         _log_target("prod", url)
         return url
 
