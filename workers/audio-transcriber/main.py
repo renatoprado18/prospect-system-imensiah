@@ -268,6 +268,70 @@ _SCHEDULER_JOBS = [
 ]
 
 
+def _interval_min_from_trigger(trigger) -> int:
+    """Deriva o intervalo esperado (em minutos) de um CronTrigger computando o
+    MAIOR gap entre disparos consecutivos a partir de uma 2a-feira 00:00 UTC de
+    referencia (cobre triggers day_of_week/hour/minute sem parsear cron na mao).
+
+    Usa o maior gap (nao o menor) de proposito: o monitor alerta em gap > 2x
+    intervalo, entao superestimar o intervalo evita falso-positivo em schedules
+    irregulares. Fallback conservador 1440 (diario) se nao der pra derivar."""
+    base = datetime(2026, 1, 5, tzinfo=ZoneInfo("UTC"))  # segunda-feira 00:00
+    fires: list[datetime] = []
+    prev_fire: datetime | None = None
+    cur = base
+    for _ in range(8):
+        nxt = trigger.get_next_fire_time(prev_fire, cur)
+        if nxt is None:
+            break
+        fires.append(nxt)
+        prev_fire = nxt
+        cur = nxt + timedelta(seconds=1)
+    if len(fires) < 2:
+        return 1440
+    gaps = [
+        (fires[i + 1] - fires[i]).total_seconds() / 60.0
+        for i in range(len(fires) - 1)
+    ]
+    return max(1, round(max(gaps)))
+
+
+def _sync_cron_registry() -> None:
+    """Reescreve cron_registry com os jobs ATIVOS deste worker — fonte unica da
+    verdade pro monitor-cron-health (app/main.py). Desligar/comentar um job em
+    _SCHEDULER_JOBS propaga pro monitor sozinho, sem lista paralela pra manter.
+    Ver scripts/migrations/045_cron_registry.sql.
+
+    Defensivo: falha nao derruba o boot do scheduler (so loga)."""
+    if not DATABASE_URL:
+        logger.warning("cron_registry sync: DATABASE_URL ausente — skip")
+        return
+    jobs = [(jid, _interval_min_from_trigger(trig)) for jid, _p, trig in _SCHEDULER_JOBS]
+    jobs += [(jid, _interval_min_from_trigger(trig)) for jid, trig in _LOCAL_DEV_DELEGATION_JOBS]
+    try:
+        with psycopg.connect(DATABASE_URL) as conn:
+            with conn.cursor() as cur:
+                # active=FALSE em tudo primeiro: jobs removidos/comentados desde
+                # o ultimo boot deixam de ser monitorados (nao ficam stale-forever).
+                cur.execute("UPDATE cron_registry SET active = FALSE")
+                for job_id, interval_min in jobs:
+                    cur.execute(
+                        """
+                        INSERT INTO cron_registry (job_id, expected_interval_min, active, updated_at)
+                        VALUES (%s, %s, TRUE, now())
+                        ON CONFLICT (job_id) DO UPDATE
+                          SET expected_interval_min = EXCLUDED.expected_interval_min,
+                              active = TRUE,
+                              updated_at = now()
+                        """,
+                        (job_id, interval_min),
+                    )
+                conn.commit()
+        logger.info(f"cron_registry: synced {len(jobs)} active jobs")
+    except Exception as e:
+        logger.warning(f"cron_registry sync failed: {e}")
+
+
 async def _run_local_dev_delegation(job_id: str) -> None:
     """Handler in-process pros 4 disparos de dev_delegation_pickup.
 
@@ -331,6 +395,9 @@ async def _start_scheduler():
         f"scheduler: started with {n_total} jobs "
         f"({len(_SCHEDULER_JOBS)} http + {len(_LOCAL_DEV_DELEGATION_JOBS)} local)"
     )
+    # Fonte unica da verdade pro monitor-cron-health: reescreve o registry com
+    # os jobs vivos deste boot. Ver _sync_cron_registry / migration 045.
+    _sync_cron_registry()
 
 
 @app.on_event("shutdown")

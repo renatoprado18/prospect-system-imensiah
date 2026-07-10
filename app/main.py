@@ -28323,10 +28323,12 @@ async def cron_monitor_cron_health(request: Request):
 
     Como funciona: cada job no Railway worker insere em cron_heartbeats apos
     cada disparo. Este endpoint (1x/h via Vercel cron) compara MAX(fired_at)
-    com intervalo esperado. Se gap > 2x interval, alerta via WA.
+    com intervalo esperado. Se gap > 2x interval, alerta via WA (dedup 24h).
 
-    JOB_INTERVALS em minutos. Cobre os crons CRITICOS — adicionar novos
-    conforme necessario (nao todos, pra evitar ruido).
+    Os intervalos esperados vem de cron_registry (fonte unica = worker, que a
+    reescreve no boot com _SCHEDULER_JOBS). Cobre TODOS os jobs ativos, nao so
+    um subset hand-picked — desligar um job no worker propaga pro monitor
+    sozinho. Meta-fix 10/07: ver migration 045_cron_registry.sql.
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
@@ -28334,12 +28336,38 @@ async def cron_monitor_cron_health(request: Request):
     from services.intel_bot import send_intel_notification
     from services.tz import now_utc
 
-    JOB_INTERVALS = {
-        "daily-morning-briefing": 24 * 60,
-        "daily-evening-debriefing": 24 * 60,
-        "process-scheduled-actions": 5,
-        "raci-weekly-report": 7 * 24 * 60,
-    }
+    # JOB_INTERVALS vem do cron_registry (fonte unica = worker Railway, que o
+    # reescreve no boot). Ver scripts/migrations/045_cron_registry.sql. Antes era
+    # um dict hardcoded aqui, lista paralela ao _SCHEDULER_JOBS do worker: ao
+    # desligar um job la, ninguem tirava daqui -> stale-forever sobre jobs mortos
+    # por design (bug 10/07: briefings apareciam stale ha 18 dias). Agora desligar
+    # um job no worker propaga pro monitor sozinho — zero manutencao paralela.
+    JOB_INTERVALS: dict[str, int] = {}
+    try:
+        from database import get_db
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT job_id, expected_interval_min FROM cron_registry WHERE active = TRUE"
+            )
+            JOB_INTERVALS = {r["job_id"]: r["expected_interval_min"] for r in cursor.fetchall()}
+    except Exception as e:
+        logging.warning(f"monitor-cron-health: cron_registry read failed: {e}")
+
+    if not JOB_INTERVALS:
+        # Registry vazio = janela entre deploy Vercel e reboot do worker (ainda
+        # nao reescreveu), ou tabela ausente. Degradacao segura: pula o check
+        # este ciclo (proximo horario ja pega o registry populado).
+        logging.info("monitor-cron-health: cron_registry vazio — skip este ciclo")
+        return {
+            "ok": True,
+            "alerts": [],
+            "new_alerts": [],
+            "notified_jobs": [],
+            "jobs": [],
+            "checked_at": now_utc().isoformat(),
+            "note": "cron_registry_empty",
+        }
 
     now = now_utc()
     alerts: list[dict] = []
