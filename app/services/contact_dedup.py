@@ -62,6 +62,7 @@ _FK_TABLES_TO_CONTACTS = [
     'group_messages',
     'linkedin_engagement_signals',
     'users',
+    'wa_triage',  # faltava (10/07): merge via servico deixava 12+ linhas orfas em SET NULL
     # ON DELETE NO ACTION (sem migracao, DELETE em contacts falha)
     'conselhoos_board_members',
     'reminders',
