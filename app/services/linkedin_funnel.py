@@ -22,6 +22,13 @@ from database import get_db
 logger = logging.getLogger(__name__)
 
 LOW_BALANCE_THRESHOLD = int((os.getenv("LINKDAPI_LOW_BALANCE_THRESHOLD") or "500").strip() or 500)
+
+# Bloco B (LinkdAPI: enrichment / prospecting / topic-monitor) SUSPENSO em 10/07/2026
+# por decisao de ROI (prospeccao rendeu ~4 sinais em meses; custo ~$10/mes). Silencia
+# o alerta de saldo (que ficaria disparando com saldo negativo). O funnel snapshot e o
+# Bloco A (posting via OAuth) seguem intactos. Trocar pra False + descomentar os 2 crons
+# no worker Railway (_SCHEDULER_JOBS) pra religar.
+LINKDAPI_SUSPENDED = True
 REFILL_HINT_USD = 10
 REFILL_HINT_CREDITS = 1200
 
@@ -236,6 +243,8 @@ async def check_low_balance_alert(threshold: int = LOW_BALANCE_THRESHOLD) -> Dic
     Idempotente por janela: se ja mandou o alerta nas ultimas 72h, nao manda
     de novo (evita spam quando saldo fica oscilando perto do threshold).
     """
+    if LINKDAPI_SUSPENDED:
+        return {"alerted": False, "saldo": get_balance(), "reason": "linkdapi_suspended"}
     saldo = get_balance()
     if saldo >= threshold:
         return {"alerted": False, "saldo": saldo, "reason": "above_threshold"}
