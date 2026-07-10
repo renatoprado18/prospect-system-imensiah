@@ -244,10 +244,12 @@ _SCHEDULER_JOBS = [
     ("sync-conselhoos-raci", "/api/cron/sync-conselhoos-raci", CronTrigger(hour=6, minute=0)),
     ("sync-whatsapp-history", "/api/cron/sync-whatsapp-history", CronTrigger(hour=6, minute=0)),
     ("index-drive-documents", "/api/cron/index-drive-documents", CronTrigger(hour=7, minute=0)),
-    ("linkedin-monitor-topics", "/api/cron/linkedin-monitor-topics", CronTrigger(hour=9, minute=0)),
+    # SUSPENSO 10/07 (Bloco B LinkdAPI — ROI fraco: ~4 sinais/meses, 403 diario). Descomentar pra religar.
+    # ("linkedin-monitor-topics", "/api/cron/linkedin-monitor-topics", CronTrigger(hour=9, minute=0)),
     ("linkedin-curator", "/api/cron/linkedin-curator", CronTrigger(hour=10, minute=0)),
     ("linkedin-outbound-check", "/api/cron/linkedin-outbound-check", CronTrigger(hour=11, minute=0)),
-    ("linkedin-engagement-prospecting", "/api/cron/linkedin-engagement-prospecting", CronTrigger(hour=11, minute=30)),
+    # SUSPENSO 10/07 (Bloco B LinkdAPI — ROI fraco: ~4 sinais/meses, 403 diario). Descomentar pra religar.
+    # ("linkedin-engagement-prospecting", "/api/cron/linkedin-engagement-prospecting", CronTrigger(hour=11, minute=30)),
     ("raci-weekly-report", "/api/cron/raci-weekly-report", CronTrigger(day_of_week="mon", hour=11, minute=0)),
     ("weekly-digest", "/api/cron/weekly-digest", CronTrigger(day_of_week="mon", hour=8, minute=0)),
     ("editorial-weekly-briefing", "/api/cron/editorial-weekly-briefing", CronTrigger(day_of_week="sun", hour=21, minute=0)),
