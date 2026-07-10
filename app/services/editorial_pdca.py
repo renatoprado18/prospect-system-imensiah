@@ -157,6 +157,23 @@ def get_last_week_performance() -> Dict:
         """, (seven_days_ago,))
         posts = [dict(p) for p in cursor.fetchall()]
 
+        # Cobertura de medicao: impressao no LinkedIn SO vem via upload manual do
+        # analytics oficial (.xlsx). A coleta automatica (LinkdAPI/mock) nunca le
+        # impressao. Logo, 'linkedin_impressoes = 0' num post sem snapshot xlsx
+        # significa "ainda nao medido", NAO falha de publicacao. Marcamos quais
+        # posts tem medicao real pra o briefing nao confundir zero-nao-medido com
+        # zero-real (era a raiz do falso alarme "problema tecnico/distribuicao").
+        measured_ids: set = set()
+        post_ids = [p["id"] for p in posts]
+        if post_ids:
+            cursor.execute("""
+                SELECT DISTINCT post_id FROM editorial_metrics_history
+                WHERE post_id = ANY(%s) AND fonte ILIKE '%%xlsx%%'
+            """, (post_ids,))
+            measured_ids = {r["post_id"] for r in cursor.fetchall()}
+        posts_measured = len(measured_ids)
+        posts_unmeasured = len(posts) - posts_measured
+
         total_impressions = sum(p.get("linkedin_impressoes") or 0 for p in posts)
         total_reactions = sum(p.get("linkedin_reacoes") or 0 for p in posts)
         total_comments = sum(p.get("linkedin_comentarios") or 0 for p in posts)
@@ -186,6 +203,8 @@ def get_last_week_performance() -> Dict:
         return {
             "period": f"{seven_days_ago.strftime('%d/%m')} - {datetime.now().strftime('%d/%m')}",
             "posts_published": len(posts),
+            "posts_measured": posts_measured,
+            "posts_unmeasured": posts_unmeasured,
             "total_impressions": total_impressions,
             "total_reactions": total_reactions,
             "total_comments": total_comments,
@@ -234,15 +253,32 @@ async def generate_weekly_briefing() -> Dict:
         bp = performance["best_post"]
         best_info = f"Melhor post: \"{bp['title'][:60]}\" com {bp['impressions']} impressoes."
 
+    # Caveat de medicao: impede o LLM de diagnosticar "problema tecnico/distribuicao"
+    # a partir de impressao zerada. Impressao so existe via upload manual do analytics
+    # (.xlsx) — posts sem esse upload aparecem com 0 mesmo tendo publicado normalmente.
+    measurement_note = ""
+    unmeasured = performance.get("posts_unmeasured", 0)
+    if performance.get("posts_published", 0) > 0 and unmeasured > 0:
+        measurement_note = (
+            f"\nATENCAO SOBRE METRICAS: {unmeasured} de {performance['posts_published']} "
+            "posts publicados AINDA NAO tem impressao coletada. Impressao no LinkedIn so "
+            "vem via upload manual do analytics oficial (.xlsx); a coleta automatica nao "
+            "le impressao. Portanto 'impressoes = 0' aqui significa 'ainda nao medido', "
+            "NAO falha de publicacao ou distribuicao — os posts sairam normalmente no feed. "
+            "NAO diagnostique problema tecnico a partir de impressao zerada; se quiser "
+            "impressao real, a acao e subir o .xlsx do analytics."
+        )
+
     prompt = f"""Voce e o estrategista editorial de Renato Prado, consultor de governanca corporativa e cofundador do ImenSIAH.
 Ele publica no LinkedIn: 2 hot takes + 1 artigo por semana.
 
 PERFORMANCE DA SEMANA ANTERIOR ({performance['period']}):
 - Posts publicados: {performance['posts_published']}
-- Impressoes totais: {performance['total_impressions']}
+- Posts com impressao medida (via .xlsx): {performance.get('posts_measured', 0)}
+- Impressoes totais (so posts medidos): {performance['total_impressions']}
 - Engajamento total (reacoes+comentarios+compartilhamentos): {performance['total_engagement']}
 - Cliques: {performance['total_clicks']}
-{best_info}
+{best_info}{measurement_note}
 
 POR PILAR:
 {pillar_summary}

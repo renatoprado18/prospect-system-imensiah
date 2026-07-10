@@ -403,7 +403,14 @@ async def collect_metrics_for_due_windows() -> Dict:
                 """, (pid, imp, reac, com, comp, vis, seg, sal, dias, janela, fonte))
                 # Refresh ultimo snapshot em editorial_posts SO se nao temos xlsx
                 # rico ja salvo — proteger demografia/impressoes reais.
-                if pid not in xlsx_protected:
+                #
+                # Modo mock nunca sobrescreve o snapshot agregado: impressao ja e
+                # protegida por NULLIF(0,...), mas reacoes/comentarios/compartilhamentos
+                # eram zerados sem guard — apagavam engajamento real (ex: xlsx antigo)
+                # sempre que o cron caia em mock (LinkdAPI suspenso). A row de history
+                # ainda e gravada acima pra manter trilha de auditoria.
+                is_mock = str(fonte or "").startswith("auto_mock")
+                if pid not in xlsx_protected and not is_mock:
                     cursor.execute("""
                         UPDATE editorial_posts
                         SET linkedin_impressoes = COALESCE(NULLIF(%s, 0), linkedin_impressoes),
