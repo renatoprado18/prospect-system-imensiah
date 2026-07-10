@@ -105,6 +105,17 @@ def search_memories(query: str, k: int = 6) -> str:
 
 
 @mcp.tool()
+def search_group_messages(group: Optional[str] = None, query: Optional[str] = None,
+                          days: int = 30, k: int = 40) -> str:
+    """Mensagens dos grupos WhatsApp de conselho (ex: reportes de RACI no grupo
+    'Conselho Vallen'). Fonte bruta dos updates que os conselheiros mandam — vive
+    separada das DMs (tabela group_messages). group: nome do grupo (ex 'vallen').
+    query: filtra conteudo. days: janela em dias. Use ANTES de afirmar se algo foi
+    reportado no grupo — nunca diga 'nao sei se enviaram' sem consultar aqui."""
+    return _json(db.search_group_messages(group=group, query=query, days=days, k=k))
+
+
+@mcp.tool()
 def get_cockpit() -> str:
     """Percepcao do momento: sinais abertos + tarefas vencidas + agenda das proximas 24h.
     Use no inicio de uma sessao de trabalho pra saber o que precisa de acao."""
