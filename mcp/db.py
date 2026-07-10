@@ -332,6 +332,32 @@ def search_memories(query: str, k: int = 6) -> List[Dict[str, Any]]:
     )
 
 
+def search_group_messages(group: Optional[str] = None, query: Optional[str] = None,
+                          days: int = 30, k: int = 40) -> List[Dict[str, Any]]:
+    """Mensagens dos grupos WhatsApp de conselho (ex: reportes de RACI no grupo
+    'Conselho Vallen'). Estas vivem em group_messages (separado das DMs) e sao a
+    fonte bruta dos updates que os conselheiros mandam. group: filtra por nome do
+    grupo (ILIKE, ex 'vallen'). query: filtra por conteudo (ILIKE). days: janela.
+    Retorna as mais recentes primeiro."""
+    where = ["content IS NOT NULL",
+             "timestamp > (now() AT TIME ZONE 'UTC') - (%s || ' days')::interval"]
+    params: List[Any] = [str(days)]
+    if group:
+        where.append("group_name ILIKE %s")
+        params.append(f"%{group}%")
+    if query:
+        where.append("content ILIKE %s")
+        params.append(f"%{query}%")
+    params.append(k)
+    return _rows(
+        f"""SELECT id, group_name, sender_name, from_me, content, message_type, timestamp
+            FROM copilot.group_messages
+            WHERE {' AND '.join(where)}
+            ORDER BY timestamp DESC LIMIT %s""",
+        tuple(params),
+    )
+
+
 def get_cockpit() -> Dict[str, Any]:
     """Percepcao: signals abertos + tasks vencidas + agenda proximas 24h."""
     signals = _rows(
