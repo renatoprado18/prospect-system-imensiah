@@ -408,7 +408,7 @@ Pós-rebuild:
 | 1 | Modelo: Sonnet 4.6 + extended thinking | ✅ |
 | 2 | Bot processing migra Vercel → Railway worker | ✅ |
 | 3 | Evolution: mantém **Hetzner**, mata Railway whatsapp-evolution | ✅ (Renato: "cost-mitigation") |
-| 4 | Extractor noturno (cos_extractor): MANTÉM | ✅ |
+| 4 | Extractor noturno (cos_extractor): MATA | ✅ (10/07 — decisão de ROI: só 12 memórias em 2 runs; aprender vira função da Tônia única F1. Autonomous tick da Tonha também morto no mesmo dia — experimento 7d OFF encerrado, ~25% falha, alinhado ao sunset 05/09) |
 | 5 | Strangler pattern com rollback 1 semana | ✅ |
 | 6 | Ear mode (cos_ear_mode): MATA | ✅ |
 | 7 | Daily synthesis (22h): MANTÉM | ✅ |

@@ -76,8 +76,6 @@ from services.auto_tags import (
 )
 from services.dashboard import (
     get_dashboard_stats,
-    get_alertas,
-    get_contatos_recentes,
     get_circulos_resumo
 )
 from services.projects import (
@@ -4410,19 +4408,6 @@ async def cron_wa_backfill_1to1(request: Request, max_contacts: int = 80, msg_li
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
     from services.wa_backfill import backfill_direct_messages
     return await backfill_direct_messages(max_contacts=max_contacts, msg_limit=msg_limit)
-
-
-@app.get("/api/cron/dev-delegation-pickup")
-@track_cron_run
-async def cron_dev_delegation_pickup(request: Request):
-    """Consumer cron pra delegations(delegated_to='dev'). Fecha critério 6 do
-    ARCHITECTURE_REBUILD. Default em SHADOW (DEV_DELEGATION_SHADOW=1) — primeiro
-    semana so loga payload sem chamar worker."""
-    if not verify_cron_auth(request):
-        raise HTTPException(status_code=401, detail="Unauthorized cron request")
-    from services.dev_delegation_pickup import process_due
-    summary = await process_due()
-    return {"job": "dev-delegation-pickup", **summary}
 
 
 @app.get("/api/admin/linkedin-topics")
@@ -10013,8 +9998,10 @@ async def api_search_drive(q: str, folder_id: str = None):
 @track_cron_run
 async def cron_sync_contacts(request: Request):
     """
-    Cron endpoint for incremental contact sync.
-    Called by Vercel Cron every 30 minutes.
+    Trigger manual/debug para sync incremental de contatos.
+    NAO tem agendador — nao esta em vercel.json nem no worker Railway.
+    O sync agendado roda via daily-sync, que chama sync_contacts_incremental
+    diretamente. Este endpoint existe so pra disparo manual/debug.
     Uses sync tokens for efficient delta sync.
     """
     if not verify_cron_auth(request):
@@ -10997,8 +10984,10 @@ async def cron_run_social_groups(request: Request):
 @track_cron_run
 async def cron_sync_calendar(request: Request):
     """
-    Cron: Sincroniza eventos do Google Calendar.
-    Schedule: 0 8,12,18 * * * (8h, 12h, 18h)
+    Trigger manual/debug para sincronizar eventos do Google Calendar.
+    NAO tem agendador — nao esta em vercel.json nem no worker Railway.
+    O sync agendado roda via daily-sync (step_calendar). Este endpoint
+    existe so pra disparo manual/debug.
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
@@ -11119,39 +11108,6 @@ async def cron_tasks_integrity(request: Request):
     except Exception as e:
         logger.exception("tasks-integrity falhou")
         return {"job": "tasks-integrity", "status": "error", "error": str(e)}
-
-
-@app.get("/api/cron/daily-ai")
-@track_cron_run
-async def cron_daily_ai(request: Request):
-    """
-    Cron: Executa geracao diaria de sugestoes AI.
-    Schedule: 0 6 * * * (6h da manha)
-
-    Inclui:
-    - Sugestoes de reconexao
-    - Lembretes de aniversario
-    - Follow-ups pendentes
-    - Alertas de health baixo
-    - Auto-enriquecimento C1-C2
-    """
-    if not verify_cron_auth(request):
-        raise HTTPException(status_code=401, detail="Unauthorized cron request")
-
-    from services.ai_agent import get_ai_agent
-
-    agent = get_ai_agent()
-
-    try:
-        results = await agent.run_daily_generation()
-        return {
-            "job": "daily-ai",
-            "timestamp": datetime.now().isoformat(),
-            "status": "success",
-            "results": results
-        }
-    except Exception as e:
-        return {"job": "daily-ai", "status": "error", "error": str(e)}
 
 
 @app.get("/api/cron/health-recalc")
@@ -11410,10 +11366,10 @@ async def get_background_job(job_id: int):
 @track_cron_run
 async def cron_sync_whatsapp(request: Request):
     """
-    Cron: Sincroniza mensagens do WhatsApp.
-    Schedule: 0 11 * * * (11h diario)
-
-    Sincroniza novos chats e mensagens do WhatsApp.
+    Trigger manual/debug para sincronizar mensagens do WhatsApp.
+    NAO tem agendador — nao esta em vercel.json nem no worker Railway
+    (o worker agenda sync-whatsapp-history, endpoint distinto). Este
+    endpoint existe so pra disparo manual/debug.
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
@@ -28745,39 +28701,6 @@ async def cron_daily_synthesis(request: Request):
         return {"job": "daily-synthesis", **result}
     except Exception as e:
         return {"job": "daily-synthesis", "status": "error", "error": str(e)}
-
-
-@app.get("/api/cron/cos-extractor")
-@app.post("/api/cron/cos-extractor")
-@track_cron_run
-async def cron_cos_extractor(request: Request):
-    """
-    Cron: Extractor Noturno + Loop de Correcao da Tonha (CoS digital).
-
-    Roda 30min depois da sintese diaria. Le ultimas 24h de:
-    - bot_conversations (turns do Renato)
-    - messages outgoing pra contatos pessoais/C0-C2
-    - sintese noturna (se houver)
-    - ultimas 50 system_memories (pra dedup)
-
-    Extrai 5 buckets via Sonnet 4.6:
-      A. Fatos novos sobre contatos       -> contact_memories
-      B. Padroes/reflexoes do Renato      -> system_memories
-      C. Glossario (girias do Renato)     -> system_memories
-      D. Decisoes/compromissos            -> system_memories
-      E. Correcoes (loop de correcao)     -> system_memories tipo='correcao'
-
-    Schedule: 30 1 * * * (22:30 Sao Paulo).
-    Budget cap: $1.50/dia (override COS_EXTRACTOR_DAILY_CAP_USD).
-    """
-    if not verify_cron_auth(request):
-        raise HTTPException(status_code=401, detail="Unauthorized cron request")
-    from services.cos_extractor import run_extractor
-    try:
-        return {"job": "cos-extractor", **await run_extractor(window_hours=24)}
-    except Exception as e:
-        logging.exception("cos-extractor falhou")
-        return {"job": "cos-extractor", "status": "error", "error": str(e)}
 
 
 @app.get("/api/cron/pulse")
