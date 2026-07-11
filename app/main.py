@@ -4383,6 +4383,32 @@ async def cron_linkedin_monitor_topics(request: Request):
     return {"job": "linkedin-monitor-topics", **summary}
 
 
+@app.post("/api/actuators/execute")
+async def actuators_execute(request: Request):
+    """F-2 Passo C — catálogo de atuadores v0. A Tônia (julgador L2) chama isto
+    SOB COMANDO do Renato pra AGIR no INTEL (sistema de registro). Nunca proativo
+    — o gatilho é comando, como a delegação de dev (evita o ruído do gen-1).
+
+    Body: {action, payload, source?}. v0: action ∈ {create_task, schedule_wa}.
+    Audita em cos_actions_log. Auth: X-API-Key == INTEL_API_KEY.
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    if not (api_key and intel_api_key and api_key == intel_api_key):
+        raise HTTPException(status_code=403, detail="auth requerida")
+
+    body = await request.json()
+    action = (body.get("action") or "").strip()
+    payload = body.get("payload") or {}
+    source = (body.get("source") or "tonia").strip()
+
+    from services.actuators import execute_actuator
+    result = execute_actuator(action, payload, source=source)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
 @app.get("/api/cron/wa-drive-archive")
 @track_cron_run
 async def cron_wa_drive_archive(request: Request, limit: int = 25):
