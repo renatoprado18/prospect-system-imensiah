@@ -217,7 +217,10 @@ _SCHEDULER_JOBS = [
     # 21/06/26 — CoS Context Agent (substituiu CCR routines que tem egress restrito).
     # Patrol horário: 1h de contexto → Claude decide → notifica se urgente → salva digest.
     # Digests narrativos: 12h de contexto → briefing WA. 7h BRT=10h UTC, 18h BRT=21h UTC.
-    ("cos-context-agent", "/api/cron/cos-context-agent", CronTrigger(minute=8)),
+    # 11/07/26 SUNSET GEN-1 PARTE 2 — patrol horário aposentado (cos_sensor reencarnado,
+    # mandava 🔴 [CoS Agent] no WA = ruído net-negative). Endpoint também neutralizado na
+    # fonte (main.py) contra re-disparo do catchup. Julgamento: Tônia + signals.
+    # ("cos-context-agent", "/api/cron/cos-context-agent", CronTrigger(minute=8)),
     ("cos-digest-morning", "/api/cron/cos-digest?mode=morning", CronTrigger(hour=10, minute=8)),
     ("cos-digest-evening", "/api/cron/cos-digest?mode=evening", CronTrigger(hour=21, minute=8)),
     # 15/06/26 FASE 2A REBUILD — Tonha brain (Sonnet 4.6 + extended thinking)

@@ -28894,12 +28894,21 @@ def _cos_agent_save_digest(summary: str, processed: int, actioned: int) -> None:
 
 @app.get("/api/cron/cos-context-agent")
 async def cron_cos_context_agent(request: Request):
-    """Patrol horário do CoS Context Agent (agendado no Railway worker).
+    """Patrol horário do CoS Context Agent — APOSENTADO (sunset gen-1 parte 2, 11/07/26).
 
-    1h de contexto → Claude decide → notifica se urgente → salva digest.
+    Era: 1h de contexto → Claude decide → notifica se urgente → salva digest.
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401)
+
+    # SUNSET GEN-1 PARTE 2 (11/07/26): este patrol é o cos_sensor reencarnado — varre 1h
+    # de contexto, pede pro Claude decidir e manda 🔴 [CoS Agent] no WhatsApp. Renato
+    # julgou ruído (net-negative) e mandou desligar. O corte de 13:53 (b86a122) matou
+    # realtime_analyzer + smart_fup no INTEL, mas passou batido neste job do worker
+    # Railway (re-disparado pelo catchup :30). Neutralizado NA FONTE — não chama Claude
+    # nem envia WA, imune a qualquer scheduler/catchup. Julgamento fica com a Tônia
+    # (briefing/urgent) + signals (detectors-run). Ver [[feedback_gen1_ruido_desligado]].
+    return {"status": "ok", "job": "cos-context-agent", "disabled": "sunset-gen1", "notify": False}
 
     from services.cos_sensor import _load_context
     ctx = _load_context(window_min=60)
