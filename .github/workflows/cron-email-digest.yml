@@ -5,8 +5,13 @@ name: Cron — Email Digest
 # pra GH Actions em 2026-05-08 pra disparo confiavel.
 
 on:
-  schedule:
-    - cron: '0 21 * * *'
+  # DESLIGADO 11/07/2026 — o digest diário de email virou ruído redundante: a
+  # Tônia agora lê o inbox de alta prioridade no briefing das 7h (camada 3 do
+  # blind spot de email). Alinhado com a filosofia de notificação (só quando
+  # precisa de ação) e com o sunset do gen-1. Mantido workflow_dispatch pra
+  # disparo manual se precisar. Reverter = descomentar o schedule abaixo.
+  # schedule:
+  #   - cron: '0 21 * * *'
   workflow_dispatch:
 
 jobs:

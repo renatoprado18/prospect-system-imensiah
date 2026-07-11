@@ -24,11 +24,33 @@ class PushNotificationService:
     """Manages browser push notification subscriptions and sending."""
 
     def __init__(self):
-        self.vapid_private_key = os.getenv("VAPID_PRIVATE_KEY", "")
+        self.vapid_private_key = self._normalize_vapid_key(os.getenv("VAPID_PRIVATE_KEY", ""))
         self.vapid_public_key = os.getenv("VAPID_PUBLIC_KEY", "")
         self.vapid_claims = {
             "sub": f"mailto:{os.getenv('VAPID_EMAIL', 'admin@intel.almeida-prado.com')}"
         }
+
+    @staticmethod
+    def _normalize_vapid_key(raw: str) -> str:
+        """Aceita o VAPID private key como PEM (multiline) OU base64 single-line.
+
+        Motivo (F-2 cutover Railway, 11/07/2026): o railpack do Railway injeta
+        cada env como build-secret e QUEBRA em valores multiline (o PEM vira
+        secrets-fantasma). No Railway a chave vai como base64 single-line; aqui
+        a gente decodifica de volta pro PEM. No Vercel a env segue PEM cru e
+        passa intacta (tem "BEGIN"). Backward-compatible.
+        """
+        raw = (raw or "").strip()
+        if not raw or "BEGIN" in raw:
+            return raw  # PEM cru (Vercel) ou vazio
+        try:
+            import base64
+            decoded = base64.b64decode(raw).decode("utf-8")
+            if "BEGIN" in decoded:
+                return decoded
+        except Exception:
+            pass
+        return raw  # não era base64 de PEM — devolve como veio
 
     def is_configured(self) -> bool:
         """Check if push notifications are properly configured."""
