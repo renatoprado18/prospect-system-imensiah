@@ -1011,43 +1011,11 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
 
 
 async def analyze_message_in_background(message_id: int, contact_id: int, content: str):
-    """Analisa mensagem em background e cria propostas de acao se necessario"""
-    try:
-        from services.realtime_analyzer import get_realtime_analyzer
-        from services.action_proposals import get_action_proposals
-        from services.whatsapp_notifications import get_whatsapp_notifications
-
-        analyzer = get_realtime_analyzer()
-        proposals_service = get_action_proposals()
-        notifications = get_whatsapp_notifications()
-
-        # Analisar mensagem
-        analysis = await analyzer.analyze_message(
-            message_text=content,
-            contact_id=contact_id,
-            message_direction="incoming",
-            message_id=message_id
-        )
-
-        # Criar propostas se necessario
-        if analysis.get('requires_action') and analysis.get('suggested_actions'):
-            created = proposals_service.create_from_analysis(
-                message_id=message_id,
-                contact_id=contact_id,
-                analysis=analysis
-            )
-            if created:
-                logger.info(f"Created {len(created)} action proposals for message {message_id}")
-
-                # Enviar notificacao WhatsApp para Renato
-                for proposal in created:
-                    try:
-                        await notifications.send_proposal_notification(proposal)
-                    except Exception as e:
-                        logger.error(f"Error sending notification for proposal {proposal['id']}: {e}")
-
-    except Exception as e:
-        logger.error(f"Error analyzing message {message_id}: {e}")
+    """Sunset gen-1 (11/07/26): o realtime_analyzer (pending_response / follow_up_alert /
+    urgent_alert em tempo real, a cada msg WA) foi DESLIGADO — so gerava ruido. O julgamento
+    agora e dos detectores (signals, cron detectors-run) + Tonia (briefing/urgent). Esta funcao
+    passa a rodar SO o smart_message_processor (email/reuniao/telefone), que e util e separado.
+    Codigo do analyzer mantido em services/realtime_analyzer.py, mas sem caller."""
 
     # Smart Message Processor: detecta emails, reunioes, telefones
     try:

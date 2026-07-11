@@ -10282,7 +10282,9 @@ async def cron_daily_sync(request: Request):
     await _aio.gather(
         run_step("sync_gmail", step_gmail, timeout=15.0),
         run_step("payment_cycle", step_payment, timeout=60.0),
-        run_step("smart_fup", step_fup, timeout=60.0),
+        # Sunset gen-1 (11/07/26): smart_fup (follow_up_alert de email) desligado — so ruido.
+        # Follow-up relevante agora vem via signals dos detectores + Tonia. step_fup mantido acima.
+        # run_step("smart_fup", step_fup, timeout=60.0),
     )
 
     # ==================== FASE 3: IA e processamento (paralelo) ====================

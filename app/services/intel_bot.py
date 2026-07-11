@@ -1461,19 +1461,13 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
             }, ensure_ascii=False, default=str)
 
         elif action == "trigger_cos_patrol":
-            # Dispara um tick do CoS Patrol Agent na hora (uso: "patrol", "patrulha", "cos agora").
-            # tick_safe ja tem budget cap diario ($0.50) e idempotency interna.
-            try:
-                from services.cos_sensor import tick_safe
-                result = tick_safe()
-                return json.dumps({
-                    "sucesso": True,
-                    "patrol_result": result,
-                    "mensagem": "CoS Patrol disparado. Aguarde — se houver acao, voce recebe mensagens em instantes.",
-                }, ensure_ascii=False, default=str)
-            except Exception as e:
-                logger.exception("trigger_cos_patrol failed")
-                return json.dumps({"erro": f"falha disparando patrol: {e}"}, ensure_ascii=False)
+            # Sunset gen-1 (11/07/26): CoS Patrol (cos_sensor) aposentado — so gerava ruido.
+            # O cron ja estava off desde 15/06; este era o ultimo gatilho manual (via WhatsApp).
+            # Julgamento agora e dos detectores (signals) + Tonia. Nao ressuscitar.
+            return json.dumps({
+                "sucesso": False,
+                "mensagem": "CoS Patrol foi aposentado (sunset gen-1). Os alertas agora vem da Tonia.",
+            }, ensure_ascii=False, default=str)
 
         elif action == "delegate_to_claude_code":
             # 14/06/26: Delegacao pra Claude Code headless rodando em Railway
