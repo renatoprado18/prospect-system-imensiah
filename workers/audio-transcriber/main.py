@@ -221,8 +221,10 @@ _SCHEDULER_JOBS = [
     # mandava 🔴 [CoS Agent] no WA = ruído net-negative). Endpoint também neutralizado na
     # fonte (main.py) contra re-disparo do catchup. Julgamento: Tônia + signals.
     # ("cos-context-agent", "/api/cron/cos-context-agent", CronTrigger(minute=8)),
-    ("cos-digest-morning", "/api/cron/cos-digest?mode=morning", CronTrigger(hour=10, minute=8)),
-    ("cos-digest-evening", "/api/cron/cos-digest?mode=evening", CronTrigger(hour=21, minute=8)),
+    # 11/07/26 SUNSET GEN-1 PARTE 3 — digests 🔵 [CoS Agent] 2x/dia aposentados (a Tônia
+    # já faz briefing/urgent = redundante). Endpoint também neutralizado na fonte (main.py).
+    # ("cos-digest-morning", "/api/cron/cos-digest?mode=morning", CronTrigger(hour=10, minute=8)),
+    # ("cos-digest-evening", "/api/cron/cos-digest?mode=evening", CronTrigger(hour=21, minute=8)),
     # 15/06/26 FASE 2A REBUILD — Tonha brain (Sonnet 4.6 + extended thinking)
     # autonomous loop 4x/dia BRT. Ticks de briefing dedicados (23/06/26):
     # morning: 7h15 BRT (10h15 UTC) = 7min após cos-digest-morning (10h08 UTC).

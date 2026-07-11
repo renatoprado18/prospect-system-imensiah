@@ -28962,13 +28962,19 @@ ou
 
 @app.get("/api/cron/cos-digest")
 async def cron_cos_digest(request: Request, mode: str = "morning"):
-    """Digest narrativo do CoS (agendado no Railway: 7h e 18h BRT).
+    """Digest narrativo do CoS — APOSENTADO (sunset gen-1 parte 3, 11/07/26).
 
-    12h de contexto → Claude escreve briefing → envia WA → salva digest.
-    mode=morning (padrão) ou mode=evening.
+    Era: 12h de contexto → Claude escreve briefing → envia WA 🔵 [CoS Agent] (7h/18h BRT).
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401)
+
+    # SUNSET GEN-1 PARTE 3 (11/07/26): os digests 🔵 [CoS Agent] 2x/dia foram aposentados
+    # a pedido do Renato — a Tônia já faz o briefing (matinal) e o urgent, então isto era
+    # redundante. Neutralizado NA FONTE (não chama Claude nem envia WA), imune ao worker/
+    # catchup. Registros cos-digest-morning/evening também comentados no worker Railway.
+    # Ver [[feedback_gen1_ruido_desligado]].
+    return {"status": "ok", "job": "cos-digest", "mode": mode, "disabled": "sunset-gen1", "notify": False}
 
     from services.cos_sensor import _load_context
     ctx = _load_context(window_min=720)
