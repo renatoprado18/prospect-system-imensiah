@@ -60,6 +60,12 @@ INTEL_API_URL = os.getenv("INTEL_API_URL", "https://intel.almeida-prado.com")
 # validators rejeitam 401, senders falham no destino (Vercel valida).
 WORKER_SECRET = (os.getenv("WORKER_SECRET") or "").strip()
 CRON_SECRET = (os.getenv("CRON_SECRET") or "").strip()
+# Tonia e Vercel-only (sem scheduler in-process). Este worker Railway hospeda o
+# tick do /delegate/pickup dela (ponte ate F-2 consolidacao Railway). Secret:
+# fallback pro CRON_SECRET se a Tonia usar a mesma chave; senao setar
+# TONIA_CRON_SECRET no Railway. URL default = dominio prod da Tonia.
+TONIA_API_URL = (os.getenv("TONIA_API_URL") or "https://tonia.almeida-prado.com").strip().rstrip("/")
+TONIA_CRON_SECRET = (os.getenv("TONIA_CRON_SECRET") or CRON_SECRET or "").strip()
 
 if not WORKER_SECRET:
     logger.error("WORKER_SECRET não configurado — auth de/para o worker vai falhar (sem fallback)")
@@ -308,6 +314,7 @@ def _sync_cron_registry() -> None:
         return
     jobs = [(jid, _interval_min_from_trigger(trig)) for jid, _p, trig in _SCHEDULER_JOBS]
     jobs += [(jid, _interval_min_from_trigger(trig)) for jid, trig in _LOCAL_DEV_DELEGATION_JOBS]
+    jobs.append(("tonia-delegate-pickup", _interval_min_from_trigger(_TONIA_PICKUP_TRIGGER)))
     try:
         with psycopg.connect(DATABASE_URL) as conn:
             with conn.cursor() as cur:
@@ -330,6 +337,53 @@ def _sync_cron_registry() -> None:
         logger.info(f"cron_registry: synced {len(jobs)} active jobs")
     except Exception as e:
         logger.warning(f"cron_registry sync failed: {e}")
+
+
+# Trigger do pickup da Tonia — modulo-level pra reusar no add_job e no registry.
+_TONIA_PICKUP_TRIGGER = CronTrigger(minute="*/2")
+
+
+async def _call_tonia_delegate_pickup() -> None:
+    """Tick confiavel pro /delegate/pickup da Tonia (FASE 1.5 async delegation).
+
+    Por que aqui: a Tonia e Vercel-only (sem scheduler in-process). O cron dela
+    vivia em GH Actions (*/2), mas o GitHub THROTTLA cron de alta frequencia pra
+    ~1x/h E o job tinha timeout-minutes:2 curto demais pro pickup (que roda a
+    delegacao inline, ~2min) — resultado medido: delegacoes esperavam 5,5h. Este
+    worker ja roda 24/7 no Railway: dispara a cada 2min, sem timeout de job.
+    Ponte ate a Tonia migrar pro Railway (F-2). Ver feedback_cron_host_choice.
+
+    POST autenticado por Bearer TONIA_CRON_SECRET (require_auth da Tonia).
+    Heartbeat gravado pro monitor-cron-health cobrir tambem este tick.
+    Defensivo: nunca levanta (nao derruba os proximos jobs)."""
+    job_id = "tonia-delegate-pickup"
+    if not TONIA_CRON_SECRET:
+        logger.warning("tonia-pickup: TONIA_CRON_SECRET/CRON_SECRET ausente — pulando")
+        _record_cron_heartbeat(job_id, None, 0)
+        return
+    url = f"{TONIA_API_URL}/delegate/pickup"
+    started = datetime.now()
+    http_status: int | None = None
+    try:
+        # read alto: o pickup roda a delegacao inline (delegador ate ~6min).
+        timeout = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {TONIA_CRON_SECRET}",
+                    "User-Agent": "intel-worker-scheduler/1.0",
+                    "X-Cron-Source": "railway-worker",
+                },
+            )
+        http_status = resp.status_code
+        logger.info(f"scheduler: tonia-pickup -> http {resp.status_code}")
+    except Exception as e:
+        http_status = 500
+        logger.exception(f"scheduler: tonia-pickup failed: {e}")
+    finally:
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        _record_cron_heartbeat(job_id, http_status, duration_ms)
 
 
 async def _run_local_dev_delegation(job_id: str) -> None:
@@ -389,11 +443,21 @@ async def _start_scheduler():
             misfire_grace_time=600,
             replace_existing=True,
         )
+    # Tick externo: pickup de delegacao da Tonia (ponte ate F-2 Railway).
+    scheduler.add_job(
+        _call_tonia_delegate_pickup,
+        trigger=_TONIA_PICKUP_TRIGGER,
+        id="tonia-delegate-pickup",
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=120,
+        replace_existing=True,
+    )
     scheduler.start()
-    n_total = len(_SCHEDULER_JOBS) + len(_LOCAL_DEV_DELEGATION_JOBS)
+    n_total = len(_SCHEDULER_JOBS) + len(_LOCAL_DEV_DELEGATION_JOBS) + 1  # +1 = tonia-pickup
     logger.info(
         f"scheduler: started with {n_total} jobs "
-        f"({len(_SCHEDULER_JOBS)} http + {len(_LOCAL_DEV_DELEGATION_JOBS)} local)"
+        f"({len(_SCHEDULER_JOBS)} http + {len(_LOCAL_DEV_DELEGATION_JOBS)} local + 1 external)"
     )
     # Fonte unica da verdade pro monitor-cron-health: reescreve o registry com
     # os jobs vivos deste boot. Ver _sync_cron_registry / migration 045.
