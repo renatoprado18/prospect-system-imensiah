@@ -157,6 +157,11 @@ _SCHEDULER_JOBS = [
     ("run-social-groups", "/api/cron/run-social-groups", CronTrigger(minute=20)),
     ("agent-intents-tick", "/api/cron/agent-intents-tick", CronTrigger(minute="*/30")),
     ("wa-catchup", "/api/cron/wa-catchup", CronTrigger(minute="*/30")),
+    # 11/07/26 — F-2 Passo B: arquiva o binário dos anexos WA no Google Drive
+    # (re-baixa da Evolution, sobe pro Drive, grava drive_file_id). Só go-forward
+    # (mídia Evolution expira → janela 3 dias). Endpoint roda no Vercel (token
+    # Google). Ver services/wa_drive_archive.py.
+    ("wa-drive-archive", "/api/cron/wa-drive-archive?limit=25", CronTrigger(minute="*/20")),
     # 15/06/26 KILL SWITCH ARQUITETURA — TODOS jobs CoS proativos desligados.
     # Motivo: 11 agentes LLM rodando em cron geravam 8+ proposals/dia, conflito
     # de propostas, alucinacoes de tools, defesa em recuo. Em rebuild estrutural

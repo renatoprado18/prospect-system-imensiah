@@ -4383,6 +4383,19 @@ async def cron_linkedin_monitor_topics(request: Request):
     return {"job": "linkedin-monitor-topics", **summary}
 
 
+@app.get("/api/cron/wa-drive-archive")
+@track_cron_run
+async def cron_wa_drive_archive(request: Request, limit: int = 25):
+    """F-2 Passo B — arquiva o binário dos anexos WA no Google Drive. Re-baixa da
+    Evolution (key reconstruída de phone+message_id+direcao) e sobe pro Drive,
+    gravando drive_file_id em wa_attachments. Desacoplado do ingest; só go-forward
+    (mídia Evolution expira → janela 3 dias). Cron ~20min."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.wa_drive_archive import archive_pending_attachments
+    return await archive_pending_attachments(limit=limit)
+
+
 @app.get("/api/cron/wa-triage-sweep")
 @track_cron_run
 async def cron_wa_triage_sweep(request: Request, window_hours: int = 4):
