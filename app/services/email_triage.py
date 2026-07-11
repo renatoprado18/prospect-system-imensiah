@@ -25,6 +25,56 @@ from services.tz import iso_utc, now_utc
 
 logger = logging.getLogger(__name__)
 
+# Captura de corpo de email (F-2 raw email, 11/07/2026).
+# Antes o sync gravava so `body["text"][:5000]` e descartava o HTML: 32% dos
+# emails ficavam com conteudo vazio (HTML-only, sem parte text/plain) e emails
+# longos truncavam em 5000. Agora: conteudo = texto (fallback HTML->texto) ate
+# EMAIL_BODY_MAX_CHARS; conteudo_html = HTML cru (fidelidade pra leitura futura).
+EMAIL_BODY_MAX_CHARS = 20000
+
+_HTML_STRIP_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_HTML_WS_RE = re.compile(r"[ \t]*\n[ \t]*")
+_HTML_MULTINL_RE = re.compile(r"\n{3,}")
+
+
+def _html_to_text(html: str) -> str:
+    """Converte HTML em texto legivel sem dependencia externa (so `re`).
+
+    Remove script/style, troca <br>/<p>/<div> por quebra de linha, tira as tags
+    restantes, desescapa entidades comuns e colapsa espaco em branco. Best-effort
+    — nao e um parser, mas recupera o corpo de emails HTML-only pra leitura.
+    """
+    if not html:
+        return ""
+    txt = _HTML_STRIP_RE.sub(" ", html)
+    txt = re.sub(r"<br\s*/?>", "\n", txt, flags=re.IGNORECASE)
+    txt = re.sub(r"</(p|div|tr|li|h[1-6])>", "\n", txt, flags=re.IGNORECASE)
+    txt = _HTML_TAG_RE.sub("", txt)
+    import html as _html_mod
+    txt = _html_mod.unescape(txt)
+    txt = txt.replace("\xa0", " ").replace("\r", "")
+    txt = _HTML_WS_RE.sub("\n", txt)
+    txt = _HTML_MULTINL_RE.sub("\n\n", txt)
+    return txt.strip()
+
+
+def extract_email_body(body: Dict) -> Tuple[str, str]:
+    """Extrai (conteudo_texto, conteudo_html) de um dict {"text","html"}.
+
+    - conteudo_texto: prefere text/plain; se vazio, faz fallback do HTML->texto.
+      Capado em EMAIL_BODY_MAX_CHARS.
+    - conteudo_html: HTML cru completo (sem cap) pra fidelidade.
+    Resolve o blind spot: emails HTML-only paravam de ter corpo.
+    """
+    body = body or {}
+    text = (body.get("text") or "").strip()
+    html = body.get("html") or ""
+    if not text and html:
+        text = _html_to_text(html)
+    return text[:EMAIL_BODY_MAX_CHARS], html
+
+
 # Cap diario pra aplicacao de label !!Renato pelo CoS (Commit 4).
 # Hardcoded pra protecao contra bug em loop. Estado mantido em
 # agent_actions.action_type='gmail_label_add'.
@@ -1675,21 +1725,24 @@ class EmailTriageService:
                             except:
                                 sent_at = None
 
+                            body_text, body_html = extract_email_body(body_data)
                             cursor.execute("""
                                 INSERT INTO messages (
                                     conversation_id, contact_id, external_id, direcao,
-                                    conteudo, metadata, enviado_em
-                                ) VALUES (%s, %s, %s, 'incoming', %s, %s, %s)
+                                    conteudo, conteudo_html, metadata, enviado_em
+                                ) VALUES (%s, %s, %s, 'incoming', %s, %s, %s, %s)
                                 RETURNING id
                             """, (
                                 conversation_id,
                                 contact_id,
                                 gmail_id,
-                                body_data.get('text', '')[:5000],
+                                body_text,
+                                body_html or None,
                                 json.dumps({
                                     "account": account_email,
                                     "from": from_email,
-                                    "from_name": from_name
+                                    "from_name": from_name,
+                                    "subject": subject
                                 }),
                                 sent_at
                             ))
@@ -1911,19 +1964,21 @@ def _ensure_message_row(
         except Exception:
             pass
 
+    body_text, body_html = extract_email_body(body)
     cursor.execute(
         """
         INSERT INTO messages (
             conversation_id, contact_id, external_id, direcao,
-            conteudo, metadata, enviado_em
-        ) VALUES (%s, %s, %s, 'incoming', %s, %s, %s)
+            conteudo, conteudo_html, metadata, enviado_em
+        ) VALUES (%s, %s, %s, 'incoming', %s, %s, %s, %s)
         RETURNING id
         """,
         (
             conversation_id,
             contact_id,
             gmail_id,
-            (body.get("text") or "")[:5000],
+            body_text,
+            body_html or None,
             json.dumps({
                 "account": account_email,
                 "from": from_email,

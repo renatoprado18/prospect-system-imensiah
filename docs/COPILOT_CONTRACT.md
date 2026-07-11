@@ -84,6 +84,30 @@ Origem: `public.messages` LEFT JOIN `public.conversations` (canal vive na conver
 | `content` | text | Corpo em texto (físico: `conteudo`) |
 | `timestamp` | timestamp | `COALESCE(enviado_em, recebido_em, criado_em)` — UTC naive |
 
+## copilot.emails
+
+Origem: `public.email_triage` LEFT JOIN `public.messages` + `public.conversations`. Superfície **email-cêntrica** (`copilot.messages` mistura email+WA e não traz assunto/remetente/triagem). Base = `email_triage` (cada linha = 1 email triado). Corpo capturado com fallback HTML→texto (migration 048 + `email_triage.extract_email_body`).
+
+| Coluna | Tipo | Semântica |
+|---|---|---|
+| `id` | integer | PK da triagem (`email_triage.id`) |
+| `message_id` | integer | FK → `copilot.messages.id` / `public.messages` |
+| `contact_id` | integer | FK → `copilot.contacts.id` (nullable) |
+| `account_email` | text | Conta Google que recebeu (ex.: `renato@almeida-prado.com`) |
+| `from_email` | text | Remetente (de `messages.metadata.from`) |
+| `from_name` | text | Nome do remetente (de `messages.metadata.from_name`) |
+| `subject` | text | Assunto (de `messages.metadata.subject`, fallback `conversations.assunto`) |
+| `content` | text | Corpo em texto — text/plain, ou HTML→texto se HTML-only (físico: `conteudo`) |
+| `has_body` | boolean | `false` = corpo não capturado (raro pós-048; email HTML-only antigo) |
+| `direction` | text | `incoming` (email recebido). Físico: `direcao` |
+| `priority` | integer | 1-10 (círculo 1 = 10, 2 = 8, etc) |
+| `classification` | text | `urgent` / `must_read` / `important` / `archive_proposed` / etc |
+| `needs_attention` | boolean | Marcado pela triagem |
+| `status` | text | `pending` / `approved` / `dismissed` / `archive_proposed_shadow` / etc |
+| `account_type` | text | `professional` / `personal` |
+| `timestamp` | timestamp | `COALESCE(enviado_em, recebido_em, criado_em)` — UTC naive |
+| `criado_em` | timestamp | Quando a triagem foi criada (UTC naive) |
+
 ## copilot.calendar_events
 
 Origem: `public.calendar_events`. **Atenção:** horários em **BRT naive** (exceção à convenção UTC).
