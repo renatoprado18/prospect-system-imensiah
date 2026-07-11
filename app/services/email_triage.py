@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 # longos truncavam em 5000. Agora: conteudo = texto (fallback HTML->texto) ate
 # EMAIL_BODY_MAX_CHARS; conteudo_html = HTML cru (fidelidade pra leitura futura).
 EMAIL_BODY_MAX_CHARS = 20000
+# HTML cru guardado pra fidelidade, mas capado pra nao inchar a row (newsletter
+# patologica) nem estressar o stripper regex. 200k chars cobre email real.
+EMAIL_HTML_MAX_CHARS = 200000
 
 _HTML_STRIP_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -69,7 +72,7 @@ def extract_email_body(body: Dict) -> Tuple[str, str]:
     """
     body = body or {}
     text = (body.get("text") or "").strip()
-    html = body.get("html") or ""
+    html = (body.get("html") or "")[:EMAIL_HTML_MAX_CHARS]
     if not text and html:
         text = _html_to_text(html)
     return text[:EMAIL_BODY_MAX_CHARS], html
