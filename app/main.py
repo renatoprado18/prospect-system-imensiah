@@ -5629,13 +5629,15 @@ async def cron_platform_costs_daily(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
     from services.platform_costs import (
         auto_snapshot_month, check_budget_threshold, check_anthropic_daily_spike,
-        get_mtd_summary,
+        check_anthropic_credit_balance, get_mtd_summary,
     )
     from datetime import date as _date
 
     snap = auto_snapshot_month(period_start=_date.today().replace(day=1))
     budget = await check_budget_threshold()
     spike = await check_anthropic_daily_spike(threshold_usd=2.0)
+    # Canary de saldo pre-briefing: pega saldo zerado ANTES do briefing 7h falhar.
+    credit = await check_anthropic_credit_balance()
     summary = get_mtd_summary()
 
     return {
@@ -5646,7 +5648,27 @@ async def cron_platform_costs_daily(request: Request):
         "snapshot": snap,
         "budget_check": budget,
         "anthropic_daily_spike": spike,
+        "anthropic_credit_canary": credit,
     }
+
+
+@app.get("/api/cron/anthropic-canary")
+@track_cron_run
+async def cron_anthropic_canary(request: Request):
+    """Canary de saldo Anthropic standalone — 1 chamada minima (1 token Haiku)
+    detecta 'credit balance too low' e alerta WA DIRETO pro Renato (independente
+    da Tonia, que cai junto quando o saldo zera). State machine deduped: 1
+    alerta por episodio + WA de recuperacao.
+
+    Ja roda tambem no platform-costs-daily (08h UTC, pre-briefing). Este
+    endpoint existe pra wiring de frequencia maior (GH Actions / Railway sub-
+    diario) e pegar zeragem no meio do dia — o saldo zerou ~10h55 em 10/07,
+    fora da janela do cron diario. Custo por tick ~$0 (1 token Haiku)."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.platform_costs import check_anthropic_credit_balance
+    result = await check_anthropic_credit_balance()
+    return {"job": "anthropic-canary", "result": result}
 
 
 @app.post("/api/internal/tonha-reactive")

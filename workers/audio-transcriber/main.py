@@ -214,6 +214,14 @@ _SCHEDULER_JOBS = [
     # Le DB, emite signals com signal_hash UNIQUE (idempotente). Brain Sonnet
     # le signals e decide. Ver docs/ARCHITECTURE_REBUILD.md.
     ("detectors-run", "/api/cron/detectors-run", CronTrigger(minute=22)),
+    # 12/07/26 — Canary de saldo Anthropic (horario). 1 chamada minima (1 token
+    # Haiku, ~$0) detecta 'credit balance too low' e alerta WA DIRETO pro Renato
+    # (independente da Tonia, que cai junto quando o saldo zera). State machine
+    # deduped: 1 alerta/episodio + WA de recuperacao. Ja roda no
+    # platform-costs-daily (pre-briefing); este tick horario pega zeragem no
+    # meio do dia (saldo zerou ~10h55 em 10/07, fora da janela diaria). Railway
+    # per feedback_cron_host_choice (sub-diario). Ver project_cost_tracker.
+    ("anthropic-canary", "/api/cron/anthropic-canary", CronTrigger(minute=33)),
     # 21/06/26 — CoS Context Agent (substituiu CCR routines que tem egress restrito).
     # Patrol horário: 1h de contexto → Claude decide → notifica se urgente → salva digest.
     # Digests narrativos: 12h de contexto → briefing WA. 7h BRT=10h UTC, 18h BRT=21h UTC.

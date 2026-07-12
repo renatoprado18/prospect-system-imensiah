@@ -567,6 +567,140 @@ async def check_anthropic_daily_spike(threshold_usd: float = 2.0) -> Dict:
             "alerted": sent}
 
 
+async def check_anthropic_credit_balance() -> Dict:
+    """Canary de saldo Anthropic: faz 1 chamada minima (1 token, Haiku) e
+    detecta o modo de falha real '400 credit balance too low'. Nao existe
+    endpoint publico de saldo restante — o cost_report da GASTO, nao saldo —
+    entao o sinal confiavel e o proprio erro de billing.
+
+    Em 10/07 o saldo zerou ~10h55 sem aviso e derrubou chat+briefing+urgent
+    juntos; o Renato so descobriu quando a Tonia parou de responder. Este
+    canary roda no cron (pre-briefing) e pega o saldo zerado ANTES do briefing
+    das 7h falhar silencioso.
+
+    Alerta WA DIRETO pro Renato (send_intel_notification), NAO via Tonia: se o
+    saldo zerou, a Tonia esta caida junto. Canal independente = excecao
+    infra/transacional do porta-voz unico (F-A) — precisa de caminho que nao
+    dependa da propria coisa que quebrou.
+
+    State machine deduped (flag 'anthropic_credit_down' em system_memories,
+    tipo 'credit_canary') — alerta na BORDA DE DESCIDA, re-arma na recuperacao:
+    - down + sem flag  -> alerta + seta flag (1 alerta por episodio)
+    - down + com flag  -> skip (ja alertado, nao spamma por tick)
+    - up   + com flag  -> limpa flag + WA 'saldo recuperado'
+    - up   + sem flag  -> no-op silencioso
+
+    Erros transientes (429/5xx/rede) NAO sao saldo e nao disparam alerta
+    (evita falso positivo em blip de API).
+    """
+    import os
+    import httpx
+
+    api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    if not api_key:
+        return {"checked": False, "reason": "no_api_key"}
+
+    status = "ok"
+    detail = ""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "ok"}],
+                },
+            )
+        if resp.status_code == 200:
+            status = "ok"
+        elif "credit balance" in resp.text.lower():
+            status = "no_credits"
+            detail = "Saldo insuficiente — recarregue em console.anthropic.com"
+        elif resp.status_code == 401:
+            status = "invalid_key"
+            detail = "API key invalida ou revogada — rotacione em console.anthropic.com"
+        else:
+            # 429/5xx/overload NAO sao billing — nao alertar como saldo
+            return {"checked": True, "status": "transient", "http": resp.status_code}
+    except Exception as e:
+        # Falha de rede != saldo — nao alertar (evita falso positivo em blip)
+        return {"checked": False, "reason": f"canary_failed:{type(e).__name__}"}
+
+    DOWN_KEY = "anthropic_credit_down"
+
+    def _flag_present(cur) -> bool:
+        cur.execute(
+            "SELECT 1 FROM system_memories WHERE titulo=%s AND tipo='credit_canary' LIMIT 1",
+            (DOWN_KEY,),
+        )
+        return cur.fetchone() is not None
+
+    if status == "ok":
+        recovered = False
+        with get_db() as conn:
+            cur = conn.cursor()
+            if _flag_present(cur):
+                cur.execute(
+                    "DELETE FROM system_memories WHERE titulo=%s AND tipo='credit_canary'",
+                    (DOWN_KEY,),
+                )
+                conn.commit()
+                recovered = True
+        if recovered:
+            try:
+                from services.intel_bot import send_intel_notification
+                await send_intel_notification(
+                    "✅ *Anthropic saldo recuperado* — a API voltou a responder "
+                    "(canary 200). Tônia/briefing/urgent normalizados."
+                )
+            except Exception as e:
+                logger.warning(f"credit canary: recovery notify failed: {e}")
+        return {"checked": True, "status": "ok", "recovered": recovered}
+
+    # status in (no_credits, invalid_key) — down
+    with get_db() as conn:
+        cur = conn.cursor()
+        if _flag_present(cur):
+            return {"checked": True, "status": status, "alerted": False,
+                    "reason": "already_alerted"}
+
+    sent = False
+    try:
+        from services.intel_bot import send_intel_notification
+        icon = "🔴" if status == "no_credits" else "🔑"
+        head = "SEM SALDO" if status == "no_credits" else "API KEY INVALIDA"
+        msg = (
+            f"{icon} *Anthropic {head}*\n\n"
+            f"{detail}\n\n"
+            "⚠️ A Tônia está CAÍDA — chat, briefing das 7h e urgent falham "
+            "juntos até resolver."
+        )
+        sent = await send_intel_notification(msg)
+    except Exception as e:
+        logger.warning(f"credit canary: alert send failed: {e}")
+
+    # Seta flag mesmo se o WA falhou — evita spam; a recuperacao limpa.
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """INSERT INTO system_memories (titulo, conteudo, tipo, fonte, criado_em)
+                   VALUES (%s, %s, 'credit_canary', 'cost_tracker', NOW())""",
+                (DOWN_KEY, f"{status}: {detail}"),
+            )
+            conn.commit()
+    except Exception:
+        logger.exception("credit canary: flag write failed")
+
+    return {"checked": True, "status": status, "alerted": sent}
+
+
 async def check_and_notify_alerts() -> Dict:
     """Verifica alerts ativos e manda WhatsApp se algum for novo.
 
