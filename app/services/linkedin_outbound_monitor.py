@@ -285,44 +285,67 @@ async def register_engagement(post_url: str, comment_text: Optional[str] = None)
 
 
 async def _send_reply_notification(eng: Dict) -> bool:
-    """Manda WhatsApp pro Renato sobre reply do autor do post."""
+    """A7/F-A (porta-voz único, 12/07): emite SIGNAL urgencia=5 (o briefing da Tônia
+    consome) sobre reply do autor do post, em vez de WA direto. Reativo mas não
+    urgente (decisão Renato: 'não precisa urgent') — chega consolidado no briefing,
+    não fica órfão como porta-voz WA solto."""
     try:
-        from services.intel_bot import send_intel_notification
+        from services.detectors._base import emit_signal, make_signal_hash
     except Exception as e:
-        logger.warning(f"_send_reply_notification: import intel_bot falhou: {e}")
+        logger.warning(f"_send_reply_notification: import emit_signal falhou: {e}")
         return False
 
     author_name = eng.get("post_author_name") or "Autor do post"
     post_url = eng.get("post_url") or ""
-    msg = (
-        f"🔔 {author_name} respondeu seu comentario\n\n"
-        f"Post: {post_url}\n\n"
-        f"Considere mandar DM follow-up — o calor esta alto agora."
-    )
     try:
-        return await send_intel_notification(msg)
+        with get_db() as conn:
+            emit_signal(
+                conn,
+                tipo="linkedin_author_reply",
+                signal_hash=make_signal_hash("linkedin_author_reply", eng.get("id") or post_url),
+                urgencia=5,
+                contexto={
+                    "engagement_id": eng.get("id"),
+                    "author_name": author_name,
+                    "post_url": post_url,
+                    "hint": "autor respondeu seu comentario — considere DM follow-up (calor alto)",
+                },
+                detector="linkedin_outbound",
+            )
+            conn.commit()
+        return True
     except Exception as e:
-        logger.warning(f"_send_reply_notification: send falhou: {e}")
+        logger.warning(f"_send_reply_notification: emit_signal falhou: {e}")
         return False
 
 
 async def _send_quarantine_notification(engagement_id: int, post_url: str, error_msg: str) -> bool:
-    """One-shot WA notif quando engagement vai pra quarentine apos N falhas."""
+    """A7/F-A (porta-voz único): emite SIGNAL urgencia=4 (briefing) quando engagement
+    vai pra quarentine apos N falhas — alerta técnico, não interrompe."""
     try:
-        from services.intel_bot import send_intel_notification
+        from services.detectors._base import emit_signal, make_signal_hash
     except Exception as e:
-        logger.warning(f"_send_quarantine_notification: import intel_bot falhou: {e}")
+        logger.warning(f"_send_quarantine_notification: import emit_signal falhou: {e}")
         return False
-    msg = (
-        f"⚠️ Engagement LinkedIn #{engagement_id} em quarentine\n\n"
-        f"Post: {post_url}\n"
-        f"Erro: {error_msg}\n\n"
-        f"Saiu da fila de checagem apos {MAX_FAILURES_BEFORE_QUARANTINE} falhas seguidas. Triagem manual."
-    )
     try:
-        return await send_intel_notification(msg)
+        with get_db() as conn:
+            emit_signal(
+                conn,
+                tipo="linkedin_engagement_quarantine",
+                signal_hash=make_signal_hash("linkedin_engagement_quarantine", engagement_id),
+                urgencia=4,
+                contexto={
+                    "engagement_id": engagement_id,
+                    "post_url": post_url,
+                    "error": error_msg,
+                    "hint": f"saiu da fila apos {MAX_FAILURES_BEFORE_QUARANTINE} falhas — triagem manual",
+                },
+                detector="linkedin_outbound",
+            )
+            conn.commit()
+        return True
     except Exception as e:
-        logger.warning(f"_send_quarantine_notification: send falhou: {e}")
+        logger.warning(f"_send_quarantine_notification: emit_signal falhou: {e}")
         return False
 
 
