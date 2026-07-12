@@ -160,10 +160,9 @@ async def check_post_meeting() -> Dict:
       (caminho novo — eventos importados do Google Calendar nao tem contact_id
       preenchido, gap real do MVP)
 
-    Mensagem WA proativa lista TODOS os contatos identificados, nao so um.
+    A6 (porta-voz único, F-A): NAO manda mais WA direto — emite um signal
+    urgencia=8 que a urgent da Tônia consome. Ela decide se/como surfaçar.
     """
-    from services.intel_bot import send_intel_notification
-
     stats = {"detected": 0, "sent": 0, "skipped_dedup": 0, "errors": 0, "skipped_no_contact": 0}
 
     try:
@@ -216,41 +215,46 @@ async def check_post_meeting() -> Dict:
             min_atras = int(ev.get("min_atras") or 0)
             summary = ev.get("summary") or "Reuniao"
 
-            # Lista contatos identificados (max 4 pra nao poluir)
-            contatos_lines = []
-            for c in identified[:4]:
-                line = c["nome"]
-                if c.get("empresa"):
-                    line += f" — {c['empresa']}"
-                contatos_lines.append(line)
-            if len(identified) > 4:
-                contatos_lines.append(f"+ {len(identified) - 4} outros")
-
-            contatos_block = "\n".join(f"• {l}" for l in contatos_lines)
-
-            # Politica feedback_notifications: so notificar quando precisa
-            # acao manual. "Como foi?" e convite reflexivo, baixo valor.
-            # Renato ja recebe pre-meeting + Fathom dispara import async com
-            # action items. Skip se nao houver contato C0/C1 (escalation)
-            # entre os identified.
+            # Politica feedback_notifications: so escala quando precisa acao
+            # manual. "Como foi?" e convite reflexivo, baixo valor. Renato ja
+            # recebe pre-meeting + Fathom dispara import async com action items.
+            # Skip se nao houver contato C0/C1 (escalation) entre os identified.
             has_c0_c1 = any(
                 (c.get("circulo") or 99) in (1, 2)
                 for c in identified
             )
             if not has_c0_c1:
-                # Sem escalation: skip WA, deixa Fathom callback fazer o resumo.
+                # Sem escalation: skip, deixa Fathom callback fazer o resumo.
                 logger.info(f"post-meeting: skip notify (sem C0/C1 nos {len(identified)} contatos)")
                 continue
 
-            msg = (
-                f"🎯 Reuniao com C1 terminou {min_atras}min atras:\n"
-                f"*{summary}* as {hora_str} ({duracao}min)\n"
-                f"{contatos_block}\n\n"
-                f"Action items via Fathom em ~10min."
-            )
-
-            ok = await send_intel_notification(msg)
-            if ok:
+            # A6 (porta-voz único, F-A, 12/07): em vez de WA direto (intel-bot),
+            # emite um SIGNAL urgencia=8 que a urgent da Tônia consome
+            # (min_urgencia=8) — ela decide se/como surfaçar. Dedup em camadas:
+            # proactive_signals(event_id) evita reprocessar + signal_hash
+            # idempotente. Ver [[project_plano_tonia_copiloto_12_07]] F-A.
+            contexto = {
+                "event_id": event_id,
+                "summary": summary,
+                "hora": hora_str,
+                "duracao_min": duracao,
+                "min_atras": min_atras,
+                "contatos": [c["nome"] for c in identified[:8]],
+                "contact_ids": [c["id"] for c in identified],
+                "fathom_hint": "action items via Fathom em ~10min",
+            }
+            try:
+                from services.detectors._base import emit_signal, make_signal_hash
+                with get_db() as conn2:
+                    emit_signal(
+                        conn2,
+                        tipo="post_meeting_c1",
+                        signal_hash=make_signal_hash("post_meeting_c1", event_id),
+                        urgencia=8,
+                        contexto=contexto,
+                        detector="proactive_post_meeting",
+                    )
+                    conn2.commit()
                 _record_sent(
                     "post_meeting",
                     str(event_id),
@@ -260,10 +264,12 @@ async def check_post_meeting() -> Dict:
                         "contact_names": [c["nome"] for c in identified],
                         "duracao_min": duracao,
                         "match_source": "attendees" if not ev.get("contact_id") else "contact_id",
+                        "emitted_as": "signal",
                     },
                 )
                 stats["sent"] += 1
-            else:
+            except Exception as e:
+                logger.warning(f"check_post_meeting emit_signal err event={event_id}: {e}")
                 stats["errors"] += 1
         except Exception as e:
             logger.warning(f"check_post_meeting send err event={event_id}: {e}")

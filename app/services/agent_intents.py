@@ -541,11 +541,11 @@ async def escalate_blocked_intents(age_minutes: int = ESCALATION_AGE_MINUTES) ->
     if not intents:
         return []
 
-    # Imports locais — evita ciclo (intel_bot importa daqui).
+    # A6 (porta-voz único, F-A): escala via SIGNAL (urgent da Tônia), não WA direto.
     try:
-        from services.intel_bot import send_intel_notification  # noqa: WPS433
+        from services.detectors._base import emit_signal, make_signal_hash  # noqa: WPS433
     except Exception as e:
-        logger.error(f"escalate_blocked_intents: cannot import send_intel_notification: {e}")
+        logger.error(f"escalate_blocked_intents: cannot import emit_signal: {e}")
         return []
     try:
         from services.agent_actions import log_action  # noqa: WPS433
@@ -556,18 +556,28 @@ async def escalate_blocked_intents(age_minutes: int = ESCALATION_AGE_MINUTES) ->
     for it in intents:
         text = (it.get("intent_text") or "").strip().replace("\n", " ")
         blocker = (it.get("blocker") or "(sem motivo registrado)").strip()
-        msg = (
-            f"🚧 Intent #{it['id']} travado:\n"
-            f"*{text[:120]}*\n"
-            f"Motivo: {blocker[:200]}\n\n"
-            f"Reponde \"destrava {it['id']}\" pra retomar, "
-            f"\"esquece {it['id']}\" pra cancelar, ou ignora."
-        )
+        # A6 (porta-voz único, F-A, 12/07): escala via SIGNAL urgencia=8 em vez de
+        # WA direto — a urgent da Tônia (min_urgencia=8) surfaça e decide. Dedup:
+        # escalated_at (mark_escalated) + signal_hash idempotente.
         ok = False
         try:
-            ok = await send_intel_notification(msg)
+            with get_db() as conn:
+                emit_signal(
+                    conn,
+                    tipo="agent_intent_blocked",
+                    signal_hash=make_signal_hash("agent_intent_blocked", it["id"]),
+                    urgencia=8,
+                    contexto={
+                        "intent_id": it["id"],
+                        "intent_text": text[:300],
+                        "blocker": blocker[:300],
+                    },
+                    detector="agent_intent_escalation",
+                )
+                conn.commit()
+            ok = True
         except Exception as e:
-            logger.error(f"escalate_blocked_intents WA send error id={it['id']}: {e}")
+            logger.error(f"escalate_blocked_intents emit_signal error id={it['id']}: {e}")
 
         if ok:
             mark_escalated(it["id"])
@@ -577,7 +587,7 @@ async def escalate_blocked_intents(age_minutes: int = ESCALATION_AGE_MINUTES) ->
                     log_action(
                         action_type="agent_intent.escalated",
                         category="system",
-                        title=f"Intent #{it['id']} escalado via WhatsApp",
+                        title=f"Intent #{it['id']} escalado via signal",
                         details=f"Blocker: {blocker[:200]}",
                         scope_ref={"intent_id": it["id"]},
                         source="agent_intents_tick",
@@ -586,6 +596,6 @@ async def escalate_blocked_intents(age_minutes: int = ESCALATION_AGE_MINUTES) ->
                 except Exception as e:
                     logger.warning(f"escalate_blocked_intents log_action failed: {e}")
         else:
-            logger.warning(f"escalate_blocked_intents: WA send failed id={it['id']}, deixando pra proxima rodada")
+            logger.warning(f"escalate_blocked_intents: emit_signal failed id={it['id']}, deixando pra proxima rodada")
 
     return escalated
