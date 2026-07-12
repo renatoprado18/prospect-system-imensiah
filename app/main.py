@@ -11447,30 +11447,34 @@ async def cron_weekly_digest(request: Request):
         generator = get_digest_generator()
         digest = generator.generate_weekly_digest()
 
-        # Send WhatsApp notification with ultra-summary
+        # A7 (porta-voz único, F-A, 12/07): em vez de WA direto, emite um SIGNAL
+        # urgencia=6 que o BRIEFING da Tônia consome (fetch_open_signals sem
+        # min_urgencia). Digest informativo chega no briefing matinal, sem
+        # interromper (urgent é >=8). Ver [[project_plano_tonia_copiloto_12_07]] F-A.
         if digest and digest.get("id"):
             try:
-                from services.intel_bot import send_intel_notification
-                # Build rich WhatsApp summary
+                from database import get_db
+                from services.detectors._base import emit_signal, make_signal_hash
                 resumo = digest.get("resumo", "")
-                # Convert markdown headers to WhatsApp bold
-                wa_resumo = resumo.replace("## ", "\n*").replace("\n*", "\n*")
-                # Clean up: bold section titles
-                import re
-                wa_resumo = re.sub(r'\*\*(.+?)\*\*', r'*\1*', wa_resumo)
-                # Limit to ~1500 chars for WhatsApp readability
-                if len(wa_resumo) > 1500:
-                    wa_resumo = wa_resumo[:1500] + "..."
-
-                wa_text = (
-                    f"📊 *Resumo Semanal INTEL*\n"
-                    f"_{digest.get('titulo', '')}_\n\n"
-                    f"{wa_resumo}\n\n"
-                    f"👉 https://intel.almeida-prado.com/resumo-semanal?id={digest['id']}"
-                )
-                await send_intel_notification(wa_text)
+                if len(resumo) > 1500:
+                    resumo = resumo[:1500] + "..."
+                with get_db() as _c:
+                    emit_signal(
+                        _c,
+                        tipo="weekly_digest",
+                        signal_hash=make_signal_hash("weekly_digest", digest["id"]),
+                        urgencia=6,
+                        contexto={
+                            "digest_id": digest["id"],
+                            "titulo": digest.get("titulo", ""),
+                            "resumo": resumo,
+                            "url": f"https://intel.almeida-prado.com/resumo-semanal?id={digest['id']}",
+                        },
+                        detector="weekly_digest",
+                    )
+                    _c.commit()
             except Exception as e:
-                logger.warning(f"Failed to send digest WhatsApp: {e}")
+                logger.warning(f"Failed to emit weekly-digest signal: {e}")
 
         return {
             "job": "weekly-digest",
@@ -28288,6 +28292,12 @@ async def _editorial_metrics_reminder_impl():
       72h -> 3 dias apos
       7d  -> 7 dias apos
     """
+    # A7 (porta-voz único, F-A, 12/07): lembrete de coleta de métricas DESLIGADO
+    # (decisão Renato: baixo valor — impressão só vem do xlsx manual, o Editorial
+    # já expõe cobertura de medição). Não migra pro briefing; morre. Reativar via
+    # F-B (notification_router). Código abaixo preservado, inalcançável.
+    return {"status": "disabled", "reason": "a7_porta_voz_unico_kill"}
+
     from services.intel_bot import send_intel_notification
 
     # Janela: (label, lower_hours, upper_hours, expected_days)

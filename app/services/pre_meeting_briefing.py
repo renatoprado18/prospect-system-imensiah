@@ -85,8 +85,27 @@ async def check_upcoming_meetings() -> Dict:
             try:
                 briefing = await _generate_meeting_briefing(meeting, cursor)
                 if briefing:
-                    from services.intel_bot import send_intel_notification
-                    await send_intel_notification(briefing)
+                    # A7 (porta-voz único, F-A, 12/07): o dossiê pré-reunião vira
+                    # SIGNAL urgencia=8 que a urgent da Tônia consome (min_urgencia=8)
+                    # — just-in-time, não WA direto. Sem preparação duplicada no
+                    # sistema, então mantém o valor via urgent. Dedup: contact_
+                    # interactions (abaixo) + signal_hash por evento+dia.
+                    from services.detectors._base import emit_signal, make_signal_hash
+                    emit_signal(
+                        conn,
+                        tipo="pre_meeting_briefing",
+                        signal_hash=make_signal_hash(
+                            "pre_meeting_briefing", meeting['id'],
+                            str(meeting.get('start_datetime'))[:10]),
+                        urgencia=8,
+                        contexto={
+                            "event_id": meeting['id'],
+                            "summary": meeting.get('summary'),
+                            "start": str(meeting.get('start_datetime')),
+                            "dossie": briefing,
+                        },
+                        detector="pre_meeting_briefing",
+                    )
                     results["briefings_sent"] += 1
 
                     # Mark as sent

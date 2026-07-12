@@ -511,29 +511,39 @@ Responda APENAS com o JSON."""
 
         conn.commit()
 
-    # Send WhatsApp notification via intel-bot
+    # A7 (porta-voz único, F-A, 12/07): emite SIGNAL urgencia=6 (o briefing da
+    # Tônia consome via fetch_open_signals) em vez de WA direto — digest editorial
+    # chega no briefing matinal. Ver [[project_plano_tonia_copiloto_12_07]] F-A.
     try:
-        from services.intel_bot import send_intel_notification
+        from database import get_db
+        from services.detectors._base import emit_signal, make_signal_hash
 
-        posts_summary = ""
+        posts_summary = []
         for post_plan in briefing.get("posts_sugeridos", []):
             pilar_label = PILLARS.get(post_plan.get("pilar", ""), {}).get("label", post_plan.get("pilar", ""))
-            posts_summary += f"  - {post_plan.get('dia', '?').title()}: {post_plan.get('tema', '?')[:60]} [{pilar_label}]\n"
+            posts_summary.append(f"{post_plan.get('dia', '?').title()}: {post_plan.get('tema', '?')[:60]} [{pilar_label}]")
 
-        whatsapp_msg = (
-            f"*Briefing Editorial - Semana {next_monday.strftime('%d/%m')}*\n\n"
-            f"Semana passada: {performance['posts_published']} posts, "
-            f"{performance['total_impressions']} impressoes, "
-            f"{performance['total_engagement']} engajamento\n\n"
-            f"*Plano sugerido (auto-publisher decide):*\n{posts_summary}\n"
-            f"*Foco:* {briefing.get('pilar_foco', 'A definir')[:120]}\n\n"
-            f"{len(created_tasks)} tarefas operacionais (metricas + comentarios) no projeto Editorial."
-        )
-
-        import asyncio
-        asyncio.create_task(send_intel_notification(whatsapp_msg))
+        semana = next_monday.strftime('%d/%m')
+        with get_db() as _c:
+            emit_signal(
+                _c,
+                tipo="editorial_weekly_digest",
+                signal_hash=make_signal_hash("editorial_weekly_digest", next_monday.strftime('%Y-%m-%d')),
+                urgencia=6,
+                contexto={
+                    "semana": semana,
+                    "posts_published": performance['posts_published'],
+                    "total_impressions": performance['total_impressions'],
+                    "total_engagement": performance['total_engagement'],
+                    "plano_sugerido": posts_summary,
+                    "pilar_foco": briefing.get('pilar_foco', 'A definir')[:120],
+                    "tarefas_operacionais": len(created_tasks),
+                },
+                detector="editorial_pdca_weekly",
+            )
+            _c.commit()
     except Exception as e:
-        logger.error(f"Error sending editorial WhatsApp notification: {e}")
+        logger.error(f"Error emitting editorial-weekly signal: {e}")
 
     return {
         "status": "success",
@@ -754,21 +764,31 @@ async def generate_monthly_review() -> Dict:
         task = cursor.fetchone()
         conn.commit()
 
-    # WhatsApp notify
+    # A7 (porta-voz único, F-A, 12/07): emite SIGNAL urgencia=6 (briefing da Tônia).
     try:
-        from services.intel_bot import send_intel_notification
+        from database import get_db
+        from services.detectors._base import emit_signal, make_signal_hash
         delta_txt = f" (delta {delta_eng:+.2f}pp)" if delta_eng is not None else ""
-        msg = (
-            f"*Revisao Mensal Editorial* {current['period']}\n\n"
-            f"{cur_n} posts | eng% medio {cur_eng}%{delta_txt}\n"
-            f"Zero eng: {current['summary']['zero_eng_count']}/{cur_n} ({current['summary']['zero_eng_pct']}%)\n\n"
-            f"Note: /projetos/22 (id {note['id']})\n"
-            f"Task de revisao criada (id {task['id']}, vence em 7d)."
-        )
-        import asyncio
-        asyncio.create_task(send_intel_notification(msg))
+        with get_db() as _c:
+            emit_signal(
+                _c,
+                tipo="editorial_monthly_digest",
+                signal_hash=make_signal_hash("editorial_monthly_digest", current['period']),
+                urgencia=6,
+                contexto={
+                    "period": current['period'],
+                    "posts": cur_n,
+                    "eng_medio_pct": cur_eng,
+                    "delta": delta_txt.strip(),
+                    "zero_eng": f"{current['summary']['zero_eng_count']}/{cur_n} ({current['summary']['zero_eng_pct']}%)",
+                    "note_url": f"/projetos/22 (id {note['id']})",
+                    "task_id": task['id'],
+                },
+                detector="editorial_pdca_monthly",
+            )
+            _c.commit()
     except Exception as e:
-        logger.warning(f"WA notify falhou: {e}")
+        logger.warning(f"editorial-monthly signal falhou: {e}")
 
     return {
         "status": "success",
