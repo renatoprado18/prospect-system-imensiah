@@ -2550,45 +2550,6 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
         logger.info(f"dedup: skipping duplicate webhook delivery for {phone}: {message[:50]}")
         return ""
 
-    # 3b. FASE 2B — rota pra Tonha Brain. Quando flag matches (wa/chat/all),
-    # caminho do Brain e DEFINITIVO. Se crashar, reportamos erro alto-falante
-    # em vez de cair silenciosamente pro bot antigo (caso 16/06/26: msgs
-    # 774-779 sairam do velho sem REGRA #-2/validador e Tonha disse "calendar
-    # externo nao integrado" com tool deployed).
-    #
-    # Fallback graceful so para imports quebrados de codigo (deploy issue) —
-    # neste caso nao da pra carregar `tonha_brain`, ja temos um problema maior
-    # e o bot antigo e melhor que erro pro usuario.
-    channel_for_flag = "chat" if mode == "chat" else "whatsapp"
-    try:
-        from services.tonha_brain import is_reactive_enabled as _tonha_on
-        from services.tonha_brain import run_reactive as _tonha_reactive
-        brain_available = True
-    except Exception as _import_err:
-        logger.exception(f"[tonha-reactive] import falhou — usando bot antigo: {_import_err}")
-        brain_available = False
-        _tonha_on = lambda *a, **k: False  # noqa: E731
-
-    if brain_available and _tonha_on(channel_for_flag, phone):
-        try:
-            logger.info(f"[tonha-reactive] routing {channel_for_flag} -> Brain")
-            hist_for_brain = _load_conversation_history(phone, limit=10)
-            reply = await _tonha_reactive(
-                message=message,
-                channel=channel_for_flag,
-                phone=phone,
-                history=[{"role": h["role"], "content": h.get("content") or ""} for h in hist_for_brain],
-            )
-            _save_conversation_message(phone, "assistant", reply)
-            return reply
-        except Exception as _e:
-            # Brain falhou apos roteado — reporta pro Renato, NAO cai pro velho.
-            # Velho nao tem REGRA #-2 nem validador, geraria mais drift.
-            logger.exception(f"[tonha-reactive] Brain crashed: {_e}")
-            err_msg = f"Tonha caiu: {str(_e)[:150]}. Renato, da uma olhada nos logs."
-            _save_conversation_message(phone, "assistant", err_msg)
-            return err_msg
-
     # 4. Load conversation history
     history = _load_conversation_history(phone, limit=20)
     messages = _build_messages_from_history(history)

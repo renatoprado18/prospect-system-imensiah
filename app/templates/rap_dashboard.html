@@ -2171,16 +2171,6 @@
 
         <!-- Stats - Ultra compact horizontal cards (drill-down workbench abaixo) -->
         <div class="stats-grid">
-            <a class="stat-card" id="statCardTonha" href="/admin/tonha/decisions?decision_type=escalate&mode=autonomous" style="cursor: pointer; text-decoration: none; color: inherit; border-left: 3px solid var(--danger, #dc2626);">
-                <div class="stat-icon" style="background: rgba(220, 38, 38, 0.1); color: #dc2626;"><i class="bi bi-robot"></i></div>
-                <div class="stat-content">
-                    <div class="stat-headline">
-                        <div class="stat-value" id="statTonhaPending">-</div>
-                        <div class="stat-label">Tonha pediu</div>
-                    </div>
-                    <div class="stat-breakdown" id="statTonhaBreakdown"></div>
-                </div>
-            </a>
             <div class="stat-card" style="cursor: pointer;" data-drill="reunioes" onclick="openDrill('reunioes')">
                 <div class="stat-icon" style="background: rgba(99, 102, 241, 0.1); color: #6366f1;"><i class="bi bi-calendar-event"></i></div>
                 <div class="stat-content">
@@ -2434,7 +2424,7 @@
         }
 
         function applyMutedState() {
-            const stats = ['statTonhaPending', 'statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos', 'statIntents'];
+            const stats = ['statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos', 'statIntents'];
             stats.forEach(id => {
                 const valEl = document.getElementById(id);
                 if (!valEl) return;
@@ -2450,7 +2440,7 @@
         function updateCleanSlateBanner() {
             const banner = document.getElementById('cleanSlateBanner');
             if (!banner) return;
-            const stats = ['statTonhaPending', 'statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos', 'statIntents'];
+            const stats = ['statReunioes', 'statProjectsAction', 'statAtencao', 'statTasksOverdue', 'statEditorial', 'statClipping', 'statVeiculos', 'statIntents'];
             // Mostra so se TODOS estao idle (nao "-" ainda carregando, nao algo ativo).
             let allIdle = true;
             for (const id of stats) {
@@ -2518,29 +2508,6 @@
                 const eventosHoje = Array.isArray(calData) ? calData : [];
                 const reunioesCount = eventosHoje.filter(e => isReuniaoCard(e)).length;
                 document.getElementById('statReunioes').textContent = reunioesCount;
-
-                // Tonha pending (escalates autonomos das ultimas 48h ainda abertos)
-                try {
-                    const tonhaResp = await fetch('/api/dashboard/tonha-pendings');
-                    if (tonhaResp.ok) {
-                        const td = await tonhaResp.json();
-                        const card = document.getElementById('statCardTonha');
-                        const valEl = document.getElementById('statTonhaPending');
-                        const bdEl = document.getElementById('statTonhaBreakdown');
-                        valEl.textContent = td.pending;
-                        if (td.pending === 0) {
-                            card.classList.add('muted');
-                            card.style.borderLeftColor = 'transparent';
-                            if (bdEl) bdEl.innerHTML = '<span class="pill muted">tudo limpo</span>';
-                        } else {
-                            card.classList.remove('muted');
-                            card.style.borderLeftColor = 'var(--danger, #dc2626)';
-                            if (bdEl) bdEl.innerHTML = td.fresh_6h > 0
-                                ? `<span class="pill danger" title="Novos nas ultimas 6h"><i class="bi bi-clock-fill"></i> ${td.fresh_6h} recentes</span>`
-                                : '<span class="pill warning">aguardando</span>';
-                        }
-                    }
-                } catch(e) { document.getElementById('statTonhaPending').textContent = '-'; }
 
                 // Projetos com atencao (mesmo endpoint do drill — atencao + proximos)
                 try {

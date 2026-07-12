@@ -931,10 +931,7 @@ BOT_TOOLS = [
             "- save_note: {project_id, titulo, conteudo}\n"
             "- save_memory: {contact_id, titulo, resumo, tipo?}\n"
             "- save_feedback: {conteudo, tipo? bug|melhoria|ideia}\n"
-            "- save_article: {project_id, url} — busca artigo, resume com IA, salva no projeto\n"
-            "- trigger_cos_patrol: dispara o CoS Patrol Agent (Sonnet 4.6) AGORA. "
-            "**Use quando Renato disser 'patrol', 'patrulha', 'cos agora', 'varre tudo' ou similar.** "
-            "Sem params. Resposta vem em mensagens separadas se houver acao."
+            "- save_article: {project_id, url} — busca artigo, resume com IA, salva no projeto"
         ),
         "input_schema": {
             "type": "object",
@@ -1139,28 +1136,6 @@ async def _execute_intel_action(action: str, params: dict) -> str:
                 return async_resp
             except Exception as e:
                 return f"Erro ao salvar artigo: {e}"
-
-        elif action == "trigger_cos_patrol":
-            # Dispara CoS Patrol Agent na hora via endpoint Vercel (que tem o Sonnet 4.6 + tools).
-            # Worker NAO executa tick_safe direto (codigo vive no Vercel, nao replicado aqui).
-            conn.close()
-            try:
-                intel_url = INTEL_API_URL or "https://intel.almeida-prado.com"
-                async with httpx.AsyncClient(timeout=120.0) as client:
-                    resp = await client.post(
-                        f"{intel_url}/api/cos/patrol/run",
-                        json={"secret": WORKER_SECRET, "triggered_by": "intel_bot.worker"},
-                    )
-                if resp.status_code == 200:
-                    j = resp.json()
-                    if j.get("status") == "aborted_budget":
-                        return f"CoS Patrol abortado por budget (${j.get('today_usd', 0):.3f} > cap diario). Aguarda reset 00h ou bump cap."
-                    if j.get("status") == "error":
-                        return f"CoS Patrol erro: {j.get('error', 'desconhecido')[:200]}"
-                    return f"CoS Patrol disparado. Tokens: {j.get('tokens', {})}. Se houver acao, voce recebe mensagens em instantes."
-                return f"CoS Patrol falhou: HTTP {resp.status_code} — {resp.text[:200]}"
-            except Exception as e:
-                return f"Erro disparando patrol: {e}"
 
         conn.close()
         return f"Acao desconhecida: {action}"
@@ -1766,78 +1741,8 @@ def _build_snapshot_block() -> str:
     return "## SITUACAO ATUAL (snapshot — voce JA SABE disso, NAO precisa de tool call pra coisas obvias)\n\n" + "\n\n".join(sections) + "\n\n"
 
 
-async def _maybe_route_to_tonha_brain(phone: str, message: str) -> Optional[str]:
-    """FASE 2B STRANGLER — chama Brain Vercel via HTTP se flag TONHA_REACTIVE_TARGETS
-    bater. Retorna texto pra enviar via Evolution, ou None se nao deve usar Brain.
-    Falha graceful: se Brain timeout/erro, volta None e _run_bot antigo assume.
-    """
-    targets = (os.getenv("TONHA_REACTIVE_TARGETS") or "none").strip().lower()
-    if targets in ("none", ""):
-        return None
-    if targets not in ("all", "wa"):
-        return None  # chat-only nao chega aqui (worker so faz WA)
-
-    # Usa INTEL_API_URL (padrao do worker pra falar com Vercel). Nao usa BASE_URL
-    # porque essa env var no worker pode estar como localhost por engano.
-    base_url = (os.getenv("INTEL_API_URL") or "https://intel.almeida-prado.com").strip().rstrip("/")
-    worker_secret = (os.getenv("WORKER_SECRET") or "").strip()
-    if not worker_secret:
-        logger.warning("[tonha-route] WORKER_SECRET ausente — fallback bot antigo")
-        return None
-
-    # Pega ultimos 10 turnos pra dar contexto
-    history: List[Dict[str, str]] = []
-    try:
-        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT role, content
-            FROM bot_conversations
-            WHERE phone = %s
-              AND role IN ('user', 'assistant')
-              AND content IS NOT NULL AND content != ''
-            ORDER BY created_at DESC
-            LIMIT 10
-        """, (phone,))
-        rows = list(reversed(cur.fetchall()))
-        history = [{"role": r["role"], "content": (r["content"] or "")[:3000]} for r in rows]
-        conn.close()
-    except Exception as e:
-        logger.warning(f"[tonha-route] history load falhou: {e}")
-
-    try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(
-                f"{base_url}/api/internal/tonha-reactive",
-                json={
-                    "secret": worker_secret,
-                    "phone": phone,
-                    "message": message,
-                    "channel": "whatsapp",
-                    "history": history,
-                },
-            )
-            if resp.status_code != 200:
-                logger.error(f"[tonha-route] Vercel returned {resp.status_code}: {resp.text[:200]}")
-                return None
-            data = resp.json()
-            if not data.get("ok"):
-                logger.error(f"[tonha-route] not ok: {data}")
-                return None
-            return data.get("reply") or None
-    except Exception as e:
-        logger.exception(f"[tonha-route] excecao — fallback bot antigo: {e}")
-        return None
-
-
 async def _run_bot(phone: str, message: str, message_id: str) -> str:
     """Full bot processing with tool_use loop. Runs on Railway (no timeout)."""
-    # FASE 2B — tenta Brain Vercel primeiro se flag matches
-    brain_reply = await _maybe_route_to_tonha_brain(phone, message)
-    if brain_reply:
-        logger.info(f"[tonha-route] Brain respondeu ({len(brain_reply)} chars)")
-        return brain_reply
-
     now = _now_sp()
     snapshot = _build_snapshot_block()
 
@@ -1869,7 +1774,7 @@ Voce (CoS Patrol Agent, rodando 30/30min) mandou esta proposta pra Renato via WA
 **Interprete a mensagem ATUAL do Renato como POSSIVEL resposta a essa proposta:**
 
 - Se ele aprovou ("1", "ok", "pode", "manda", "aprovo", "sim", "vai"): EXECUTE proposed_action via tool apropriada (execute_intel/execute_conselhoos/manage_email/web_search conforme o caso). Confirme em 1 linha.
-- Se pediu pra modificar ("muda X", "troca", "reescreve assim"): rascunhe a versao nova e RE-MANDE pra ele aprovar (use trigger_cos_patrol pra gerar novo turno OU envie o draft direto perguntando "manda assim?").
+- Se pediu pra modificar ("muda X", "troca", "reescreve assim"): rascunhe a versao nova e RE-MANDE pra ele aprovar (envie o draft direto perguntando "manda assim?").
 - Se descartou ("3", "ignora", "deixa", "nao", "depois"): apenas confirme em 1 linha. Nao execute.
 - Se a mensagem dele e ASSUNTO NOVO (nao relacionado): trate normal, ignore essa proposta — nao force o link.
 - Se ele perguntou sobre o assunto: responda contextualizadamente e mantenha aberta.
