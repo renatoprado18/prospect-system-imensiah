@@ -1162,7 +1162,22 @@ async def send_daily_digest() -> dict:
         return result
     result["digest_id"] = digest_id
 
-    # Envia via Evolution
+    # A3 (porta-voz único, F-A, 12/07): o digest NÃO é mais enviado como self-chat
+    # WA (instância rap-whatsapp = Renato→Renato). O conteúdo agora chega pela
+    # Tônia: o briefing das 7h lê os hits granulares via copilot.news_hits (A5,
+    # live) e cruza notícia→projeto. O digest fica GRAVADO (histórico +
+    # copilot.news_digests + hits marcados com digest_id = idempotência preservada),
+    # só o ENVIO morre. Reativar = F-B (notification_router escolhe canal), não
+    # aqui. Ver [[project_plano_tonia_copiloto_12_07]] F-A + [[project_dev_backlog]].
+    result["skipped_reason"] = "self_chat_off_porta_voz_unico"
+    logger.info(
+        f"send_daily_digest: digest #{digest_id} gravado; envio self-chat "
+        f"DESLIGADO (A3 porta-voz único) — {n_watchers} watchers/{total_hits} hits "
+        f"chegam pela Tônia (briefing via copilot.news_hits)"
+    )
+    return result
+
+    # Envia via Evolution  [A3: preservado, inalcançável — reativação via F-B]
     try:
         from integrations.whatsapp import WhatsAppIntegration
         wa = WhatsAppIntegration()
