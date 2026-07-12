@@ -24,6 +24,7 @@ Env vars:
 from __future__ import annotations
 
 import json
+from services import llm
 import logging
 import os
 import re
@@ -44,8 +45,8 @@ logger = logging.getLogger(__name__)
 # ---- Config ----
 LINKDAPI_BASE = "https://linkdapi.com"
 SCORE_THRESHOLD = int((os.getenv("LINKEDIN_CURATOR_SCORE_THRESHOLD") or "7").strip() or 7)
-MODEL_SCORING = (os.getenv("LINKEDIN_CURATOR_MODEL_SCORING") or "claude-sonnet-4-6").strip()
-MODEL_DRAFT = (os.getenv("LINKEDIN_CURATOR_MODEL_DRAFT") or "claude-opus-4-7").strip()
+MODEL_SCORING = (os.getenv("LINKEDIN_CURATOR_MODEL_SCORING") or llm.BALANCED).strip()
+MODEL_DRAFT = (os.getenv("LINKEDIN_CURATOR_MODEL_DRAFT") or llm.DEEP).strip()
 MAX_DAILY = int((os.getenv("LINKEDIN_CURATOR_MAX_DAILY") or "15").strip() or 15)
 
 # ---- Cached prompt assets ----

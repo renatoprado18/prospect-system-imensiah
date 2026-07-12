@@ -23,6 +23,7 @@ Dedup proposals: contact_id=NULL nao usa o dedup nativo de action_proposals
 from __future__ import annotations
 
 import hashlib
+from services import llm
 import json
 import logging
 import os
@@ -45,10 +46,10 @@ MAX_HITS_PER_RUN = 50
 
 # Modo B: filtro IA + push WA critico.
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-ANTHROPIC_MODEL_HAIKU = "claude-haiku-4-5-20251001"
+ANTHROPIC_MODEL_HAIKU = llm.FAST
 # Modo D: digest diario interativo usa Sonnet (mais qualidade no resumo).
 # Custo aceitavel: ~5 watchers x ~300 tokens = ~1.5k tokens / dia.
-ANTHROPIC_MODEL_SONNET = "claude-sonnet-4-6"
+ANTHROPIC_MODEL_SONNET = llm.BALANCED
 
 # Numero default pra push (Renato). Pode ser overridado por watcher.wa_target.
 # Hardcoded pq ja foi acordado em memoria/codigo varias vezes.

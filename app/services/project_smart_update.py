@@ -5,6 +5,7 @@ Cruza mensagens recentes dos membros do projeto com tarefas pendentes
 e usa IA para identificar quais tarefas podem ser marcadas como concluidas.
 """
 import os
+from services import llm
 import json
 import logging
 from datetime import datetime, date
@@ -230,7 +231,7 @@ IMPORTANTE:
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 1500,
                     "messages": [{"role": "user", "content": prompt}]
                 }
@@ -778,7 +779,7 @@ REGRAS sobre a memória:
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 2000,
                     "messages": [{"role": "user", "content": prompt}]
                 }

@@ -4,6 +4,7 @@ Weekly briefing generation, funnel analytics, and content strategy for LinkedIn.
 Pillar-based system: NeoGovernanca, IA aplicada, Bastidores/resultados reais.
 """
 import os
+from services import llm
 import json
 import httpx
 import logging
@@ -337,7 +338,7 @@ Responda APENAS com o JSON."""
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 2000,
                     "messages": [{"role": "user", "content": prompt}],
                 },

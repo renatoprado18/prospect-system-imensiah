@@ -11,6 +11,7 @@ How to apply: rodado por cron diário (~22h SP). Output entra no snapshot
 do system prompt.
 """
 import logging
+from services import llm
 import os
 from datetime import datetime, timedelta, date
 from typing import Dict, Optional
@@ -23,7 +24,7 @@ from services.system_memory import save_system_memory
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = llm.BALANCED
 
 
 SYNTHESIS_PROMPT = """Você está lendo as conversas do INTEL com o Renato nas últimas 24h.

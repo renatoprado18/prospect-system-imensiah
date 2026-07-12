@@ -17,6 +17,7 @@ Audit obrigatorio (per AUTONOMY_POLICY.md): cada tick chama log_action.
 Memoria: project_inteligencia_real.md (P6 Diligente Fase 2).
 """
 import json
+from services import llm
 import logging
 import os
 from typing import Any, Dict, List, Optional
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 # Mesmo modelo do intel_bot pra consistencia. Haiku barato; tick e high-frequency.
-CLAUDE_MODEL = os.getenv("INTEL_BOT_MODEL", "claude-haiku-4-5-20251001")
+CLAUDE_MODEL = os.getenv("INTEL_BOT_MODEL", llm.FAST)
 # Loop limitado: max iteracoes por intent (1 tool call -> 1 follow-up text -> stop).
 # Mantem token cost previsivel. 3 e suficiente: tool, observa resultado, decide.
 MAX_TICK_ITERATIONS = 3

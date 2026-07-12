@@ -10,6 +10,7 @@ Fluxo:
 """
 
 import httpx
+from services import llm
 import json
 import logging
 import xml.etree.ElementTree as ET
@@ -147,7 +148,7 @@ Responda APENAS com JSON: {{"categoria": "<nome exato de uma das categorias>"}}
                     "anthropic-version": "2023-06-01",
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": llm.FAST,
                     "max_tokens": 100,
                     "messages": [{"role": "user", "content": prompt}],
                 },
@@ -349,7 +350,7 @@ Responda APENAS com JSON:
                     "anthropic-version": "2023-06-01"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 500,
                     "messages": [{"role": "user", "content": prompt}]
                 },
@@ -474,7 +475,7 @@ Responda em JSON:
                     "anthropic-version": "2023-06-01"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 1000,
                     "messages": [{"role": "user", "content": prompt}]
                 },

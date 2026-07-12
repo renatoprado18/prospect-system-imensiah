@@ -6,6 +6,7 @@ to dynamically decide when to query the CRM, create tasks, send messages, etc.
 No rigid intent classification — Claude decides what tools to use.
 """
 import os
+from services import llm
 import re
 import json
 import httpx
@@ -55,7 +56,7 @@ INTEL_BOT_INSTANCE = (os.getenv("INTEL_BOT_INSTANCE") or "intel-bot-v2").strip()
 INTEL_BOT_NUMBER = (os.getenv("INTEL_BOT_NUMBER") or "5511915020192").strip()
 RENATO_PHONE = "5511984153337"
 RENATO_PHONE_SUFFIXES = ["11984153337", "984153337"]
-CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+CLAUDE_MODEL = llm.FAST
 MAX_TOOL_ITERATIONS = 4  # bumped de 3 -> 4 pra acomodar re-prompt + retry
 # Max re-prompts when detector flags promessa-sem-tool. 1 chance extra:
 # bot pode reagir a aviso explicito chamando tool ou admitindo limite.

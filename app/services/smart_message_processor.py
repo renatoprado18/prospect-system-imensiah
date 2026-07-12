@@ -10,6 +10,7 @@ Auto-executa acoes claras e cria propostas para casos ambiguos.
 Notifica Renato via intel-bot para todas as propostas criadas.
 """
 import os
+from services import llm
 import re
 import logging
 import httpx
@@ -20,7 +21,7 @@ from database import get_db
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = llm.BALANCED
 OWNER_CONTACT_ID = 14911
 
 # ==================== REGEX PATTERNS ====================

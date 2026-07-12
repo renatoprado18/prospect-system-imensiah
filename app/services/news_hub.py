@@ -9,6 +9,7 @@ Combina:
 """
 
 import os
+from services import llm
 import httpx
 import json
 import logging
@@ -671,7 +672,7 @@ REGRAS DE RESPOSTA:
 Resposta:"""
 
         response = client.messages.create(
-            model="claude-sonnet-4-6",
+            model=llm.BALANCED,
             max_tokens=200,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -794,7 +795,7 @@ Responda de forma direta, sem rótulos. Formato:
 💡 [Impacto em 1 frase]"""
 
         response = client.messages.create(
-            model="claude-sonnet-4-6",
+            model=llm.BALANCED,
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -867,7 +868,7 @@ Responda em português, de forma direta e prática. Formato:
 💡 Ação: [sugestão]"""
 
         response = client.messages.create(
-            model="claude-sonnet-4-6",
+            model=llm.BALANCED,
             max_tokens=400,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -984,7 +985,7 @@ Priorize: noticias acionaveis, que o Renato pode comentar no LinkedIn, ou que af
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 1500,
+                json={"model": llm.FAST, "max_tokens": 1500,
                       "messages": [{"role": "user", "content": prompt}]}
             )
 

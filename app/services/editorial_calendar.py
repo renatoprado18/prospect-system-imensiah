@@ -4,6 +4,7 @@ Manages content scheduling for LinkedIn and Instagram
 Includes AI-powered content analysis and categorization
 """
 import os
+from services import llm
 import httpx
 import logging
 from datetime import datetime, timedelta
@@ -760,7 +761,7 @@ Responda APENAS com o JSON, sem explicações adicionais."""
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 1000,
                     "messages": [{"role": "user", "content": prompt}]
                 }

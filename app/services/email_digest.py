@@ -5,6 +5,7 @@ Busca emails das últimas 24h via Gmail API para ambas as contas
 (pessoal e profissional), resume com IA, envia via WhatsApp.
 """
 import os
+from services import llm
 import json
 import logging
 import base64
@@ -202,7 +203,7 @@ Máximo 300 palavras. Português. Direto."""
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
                          "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500,
+                json={"model": llm.FAST, "max_tokens": 500,
                       "messages": [{"role": "user", "content": prompt}]}
             )
         if resp.status_code == 200:

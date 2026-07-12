@@ -5,6 +5,7 @@ Sends WhatsApp briefing to Renato 1h before each meeting.
 Includes: participants, last interactions, pending tasks, relevant facts.
 """
 import os
+from services import llm
 import json
 import logging
 from datetime import datetime, timedelta
@@ -245,7 +246,7 @@ Responda APENAS com a sugestão, máximo 1 linha. Português. Comece com emoji."
                         "https://api.anthropic.com/v1/messages",
                         headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
                                  "content-type": "application/json"},
-                        json={"model": "claude-haiku-4-5-20251001", "max_tokens": 100,
+                        json={"model": llm.FAST, "max_tokens": 100,
                               "messages": [{"role": "user", "content": prompt}]}
                     )
                 if resp.status_code == 200:

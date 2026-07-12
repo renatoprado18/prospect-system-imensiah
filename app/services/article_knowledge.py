@@ -4,6 +4,7 @@ Article Knowledge Service - Fetch, summarize, and save articles to projects.
 Fluxo: URL → fetch HTML → extract text → AI summary → save as project_note
 """
 import os
+from services import llm
 import re
 import json
 import logging
@@ -123,7 +124,7 @@ Máximo 200 palavras. Português."""
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": llm.FAST,
                     "max_tokens": 500,
                     "messages": [{"role": "user", "content": prompt}]
                 }

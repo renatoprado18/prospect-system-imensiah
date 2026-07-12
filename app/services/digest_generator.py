@@ -7,6 +7,7 @@ Gera resumos:
 - Mensal: Visao geral do mes
 """
 import os
+from services import llm
 import json
 import httpx
 from typing import List, Dict, Optional
@@ -14,7 +15,7 @@ from datetime import datetime, timedelta
 from database import get_db
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = llm.BALANCED
 
 
 class DigestGeneratorService:
@@ -347,7 +348,7 @@ REGRAS:
             resp = hx.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 800, "messages": [{"role": "user", "content": prompt}]},
+                json={"model": llm.FAST, "max_tokens": 800, "messages": [{"role": "user", "content": prompt}]},
                 timeout=15.0
             )
             if resp.status_code == 200:

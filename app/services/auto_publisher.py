@@ -8,6 +8,7 @@ Fluxo:
 4. Cron diario: publica posts agendados cuja hora chegou
 """
 import asyncio
+from services import llm
 import os
 import json
 import logging
@@ -317,7 +318,7 @@ Responda APENAS com JSON:
                 resp = await client.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500, "messages": [{"role": "user", "content": prompt}]}
+                    json={"model": llm.FAST, "max_tokens": 500, "messages": [{"role": "user", "content": prompt}]}
                 )
             if resp.status_code != 200:
                 logger.warning(f"select_weekly_posts {bucket_name}: API {resp.status_code}")
@@ -624,7 +625,7 @@ Responda APENAS JSON: {{"index": <numero>, "reason": "motivo curto"}}"""
                 resp = await client.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 200, "messages": [{"role": "user", "content": prompt}]}
+                    json={"model": llm.FAST, "max_tokens": 200, "messages": [{"role": "user", "content": prompt}]}
                 )
             if resp.status_code == 200:
                 text = resp.json()["content"][0]["text"]

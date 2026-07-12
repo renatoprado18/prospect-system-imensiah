@@ -9,6 +9,7 @@ Fluxo:
 """
 
 import base64
+from services import llm
 import json
 import logging
 import os
@@ -63,7 +64,7 @@ async def _ocr_screenshot(image_b64: str, mime: str = "image/jpeg") -> Optional[
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 4000,
                     "messages": [{
                         "role": "user",

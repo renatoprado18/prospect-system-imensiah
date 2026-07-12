@@ -18,6 +18,7 @@ Política por contact_circulo:
 from __future__ import annotations
 
 import json
+from services import llm
 import logging
 import os
 import uuid
@@ -31,7 +32,7 @@ from services.tz import now_utc
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = llm.BALANCED
 ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip().rstrip("\\n").strip()
 
 # Pricing Sonnet 4.6 (USD per milhao tokens). Atualizar com model bump.

@@ -8,6 +8,7 @@ Gera sugestoes inteligentes:
 - Health: Contatos com health baixo
 """
 import os
+from services import llm
 import json
 import httpx
 from typing import List, Dict, Optional
@@ -15,7 +16,7 @@ from datetime import datetime, timedelta
 from database import get_db
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = llm.BALANCED
 
 
 class AIAgentService:

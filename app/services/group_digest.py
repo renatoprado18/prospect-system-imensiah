@@ -5,6 +5,7 @@ Gera resumo IA das mensagens do dia para cada grupo com sync ativo.
 Envia via WhatsApp (intel-bot) com destaques e pendências.
 """
 import os
+from services import llm
 import json
 import logging
 from datetime import datetime, timedelta
@@ -121,7 +122,7 @@ Português. Direto. Sem introdução."""
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
                          "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 300,
+                json={"model": llm.FAST, "max_tokens": 300,
                       "messages": [{"role": "user", "content": prompt}]}
             )
 

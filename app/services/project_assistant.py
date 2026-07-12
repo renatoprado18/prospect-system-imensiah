@@ -6,6 +6,7 @@ mensagens, pareceres, notas. Usa Claude com tool_use para consultar
 e executar ações no escopo do projeto.
 """
 import os
+from services import llm
 import json
 import logging
 from datetime import datetime
@@ -16,7 +17,7 @@ from database import get_db
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = llm.BALANCED
 MAX_TOOL_ITERATIONS = 5
 
 TOOLS = [

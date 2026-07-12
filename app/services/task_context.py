@@ -6,6 +6,7 @@ Autor: INTEL
 Data: 2026-03-30
 """
 import logging
+from services import llm
 import os
 from datetime import datetime
 from typing import Dict, List, Any, Optional
@@ -392,7 +393,7 @@ IMPORTANTE:
                         "content-type": "application/json"
                     },
                     json={
-                        "model": "claude-sonnet-4-6",
+                        "model": llm.BALANCED,
                         "max_tokens": 1024,
                         "messages": [{"role": "user", "content": prompt}]
                     }
@@ -641,7 +642,7 @@ Se a tarefa não precisar de follow-up (ex: tarefa interna, sem necessidade de r
                         "content-type": "application/json"
                     },
                     json={
-                        "model": "claude-sonnet-4-6",
+                        "model": llm.BALANCED,
                         "max_tokens": 256,
                         "messages": [{"role": "user", "content": prompt}]
                     }

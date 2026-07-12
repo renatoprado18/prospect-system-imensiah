@@ -18,6 +18,7 @@ Cost: ~Haiku 4.5 ~$0.001/msg. Grupo ativo 20 msg/dia = ~$0.6/mes/grupo.
 from __future__ import annotations
 
 import os
+from services import llm
 import json
 import logging
 import re
@@ -127,7 +128,7 @@ Responda APENAS o JSON array."""
             r = await cli.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 1200,
+                json={"model": llm.FAST, "max_tokens": 1200,
                       "messages": [{"role": "user", "content": prompt}]}
             )
         if r.status_code != 200:
@@ -266,7 +267,7 @@ async def _download_media_from_evolution(message_key: Dict, instance: str) -> Op
 
 
 async def _claude_media_to_text(b64: str, mime: str, instruction: str,
-                                  model: str = "claude-haiku-4-5-20251001") -> Optional[str]:
+                                  model: str = llm.FAST) -> Optional[str]:
     """Envia media pro Claude com instrucao de extracao. Audio/PDF = type=document; image = type=image."""
     if not ANTHROPIC_API_KEY:
         return None

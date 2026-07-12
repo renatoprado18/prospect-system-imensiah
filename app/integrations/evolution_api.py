@@ -7,6 +7,7 @@ Docs: https://doc.evolution-api.com/v2/en
 GitHub: https://github.com/EvolutionAPI/evolution-api
 """
 import os
+from services import llm
 import json
 import httpx
 import logging
@@ -1267,7 +1268,7 @@ async def _transcribe_bot_audio(key: Dict, data: Dict) -> str:
                 "content-type": "application/json"
             },
             json={
-                "model": "claude-haiku-4-5-20251001",
+                "model": llm.FAST,
                 "max_tokens": 1000,
                 "messages": [{
                     "role": "user",

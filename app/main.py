@@ -14,6 +14,7 @@ env_path = Path(__file__).resolve().parent.parent / '.env'
 load_dotenv(env_path)
 
 import os
+from services import llm
 import sys
 import json
 import asyncio
@@ -375,7 +376,7 @@ async def ai_api_status():
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": llm.FAST,
                     "max_tokens": 1,
                     "messages": [{"role": "user", "content": "ok"}]
                 }
@@ -2906,7 +2907,7 @@ Retorne APENAS o JSON, sem explicacoes."""
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 1024,
                     "messages": [{"role": "user", "content": prompt}]
                 },
@@ -8761,7 +8762,7 @@ Seja direto. Portugues. Sem juridiques."""
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500, "messages": [{"role": "user", "content": prompt}]}
+                json={"model": llm.FAST, "max_tokens": 500, "messages": [{"role": "user", "content": prompt}]}
             )
         if resp.status_code == 200:
             analysis = resp.json()["content"][0]["text"]
@@ -21050,7 +21051,7 @@ REGRAS:
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 1000,
                     "messages": [{"role": "user", "content": prompt}],
                 },
@@ -21612,7 +21613,7 @@ Instrucoes:
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 2000,
                     "messages": [{"role": "user", "content": prompt}]
                 }
@@ -21753,7 +21754,7 @@ INSTRUCOES:
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-sonnet-4-6", "max_tokens": 1500, "messages": [{"role": "user", "content": prompt}]}
+                json={"model": llm.BALANCED, "max_tokens": 1500, "messages": [{"role": "user", "content": prompt}]}
             )
         if resp.status_code != 200:
             raise HTTPException(status_code=500, detail=f"Erro API: {resp.status_code}")
@@ -21847,7 +21848,7 @@ PARECER ORIGINAL (projeto: {project_name}):
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 800,
+                json={"model": llm.FAST, "max_tokens": 800,
                       "messages": [{"role": "user", "content": prompt}]}
             )
         if resp.status_code == 200:
@@ -22404,7 +22405,7 @@ Responda JSON puro, sem markdown:
         resp = await client.post(
             "https://api.anthropic.com/v1/messages",
             headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": "claude-sonnet-4-6", "max_tokens": 1500, "messages": [{"role": "user", "content": prompt}]},
+            json={"model": llm.BALANCED, "max_tokens": 1500, "messages": [{"role": "user", "content": prompt}]},
         )
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Claude API {resp.status_code}: {resp.text[:300]}")
@@ -24680,7 +24681,7 @@ NAO invente URLs ou links — se quiser referenciar um artigo, deixe em branco."
                 resp = await client.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500,
+                    json={"model": llm.FAST, "max_tokens": 500,
                           "messages": [{"role": "user", "content": prompt}]}
                 )
                 if resp.status_code == 200:
@@ -24791,7 +24792,7 @@ INSTRUCOES - Gere APENAS a mensagem, nada mais:
             resp = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                json={"model": "claude-haiku-4-5-20251001", "max_tokens": 300,
+                json={"model": llm.FAST, "max_tokens": 300,
                       "messages": [{"role": "user", "content": prompt}]}
             )
         if resp.status_code == 200:
@@ -26301,7 +26302,7 @@ Retorne APENAS o JSON válido."""
     try:
         client = anthropic.Anthropic()
         message = client.messages.create(
-            model="claude-sonnet-4-6",
+            model=llm.BALANCED,
             max_tokens=8000,
             messages=[{"role": "user", "content": prompt}],
         )

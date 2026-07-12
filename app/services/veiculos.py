@@ -5,6 +5,7 @@ from datetime import datetime, date, timedelta
 from typing import List, Dict, Optional, Any
 from dateutil.relativedelta import relativedelta
 import json
+from services import llm
 import os
 import base64
 import logging
@@ -1069,7 +1070,7 @@ Regras:
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 1000,
                     "messages": [{
                         "role": "user",

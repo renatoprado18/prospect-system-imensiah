@@ -12,6 +12,7 @@ Autor: INTEL
 Data: 2026-04-02
 """
 import os
+from services import llm
 import re
 import json
 import httpx
@@ -112,7 +113,7 @@ Se nao houver reuniao:
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 1000,
                     "messages": [{"role": "user", "content": prompt}]
                 }
@@ -281,7 +282,7 @@ async def _find_address_on_website(website_url: str, company_name: str) -> Optio
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 300,
                     "messages": [{
                         "role": "user",

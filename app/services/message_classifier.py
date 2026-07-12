@@ -14,6 +14,7 @@ NAO usar Sonnet/Opus — classificacao binaria nao precisa.
 Override manual: salva com method='manual' e tem precedencia (sobrescreve cache).
 """
 import os
+from services import llm
 import re
 import json
 import logging
@@ -24,7 +25,7 @@ from database import get_db
 
 logger = logging.getLogger(__name__)
 
-CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
+CLASSIFIER_MODEL = llm.FAST
 MAX_TOKENS = 150
 
 # Patterns 100% "nao precisa resposta" — fechamento, ack, agradecimento curto.

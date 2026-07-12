@@ -7,6 +7,7 @@ um briefing executivo adaptativo pre-reuniao.
 Author: INTEL
 """
 import os
+from services import llm
 import json
 import logging
 from datetime import datetime, timedelta
@@ -21,7 +22,7 @@ from database import get_db
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = llm.BALANCED
 CONSELHOOS_DATABASE_URL = os.getenv("CONSELHOOS_DATABASE_URL")
 CONSELHOOS_USER_ID = os.getenv("CONSELHOOS_USER_ID", "")
 

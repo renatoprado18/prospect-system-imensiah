@@ -13,6 +13,7 @@ Uses all available data:
 - Relationship history
 """
 import os
+from services import llm
 import json
 import httpx
 from datetime import datetime, timedelta
@@ -22,7 +23,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = llm.BALANCED
 
 
 async def gather_contact_context(contact_id: int, db_connection) -> Dict[str, Any]:

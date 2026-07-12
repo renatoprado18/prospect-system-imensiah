@@ -8,6 +8,7 @@ Inclui historico, health score, fatos importantes e sugestoes de pauta.
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import json
+from services import llm
 import os
 import httpx
 
@@ -21,7 +22,7 @@ import re
 
 # Configuracao AI
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = llm.BALANCED
 
 
 # ============== PERSISTENCIA DE BRIEFINGS ==============

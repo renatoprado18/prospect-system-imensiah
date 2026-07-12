@@ -14,6 +14,7 @@ Generates:
 - Follow-up suggestions
 """
 import os
+from services import llm
 import json
 import httpx
 from datetime import datetime, timedelta
@@ -21,7 +22,7 @@ from typing import Optional, Dict, List, Any
 
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = llm.BALANCED
 
 import logging
 logger = logging.getLogger(__name__)

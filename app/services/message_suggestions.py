@@ -7,6 +7,7 @@ Funcionalidades:
 - Rendering de templates com variaveis
 """
 import os
+from services import llm
 import json
 import re
 import httpx
@@ -15,7 +16,7 @@ from datetime import datetime
 from database import get_db
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = llm.BALANCED
 
 
 class MessageSuggestionsService:

@@ -6,6 +6,7 @@ Endpoint: GET /api/contacts/{contact_id}/timeline
 Agrupa mensagens por dia + canal e gera resumos com IA.
 """
 import os
+from services import llm
 import json
 import hashlib
 import httpx
@@ -258,7 +259,7 @@ Responda APENAS com o resumo, sem explicacoes."""
                         "content-type": "application/json"
                     },
                     json={
-                        "model": "claude-sonnet-4-6",
+                        "model": llm.BALANCED,
                         "max_tokens": 100,
                         "messages": [{"role": "user", "content": prompt}]
                     }

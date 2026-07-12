@@ -12,6 +12,7 @@ estabelecidos, basta combinar bem). ~$0.01/call.
 from __future__ import annotations
 
 import json
+from services import llm
 import logging
 import os
 import re
@@ -24,7 +25,7 @@ from services.linkedin_comment_curator import _load_cv, _load_framework
 
 logger = logging.getLogger(__name__)
 
-MODEL = (os.getenv("LINKEDIN_REPLY_DRAFTER_MODEL") or "claude-sonnet-4-6").strip()
+MODEL = (os.getenv("LINKEDIN_REPLY_DRAFTER_MODEL") or llm.BALANCED).strip()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
 

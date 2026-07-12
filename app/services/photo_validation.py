@@ -7,6 +7,7 @@ Uses Claude Vision to validate if a photo is appropriate for a contact profile:
 - Is the face clearly visible?
 """
 import os
+from services import llm
 import httpx
 import base64
 import logging
@@ -72,7 +73,7 @@ async def validate_profile_photo(image_url: str) -> Dict:
                     "content-type": "application/json"
                 },
                 json={
-                    "model": "claude-sonnet-4-6",
+                    "model": llm.BALANCED,
                     "max_tokens": 500,
                     "messages": [
                         {

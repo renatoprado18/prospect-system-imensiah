@@ -8,6 +8,7 @@ Suporta dois providers:
 Detecta mudancas de emprego e gera alertas.
 """
 import os
+from services import llm
 import re
 import json
 import httpx
@@ -686,7 +687,7 @@ Dados:
             return {"error": "ANTHROPIC_API_KEY not set", "code": "NO_CLAUDE"}
         client = Anthropic(api_key=api_key)
         msg = client.messages.create(
-            model="claude-sonnet-4-6",
+            model=llm.BALANCED,
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}],
         )

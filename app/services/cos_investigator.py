@@ -29,6 +29,7 @@ hit (~90% saving prefix), ~$0.02-0.05 por ciclo @ Sonnet 4.6.
 from __future__ import annotations
 
 import json
+from services import llm
 import logging
 import os
 import time
@@ -48,7 +49,7 @@ from services.tz import now_utc, to_brt
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
-COS_INVESTIGATOR_MODEL = "claude-sonnet-4-6"
+COS_INVESTIGATOR_MODEL = llm.BALANCED
 MAX_ITERATIONS = 15
 MAX_TOKENS_PER_ITER = 4096
 
