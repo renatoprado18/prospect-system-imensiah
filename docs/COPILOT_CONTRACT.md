@@ -161,6 +161,43 @@ Origem: `public.action_proposals`. Propostas do INTEL proativo (auto-dedup conta
 | `payload` | jsonb | Parâmetros da ação (físico: `action_params`) |
 | `criado_em` | timestamp | Criação (UTC naive) |
 
+## copilot.news_hits
+
+Origem: `public.project_news_hits` (039/040) LEFT JOIN `public.project_news_watchers` (contexto do watcher). Notícias captadas pelos watchers de projeto. `watcher_id` sozinho não diz nada — o valor está em `project_id` + `watcher_query` (cruzar notícia→projeto no briefing, A5). Não expostas: `url_hash` (dedup interno), `pushed_at` (mecânica de entrega).
+
+| Coluna | Tipo | Semântica |
+|---|---|---|
+| `id` | integer | PK do hit |
+| `watcher_id` | integer | FK → watcher que captou |
+| `project_id` | integer | Projeto do watcher (via join; NOT NULL na origem) |
+| `watcher_query` | text | Busca/tema do watcher (físico: `project_news_watchers.query`) |
+| `delivery_mode` | text | `silent` / `critical_push` / `digest_weekly` / `digest_daily` |
+| `title` | text | Título da notícia |
+| `url` | text | Link |
+| `source` | text | Fonte (ex.: `Google News`) |
+| `published_at` | timestamp | Publicação (UTC naive, do feed; nullable) |
+| `hit_at` | timestamp | Quando o watcher captou (UTC naive) |
+| `relevance_score` | double precision | Score AI 0–1 (físico: `ai_relevance_score`; nullable — só watchers com scoring) |
+| `digest_id` | bigint | FK → `copilot.news_digests.id` (preenchido = já foi pra digest) |
+| `proposal_id` | integer | FK → action_proposals (preenchido = virou proposta) |
+| `archived_at` | timestamp | Arquivamento (nullable) |
+
+## copilot.news_digests
+
+Origem: `public.news_digests` (042). Digests de news já enviados (self-chat WA hoje, migra pro briefing na A3). Não exposta: `message_id_evolution` (id interno da Evolution).
+
+| Coluna | Tipo | Semântica |
+|---|---|---|
+| `id` | bigint | PK do digest |
+| `sent_at` | timestamp | Envio (UTC naive) |
+| `target` | text | Destino WA (físico: `wa_target`) |
+| `watchers_count` | integer | Nº de watchers no digest |
+| `hits_count` | integer | Nº de notícias no digest |
+| `content` | text | Texto do digest (físico: `message_text`) |
+| `ack_status` | text | `pending` / `acked_ok` / `drilled` / `expired` |
+| `acked_at` | timestamp | Quando o Renato reagiu (nullable) |
+| `expires_at` | timestamp | Expiração da janela de drill (nullable) |
+
 ---
 
 ## Aliases (nome físico → nome do contrato)
@@ -182,3 +219,7 @@ Origem: `public.action_proposals`. Propostas do INTEL proativo (auto-dedup conta
 | memories | `criado_em` / `atualizado_em` | `created_at` / `updated_at` |
 | action_proposals | `action_type` | `tipo` |
 | action_proposals | `action_params` | `payload` |
+| news_hits | `ai_relevance_score` | `relevance_score` |
+| news_hits | `project_news_watchers.query` (join) | `watcher_query` |
+| news_digests | `wa_target` | `target` |
+| news_digests | `message_text` | `content` |
