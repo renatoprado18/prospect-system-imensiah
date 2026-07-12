@@ -1015,7 +1015,8 @@ async def analyze_message_in_background(message_id: int, contact_id: int, conten
     urgent_alert em tempo real, a cada msg WA) foi DESLIGADO — so gerava ruido. O julgamento
     agora e dos detectores (signals, cron detectors-run) + Tonia (briefing/urgent). Esta funcao
     passa a rodar SO o smart_message_processor (email/reuniao/telefone), que e util e separado.
-    Codigo do analyzer mantido em services/realtime_analyzer.py, mas sem caller."""
+    O modulo services/realtime_analyzer.py (orfao, sem caller) foi removido na limpeza
+    pos-sunset (12/07/26) — historico no git."""
 
     # Smart Message Processor: detecta emails, reunioes, telefones
     try:

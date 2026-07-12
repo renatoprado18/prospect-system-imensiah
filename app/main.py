@@ -10332,20 +10332,12 @@ async def cron_daily_sync(request: Request):
             return await check_payment_replies(token)
         return {"skipped": "no token"}
 
-    async def step_fup():
-        from services.smart_fup import check_pending_fups
-        with get_db() as conn:
-            token = await get_valid_token(conn, 'professional')
-        if token:
-            return await check_pending_fups(token)
-        return {"skipped": "no token"}
-
     await _aio.gather(
         run_step("sync_gmail", step_gmail, timeout=15.0),
         run_step("payment_cycle", step_payment, timeout=60.0),
         # Sunset gen-1 (11/07/26): smart_fup (follow_up_alert de email) desligado — so ruido.
-        # Follow-up relevante agora vem via signals dos detectores + Tonia. step_fup mantido acima.
-        # run_step("smart_fup", step_fup, timeout=60.0),
+        # Follow-up relevante agora vem via signals dos detectores + Tonia. Codigo morto
+        # (step_fup + services/smart_fup.py) removido na limpeza pos-sunset (12/07/26).
     )
 
     # ==================== FASE 3: IA e processamento (paralelo) ====================
