@@ -142,6 +142,52 @@ def expire_stale_signals(conn, *, detector: str, current_hashes: List[str], reas
     return cur.rowcount
 
 
+# TTL por tipo de signal EFEMERO (horas). Estes signals sao emitidos por
+# emit_signal AVULSO (A6/A7 do porta-voz unico: digests, pre/post-meeting,
+# escalations, linkedin) — NAO passam por nenhum detector recorrente que os
+# expire via expire_stale_signals. Sem TTL ficam 'open' pra sempre: incham a
+# tabela e vazam pra qualquer leitura de status='open' sem exclude_seen.
+# A Tonia ja nao os re-mostra (dedup tonia_seen_signals), mas o registro fica
+# sujo. Este sweep marca 'expired' por idade. Ver [[reference_porta_voz_signal_routing]].
+EPHEMERAL_SIGNAL_TTL_HOURS: Dict[str, int] = {
+    "pre_meeting_briefing": 24,        # dossie just-in-time; reuniao ja passou
+    "post_meeting_c1": 72,             # follow-up de reuniao; 3 dias
+    "agent_intent_blocked": 120,       # 5 dias travado = stale
+    "weekly_digest": 168,              # 7 dias (proximo digest ja veio)
+    "editorial_weekly_digest": 168,    # idem
+    "editorial_monthly_digest": 720,   # 30 dias
+    "linkedin_author_reply": 168,      # 7 dias
+    "linkedin_engagement_quarantine": 168,
+}
+
+
+def expire_aged_signals(conn) -> int:
+    """Marca 'expired' signals efemeros abertos que passaram do TTL por tipo.
+
+    Complementa expire_stale_signals (que so cobre signals de detector,
+    expirados por ausencia na run seguinte). Signals de emit_signal avulso nao
+    tem run recorrente — expiram por IDADE aqui. Idempotente (so toca 'open').
+    Retorna quantas linhas expiraram.
+    """
+    cur = conn.cursor()
+    total = 0
+    for tipo, ttl_h in EPHEMERAL_SIGNAL_TTL_HOURS.items():
+        cur.execute(
+            """
+            UPDATE signals
+            SET status = 'expired',
+                resolved_at = NOW(),
+                resolved_by = 'ttl_expired'
+            WHERE tipo = %s
+              AND status = 'open'
+              AND criado_em < NOW() - make_interval(hours => %s)
+            """,
+            (tipo, ttl_h),
+        )
+        total += cur.rowcount
+    return total
+
+
 def run_all_detectors(only: Optional[List[str]] = None) -> Dict[str, Any]:
     """Executa todos os detectores em sequencia. Retorna stats agregadas.
 
@@ -175,6 +221,7 @@ def run_all_detectors(only: Optional[List[str]] = None) -> Dict[str, Any]:
     started = time.time()
     results: List[Dict[str, Any]] = []
     total = {"emitted": 0, "updated": 0, "skipped": 0, "expired": 0}
+    aged_expired = 0
 
     with get_db() as conn:
         for name, fn in all_detectors:
@@ -197,10 +244,21 @@ def run_all_detectors(only: Optional[List[str]] = None) -> Dict[str, Any]:
                     "errors": [str(e)[:300]],
                 })
 
+        # TTL de signals efemeros (emit_signal avulso, A6/A7) — sweep proprio,
+        # falha isolada nao polui os detectores acima.
+        try:
+            aged_expired = expire_aged_signals(conn)
+            conn.commit()
+            total["expired"] += aged_expired
+        except Exception as e:
+            conn.rollback()
+            logger.exception("expire_aged_signals crashed")
+
     return {
         "ok": True,
         "total_duration_ms": int((time.time() - started) * 1000),
         "detectors_run": len(results),
         "totals": total,
+        "aged_expired": aged_expired,
         "details": results,
     }
