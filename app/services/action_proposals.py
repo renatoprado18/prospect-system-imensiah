@@ -366,9 +366,13 @@ class ActionProposalsService:
                 "title": proposal_data.get("title"),
             })
 
-            # Send push notification for new proposals
-            if proposal:
-                self._send_push_notification(proposal)
+            # Push por proposta DESLIGADO (F-A / A1, porta-voz único 12/07).
+            # A Tônia já surfaça proposals via signals; o web push event-driven
+            # por proposta era ruído redundante e de alto volume. O serviço VAPID
+            # (push_notifications.py) segue vivo e ocioso pra F-B (canal inteligente
+            # via notification_router). Ver [[project_plano_tonia_copiloto_12_07]].
+            # if proposal:
+            #     self._send_push_notification(proposal)
 
             return proposal
 
@@ -388,7 +392,14 @@ class ActionProposalsService:
             logging.getLogger(__name__).warning(f"audit failed for proposal {proposal_id}: {e}")
 
     def _send_push_notification(self, proposal: Dict):
-        """Send browser push notification for a new proposal."""
+        """Send browser push notification for a new proposal.
+
+        DESLIGADO em F-A / A1 (porta-voz único, 12/07). Early-return no-op como
+        defesa em profundidade: mesmo que algum call site futuro chame este método,
+        nenhum push por proposta dispara. Reativar = F-B via notification_router,
+        não aqui. O serviço VAPID (push_notifications.py) fica intacto.
+        """
+        return  # A1: push por proposta desligado (porta-voz único)
         try:
             from services.push_notifications import get_push_service
             push_service = get_push_service()
