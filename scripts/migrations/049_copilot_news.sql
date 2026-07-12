@@ -24,7 +24,9 @@ CREATE SCHEMA IF NOT EXISTS copilot;
 -- copilot.news_hits — noticias captadas pelos watchers, com contexto do watcher.
 -- Base: public.project_news_hits (039/040). JOIN watcher pra project_id + query.
 -- Nao expostas: url_hash (dedup interno), pushed_at (mecanica de entrega interna).
--- Aliases: relevance_score <- ai_relevance_score, watcher_query <- watchers.query.
+-- Aliases: relevance_score <- ai_relevance_score, watcher_query <- watchers.query,
+--          project_name <- projects.nome (LEFT JOIN public.projects pra o briefing
+--          nomear o projeto sem 2a query; ultima coluna = regra do CREATE OR REPLACE).
 -- =============================================================================
 CREATE OR REPLACE VIEW copilot.news_hits AS
 SELECT
@@ -41,11 +43,13 @@ SELECT
     h.ai_relevance_score    AS relevance_score,
     h.digest_id,
     h.proposal_id,
-    h.archived_at
+    h.archived_at,
+    p.nome                  AS project_name
 FROM public.project_news_hits h
-LEFT JOIN public.project_news_watchers w ON w.id = h.watcher_id;
+LEFT JOIN public.project_news_watchers w ON w.id = h.watcher_id
+LEFT JOIN public.projects p ON p.id = w.project_id;
 
-COMMENT ON VIEW copilot.news_hits IS 'Noticias captadas pelos watchers de projeto, com contexto (project_id + watcher_query pra cruzar noticia->projeto). relevance_score 0-1 (AI), digest_id preenchido = ja foi pra digest, proposal_id = virou proposta, archived_at = arquivada. Timestamps UTC naive.';
+COMMENT ON VIEW copilot.news_hits IS 'Noticias captadas pelos watchers de projeto, com contexto (project_id + project_name + watcher_query pra cruzar noticia->projeto). relevance_score 0-1 (AI), digest_id preenchido = ja foi pra digest, proposal_id = virou proposta, archived_at = arquivada. Timestamps UTC naive.';
 
 -- =============================================================================
 -- copilot.news_digests — digests de news ja enviados (self-chat WA hoje; migra

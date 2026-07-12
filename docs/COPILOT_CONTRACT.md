@@ -163,7 +163,7 @@ Origem: `public.action_proposals`. Propostas do INTEL proativo (auto-dedup conta
 
 ## copilot.news_hits
 
-Origem: `public.project_news_hits` (039/040) LEFT JOIN `public.project_news_watchers` (contexto do watcher). Notícias captadas pelos watchers de projeto. `watcher_id` sozinho não diz nada — o valor está em `project_id` + `watcher_query` (cruzar notícia→projeto no briefing, A5). Não expostas: `url_hash` (dedup interno), `pushed_at` (mecânica de entrega).
+Origem: `public.project_news_hits` (039/040) LEFT JOIN `public.project_news_watchers` (contexto do watcher) LEFT JOIN `public.projects` (nome do projeto). Notícias captadas pelos watchers de projeto. `watcher_id` sozinho não diz nada — o valor está em `project_id` + `project_name` + `watcher_query` (cruzar notícia→projeto no briefing, A5). Não expostas: `url_hash` (dedup interno), `pushed_at` (mecânica de entrega).
 
 | Coluna | Tipo | Semântica |
 |---|---|---|
@@ -181,6 +181,7 @@ Origem: `public.project_news_hits` (039/040) LEFT JOIN `public.project_news_watc
 | `digest_id` | bigint | FK → `copilot.news_digests.id` (preenchido = já foi pra digest) |
 | `proposal_id` | integer | FK → action_proposals (preenchido = virou proposta) |
 | `archived_at` | timestamp | Arquivamento (nullable) |
+| `project_name` | text | Nome do projeto (físico: `projects.nome` via join; última coluna pra briefing nomear sem 2ª query) |
 
 ## copilot.news_digests
 
@@ -221,5 +222,6 @@ Origem: `public.news_digests` (042). Digests de news já enviados (self-chat WA 
 | action_proposals | `action_params` | `payload` |
 | news_hits | `ai_relevance_score` | `relevance_score` |
 | news_hits | `project_news_watchers.query` (join) | `watcher_query` |
+| news_hits | `projects.nome` (join) | `project_name` |
 | news_digests | `wa_target` | `target` |
 | news_digests | `message_text` | `content` |
