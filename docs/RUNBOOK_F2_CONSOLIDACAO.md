@@ -153,6 +153,12 @@ Bateria completa, tudo verde:
 - **T5** latência DB endpoints 0.47-0.79s. **T6** Neon: **1 conn ativa / 901 max**.
 - **R1** WA E2E (Tônia responde) ✅ · **R2** UI dashboard ✅ · **R3** `daily-morning-briefing` disparado via domínio → `status:sent` (overdue=11, today=4, events=3), WA entregue ✅.
 
+**✅ Sweep de crons de baixa freq (13/07 13:37-13:46, 19 jobs diários/semanais disparados manualmente via domínio Railway — "observação de 24h" comprimida):**
+- **16/19 → `200` limpo** (email-triage-aging, auto-archive-gate-eval, wa-triage-sweep, news-watchers, news-digest, daily-sync 25s, daily-clipping, index-drive-documents 270 docs, linkedin-curator/outbound, daily-synthesis, auto-resolve-editorial, raci-weekly-report, weekly-digest id17, editorial-weekly-briefing).
+- **3/19 timeout de CLIENTE (120s), não quebrados** — `run-daily-ai`, `run-auto-enrich` (log confirma `>240s` processando server-side), `sync-whatsapp-history` (~43min por design). Pré-existente, não regressão.
+- **Serviço saudável pós-19-disparos**: zero crash/OOM/traceback, health 200, Neon 1 conn.
+- **2 achados p/ backlog (não-cutover):** (a) `sync-conselhoos-raci` erro "pessoas Vallen" (empresas OK; `CONSELHOOS_DATABASE_URL` presente → dados/lógica pré-existente); (b) jobs >180s podem exceder o read-timeout do worker → candidatos a async.
+
 **🔧 ACHADO não-bloqueante — pool DB app-level ligado no Railway:** `database.py:144` só desliga o pool psycopg2 (`ThreadedConnectionPool maxconn=10`, código de dev) quando `VERCEL` está no env. No Railway `VERCEL` não existe → pool liga, satura sob carga consolidada, e cai em `[DB] Pool failed, falling back to direct` **em toda request**. **Não é risco**: a `DATABASE_URL` é o **pooler Neon (pgbouncer, 901 max)** e o fallback direct é justamente o modo serverless correto (Neon com 1 conn ativa). É **ruído de log + micro-latência**. Fix P3: estender a guarda pra `RAILWAY_ENVIRONMENT` (`if not VERCEL and not RAILWAY_ENVIRONMENT`) em `_create_connection`/`_return_to_pool`, OU subir `maxconn`. Baixo ROI, cosmético.
 
 ### ROLLBACK (a qualquer momento, ~minutos — Vercel fica vivo)
