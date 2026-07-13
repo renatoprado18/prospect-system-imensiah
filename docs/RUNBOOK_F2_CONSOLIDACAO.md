@@ -80,4 +80,77 @@ INTEL API + worker + Tônia num serviço Railway (ou serviços no mesmo projeto)
 - ✅ **WA anexos → Drive** (`54bee9d`).
 - ✅ **ConselhoOS model bump** sonnet-4→5 (`1644155`, `llm-config.ts` = `claude-sonnet-5`) — commitado pela outra sessão.
 - ⏸️ **read-only ConselhoOS wiring** — held, lane da outra sessão.
-- ⬜ **wrapper LLM INTEL** (~46 sites) — adiado por decisão (colisão alta).
+- ✅ **wrapper LLM INTEL** — FEITO 12/07 (`llm.py` FAST/BALANCED/DEEP, 62 sites; commit `1457b92`). Idem Tônia (`b7042e2`).
+
+---
+
+## ⚡ CHECKLIST EXECUTÁVEL (preparado 13/07 — dual-run já validado)
+
+**Pré-requisitos JÁ prontos:** dual-run Railway de pé + smoke/parity/resiliência VERDES · TTL DNS baixado pra 60 nos 2 domínios (`intel` já era; `tonia` = record `rec_da1d7468c7d42d5b9269380c` criado 12/07) · sessão Baileys vive no Evolution/Hetzner (reiniciar tonia NÃO pede QR) · gen-1/Tonha-H removida.
+
+**URLs Railway:** intel-api = `https://intel-api-production-200b.up.railway.app` · tonia = `https://tonia-production.up.railway.app`.
+
+### Passo 0 — Pré-flight (~5min)
+```bash
+# backup: anotar timestamp PITR (Neon PITR 5min ativo)
+date "+%Y-%m-%d %H:%M:%S BRT"
+# parity fresco (deve dar 4/4 idêntico):
+cd /Users/rap/tonia && python3 scripts/railway_replay_harness.py --mode parity \
+  --tonia-url https://tonia-production.up.railway.app --vercel-url https://tonia.almeida-prado.com
+# confirmar TTL drenou (deve mostrar TTL 60 nos 2):
+dig @8.8.8.8 tonia.almeida-prado.com +noall +answer; dig @8.8.8.8 intel.almeida-prado.com +noall +answer
+```
+
+### Passo 1 — Repontar WEBHOOK Evolution (o processamento; ~15min, 1 instância por vez)
+Método: `POST {EVOLUTION_API_URL}/webhook/set/{instância}` header `apikey: {EVOLUTION_API_KEY}`, payload v2:
+`{"webhook":{"url":"...","events":["MESSAGES_UPSERT","MESSAGES_UPDATE","SEND_MESSAGE","CONNECTION_UPDATE","QRCODE_UPDATED"],"enabled":true,"webhookByEvents":true,"webhookBase64":false}}`
+- **intel-bot-v2** (Tônia) → `url = https://tonia-production.up.railway.app/webhooks/evolution`. Mandar 1 WA de teste → confirmar Tônia responde (LID incluso).
+- **rap-whatsapp** (INTEL) → `url = https://intel-api-production-200b.up.railway.app/api/webhooks/whatsapp`. Testar depois da 1ª OK.
+⚠️ Testar UMA por vez com msg imediata. Webhook = o crítico; DNS pode vir depois.
+
+## ✅ PASSO 1 EXECUTADO — 13/07/2026 13:04-13:09 BRT (supervisionado, Renato presente)
+
+Env audit passou **zero gap bloqueante** antes de tocar webhook:
+- **INTEL** (intel-api): 4 chaves "faltantes" vs Vercel são todas **vazias `""` no próprio Vercel** (`WA_PERSIST_1TO1`, `NOTIFICATION_DIGEST_MODE`, `LINKDAPI_MONITOR_MIN_REACTIONS` = default idêntico) + `VERCEL_API_TOKEN` (não runtime). `DB_TARGET=prod`, `EVOLUTION_API_URL=wa.almeida-prado.com`, `INTEL_BOT_INSTANCE=intel-bot-v2` ✅.
+- **Tônia**: `DATABASE_URL` faltante → coberto por fallback `NEON_DATABASE_URL` (db.py:119 + health verde). `CRON_SECRET` faltante → irrelevante: ticks autenticam por `TONIA_WEB_TOKEN` (bate Vercel↔Railway). **Nenhuma env adicionada.**
+- **git stash@{0} NÃO popado**: mensagem promete Procfile/.python-version/.railwayignore mas eles nunca existiram (Railway roda por nixpacks auto-detect, verde); stash contém só versão **stale** do runbook. Deixado quieto.
+
+⚠️ **Correção do método vs runbook original:** os webhooks vivos estavam com `webhookByEvents=**false**` (não `true`). Repontados **preservando `false`** + os events exatos de cada instância — setar `true` mudaria o roteamento de entrega (risco de blackout).
+
+| Instância | url nova (Railway) | byEvents | events | validação E2E |
+|---|---|---|---|---|
+| `intel-bot-v2` | `tonia-production.up.railway.app/webhooks/evolution` | false | 4 (UPSERT/UPDATE/SEND/CONNECTION) | ✅ recebe 200 + `chat.respond` + `evolution.send_text ok` (respondeu WA) + repasse `wa-ingest` 200 |
+| `rap-whatsapp` | `intel-api-production-200b.up.railway.app/api/webhooks/whatsapp` | false | 5 (+QRCODE_UPDATED) | ✅ `POST /api/webhooks/whatsapp 200 OK` (2 eventos), zero erro |
+
+**Estado pós-Passo-1:** webhooks WA → Railway · crons/ticks/UI/health → ainda Vercel (via DNS, Passo 2 não feito) · Vercel vivo pra rollback · Neon único (DB_TARGET=prod) = sem double-processing (Evolution entrega a 1 endpoint só).
+
+### Passo 2 — DNS (opcional, pode ficar pra depois; ~5min + ~60s propagação)
+No Railway: adicionar custom domain `intel.almeida-prado.com` (svc intel-api) + `tonia.almeida-prado.com` (svc tonia) → Railway devolve um CNAME target. Trocar os 2 CNAMEs no Vercel DNS (`vercel dns rm <id>` + `vercel dns add almeida-prado.com <name> CNAME <railway-target>`). Propaga ~60s (TTL 60).
+
+## ✅ PASSO 2 (DNS) EXECUTADO — 13/07/2026 13:12-13:16 BRT (supervisionado)
+
+Custom domains criados no Railway + TXT `_railway-verify` adicionados no Vercel PRIMEIRO (ownership sem tocar tráfego), verificados, e só então CNAMEs trocados:
+
+| Domínio | CNAME novo (Railway target) | rec Vercel novo | cert |
+|---|---|---|---|
+| `intel.almeida-prado.com` | `51bam3us.up.railway.app` (svc intel-api, domain 71dd3385) | `rec_3d64144cce9f599a7d3f751f` | VALID/COMPLETE |
+| `tonia.almeida-prado.com` | `8l6d48iq.up.railway.app` (svc tonia, domain faedbd1a) | `rec_d5f5e6e6bc720f3edc5fbda4` | VALID/COMPLETE |
+
+Validação: `server: railway-hikari` + `x-railway-edge` nos headers (confirma Railway, não cache Vercel) · intel `/api/health` ok (2300 prospects) · tonia `/health/deep` verde. **Downtime intel ~15-30s** (1 medição http=000 → 200); tonia sem interrupção.
+
+**🎁 Bônus — crons do worker consolidados automaticamente:** o worker Railway (`prospect-system-imensiah`, ~40 jobs em `_SCHEDULER_JOBS`) dispara GETs pra `INTEL_API_URL = https://intel.almeida-prado.com/api/cron/*` (main.py:128). Como o DNS agora aponta pro Railway, **esses ~40 crons passaram a executar no Railway intel-api** (CRON_SECRET bate `…KGq34U` → autenticam OK). Sem ação extra.
+
+**⚠️ DÉBITO PRO PASSO 5 (antes de desligar Vercel INTEL):** 7 crons vivem SÓ no `vercel.json` (disparados pelo scheduler interno do Vercel, **não** no worker) → `health-recalc`, `cleanup`, `editorial-metrics-reminder-evening`, `group-digest`, `platform-costs-snapshot`, `circulos-recalc`, `wa-backfill-1to1`. **Zero double-fire hoje** (nenhum sobrepõe o worker). Mas ao desligar o Vercel eles PARAM — migrar pra `_SCHEDULER_JOBS` do worker antes.
+
+**Rollback DNS:** `vercel dns rm rec_3d64144cce9f599a7d3f751f` + `rec_d5f5e6e6bc720f3edc5fbda4`, depois `vercel dns add almeida-prado.com {intel,tonia} CNAME cname.vercel-dns.com`.
+
+### Passo 3 — Validação (~15min)
+WA E2E (Tônia responde) · briefing/urgent geram · `/health/deep` verde · writes chegam no Neon · observar tráfego real ~15min.
+
+### ROLLBACK (a qualquer momento, ~minutos — Vercel fica vivo)
+Repetir Passo 1 com as URLs Vercel: intel-bot-v2 → `https://tonia.almeida-prado.com/webhooks/evolution`, rap-whatsapp → `https://intel.almeida-prado.com/api/webhooks/whatsapp`. Se mexeu no DNS: reverter os CNAMEs. Neon PITR se houver corrupção de dados.
+
+### Ainda pra preparar na sessão de cutover (antes do Passo 1)
+- Auditar env completeness dos 2 serviços Railway vs Vercel (`railway variables` — chaves, não valores).
+- Retomar a config Railway parqueada em `git stash@{0}` (Procfile + `.python-version` + `.railwayignore`) e decidir se commita.
+- Confirmar `EVOLUTION_API_URL`/`EVOLUTION_API_KEY` à mão (do `.env`).
