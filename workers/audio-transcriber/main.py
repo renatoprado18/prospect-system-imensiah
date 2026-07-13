@@ -274,6 +274,18 @@ _SCHEDULER_JOBS = [
     ("editorial-weekly-briefing", "/api/cron/editorial-weekly-briefing", CronTrigger(day_of_week="sun", hour=21, minute=0)),
     ("daily-synthesis", "/api/cron/daily-synthesis", CronTrigger(hour=1, minute=0)),
     ("auto-resolve-editorial", "/api/cron/auto-resolve-editorial", CronTrigger(hour=15, minute=30)),
+    # 13/07/26 — Passo 5 F-2: migracao final dos 7 crons Vercel-only restantes
+    # (completa a leva de 17/06). Removidos do vercel.json no MESMO commit pra
+    # evitar trigger duplicado. Horarios UTC identicos aos do vercel.json.
+    # cleanup: cron "0 4 * * 0" (0=domingo Unix) → day_of_week="sun" no APScheduler
+    # (day_of_week=0 seria SEGUNDA no APScheduler — nao usar).
+    ("health-recalc", "/api/cron/health-recalc", CronTrigger(hour=18, minute=0)),
+    ("cleanup", "/api/cron/cleanup", CronTrigger(day_of_week="sun", hour=4, minute=0)),
+    ("editorial-metrics-reminder-evening", "/api/cron/editorial-metrics-reminder-evening", CronTrigger(hour=23, minute=0)),
+    ("group-digest", "/api/cron/group-digest", CronTrigger(hour=0, minute=0)),
+    ("platform-costs-snapshot", "/api/cron/platform-costs-snapshot", CronTrigger(day=2, hour=12, minute=0)),
+    ("circulos-recalc", "/api/cron/circulos-recalc", CronTrigger(hour=9, minute=0)),
+    ("wa-backfill-1to1", "/api/cron/wa-backfill-1to1", CronTrigger(hour=9, minute=30)),
     # 15/06/26 KILL SWITCH — 10 specialists CoS desligados em bloco.
     # Toda a fila abaixo gerava notificacao redundante, alucinacao de tools,
     # listas defensivas, anti-padrao de "trazer tarefa operacional pra Renato".
