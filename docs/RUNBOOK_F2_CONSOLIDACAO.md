@@ -144,8 +144,16 @@ Validação: `server: railway-hikari` + `x-railway-edge` nos headers (confirma R
 
 **Rollback DNS:** `vercel dns rm rec_3d64144cce9f599a7d3f751f` + `rec_d5f5e6e6bc720f3edc5fbda4`, depois `vercel dns add almeida-prado.com {intel,tonia} CNAME cname.vercel-dns.com`.
 
-### Passo 3 — Validação (~15min)
-WA E2E (Tônia responde) · briefing/urgent geram · `/health/deep` verde · writes chegam no Neon · observar tráfego real ~15min.
+### Passo 3 — Validação (~15min) — ✅ EXECUTADO 13/07 13:20-13:33 BRT
+Bateria completa, tudo verde:
+- **T1** health+UI via domínios `200` (0.5-0.8s) — 1 blip de 10s pontual, **não recorreu** (Neon saudável, sem restart nos logs → provável cold-start/rede).
+- **T2** parity Railway vs Vercel **4/4** (incl. LID ouro).
+- **T3** writes no Neon: **9 mensagens** gravadas/40min (ingestão WA OK).
+- **T4** crons do worker → Railway: **8 heartbeats `railway-worker`/20min, todos 200** (`tonia-delegate-pickup`, `process-scheduled-actions`, `detectors-run`, `run-social-groups`, `wa-drive-archive`) — prova da consolidação.
+- **T5** latência DB endpoints 0.47-0.79s. **T6** Neon: **1 conn ativa / 901 max**.
+- **R1** WA E2E (Tônia responde) ✅ · **R2** UI dashboard ✅ · **R3** `daily-morning-briefing` disparado via domínio → `status:sent` (overdue=11, today=4, events=3), WA entregue ✅.
+
+**🔧 ACHADO não-bloqueante — pool DB app-level ligado no Railway:** `database.py:144` só desliga o pool psycopg2 (`ThreadedConnectionPool maxconn=10`, código de dev) quando `VERCEL` está no env. No Railway `VERCEL` não existe → pool liga, satura sob carga consolidada, e cai em `[DB] Pool failed, falling back to direct` **em toda request**. **Não é risco**: a `DATABASE_URL` é o **pooler Neon (pgbouncer, 901 max)** e o fallback direct é justamente o modo serverless correto (Neon com 1 conn ativa). É **ruído de log + micro-latência**. Fix P3: estender a guarda pra `RAILWAY_ENVIRONMENT` (`if not VERCEL and not RAILWAY_ENVIRONMENT`) em `_create_connection`/`_return_to_pool`, OU subir `maxconn`. Baixo ROI, cosmético.
 
 ### ROLLBACK (a qualquer momento, ~minutos — Vercel fica vivo)
 Repetir Passo 1 com as URLs Vercel: intel-bot-v2 → `https://tonia.almeida-prado.com/webhooks/evolution`, rap-whatsapp → `https://intel.almeida-prado.com/api/webhooks/whatsapp`. Se mexeu no DNS: reverter os CNAMEs. Neon PITR se houver corrupção de dados.
