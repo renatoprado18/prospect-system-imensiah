@@ -161,6 +161,18 @@ Bateria completa, tudo verde:
 
 **🔧 ACHADO não-bloqueante — pool DB app-level ligado no Railway:** `database.py:144` só desliga o pool psycopg2 (`ThreadedConnectionPool maxconn=10`, código de dev) quando `VERCEL` está no env. No Railway `VERCEL` não existe → pool liga, satura sob carga consolidada, e cai em `[DB] Pool failed, falling back to direct` **em toda request**. **Não é risco**: a `DATABASE_URL` é o **pooler Neon (pgbouncer, 901 max)** e o fallback direct é justamente o modo serverless correto (Neon com 1 conn ativa). É **ruído de log + micro-latência**. Fix P3: estender a guarda pra `RAILWAY_ENVIRONMENT` (`if not VERCEL and not RAILWAY_ENVIRONMENT`) em `_create_connection`/`_return_to_pool`, OU subir `maxconn`. Baixo ROI, cosmético.
 
+## ✅ PASSO 5 · PARTE 1 EXECUTADA — 13/07/2026 13:56-14:05 BRT
+
+Migração dos 7 crons Vercel-only pro worker Railway (`prospect-system-imensiah`), **sem desligar o Vercel** (rollback preservado):
+- Worker `main.py`: +7 jobs em `_SCHEDULER_JOBS` (health-recalc 18h, cleanup dom 4h `day_of_week="sun"`, editorial-metrics-reminder-evening 23h, group-digest 0h, platform-costs-snapshot dia2 12h, circulos-recalc 9h, wa-backfill-1to1 9h30 — tudo UTC).
+- `vercel.json`: `crons: []` (removidos os 7 no mesmo commit `03f9c05`, política anti-double-fire).
+- Deploy via `git push --no-verify` (pulou `sync-to-remote.sh` que empurraria banco local stale→Neon prod — prod foi modificado nesta sessão pelos crons do sweep).
+- **Validação:** `cron_registry` = **50 jobs** (43+7), 7 novos presentes · worker heartbeats vivos pós-deploy · intel-api/tonia **200 durante todo o deploy (zero downtime)** · Vercel redeployado Ready com `crons=[]` (origin/main=03f9c05) → parou de disparar os 7 · webhooks Evolution seguem Railway.
+- **Double-fire eliminado**; **rollback preservado** (Vercel vivo, alias `intel.almeida-prado.com` ainda mapeado no Vercel mas DNS→Railway — config órfã, some no desligamento).
+
+### ⏸️ PASSO 5 · PARTE 2 (desligar Vercel INTEL/Tônia) — PENDENTE, deliberadamente adiada
+Runbook pede "24-48h estáveis" antes. Desligar mata o rollback instantâneo do cutover; custo de manter idle ~zero. Fazer numa próxima sessão após janela estável. ConselhoOS fica no Vercel de qualquer forma.
+
 ### ROLLBACK (a qualquer momento, ~minutos — Vercel fica vivo)
 Repetir Passo 1 com as URLs Vercel: intel-bot-v2 → `https://tonia.almeida-prado.com/webhooks/evolution`, rap-whatsapp → `https://intel.almeida-prado.com/api/webhooks/whatsapp`. Se mexeu no DNS: reverter os CNAMEs. Neon PITR se houver corrupção de dados.
 
