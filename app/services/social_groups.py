@@ -237,11 +237,41 @@ async def sync_all_groups_cache(
         results["synced"] = synced
         results["errors"] = errors
 
+        # Label-driven digest: grupo etiquetado "Digest" no WhatsApp entra no digest (auto-sync).
+        # Kill-switch: DIGEST_LABEL_AUTOSYNC=on. Só LIGA (nunca desliga) por seguranca.
+        import os
+        if os.getenv("DIGEST_LABEL_AUTOSYNC", "off").strip().lower() == "on":
+            try:
+                results["digest_autosync"] = await aio.to_thread(_apply_digest_label_autosync)
+            except Exception as e:
+                logger.warning(f"digest label autosync falhou: {e}")
+
     except Exception as e:
         logger.error(f"Erro no sync de grupos: {e}")
         results["error"] = str(e)
 
     return results
+
+
+def _apply_digest_label_autosync() -> int:
+    """Liga sync_enabled para grupos com o label 'Digest' no WhatsApp. Retorna quantos ligou.
+    Add-only: nunca DESLIGA (remocao fica manual pra nao cair grupo por glitch de label)."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE social_groups_cache
+            SET sync_enabled = TRUE
+            WHERE sync_enabled = FALSE
+              AND labels IS NOT NULL
+              AND jsonb_typeof(labels) = 'array'
+              AND EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(labels) l
+                  WHERE l->>'name' ILIKE 'Digest'
+              )
+        """)
+        n = cursor.rowcount
+        conn.commit()
+        return n
 
 
 def list_cached_groups() -> List[Dict]:

@@ -6,6 +6,7 @@
 {% block page_subtitle %}<p class="page-subtitle">Mapeie seus circulos sociais via WhatsApp</p>{% endblock %}
 
 {% block extra_css %}
+/* grid kept only for Cruzamento/Introduções tabs */
 .groups-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -20,51 +21,75 @@
     cursor: pointer;
     transition: all 0.2s;
 }
-.group-card:hover {
-    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-    transform: translateY(-2px);
-}
-.group-card-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
-}
-.group-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: 10px;
-    background: linear-gradient(135deg, #22c55e, #16a34a);
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.2rem;
-    flex-shrink: 0;
-}
+.group-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
 .group-name {
-    font-weight: 700;
-    font-size: 0.95rem;
+    font-weight: 600;
+    font-size: 0.9rem;
     color: var(--text-primary, #1e293b);
 }
-.group-stats {
-    display: flex;
-    gap: 16px;
-    font-size: 0.8rem;
-    color: var(--text-secondary, #64748b);
-}
-.group-stat { display: flex; align-items: center; gap: 4px; }
-.group-labels { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 8px; }
 .group-label-badge {
     font-size: 0.65rem; padding: 2px 8px; border-radius: 10px;
     background: #e2e8f0; color: #475569; font-weight: 600;
 }
-.sync-toggle {
-    position: absolute; top: 12px; right: 12px;
+
+/* ===== Toolbar (busca + filtros) ===== */
+.groups-toolbar {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 16px 0 12px;
 }
-.sync-toggle input { width: 36px; height: 20px; cursor: pointer; }
-.group-card { position: relative; }
-.group-card.sync-on { border-color: #22c55e; border-width: 2px; }
+.groups-toolbar .search-box { flex: 1 1 240px; position: relative; }
+.groups-toolbar .search-box i {
+    position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 0.9rem;
+}
+.groups-toolbar .search-box input { padding-left: 34px; }
+.groups-toolbar input[type=text], .groups-toolbar select {
+    width: 100%; padding: 8px 12px; font-size: 0.85rem;
+    border: 1px solid var(--border-color, #e2e8f0); border-radius: 8px;
+    background: var(--card-bg, #fff); color: var(--text-primary, #1e293b);
+}
+.groups-toolbar select { width: auto; min-width: 140px; cursor: pointer; }
+.groups-count { font-size: 0.78rem; color: var(--text-secondary, #64748b); white-space: nowrap; }
+.groups-count b { color: #22c55e; }
+
+/* ===== List ===== */
+.groups-list {
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border-color, #e2e8f0); border-radius: 12px; overflow: hidden;
+    background: var(--card-bg, #fff);
+}
+.group-row {
+    display: flex; align-items: center; gap: 14px; padding: 11px 16px;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    border-left: 3px solid transparent;
+    cursor: pointer; transition: background 0.12s;
+}
+.group-row:last-child { border-bottom: none; }
+.group-row:hover { background: var(--bg-secondary, #f8fafc); }
+.group-row.sync-on { border-left-color: #22c55e; }
+.group-row.sync-on .gr-name { }
+.gr-icon {
+    width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 0.95rem;
+    background: var(--bg-secondary, #f1f5f9); color: #64748b;
+}
+.group-row.sync-on .gr-icon { background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; }
+.gr-main { flex: 1; min-width: 0; }
+.gr-name { font-weight: 600; font-size: 0.88rem; color: var(--text-primary, #1e293b);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gr-labels { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+.gr-stats { display: flex; gap: 14px; font-size: 0.76rem; color: var(--text-secondary, #64748b);
+    flex-shrink: 0; align-items: center; }
+.gr-stat { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.gr-digest-tag { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+    padding: 2px 7px; border-radius: 20px; }
+.gr-digest-tag.on { background: #dcfce7; color: #15803d; }
+.gr-digest-tag.off { background: var(--bg-secondary, #f1f5f9); color: #94a3b8; }
+.gr-toggle { flex-shrink: 0; }
+.gr-toggle input { width: 36px; height: 20px; cursor: pointer; }
+.groups-empty { text-align: center; padding: 40px 20px; color: var(--text-secondary, #64748b); }
+@media (max-width: 640px) {
+    .gr-stats { display: none; }
+    .groups-toolbar select { flex: 1 1 45%; }
+}
 
 /* Detail modal */
 .member-card {
@@ -139,7 +164,27 @@
 </div>
 
 <div id="pageGroups">
-    <div class="groups-grid" id="groupsGrid">
+    <div class="groups-toolbar">
+        <div class="search-box">
+            <i class="bi bi-search"></i>
+            <input type="text" id="groupSearch" placeholder="Buscar grupo..." oninput="renderGroupsList()" autocomplete="off">
+        </div>
+        <select id="labelFilter" onchange="renderGroupsList()">
+            <option value="">Todos os labels</option>
+        </select>
+        <select id="syncFilter" onchange="renderGroupsList()">
+            <option value="all">Todos</option>
+            <option value="on">✅ No digest</option>
+            <option value="off">Fora do digest</option>
+        </select>
+        <select id="sortBy" onchange="renderGroupsList()">
+            <option value="name">Nome (A→Z)</option>
+            <option value="known">Mais conhecidos</option>
+            <option value="total">Mais membros</option>
+        </select>
+        <span class="groups-count" id="groupsCount"></span>
+    </div>
+    <div class="groups-list" id="groupsList">
         <div class="loading-center">
             <div class="spinner-border text-success mb-3"></div>
             <p>Carregando grupos do WhatsApp...</p>
@@ -175,54 +220,94 @@
 
 {% block extra_js %}
 <script>
+    let allGroups = [];
+
+    function esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function labelNames(g) { return (g.labels || []).map(l => (l && l.name) ? l.name : l).filter(Boolean); }
+
     async function loadGroups() {
-        const grid = document.getElementById('groupsGrid');
+        const list = document.getElementById('groupsList');
         try {
             const resp = await fetch('/api/social-groups');
             const groups = await resp.json();
+            allGroups = Array.isArray(groups) ? groups : [];
 
-            if (!groups || groups.length === 0) {
-                grid.innerHTML = '<div class="loading-center"><i class="bi bi-diagram-3" style="font-size:3rem; opacity:0.3;"></i><p>Nenhum grupo encontrado</p></div>';
-                return;
-            }
+            // popula filtro de labels (distintos, ordenados)
+            const labelSet = new Set();
+            allGroups.forEach(g => labelNames(g).forEach(n => labelSet.add(n)));
+            const sel = document.getElementById('labelFilter');
+            const current = sel.value;
+            sel.innerHTML = '<option value="">Todos os labels</option>' +
+                [...labelSet].sort((a,b)=>a.localeCompare(b,'pt')).map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+            sel.value = current;
 
-            grid.innerHTML = groups.map(g => {
-                const healthDot = g.health != null
-                    ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${g.health>=70?'#22c55e':g.health>=40?'#f59e0b':'#ef4444'};margin-right:4px;" title="Health ${g.health}%"></span>`
-                    : '';
-                const labels = (g.labels || []).map(l =>
-                    `<span class="group-label-badge">${l.name || l}</span>`
-                ).join('');
-                const syncOn = g.sync_enabled ? 'sync-on' : '';
-                const syncChecked = g.sync_enabled ? 'checked' : '';
-                return `
-                <div class="group-card ${syncOn}" id="card-${g.jid.replace(/[@.]/g,'_')}">
-                    <div class="sync-toggle" title="Sincronizar mensagens">
-                        <div class="form-check form-switch mb-0">
-                            <input class="form-check-input" type="checkbox" ${syncChecked}
-                                onchange="toggleSync('${g.jid}', this.checked, event)">
-                        </div>
-                    </div>
-                    <div onclick="openGroupDetail('${g.jid}', '${(g.name || '').replace(/'/g, "\\'")}')" style="cursor:pointer;">
-                        <div class="group-card-header">
-                            <div class="group-icon"><i class="bi bi-people-fill"></i></div>
-                            <div>
-                                <div class="group-name">${g.name}</div>
-                            </div>
-                        </div>
-                        <div class="group-stats">
-                            ${g.total ? `<div class="group-stat"><i class="bi bi-people"></i> ${g.total}</div>` : ''}
-                            ${g.known ? `<div class="group-stat"><i class="bi bi-person-check"></i> ${g.known} conhecidos</div>` : ''}
-                            ${g.health != null ? `<div class="group-stat">${healthDot}${g.health}%</div>` : ''}
-                        </div>
-                        ${labels ? `<div class="group-labels">${labels}</div>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-
+            renderGroupsList();
         } catch (e) {
-            grid.innerHTML = '<div class="loading-center"><p class="text-danger">Erro ao carregar grupos</p></div>';
+            list.innerHTML = '<div class="groups-empty"><p class="text-danger">Erro ao carregar grupos</p></div>';
         }
+    }
+
+    function renderGroupsList() {
+        const list = document.getElementById('groupsList');
+        const q = (document.getElementById('groupSearch').value || '').toLowerCase().trim();
+        const labelF = document.getElementById('labelFilter').value;
+        const syncF = document.getElementById('syncFilter').value;
+        const sortBy = document.getElementById('sortBy').value;
+
+        let rows = allGroups.filter(g => {
+            if (q && !(g.name || '').toLowerCase().includes(q)) return false;
+            if (labelF && !labelNames(g).includes(labelF)) return false;
+            if (syncF === 'on' && !g.sync_enabled) return false;
+            if (syncF === 'off' && g.sync_enabled) return false;
+            return true;
+        });
+
+        rows.sort((a,b) => {
+            if (sortBy === 'known') return (b.known||0) - (a.known||0);
+            if (sortBy === 'total') return (b.total||0) - (a.total||0);
+            return (a.name||'').localeCompare(b.name||'', 'pt');
+        });
+
+        const onCount = allGroups.filter(g => g.sync_enabled).length;
+        document.getElementById('groupsCount').innerHTML =
+            `${rows.length} de ${allGroups.length} · <b>${onCount} no digest</b>`;
+
+        if (rows.length === 0) {
+            list.innerHTML = '<div class="groups-empty"><i class="bi bi-search" style="font-size:2rem;opacity:.3;"></i><p>Nenhum grupo encontrado</p></div>';
+            return;
+        }
+
+        list.innerHTML = rows.map(g => {
+            const jidEsc = (g.jid||'').replace(/'/g, "\\'");
+            const nameEsc = (g.name||'').replace(/'/g, "\\'");
+            const labels = labelNames(g).map(n => `<span class="group-label-badge">${esc(n)}</span>`).join('');
+            const health = g.health != null
+                ? `<span class="gr-stat"><span style="width:8px;height:8px;border-radius:50%;background:${g.health>=70?'#22c55e':g.health>=40?'#f59e0b':'#ef4444'};display:inline-block;"></span>${g.health}%</span>` : '';
+            const digestTag = g.sync_enabled
+                ? '<span class="gr-digest-tag on">no digest</span>'
+                : '<span class="gr-digest-tag off">fora</span>';
+            return `
+            <div class="group-row ${g.sync_enabled?'sync-on':''}" id="row-${(g.jid||'').replace(/[@.]/g,'_')}"
+                 onclick="openGroupDetail('${jidEsc}','${nameEsc}')">
+                <div class="gr-icon"><i class="bi bi-people-fill"></i></div>
+                <div class="gr-main">
+                    <div class="gr-name">${esc(g.name)}</div>
+                    ${labels ? `<div class="gr-labels">${labels}</div>` : ''}
+                </div>
+                <div class="gr-stats">
+                    ${g.total ? `<span class="gr-stat"><i class="bi bi-people"></i> ${g.total}</span>` : ''}
+                    ${g.known ? `<span class="gr-stat"><i class="bi bi-person-check"></i> ${g.known}</span>` : ''}
+                    ${health}
+                    ${digestTag}
+                </div>
+                <div class="gr-toggle" onclick="event.stopPropagation();" title="Incluir no digest">
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" ${g.sync_enabled?'checked':''}
+                            onchange="toggleSync('${jidEsc}', this.checked, event)">
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
     }
 
     let currentGroupJid = '';
@@ -384,12 +469,9 @@
                 body: JSON.stringify({group_jid: jid, enabled})
             });
             if (!resp.ok) throw new Error();
-            const cardId = 'card-' + jid.replace(/[@.]/g, '_');
-            const card = document.getElementById(cardId);
-            if (card) {
-                if (enabled) card.classList.add('sync-on');
-                else card.classList.remove('sync-on');
-            }
+            const g = allGroups.find(x => x.jid === jid);
+            if (g) g.sync_enabled = enabled;
+            renderGroupsList();
         } catch (e) {
             alert('Erro ao atualizar sync');
             event.target.checked = !enabled;
