@@ -239,7 +239,8 @@ async def sync_all_groups_cache(
 
         # Label-driven digest: grupo etiquetado "Digest" no WhatsApp entra no digest (auto-sync).
         # Kill-switch: DIGEST_LABEL_AUTOSYNC=on. Só LIGA (nunca desliga) por seguranca.
-        import os
+        # (usa o `os` importado no topo do módulo; import local aqui shadowava `os`
+        #  como variável local → UnboundLocalError nas linhas 102-104. Removido 15/07.)
         if os.getenv("DIGEST_LABEL_AUTOSYNC", "off").strip().lower() == "on":
             try:
                 results["digest_autosync"] = await aio.to_thread(_apply_digest_label_autosync)

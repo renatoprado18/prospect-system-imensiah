@@ -5,6 +5,7 @@ Uses Web Push protocol with VAPID authentication.
 """
 import os
 import json
+import base64
 import logging
 from typing import Dict, List, Optional
 from datetime import datetime
@@ -32,25 +33,40 @@ class PushNotificationService:
 
     @staticmethod
     def _normalize_vapid_key(raw: str) -> str:
-        """Aceita o VAPID private key como PEM (multiline) OU base64 single-line.
+        """Devolve a chave privada VAPID no formato que pywebpush/py_vapid.from_string
+        aceita: raw base64url do escalar EC (sem padding). Aceita entrada em PEM
+        (multiline), base64-de-PEM (single-line, do cutover Railway 11/07) OU já raw.
 
-        Motivo (F-2 cutover Railway, 11/07/2026): o railpack do Railway injeta
-        cada env como build-secret e QUEBRA em valores multiline (o PEM vira
-        secrets-fantasma). No Railway a chave vai como base64 single-line; aqui
-        a gente decodifica de volta pro PEM. No Vercel a env segue PEM cru e
-        passa intacta (tem "BEGIN"). Backward-compatible.
+        Motivo (15/07/2026): py_vapid 1.9.4 NAO aceita PEM via from_string (da
+        ASN.1 error) — só raw base64url. O helper antigo NORMALIZAVA pra PEM, o que
+        quebrou o push inteiro. Agora convertemos qualquer formato pro raw, tirando
+        o foot-gun de vez. Backward/forward-compatible.
         """
         raw = (raw or "").strip()
-        if not raw or "BEGIN" in raw:
-            return raw  # PEM cru (Vercel) ou vazio
+        if not raw:
+            return raw
+
+        # base64-de-PEM (single-line sem BEGIN, mas que decodifica pra um PEM)
+        if "BEGIN" not in raw:
+            try:
+                decoded = base64.b64decode(raw).decode("utf-8")
+                if "BEGIN" in decoded:
+                    raw = decoded  # cai no ramo PEM abaixo
+            except Exception:
+                return raw  # não era base64-de-PEM → assume raw base64url do escalar
+
+        if "BEGIN" not in raw:
+            return raw  # já é raw base64url
+
+        # PEM → extrai o escalar `d` e devolve raw base64url (o que from_string quer)
         try:
-            import base64
-            decoded = base64.b64decode(raw).decode("utf-8")
-            if "BEGIN" in decoded:
-                return decoded
-        except Exception:
-            pass
-        return raw  # não era base64 de PEM — devolve como veio
+            from cryptography.hazmat.primitives.serialization import load_pem_private_key
+            key = load_pem_private_key(raw.encode(), password=None)
+            d = key.private_numbers().private_value
+            return base64.urlsafe_b64encode(d.to_bytes(32, "big")).rstrip(b"=").decode()
+        except Exception as e:
+            logger.warning(f"_normalize_vapid_key: falha ao converter PEM->raw: {e}")
+            return raw
 
     def is_configured(self) -> bool:
         """Check if push notifications are properly configured."""
