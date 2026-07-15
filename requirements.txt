@@ -21,6 +21,10 @@ python-dotenv
 
 # Web Push Notifications
 pywebpush==1.14.0
+# http_ece (dep do pywebpush) passa a curva EC como classe; cryptography>=45 virou
+# isso erro ("curve must be an EllipticCurve instance") e quebra o encrypt do payload.
+# Pinar <45 até http_ece publicar fix. Bisect 15/07/2026: 44.x OK, 45+ quebra.
+cryptography<45
 
 # AI - Anthropic Claude API
 anthropic>=0.89.0
