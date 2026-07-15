@@ -100,18 +100,27 @@ def _notify_token_issue(reason: str):
     e nunca levanta — falha em notificacao NAO pode quebrar o cron.
     """
     try:
-        from services.intel_bot import send_intel_notification
+        from services.notification_router import route_to_renato
         msg = (
             f"INTEL: token LinkedIn invalido ({reason}). "
             "Reconecte em https://intel.almeida-prado.com/api/linkedin/authorize"
         )
+        # Informativo (4) — Web Push nao urgente / pill. Nao interrompe WhatsApp.
+        _coro = route_to_renato(
+            source="auto_publisher",
+            payload={"title": "Token LinkedIn invalido", "body": msg},
+            msg_type="linkedin_token_invalid",
+            urgency_score=4,
+            dedup_key=f"linkedin_token_invalid:{reason}",
+            message_text=msg,
+        )
         # Estamos dentro de um event loop async (caller e async). Agenda como task.
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(send_intel_notification(msg))
+            loop.create_task(_coro)
         except RuntimeError:
             # Sem loop rodando — roda sincronamente (improvavel neste caller)
-            asyncio.run(send_intel_notification(msg))
+            asyncio.run(_coro)
     except Exception:
         logger.exception("auto_publisher: falha ao notificar token invalido")
 
@@ -124,18 +133,27 @@ def _notify_short_body(post_id: int, body_len: int, title: Optional[str], source
     e re-agendar antes da janela passar.
     """
     try:
-        from services.intel_bot import send_intel_notification
+        from services.notification_router import route_to_renato
         label = (title or "sem titulo")[:60]
         msg = (
             f"INTEL: post {source} #{post_id} pulado — body com apenas "
             f"{body_len} chars (minimo {MIN_BODY_CHARS}). "
             f"Titulo: {label}. Edite e re-agende em /editorial."
         )
+        # Informativo (4) — Web Push nao urgente / pill.
+        _coro = route_to_renato(
+            source="auto_publisher",
+            payload={"title": "Post pulado (body curto)", "body": msg},
+            msg_type="post_short_body",
+            urgency_score=4,
+            dedup_key=f"post_short_body:{source}:{post_id}",
+            message_text=msg,
+        )
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(send_intel_notification(msg))
+            loop.create_task(_coro)
         except RuntimeError:
-            asyncio.run(send_intel_notification(msg))
+            asyncio.run(_coro)
     except Exception:
         logger.exception("auto_publisher: falha ao notificar short body")
 

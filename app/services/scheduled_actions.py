@@ -186,7 +186,7 @@ async def _execute_wa_send(row: Dict[str, Any]) -> Dict[str, Any]:
 async def _notify_renato(success: bool, row: Dict[str, Any], result: Dict[str, Any]) -> None:
     """Confirmacao ativa pos-execucao. Falha silenciosa (best-effort)."""
     try:
-        from services.intel_bot import send_intel_notification
+        from services.notification_router import route_to_renato
 
         payload = row["payload"] or {}
         if isinstance(payload, str):
@@ -216,7 +216,16 @@ async def _notify_renato(success: bool, row: Dict[str, Any], result: Dict[str, A
         if source:
             note += f" [{source}]"
 
-        await send_intel_notification(note)
+        # Falha TERMINAL exige decisao imediata do Renato = 8: WhatsApp.
+        row_id = row.get("id", "?")
+        await route_to_renato(
+            source="scheduled_actions",
+            payload={"title": "CoS desistiu de envio WA", "body": note},
+            msg_type="scheduled_action_terminal_fail",
+            urgency_score=8,
+            dedup_key=f"scheduled_action_fail:{row_id}",
+            message_text=note,
+        )
     except Exception as e:
         logger.warning(f"scheduled_actions: _notify_renato falhou silenciosamente: {e}")
 

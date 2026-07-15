@@ -48,6 +48,23 @@ def get_mode() -> str:
 
 
 # ============================================================================
+# Multi-canal (F-B Frente 2) — kill-switch NOTIFICATION_MULTICHANNEL
+# ============================================================================
+# 'off' (default): comportamento legado byte-a-byte (WhatsApp/fila como hoje).
+# 'on': roteia por canal DE VERDADE — urgencia>=8 -> WhatsApp, 5-7 -> Web Push,
+#       <5 -> pill (fila pending + badge). Push sem subscriber valido cai em
+#       pill (NUNCA vira WhatsApp — preserva "WhatsApp quieto").
+
+MULTICHANNEL_OFF = "off"
+MULTICHANNEL_ON = "on"
+
+
+def get_multichannel_mode() -> str:
+    raw = (os.getenv("NOTIFICATION_MULTICHANNEL") or MULTICHANNEL_OFF).strip().lower()
+    return MULTICHANNEL_ON if raw == MULTICHANNEL_ON else MULTICHANNEL_OFF
+
+
+# ============================================================================
 # Urgency decision — 5 regras v1 (calibrado com Renato 19/05/2026)
 # ============================================================================
 
@@ -317,8 +334,206 @@ async def _send_now(message: str) -> bool:
 
 
 # ============================================================================
+# Multi-canal (F-B Frente 2) — decisao de canal + push + log
+# ============================================================================
+
+
+def decide_channel(
+    payload: Dict[str, Any],
+    urgency_score: Optional[int],
+    source: str,
+    msg_type: Optional[str],
+) -> tuple[str, str]:
+    """Decide o canal alvo. Retorna (channel, rule).
+
+    - urgente (is_urgent gate: force_immediate / score>=8 / URGENCY_RULES)
+      -> ('whatsapp', <rule>)
+    - senao 5<=score<=7 -> ('push', 'score_5_7')
+    - senao -> ('pill', 'score_lt_5')
+    """
+    urgent, urgency_rule = is_urgent(payload, urgency_score, source, msg_type)
+    if urgent:
+        return "whatsapp", (urgency_rule or "urgent")
+    if isinstance(urgency_score, int) and 5 <= urgency_score <= 7:
+        return "push", "score_5_7"
+    return "pill", "score_lt_5"
+
+
+def _send_push(
+    title: str,
+    body: str,
+    urgent: bool = False,
+    tag: Optional[str] = None,
+    data: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Envia Web Push via push_notifications. Retorna True se sent>0.
+
+    is_configured()=False ou qualquer excecao -> False (caller cai em pill)."""
+    try:
+        from services.push_notifications import get_push_service
+        svc = get_push_service()
+        if not svc.is_configured():
+            logger.info("router _send_push: push nao configurado — caller cai em pill")
+            return False
+        res = svc.send_notification(
+            title=title,
+            body=body,
+            data=data or {},
+            tag=tag,
+            urgent=urgent,
+        )
+        return bool((res or {}).get("sent", 0) > 0)
+    except Exception as e:
+        logger.warning(f"router _send_push falhou: {e}")
+        return False
+
+
+def _log_channel_decision(
+    source: str,
+    msg_type: Optional[str],
+    urgency_score: Optional[int],
+    decided_channel: str,
+    decision_rule: Optional[str],
+    sent_ok: Optional[bool],
+    multichannel_mode: str,
+    dedup_key: Optional[str],
+    payload_title: Optional[str],
+) -> None:
+    """Best-effort INSERT em channel_decisions. NUNCA quebra o envio."""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO channel_decisions
+                  (source, msg_type, urgency_score, decided_channel, decision_rule,
+                   sent_ok, multichannel_mode, dedup_key, payload_title)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    source,
+                    msg_type,
+                    urgency_score,
+                    decided_channel,
+                    decision_rule,
+                    sent_ok,
+                    multichannel_mode,
+                    dedup_key,
+                    (payload_title or "")[:500] if payload_title else None,
+                ),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"router _log_channel_decision falhou (ignorado): {e}")
+
+
+# ============================================================================
 # API publica
 # ============================================================================
+
+
+async def _dispatch_multichannel(
+    *,
+    source: str,
+    payload: Dict[str, Any],
+    msg_type: Optional[str],
+    urgency_score: Optional[int],
+    digest_target: str,
+    dedup_key: Optional[str],
+    text: str,
+    urgent: bool,
+    urgency_rule: Optional[str],
+) -> Dict[str, Any]:
+    """Roteia por canal quando NOTIFICATION_MULTICHANNEL='on'.
+
+    whatsapp -> _send_now  |  push -> _send_push (falha -> pill)  |  pill -> fila.
+    Domingo (non-urgent) cai em pill/morning (preserva domingo sagrado).
+    Sempre grava channel_decisions (best-effort).
+    """
+    channel, rule = decide_channel(payload, urgency_score, source, msg_type)
+    title = payload.get("title") or source
+    push_data = payload.get("data") if isinstance(payload.get("data"), dict) else None
+
+    # Domingo silence: non-urgent (push/pill) adia pra morning como pill
+    if channel != "whatsapp" and _is_sunday_silence(urgent, urgency_rule):
+        logger.info(f"domingo silence (multichannel): {source} -> pill/morning")
+        pid = _enqueue_pending(source, payload, msg_type, urgency_score, "morning", dedup_key)
+        _log_channel_decision(
+            source, msg_type, urgency_score, "pill", "sunday_silence",
+            pid is not None, MULTICHANNEL_ON, dedup_key, title,
+        )
+        return {
+            "action": "queued_sunday_silence" if pid else "duplicate",
+            "pending_id": pid,
+            "channel": "pill",
+            "decision_rule": "sunday_silence",
+            "mode": "multichannel",
+        }
+
+    # WhatsApp — urgente
+    if channel == "whatsapp":
+        ok = await _send_now(text)
+        _log_channel_decision(
+            source, msg_type, urgency_score, "whatsapp", rule,
+            ok, MULTICHANNEL_ON, dedup_key, title,
+        )
+        return {
+            "action": "sent" if ok else "skipped",
+            "pending_id": None,
+            "channel": "whatsapp",
+            "decision_rule": rule,
+            "mode": "multichannel",
+        }
+
+    # Web Push — medio (5-7). Enfileira SEMPRE em pending (dedup + ledger
+    # duravel); o push e so o "toque" em cima. Se o dedup_key ja tem pending
+    # aberto, NAO repete o toque. Push falho/sem subscriber -> o item ja esta
+    # em pending (vira pill; nunca WhatsApp).
+    if channel == "push":
+        pid = _enqueue_pending(source, payload, msg_type, urgency_score, digest_target, dedup_key)
+        if pid is None:
+            # dedup: ja ha pending aberto (mesmo source+dedup_key) -> nao toca de novo
+            _log_channel_decision(
+                source, msg_type, urgency_score, "push", "dedup_skip",
+                False, MULTICHANNEL_ON, dedup_key, title,
+            )
+            return {
+                "action": "duplicate",
+                "pending_id": None,
+                "channel": "push",
+                "decision_rule": "dedup_skip",
+                "mode": "multichannel",
+            }
+        pushed = _send_push(title=title, body=text, urgent=False, tag=dedup_key, data=push_data)
+        # pending permanece como ledger duravel (sent_at NULL): se o push for
+        # perdido/expirado, o item ainda aparece no badge/digest — nunca some.
+        _log_channel_decision(
+            source, msg_type, urgency_score,
+            "push" if pushed else "pill",
+            rule if pushed else "push_fallback_pill",
+            pushed, MULTICHANNEL_ON, dedup_key, title,
+        )
+        return {
+            "action": "sent" if pushed else "queued",
+            "pending_id": pid,
+            "channel": "push" if pushed else "pill",
+            "decision_rule": rule if pushed else "push_fallback_pill",
+            "mode": "multichannel",
+        }
+
+    # Pill — informativo (<5)
+    pid = _enqueue_pending(source, payload, msg_type, urgency_score, digest_target, dedup_key)
+    _log_channel_decision(
+        source, msg_type, urgency_score, "pill", rule,
+        pid is not None, MULTICHANNEL_ON, dedup_key, title,
+    )
+    return {
+        "action": "queued" if pid else "duplicate",
+        "pending_id": pid,
+        "channel": "pill",
+        "decision_rule": rule,
+        "mode": "multichannel",
+    }
 
 
 async def route_to_renato(
@@ -350,6 +565,24 @@ async def route_to_renato(
     text = message_text or payload.get("body") or json.dumps(payload, ensure_ascii=False)
 
     urgent, urgency_rule = is_urgent(payload, urgency_score, source, msg_type)
+
+    # ------------------------------------------------------------------
+    # Multi-canal (F-B Frente 2) — kill-switch NOTIFICATION_MULTICHANNEL='on'
+    # Roteia por canal DE VERDADE. Quando 'off', cai no fluxo legado abaixo
+    # (byte-a-byte). Preserva digest/dedup/domingo.
+    # ------------------------------------------------------------------
+    if get_multichannel_mode() == MULTICHANNEL_ON:
+        return await _dispatch_multichannel(
+            source=source,
+            payload=payload,
+            msg_type=msg_type,
+            urgency_score=urgency_score,
+            digest_target=digest_target,
+            dedup_key=dedup_key,
+            text=text,
+            urgent=urgent,
+            urgency_rule=urgency_rule,
+        )
 
     # Mode 'off' — comportamento legado (mas com silence guard pra domingo)
     if mode == MODE_OFF:

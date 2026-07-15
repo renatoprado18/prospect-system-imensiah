@@ -29,7 +29,8 @@ from services.tz import now_utc, parse_iso
 
 log = logging.getLogger("actuators")
 
-ALLOWED_ACTIONS = {"create_task", "schedule_wa"}
+ALLOWED_ACTIONS = {"create_task", "schedule_wa",
+                   "send_push", "send_email", "create_calendar_event"}
 
 
 def _audit_open(cur, action: str, params: Dict[str, Any], source: str) -> Optional[int]:
@@ -128,16 +129,134 @@ def _do_schedule_wa(payload: Dict[str, Any], source: str) -> Dict[str, Any]:
             "number": number}
 
 
-def execute_actuator(action: str, payload: Dict[str, Any], source: str = "tonia") -> Dict[str, Any]:
+def _do_send_push(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Dispara push notification (Web Push/VAPID) pros subscribers. Sem
+    subscription específica = broadcast pra todos. Reusa o PushNotificationService
+    (não reimplementa envio). Retorna {sent, failed}."""
+    from services.push_notifications import get_push_service
+    title = (payload.get("title") or "").strip()
+    if not title:
+        raise ValueError("send_push requer 'title'")
+    body = (payload.get("body") or "").strip()
+    res = get_push_service().send_notification(
+        title=title,
+        body=body,
+        data=payload.get("data"),
+        tag=payload.get("tag"),
+        urgent=bool(payload.get("urgent", False)),
+    )
+    # success=False COM errors = problema real (não-configurado, 4xx do push).
+    # success=False SEM errors = simplesmente não há subscriber → sent=0, ok.
+    if not res.get("success") and res.get("errors"):
+        raise RuntimeError("; ".join(str(e) for e in res["errors"]))
+    return {"sent": res.get("sent", 0), "failed": res.get("failed", 0)}
+
+
+async def _do_send_email(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Envia email via Gmail API. Resolve a conta (personal|professional) em
+    google_accounts e pega token válido (refresh automático via get_valid_token).
+    Espelha o padrão da tool send_email do intel_bot. Retorna {message_id}."""
+    to = (payload.get("to") or "").strip()
+    if not to or "@" not in to:
+        raise ValueError("send_email requer 'to' (email válido)")
+    subject = (payload.get("subject") or "").strip()
+    if not subject:
+        raise ValueError("send_email requer 'subject'")
+    body = payload.get("body") or ""
+
+    account_alias = (payload.get("account") or "professional").lower()
+    account_email = None
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT email FROM google_accounts WHERE conectado=TRUE AND tipo=%s LIMIT 1",
+            (account_alias,),
+        )
+        row = cur.fetchone()
+        if row:
+            account_email = row["email"]
+    if not account_email:
+        raise RuntimeError(f"conta Gmail '{account_alias}' não conectada")
+
+    from integrations.google_contacts import get_valid_token
+    from integrations.gmail import GmailIntegration
+    token = await get_valid_token(account_email)
+    if not token:
+        raise RuntimeError(f"falha ao obter token Gmail da conta {account_email}")
+
+    result = await GmailIntegration().send_message(
+        access_token=token,
+        to=to,
+        subject=subject,
+        body=body,
+        html_body=payload.get("html_body"),
+    )
+    if "error" in result:
+        raise RuntimeError(f"Gmail send falhou: {result.get('error')}")
+    return {"message_id": result.get("id"), "from_account": account_email}
+
+
+async def _do_create_calendar_event(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Cria evento no Google Calendar via CalendarEventsService (resolve
+    conta/token internamente — não pedir access_token). start/end em ISO-8601.
+    Retorna {event_id, google_event_id, conference_url}.
+
+    Obs: CalendarEventsService não expõe o htmlLink do Google (push_local_event
+    não o persiste), então devolvemos os IDs + conference_url (link Meet, se houver)
+    em vez de html_link."""
+    summary = (payload.get("summary") or "").strip()
+    if not summary:
+        raise ValueError("create_calendar_event requer 'summary'")
+    start_raw = payload.get("start_datetime")
+    end_raw = payload.get("end_datetime")
+    if not start_raw or not end_raw:
+        raise ValueError("create_calendar_event requer 'start_datetime' e 'end_datetime' (ISO-8601)")
+    # Mesmo parsing da tool schedule_meeting do intel_bot (preserva o horário BRT
+    # que o Renato passa — calendar_events guarda naive BRT, não converter).
+    try:
+        start_dt = datetime.fromisoformat(str(start_raw).replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(str(end_raw).replace("Z", "+00:00"))
+    except ValueError as e:
+        raise ValueError(f"data inválida (use ISO-8601): {e}")
+
+    # attendees aceita ["a@b.com"] ou [{"email": "a@b.com"}]
+    attendees = payload.get("attendees")
+    if isinstance(attendees, list) and attendees and isinstance(attendees[0], str):
+        attendees = [{"email": a} for a in attendees]
+
+    from services.calendar_events import get_calendar_events
+    event = await get_calendar_events().create_event(
+        summary=summary,
+        start_datetime=start_dt,
+        end_datetime=end_dt,
+        description=payload.get("description"),
+        location=payload.get("location"),
+        attendees=attendees,
+        create_in_google=True,
+    )
+    if not event:
+        raise RuntimeError("create_event não retornou evento")
+    return {
+        "event_id": event.get("id"),
+        "google_event_id": event.get("google_event_id"),
+        "conference_url": event.get("conference_url"),
+    }
+
+
+async def execute_actuator(action: str, payload: Dict[str, Any], source: str = "tonia") -> Dict[str, Any]:
     """
-    Executa um atuador do catálogo v0. Audita em cos_actions_log.
+    Executa um atuador do catálogo. Audita em cos_actions_log.
     Retorna {"ok": True, "action": ..., ...result} ou {"error": ...}.
     NUNCA levanta.
+
+    Async: send_email e create_calendar_event precisam de await (Gmail/Calendar
+    são async). create_task/schedule_wa/send_push seguem síncronos. Chamado do
+    endpoint async main.py:/api/actuators/execute.
     """
     action = (action or "").strip()
     payload = payload or {}
     if action not in ALLOWED_ACTIONS:
-        return {"error": f"action '{action}' não permitida (v0: {sorted(ALLOWED_ACTIONS)})"}
+        return {"error": f"action '{action}' não permitida ({sorted(ALLOWED_ACTIONS)})"}
 
     try:
         with get_db() as conn:
@@ -149,6 +268,12 @@ def execute_actuator(action: str, payload: Dict[str, Any], source: str = "tonia"
                     result = _do_create_task(cur, payload)
                 elif action == "schedule_wa":
                     result = _do_schedule_wa(payload, source)
+                elif action == "send_push":
+                    result = _do_send_push(payload)
+                elif action == "send_email":
+                    result = await _do_send_email(payload)
+                elif action == "create_calendar_event":
+                    result = await _do_create_calendar_event(payload)
                 _audit_close(cur, audit_id, "success", result=result)
                 conn.commit()
                 log.info("actuators: %s ok source=%s result=%s", action, source, result)

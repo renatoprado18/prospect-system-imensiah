@@ -266,14 +266,23 @@ async def check_low_balance_alert(threshold: int = LOW_BALANCE_THRESHOLD) -> Dic
 
     # Manda WhatsApp (import lazy pra evitar ciclo + imports caros)
     try:
-        from services.intel_bot import send_intel_notification
+        from services.notification_router import route_to_renato
         msg = (
             f"🔋 LinkdAPI saldo baixo: {saldo} creditos restantes.\n\n"
             f"Refill ${REFILL_HINT_USD} = +{REFILL_HINT_CREDITS} creditos em "
             f"https://linkdapi.com/dashboard\n\n"
             f"(threshold {threshold} — alerta 1x/72h)"
         )
-        sent = await send_intel_notification(msg)
+        # Saldo baixo = medio (5): Web Push, nao interrompe WhatsApp.
+        _r = await route_to_renato(
+            source="linkedin_funnel",
+            payload={"title": "LinkdAPI saldo baixo", "body": msg},
+            msg_type="linkdapi_low_balance",
+            urgency_score=5,
+            dedup_key="linkdapi_low_balance",
+            message_text=msg,
+        )
+        sent = _r.get("action") == "sent"
     except Exception as e:
         logger.warning(f"check_low_balance_alert: send failed: {e}")
         sent = False

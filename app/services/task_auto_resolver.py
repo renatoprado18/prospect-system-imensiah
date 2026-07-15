@@ -182,23 +182,39 @@ async def check_and_resolve_tasks(action_type: str, context: dict):
                 )
 
             # Notify Renato
-            from services.intel_bot import send_intel_notification
+            from services.notification_router import route_to_renato
             action_desc = _action_description(action_type, context)
             task_list = "\n".join(f"  - {t['titulo']}" for t in auto_completed)
             msg = f"✅ {action_desc}\n\nTarefas concluidas automaticamente:\n{task_list}"
-            await send_intel_notification(msg)
+            # Informativo (3): tarefa ja resolvida sozinha, so registro -> pill.
+            await route_to_renato(
+                source="task_auto_resolver",
+                payload={"title": "Tarefas concluidas automaticamente", "body": msg},
+                msg_type="tasks_auto_completed",
+                urgency_score=3,
+                dedup_key=f"tasks_auto_completed:{action_type}",
+                message_text=msg,
+            )
             logger.info(f"Auto-completed {len(auto_completed)} tasks for {action_type}: {[t['titulo'] for t in auto_completed]}")
 
         # Ask about ambiguous matches
         for task in ambiguous:
-            from services.intel_bot import send_intel_notification
+            from services.notification_router import route_to_renato
             action_desc = _action_description(action_type, context)
             msg = (
                 f"Acabei de registrar: {action_desc}\n\n"
                 f"Posso marcar como concluida: \"{task['titulo']}\"?\n"
                 f"Responda: sim {task['id']} ou nao {task['id']}"
             )
-            await send_intel_notification(msg)
+            # Informativo (3): pergunta nao urgente -> pill.
+            await route_to_renato(
+                source="task_auto_resolver",
+                payload={"title": "Tarefa ambigua — confirmar?", "body": msg},
+                msg_type="task_ambiguous_confirm",
+                urgency_score=3,
+                dedup_key=f"task_ambiguous:{task['id']}",
+                message_text=msg,
+            )
             logger.info(f"Asked about ambiguous task #{task['id']}: {task['titulo']}")
 
     except Exception as e:

@@ -539,14 +539,23 @@ async def check_anthropic_daily_spike(threshold_usd: float = 2.0) -> Dict:
 
     sent = False
     try:
-        from services.intel_bot import send_intel_notification
+        from services.notification_router import route_to_renato
         msg = (
             f"💸 *Anthropic daily spike — {target.strftime('%d/%m')}*\n\n"
             f"Gasto ontem: *${spend:.2f}* (threshold ${threshold_usd:.2f})\n"
             f"Baseline maio: ~$0.66/dia. Pico jun 13-17: $3-8/dia.\n\n"
             "Audit: /admin/costs ou cost_report API"
         )
-        sent = await send_intel_notification(msg)
+        # Alerta financeiro = 8: WhatsApp (interrompe — custo disparado exige acao).
+        _r = await route_to_renato(
+            source="platform_costs",
+            payload={"title": "Anthropic daily spike", "body": msg},
+            msg_type="cost_daily_spike",
+            urgency_score=8,
+            dedup_key=alert_key,
+            message_text=msg,
+        )
+        sent = _r.get("action") == "sent"
     except Exception as e:
         logger.warning(f"check_anthropic_daily_spike: send failed: {e}")
 
@@ -738,8 +747,20 @@ async def check_and_notify_alerts() -> Dict:
 
     sent = False
     try:
-        from services.intel_bot import send_intel_notification
-        sent = await send_intel_notification(msg)
+        from services.notification_router import route_to_renato
+        # Alerta financeiro = 7: Web Push. Dedup por periodos agrupados.
+        _dedup = "cost_alerts:" + ",".join(
+            f"{a['provider']}:{a['to_period'][:7]}" for a in new_alerts
+        )
+        _r = await route_to_renato(
+            source="platform_costs",
+            payload={"title": "Cost Tracker — aumento suspeito", "body": msg},
+            msg_type="cost_increase_alert",
+            urgency_score=8,  # WhatsApp: custo disparado interrompe
+            dedup_key=_dedup[:200],
+            message_text=msg,
+        )
+        sent = _r.get("action") == "sent"
     except Exception as e:
         logger.warning(f"check_and_notify_alerts: send failed: {e}")
 

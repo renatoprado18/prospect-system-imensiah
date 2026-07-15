@@ -4356,7 +4356,8 @@ async def actuators_execute(request: Request):
     SOB COMANDO do Renato pra AGIR no INTEL (sistema de registro). Nunca proativo
     — o gatilho é comando, como a delegação de dev (evita o ruído do gen-1).
 
-    Body: {action, payload, source?}. v0: action ∈ {create_task, schedule_wa}.
+    Body: {action, payload, source?}. action ∈ {create_task, schedule_wa,
+    send_push, send_email, create_calendar_event}.
     Audita em cos_actions_log. Auth: X-API-Key == INTEL_API_KEY.
     """
     api_key = request.headers.get("X-API-Key", "").strip()
@@ -4370,7 +4371,7 @@ async def actuators_execute(request: Request):
     source = (body.get("source") or "tonia").strip()
 
     from services.actuators import execute_actuator
-    result = execute_actuator(action, payload, source=source)
+    result = await execute_actuator(action, payload, source=source)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
@@ -4982,6 +4983,47 @@ async def api_notifications_silenced(request: Request, hours: int = 24, show: st
         "pending": len(pending),
         "sent": len(sent),
         "items": rows,
+    }
+
+
+@app.get("/api/admin/channel-log")
+async def api_channel_log(request: Request, days: int = 5):
+    """F-B Frente 2: agregado das decisoes de canal do notification_router.
+
+    Debug/telemetria quando algo "nao chegou": mostra por canal quantas
+    decisoes e quantas foram efetivamente enviadas (sent_ok) nos ultimos N dias.
+    So popula quando NOTIFICATION_MULTICHANNEL='on'.
+    """
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT decided_channel,
+                   COUNT(*) AS total,
+                   SUM(sent_ok::int) AS sent_ok
+            FROM channel_decisions
+            WHERE created_at >= NOW() - (%s || ' days')::interval
+            GROUP BY decided_channel
+            ORDER BY total DESC
+            """,
+            (str(days),),
+        )
+        by_channel = [
+            {
+                "channel": r["decided_channel"],
+                "total": int(r["total"] or 0),
+                "sent_ok": int(r["sent_ok"] or 0),
+            }
+            for r in cur.fetchall()
+        ]
+    return {
+        "days": days,
+        "multichannel_mode": (os.getenv("NOTIFICATION_MULTICHANNEL") or "off").strip().lower(),
+        "by_channel": by_channel,
+        "total": sum(c["total"] for c in by_channel),
     }
 
 
@@ -16757,7 +16799,7 @@ async def cron_auto_archive_gate_eval(request: Request):
     # Notifica via WA pra mudancas
     for n in notifications:
         try:
-            from services.intel_bot import send_intel_notification
+            from services.notification_router import route_to_renato
             acc_short = n["account"].split("@")[0]
             if n["to"] == "ready_to_enable":
                 fp_pct = (n["status"]["fp_rate"] or 0) * 100
@@ -16767,6 +16809,8 @@ async def cron_auto_archive_gate_eval(request: Request):
                     f"Pra liberar: POST /api/admin/auto-archive-enable "
                     f"{{account_email: '{n['account']}', enabled: true}}"
                 )
+                _title = f"Auto-archive elegivel: {acc_short}"
+                _urg = 4  # informativo (elegibilidade) -> pill
             else:  # disable_high_fp
                 fp_pct = (n["status"]["fp_rate"] or 0) * 100
                 text = (
@@ -16774,7 +16818,16 @@ async def cron_auto_archive_gate_eval(request: Request):
                     f"FP rate subiu para {fp_pct:.2f}% (cap alerta 5%)\n"
                     f"Considere desabilitar."
                 )
-            await send_intel_notification(text)
+                _title = f"Auto-archive risco: {acc_short}"
+                _urg = 6  # risco que pede decisao -> Web Push
+            await route_to_renato(
+                source="auto_archive_gate",
+                payload={"title": _title, "body": text},
+                msg_type=n["to"],
+                urgency_score=_urg,
+                dedup_key=f"auto_archive_gate:{n['to']}:{n['account']}",
+                message_text=text,
+            )
         except Exception as e:
             logging.warning(f"gate notify falhou: {e}")
 
@@ -23686,13 +23739,21 @@ async def cron_editorial_weekly_briefing(request: Request):
     # 3) Notifica WhatsApp
     if selection_count > 0:
         try:
-            from services.intel_bot import send_intel_notification
+            from services.notification_router import route_to_renato
             msg = (
                 f"🎯 *Editorial pra proxima semana*\n"
                 f"{selection_count} posts selecionados pela IA — revise e aprove no /editorial\n\n"
                 f"https://intel.almeida-prado.com/editorial"
             )
-            await send_intel_notification(msg)
+            # Nudge editorial semanal (revise/aprove) = 5: Web Push, nao urgente.
+            await route_to_renato(
+                source="editorial_selection",
+                payload={"title": "Editorial pra proxima semana", "body": msg},
+                msg_type="editorial_weekly_selection",
+                urgency_score=5,
+                dedup_key="editorial_weekly_selection",
+                message_text=msg,
+            )
             out["notified"] = True
         except Exception as e:
             out["notify_error"] = str(e)
