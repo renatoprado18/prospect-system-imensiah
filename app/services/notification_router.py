@@ -30,8 +30,12 @@ from services.tz import now_utc, to_brt
 
 logger = logging.getLogger(__name__)
 
-# Numero WhatsApp do Renato (alvo das notificacoes do bot)
-RENATO_PHONE_ENV = "WHATSAPP_OWNER_NUMBER"
+# Numero WhatsApp do Renato (alvo das notificacoes do bot).
+# Usa RENATO_PHONE (mesmo env/valor canonico de intel_bot.py e main.py), com
+# fallback hardcoded — NUNCA falhar calado por env nao migrada (era
+# WHATSAPP_OWNER_NUMBER, env-fantasma nunca provisionada → urgentes sumiam).
+RENATO_PHONE_ENV = "RENATO_PHONE"
+RENATO_PHONE_FALLBACK = "5511984153337"
 
 # Modos validos
 MODE_OFF = "off"
@@ -319,9 +323,9 @@ def _is_sunday_silence(urgent: bool, urgency_rule: Optional[str]) -> bool:
 
 async def _send_now(message: str) -> bool:
     """Envia direto via Evolution. Retorna sucesso."""
-    phone = (os.getenv(RENATO_PHONE_ENV) or "").strip()
+    phone = (os.getenv(RENATO_PHONE_ENV) or RENATO_PHONE_FALLBACK).strip()
     if not phone:
-        logger.error(f"router: {RENATO_PHONE_ENV} ausente — nao consigo enviar")
+        logger.error(f"router: {RENATO_PHONE_ENV} ausente e sem fallback — nao consigo enviar")
         return False
     try:
         from integrations.evolution_api import get_evolution_client
@@ -477,8 +481,24 @@ async def _dispatch_multichannel(
             source, msg_type, urgency_score, "whatsapp", rule,
             ok, MULTICHANNEL_ON, dedup_key, title,
         )
+        if not ok:
+            # WA falhou -> NAO descarta o urgente: cai em pill (ledger duravel +
+            # badge + entra no proximo digest). Melhor chegar tarde que sumir.
+            pid = _enqueue_pending(source, payload, msg_type, urgency_score, digest_target, dedup_key)
+            _log_channel_decision(
+                source, msg_type, urgency_score, "pill", "whatsapp_fail_fallback",
+                pid is not None, MULTICHANNEL_ON, dedup_key, title,
+            )
+            logger.warning(f"router: WA falhou p/ urgente ({source}) -> fallback pill (pid={pid})")
+            return {
+                "action": "queued_wa_fail" if pid else "duplicate",
+                "pending_id": pid,
+                "channel": "pill",
+                "decision_rule": "whatsapp_fail_fallback",
+                "mode": "multichannel",
+            }
         return {
-            "action": "sent" if ok else "skipped",
+            "action": "sent",
             "pending_id": None,
             "channel": "whatsapp",
             "decision_rule": rule,
