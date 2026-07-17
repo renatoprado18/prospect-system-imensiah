@@ -52,3 +52,7 @@ docs/Pitangueiras_Solicitacao_Secretario.pdf
 docs/ARCHITECTURE_REBUILD.html
 .env.bak*
 mcp/.venv/
+# Estado OAuth do MCP HTTP (SQLite local/volume — nunca versionar)
+mcp/oauth_state.db
+mcp/oauth_state.db-wal
+mcp/oauth_state.db-shm

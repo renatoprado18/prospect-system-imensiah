@@ -42,11 +42,16 @@ Endpoint MCP:  http(s)://<host>:<port>/mcp
 
 Deploy: ver mcp/DEPLOY_HTTP.md (servico Railway `copiloto-mcp`, NAO o intel-api).
 
-NOTA sobre persistencia: clients/codes/tokens vivem EM MEMORIA (dict). Simples e
-seguro (PKCE obrigatorio, code de uso unico + expiracao curta). Apos um redeploy
-o estado zera — o claude.ai simplesmente re-faz o Dynamic Client Registration e
-o Renato re-autoriza com a senha uma vez. Access tokens ja emitidos param de
-valer no redeploy (o refresh/re-login resolve). Para single-user isso e aceitavel.
+NOTA sobre persistencia: clients (DCR) / authorization codes / access+refresh
+tokens sao PERSISTIDOS em SQLite (mcp/oauth_store.py, arquivo por env
+`MCP_OAUTH_DB`, default `mcp/oauth_state.db`). Os dicts em memoria sao cache
+write-through carregado na subida — o estado sobrevive a restart/redeploy do
+processo, entao o Renato NAO precisa re-autorizar no claude.ai a cada deploy.
+IMPORTANTE p/ Railway: o filesystem do container e efemero entre REDEPLOYS; pra
+sobreviver a um novo build e preciso montar um volume e apontar `MCP_OAUTH_DB`
+pra ele (ex: /data/oauth_state.db). Sem volume, sobrevive a restart mas nao a
+redeploy. O `pending` (consentimento em curso, TTL 10 min) segue so em memoria.
+Bearer estatico (MCP_HTTP_TOKEN) NAO passa pelo store — caminho paralelo intacto.
 """
 
 import base64
@@ -81,6 +86,8 @@ from mcp.server.auth.settings import (
 )
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.auth import OAuthClientInformationFull, OAuthMetadata, OAuthToken
+
+from oauth_store import OAuthStore
 
 # Reuso total: importa o MESMO objeto FastMCP (com as ~17 tools ja registradas)
 # do server stdio. Nada de re-registrar tools aqui — single source of truth.
@@ -127,15 +134,26 @@ class SingleUserOAuthProvider(
     sem secret), mas a emissao do `code` e gated por uma pagina de consentimento
     que exige a senha. Tudo em memoria."""
 
-    def __init__(self, static_token: str, password: str):
+    def __init__(self, static_token: str, password: str,
+                 store: OAuthStore | None = None):
         self.static_token = static_token
         self.password = password
-        self.clients: dict[str, OAuthClientInformationFull] = {}
+        # Persistencia SQLite: clients/codes/tokens sobrevivem a restart/redeploy
+        # (sem re-autorizar no claude.ai a cada subida). O `pending` fica so em
+        # memoria (efemero, TTL 10 min, meio do fluxo do browser).
+        self.store = store if store is not None else OAuthStore()
+        # Carrega estado persistido na subida (dict = cache write-through do SQLite).
+        self.clients: dict[str, OAuthClientInformationFull] = self.store.load_clients()
+        self.auth_codes: dict[str, AuthorizationCode] = self.store.load_codes()
+        self.access_tokens: dict[str, AccessToken] = self.store.load_access()
+        self.refresh_tokens: dict[str, RefreshToken] = self.store.load_refresh()
+        logger.info(
+            "OAuth state carregado do store: %d clients, %d codes, %d access, %d refresh",
+            len(self.clients), len(self.auth_codes),
+            len(self.access_tokens), len(self.refresh_tokens),
+        )
         # txn_id -> (client, AuthorizationParams, created_at)
         self.pending: dict[str, tuple[OAuthClientInformationFull, AuthorizationParams, float]] = {}
-        self.auth_codes: dict[str, AuthorizationCode] = {}
-        self.access_tokens: dict[str, AccessToken] = {}
-        self.refresh_tokens: dict[str, RefreshToken] = {}
 
     # --- DCR -----------------------------------------------------------------
     async def get_client(self, client_id: str):
@@ -143,6 +161,7 @@ class SingleUserOAuthProvider(
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         self.clients[client_info.client_id] = client_info
+        self.store.save_client(client_info)
         logger.info("OAuth client registrado: %s (%s)", client_info.client_id,
                     client_info.client_name or "sem nome")
 
@@ -165,7 +184,7 @@ class SingleUserOAuthProvider(
             raise KeyError("txn invalido ou expirado")
         client, params, _ = entry
         code = secrets.token_urlsafe(32)
-        self.auth_codes[code] = AuthorizationCode(
+        auth_code = AuthorizationCode(
             code=code,
             scopes=params.scopes or [],
             expires_at=time.time() + _CODE_TTL,
@@ -175,6 +194,8 @@ class SingleUserOAuthProvider(
             redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
             resource=params.resource,
         )
+        self.auth_codes[code] = auth_code
+        self.store.save_code(auth_code)
         return construct_redirect_uri(
             str(params.redirect_uri), code=code, state=params.state
         )
@@ -195,6 +216,7 @@ class SingleUserOAuthProvider(
     async def exchange_authorization_code(self, client, authorization_code) -> OAuthToken:
         # code de uso unico
         self.auth_codes.pop(authorization_code.code, None)
+        self.store.delete_code(authorization_code.code)
         return self._issue_tokens(client.client_id, authorization_code.scopes)
 
     # --- /token (refresh_token) ---------------------------------------------
@@ -209,6 +231,7 @@ class SingleUserOAuthProvider(
     async def exchange_refresh_token(self, client, refresh_token, scopes) -> OAuthToken:
         # rotaciona: invalida o refresh antigo
         self.refresh_tokens.pop(refresh_token.token, None)
+        self.store.delete_refresh(refresh_token.token)
         return self._issue_tokens(client.client_id, scopes or refresh_token.scopes)
 
     # --- verificacao de access token (usada pelo /mcp) ----------------------
@@ -224,6 +247,7 @@ class SingleUserOAuthProvider(
             return None
         if at.expires_at and at.expires_at < time.time():
             self.access_tokens.pop(token, None)
+            self.store.delete_access(token)
             return None
         return at
 
@@ -232,19 +256,25 @@ class SingleUserOAuthProvider(
         if tok:
             self.access_tokens.pop(tok, None)
             self.refresh_tokens.pop(tok, None)
+            self.store.delete_access(tok)
+            self.store.delete_refresh(tok)
 
     # --- helpers -------------------------------------------------------------
     def _issue_tokens(self, client_id: str, scopes: list[str]) -> OAuthToken:
         access = secrets.token_urlsafe(48)
         refresh = secrets.token_urlsafe(48)
         now = int(time.time())
-        self.access_tokens[access] = AccessToken(
+        at = AccessToken(
             token=access, client_id=client_id, scopes=scopes or [],
             expires_at=now + _ACCESS_TTL,
         )
-        self.refresh_tokens[refresh] = RefreshToken(
+        rt = RefreshToken(
             token=refresh, client_id=client_id, scopes=scopes or [], expires_at=None,
         )
+        self.access_tokens[access] = at
+        self.refresh_tokens[refresh] = rt
+        self.store.save_access(at)
+        self.store.save_refresh(rt)
         return OAuthToken(
             access_token=access,
             token_type="Bearer",
