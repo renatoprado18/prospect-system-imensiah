@@ -3646,6 +3646,85 @@ async def system_feedback_list(
     return {"count": len(rows), "feedbacks": rows}
 
 
+@app.get("/api/dev/delegations")
+async def dev_delegations_list(request: Request, days: int = 14):
+    """F-C C1: fila de delegacoes da Tonia pra sessao Dev (/dev) enxergar.
+
+    A Tonia enfileira delegacoes de coding em `tonia_dev_delegations` (via
+    comando no WhatsApp/chat); hoje o resultado so volta pro WA do Renato e
+    NUNCA chega a sessao Dev — a delegacao "morre no WA". Este endpoint surfaca
+    as ACIONAVEIS pra Dev na abertura do /dev, em 3 buckets:
+      - needs_review: success + mode=edit + has_changes (tem branch/diff pra a
+                      Dev revisar e mergear — a Dev e dona do merge/push)
+      - failed:       error | timeout nos ultimos N dias (precisa olho humano)
+      - in_progress:  queued | running (trabalho em curso)
+
+    Investigacoes read-only concluidas (mode=investigate/success) ficam de fora:
+    ja foram entregues no WA e nao pedem acao de codigo.
+
+    Admin-only (sessao OU X-API-Key). Read-only em `tonia_*` (contrato
+    assimetrico: o INTEL le, nao escreve).
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    authed = bool(api_key and intel_api_key and api_key == intel_api_key) or bool(
+        get_current_user(request)
+    )
+    if not authed:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    days = max(1, min(days, 90))
+    delegations = []
+    with get_db() as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT id, mode, status, task_summary, created_at, updated_at,
+                       branch, has_changes, diff_truncated,
+                       LEFT(COALESCE(response_summary, response_text), 400) AS summary,
+                       cost_usd, surfaced_at
+                FROM tonia_dev_delegations
+                WHERE status IN ('queued', 'running')
+                   OR (status IN ('error', 'timeout')
+                       AND created_at > NOW() - (%s || ' days')::interval)
+                   OR (status = 'success' AND mode = 'edit' AND has_changes = TRUE
+                       AND created_at > NOW() - (%s || ' days')::interval)
+                ORDER BY created_at DESC
+                """,
+                (days, days),
+            )
+            rows = cursor.fetchall()
+        except Exception as e:
+            # tonia_dev_delegations vive no Neon prod; em dev local pode nao
+            # existir (nao sincronizada) -> degrada gracioso em vez de 500.
+            conn.rollback()
+            return {"count": 0, "delegations": [],
+                    "note": f"indisponivel: {e.__class__.__name__}"}
+
+        for r in rows:
+            r = dict(r)
+            if r["status"] in ("queued", "running"):
+                r["bucket"] = "in_progress"
+            elif r["status"] in ("error", "timeout"):
+                r["bucket"] = "failed"
+            else:
+                r["bucket"] = "needs_review"
+            for k in ("created_at", "updated_at", "surfaced_at"):
+                if r.get(k):
+                    r[k] = r[k].isoformat()
+            if r.get("cost_usd") is not None:
+                r["cost_usd"] = float(r["cost_usd"])
+            delegations.append(r)
+
+    # agrupa por prioridade de acao; sort estavel preserva o created_at DESC do SQL
+    rank = {"needs_review": 0, "failed": 1, "in_progress": 2}
+    delegations.sort(key=lambda d: rank.get(d["bucket"], 9))
+    counts = {b: sum(1 for d in delegations if d["bucket"] == b)
+              for b in ("needs_review", "failed", "in_progress")}
+    return {"count": len(delegations), "counts": counts, "delegations": delegations}
+
+
 @app.get("/api/admin/cron-status")
 async def cron_status(user: dict = Depends(require_admin)):
     """Retorna evidencias indiretas de execucao recente dos crons —
