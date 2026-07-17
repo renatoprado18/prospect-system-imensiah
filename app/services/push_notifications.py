@@ -213,11 +213,16 @@ class PushNotificationService:
                     'keys': sub['keys']
                 }
 
+                # Copia FRESCA do claims por envio: pywebpush MUTA o dict pra
+                # injetar `aud` (audience do endpoint) e `exp`. Compartilhar o
+                # dict do singleton travava o `aud` no PRIMEIRO provider (FCM) e
+                # reusava pros demais -> Apple recebia aud=fcm.googleapis.com e
+                # rejeitava com 403 BadJwtToken (iPhone nao recebia, Mac sim).
                 webpush(
                     subscription_info=subscription_info,
                     data=json.dumps(payload),
                     vapid_private_key=self.vapid_private_key,
-                    vapid_claims=self.vapid_claims
+                    vapid_claims={**self.vapid_claims}
                 )
                 sent += 1
 
