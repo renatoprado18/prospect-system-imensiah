@@ -10,6 +10,10 @@ Ele só dá acesso a dados (leitura via views `copilot.*`) + escrita controlada 
 
 Design completo: `docs/MCP_SERVER_DESIGN.md` · Contrato de leitura: `docs/COPILOT_CONTRACT.md`
 
+> **Variante HTTP remota (mobile / connectors claude.ai):** `http_server.py` serve as
+> MESMAS tools via `streamable-http` com auth por bearer token. Deploy + registro do
+> connector: **`DEPLOY_HTTP.md`**.
+
 ## Arquivos
 
 ```
