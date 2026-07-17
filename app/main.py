@@ -5027,6 +5027,59 @@ async def api_channel_log(request: Request, days: int = 5):
     }
 
 
+@app.api_route("/api/admin/channel-test", methods=["GET", "POST"])
+async def api_channel_test(
+    request: Request,
+    urgency: int = 6,
+    source: str = "channel_test",
+    text: Optional[str] = None,
+):
+    """F-B gate: dispara route_to_renato pra exercitar um tier do router
+    multi-canal (push 5-7 / pill <5) em prod, sem esperar volume organico.
+
+    Fecha o gate do passo 5 (desligar Vercel): prova que urgencia media roteia
+    pra Web Push e urgencia baixa pra pill, com rastro em channel_decisions.
+    Admin-only (sessao OU X-API-Key). Reusavel em re-testes futuros.
+
+    Deixa 1 pending_notifications por chamada (ledger/badge) — limpavel pelo
+    dedup_key 'channel_test_urgN' se poluir digest.
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    authed = bool(api_key and intel_api_key and api_key == intel_api_key) or bool(
+        get_current_user(request)
+    )
+    if not authed:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.notification_router import (
+        route_to_renato,
+        decide_channel,
+        get_multichannel_mode,
+    )
+
+    body_text = text or f"[TESTE gate F-B] tier urgencia={urgency} ({source})"
+    payload = {"title": f"Teste canal (urg {urgency})", "body": body_text}
+    dedup_key = f"channel_test_urg{urgency}"
+    expected_channel, expected_rule = decide_channel(payload, urgency, source, "gate_test")
+
+    result = await route_to_renato(
+        source=source,
+        payload=payload,
+        msg_type="gate_test",
+        urgency_score=urgency,
+        dedup_key=dedup_key,
+        message_text=body_text,
+    )
+    return {
+        "multichannel_mode": get_multichannel_mode(),
+        "urgency": urgency,
+        "expected_channel": expected_channel,
+        "expected_rule": expected_rule,
+        "result": result,
+    }
+
+
 @app.post("/api/admin/notifications-silenced/{notif_id}/ack")
 async def api_ack_silenced(notif_id: int, user: dict = Depends(require_admin)):
     """Renato marca 'Digest OK' — viu o item no digest e esta bem assim.
