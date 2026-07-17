@@ -205,8 +205,15 @@ _SCHEDULER_JOBS = [
     # manda WA. Renato responde "ok" (arquiva) ou nome/numero (drill).
     # Custo ~$0.005/digest, hits NAO viram action_proposals (skip_proposal
     # no check_watcher). Cron skipado se 0 hits novos.
-    ("run-daily-news-digest", "/api/cron/run-daily-news-digest",
-     CronTrigger(hour=11, minute=0)),
+    #
+    # 17/07/26 — TICK OCIOSO DESREGISTRADO. O A3 (porta-voz unico) ja matou o
+    # ENVIO do digest self-chat via early-return no endpoint, entao este tick
+    # so disparava a toa ~11h UTC (chamada no-op). Removido do scheduler; o
+    # endpoint /api/cron/run-daily-news-digest e o service seguem existentes
+    # (nada apagado). cron_registry propaga sozinho: _sync_cron_registry marca
+    # active=FALSE em jobs ausentes na proxima subida do worker (sem DDL).
+    # ("run-daily-news-digest", "/api/cron/run-daily-news-digest",
+    #  CronTrigger(hour=11, minute=0)),
     # 22/06/2026: APOSENTADO — cos-digest-morning (10:08 UTC) ja cobre LLM
     # narrative. daily-morning-briefing volta ao static template que e suficiente.
     # ("cos-investigator", "/api/cron/cos-investigator", CronTrigger(hour=10, minute=10)),
