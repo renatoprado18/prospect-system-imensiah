@@ -5080,6 +5080,59 @@ async def api_channel_test(
     }
 
 
+@app.api_route("/api/admin/push-diag", methods=["GET", "POST"])
+async def api_push_diag(request: Request, send: int = 0):
+    """Diagnostico por-subscricao do Web Push. Admin-only (sessao OU X-API-Key).
+
+    Lista as subscricoes e, com ?send=1, dispara um push de teste pra CADA uma
+    isoladamente e reporta o desfecho real por endpoint (provider + status HTTP
+    da excecao). Separa 'device-side, re-subscrever' (Apple 201/410) de bug
+    server-side (400/403). Nao remove nada (so send_notification remove em 410).
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    authed = bool(api_key and intel_api_key and api_key == intel_api_key) or bool(
+        get_current_user(request)
+    )
+    if not authed:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.push_notifications import get_push_service
+
+    svc = get_push_service()
+    subs = svc.get_all_subscriptions()
+
+    def _provider(ep: str) -> str:
+        try:
+            return ep.split("/")[2]
+        except Exception:
+            return "?"
+
+    results = []
+    for sub in subs:
+        ep = sub.get("endpoint", "")
+        row = {"provider": _provider(ep), "endpoint_head": ep[:55]}
+        if send == 1:
+            res = svc.send_notification(
+                title="INTEL diag",
+                body="Diagnostico de push por device",
+                data={"url": "/rap"},
+                tag="push-diag",
+                subscription=sub,
+            )
+            row["sent"] = res.get("sent", 0)
+            row["failed"] = res.get("failed", 0)
+            row["errors"] = res.get("errors", [])
+        results.append(row)
+
+    return {
+        "configured": svc.is_configured(),
+        "count": len(subs),
+        "sent_test": bool(send == 1),
+        "subscriptions": results,
+    }
+
+
 @app.post("/api/admin/notifications-silenced/{notif_id}/ack")
 async def api_ack_silenced(notif_id: int, user: dict = Depends(require_admin)):
     """Renato marca 'Digest OK' — viu o item no digest e esta bem assim.
