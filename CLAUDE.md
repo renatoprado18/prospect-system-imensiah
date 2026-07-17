@@ -96,7 +96,11 @@ SELECT id, tipo, conteudo, criado_em FROM system_feedback WHERE status = 'pendin
 ```
 Se houver feedback pendente, informar ao usuário e priorizar na sessão.
 
-**RECOMENDADO**: Pra abertura estruturada com cockpit (estado CoS + dev + checks + proposta), o user pode invocar `/abre`. Lê os boards `project_cos_status.md` (executivo) + `project_dev_backlog.md` (dev) e roda checks dinâmicos. Usar em vez de status check manual no prompt.
+**RECOMENDADO**: Pra abertura estruturada, o user invoca o comando do PAPEL da sessão (substituíram o antigo `/abre`):
+- **`/cos`** — sessão executiva (Chief of Staff). Marca a sessão como `cos`, lê `project_cos_status.md` inteiro + topo do dev, mostra "onde paramos + próximos passos" e roda checks dinâmicos. NÃO toca git/deploy/Neon-DDL.
+- **`/dev`** — sessão de código. Marca como `dev`, lê `project_dev_backlog.md` inteiro + topo do executivo + `session_locks.md`, checa saúde técnica (git/deploy/health), pega os locks e propõe frente. Dona de git/deploy/Neon-DDL; só a Dev pusha `main`.
+
+Cada um grava um marcador de papel (`session_role` no scratchpad); o `/fim` lê esse marcador e fecha o board certo automaticamente (não é desdobrado em 2). Ver `session_locks.md` + `feedback_parallel_sessions`.
 
 ## No Fim de Cada Sessão
 
