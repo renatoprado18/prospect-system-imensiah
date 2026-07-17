@@ -5102,6 +5102,36 @@ async def api_push_diag(request: Request, send: int = 0):
     svc = get_push_service()
     subs = svc.get_all_subscriptions()
 
+    # Checagem decisiva do par VAPID: deriva a pública da privada e compara com
+    # a VAPID_PUBLIC_KEY. Par descasado => Apple rejeita (BadJwtToken) enquanto
+    # FCM (leniente) aceita — exatamente o sintoma iPhone-nao / Mac-sim.
+    pair = {"checked": False}
+    try:
+        import base64 as _b64
+        from cryptography.hazmat.primitives.asymmetric import ec as _ec
+        from cryptography.hazmat.primitives import serialization as _ser
+
+        def _b64url_dec(s: str) -> bytes:
+            s = s + "=" * (-len(s) % 4)
+            return _b64.urlsafe_b64decode(s)
+
+        priv_raw = svc.vapid_private_key
+        d_int = int.from_bytes(_b64url_dec(priv_raw), "big")
+        priv = _ec.derive_private_key(d_int, _ec.SECP256R1())
+        raw_pub = priv.public_key().public_bytes(
+            _ser.Encoding.X962, _ser.PublicFormat.UncompressedPoint
+        )
+        derived_pub = _b64.urlsafe_b64encode(raw_pub).rstrip(b"=").decode()
+        env_pub = (os.getenv("VAPID_PUBLIC_KEY", "") or "").strip()
+        pair = {
+            "checked": True,
+            "derived_public_head": derived_pub[:22],
+            "env_public_head": env_pub[:22],
+            "match": derived_pub == env_pub,
+        }
+    except Exception as e:
+        pair = {"checked": False, "error": str(e)}
+
     def _provider(ep: str) -> str:
         try:
             return ep.split("/")[2]
@@ -5127,6 +5157,7 @@ async def api_push_diag(request: Request, send: int = 0):
 
     return {
         "configured": svc.is_configured(),
+        "vapid_pair": pair,
         "count": len(subs),
         "sent_test": bool(send == 1),
         "subscriptions": results,
