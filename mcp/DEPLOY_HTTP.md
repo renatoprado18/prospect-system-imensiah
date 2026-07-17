@@ -72,32 +72,39 @@ Copie `DATABASE_URL`, `VOYAGE_API_KEY`, `CONSELHOOS_DATABASE_URL` do `.env` do p
 
 ---
 
-## 3. Registrar o connector no claude.ai (o celular herda da conta)
+## 3. Registrar o connector no claude.ai (OAuth 2.1 — o celular herda da conta)
 
-O app mobile do Claude **nao** cadastra MCP no aparelho — ele herda os connectors da
-sua conta claude.ai. Entao registra-se uma vez na web:
+A UI de custom connector do claude.ai **so oferece OAuth** (nao ha campo de bearer
+estatico). Desde o commit de OAuth, o server e um **Authorization Server OAuth 2.1**
+single-user (suporte NATIVO do SDK `mcp`): DCR + PKCE + pagina de consentimento com
+senha. O app mobile herda os connectors da conta claude.ai — registra-se uma vez na web:
 
 1. Abrir **claude.ai** (web) logado na conta do Renato.
 2. **Settings** (menu do perfil) → **Connectors**.
 3. **Add custom connector** (ou "Browse connectors" → "Add custom connector").
-4. Preencher:
+4. Preencher **APENAS**:
    - **Name:** `CoPiloto Renato`
    - **Remote MCP server URL:** `https://<dominio-railway>/mcp`  ← inclui o `/mcp`.
-   - **Authentication:** escolher **OAuth**? NAO — este server usa **bearer token
-     estatico**. Selecionar a opcao de token/header e colar em
-     **Authorization**: `Bearer <MCP_HTTP_TOKEN>` (o mesmo token do passo 0).
-     - Se a UI pedir so o "token", cole o valor cru do `MCP_HTTP_TOKEN`; se pedir o
-       header inteiro, cole `Bearer <token>`.
-5. **Add / Connect**. O claude.ai faz o handshake MCP (`initialize` + `tools/list`) —
-   se autenticou, aparecem as 17 tools do CoPiloto.
-6. No **app mobile**: abrir uma conversa → menu de ferramentas/connectors → habilitar
-   **CoPiloto Renato**. As tools ficam disponiveis (ex.: "abre meu cockpit",
-   "busca o projeto Cafe Jabo").
+   - **SEM token** — a UI faz OAuth sozinha.
+5. **Add / Connect**. O claude.ai descobre o AS (well-known), **se registra sozinho**
+   (Dynamic Client Registration) e **abre uma pagina no navegador** pedindo a senha.
+6. Na pagina **"Autorizar CoPiloto"**, digite a senha (`MCP_OAUTH_PASSWORD`) → **Autorizar**.
+   O browser volta pro claude.ai, que troca o code por token e conclui o handshake —
+   aparecem as 17 tools.
+7. No **app mobile**: abrir uma conversa → menu de connectors → habilitar **CoPiloto Renato**.
 
-> Se o claude.ai so aceitar connectors OAuth (varia por plano/rollout), a alternativa e
-> por o server atras de um proxy que faca o OAuth, OU habilitar o fluxo `token_verifier`
-> nativo do FastMCP. Isso e um upgrade futuro — o bearer estatico ja atende Claude
-> Desktop/Code e a maioria dos connectors custom.
+> **Bearer estatico ainda vale** pra Claude Desktop/Code/curl: `MCP_HTTP_TOKEN` continua
+> aceito como `Authorization: Bearer <token>` direto no `/mcp` (o verificador aceita AMBOS:
+> token OAuth emitido OU o estatico).
+>
+> **Estado OAuth e em memoria** — apos um redeploy, clients/tokens zeram; o claude.ai
+> re-faz o DCR e o Renato re-autoriza com a senha uma vez. Esperado, nao-bloqueante.
+
+### Envs OAuth (Railway → Variables)
+| Var | Obrigatoria | Uso |
+|-----|-------------|-----|
+| `MCP_OAUTH_PASSWORD` | recomendada | senha da pagina de consentimento (fallback = `MCP_HTTP_TOKEN`) |
+| `MCP_PUBLIC_URL` | recomendada | base publica = issuer OAuth (ex `https://<dominio>`); fallback deriva de `RAILWAY_PUBLIC_DOMAIN` |
 
 ---
 
