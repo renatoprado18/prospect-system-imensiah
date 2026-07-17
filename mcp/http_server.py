@@ -103,6 +103,16 @@ def build_app():
     mcp.settings.stateless_http = True
     mcp.settings.json_response = True
 
+    # DNS-rebinding protection: o FastMCP auto-liga (host default 127.0.0.1) e so
+    # aceita Host: localhost/127.0.0.1 -> num dominio publico isso vira 421 "Invalid
+    # Host header". Como o /mcp ja e protegido por bearer token (BearerAuthMiddleware),
+    # desligamos a validacao de Host/Origin aqui — o gate real e o token, nao o Host.
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=False
+    )
+
     app = mcp.streamable_http_app()  # Starlette app com rota POST/GET /mcp
     app.add_route("/healthz", _healthz, methods=["GET"])
     app.add_middleware(BearerAuthMiddleware)
