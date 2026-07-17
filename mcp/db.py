@@ -166,9 +166,13 @@ def search_projects(query: Optional[str] = None, status: Optional[str] = None,
     # NOTA: copilot.projects NAO existe ainda -> lendo public.projects direto.
     where, params = [], []
     if query:
-        where.append("(nome ILIKE %s OR descricao ILIKE %s OR empresa_relacionada ILIKE %s)")
-        like = f"%{query}%"
-        params += [like, like, like]
+        # Tokeniza: cada termo precisa casar em ALGUM campo (AND entre termos, OR
+        # entre campos). Query de 1 palavra = comportamento identico ao anterior.
+        # Multi-palavra passa a achar (ex: "cafe jabo" acha "Fazenda ... Cafe Jabo").
+        for term in query.split():
+            where.append("(nome ILIKE %s OR descricao ILIKE %s OR empresa_relacionada ILIKE %s)")
+            like = f"%{term}%"
+            params += [like, like, like]
     if status:
         where.append("status = %s")
         params.append(status)
