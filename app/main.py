@@ -3725,6 +3725,113 @@ async def dev_delegations_list(request: Request, days: int = 14):
     return {"count": len(delegations), "counts": counts, "delegations": delegations}
 
 
+@app.get("/api/dev/feedback")
+async def dev_feedback_unified(request: Request, days: int = 14):
+    """F-C C3: visao unificada (read-only) dos funis de feedback + candidatas.
+
+    Junta num so lugar os tres sinais que hoje vivem isolados — a sessao CoS/Dev
+    ve TODO feedback sem caçar em tabela separada. NAO funde as tabelas; cada
+    secao e distinta e mantem seu proposito:
+      - system_feedback:  reporte de problema do SISTEMA via bot INTEL (WA).
+                          Reusa a query de /api/admin/system-feedback (pending).
+      - tonia_feedback:   correcoes de COMPORTAMENTO da Tonia (kind tag/prose;
+                          exclui 'silence'). O feedback que nao bateu o
+                          threshold de virar regra fica visivel aqui — hoje e
+                          invisivel fora do proprio loop.
+      - rule_candidates:  padroes destilados (state='proposed' em
+                          tonia_rule_candidates) esperando ratificacao do Renato.
+
+    Admin-only (sessao OU X-API-Key), espelhando /api/dev/delegations. Read-only
+    em `tonia_*` (contrato assimetrico: o INTEL le, nao escreve). Cada secao
+    degrada gracioso (note) se a tabela nao existir no alvo (ex: dev local sem
+    tonia_* sincronizada).
+    """
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    authed = bool(api_key and intel_api_key and api_key == intel_api_key) or bool(
+        get_current_user(request)
+    )
+    if not authed:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    days = max(1, min(days, 90))
+    out: dict = {}
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+
+        # 1) system_feedback (tabela nativa INTEL) — pendentes.
+        try:
+            cursor.execute(
+                """
+                SELECT id, tipo, conteudo, status, criado_em
+                FROM system_feedback
+                WHERE status = 'pending'
+                ORDER BY criado_em DESC
+                LIMIT 50
+                """
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+            for r in rows:
+                if r.get("criado_em"):
+                    r["criado_em"] = r["criado_em"].isoformat()
+            out["system_feedback"] = {"count": len(rows), "items": rows}
+        except Exception as e:
+            conn.rollback()
+            out["system_feedback"] = {"count": 0, "items": [],
+                                      "note": f"indisponivel: {e.__class__.__name__}"}
+
+        # 2) tonia_feedback — ultimos N dias, kind tag/prose (exclui silence).
+        try:
+            cursor.execute(
+                """
+                SELECT id, kind, tag, content, block_ref, scope, created_at
+                FROM tonia_feedback
+                WHERE kind IN ('tag', 'prose')
+                  AND created_at > NOW() - (%s || ' days')::interval
+                ORDER BY created_at DESC
+                """,
+                (days,),
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+            for r in rows:
+                if r.get("created_at"):
+                    r["created_at"] = r["created_at"].isoformat()
+            out["tonia_feedback"] = {"count": len(rows), "items": rows}
+        except Exception as e:
+            conn.rollback()
+            out["tonia_feedback"] = {"count": 0, "items": [],
+                                     "note": f"indisponivel: {e.__class__.__name__}"}
+
+        # 3) rule_candidates — propostas aguardando ratificacao.
+        try:
+            cursor.execute(
+                """
+                SELECT id, rule_text, pattern_summary, proposed_at
+                FROM tonia_rule_candidates
+                WHERE state = 'proposed'
+                ORDER BY proposed_at ASC
+                """
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+            for r in rows:
+                if r.get("proposed_at"):
+                    r["proposed_at"] = r["proposed_at"].isoformat()
+            out["rule_candidates"] = {"count": len(rows), "items": rows}
+        except Exception as e:
+            conn.rollback()
+            out["rule_candidates"] = {"count": 0, "items": [],
+                                      "note": f"indisponivel: {e.__class__.__name__}"}
+
+    out["counts"] = {
+        "system_feedback": out["system_feedback"]["count"],
+        "tonia_feedback": out["tonia_feedback"]["count"],
+        "rule_candidates": out["rule_candidates"]["count"],
+    }
+    out["days"] = days
+    return out
+
+
 @app.get("/api/admin/cron-status")
 async def cron_status(user: dict = Depends(require_admin)):
     """Retorna evidencias indiretas de execucao recente dos crons —
