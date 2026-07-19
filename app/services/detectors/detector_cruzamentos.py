@@ -109,10 +109,71 @@ def _is_topical_watcher(query: str) -> bool:
     return len(_entity_tokens(query)) >= TOPICAL_MIN_TOKENS
 
 
+# Limiar de Jaccard (tokens do titulo) pra 2 manchetes serem a MESMA historia.
+# 19 hits da Fictor eram a mesma materia ecoada em varias fontes — o cross so
+# deve trazer NOVIDADE, nao repeticao. Titulo quase-igual (mesma fonte replicada)
+# da Jaccard ~0.8-1.0; eventos distintos da mesma entidade compartilham poucos
+# tokens (~0.2-0.4). 0.6 corta o eco sem colar historias diferentes.
+STORY_DEDUP_THRESHOLD = 0.6
+
+
+def _story_tokens(title: str) -> Set[str]:
+    """Tokens de conteudo do titulo (>=4 chars) pra comparar historias. NAO usa
+    _STOP (que e sufixo societario) — aqui queremos as palavras da materia."""
+    return {t for t in re.findall(r"[a-z0-9]+", _norm(title)) if len(t) >= 4}
+
+
+def _dedup_stories(hits: List[Dict]) -> List[Dict]:
+    """Colapsa a MESMA historia repetida em varias fontes. Mantem a 1a ocorrencia
+    (hits vem ordenados por hit_at DESC = mais recente primeiro). Jaccard de
+    tokens do titulo >= STORY_DEDUP_THRESHOLD => mesma historia, descarta.
+    Deterministico, sem LLM. Serve a regra 'so novidade' do cruzamento."""
+    kept: List[Dict] = []
+    kept_toks: List[Set[str]] = []
+    for h in hits:
+        tok = _story_tokens(h["title"])
+        if not tok:
+            continue
+        dup = False
+        for kt in kept_toks:
+            union = len(tok | kt)
+            if union and (len(tok & kt) / union) >= STORY_DEDUP_THRESHOLD:
+                dup = True
+                break
+        if not dup:
+            kept.append(h)
+            kept_toks.append(tok)
+    return kept
+
+
+def _build_angulo(entidade: str, contatos: List[Dict], best_circ: int) -> str:
+    """Angulo honesto: se o contato mais proximo tem papel (credor/beneficiario/
+    membro do caso), enquadra como EXPOSICAO via ele — nao afirma que trabalha na
+    empresa. Senao, o classico 'voce tem N contato(s) la'."""
+    n = len(contatos)
+    c1 = " (inclui circulo 1)" if best_circ == 1 else ""
+    closest = contatos[0] if contatos else None
+    if closest and closest.get("papel"):
+        return (
+            f"Saiu noticia sobre {entidade}. Voce tem exposicao via "
+            f"{closest['nome']} ({closest['papel']}){c1} — {n} contato(s) ligado(s) "
+            "ao caso. Contexto pro relacionamento, nao necessariamente acao."
+        )
+    return (
+        f"Saiu noticia sobre {entidade}. Voce tem {n} contato(s) la{c1}"
+        " — angulo de reaproximacao / contexto pro relacionamento."
+    )
+
+
 def run(conn) -> DetectorRun:
     res = DetectorRun(detector=DETECTOR_NAME)
     current_hashes: List[str] = []
     topical_on = _topical_enabled()
+    # Sufixo do RENATO_PHONE pra excluir o self (e suas duplicatas) dos membros
+    # de projeto. Fallback = numero canonico ([[feedback_no_hardcoded...]] usa
+    # este valor). Ultimos 9 digitos = robusto a +55 / DDI / formatacao.
+    _renato_digits = re.sub(r"\D", "", (os.getenv("RENATO_PHONE") or "5511984153337"))
+    self_phone_like = f"%{_renato_digits[-9:]}%"
     cur = conn.cursor()
 
     try:
@@ -171,10 +232,13 @@ def run(conn) -> DetectorRun:
                 # cross so vale se a noticia menciona a empresa. Sem manchete
                 # qualificada => sem signal.
                 token_res = [re.compile(r"\b" + t, re.IGNORECASE) for t in tokens]
-                named = [
+                # Dedup de historia SEMPRE (regra "so novidade"): a mesma materia
+                # ecoada em N fontes vira 1. Aplicado antes do teto pra nao gastar
+                # as 5 vagas com o mesmo evento repetido.
+                named = _dedup_stories([
                     h for h in grp["hits"]
                     if any(rx.search(_norm(h["title"])) for rx in token_res)
-                ]
+                ])
                 if topical_on:
                     # Manchetes nomeadas primeiro (marcadas), depois preenche o
                     # teto com topicas: hits NAO-nomeados cujo watcher e tematico.
@@ -184,17 +248,20 @@ def run(conn) -> DetectorRun:
                         for h in named[:MAX_HEADLINES]
                     ]
                     if len(headlines) < MAX_HEADLINES:
-                        topical = [
+                        topical_pool = [
                             h for h in grp["hits"]
                             if h["title"] not in named_titles
                             and _is_topical_watcher(h["watcher_query"])
                         ]
+                        # dedup topicas contra si E contra as nomeadas (named vem
+                        # primeiro; o slice pega so os sobreviventes topicos).
+                        topical = _dedup_stories(named + topical_pool)[len(named):]
                         headlines += [
                             {"title": h["title"], "url": h["url"], "match_type": "topical"}
                             for h in topical[: MAX_HEADLINES - len(headlines)]
                         ]
                 else:
-                    # OFF: comportamento v0 byte-a-byte (so nomeadas, sem match_type).
+                    # OFF: so nomeadas (+ dedup de historia). match_type ausente.
                     headlines = [
                         {"title": h["title"], "url": h["url"]}
                         for h in named
@@ -202,9 +269,10 @@ def run(conn) -> DetectorRun:
                 if not headlines:
                     continue
 
-                # Casa contatos cujo empresa (texto) COMECA com o token (word-start
-                # `\y` sem fronteira final). Pega "Jabô"->"Jaboticabeiras" sem
-                # exigir palavra identica; min 4 chars segura a precisao.
+                # FONTE 1 — contatos cujo empresa (texto) COMECA com o token
+                # (word-start `\y` sem fronteira final). Pega "Jabô"->"Jaboticabeiras"
+                # sem exigir palavra identica; min 4 chars segura a precisao. Sao
+                # pessoas que TRABALHAM na entidade da noticia.
                 patterns = [r"\y" + t for t in tokens]
                 cur.execute(
                     """
@@ -217,7 +285,54 @@ def run(conn) -> DetectorRun:
                     """,
                     (patterns,),
                 )
-                contatos = cur.fetchall()
+                # id -> contato unificado. papel=None => vinculo "trabalha na empresa".
+                by_id: Dict[int, Dict] = {}
+                for c in cur.fetchall():
+                    by_id[c["id"]] = {
+                        "id": c["id"], "nome": c["nome"], "circulo": c["circulo"],
+                        "cargo": (c["cargo"] or "")[:80], "papel": None,
+                    }
+
+                # FONTE 2 — membros do projeto (project_members). Pega vinculos que
+                # NAO sao "trabalha na empresa": ex Emma, credora/beneficiaria no
+                # caso Fictor (empresa em branco) — a F-D deve cruzar quem esta
+                # LIGADO ao caso, nao so quem trabalha na entidade. Exclui o
+                # PROPRIO Renato (single-tenant, nao se surfaca a si mesmo): o
+                # self tem varias duplicatas com o mesmo nome (uma so tem o
+                # telefone) — exclui por NOME que bate com o self do RENATO_PHONE,
+                # o que pega todas as duplicatas sem hardcodar contact_id
+                # ([[feedback_no_hardcoded_contact_ids]]). NOT EXISTS = seguro
+                # com NULL e com telefone ausente (fallback: nao exclui ninguem).
+                cur.execute(
+                    """
+                    SELECT c.id, c.nome, c.circulo, c.cargo, pm.papel
+                    FROM project_members pm
+                    JOIN contacts c ON c.id = pm.contact_id
+                    WHERE pm.project_id = %s
+                      AND NOT EXISTS (
+                          SELECT 1 FROM contacts self_c
+                          WHERE self_c.telefones::text LIKE %s
+                            AND self_c.nome = c.nome
+                      )
+                    """,
+                    (pid, self_phone_like),
+                )
+                for c in cur.fetchall():
+                    ex = by_id.get(c["id"])
+                    if ex:
+                        # ja veio da empresa; anexa o papel se a empresa nao deu.
+                        if not ex["papel"] and c["papel"]:
+                            ex["papel"] = c["papel"]
+                    else:
+                        by_id[c["id"]] = {
+                            "id": c["id"], "nome": c["nome"], "circulo": c["circulo"],
+                            "cargo": (c["cargo"] or "")[:80], "papel": c["papel"],
+                        }
+
+                contatos = sorted(
+                    by_id.values(),
+                    key=lambda x: (x["circulo"] if x["circulo"] is not None else 99, x["nome"] or ""),
+                )
                 if not contatos:
                     continue
 
@@ -240,17 +355,13 @@ def run(conn) -> DetectorRun:
                         {
                             "nome": c["nome"],
                             "circulo": c["circulo"],
-                            "cargo": (c["cargo"] or "")[:80],
+                            "cargo": c["cargo"],
+                            "papel": c["papel"],  # ex "Beneficiário"; None = trabalha na empresa
                         }
                         for c in contatos[:MAX_CONTATOS]
                     ],
                     "n_contatos": len(contatos),
-                    "angulo": (
-                        f"Saiu noticia sobre {entidade}. Voce tem "
-                        f"{len(contatos)} contato(s) la"
-                        + (" (inclui circulo 1)" if best_circ == 1 else "")
-                        + " — angulo de reaproximacao / contexto pro relacionamento."
-                    ),
+                    "angulo": _build_angulo(entidade, contatos, best_circ),
                 }
                 # Metadata topica so no modo ON (OFF fica byte-a-byte com v0). Se
                 # o cruzamento e SO topico (nenhuma manchete nomeia a entidade),
