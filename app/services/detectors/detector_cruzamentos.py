@@ -95,11 +95,9 @@ def run(conn) -> DetectorRun:
                     "project_name": r["project_name"] or "",
                     "empresa_relacionada": r["empresa_relacionada"] or "",
                     "watcher_query": r["watcher_query"] or "",
-                    "headlines": [],
+                    "hits": [],
                 })
-                if len(grp["headlines"]) < MAX_HEADLINES:
-                    grp["headlines"].append({"title": r["title"], "url": r["url"]})
-                grp["n_noticias"] = grp.get("n_noticias", 0) + 1
+                grp["hits"].append({"title": r["title"], "url": r["url"]})
 
             # 2) Pra cada projeto, resolve entidade -> tokens -> contatos no CRM.
             for pid, grp in by_project.items():
@@ -109,6 +107,19 @@ def run(conn) -> DetectorRun:
                 entidade = grp["empresa_relacionada"] or grp["watcher_query"]
                 tokens = _entity_tokens(entidade)
                 if not tokens:
+                    continue
+
+                # So cruza manchetes onde a ENTIDADE aparece NOMEADA no titulo
+                # (word-start). O watcher agrega por projeto e puxa ruido topico
+                # (ex: watcher 'Vallen Clinic' pega 'del Valle' de futebol) — o
+                # cross so vale se a noticia menciona a empresa. Sem manchete
+                # qualificada => sem signal.
+                token_res = [re.compile(r"\b" + t, re.IGNORECASE) for t in tokens]
+                headlines = [
+                    h for h in grp["hits"]
+                    if any(rx.search(_norm(h["title"])) for rx in token_res)
+                ][:MAX_HEADLINES]
+                if not headlines:
                     continue
 
                 # Casa contatos cujo empresa (texto) COMECA com o token (word-start
@@ -143,8 +154,8 @@ def run(conn) -> DetectorRun:
                     "project_id": pid,
                     "project_name": grp["project_name"],
                     "entidade": entidade,
-                    "n_noticias": grp.get("n_noticias", len(grp["headlines"])),
-                    "headlines": grp["headlines"],
+                    "n_noticias": len(headlines),
+                    "headlines": headlines,
                     "contatos": [
                         {
                             "nome": c["nome"],
