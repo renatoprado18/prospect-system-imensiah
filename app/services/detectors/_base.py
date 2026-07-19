@@ -202,6 +202,7 @@ def run_all_detectors(only: Optional[List[str]] = None) -> Dict[str, Any]:
         detector_governanca_pessoal,
         detector_delegacoes,
         detector_inbox,
+        detector_cruzamentos,
     )
 
     all_detectors = [
@@ -213,6 +214,7 @@ def run_all_detectors(only: Optional[List[str]] = None) -> Dict[str, Any]:
         ("detector_governanca_pessoal", detector_governanca_pessoal.run),
         ("detector_delegacoes", detector_delegacoes.run),
         ("detector_inbox", detector_inbox.run),
+        ("detector_cruzamentos", detector_cruzamentos.run),
     ]
 
     if only:
