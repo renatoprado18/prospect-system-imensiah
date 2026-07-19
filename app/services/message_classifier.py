@@ -4,28 +4,28 @@ Message Classifier — decide se uma mensagem incoming precisa resposta.
 Pipeline hibrido:
   1. Cache (message_classifications table)
   2. Rule-based (regex de fechamentos / acks / so emojis / so perguntas)
-  3. LLM (Claude Haiku 4.5, single-call, max_tokens=150)
+  3. LLM via ADVISOR (services.llm.classify_with_advisor): Haiku decide; com a
+     flag TRIAGE_ADVISOR ON, escala pro Sonnet quando o Haiku esta em duvida
+     (confidence < 0.7) OU o contato e circulo 1-2 (falso-negativo caro). OFF =
+     so Haiku, comportamento anterior byte-a-byte.
 
 Usado pelo statcard "Contatos c/ Atencao" pra eliminar falsos positivos.
 
-Modelo: SOMENTE claude-haiku-4-5-20251001 (cheap, ~$0.0001/msg).
-NAO usar Sonnet/Opus — classificacao binaria nao precisa.
+Custo base: Haiku ~$0.0001/msg. Advisor OFF nao adiciona custo; ON so paga
+Sonnet nas msgs duvidosas/criticas (a maioria resolve no Haiku).
 
 Override manual: salva com method='manual' e tem precedencia (sobrescreve cache).
 """
-import os
 from services import llm
 import re
 import json
 import logging
-import asyncio
 from typing import Optional, Tuple
 
 from database import get_db
 
 logger = logging.getLogger(__name__)
 
-CLASSIFIER_MODEL = llm.FAST
 MAX_TOKENS = 150
 
 # Patterns 100% "nao precisa resposta" — fechamento, ack, agradecimento curto.
@@ -104,27 +104,14 @@ def rule_based_check(text: str) -> Optional[bool]:
     return None  # ambiguo — vai pro LLM
 
 
-async def llm_classify(text: str, sender_name: str = '') -> Tuple[bool, str]:
+def _build_llm_prompt(text: str, sender_name: str = '') -> str:
+    """Monta o prompt do classificador binario (requires_reply).
+
+    ADITIVO: pede tambem `confidence` (0.0-1.0). Quando o advisor esta OFF o
+    campo e ignorado (comportamento byte-a-byte); quando ON alimenta a decisao
+    de escalar Haiku→Sonnet.
     """
-    Claude Haiku — classifica binario com 1 frase de reasoning.
-
-    Returns:
-        (requires_reply: bool, reasoning: str)
-    """
-    api_key = os.getenv('ANTHROPIC_API_KEY')
-    if not api_key:
-        logger.warning("ANTHROPIC_API_KEY ausente — defaulting para requires_reply=True (conservador)")
-        return True, "no_api_key"
-
-    try:
-        import anthropic
-    except ImportError:
-        logger.warning("anthropic SDK ausente — defaulting para requires_reply=True")
-        return True, "no_sdk"
-
-    client = anthropic.Anthropic(api_key=api_key)
-
-    prompt = f"""Voce classifica mensagens recebidas em PT-BR pra decidir se precisam de resposta acionavel do destinatario.
+    return f"""Voce classifica mensagens recebidas em PT-BR pra decidir se precisam de resposta acionavel do destinatario.
 
 Mensagem de {sender_name or 'contato'}:
 \"\"\"
@@ -132,7 +119,9 @@ Mensagem de {sender_name or 'contato'}:
 \"\"\"
 
 Responda SO em JSON valido:
-{{"requires_reply": true|false, "reasoning": "1 frase curta em pt-br"}}
+{{"requires_reply": true|false, "confidence": 0.0-1.0, "reasoning": "1 frase curta em pt-br"}}
+
+`confidence` = quao seguro voce esta da classificacao (1.0 = certeza total, 0.5 = em cima do muro, ambiguo).
 
 Marque true SO quando ha pedido/pergunta/decisao explicita esperando resposta:
 - Perguntas diretas com expectativa de resposta ("voce topa?", "qual prazo?")
@@ -146,31 +135,70 @@ Marque false em todo o resto:
 - Placeholders de midia sem texto util ("[Audio]", "[Imagem]", "[Video]", "[Sticker]")
 - Digests/resumos automatizados (comecam com emojis tipo 📊 📧 📱 e listam stats)
 - Reclamacoes/desabafos sem pergunta direta
-- Quando em duvida = false (preferimos perder do que poluir o inbox)
+- Quando em duvida = false (preferimos perder do que poluir o inbox), mas baixe o confidence
 """
 
+
+def _parse_reply_classification(raw) -> Optional[dict]:
+    """Extrai {requires_reply, confidence, reasoning} do texto do LLM. Robusto
+    a prefixo/sufixo (Haiku as vezes adiciona). None se nao parseou."""
+    if not raw:
+        return None
     try:
-        msg = await asyncio.to_thread(
-            client.messages.create,
-            model=CLASSIFIER_MODEL,
-            max_tokens=MAX_TOKENS,
-            messages=[{'role': 'user', 'content': prompt}],
-        )
-        raw = msg.content[0].text if msg.content else ''
-        # Extrai JSON do texto (Haiku as vezes adiciona prefixo/sufixo)
-        try:
-            start = raw.index('{')
-            end = raw.rindex('}') + 1
-            data = json.loads(raw[start:end])
-            requires = bool(data.get('requires_reply', True))
-            reasoning = str(data.get('reasoning', ''))[:280]
-            return requires, reasoning
-        except (ValueError, json.JSONDecodeError) as e:
-            logger.warning(f"llm_classify parse error: {e} | raw={raw[:200]}")
-            return True, 'parse_error'  # conservador
-    except Exception as e:
-        logger.warning(f"llm_classify api error: {e}")
-        return True, f'api_error: {str(e)[:120]}'  # conservador
+        start = raw.index('{')
+        end = raw.rindex('}') + 1
+        data = json.loads(raw[start:end])
+    except (ValueError, json.JSONDecodeError) as e:
+        logger.warning(f"_parse_reply_classification parse error: {e} | raw={str(raw)[:200]}")
+        return None
+    return {
+        'requires_reply': bool(data.get('requires_reply', True)),
+        'confidence': data.get('confidence'),
+        'reasoning': str(data.get('reasoning', ''))[:280],
+    }
+
+
+async def llm_classify(
+    text: str, sender_name: str = '', sender_circle: Optional[int] = None
+) -> Tuple[bool, str]:
+    """
+    Classifica binario com 1 frase de reasoning.
+
+    Roteia pelo ADVISOR (services.llm.classify_with_advisor): Haiku decide; com
+    a flag TRIAGE_ADVISOR ON, se o Haiku esta em duvida (confidence < 0.7) OU o
+    contato e circulo 1-2 (gate critico — falso-negativo caro), re-roda no
+    Sonnet, que substitui o veredito. OFF = so Haiku (comportamento anterior).
+
+    Args:
+        sender_circle: circulo do contato (1=familia..5=cold). Gate critico se 1-2.
+
+    Returns:
+        (requires_reply: bool, reasoning: str)
+    """
+    prompt = _build_llm_prompt(text or '', sender_name)
+    critical = sender_circle in (1, 2)
+
+    res = await llm.classify_with_advisor(
+        prompt,
+        _parse_reply_classification,
+        decision_key='requires_reply',
+        critical_gate=critical,
+        max_tokens=MAX_TOKENS,
+        label='reply_needed',
+    )
+    parsed = res.get('parsed')
+    if parsed is None:
+        # Sem key/SDK/parse — conservador (preserva comportamento anterior).
+        logger.warning("llm_classify: sem veredito do LLM — defaulting requires_reply=True")
+        return True, 'no_result'
+
+    reasoning = parsed.get('reasoning') or ''
+    # Telemetria leve no reasoning quando o Sonnet decidiu (nao muda `method`).
+    if res.get('escalated') and res.get('tier') == 'strong':
+        suffix = f" [advisor→sonnet{'*' if res.get('changed') else ''}]"
+        reasoning = (reasoning + suffix)[:280]
+
+    return bool(parsed.get('requires_reply', True)), reasoning
 
 
 def _get_cached(message_id: int, source_table: str) -> Optional[dict]:
@@ -230,6 +258,7 @@ async def classify(
     text: str,
     sender_name: str = '',
     force: bool = False,
+    sender_circle: Optional[int] = None,
 ) -> dict:
     """
     Orquestra classificacao com cache + rule + LLM.
@@ -240,6 +269,8 @@ async def classify(
         text: conteudo da mensagem
         sender_name: nome do contato (opcional, ajuda contexto)
         force: ignora cache e reclassifica
+        sender_circle: circulo do contato (1-5). Ativa gate critico do advisor
+                       (circulo 1-2 = falso-negativo caro) quando TRIAGE_ADVISOR ON.
 
     Returns:
         {
@@ -272,8 +303,8 @@ async def classify(
             'cached': False,
         }
 
-    # 3. LLM
-    requires, reasoning = await llm_classify(text or '', sender_name)
+    # 3. LLM (via advisor: Haiku → talvez Sonnet se em duvida / gate critico)
+    requires, reasoning = await llm_classify(text or '', sender_name, sender_circle)
     _save_classification(message_id, source_table, requires, reasoning, 'llm')
     return {
         'requires_reply': requires,
@@ -304,7 +335,8 @@ async def classify_pending_batch(limit: int = 500, days: int = 7) -> dict:
                 """
                 SELECT m.id, m.contact_id, m.conteudo,
                        c.nome AS sender_name,
-                       c.empresa AS sender_company
+                       c.empresa AS sender_company,
+                       c.circulo AS sender_circle
                 FROM messages m
                 JOIN contacts c ON c.id = m.contact_id
                 LEFT JOIN message_classifications mc
@@ -327,6 +359,7 @@ async def classify_pending_batch(limit: int = 500, days: int = 7) -> dict:
                     source_table="messages",
                     text=row["conteudo"] or "",
                     sender_name=row.get("sender_name") or "",
+                    sender_circle=row.get("sender_circle"),
                 )
                 if res.get("cached"):
                     processed["skipped"] += 1
