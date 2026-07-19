@@ -280,6 +280,10 @@ _SCHEDULER_JOBS = [
     ("weekly-digest", "/api/cron/weekly-digest", CronTrigger(day_of_week="mon", hour=8, minute=0)),
     ("editorial-weekly-briefing", "/api/cron/editorial-weekly-briefing", CronTrigger(day_of_week="sun", hour=21, minute=0)),
     ("daily-synthesis", "/api/cron/daily-synthesis", CronTrigger(hour=1, minute=0)),
+    # F-E instrumentacao v0 — snapshot diario do capability registry (custo/uso/
+    # valor por capacidade). 01h40 UTC, depois do daily-synthesis; acumula a
+    # serie point-in-time pra retro PDCA quinzenal. Idempotente por dia (UPSERT).
+    ("capability-snapshot", "/api/cron/capability-snapshot", CronTrigger(hour=1, minute=40)),
     ("auto-resolve-editorial", "/api/cron/auto-resolve-editorial", CronTrigger(hour=15, minute=30)),
     # 13/07/26 — Passo 5 F-2: migracao final dos 7 crons Vercel-only restantes
     # (completa a leva de 17/06). Removidos do vercel.json no MESMO commit pra

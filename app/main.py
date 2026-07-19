@@ -3832,6 +3832,57 @@ async def dev_feedback_unified(request: Request, days: int = 14):
     return out
 
 
+@app.get("/api/dev/capability-registry")
+async def dev_capability_registry(request: Request, days: int = 14, trend: bool = False):
+    """F-E: capability registry — custo/uso/valor por CAPACIDADE, pra retro PDCA.
+
+    A base de dados da retro quinzenal (1a em 31/07). Interpreta a telemetria
+    crua (signals, cron_runs, tonia_llm_usage, platform_costs, action_proposals)
+    por capacidade em 4 tipos — detector, cron, llm_function, proposal_source —
+    devolvendo pra cada uma {cost_usd, invocations, value_acted, value_ignored,
+    value_ratio, extra}. Onde nao ha proxy de valor mensuravel, value_ratio=None
+    e o motivo fica em extra (honestidade > metrica-teatro).
+
+    O rollup e ON-DEMAND (build_registry) — nao depende do snapshot diario. Com
+    ?trend=true anexa a serie point-in-time dos ultimos snapshots (tendencia do
+    ratio de valor ao longo dos dias), que so existe se o cron
+    /api/cron/capability-snapshot ja rodou.
+
+    Admin-only (sessao OU X-API-Key), espelhando /api/dev/delegations e
+    /api/dev/feedback. Read-only sobre a telemetria (a unica escrita do F-E e o
+    cron do snapshot, nao este endpoint)."""
+    api_key = request.headers.get("X-API-Key", "").strip()
+    intel_api_key = (os.getenv("INTEL_API_KEY", "") or "").strip()
+    authed = bool(api_key and intel_api_key and api_key == intel_api_key) or bool(
+        get_current_user(request)
+    )
+    if not authed:
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+
+    from services.capability_registry import build_registry, snapshot_trend
+
+    registry = build_registry(days)
+    if trend:
+        registry["trend"] = snapshot_trend()
+    return registry
+
+
+@app.get("/api/cron/capability-snapshot")
+@track_cron_run
+async def cron_capability_snapshot(request: Request, days: int = 14):
+    """Cron diario (F-E): persiste 1 linha por capacidade em
+    capability_snapshots pra data de hoje (UTC). Idempotente por dia — re-run
+    faz UPSERT. Acumula a serie point-in-time (nº pending hoje, ratio aberto)
+    que os eventos crus nao viram sozinhos, pra retro ver TENDENCIA.
+
+    Auth via verify_cron_auth (Bearer CRON_SECRET / vercel-cron UA)."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.capability_registry import persist_snapshot
+    result = persist_snapshot(days=days)
+    return {"job": "capability-snapshot", **result}
+
+
 @app.get("/api/admin/cron-status")
 async def cron_status(user: dict = Depends(require_admin)):
     """Retorna evidencias indiretas de execucao recente dos crons —
