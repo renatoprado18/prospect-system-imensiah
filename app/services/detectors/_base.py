@@ -158,6 +158,11 @@ EPHEMERAL_SIGNAL_TTL_HOURS: Dict[str, int] = {
     "editorial_monthly_digest": 720,   # 30 dias
     "linkedin_author_reply": 168,      # 7 dias
     "linkedin_engagement_quarantine": 168,
+    # cruzamento_noticia_contato TEM detector recorrente (expira via
+    # expire_stale_signals quando some da run), MAS expire_stale bail-a quando
+    # current_hashes vem vazio (todas as manchetes suprimidas). Sem este TTL,
+    # um cruzamento antigo fica 'open' pra sempre quando o detector zera. 7d.
+    "cruzamento_noticia_contato": 168,
 }
 
 
