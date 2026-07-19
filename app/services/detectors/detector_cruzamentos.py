@@ -119,8 +119,16 @@ STORY_DEDUP_THRESHOLD = 0.6
 
 def _story_tokens(title: str) -> Set[str]:
     """Tokens de conteudo do titulo (>=4 chars) pra comparar historias. NAO usa
-    _STOP (que e sufixo societario) — aqui queremos as palavras da materia."""
-    return {t for t in re.findall(r"[a-z0-9]+", _norm(title)) if len(t) >= 4}
+    _STOP (que e sufixo societario) — aqui queremos as palavras da materia.
+
+    Tira o SUFIXO DA FONTE antes de tokenizar: portais anexam ' - Diario do
+    Comercio' / ' | CNN Brasil' ao fim do titulo — a mesma materia em 2 fontes
+    ficava com tokens diferentes (nome do veiculo) e escapava do dedup. Corta so
+    o ULTIMO segmento e so se for curto (<=5 palavras = nome de veiculo), pra nao
+    perder conteudo que use travessao no meio."""
+    parts = re.split(r"\s[-–—|]\s", title)
+    core = " ".join(parts[:-1]) if len(parts) > 1 and len(parts[-1].split()) <= 5 else title
+    return {t for t in re.findall(r"[a-z0-9]+", _norm(core)) if len(t) >= 4}
 
 
 def _dedup_stories(hits: List[Dict]) -> List[Dict]:
