@@ -29,6 +29,12 @@ DEEP = "claude-opus-4-7"                # análise profunda (raro)
 # ─────────────────────────────────────────────────────────────────────────────
 # Threshold de confiança: abaixo disso, o Haiku está "em dúvida" e escalamos.
 TRIAGE_ADVISOR_THRESHOLD = 0.7
+# Threshold pra contatos CRÍTICOS (círculo 1-2 — falso-negativo caro): bar mais
+# alto (escala com menos dúvida), MAS não é "sempre". Calibração 19/07: o gate
+# antigo forçava escalada em 100% dos círculo 1-2 (toda msg casual da Emma pagava
+# Sonnet). Bar 0.9 = escala a dúvida real do contato próximo sem queimar Sonnet
+# no óbvio (conf>=0.9). A retro PDCA afina via telemetria (verdict_changed/rate).
+TRIAGE_ADVISOR_CRITICAL_THRESHOLD = 0.9
 # Cap de sanidade: se o advisor escalar mais que isso do volume, ele virou
 # "sempre Sonnet" (perdeu o ganho de custo) — logamos alerta 1x pra revisar
 # threshold/gate. Não BLOQUEIA (nunca queremos degradar precisão), só sinaliza.
@@ -62,6 +68,7 @@ def advisor_telemetry() -> dict:
         "verdict_changed": _advisor_changed,
         "escalation_rate": round(rate, 4),
         "threshold": TRIAGE_ADVISOR_THRESHOLD,
+        "critical_threshold": TRIAGE_ADVISOR_CRITICAL_THRESHOLD,
     }
 
 
@@ -99,6 +106,7 @@ async def classify_with_advisor(
     decision_key,
     critical_gate=False,
     threshold=TRIAGE_ADVISOR_THRESHOLD,
+    critical_threshold=TRIAGE_ADVISOR_CRITICAL_THRESHOLD,
     max_tokens=200,
     fast_model=FAST,
     strong_model=BALANCED,
@@ -122,9 +130,11 @@ async def classify_with_advisor(
                   'confidence' (0.0-1.0). Retorna None se não parseou.
         decision_key: chave no dict parseado usada pra detectar se o Sonnet
                       MUDOU o veredito do Haiku (telemetria).
-        critical_gate: True força escalada mesmo com confidence alta (ex:
-                       contato círculo 1-2, item na borda de urgente).
-        threshold: corte de confidence pra escalar (default 0.7).
+        critical_gate: contato crítico (círculo 1-2) — usa bar de confiança mais
+                       alto (critical_threshold), escala com menos dúvida mas
+                       NÃO no óbvio (conf alta não paga Sonnet).
+        threshold: corte de confidence pra escalar contato normal (default 0.7).
+        critical_threshold: corte pra contato crítico (default 0.9).
         call_fn: callable(model, prompt, max_tokens) -> str|None, SÍNCRONO.
                  Injetável pra teste/mock. Default = _call_model.
 
@@ -159,7 +169,11 @@ async def classify_with_advisor(
                 "changed": False, "confidence": conf, "advisor_on": False}
 
     _advisor_calls += 1
-    should_escalate = (conf < threshold) or bool(critical_gate)
+    # Contato crítico (círculo 1-2) usa bar de confiança mais alto — escala com
+    # menos dúvida, mas NÃO sempre: conf>=critical_threshold no óbvio não paga
+    # Sonnet (calibração 19/07, ver constante). Resto usa o threshold normal.
+    effective_threshold = critical_threshold if critical_gate else threshold
+    should_escalate = conf < effective_threshold
     if not should_escalate:
         return {"parsed": fast_parsed, "tier": "fast", "escalated": False,
                 "changed": False, "confidence": conf, "advisor_on": True}
