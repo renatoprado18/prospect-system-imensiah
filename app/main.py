@@ -16903,15 +16903,20 @@ async def sync_gmail_labels(request: Request, label: str = "!!Renato"):
 @app.post("/api/cron/email-triage-sweep")
 @track_cron_run
 async def cron_email_triage_sweep(request: Request, hours: int = 1):
-    """Cron: varre Gmail das ultimas N horas em AMBAS contas, classifica,
-    aplica label !!Renato quando must_read+conf>=0.85, propoe shadow archive.
+    """Cron: varre Gmail das ultimas N horas em AMBAS contas, classifica e
+    roteia pros 4 buckets (20/07/2026, age-ja):
+      - must_read -> !!Renato / !Andressa / Financeiro (mantem inbox).
+      - R4 (noreply) conf>=0.85 -> Arquivar (remove inbox, sem label).
+      - R5/R6 (unsub/cold) conf>=0.85 -> !!Deletar (label + remove inbox).
+      - silent / incerto -> no-op (fica no inbox).
 
     Schedule via GH Actions (cron 7,37 * * * — 2x/hora off-peak).
     NAO em vercel.json — Hobby plan atrasa crons frequentes.
 
     Returns:
-        {job, ok, processed, by_account, by_classification,
-         label_applied, shadow_proposals, errors, duration_ms}
+        {job, ok, processed, by_account, by_classification, label_applied,
+         auto_archived, bucket_arquivar, bucket_deletar, shadow_proposals,
+         errors, duration_ms}
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")

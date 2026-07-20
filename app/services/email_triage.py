@@ -83,6 +83,12 @@ def extract_email_body(body: Dict) -> Tuple[str, str]:
 # agent_actions.action_type='gmail_label_add'.
 MAX_LABELS_PER_DAY = 50
 
+# Triagem 4-bucket (20/07/2026): confianca minima pra AGIR nos buckets que
+# REMOVEM da inbox (Arquivar via R4, !!Deletar via R5/R6). Abaixo disso o
+# email fica no inbox (bucket "incerto" — Renato ve). Labels que MANTEM no
+# inbox (!!Renato / !Andressa) usam o gate de 0.85 ja existente no must_read.
+ARCHIVE_ACTION_MIN_CONFIDENCE = 0.85
+
 # Auto-archive gate (24/06/2026) — substitui o flag global por config
 # per conta em google_accounts.auto_archive_enabled. Lido a cada sweep.
 # Criterio destrava: FP rate < 1% em 14d (manual via Renato).
@@ -1999,6 +2005,12 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
     """Sweep emails recentes de TODAS contas Google conectadas, classifica
     via regras e insere em email_triage (idempotente por external_id).
 
+    Roteia cada email pros 4 buckets (20/07/2026, age-ja):
+      - must_read       -> !!Renato / !Andressa / Financeiro (MANTEM inbox).
+      - R4 archive       -> Arquivar: remove INBOX, sem label (conf>=0.85).
+      - R5/R6 archive    -> !!Deletar: label + remove INBOX (conf>=0.85).
+      - silent / incerto -> no-op (fica no inbox pro Renato ver).
+
     Args:
         hours: janela de busca pra tras (default 1h pra cron 30min).
 
@@ -2009,7 +2021,11 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
             by_account: {email: count},
             by_classification: {must_read: N, archive_proposed: N, silent: N},
             label_applied: int,
-            shadow_proposals: int,
+            auto_archived: int,          # emails removidos do inbox (arquivar+deletar)
+            bucket_arquivar: int,        # R4 arquivados
+            bucket_deletar: int,         # R5/R6 -> !!Deletar
+            shadow_proposals: int,       # archive_proposed incerto (nao agido)
+            label_skipped_cap: int,
             errors: [str],
             duration_ms: int
         }
@@ -2235,16 +2251,9 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
             #   (ou 7-Financeiro/Recibos profissional). infra-critico ALEM disso ganha !!Renato.
             # - resto must_read -> !!Renato (default)
             if classification == "must_read" and confidence >= 0.85:
-                tags_lower = [str(t).lower() for t in (decision.get("suggested_tags") or [])]
-                labels_to_apply = []
-                if any(t in tags_lower for t in ("!andressa", "andressa", "admin")):
-                    labels_to_apply.append("!Andressa")
-                elif any(t in tags_lower for t in ("financeiro", "billing", "gov", "infra-critico")):
-                    labels_to_apply.append(_label_name_financeiro(ref["account_email"]))
-                    if "infra-critico" in tags_lower:
-                        labels_to_apply.append("!!Renato")
-                else:
-                    labels_to_apply.append("!!Renato")
+                labels_to_apply = route_mustread_labels(
+                    decision.get("suggested_tags"), ref["account_email"]
+                )
 
                 for label_name in labels_to_apply:
                     if labels_today >= MAX_LABELS_PER_DAY:
@@ -2296,45 +2305,22 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
                 except Exception as e:
                     stats["errors"].append(f"wa_push {gmail_id[:12]}: {str(e)[:80]}")
 
-            # 4g. Archive proposals — shadow OU real (gate per-conta, 24/06/2026)
+            # 4g. Archive_proposed -> roteia pros buckets 4-bucket (age-ja,
+            # 20/07/2026). Substitui o gate per-conta is_auto_archive_enabled:
+            #   - R4 (noreply)       -> Arquivar: remove INBOX, SEM label.
+            #   - R5/R6 (unsub/cold) -> !!Deletar: label !!Deletar + remove
+            #                           INBOX (fila de exclusao; NUNCA deleta
+            #                           de verdade — o Renato apaga em lote).
+            #   - resto / conf<0.85  -> no-op (incerto): fica no inbox pro
+            #                           Renato ver; registra shadow pra auditoria.
+            # Idempotencia: shadow proposal por message_id + label idempotente.
+            # Rede de seguranca: MAX_LABELS_PER_DAY limita acoes destrutivas/dia.
             if classification == "archive_proposed":
                 acct_email = ref["account_email"]
-                acct_auto_enabled = is_auto_archive_enabled(acct_email)
+                bucket = route_archive_bucket(decision.get("rule_hits"), confidence)
                 try:
-                    if acct_auto_enabled:
-                        # Auto-archive ATIVADO pra essa conta — arquiva real no Gmail
-                        try:
-                            archived_ok = await gmail.archive_message(
-                                ref["access_token"], gmail_id
-                            )
-                        except Exception as e:
-                            archived_ok = False
-                            stats["errors"].append(f"auto_archive {gmail_id[:12]}: {str(e)[:80]}")
-                        prop_result = await _create_shadow_proposal(
-                            triage_id=triage_id,
-                            gmail_id=gmail_id,
-                            account_email=acct_email,
-                            headers=headers,
-                            decision=decision,
-                        )
-                        # Marca proposal como archived direto
-                        if prop_result.get("created") and archived_ok:
-                            with get_db() as _conn:
-                                _cur = _conn.cursor()
-                                _cur.execute(
-                                    """
-                                    UPDATE email_archive_proposals
-                                    SET status = 'archived',
-                                        ratified_at = NOW(),
-                                        ratified_by = 'auto_gate'
-                                    WHERE id = %s
-                                    """,
-                                    (prop_result.get("proposal_id"),),
-                                )
-                                _conn.commit()
-                            stats["auto_archived"] = stats.get("auto_archived", 0) + 1
-                    else:
-                        # Shadow mode (default — gate ainda nao destravou)
+                    if bucket == "noop":
+                        # Incerto — NAO mexe na inbox. Registro shadow p/ auditoria.
                         prop_result = await _create_shadow_proposal(
                             triage_id=triage_id,
                             gmail_id=gmail_id,
@@ -2344,8 +2330,60 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
                         )
                         if prop_result.get("created"):
                             stats["shadow_proposals"] += 1
+                    elif labels_today >= MAX_LABELS_PER_DAY:
+                        # Cap diario batido — nao age (rede de seguranca).
+                        stats["label_skipped_cap"] += 1
+                    else:
+                        # AGE: remove da inbox (+ label !!Deletar se bucket deletar).
+                        if bucket == "deletar":
+                            try:
+                                lr = await _apply_generic_label(
+                                    gmail, ref["access_token"], gmail_id,
+                                    acct_email, triage_id, msg_id, "!!Deletar",
+                                )
+                                if lr.get("applied"):
+                                    stats["label_applied"] += 1
+                            except Exception as e:
+                                stats["errors"].append(
+                                    f"deletar_label {gmail_id[:12]}: {str(e)[:80]}"
+                                )
+                        try:
+                            archived_ok = await gmail.archive_message(
+                                ref["access_token"], gmail_id
+                            )
+                        except Exception as e:
+                            archived_ok = False
+                            stats["errors"].append(
+                                f"archive {gmail_id[:12]}: {str(e)[:80]}"
+                            )
+                        if archived_ok:
+                            labels_today += 1  # conta como acao destrutiva do dia
+                            stats["auto_archived"] = stats.get("auto_archived", 0) + 1
+                            stats[f"bucket_{bucket}"] = stats.get(f"bucket_{bucket}", 0) + 1
+                        # Registro de auditoria (proposta -> archived).
+                        prop_result = await _create_shadow_proposal(
+                            triage_id=triage_id,
+                            gmail_id=gmail_id,
+                            account_email=acct_email,
+                            headers=headers,
+                            decision=decision,
+                        )
+                        if prop_result.get("created") and archived_ok:
+                            with get_db() as _conn:
+                                _cur = _conn.cursor()
+                                _cur.execute(
+                                    """
+                                    UPDATE email_archive_proposals
+                                    SET status = 'archived',
+                                        ratified_at = NOW(),
+                                        ratified_by = %s
+                                    WHERE id = %s
+                                    """,
+                                    (f"auto_bucket_{bucket}", prop_result.get("proposal_id")),
+                                )
+                                _conn.commit()
                 except Exception as e:
-                    stats["errors"].append(f"shadow {gmail_id[:12]}: {str(e)[:80]}")
+                    stats["errors"].append(f"bucket {gmail_id[:12]}: {str(e)[:80]}")
 
         except Exception as e:
             stats["errors"].append(f"process {gmail_id[:12]}: {str(e)[:120]}")
@@ -2360,6 +2398,61 @@ def _label_name_financeiro(account_email: str) -> str:
     if account_email == "renato.almeida.prado@gmail.com":
         return "!Recibos/Financeiro"
     return "7-Financeiro/Recibos"
+
+
+def route_mustread_labels(suggested_tags: List[str], account_email: str) -> List[str]:
+    """Roteia um email must_read pros label(s) do bucket certo (MANTEM inbox).
+
+    Buckets que mantem no inbox:
+      - !Andressa  : R3.6 admin senders (tag !Andressa/admin). Ela acessa a
+                     inbox e filtra. Label EXISTENTE (1 '!') — NAO renomear.
+      - !!Renato   : default must_read (circulo 1, imprensa, frente, infra
+                     critica, financeiro subject, calendar invite, etc).
+      - Financeiro : whitelist financeiro/gov/billing ganha o label de
+                     financeiro por conta (7-Financeiro/Recibos ou
+                     !Recibos/Financeiro). infra-critico ganha !!Renato ALEM.
+
+    Extraido do sweep (era inline no 4f) pra ficar testavel e explicito. NAO
+    muda a decisao do classificador — so mapeia suggested_tags -> label(s).
+    """
+    tags_lower = [str(t).lower() for t in (suggested_tags or [])]
+    labels: List[str] = []
+    if any(t in tags_lower for t in ("!andressa", "andressa", "admin")):
+        labels.append("!Andressa")
+    elif any(t in tags_lower for t in ("financeiro", "billing", "gov", "infra-critico")):
+        labels.append(_label_name_financeiro(account_email))
+        if "infra-critico" in tags_lower:
+            labels.append("!!Renato")
+    else:
+        labels.append("!!Renato")
+    return labels
+
+
+def route_archive_bucket(rule_hits: List[str], confidence: float) -> str:
+    """Mapeia um email archive_proposed pro bucket de ACAO (age-ja, 20/07/26).
+
+    Retorna:
+      - 'arquivar' : R4 (no-reply/notifications/system). Vale guardar, so
+                     tirar da inbox -> archive padrao (remove INBOX, SEM label).
+      - 'deletar'  : R5 (unsubscribe+comercial) ou R6 (cold vendor). Fila de
+                     exclusao -> label !!Deletar + remove INBOX. O Renato apaga
+                     em lote revisando o label. NUNCA deleta de verdade aqui.
+      - 'noop'     : qualquer outra coisa (R7 default) OU confianca < 0.85.
+                     Incerto -> fica no inbox pro Renato ver (nao mexe).
+
+    Gate: 'arquivar'/'deletar' REMOVEM da inbox, entao so agem com
+    confidence >= ARCHIVE_ACTION_MIN_CONFIDENCE (0.85). Discrimina R4 vs
+    R5/R6 pelos rule_hits que o classificador ja retorna — sem tocar a
+    decisao must_read/archive/silent.
+    """
+    hits = set(rule_hits or [])
+    if (confidence or 0.0) < ARCHIVE_ACTION_MIN_CONFIDENCE:
+        return "noop"
+    if "R5_unsub" in hits or "R6_cold" in hits:
+        return "deletar"
+    if "R4_noreply" in hits:
+        return "arquivar"
+    return "noop"
 
 
 async def _apply_generic_label(
