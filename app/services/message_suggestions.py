@@ -8,6 +8,7 @@ Funcionalidades:
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import re
 import httpx
@@ -367,6 +368,7 @@ Responda APENAS com a mensagem, sem explicacoes."""
 
                 if response.status_code == 200:
                     data = response.json()
+                    llm_usage.record_response("message_suggestions.generate", CLAUDE_MODEL, data)  # F-E: custo por-funcao
                     mensagem = data["content"][0]["text"].strip()
 
                     return {

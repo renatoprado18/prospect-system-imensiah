@@ -6,6 +6,7 @@ Envia via WhatsApp (intel-bot) com destaques e pendências.
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import logging
 from datetime import datetime, timedelta
@@ -127,7 +128,9 @@ Português. Direto. Sem introdução."""
             )
 
         if resp.status_code == 200:
-            summary = resp.json()["content"][0]["text"]
+            _llm_resp = resp.json()
+            llm_usage.record_response("group_digest.summary", llm.FAST, _llm_resp)  # F-E: custo por-funcao
+            summary = _llm_resp["content"][0]["text"]
             return {
                 "group": group_name,
                 "summary": summary,

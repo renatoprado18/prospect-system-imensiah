@@ -8,6 +8,7 @@ Author: INTEL
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import logging
 from datetime import datetime, timedelta
@@ -381,6 +382,7 @@ async def _call_claude(system_prompt: str, user_prompt: str) -> Optional[str]:
                 return None
 
             result = response.json()
+            llm_usage.record_response("conselhoos.briefing", CLAUDE_MODEL, result)  # F-E: custo por-funcao
             return result.get("content", [{}])[0].get("text", "")
 
     except Exception as e:

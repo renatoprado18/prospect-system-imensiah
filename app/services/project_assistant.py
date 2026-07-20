@@ -7,6 +7,7 @@ e executar ações no escopo do projeto.
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import logging
 from datetime import datetime
@@ -286,6 +287,7 @@ async def chat(project_id: int, message: str) -> Dict:
                 return {"error": f"API error: {resp.status_code}"}
 
             result = resp.json()
+            llm_usage.record_response("project_assistant.respond", CLAUDE_MODEL, result)  # F-E: custo por-funcao
             stop_reason = result.get("stop_reason")
 
             # Extract text and tool_use blocks

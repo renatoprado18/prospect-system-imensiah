@@ -7,6 +7,7 @@ Agrupa mensagens por dia + canal e gera resumos com IA.
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import hashlib
 import httpx
@@ -267,6 +268,7 @@ Responda APENAS com o resumo, sem explicacoes."""
 
                 if response.status_code == 200:
                     result = response.json()
+                    llm_usage.record_response("timeline.analyze", llm.BALANCED, result)  # F-E: custo por-funcao
                     summary = result.get("content", [{}])[0].get("text", "").strip()
                     # Limpar e validar
                     if summary and len(summary) < 200:

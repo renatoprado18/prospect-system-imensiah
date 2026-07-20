@@ -18,6 +18,7 @@ Memoria: project_inteligencia_real.md (P6 Diligente Fase 2).
 """
 import json
 from services import llm
+from services import llm_usage
 import logging
 import os
 from typing import Any, Dict, List, Optional
@@ -257,6 +258,7 @@ async def _call_claude_with_tools(
                     return {"error": f"claude_http_{response.status_code}", "tool_calls": tool_calls_log, "final_text": ""}
 
                 data = response.json()
+                llm_usage.record_response("agent_intents.tick", CLAUDE_MODEL, data)  # F-E: custo por-funcao
                 stop_reason = data.get("stop_reason")
                 content_blocks = data.get("content") or []
 

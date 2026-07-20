@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Any
 from dateutil.relativedelta import relativedelta
 import json
 from services import llm
+from services import llm_usage
 import os
 import base64
 import logging
@@ -1094,6 +1095,7 @@ Regras:
             return {"error": f"Erro na API: {response.status_code}"}
 
         result = response.json()
+        llm_usage.record_response("veiculos.analyze", llm.BALANCED, result)  # F-E: custo por-funcao
         text = result.get("content", [{}])[0].get("text", "")
 
         # Extrair JSON da resposta

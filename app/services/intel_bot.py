@@ -7,6 +7,7 @@ No rigid intent classification — Claude decides what tools to use.
 """
 import os
 from services import llm
+from services import llm_usage
 import re
 import json
 import httpx
@@ -1656,6 +1657,7 @@ Escreva APENAS a mensagem, pronta para enviar. Sem explicacoes."""
                 return json.dumps({"erro": "Falha ao gerar rascunho"})
 
             result = response.json()
+            llm_usage.record_response("intel_bot.respond", CLAUDE_MODEL, result)  # F-E: custo por-funcao
             draft = result.get("content", [{}])[0].get("text", "").strip()
 
         return json.dumps({
@@ -2656,6 +2658,7 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
                 return "Desculpa, tive um erro ao processar. Tenta de novo?"
 
             result = response.json()
+            llm_usage.record_response("intel_bot.respond", CLAUDE_MODEL, result)  # F-E: custo por-funcao
             stop_reason = result.get("stop_reason", "")
             content_blocks = result.get("content", [])
 
