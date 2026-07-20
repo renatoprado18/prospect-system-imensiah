@@ -30,7 +30,8 @@ from services.tz import now_utc, parse_iso
 log = logging.getLogger("actuators")
 
 ALLOWED_ACTIONS = {"create_task", "schedule_wa",
-                   "send_push", "send_email", "create_calendar_event"}
+                   "send_push", "send_email", "create_calendar_event",
+                   "triage_inbox"}
 
 
 def _audit_open(cur, action: str, params: Dict[str, Any], source: str) -> Optional[int]:
@@ -243,6 +244,53 @@ async def _do_create_calendar_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+async def _do_triage_inbox(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Varre o INBOX atual do Renato e organiza nos 4 buckets
+    (!!Renato/!Andressa/Financeiro/Arquivar/!!Deletar). Reusa
+    apply_triage_to_inbox do email_triage (mesma logica/helpers do sweep) — NAO
+    reimplementa roteamento. Params:
+      - account: 'professional'|'personal' OU email direto (opcional; default 2 contas).
+      - dry_run: se True, so preview (nao age). Default False.
+      - limit: max de emails por conta (default 40).
+    Retorna o stats dict (processed, by_bucket, acted, dry_run, per_email...)."""
+    from services.email_triage import apply_triage_to_inbox
+
+    account_raw = (payload.get("account") or "").strip()
+    account_email = None
+    if account_raw:
+        if "@" in account_raw:
+            account_email = account_raw
+        else:
+            # alias professional|personal -> resolve email da conta conectada
+            alias = account_raw.lower()
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT email FROM google_accounts WHERE conectado=TRUE AND tipo=%s LIMIT 1",
+                    (alias,),
+                )
+                row = cur.fetchone()
+                if row:
+                    account_email = row["email"]
+            if not account_email:
+                raise RuntimeError(f"conta Gmail '{account_raw}' nao conectada")
+
+    dry_run = bool(payload.get("dry_run", False))
+    try:
+        limit = int(payload.get("limit", 40))
+    except (TypeError, ValueError):
+        limit = 40
+
+    result = await apply_triage_to_inbox(
+        account_email=account_email,
+        limit=limit,
+        dry_run=dry_run,
+    )
+    if not result.get("ok", True):
+        raise RuntimeError("; ".join(str(e) for e in result.get("errors", [])) or "triage_inbox falhou")
+    return result
+
+
 async def execute_actuator(action: str, payload: Dict[str, Any], source: str = "tonia") -> Dict[str, Any]:
     """
     Executa um atuador do catálogo. Audita em cos_actions_log.
@@ -274,6 +322,8 @@ async def execute_actuator(action: str, payload: Dict[str, Any], source: str = "
                     result = await _do_send_email(payload)
                 elif action == "create_calendar_event":
                     result = await _do_create_calendar_event(payload)
+                elif action == "triage_inbox":
+                    result = await _do_triage_inbox(payload)
                 _audit_close(cur, audit_id, "success", result=result)
                 conn.commit()
                 log.info("actuators: %s ok source=%s result=%s", action, source, result)
