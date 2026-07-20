@@ -150,6 +150,14 @@
 - **Smart Follow-Up**: detecta emails sem resposta, cria FUP automático → `smart_fup.py`
 - **Action Proposals**: dedup por contato+tipo, auto-resolve on reply, expire >7d
 - **CoS Sensor Agent** (11/06/26, substitui Operational Alerts): agent autônomo Sonnet 4.6 que tica 30/30min via Railway scheduler. Lê msgs WA 60min + grupos + calendar 24h + RACI crítico + proposals abertas; decide ações via 5 tools (create_action_proposal, draft_email, update_contact_notes, add_calendar_event, schedule_wa_message) respeitando política de autonomia (`feedback_cos_autonomy_policy.md`). Custo ~$0.06/tick, hard cap $0.50/dia. Service: `app/services/cos_sensor.py`. Endpoint: `/api/cron/cos-sensor-tick`. Cobertura validada 48h: 9 proposals (Sensor) vs 1 (detector rule-based velho), FP rate 11%, ações autônomas em capital relacional + RACI atrasado + violação de política E1. Deprecou `operational_alerts.py` (movido pra `app/services/_deprecated/`) em 13/06/26 após observação paralela.
+- **Triagem de inbox 4-bucket** (`services/email_triage.py`, 20/07/26): o sweep (`sweep_email_triage`, cron `/api/cron/email-triage-sweep` 7,37 * * *) classifica cada email das 2 contas (professional + personal) via `classify_email_cos` (rule-based R0–R7 → `must_read`/`archive_proposed`/`silent`) e **roteia+age** nos 4 buckets do Renato (helpers puros `route_mustread_labels` + `route_archive_bucket`):
+  - **!!Renato** (mantém no inbox): `must_read` default (círculo 1, imprensa, frente, infra crítica, calendar invite, financeiro-subject). Aplica label `!!Renato`.
+  - **!Andressa** (mantém no inbox, label EXISTENTE 1 `!` — sem rename): R3.6 admin senders (agilize/cora/fireflies/andressa@). Escopo NÃO alargado — Renato calibra por observação (labeling passivo).
+  - **Financeiro** (mantém no inbox): whitelist financeiro/gov/billing → label `7-Financeiro/Recibos` (pro) ou `!Recibos/Financeiro` (personal). infra-crítico ganha `!!Renato` além.
+  - **Arquivar** (remove do INBOX, sem label = archive padrão): `archive_proposed` via **R4** (no-reply/notifications/system), só age com `ai_confidence >= 0.85`.
+  - **!!Deletar** (label `!!Deletar` + remove do INBOX = fila de exclusão): `archive_proposed` via **R5** (unsubscribe+comercial) e **R6** (cold vendor), só age com `ai_confidence >= 0.85`. **NUNCA deleta de verdade** — só label+archive; Renato apaga em lote revisando o label.
+  - **Incerto** (`silent` OU `archive_proposed` conf <0.85, ex R7 personal-default conf 0.78): **no-op**, fica no inbox pro Renato ver.
+  Rollout "age-já" (sem shadow): labels que mantêm no inbox são reversíveis; Arquivar/!!Deletar (que removem do inbox) gated em conf≥0.85 (`ARCHIVE_ACTION_MIN_CONFIDENCE`). Idempotente por `messages.external_id` + label idempotente (`add_gmail_label` cria label on-demand). Cap `MAX_LABELS_PER_DAY=50` também limita ações destrutivas/dia. Auditoria: cada archive vira `email_archive_proposals` com `status='archived', ratified_by='auto_bucket_<bucket>'`. **Substitui** o gate per-conta `is_auto_archive_enabled` no caminho de archive (buckets agora agem por confiança, não pelo flag).
 
 ## 13. Calendário (`/calendario`)
 - Sync Google Calendar bidirecional
@@ -195,6 +203,7 @@
 | `20 * * * *` | `cron-social-groups.yml` | `/api/cron/run-social-groups` (paginado, batch=30) |
 | `5 12,15 * * *` | `cron-auto-publish-linkedin.yml` | `/api/cron/auto-publish-linkedin` |
 | `*/15 * * * *` | `cron-catchup.yml` | `/api/cron/catchup` (retry crons que falharam) |
+| `7,37 * * * *` | email-triage-sweep | `/api/cron/email-triage-sweep` (triagem 4-bucket, 2x/hora) |
 | (multiplos) | `cron-auto-collect-metrics.yml` | LinkedIn metrics windows |
 
 ### Crons paginados (cron_cursors)
