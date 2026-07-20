@@ -16937,6 +16937,57 @@ async def cron_email_triage_sweep(request: Request, hours: int = 1):
         }
 
 
+# ============== TRIAGE INBOX SCAN (backlog, 20/07/2026) ==============
+# Diferente do sweep (que so pega email NOVO das ultimas N horas e pula
+# ja-triados): este passo age no INBOX ATUAL do Renato. Varre `in:inbox`
+# (sem janela de tempo), classifica CADA email e roteia pros 4 buckets
+# (!!Renato/!Andressa/Financeiro/Arquivar/!!Deletar). Idempotencia via Gmail
+# (label ja presente = no-op). dry_run=1 devolve so o PREVIEW (nao age).
+@app.get("/api/cron/triage-inbox-scan")
+@app.post("/api/cron/triage-inbox-scan")
+@track_cron_run
+async def cron_triage_inbox_scan(
+    request: Request,
+    dry_run: bool = False,
+    limit: int = 40,
+    account: str = None,
+):
+    """Aplica a triagem 4-bucket no INBOX ATUAL (backlog), nao so email novo.
+
+    Query params:
+      - dry_run: se true, so PREVIEW (nao age) — devolve per_email do que faria.
+      - limit: max de emails por conta (default 40).
+      - account: email de UMA conta (opcional); default = as 2 conectadas.
+
+    Auth: Bearer CRON_SECRET (verify_cron_auth), como o email-triage-sweep.
+
+    Returns:
+        {job, ok, processed, by_bucket, acted, dry_run, per_email, errors,
+         by_account, label_skipped_cap, duration_ms}
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from services.email_triage import apply_triage_to_inbox
+
+    try:
+        result = await apply_triage_to_inbox(
+            account_email=(account or None),
+            limit=limit,
+            dry_run=dry_run,
+        )
+        return {"job": "triage-inbox-scan", **result}
+    except Exception as e:
+        import traceback
+        logging.exception("triage-inbox-scan falhou")
+        return {
+            "job": "triage-inbox-scan",
+            "ok": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()[:2000],
+        }
+
+
 @app.get("/api/admin/auto-archive-gate")
 async def admin_auto_archive_gate_status(request: Request):
     """Status do gate de auto-archive por conta.

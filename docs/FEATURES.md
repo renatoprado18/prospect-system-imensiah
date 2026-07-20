@@ -158,6 +158,7 @@
   - **!!Deletar** (label `!!Deletar` + remove do INBOX = fila de exclusão): `archive_proposed` via **R5** (unsubscribe+comercial) e **R6** (cold vendor), só age com `ai_confidence >= 0.85`. **NUNCA deleta de verdade** — só label+archive; Renato apaga em lote revisando o label.
   - **Incerto** (`silent` OU `archive_proposed` conf <0.85, ex R7 personal-default conf 0.78): **no-op**, fica no inbox pro Renato ver.
   Rollout "age-já" (sem shadow): labels que mantêm no inbox são reversíveis; Arquivar/!!Deletar (que removem do inbox) gated em conf≥0.85 (`ARCHIVE_ACTION_MIN_CONFIDENCE`). Idempotente por `messages.external_id` + label idempotente (`add_gmail_label` cria label on-demand). Cap `MAX_LABELS_PER_DAY=50` também limita ações destrutivas/dia. Auditoria: cada archive vira `email_archive_proposals` com `status='archived', ratified_by='auto_bucket_<bucket>'`. **Substitui** o gate per-conta `is_auto_archive_enabled` no caminho de archive (buckets agora agem por confiança, não pelo flag).
+- **Triagem do INBOX ATUAL — backlog** (`apply_triage_to_inbox` em `services/email_triage.py`, 20/07/26): o sweep acima só age em email NOVO (janela N horas) e pula quem já tem row em `email_triage`, então o inbox EXISTENTE (classificado sob o fluxo antigo que não agia) nunca recebia roteamento. Esta função varre `in:inbox` (SEM janela de tempo, `_fetch_inbox_messages_for_account`), classifica CADA email via `classify_email_cos` e roteia pros MESMOS 4 buckets REUSANDO `route_mustread_labels`/`route_archive_bucket` + `_apply_generic_label`/`archive_message`. **NÃO pula já-triados** (o alvo é o backlog); idempotência vem do Gmail (label já presente = no-op) + checagem do label atual (name→id da conta) pra pular ação se já aplicada / já fora do inbox. Enriquece `List-Unsubscribe` do payload cru antes de classificar (o `parse_message_headers` o dropa → R5/deletar ficaria cego; o sweep tem a mesma lacuna latente). Respeita `MAX_LABELS_PER_DAY` (contador compartilhado com o sweep via `agent_actions`). `dry_run=True` devolve só o PREVIEW (`per_email`: from, subject, bucket, confidence, ação) sem agir. Erro por email é isolado. Exposto como: (a) cron `POST/GET /api/cron/triage-inbox-scan?dry_run=&limit=&account=` (auth Bearer `CRON_SECRET`); (b) atuador `triage_inbox` da Tônia (`services/actuators.py` `ALLOWED_ACTIONS` + `_do_triage_inbox`), chamável on-demand via chat ("organiza meu inbox" / "roda a triagem").
 
 ## 13. Calendário (`/calendario`)
 - Sync Google Calendar bidirecional
@@ -204,6 +205,7 @@
 | `5 12,15 * * *` | `cron-auto-publish-linkedin.yml` | `/api/cron/auto-publish-linkedin` |
 | `*/15 * * * *` | `cron-catchup.yml` | `/api/cron/catchup` (retry crons que falharam) |
 | `7,37 * * * *` | email-triage-sweep | `/api/cron/email-triage-sweep` (triagem 4-bucket, 2x/hora) |
+| (on-demand) | triage-inbox-scan | `/api/cron/triage-inbox-scan?dry_run=&limit=&account=` (triagem do INBOX atual/backlog; tbm atuador `triage_inbox` da Tônia) |
 | (multiplos) | `cron-auto-collect-metrics.yml` | LinkedIn metrics windows |
 
 ### Crons paginados (cron_cursors)

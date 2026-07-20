@@ -2393,6 +2393,423 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
     return stats
 
 
+# Labels de financeiro (ambas contas) — usado pra mapear o bucket "financeiro"
+# no apply_triage_to_inbox (route_mustread_labels devolve o nome por conta).
+_FINANCEIRO_LABEL_NAMES = {"!Recibos/Financeiro", "7-Financeiro/Recibos"}
+
+
+async def _fetch_inbox_messages_for_account(
+    gmail_integration,
+    account: Dict,
+    limit: int,
+) -> List[Dict]:
+    """Busca refs de emails ATUALMENTE no INBOX (SEM janela de tempo) pra UMA
+    conta. Diferente de _fetch_recent_messages_for_account (que filtra por
+    newer_than) — aqui a query e so `in:inbox`, pra agir no BACKLOG do inbox.
+
+    Retorna [{gmail_id, thread_id, account_email, account_type, access_token}, ...],
+    ate `limit` (pagina de 100 em 100). Em erro, retorna [] (1 conta nao
+    derruba a outra).
+    """
+    refs: List[Dict] = []
+    account_email = account.get("email")
+    refresh_token = account.get("refresh_token")
+    if not refresh_token:
+        logger.warning(f"inbox-scan: conta {account_email} sem refresh_token")
+        return refs
+
+    try:
+        refresh_result = await gmail_integration.refresh_access_token(refresh_token)
+    except Exception as e:
+        logger.warning(f"inbox-scan: refresh {account_email} falhou: {e}")
+        return refs
+
+    if "access_token" not in refresh_result:
+        logger.warning(f"inbox-scan: refresh {account_email} sem access_token: {refresh_result}")
+        return refs
+    access_token = refresh_result["access_token"]
+
+    # Persistir access_token novo (best-effort)
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE google_accounts SET access_token = %s WHERE email = %s",
+                (access_token, account_email),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"inbox-scan: persist access_token {account_email} falhou: {e}")
+
+    query = "in:inbox"
+    page_token = None
+    account_type = account.get("tipo", "professional")
+    while len(refs) < limit:
+        try:
+            result = await gmail_integration.list_messages(
+                access_token=access_token,
+                query=query,
+                max_results=min(100, limit - len(refs)),
+                page_token=page_token,
+            )
+        except Exception as e:
+            logger.warning(f"inbox-scan: list_messages {account_email} falhou: {e}")
+            break
+        if "error" in result:
+            logger.warning(f"inbox-scan: list_messages {account_email} error: {result.get('error')}")
+            break
+        msgs = result.get("messages", []) or []
+        for msg_ref in msgs:
+            refs.append({
+                "gmail_id": msg_ref.get("id"),
+                "thread_id": msg_ref.get("threadId"),
+                "account_email": account_email,
+                "account_type": account_type,
+                "access_token": access_token,
+            })
+            if len(refs) >= limit:
+                break
+        page_token = result.get("nextPageToken")
+        if not page_token or not msgs:
+            break
+    return refs[:limit]
+
+
+def _resolve_contact_id_by_email(from_email: str) -> Optional[int]:
+    """Resolve contact_id pelo email do remetente (READ-ONLY). Espelha a
+    query de _ensure_message_row SEM os side-effects (nao cria conversation
+    nem messages) — o inbox-scan varre o backlog, nao quer poluir o DB.
+    Precisa do contact_id pra R2 (circulo 1 -> !!Renato) classificar certo.
+    """
+    if not from_email:
+        return None
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id FROM contacts WHERE emails @> %s::jsonb LIMIT 1",
+                (json.dumps([{"email": from_email}]),),
+            )
+            c = cur.fetchone()
+            if c:
+                return c["id"]
+            cur.execute(
+                "SELECT id FROM contacts WHERE emails::text ILIKE %s LIMIT 1",
+                (f"%{from_email}%",),
+            )
+            c = cur.fetchone()
+            if c:
+                return c["id"]
+    except Exception as e:
+        logger.warning(f"inbox-scan: resolve_contact {from_email} falhou: {e}")
+    return None
+
+
+def _mustread_bucket_name(labels: List[str]) -> str:
+    """Mapeia os labels de um must_read pro nome do bucket (stats)."""
+    if "!Andressa" in labels:
+        return "andressa"
+    if any(l in _FINANCEIRO_LABEL_NAMES for l in labels):
+        return "financeiro"
+    return "renato"
+
+
+async def apply_triage_to_inbox(
+    account_email: Optional[str] = None,
+    limit: int = 40,
+    dry_run: bool = False,
+) -> Dict:
+    """Aplica a triagem 4-bucket no INBOX ATUAL (backlog), nao so em email novo.
+
+    O sweep_email_triage age em email das ultimas N horas E pula quem ja tem
+    row em email_triage (idempotencia). Resultado: o inbox EXISTENTE do Renato
+    (classificado sob o fluxo antigo, que nao agia) nunca recebe roteamento.
+    Esta funcao varre `in:inbox` (sem janela de tempo), classifica CADA email
+    via classify_email_cos e roteia pros MESMOS 4 buckets do sweep, REUSANDO
+    route_mustread_labels/route_archive_bucket e as MESMAS chamadas Gmail
+    (_apply_generic_label / archive_message):
+
+      - must_read       -> !!Renato / !Andressa / Financeiro (MANTEM inbox).
+      - R4 (noreply)     -> arquivar: remove INBOX, sem label (conf>=0.85).
+      - R5/R6 (unsub/cold)-> deletar: label !!Deletar + remove INBOX (conf>=0.85).
+      - silent / incerto -> no-op (fica no inbox).
+
+    NAO pula ja-triados (o alvo E o backlog). Idempotencia vem do Gmail:
+    label ja presente = no-op, arquivo ja fora do inbox = skip. Antes de agir,
+    checa o label atual (name->id da conta) e pula a acao se ja aplicada / ja
+    fora do inbox.
+
+    Args:
+        account_email: se None, roda nas 2 contas conectadas; senao so nessa.
+        limit: max de emails por conta (default 40).
+        dry_run: se True, NAO age — devolve so o PREVIEW (per_email) do que faria.
+
+    Returns:
+        {ok, processed, by_bucket:{renato,andressa,financeiro,arquivar,deletar,noop},
+         acted, dry_run, per_email:[...], errors, by_account, label_skipped_cap,
+         duration_ms}
+    """
+    import time
+    started = time.time()
+    from integrations.gmail import GmailIntegration
+
+    stats: Dict = {
+        "ok": True,
+        "processed": 0,
+        "by_bucket": {
+            "renato": 0, "andressa": 0, "financeiro": 0,
+            "arquivar": 0, "deletar": 0, "noop": 0,
+        },
+        "acted": 0,
+        "dry_run": bool(dry_run),
+        "per_email": [],
+        "errors": [],
+        "by_account": {},
+        "label_skipped_cap": 0,
+        "duration_ms": 0,
+    }
+
+    gmail = GmailIntegration()
+    service = get_email_triage_service()
+
+    # 1. Contas (uma especifica ou todas conectadas)
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            if account_email:
+                cursor.execute(
+                    """
+                    SELECT id, email, tipo, access_token, refresh_token
+                    FROM google_accounts
+                    WHERE conectado = TRUE AND email = %s
+                    """,
+                    (account_email,),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, email, tipo, access_token, refresh_token
+                    FROM google_accounts
+                    WHERE conectado = TRUE
+                    """
+                )
+            accounts = [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        stats["ok"] = False
+        stats["errors"].append(f"list_accounts: {e}")
+        stats["duration_ms"] = int((time.time() - started) * 1000)
+        return stats
+
+    if not accounts:
+        stats["errors"].append(
+            f"account_not_connected:{account_email}" if account_email
+            else "no_connected_accounts"
+        )
+        stats["duration_ms"] = int((time.time() - started) * 1000)
+        return stats
+
+    # 2. Cap diario de acoes (COMPARTILHADO com o sweep via agent_actions —
+    # mesma rede de seguranca; inbox-scan nao explode alem de MAX_LABELS_PER_DAY).
+    labels_today = 0
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT COUNT(*) AS n FROM agent_actions
+                WHERE action_type = 'gmail_label_add'
+                  AND criado_em > NOW() - INTERVAL '1 day'
+                """
+            )
+            r = cur.fetchone()
+            labels_today = (r["n"] if r else 0) or 0
+    except Exception:
+        pass
+
+    # 3. Processa por conta
+    for acc in accounts:
+        acct_email = acc["email"]
+        acct_type = (acc.get("tipo") or "professional")
+        try:
+            refs = await _fetch_inbox_messages_for_account(gmail, acc, limit)
+        except Exception as e:
+            stats["errors"].append(f"fetch_{acct_email}: {e}")
+            stats["by_account"][acct_email] = 0
+            continue
+        stats["by_account"][acct_email] = len(refs)
+        if not refs:
+            continue
+
+        access_token = refs[0]["access_token"]
+        # Mapa name->id da conta (idempotencia real: label ja presente = skip).
+        try:
+            labels_list = await gmail.list_labels(access_token)
+            name_to_id = {l.get("name"): l.get("id") for l in (labels_list or []) if l.get("name")}
+        except Exception:
+            name_to_id = {}
+
+        for ref in refs:
+            gmail_id = ref["gmail_id"]
+            if not gmail_id:
+                continue
+            entry: Dict = {"account": _short_account(acct_email)}
+            try:
+                msg_details = await gmail.get_message(ref["access_token"], gmail_id)
+                if "error" in msg_details:
+                    stats["errors"].append(
+                        f"get_msg {gmail_id[:12]}: {str(msg_details.get('error'))[:80]}"
+                    )
+                    continue
+
+                headers = gmail.parse_message_headers(msg_details)
+                # parse_message_headers DROPA List-Unsubscribe (so mantem
+                # from/to/subject/date). O classificador precisa dele pra R5
+                # (unsub+comercial -> !!Deletar). Injetamos do payload cru —
+                # NAO muda o mapeamento, so alimenta o header que faltava (o
+                # sweep tem a mesma lacuna latente; aqui e o backlog que
+                # precisa da precisao do bucket deletar).
+                try:
+                    for _h in (msg_details.get("payload", {}).get("headers", []) or []):
+                        if (_h.get("name") or "").lower() == "list-unsubscribe":
+                            headers["list-unsubscribe"] = _h.get("value", "")
+                            break
+                except Exception:
+                    pass
+                body = gmail.parse_message_body(msg_details)
+                label_ids = [l for l in (msg_details.get("labelIds") or []) if isinstance(l, str)]
+
+                from_hdr = (headers.get("from") or "").strip()
+                from_email = gmail.extract_email_address(from_hdr) if from_hdr else ""
+                contact_id = _resolve_contact_id_by_email(from_email)
+
+                decision = service.classify_email_cos(
+                    headers=headers,
+                    body_text=body.get("text") or "",
+                    gmail_label_ids=label_ids,
+                    account_email=acct_email,
+                    account_type=acct_type,
+                    contact_id=contact_id,
+                )
+                classification = decision["classification"]
+                confidence = float(decision.get("ai_confidence") or 0.5)
+
+                entry.update({
+                    "from": from_hdr[:60],
+                    "subject": (headers.get("subject") or "(sem assunto)")[:60],
+                    "classification": classification,
+                    "confidence": round(confidence, 2),
+                })
+                stats["processed"] += 1
+
+                # ---- Rota + acao (mesma logica do sweep 4f/4g) ----
+                if classification == "must_read":
+                    labels = route_mustread_labels(
+                        decision.get("suggested_tags"), acct_email
+                    )
+                    bucket = _mustread_bucket_name(labels)
+                    # Ja aplicado? (todos os labels-alvo ja presentes na msg)
+                    missing = [
+                        ln for ln in labels
+                        if not (name_to_id.get(ln) and name_to_id[ln] in label_ids)
+                    ]
+                    entry["bucket"] = bucket
+                    if not missing:
+                        entry["action"] = "skip:already_labeled"
+                        stats["by_bucket"]["noop"] += 1
+                    elif dry_run:
+                        entry["action"] = f"label:{','.join(missing)}"
+                        stats["by_bucket"][bucket] += 1
+                    else:
+                        applied_any = False
+                        for ln in missing:
+                            if labels_today >= MAX_LABELS_PER_DAY:
+                                stats["label_skipped_cap"] += 1
+                                break
+                            try:
+                                res = await _apply_generic_label(
+                                    gmail, ref["access_token"], gmail_id,
+                                    acct_email, None, None, ln,
+                                )
+                                if res.get("applied"):
+                                    applied_any = True
+                                    labels_today += 1
+                            except Exception as e:
+                                stats["errors"].append(
+                                    f"label {ln} {gmail_id[:12]}: {str(e)[:80]}"
+                                )
+                        entry["action"] = f"label:{','.join(missing)}" if applied_any else "skip:already_labeled"
+                        stats["by_bucket"][bucket] += 1
+                        if applied_any:
+                            stats["acted"] += 1
+
+                elif classification == "archive_proposed":
+                    bucket = route_archive_bucket(decision.get("rule_hits"), confidence)
+                    entry["bucket"] = bucket
+                    if bucket == "noop":
+                        entry["action"] = "noop:uncertain"
+                        stats["by_bucket"]["noop"] += 1
+                    elif "INBOX" not in label_ids:
+                        # Ja fora do inbox — nada a fazer.
+                        entry["action"] = "skip:not_in_inbox"
+                        stats["by_bucket"]["noop"] += 1
+                    elif dry_run:
+                        entry["action"] = (
+                            "label:!!Deletar+archive" if bucket == "deletar" else "archive"
+                        )
+                        stats["by_bucket"][bucket] += 1
+                    elif labels_today >= MAX_LABELS_PER_DAY:
+                        entry["action"] = "skip:cap"
+                        stats["label_skipped_cap"] += 1
+                    else:
+                        acted_this = False
+                        if bucket == "deletar":
+                            del_id = name_to_id.get("!!Deletar")
+                            if not (del_id and del_id in label_ids):
+                                try:
+                                    lr = await _apply_generic_label(
+                                        gmail, ref["access_token"], gmail_id,
+                                        acct_email, None, None, "!!Deletar",
+                                    )
+                                    if lr.get("applied"):
+                                        acted_this = True
+                                except Exception as e:
+                                    stats["errors"].append(
+                                        f"deletar_label {gmail_id[:12]}: {str(e)[:80]}"
+                                    )
+                        try:
+                            archived_ok = await gmail.archive_message(
+                                ref["access_token"], gmail_id
+                            )
+                        except Exception as e:
+                            archived_ok = False
+                            stats["errors"].append(
+                                f"archive {gmail_id[:12]}: {str(e)[:80]}"
+                            )
+                        if archived_ok:
+                            acted_this = True
+                            labels_today += 1  # conta como acao destrutiva do dia
+                        entry["action"] = (
+                            "label:!!Deletar+archive" if bucket == "deletar" else "archive"
+                        )
+                        stats["by_bucket"][bucket] += 1
+                        if acted_this:
+                            stats["acted"] += 1
+
+                else:  # silent
+                    entry["bucket"] = "noop"
+                    entry["action"] = "noop:silent"
+                    stats["by_bucket"]["noop"] += 1
+
+            except Exception as e:
+                stats["errors"].append(f"process {gmail_id[:12]}: {str(e)[:120]}")
+                logger.exception(f"inbox-scan process {gmail_id}")
+                entry.setdefault("action", f"error:{str(e)[:40]}")
+            stats["per_email"].append(entry)
+
+    stats["duration_ms"] = int((time.time() - started) * 1000)
+    return stats
+
+
 def _label_name_financeiro(account_email: str) -> str:
     """Label de financeiro por conta. Nomes diferentes nas 2 contas."""
     if account_email == "renato.almeida.prado@gmail.com":
