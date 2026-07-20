@@ -210,17 +210,23 @@ def run_all_detectors(only: Optional[List[str]] = None) -> Dict[str, Any]:
         detector_cruzamentos,
     )
 
+    # MECANISMO DE SIGNALS DESATIVADO (decisão Renato 20/07 — opção "ii"): a Tônia
+    # já cruza as fontes cruas (email/news/WA/agenda/RACI) no briefing; os detectores
+    # de heurística proativa eram redundantes e a medição de valor está morta desde
+    # 27/06 (resolver tonha_brain sumiu). Todos desligados. Consumidor da Tônia fica
+    # intacto (degrada gracioso pra zero signals). REVERSÍVEL: descomentar.
+    # Nota: o canary de saldo Anthropic (platform_costs.check_anthropic_credit_balance,
+    # tick horário no worker, WA-direto) é SEPARADO e SEGUE VIVO — alarme de crédito ok.
     all_detectors = [
-        # KILL retro F-E 20/07 — 0 valor operacional / medição cega (resolver morreu c/ Tônia 27/06). Reversível: descomentar.
         # ("detector_conselhos", detector_conselhos.run),
         # ("detector_editorial", detector_editorial.run),
-        ("detector_relacionamento", detector_relacionamento.run),
+        # ("detector_relacionamento", detector_relacionamento.run),
         # ("detector_operational", detector_operational.run),
-        ("detector_financial", detector_financial.run),
+        # ("detector_financial", detector_financial.run),
         # ("detector_governanca_pessoal", detector_governanca_pessoal.run),
-        ("detector_delegacoes", detector_delegacoes.run),
+        # ("detector_delegacoes", detector_delegacoes.run),
         # ("detector_inbox", detector_inbox.run),
-        ("detector_cruzamentos", detector_cruzamentos.run),
+        # ("detector_cruzamentos", detector_cruzamentos.run),
     ]
 
     if only:
