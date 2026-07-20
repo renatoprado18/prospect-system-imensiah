@@ -11,6 +11,7 @@ Fluxo:
 
 import httpx
 from services import llm
+from services import llm_usage
 import json
 import logging
 import xml.etree.ElementTree as ET
@@ -156,7 +157,9 @@ Responda APENAS com JSON: {{"categoria": "<nome exato de uma das categorias>"}}
         if resp.status_code != 200:
             logger.warning(f"classify_hot_take_category: API {resp.status_code}")
             return None
-        text = resp.json()["content"][0]["text"]
+        _llm_resp = resp.json()
+        llm_usage.record_response("hot_takes.curate", llm.FAST, _llm_resp)  # F-E: custo por-funcao
+        text = _llm_resp["content"][0]["text"]
         m = re.search(r'\{[\s\S]*\}', text)
         if not m:
             return None
@@ -359,6 +362,7 @@ Responda APENAS com JSON:
             response.raise_for_status()
 
         result = response.json()
+        llm_usage.record_response("hot_takes.generate", llm.BALANCED, result)  # F-E: custo por-funcao
 
         # Validate response structure
         if "content" not in result or not isinstance(result["content"], list) or len(result["content"]) == 0:
@@ -489,6 +493,7 @@ Responda em JSON:
             return {"error": f"API error {response.status_code}: {error_text}"}
 
         result = response.json()
+        llm_usage.record_response("hot_takes.generate", llm.BALANCED, result)  # F-E: custo por-funcao
 
         # Debug: log full response structure
         logger.info(f"Response keys: {list(result.keys())}")

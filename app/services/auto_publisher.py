@@ -9,6 +9,7 @@ Fluxo:
 """
 import asyncio
 from services import llm
+from services import llm_usage
 import os
 import json
 import logging
@@ -341,7 +342,9 @@ Responda APENAS com JSON:
             if resp.status_code != 200:
                 logger.warning(f"select_weekly_posts {bucket_name}: API {resp.status_code}")
                 return []
-            text = resp.json()["content"][0]["text"]
+            _llm_resp = resp.json()
+            llm_usage.record_response("auto_publisher.generate", llm.FAST, _llm_resp)  # F-E: custo por-funcao
+            text = _llm_resp["content"][0]["text"]
             start = text.find("{"); end = text.rfind("}") + 1
             if start < 0:
                 return []
@@ -646,7 +649,9 @@ Responda APENAS JSON: {{"index": <numero>, "reason": "motivo curto"}}"""
                     json={"model": llm.FAST, "max_tokens": 200, "messages": [{"role": "user", "content": prompt}]}
                 )
             if resp.status_code == 200:
-                text = resp.json()["content"][0]["text"]
+                _llm_resp = resp.json()
+                llm_usage.record_response("auto_publisher.generate", llm.FAST, _llm_resp)  # F-E: custo por-funcao
+                text = _llm_resp["content"][0]["text"]
                 start = text.find("{"); end = text.rfind("}") + 1
                 if start >= 0:
                     parsed = json.loads(text[start:end])

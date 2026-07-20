@@ -14,6 +14,7 @@ Uses all available data:
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import httpx
 from datetime import datetime, timedelta
@@ -318,6 +319,7 @@ Responda em JSON:
                 return {"status": "error", "error": f"API error: {response.status_code}"}
 
             result = response.json()
+            llm_usage.record_response("intelligence.contact", CLAUDE_MODEL, result)  # F-E: custo por-funcao
             content = result.get("content", [{}])[0].get("text", "")
 
             # Parse JSON response
@@ -465,6 +467,7 @@ Responda em JSON:
                 return {"status": "error", "error": f"API error: {response.status_code}"}
 
             result = response.json()
+            llm_usage.record_response("intelligence.contact", CLAUDE_MODEL, result)  # F-E: custo por-funcao
             content = result.get("content", [{}])[0].get("text", "")
 
             try:

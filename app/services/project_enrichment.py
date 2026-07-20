@@ -14,6 +14,7 @@ Generates suggestions for:
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import httpx
 import re
@@ -51,7 +52,9 @@ async def call_claude_api(prompt: str, max_tokens: int = 500, retries: int = 2) 
                 )
 
                 if response.status_code == 200:
-                    return {"success": True, "data": response.json()}
+                    _llm_resp = response.json()
+                    llm_usage.record_response("enrichment.project", CLAUDE_MODEL, _llm_resp)  # F-E: custo por-funcao
+                    return {"success": True, "data": _llm_resp}
                 elif response.status_code == 529:
                     # Server overloaded - retry after delay
                     if attempt < retries:

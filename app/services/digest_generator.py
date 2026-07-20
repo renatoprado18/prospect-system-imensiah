@@ -8,6 +8,7 @@ Gera resumos:
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import httpx
 from typing import List, Dict, Optional
@@ -352,7 +353,9 @@ REGRAS:
                 timeout=15.0
             )
             if resp.status_code == 200:
-                return resp.json()["content"][0]["text"]
+                _llm_resp = resp.json()
+                llm_usage.record_response("digest.group", llm.FAST, _llm_resp)  # F-E: custo por-funcao
+                return _llm_resp["content"][0]["text"]
         except Exception:
             pass
 
@@ -522,6 +525,7 @@ Seja conciso e direto."""
 
                 if response.status_code == 200:
                     data = response.json()
+                    llm_usage.record_response("digest.generate", CLAUDE_MODEL, data)  # F-E: custo por-funcao
                     summary = data["content"][0]["text"].strip()
 
                     # Atualizar digest com resumo AI

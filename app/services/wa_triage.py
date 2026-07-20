@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from services import llm
+from services import llm_usage
 import logging
 import os
 import uuid
@@ -223,6 +224,14 @@ def _call_claude_batch(formatted: List[Dict]) -> Optional[Dict]:
         usage.get("cache_creation_input_tokens", 0),
     )
 
+    llm_usage.record(  # F-E: custo por-funcao (cost ja computado)
+        "wa_triage.classify", CLAUDE_MODEL,
+        input_tokens=usage.get("input_tokens", 0),
+        output_tokens=usage.get("output_tokens", 0),
+        cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+        cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
+        cost_usd=cost,
+    )
     return {"classifications": classifications, "usage": usage, "cost_usd": cost}
 
 

@@ -5,6 +5,7 @@ Pillar-based system: NeoGovernanca, IA aplicada, Bastidores/resultados reais.
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import httpx
 import logging
@@ -349,6 +350,7 @@ Responda APENAS com o JSON."""
                 return {"error": f"AI API error: {response.status_code}"}
 
             result = response.json()
+            llm_usage.record_response("editorial.pdca", llm.BALANCED, result)  # F-E: custo por-funcao
             content = result.get("content", [{}])[0].get("text", "").strip()
 
             # Parse JSON response

@@ -13,6 +13,7 @@ Data: 2026-04-02
 """
 import os
 from services import llm
+from services import llm_usage
 import re
 import json
 import httpx
@@ -124,6 +125,7 @@ Se nao houver reuniao:
                 return None
 
             result = response.json()
+            llm_usage.record_response("meeting.suggest", llm.BALANCED, result)  # F-E: custo por-funcao
             content = result.get("content", [{}])[0].get("text", "")
 
             # Parse JSON response
@@ -302,6 +304,7 @@ ou
 
             if response.status_code == 200:
                 result = response.json()
+                llm_usage.record_response("meeting.suggest", llm.BALANCED, result)  # F-E: custo por-funcao
                 content = result.get("content", [{}])[0].get("text", "")
                 try:
                     data = json.loads(content)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 from services import llm
+from services import llm_usage
 import json
 import logging
 import re
@@ -134,7 +135,9 @@ Responda APENAS o JSON array."""
         if r.status_code != 200:
             logger.warning(f"propose_updates_from_text: API {r.status_code}: {r.text[:200]}")
             return []
-        text_out = r.json()["content"][0]["text"]
+        _llm_resp = r.json()
+        llm_usage.record_response("raci.update", llm.FAST, _llm_resp)  # F-E: custo por-funcao
+        text_out = _llm_resp["content"][0]["text"]
         # Extrai JSON array
         start = text_out.find('[')
         end = text_out.rfind(']') + 1
@@ -289,7 +292,9 @@ async def _claude_media_to_text(b64: str, mime: str, instruction: str,
         if r.status_code != 200:
             logger.warning(f"claude media: HTTP {r.status_code}: {r.text[:200]}")
             return None
-        return r.json()["content"][0]["text"].strip()
+        _llm_resp = r.json()
+        llm_usage.record_response("raci.smart_update", model, _llm_resp)  # F-E: custo por-funcao
+        return _llm_resp["content"][0]["text"].strip()
     except Exception as e:
         logger.warning(f"claude media error: {e}")
         return None

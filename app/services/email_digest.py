@@ -6,6 +6,7 @@ Busca emails das últimas 24h via Gmail API para ambas as contas
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import logging
 import base64
@@ -207,7 +208,9 @@ Máximo 300 palavras. Português. Direto."""
                       "messages": [{"role": "user", "content": prompt}]}
             )
         if resp.status_code == 200:
-            summary = resp.json()["content"][0]["text"]
+            _llm_resp = resp.json()
+            llm_usage.record_response("email_digest.summary", llm.FAST, _llm_resp)  # F-E: custo por-funcao
+            summary = _llm_resp["content"][0]["text"]
             total = len(emails)
             return f"📧 *Digest de Emails* ({total} recebidos)\n\n{summary}"
     except Exception as e:
