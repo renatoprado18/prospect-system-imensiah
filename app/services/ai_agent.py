@@ -9,6 +9,7 @@ Gera sugestoes inteligentes:
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import httpx
 from typing import List, Dict, Optional
@@ -46,6 +47,7 @@ class AIAgentService:
                 )
                 if response.status_code == 200:
                     data = response.json()
+                    llm_usage.record_response("ai_agent.respond", CLAUDE_MODEL, data)  # F-E: custo por-funcao
                     return data["content"][0]["text"]
         except Exception as e:
             print(f"Claude API error: {e}")

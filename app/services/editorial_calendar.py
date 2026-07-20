@@ -5,6 +5,7 @@ Includes AI-powered content analysis and categorization
 """
 import os
 from services import llm
+from services import llm_usage
 import httpx
 import logging
 from datetime import datetime, timedelta
@@ -772,6 +773,7 @@ Responda APENAS com o JSON, sem explicações adicionais."""
                 return None
 
             result = response.json()
+            llm_usage.record_response("editorial.calendar", llm.BALANCED, result)  # F-E: custo por-funcao
             content = result.get("content", [{}])[0].get("text", "").strip()
 
             # Parse JSON response

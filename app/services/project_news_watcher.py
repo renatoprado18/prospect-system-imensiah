@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 from services import llm
+from services import llm_usage
 import json
 import logging
 import os
@@ -390,7 +391,9 @@ Retorne APENAS JSON: {{"score": <float entre 0 e 1>}}"""
             )
             return AI_FALLBACK_SCORE
 
-        text = resp.json()["content"][0]["text"]
+        _llm_resp = resp.json()
+        llm_usage.record_response("news_watcher.triage", ANTHROPIC_MODEL_HAIKU, _llm_resp)  # F-E: custo por-funcao
+        text = _llm_resp["content"][0]["text"]
         m = re.search(r'\{[\s\S]*?\}', text)
         if not m:
             logger.warning(f"score_news_relevance: sem JSON na resposta: {text[:100]}")
@@ -919,7 +922,9 @@ Resuma em 1-2 frases o tema geral desses {len(hits)} hits. Tom factual, conciso,
                 f"_summarize_watcher_hits: API {resp.status_code} body={resp.text[:200]}"
             )
             return f"{len(hits)} noticia(s) capturada(s) (resumo IA falhou)."
-        text = resp.json()["content"][0]["text"].strip()
+        _llm_resp = resp.json()
+        llm_usage.record_response("news_watcher.digest", ANTHROPIC_MODEL_SONNET, _llm_resp)  # F-E: custo por-funcao
+        text = _llm_resp["content"][0]["text"].strip()
         return text or f"{len(hits)} noticia(s) capturada(s)."
     except Exception as e:
         logger.warning(f"_summarize_watcher_hits falhou: {type(e).__name__}: {e}")

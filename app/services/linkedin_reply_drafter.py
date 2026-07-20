@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from services import llm
+from services import llm_usage
 import logging
 import os
 import re
@@ -145,7 +146,9 @@ Gere os 2 drafts em JSON."""
             )
         if resp.status_code != 200:
             return {"ok": False, "error": f"Claude {resp.status_code}: {resp.text[:200]}"}
-        raw = resp.json()["content"][0]["text"].strip()
+        _llm_resp = resp.json()
+        llm_usage.record_response("linkedin.reply_draft", MODEL, _llm_resp)  # F-E: custo por-funcao
+        raw = _llm_resp["content"][0]["text"].strip()
         if "```" in raw:
             m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
             if m:

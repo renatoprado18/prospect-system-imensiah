@@ -7,6 +7,7 @@ Data: 2026-03-30
 """
 import logging
 from services import llm
+from services import llm_usage
 import os
 from datetime import datetime
 from typing import Dict, List, Any, Optional
@@ -401,6 +402,7 @@ IMPORTANTE:
 
                 if response.status_code == 200:
                     result = response.json()
+                    llm_usage.record_response("task_context.analyze", llm.BALANCED, result)  # F-E: custo por-funcao
                     content = result.get("content", [{}])[0].get("text", "{}")
 
                     # Parse JSON
@@ -650,6 +652,7 @@ Se a tarefa não precisar de follow-up (ex: tarefa interna, sem necessidade de r
 
                 if response.status_code == 200:
                     result = response.json()
+                    llm_usage.record_response("task_context.analyze", llm.BALANCED, result)  # F-E: custo por-funcao
                     content = result.get("content", [{}])[0].get("text", "{}")
 
                     import json

@@ -8,6 +8,7 @@ Uses Claude Vision to validate if a photo is appropriate for a contact profile:
 """
 import os
 from services import llm
+from services import llm_usage
 import httpx
 import base64
 import logging
@@ -110,6 +111,7 @@ Be strict: a good profile photo should show ONE person with a clearly visible fa
 
             if response.status_code == 200:
                 result = response.json()
+                llm_usage.record_response("photo.validate", llm.BALANCED, result)  # F-E: custo por-funcao
                 content = result.get("content", [{}])[0].get("text", "{}")
 
                 # Parse AI response

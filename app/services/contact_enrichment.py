@@ -15,6 +15,7 @@ Generates:
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import httpx
 from datetime import datetime, timedelta
@@ -314,6 +315,7 @@ Responda APENAS com JSON valido:
                 }
 
             result = response.json()
+            llm_usage.record_response("enrichment.contact", CLAUDE_MODEL, result)  # F-E: custo por-funcao
             content = result.get("content", [{}])[0].get("text", "")
 
             # Parse JSON response
@@ -744,6 +746,7 @@ Responda APENAS com JSON valido:
                 }
 
             result = response.json()
+            llm_usage.record_response("enrichment.contact", CLAUDE_MODEL, result)  # F-E: custo por-funcao
             content = result.get("content", [{}])[0].get("text", "")
 
             # Parse JSON response
@@ -1040,6 +1043,7 @@ Se alguma informacao nao estiver disponivel, use null.
                 return {"status": "error", "error": f"AI API error: {response.status_code}"}
 
             result = response.json()
+            llm_usage.record_response("enrichment.contact", CLAUDE_MODEL, result)  # F-E: custo por-funcao
             content = result.get("content", [{}])[0].get("text", "")
 
             # Parse JSON

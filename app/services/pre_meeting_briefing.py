@@ -6,6 +6,7 @@ Includes: participants, last interactions, pending tasks, relevant facts.
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import logging
 from datetime import datetime, timedelta
@@ -250,7 +251,9 @@ Responda APENAS com a sugestão, máximo 1 linha. Português. Comece com emoji."
                               "messages": [{"role": "user", "content": prompt}]}
                     )
                 if resp.status_code == 200:
-                    suggestion = resp.json()["content"][0]["text"].strip()
+                    _llm_resp = resp.json()
+                    llm_usage.record_response("pre_meeting.briefing", llm.FAST, _llm_resp)  # F-E: custo por-funcao
+                    suggestion = _llm_resp["content"][0]["text"].strip()
                     briefing += f"\n\n💡 *Foco:* {suggestion}"
             except Exception:
                 pass

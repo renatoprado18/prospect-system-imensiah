@@ -10,6 +10,7 @@ Combina:
 
 import os
 from services import llm
+from services import llm_usage
 import httpx
 import json
 import logging
@@ -993,7 +994,9 @@ Priorize: noticias acionaveis, que o Renato pode comentar no LinkedIn, ou que af
             logger.error(f"Clipping IA error: {resp.status_code}")
             return {"error": f"API error: {resp.status_code}", "total_collected": collection['collected']}
 
-        text = resp.json()["content"][0]["text"]
+        _llm_resp = resp.json()
+        llm_usage.record_response("news_hub.relevance", llm.FAST, _llm_resp)  # F-E: custo por-funcao
+        text = _llm_resp["content"][0]["text"]
         start = text.find("{")
         end = text.rfind("}") + 1
         if start >= 0 and end > start:

@@ -12,6 +12,7 @@ do system prompt.
 """
 import logging
 from services import llm
+from services import llm_usage
 import os
 from datetime import datetime, timedelta, date
 from typing import Dict, Optional
@@ -150,6 +151,7 @@ async def run_daily_synthesis(hours: int = 24) -> Dict:
             return {"status": "error", "error": f"Claude {resp.status_code}"}
 
         result = resp.json()
+        llm_usage.record_response("synthesis.daily", CLAUDE_MODEL, result)  # F-E: custo por-funcao
         synthesis_text = ""
         for block in result.get("content", []):
             if block.get("type") == "text":

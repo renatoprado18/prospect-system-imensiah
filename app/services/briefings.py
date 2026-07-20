@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import json
 from services import llm
+from services import llm_usage
 import os
 import httpx
 
@@ -554,6 +555,7 @@ Se nao houver dados suficientes em alguma secao, indique "Sem dados suficientes"
                 }
 
             result = response.json()
+            llm_usage.record_response("briefing.contact", CLAUDE_MODEL, result)  # F-E: custo por-funcao
             briefing_text = result.get("content", [{}])[0].get("text", "")
 
     except Exception as e:
@@ -799,6 +801,7 @@ async def generate_cos_briefing_narrative(
             if response.status_code != 200:
                 return None
             result = response.json()
+            llm_usage.record_response("briefing.daily", CLAUDE_MODEL, result)  # F-E: custo por-funcao
             text = result.get("content", [{}])[0].get("text", "").strip()
             if not text:
                 return None

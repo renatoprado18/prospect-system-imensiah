@@ -6,6 +6,7 @@ e usa IA para identificar quais tarefas podem ser marcadas como concluidas.
 """
 import os
 from services import llm
+from services import llm_usage
 import json
 import logging
 from datetime import datetime, date
@@ -242,6 +243,7 @@ IMPORTANTE:
             return {"error": f"Erro na API: {response.status_code}", "detail": response.text[:200]}
 
         result = response.json()
+        llm_usage.record_response("smart_update.project", llm.BALANCED, result)  # F-E: custo por-funcao
         text = result.get("content", [{}])[0].get("text", "")
 
         # Extrair JSON
@@ -788,7 +790,9 @@ REGRAS sobre a memória:
         if response.status_code != 200:
             return {"error": f"Erro na API: {response.status_code}", "detail": response.text[:200]}
 
-        analysis_text = response.json().get("content", [{}])[0].get("text", "")
+        _llm_resp = response.json()
+        llm_usage.record_response("smart_update.analyze", llm.BALANCED, _llm_resp)  # F-E: custo por-funcao
+        analysis_text = _llm_resp.get("content", [{}])[0].get("text", "")
 
     except Exception as e:
         return {"error": str(e)}

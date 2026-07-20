@@ -5,6 +5,7 @@ Fluxo: URL → fetch HTML → extract text → AI summary → save as project_no
 """
 import os
 from services import llm
+from services import llm_usage
 import re
 import json
 import logging
@@ -131,7 +132,9 @@ Máximo 200 palavras. Português."""
             )
 
         if resp.status_code == 200:
-            return resp.json()["content"][0]["text"]
+            _llm_resp = resp.json()
+            llm_usage.record_response("article_knowledge.extract", llm.FAST, _llm_resp)  # F-E: custo por-funcao
+            return _llm_resp["content"][0]["text"]
 
     except Exception as e:
         logger.error(f"Error summarizing article: {e}")

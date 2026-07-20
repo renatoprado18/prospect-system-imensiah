@@ -10,6 +10,7 @@ Fluxo:
 
 import base64
 from services import llm
+from services import llm_usage
 import json
 import logging
 import os
@@ -78,7 +79,9 @@ async def _ocr_screenshot(image_b64: str, mime: str = "image/jpeg") -> Optional[
         if r.status_code != 200:
             logger.warning(f"screenshot OCR: HTTP {r.status_code}: {r.text[:300]}")
             return None
-        raw = r.json()["content"][0]["text"].strip()
+        _llm_resp = r.json()
+        llm_usage.record_response("ocr.screenshot", llm.BALANCED, _llm_resp)  # F-E: custo por-funcao
+        raw = _llm_resp["content"][0]["text"].strip()
         # Remove markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]

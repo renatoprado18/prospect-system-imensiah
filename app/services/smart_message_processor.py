@@ -11,6 +11,7 @@ Notifica Renato via intel-bot para todas as propostas criadas.
 """
 import os
 from services import llm
+from services import llm_usage
 import re
 import logging
 import httpx
@@ -327,6 +328,7 @@ async def _identify_email_owner(
             )
             if response.status_code == 200:
                 data = response.json()
+                llm_usage.record_response("smart_message.extract", CLAUDE_MODEL, data)  # F-E: custo por-funcao
                 name = data["content"][0]["text"].strip()
                 if name and name.upper() != "INDEFINIDO":
                     return name
