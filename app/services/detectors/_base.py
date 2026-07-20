@@ -211,14 +211,15 @@ def run_all_detectors(only: Optional[List[str]] = None) -> Dict[str, Any]:
     )
 
     all_detectors = [
-        ("detector_conselhos", detector_conselhos.run),
-        ("detector_editorial", detector_editorial.run),
+        # KILL retro F-E 20/07 — 0 valor operacional / medição cega (resolver morreu c/ Tônia 27/06). Reversível: descomentar.
+        # ("detector_conselhos", detector_conselhos.run),
+        # ("detector_editorial", detector_editorial.run),
         ("detector_relacionamento", detector_relacionamento.run),
-        ("detector_operational", detector_operational.run),
+        # ("detector_operational", detector_operational.run),
         ("detector_financial", detector_financial.run),
-        ("detector_governanca_pessoal", detector_governanca_pessoal.run),
+        # ("detector_governanca_pessoal", detector_governanca_pessoal.run),
         ("detector_delegacoes", detector_delegacoes.run),
-        ("detector_inbox", detector_inbox.run),
+        # ("detector_inbox", detector_inbox.run),
         ("detector_cruzamentos", detector_cruzamentos.run),
     ]
 
