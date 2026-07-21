@@ -2132,6 +2132,14 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
             body = gmail.parse_message_body(msg_details)
             label_ids = msg_details.get("labelIds") or []
 
+            # 4b-bis. Thread-aware (feedback 21/07 — action-blindness): se a
+            # ULTIMA msg do thread ja e do Renato (ele respondeu), o item esta
+            # resolvido. Nao sugere resposta/must_read; arquiva + tira !!Renato.
+            thread_resolved = await _thread_last_is_outbound(
+                gmail, ref["access_token"], msg_details.get("threadId"),
+                ref["account_email"],
+            )
+
             # 4c. Garante row em messages + resolve contact
             with get_db() as conn:
                 cursor = conn.cursor()
@@ -2218,7 +2226,7 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
                         msg_id,
                         conv_id,
                         contact_id,
-                        classification in ("must_read",) and dup_status == "pending",
+                        classification in ("must_read",) and dup_status == "pending" and not thread_resolved,
                         decision.get("priority", 5),
                         classification,
                         json.dumps(decision.get("reasons", [])),
@@ -2243,6 +2251,27 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
                 continue  # conflict — outra conta processou primeiro
 
             stats["processed"] += 1
+
+            # 4f-pre. THREAD-AWARE: se o Renato ja respondeu (ultima msg do
+            # thread e outbound), o item esta RESOLVIDO. Nao aplica !!Renato
+            # nem propoe resposta — arquiva e tira !!Renato (reuse do caminho
+            # arquivar+strip). So age quando _thread_last_is_outbound CONFIRMOU
+            # o outbound; nunca mexe em thread cujo ultimo turno e do terceiro.
+            if thread_resolved:
+                try:
+                    archived_ok = await gmail.archive_message(
+                        ref["access_token"], gmail_id
+                    )
+                    await _remove_renato_label(gmail, ref["access_token"], gmail_id)
+                    if archived_ok:
+                        stats["thread_resolved_archived"] = (
+                            stats.get("thread_resolved_archived", 0) + 1
+                        )
+                except Exception as e:
+                    stats["errors"].append(
+                        f"thread_resolved {gmail_id[:12]}: {str(e)[:80]}"
+                    )
+                continue
 
             # 4f. Aplicar label apropriado se must_read + conf >= 0.85
             # 25/06/2026: roteamento por suggested_tags em vez de sempre !!Renato.
@@ -2355,6 +2384,17 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
                             archived_ok = False
                             stats["errors"].append(
                                 f"archive {gmail_id[:12]}: {str(e)[:80]}"
+                            )
+                        # Feedback Renato (21/07): arquivar/deletar tem que TIRAR
+                        # o email da lista de atencao — remove !!Renato tambem
+                        # (no-op se ausente). Aditivo, nao muda a classificacao.
+                        try:
+                            await _remove_renato_label(
+                                gmail, ref["access_token"], gmail_id
+                            )
+                        except Exception as e:
+                            stats["errors"].append(
+                                f"unlabel_renato {gmail_id[:12]}: {str(e)[:80]}"
                             )
                         if archived_ok:
                             labels_today += 1  # conta como acao destrutiva do dia
@@ -2678,6 +2718,14 @@ async def apply_triage_to_inbox(
                 body = gmail.parse_message_body(msg_details)
                 label_ids = [l for l in (msg_details.get("labelIds") or []) if isinstance(l, str)]
 
+                # Thread-aware (feedback 21/07 — action-blindness): se a ultima
+                # msg do thread ja e do Renato (ele respondeu), o item esta
+                # resolvido — arquiva + tira !!Renato em vez de propor resposta.
+                thread_resolved = await _thread_last_is_outbound(
+                    gmail, ref["access_token"], msg_details.get("threadId"),
+                    acct_email,
+                )
+
                 from_hdr = (headers.get("from") or "").strip()
                 from_email = gmail.extract_email_address(from_hdr) if from_hdr else ""
                 contact_id = _resolve_contact_id_by_email(from_email)
@@ -2700,6 +2748,39 @@ async def apply_triage_to_inbox(
                     "confidence": round(confidence, 2),
                 })
                 stats["processed"] += 1
+
+                # ---- THREAD-AWARE: Renato ja respondeu -> RESOLVIDO ----
+                # Se a ultima msg do thread e outbound, nao propoe resposta nem
+                # !!Renato: arquiva + tira !!Renato (feedback 21/07). Precede o
+                # roteamento normal; so age quando o outbound foi CONFIRMADO.
+                if thread_resolved:
+                    entry["bucket"] = "arquivar"
+                    if "INBOX" not in label_ids:
+                        entry["action"] = "skip:not_in_inbox"
+                        stats["by_bucket"]["noop"] += 1
+                    elif dry_run:
+                        entry["action"] = "thread_resolved:archive+unlabel_renato"
+                        stats["by_bucket"]["arquivar"] += 1
+                    else:
+                        try:
+                            archived_ok = await gmail.archive_message(
+                                ref["access_token"], gmail_id
+                            )
+                            await _remove_renato_label(
+                                gmail, ref["access_token"], gmail_id,
+                                renato_label_id=name_to_id.get("!!Renato"),
+                            )
+                        except Exception as e:
+                            archived_ok = False
+                            stats["errors"].append(
+                                f"thread_resolved {gmail_id[:12]}: {str(e)[:80]}"
+                            )
+                        entry["action"] = "thread_resolved:archive+unlabel_renato"
+                        stats["by_bucket"]["arquivar"] += 1
+                        if archived_ok:
+                            stats["acted"] += 1
+                    stats["per_email"].append(entry)
+                    continue
 
                 # ---- Rota + acao (mesma logica do sweep 4f/4g) ----
                 if classification == "must_read":
@@ -2784,6 +2865,18 @@ async def apply_triage_to_inbox(
                             archived_ok = False
                             stats["errors"].append(
                                 f"archive {gmail_id[:12]}: {str(e)[:80]}"
+                            )
+                        # Feedback Renato (21/07): arquivar/deletar tem que TIRAR
+                        # o email da lista de atencao — remove !!Renato tambem
+                        # (no-op se ausente). Aditivo, nao muda a classificacao.
+                        try:
+                            await _remove_renato_label(
+                                gmail, ref["access_token"], gmail_id,
+                                renato_label_id=name_to_id.get("!!Renato"),
+                            )
+                        except Exception as e:
+                            stats["errors"].append(
+                                f"unlabel_renato {gmail_id[:12]}: {str(e)[:80]}"
                             )
                         if archived_ok:
                             acted_this = True
@@ -2870,6 +2963,82 @@ def route_archive_bucket(rule_hits: List[str], confidence: float) -> str:
     if "R4_noreply" in hits:
         return "arquivar"
     return "noop"
+
+
+async def _remove_renato_label(
+    gmail_integration,
+    access_token: str,
+    gmail_id: str,
+    renato_label_id: Optional[str] = None,
+) -> bool:
+    """Remove o label !!Renato de UMA mensagem (no-op se ausente/inexistente).
+
+    Feedback recorrente do Renato (21/07/2026): ao ARQUIVAR ou DELETAR um email,
+    ele tem que sair da lista de atencao !!Renato — hoje o email saia do inbox
+    mas continuava aparecendo em "Todos com !!Renato". Aditivo/defensivo: nao
+    muda a classificacao; so garante que arquivar/deletar tambem tira o !!Renato.
+    Idempotente: se o label nao existe na conta ou nao esta aplicado, e no-op.
+
+    Args:
+        renato_label_id: id ja resolvido (name->id) pra evitar 1 chamada extra;
+                         se None, resolve via list_labels.
+    Retorna True se a chamada de modify foi enviada; False em ausencia/erro.
+    """
+    try:
+        if not renato_label_id:
+            labels = await gmail_integration.list_labels(access_token)
+            renato_label_id = next(
+                (l.get("id") for l in (labels or []) if l.get("name") == "!!Renato"),
+                None,
+            )
+        if not renato_label_id:
+            return False  # conta sem o label — nada a remover
+        return await gmail_integration.modify_message_labels(
+            access_token, gmail_id, remove_label_ids=[renato_label_id]
+        )
+    except Exception:
+        return False
+
+
+async def _thread_last_is_outbound(
+    gmail_integration,
+    access_token: str,
+    thread_id: Optional[str],
+    account_email: str,
+) -> bool:
+    """True se a ULTIMA mensagem do thread e do proprio Renato (outbound/SENT).
+
+    Torna a atencao THREAD-AWARE (feedback 21/07 — action-blindness): se o
+    ultimo turno de uma conversa ja e a RESPOSTA do Renato, o item esta
+    RESOLVIDO e o sistema nao deve sugerir "responder"/must_read. Exemplo real:
+    thread com Orestes cuja ultima msg ja e do Renato, mas a triagem via so a
+    msg inbound isolada (ainda no inbox) e pedia resposta.
+
+    Defensivo: exige >=2 mensagens (back-and-forth de verdade) e, em qualquer
+    erro/ambiguidade, retorna False — NUNCA arquiva sem confirmar o outbound.
+    Detecta outbound por label SENT; fallback = From header == conta.
+    """
+    if not thread_id:
+        return False
+    try:
+        th = await gmail_integration.get_thread(
+            access_token, thread_id, format="metadata"
+        )
+        if not th or "error" in th:
+            return False
+        msgs = th.get("messages") or []
+        if len(msgs) < 2:
+            return False  # thread de 1 turno nao e "ja respondido"
+        last = msgs[-1]
+        lids = last.get("labelIds") or []
+        if "SENT" in lids:
+            return True
+        for h in (last.get("payload", {}).get("headers", []) or []):
+            if (h.get("name") or "").lower() == "from":
+                return account_email.lower() in (h.get("value") or "").lower()
+        return False
+    except Exception:
+        return False
 
 
 async def _apply_generic_label(
