@@ -282,6 +282,10 @@ _SCHEDULER_JOBS = [
     ("weekly-digest", "/api/cron/weekly-digest", CronTrigger(day_of_week="mon", hour=8, minute=0)),
     ("editorial-weekly-briefing", "/api/cron/editorial-weekly-briefing", CronTrigger(day_of_week="sun", hour=21, minute=0)),
     ("daily-synthesis", "/api/cron/daily-synthesis", CronTrigger(hour=1, minute=0)),
+    # Reconciliador de estado WA×tasks (P1 action-blindness): 1×/dia 15h UTC (12h
+    # BRT, pós-briefing). Fecha tasks pending resolvidas por conversa direta. SÓ
+    # FECHA + LLM barra 0.85 + undo + kill-switch DB. Ver services/task_reconciler.py.
+    ("task-reconciler", "/api/cron/task-reconciler", CronTrigger(hour=15, minute=0)),
     # F-E instrumentacao v0 — snapshot diario do capability registry (custo/uso/
     # valor por capacidade). 01h40 UTC, depois do daily-synthesis; acumula a
     # serie point-in-time pra retro PDCA quinzenal. Idempotente por dia (UPSERT).

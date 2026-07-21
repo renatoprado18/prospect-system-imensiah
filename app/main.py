@@ -6075,6 +6075,27 @@ async def cron_detectors_run(request: Request, only: str = ""):
     return run_all_detectors(only=only_list)
 
 
+@app.get("/api/cron/task-reconciler")
+@track_cron_run
+async def cron_task_reconciler(request: Request, dry_run: str = ""):
+    """Reconciliador de estado WA×tasks — fecha tasks pending já resolvidas por
+    comunicação direta (gap do action-blindness: o task_auto_resolver só roda em
+    ação do bot, nunca quando o Renato age direto do celular).
+
+    SÓ FECHA (nunca cria proposta/ação). Match LLM semântico + barra 0.85, undo+
+    audit (agent_actions), kill-switch DB (analyzer_settings 'task_reconciler_enabled'),
+    silêncio quando nada fecha, pill passivo quando fecha. Agendado 1×/dia no
+    Railway scheduler. `?dry_run=1` julga e loga sem fechar.
+
+    Ver services/task_reconciler.py + feedback_cos_action_blindness.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.task_reconciler import run_task_reconciler
+
+    return await run_task_reconciler(dry_run=dry_run.strip().lower() in ("1", "true", "on", "yes"))
+
+
 
 @app.get("/api/cron/hetzner-evolution-health")
 @track_cron_run
