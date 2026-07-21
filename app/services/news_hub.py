@@ -678,6 +678,11 @@ Resposta:"""
             messages=[{"role": "user", "content": prompt}]
         )
 
+        try:  # F-E: custo por-funcao (telemetria nunca quebra a chamada real)
+            llm_usage.record_response("news_hub.article_relevance", llm.BALANCED, response.model_dump())
+        except Exception:
+            pass
+
         result = response.content[0].text.strip()
 
         # Verificar se não há conexão
@@ -801,6 +806,11 @@ Responda de forma direta, sem rótulos. Formato:
             messages=[{"role": "user", "content": prompt}]
         )
 
+        try:  # F-E: custo por-funcao (telemetria nunca quebra a chamada real)
+            llm_usage.record_response("news_hub.summary", llm.BALANCED, response.model_dump())
+        except Exception:
+            pass
+
         summary = response.content[0].text.strip()
 
         # Salvar no banco
@@ -873,6 +883,11 @@ Responda em português, de forma direta e prática. Formato:
             max_tokens=400,
             messages=[{"role": "user", "content": prompt}]
         )
+
+        try:  # F-E: custo por-funcao (telemetria nunca quebra a chamada real)
+            llm_usage.record_response("news_hub.article_connection", llm.BALANCED, response.model_dump())
+        except Exception:
+            pass
 
         connection_text = response.content[0].text.strip()
 

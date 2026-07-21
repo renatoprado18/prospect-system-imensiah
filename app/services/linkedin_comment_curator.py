@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 from services import llm
+from services import llm_usage
 import logging
 import os
 import re
@@ -382,6 +383,10 @@ Avalie e retorne o JSON."""
             system=system_prompt,
             messages=[{"role": "user", "content": user_msg}],
         )
+        try:  # F-E: custo por-funcao (telemetria nunca quebra a chamada real)
+            llm_usage.record_response("linkedin.comment_score", MODEL_SCORING, msg.model_dump())
+        except Exception:
+            pass
         raw = "".join(b.text for b in msg.content if hasattr(b, "text")).strip()
         # Extract JSON if wrapped in markdown
         if "```" in raw:
@@ -484,6 +489,10 @@ Gere os drafts. Retorne o JSON."""
             system=system_prompt,
             messages=[{"role": "user", "content": user_msg}],
         )
+        try:  # F-E: custo por-funcao (telemetria nunca quebra a chamada real)
+            llm_usage.record_response("linkedin.comment_draft", MODEL_DRAFT, msg.model_dump())
+        except Exception:
+            pass
         raw = "".join(b.text for b in msg.content if hasattr(b, "text")).strip()
         if "```" in raw:
             m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)

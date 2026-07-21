@@ -796,6 +796,23 @@ async def run_investigator_cycle(cycle_id: Optional[str] = None) -> Dict[str, An
         + (cache_read_tokens * 0.30 / 1_000_000)        # 0.1x input
     )
 
+    # F-E: custo por-funcao. Loop agentico multi-iteracao -> UMA linha com os
+    # totais acumulados + custo ja computado acima (mesmo padrao pre-computado do
+    # wa_triage). Telemetria best-effort, nunca quebra o ciclo.
+    if total_input_tokens or total_output_tokens:
+        try:
+            from services import llm_usage
+            llm_usage.record(
+                "cos.investigator", COS_INVESTIGATOR_MODEL,
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_creation_tokens=cache_creation_tokens,
+                cost_usd=round(cost_usd, 6),
+            )
+        except Exception:
+            pass
+
     status = "success"
     if error_message:
         status = "error" if items["total"] == 0 else "partial"

@@ -26798,6 +26798,12 @@ Retorne APENAS o JSON válido."""
             messages=[{"role": "user", "content": prompt}],
         )
 
+        try:  # F-E: custo por-funcao (telemetria nunca quebra a chamada real)
+            from services import llm_usage
+            llm_usage.record_response("conselhoos.ata", llm.BALANCED, message.model_dump())
+        except Exception:
+            pass
+
         response_text = message.content[0].text if message.content[0].type == "text" else ""
         json_match = _re.search(r'\{[\s\S]*\}', response_text)
         if not json_match:

@@ -9,6 +9,7 @@ Detecta mudancas de emprego e gera alertas.
 """
 import os
 from services import llm
+from services import llm_usage
 import re
 import json
 import httpx
@@ -691,6 +692,10 @@ Dados:
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}],
         )
+        try:  # F-E: custo por-funcao (telemetria nunca quebra a chamada real)
+            llm_usage.record_response("linkedin.dossie", llm.BALANCED, msg.model_dump())
+        except Exception:
+            pass
         dossie = "".join(b.text for b in msg.content if hasattr(b, "text")).strip()
 
         with get_db() as conn:

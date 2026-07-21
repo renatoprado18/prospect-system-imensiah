@@ -93,6 +93,11 @@ def _call_model(model: str, prompt: str, max_tokens: int = 200):
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
+        try:  # F-E: custo por-funcao (telemetria nunca quebra a chamada real)
+            from services import llm_usage
+            llm_usage.record_response("triage.advisor", model, msg.model_dump())
+        except Exception:
+            pass
         return msg.content[0].text if msg.content else ""
     except Exception as e:
         logger.warning(f"llm._call_model {model} erro: {e}")
