@@ -126,6 +126,28 @@ def _log_target(target: str, url: str) -> None:
     print(f"[DB] {where} (target={target})")
 
 
+def _use_app_pool() -> bool:
+    """
+    O pool app-level (ThreadedConnectionPool) so vale no DEV LOCAL, onde reusar
+    conexoes ao Postgres local economiza o handshake a cada request.
+
+    Em cloud o pool ja e feito na BORDA e um pool por cima so atrapalha:
+    - Vercel: serverless, cada invocacao e efemera -> conexao direta.
+    - Railway (always-on): DB_TARGET=prod aponta pro Neon atras de PGBOUNCER, que
+      ja pooleia. Abrir um ThreadedConnectionPool(minconn=2) por cima estoura o
+      limite de conexoes do Neon, falha, e cai no fallback direto imprimindo
+      "[DB] Pool failed..." a CADA request (o _connection_pool fica None e a
+      tentativa se repete). Ruido puro — a conexao direta ja e o caminho certo.
+
+    Guard: Vercel injeta VERCEL; Railway sempre injeta RAILWAY_ENVIRONMENT.
+    (Nao confundir com o DB_TARGET protocol em _get_conn_string, que decide QUAL
+    banco — isto so decide SE usa pool app-level, nunca o alvo.)
+    """
+    if os.getenv('VERCEL') or os.getenv('RAILWAY_ENVIRONMENT'):
+        return False
+    return True
+
+
 def _get_pool():
     """Get or create connection pool"""
     global _connection_pool
@@ -139,22 +161,22 @@ def _get_pool():
 
 
 def _create_connection():
-    """Get connection from pool (or create new for serverless)"""
-    # Use pooling for local development (if not on Vercel)
-    if not os.getenv('VERCEL'):
+    """Get connection from pool (or create new for serverless/cloud)"""
+    # Pool so no dev local; cloud (Vercel/Railway) usa conexao direta.
+    if _use_app_pool():
         try:
             conn = _get_pool().getconn()
             conn.cursor_factory = RealDictCursor
             return conn
         except Exception as e:
             print(f"[DB] Pool failed, falling back to direct: {e}")
-    # Fallback: direct connection (serverless/Vercel)
+    # Fallback: direct connection (serverless/Vercel/Railway-pgbouncer)
     return psycopg2.connect(_get_conn_string(), cursor_factory=RealDictCursor)
 
 
 def _return_to_pool(conn):
     """Return connection to pool if using pooling"""
-    if not os.getenv('VERCEL') and _connection_pool:
+    if _use_app_pool() and _connection_pool:
         try:
             _connection_pool.putconn(conn)
             return
