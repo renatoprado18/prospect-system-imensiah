@@ -31,6 +31,7 @@ class _Harness:
     def __init__(self, *, resolve=None, propose_result=None):
         self.marked = []               # ids marcados como processados
         self.stored = []               # propostas gravadas
+        self.propose_calls = 0         # quantas vezes a IA foi chamada
         self._resolve = resolve or (lambda jid: ("emp-1", "Vallen"))
         self._propose_result = propose_result if propose_result is not None else []
 
@@ -46,11 +47,12 @@ class _Harness:
         return row
 
     async def propose(self, content, empresa_id):
+        self.propose_calls += 1
         if callable(self._propose_result):
             return self._propose_result(content, empresa_id)
         return list(self._propose_result)
 
-    def run(self, msgs):
+    def run(self, msgs, **kw):
         return asyncio.run(_run_sweep(
             msgs,
             resolve_empresa=self._resolve,
@@ -58,6 +60,7 @@ class _Harness:
             fetch_acoes=self.fetch_acoes,
             store_proposal=self.store_proposal,
             mark_processed=self.mark_processed,
+            **kw,
         ))
 
 
@@ -146,3 +149,118 @@ def test_happy_path_resolve_e_gera_propostas():
     assert out["errors"] == 0
     assert out["proposals"] == 2
     assert sorted(h.marked) == [1, 2]
+
+
+# --- Cap de idade da EVIDENCIA (fix 22/07) ----------------------------------
+# Full drain de backlog nao pode inundar a fila de review da CoS com msg velha
+# (decisao ja absorvida na ponte manual). Msg-evidencia > threshold: drena
+# (marca processada) mas NAO gera pending_review nem chama a IA.
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+_NOW = datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc)
+
+
+def _now_fn():
+    return _NOW
+
+
+def _tsmsgs(*specs):
+    """specs: (id, jid, sender, content, timestamp). timestamp NAIVE (como o DB)."""
+    return [{"id": i, "group_jid": j, "sender_name": s, "content": c, "timestamp": ts}
+            for (i, j, s, c, ts) in specs]
+
+
+def test_evidencia_velha_suprimida_mas_avanca():
+    """Msg de 40 dias atras (> cap 21): drena sem gerar proposta nem chamar IA."""
+    prop = [{"item_id": "aaa", "action": "complete", "new_status": "concluido",
+             "confianca": "alta", "evidencia": "x", "notes": None, "new_prazo": None}]
+    h = _Harness(propose_result=prop)
+    velha = (_NOW - timedelta(days=40)).replace(tzinfo=None)  # naive, como o DB
+    out, props = h.run(_tsmsgs((1, "g@us", "Ana", "reporte antigo ja absorvido", velha)),
+                       max_age_days=21, now_fn=_now_fn)
+    assert out["stale_skipped"] == 1
+    assert out["proposals"] == 0
+    assert h.stored == []
+    assert h.propose_calls == 0        # nem chamou a IA (barato)
+    assert h.marked == [1]             # drenou: nao re-trava a janela
+    assert out["processed_msgs"] == 1
+
+
+def test_evidencia_fresca_passa_normal():
+    """Msg de hoje (< cap): gera proposta como antes — nao regride o caso normal."""
+    prop = [{"item_id": "aaa", "action": "complete", "new_status": "concluido",
+             "confianca": "alta", "evidencia": "kommo ativado", "notes": None, "new_prazo": None}]
+    h = _Harness(propose_result=prop)
+    fresca = (_NOW - timedelta(days=2)).replace(tzinfo=None)
+    out, props = h.run(_tsmsgs((1, "g@us", "Ana", "Kommo ativado hoje", fresca)),
+                       max_age_days=21, now_fn=_now_fn)
+    assert out["stale_skipped"] == 0
+    assert out["proposals"] == 1
+    assert h.propose_calls == 1
+    assert h.marked == [1]
+
+
+def test_borda_do_cap_msg_no_limite_passa():
+    """Msg exatamente dentro do cap (20 dias, cap 21) ainda gera proposta."""
+    prop = [{"item_id": "aaa", "action": "add_note", "confianca": "media",
+             "evidencia": "y", "notes": "n", "new_status": None, "new_prazo": None}]
+    h = _Harness(propose_result=prop)
+    borda = (_NOW - timedelta(days=20)).replace(tzinfo=None)
+    out, props = h.run(_tsmsgs((1, "g@us", "Ana", "reporte ainda recente", borda)),
+                       max_age_days=21, now_fn=_now_fn)
+    assert out["stale_skipped"] == 0
+    assert out["proposals"] == 1
+
+
+def test_cap_desligado_nao_filtra_msg_velha():
+    """max_age_days=None (cap off): msg velha volta a gerar proposta (comportamento antigo)."""
+    prop = [{"item_id": "aaa", "action": "complete", "new_status": "concluido",
+             "confianca": "alta", "evidencia": "x", "notes": None, "new_prazo": None}]
+    h = _Harness(propose_result=prop)
+    velha = (_NOW - timedelta(days=200)).replace(tzinfo=None)
+    out, props = h.run(_tsmsgs((1, "g@us", "Ana", "reporte antigo", velha)))  # sem max_age_days
+    assert out["stale_skipped"] == 0
+    assert out["proposals"] == 1
+
+
+def test_cap_mistura_velha_e_fresca():
+    """Batch misto: velha drena silenciosa, fresca vira proposta. So a fresca chama IA."""
+    prop = [{"item_id": "aaa", "action": "complete", "new_status": "concluido",
+             "confianca": "alta", "evidencia": "x", "notes": None, "new_prazo": None}]
+    h = _Harness(propose_result=prop)
+    velha = (_NOW - timedelta(days=90)).replace(tzinfo=None)
+    fresca = (_NOW - timedelta(days=1)).replace(tzinfo=None)
+    out, props = h.run(_tsmsgs(
+        (1, "g@us", "Ana", "decisao velha de abril", velha),
+        (2, "g@us", "Bruno", "reporte de hoje", fresca),
+    ), max_age_days=21, now_fn=_now_fn)
+    assert out["stale_skipped"] == 1
+    assert out["proposals"] == 1
+    assert out["processed_msgs"] == 2
+    assert sorted(h.marked) == [1, 2]
+    assert h.propose_calls == 1        # so a fresca chamou a IA
+
+
+def test_env_threshold_parsing():
+    """_evidence_max_age_days: default 21, strip do \\n, <=0 desliga, invalido->default."""
+    from services.raci_group_shadow import _evidence_max_age_days
+    import os as _os
+
+    saved = _os.environ.get("RACI_EVIDENCE_MAX_AGE_DAYS")
+    try:
+        _os.environ.pop("RACI_EVIDENCE_MAX_AGE_DAYS", None)
+        assert _evidence_max_age_days() == 21
+        _os.environ["RACI_EVIDENCE_MAX_AGE_DAYS"] = " 30\n"   # Vercel cola \n
+        assert _evidence_max_age_days() == 30
+        _os.environ["RACI_EVIDENCE_MAX_AGE_DAYS"] = "0"        # desliga
+        assert _evidence_max_age_days() is None
+        _os.environ["RACI_EVIDENCE_MAX_AGE_DAYS"] = "-5"       # negativo desliga
+        assert _evidence_max_age_days() is None
+        _os.environ["RACI_EVIDENCE_MAX_AGE_DAYS"] = "abc"      # invalido -> default
+        assert _evidence_max_age_days() == 21
+    finally:
+        if saved is None:
+            _os.environ.pop("RACI_EVIDENCE_MAX_AGE_DAYS", None)
+        else:
+            _os.environ["RACI_EVIDENCE_MAX_AGE_DAYS"] = saved

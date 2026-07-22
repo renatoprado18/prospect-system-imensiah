@@ -17,6 +17,7 @@ inventar).
 """
 import logging
 import os
+from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import psycopg2
@@ -31,8 +32,34 @@ from services.raci_smart_updates import (
     RaciNoChange,
     RaciApplyError,
 )
+from services.tz import now_utc, to_utc
 
 log = logging.getLogger("raci_group_shadow")
+
+# Cap de idade da EVIDENCIA (fix 22/07). Mensagem-evidencia mais velha que isto
+# NAO vira pending_review — so drena (marca processada). Motivo: todo
+# destravamento de backlog (full drain com `days` grande) gerava proposta
+# retroativa de cada msg de mar-jun, re-litigando decisao que a RACI ja absorveu
+# na ponte manual (42 de 72 propostas eram velhas em 22/07 — a CoS descartou 43 a
+# mao). O guardrail SEMANTICO ("isto satisfaz o item?") ja existe em
+# propose_updates_from_text; este cap resolve so a IDADE. Configuravel; <=0 desliga.
+DEFAULT_EVIDENCE_MAX_AGE_DAYS = 21
+
+
+def _evidence_max_age_days() -> Optional[int]:
+    """Threshold de idade da evidencia, em dias. Env RACI_EVIDENCE_MAX_AGE_DAYS
+    (default 21). <=0 desliga o cap; invalido -> default. .strip() porque
+    Vercel/Railway colam '\\n' no valor (convencao do repo)."""
+    raw = (os.getenv("RACI_EVIDENCE_MAX_AGE_DAYS") or "").strip()
+    if not raw:
+        return DEFAULT_EVIDENCE_MAX_AGE_DAYS
+    try:
+        v = int(raw)
+    except ValueError:
+        log.warning("RACI_EVIDENCE_MAX_AGE_DAYS invalido (%r) — usa default %s",
+                    raw, DEFAULT_EVIDENCE_MAX_AGE_DAYS)
+        return DEFAULT_EVIDENCE_MAX_AGE_DAYS
+    return v if v > 0 else None
 
 
 class TransientInfraError(Exception):
@@ -115,6 +142,8 @@ async def _run_sweep(
     fetch_acoes: Callable[[List[str]], Dict[str, str]],
     store_proposal: Callable[..., Optional[Dict[str, Any]]],
     mark_processed: Callable[[int], None],
+    max_age_days: Optional[int] = None,
+    now_fn: Callable[[], datetime] = now_utc,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """Nucleo resiliente do sweep (deps injetadas -> testavel sem DB).
 
@@ -125,15 +154,38 @@ async def _run_sweep(
 
     Isso conserta o stall que segurou 5.548 msgs: antes, uma msg que levantava
     excecao nao era marcada e voltava a ocupar as vagas do LIMIT em todo tick
-    (livelock), impedindo o sweep de avancar."""
-    out: Dict[str, Any] = {"scanned": 0, "proposals": 0, "processed_msgs": 0, "errors": 0}
+    (livelock), impedindo o sweep de avancar.
+
+    Cap de idade (fix 22/07): se `max_age_days` esta setado e a mensagem
+    (`m['timestamp']`, naive-UTC do DB) e mais velha que o corte, NAO gera
+    proposta — so marca processada (dreno silencioso) e conta em `stale_skipped`.
+    Evita inundar a fila de review da CoS ao destravar backlog historico."""
+    out: Dict[str, Any] = {"scanned": 0, "proposals": 0, "processed_msgs": 0,
+                           "errors": 0, "stale_skipped": 0}
     emp_cache: Dict[str, Optional[Tuple[str, str]]] = {}
     new_proposals: List[Dict[str, Any]] = []
+    stale_cutoff = (now_fn() - timedelta(days=max_age_days)) if max_age_days else None
 
     for m in msgs:
         out["scanned"] += 1
         mid = m["id"]
         jid = m["group_jid"]
+
+        # 0. Cap de idade da EVIDENCIA. Mensagem velha nao vira pending_review
+        # (decisao ja absorvida na ponte manual). Ainda marca processada pra
+        # drenar o backlog e nao re-travar a janela. Barato: roda antes de
+        # resolver empresa e antes de chamar a IA. to_utc trata o naive do DB
+        # como UTC (colunas TIMESTAMP voltam naive em psycopg2).
+        if stale_cutoff is not None:
+            ts = to_utc(m.get("timestamp"))
+            if ts is not None and ts < stale_cutoff:
+                try:
+                    mark_processed(mid)
+                    out["processed_msgs"] += 1
+                    out["stale_skipped"] += 1
+                except Exception:
+                    log.exception("raci_group_shadow: mark_processed (stale) falhou id=%s", mid)
+                continue
 
         # 1. Resolucao de empresa (uma vez por jid).
         if jid not in emp_cache:
@@ -193,12 +245,17 @@ async def process_unreviewed_groups(days: int = 7, limit: int = 40) -> Dict[str,
 
     Resiliente (fix 22/07): msg problematica pula + avanca; so infra caida aborta
     o run (retry). Ver _run_sweep. Pra reprocessar o backlog historico, aumente
-    `days` (ex: days=3650) e `limit`."""
+    `days` (ex: days=3650) e `limit`.
+
+    Cap de idade (fix 22/07): `days` controla so quao longe o sweep VARRE
+    (drena/marca); o que vira pending_review e capado por
+    RACI_EVIDENCE_MAX_AGE_DAYS. Assim um full drain (days=3650) drena o backlog
+    inteiro mas NAO gera proposta retroativa de msg velha (>~3 semanas)."""
     try:
         with get_db() as conn:
             cur = conn.cursor()
             cur.execute(
-                """SELECT gm.id, gm.group_jid, gm.sender_name, gm.content
+                """SELECT gm.id, gm.group_jid, gm.sender_name, gm.content, gm.timestamp
                      FROM group_messages gm
                      JOIN project_whatsapp_groups pwg
                        ON pwg.group_jid = gm.group_jid AND pwg.ativo = TRUE
@@ -224,6 +281,7 @@ async def process_unreviewed_groups(days: int = 7, limit: int = 40) -> Dict[str,
         fetch_acoes=_fetch_item_acoes,
         store_proposal=_store_proposal,
         mark_processed=_mark_processed,
+        max_age_days=_evidence_max_age_days(),
     )
 
     if new_proposals:
