@@ -33,6 +33,41 @@ logger = logging.getLogger(__name__)
 CONSELHOOS_DATABASE_URL = os.getenv("CONSELHOOS_DATABASE_URL", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+
+def _conselhoos_url() -> str:
+    """URL do ConselhoOS lida em CALL-TIME + strip().
+
+    Por que nao usar a constante de modulo: (1) env-whitespace gotcha — Vercel cola
+    '\\n' no valor (ver feedback_env_var_whitespace); (2) a constante e lida 1x no
+    import, entao uma sessao/worker que seta a env DEPOIS do import via a constante
+    vazia. Ambos os casos faziam o apply devolver None -> a superficie de review
+    reportava 'item nao encontrado no RACI' (diagnostico falso: o item existe, quem
+    faltava era a conexao)."""
+    return (os.getenv("CONSELHOOS_DATABASE_URL") or "").strip()
+
+
+# ── Erros tipados do apply (fix 22/07) ───────────────────────────────────────
+# apply_proposal historicamente colapsava QUATRO desfechos distintos num unico
+# `return None`: (a) env do ConselhoOS ausente/errada, (b) item realmente inexistente,
+# (c) no-op (nada a aplicar), (d) excecao de DB. apply_group_proposal traduzia esse
+# None sempre como "item nao encontrado no RACI" — mandando quem revisa investigar o
+# mapeamento item_id (que esta CORRETO) em vez da causa real (conexao/no-op). Com
+# strict=True o apply distingue os casos e o chamador reporta a verdade.
+class RaciApplyError(Exception):
+    """Falha generica ao aplicar uma proposta no RACI."""
+
+
+class RaciConfigError(RaciApplyError):
+    """CONSELHOOS_DATABASE_URL ausente/vazia — sem conexao pro RACI (retryable)."""
+
+
+class RaciItemNotFound(RaciApplyError):
+    """item_id nao existe em raci_itens (mapeamento realmente quebrado)."""
+
+
+class RaciNoChange(RaciApplyError):
+    """Item existe mas a proposta nao muda nada (item ja esta no estado alvo)."""
+
 # Tamanho minimo de msg pra rodar AI (filtra "ok", "👍", reactions)
 MIN_TEXT_LEN_FOR_AI = 12
 
@@ -200,10 +235,11 @@ def _apply_guardrails(proposals: List[Dict], items_by_id: Dict[str, str], text: 
 def _get_open_items(empresa_id: str) -> List[Dict]:
     """Retorna itens nao-concluidos da empresa pra usar como contexto do classifier."""
     import psycopg2, psycopg2.extras
-    if not CONSELHOOS_DATABASE_URL:
+    url = _conselhoos_url()
+    if not url:
         return []
     try:
-        conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
+        conn = psycopg2.connect(url)
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         cur.execute("""
             SELECT id, acao, status, prazo, responsavel_r
@@ -334,19 +370,36 @@ Responda APENAS o JSON array."""
         return []
 
 
-def apply_proposal(proposal: Dict, empresa_id: str) -> Optional[Dict]:
+def apply_proposal(proposal: Dict, empresa_id: str, strict: bool = False) -> Optional[Dict]:
     """Aplica 1 proposta no DB + audit log. Retorna {acao, old_status, new_status}
-    pra UI/confirmacao no grupo. None se item nao encontrado."""
+    pra UI/confirmacao no grupo.
+
+    strict=False (default, usado pelo auto-apply do webhook/batch): retorna None em
+    QUALQUER desfecho nao-aplicavel (env ausente, item inexistente, no-op, excecao) —
+    contrato historico, os chamadores so olham `if r`.
+
+    strict=True (usado pelo human-in-loop apply_group_proposal): NAO colapsa os casos.
+    Levanta erro tipado pra que o chamador reporte a causa REAL em vez de mentir
+    'item nao encontrado':
+      - RaciConfigError  -> CONSELHOOS_DATABASE_URL ausente/vazia (conexao, retryable);
+      - RaciItemNotFound -> item_id realmente inexistente em raci_itens;
+      - RaciNoChange     -> item existe mas a proposta nao muda nada (no-op);
+      - RaciApplyError   -> excecao de DB inesperada."""
     import psycopg2, psycopg2.extras
-    if not CONSELHOOS_DATABASE_URL:
+    url = _conselhoos_url()
+    if not url:
+        if strict:
+            raise RaciConfigError("CONSELHOOS_DATABASE_URL ausente ou vazia — sem conexao pro RACI")
         return None
     try:
-        conn = psycopg2.connect(CONSELHOOS_DATABASE_URL)
+        conn = psycopg2.connect(url)
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         cur.execute("SELECT id, acao, status FROM raci_itens WHERE id = %s", (proposal['item_id'],))
         row = cur.fetchone()
         if not row:
             conn.close()
+            if strict:
+                raise RaciItemNotFound(str(proposal.get('item_id')))
             return None
         target = dict(row)
 
@@ -364,6 +417,8 @@ def apply_proposal(proposal: Dict, empresa_id: str) -> Optional[Dict]:
             params.append(f"\n[{format_brt(now_utc(), '%d/%m')}] {proposal['notes'][:200]}")
         if not sets:
             conn.close()
+            if strict:
+                raise RaciNoChange(f"item ja em '{target['status']}' e proposta nao altera nada")
             return None  # no-op — nao polui audit log nem reply no grupo
         sets.append("updated_at = NOW()")
         params.append(target['id'])
@@ -400,8 +455,12 @@ def apply_proposal(proposal: Dict, empresa_id: str) -> Optional[Dict]:
             'new_status': proposal.get('new_status') or target['status'],
             'evidencia': proposal.get('evidencia'),
         }
+    except RaciApplyError:
+        raise  # ja tipado (not-found / no-op) — propaga sem virar None
     except Exception as e:
         logger.warning(f"apply_proposal falhou: {e}")
+        if strict:
+            raise RaciApplyError(f"{type(e).__name__}: {e}") from e
         return None
 
 

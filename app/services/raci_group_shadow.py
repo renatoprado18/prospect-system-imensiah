@@ -26,6 +26,10 @@ from services.raci_smart_updates import (
     propose_updates_from_text,
     apply_proposal,
     MIN_TEXT_LEN_FOR_AI,
+    RaciConfigError,
+    RaciItemNotFound,
+    RaciNoChange,
+    RaciApplyError,
 )
 
 log = logging.getLogger("raci_group_shadow")
@@ -344,15 +348,28 @@ def apply_group_proposal(proposal_id: int) -> Dict[str, Any]:
         "new_status": row["new_status"], "new_prazo": row["new_prazo"],
         "notes": row["notes"], "evidencia": row["evidencia"], "confianca": row["confianca"],
     }
+    # strict=True: apply_proposal distingue os desfechos em vez de devolver um None
+    # ambiguo. Assim reportamos a causa REAL (conexao / item / no-op) em vez do velho
+    # "item nao encontrado no RACI" — que mandava quem revisa cacar um bug de
+    # mapeamento que nao existe (o item_id resolve; ver relatorio do fix 22/07).
     try:
-        result = apply_proposal(proposal, row["empresa_id"])
-    except Exception as e:
-        _update_proposal_status(proposal_id, "apply_error", f"{type(e).__name__}: {e}")
-        return {"error": f"apply falhou: {type(e).__name__}: {e}", "id": proposal_id}
-
-    if result is None:
-        _update_proposal_status(proposal_id, "apply_error", "item nao encontrado no RACI")
-        return {"error": "item nao encontrado no RACI", "id": proposal_id}
+        result = apply_proposal(proposal, row["empresa_id"], strict=True)
+    except RaciConfigError as e:
+        # Problema de ambiente (env do ConselhoOS), nao da proposta: NAO marca
+        # apply_error (a proposta segue aplicavel assim que a conexao voltar).
+        log.warning("apply_group_proposal #%s: config ConselhoOS ausente (%s)", proposal_id, e)
+        return {"error": f"conexao ConselhoOS indisponivel: {e}", "id": proposal_id, "retryable": True}
+    except RaciItemNotFound as e:
+        _update_proposal_status(proposal_id, "apply_error", f"item nao encontrado no RACI: item_id={e}")
+        return {"error": f"item nao encontrado no RACI (item_id={e})", "id": proposal_id}
+    except RaciNoChange as e:
+        # Item existe mas ja esta no estado alvo — nada a fazer. Fecha como aplicada
+        # (idempotente), sem erro: a proposta cumpriu seu papel.
+        _update_proposal_status(proposal_id, "applied", f"no-op: {e}")
+        return {"ok": True, "id": proposal_id, "noop": True, "detail": str(e)}
+    except RaciApplyError as e:
+        _update_proposal_status(proposal_id, "apply_error", str(e))
+        return {"error": f"apply falhou: {e}", "id": proposal_id}
 
     _update_proposal_status(proposal_id, "applied", str(result))
     return {"ok": True, "id": proposal_id, "result": result}
