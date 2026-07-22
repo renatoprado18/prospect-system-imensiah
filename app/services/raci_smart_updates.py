@@ -39,6 +39,163 @@ MIN_TEXT_LEN_FOR_AI = 12
 # Phase 2: limite anti-loop pra docs gigantes baixados da Evolution.
 MAX_MEDIA_BYTES = 20 * 1024 * 1024  # 20MB
 
+# ── Guardrails semanticos (fix 22/07 — FP de cortesia fechando item de revisao) ──
+# BUG observado ao vivo: mensagens de CORTESIA pos-reuniao ("fico feliz",
+# "grato pela colaboracao", "agradeço os feedbacks da reuniao") fecharam o item
+# "Revisar o questionario dos socios" — nenhuma falava do documento em si.
+# Raiz: o classifier tratava atividade generica/social como conclusao, sem checar
+# se a mensagem satisfaz ESTE entregavel especifico. Estas camadas deterministicas
+# rodam DEPOIS do LLM como rede de seguranca testavel.
+#
+# KILL-SWITCH: por padrao, itens de JULGAMENTO (revisao/aprovacao/avaliacao) NUNCA
+# auto-fecham (viram no maximo proposta 'media' = human-in-loop). Pra reabilitar
+# auto-close desses itens (nao recomendado), set RACI_JUDGMENT_AUTOCLOSE=1.
+
+
+def _judgment_autoclose_enabled() -> bool:
+    """Kill-switch. Default OFF: item de julgamento nunca auto-fecha (so propoe)."""
+    return (os.getenv("RACI_JUDGMENT_AUTOCLOSE", "0") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _strip_accents(s: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", s or "") if unicodedata.category(c) != "Mn")
+
+
+def _norm(s: str) -> str:
+    """lowercase + sem acento + sem prefixo [SENDER em ...] do batch."""
+    s = s or ""
+    # Remove prefixo de contexto que o batch injeta: "[Nome em 12/07 14:30]\n..."
+    s = re.sub(r"^\s*\[[^\]]{0,60}\]\s*", "", s, count=1)
+    return _strip_accents(s).lower().strip()
+
+
+# Marcadores de cortesia/gratidao pos-reuniao — sinal INSUFICIENTE pra fechar item.
+_COURTESY_MARKERS = [
+    "fico feliz", "fico muito feliz", "muito feliz", "que feliz",
+    "feliz em colaborar", "feliz em ajudar", "feliz em participar",
+    "obrigad", "muito grat", "grato ", "grata ", "agradec", "agradeco",
+    "parabens", "que bom", "maravilh", "excelente reuniao", "otima reuniao",
+    "otima conversa", "otimo encontro", "foi um prazer", "prazer em",
+    "um abraco", "abracos", "abraco a todos", "adorei", "amei",
+    "conte comigo", "contem comigo", "a disposicao", "estou a disposicao",
+    "estamos juntos", "sucesso a todos", "bom te ver", "bom ter",
+    "teras cuidado", "todo o cuidado", "todo cuidado", "cuidado com",
+    "colaborar com voce", "colaborar com voces", "grande abraco",
+]
+
+# Sinal SUBSTANTIVO — indica que a msg fala de trabalho/entregavel concreto,
+# nao so social. Se presente, a msg NAO e cortesia-pura.
+_SUBSTANTIVE_MARKERS = [
+    "document", "questionario", "planilha", "relatorio", "anexo", "versao",
+    "revisei", "revisado", "revisamos", "aprovado", "aprovei", "assinado",
+    "enviei", "enviado", "envio o", "envio a", "segue o", "segue a", "segue em",
+    "minuta", "contrato", "proposta", "ata ", "prazo", "deadline", "reais",
+    "r$", "kommo", "crm", "planejamento", "orcamento", "cronograma", "draft",
+    "preenchi", "preenchido", "respondi o", "respondemos", "finalizei",
+    "conclui ", "concluido o", "concluida a", "esta pronto", "esta pronta",
+    "ficou pronto", "atualizei", "subi o", "subi a", "compartilhei",
+]
+
+
+def _is_courtesy_only(text: str) -> bool:
+    """True quando a msg e essencialmente cortesia/gratidao pos-reuniao SEM
+    referencia a nenhum entregavel/trabalho concreto. Estas nao devem mover
+    NENHUM item de RACI (nem abrir proposta).
+
+    Ex FP (22/07): 'fico feliz em colaborar', 'agradeco os feedbacks da reuniao',
+    'fico feliz, teras todo o cuidado' -> True (cortesia).
+    Ex legitima: 'obrigado, ja revisei o questionario e esta aprovado' -> False
+    (tem 'revisei'/'questionario'/'aprovado' = substantivo)."""
+    n = _norm(text)
+    if not n:
+        return False
+    has_courtesy = any(m in n for m in _COURTESY_MARKERS)
+    if not has_courtesy:
+        return False
+    has_substantive = any(m in n for m in _SUBSTANTIVE_MARKERS)
+    return not has_substantive
+
+
+# Itens de JULGAMENTO: revisar/aprovar/avaliar/validar/analisar/deliberar.
+# Nao fecham por "atividade" — so por evidencia de que O ENTREGAVEL foi julgado.
+_JUDGMENT_MARKERS = [
+    "revisar", "revisao", "revise ", "revisao do", "revisao da",
+    "aprovar", "aprovacao", "aprovaco", "aprove ", "homologar",
+    "validar", "validacao", "valide ", "avaliar", "avaliacao",
+    "analisar", "analise", "parecer", "deliberar", "deliberacao",
+    "julgar", "opinar", "opiniao sobre", "decidir sobre", "definir sobre",
+    "considerar a", "considerar o", "dar retorno sobre", "dar feedback sobre",
+]
+
+_STOPWORDS = {
+    "o", "a", "os", "as", "de", "do", "da", "dos", "das", "e", "em", "no", "na",
+    "nos", "nas", "um", "uma", "para", "pra", "por", "com", "sem", "sobre", "ao",
+    "aos", "que", "se", "sua", "seu", "suas", "seus", "the", "of", "to", "com",
+}
+
+
+def _is_judgment_item(acao: str) -> bool:
+    """True se o item RACI e de revisao/aprovacao/julgamento."""
+    n = _norm(acao)
+    return any(m in n for m in _JUDGMENT_MARKERS)
+
+
+def _item_keywords(acao: str) -> set:
+    """Substantivos salientes do item (>=4 chars, sem stopword) pra checar match."""
+    n = _norm(acao)
+    toks = re.findall(r"[a-z0-9]{4,}", n)
+    # Descarta os proprios verbos de julgamento pra nao dar match trivial
+    verbs = {"revisar", "revisao", "aprovar", "aprovacao", "validar", "avaliar",
+             "avaliacao", "analisar", "analise", "parecer", "deliberar", "julgar",
+             "conselho", "diretora", "executiva", "socios", "socio"}
+    return {t for t in toks if t not in _STOPWORDS and t not in verbs}
+
+
+def _references_deliverable(text: str, evidencia: str, acao: str) -> bool:
+    """True se a msg (ou a evidencia extraida) menciona o entregavel nomeado no
+    item. Ex: item 'Revisar o questionario dos socios' + msg com 'questionario'
+    -> True. 'fico feliz em colaborar' -> False."""
+    kws = _item_keywords(acao)
+    if not kws:
+        return False
+    hay = _norm((text or "") + " " + (evidencia or ""))
+    return any(k in hay for k in kws)
+
+
+def _apply_guardrails(proposals: List[Dict], items_by_id: Dict[str, str], text: str) -> List[Dict]:
+    """Rede de seguranca deterministica pos-LLM. items_by_id: item_id -> acao.
+
+    Regras (anti-gen-1 / human-in-loop):
+    1. Msg de cortesia-pura -> descarta TODAS as propostas (sinal insuficiente).
+    2. Item de julgamento (revisao/aprovacao) + conclusao:
+       - sem referencia ao entregavel -> DESCARTA (nao fecha revisao por atividade).
+       - com referencia -> rebaixa confianca pra 'media' (PROPOR, nao executa),
+         a menos que RACI_JUDGMENT_AUTOCLOSE=1.
+    3. Itens operacionais com evidencia clara: inalterados (auto-close preservado).
+    """
+    if _is_courtesy_only(text):
+        logger.info("smart_updates: msg cortesia-pura, descartando %d proposta(s)", len(proposals))
+        return []
+
+    out: List[Dict] = []
+    for p in proposals:
+        iid = str(p.get("item_id") or "")
+        acao = items_by_id.get(iid, "")
+        is_completion = (p.get("action") == "complete") or (p.get("new_status") == "concluido")
+        if acao and _is_judgment_item(acao) and is_completion:
+            if not _references_deliverable(text, p.get("evidencia") or "", acao):
+                logger.info(
+                    "smart_updates: DROP conclusao de item de julgamento sem ref ao entregavel "
+                    "(item=%r evid=%r)", acao[:50], (p.get("evidencia") or "")[:50]
+                )
+                continue
+            if not _judgment_autoclose_enabled() and (p.get("confianca") or "").lower() == "alta":
+                logger.info("smart_updates: rebaixa item de julgamento alta->media (propor, nao executar): %r", acao[:50])
+                p = {**p, "confianca": "media"}
+        out.append(p)
+    return out
+
 
 def _get_open_items(empresa_id: str) -> List[Dict]:
     """Retorna itens nao-concluidos da empresa pra usar como contexto do classifier."""
@@ -113,6 +270,13 @@ Regras:
 - confianca=media: msg pode estar relacionada mas ambigua.
 - confianca=baixa: matching forçado, contexto insuficiente. Prefira retornar vazio em vez de baixa.
 - Mensagens irrelevantes (saudacao, off-topic, emoji isolado): retorne array vazio [].
+- CORTESIA NAO E CONCLUSAO: mensagens sociais/gratidao pos-reuniao ("fico feliz em colaborar",
+  "grato pelos feedbacks", "agradeco a reuniao", "conte comigo", "sucesso a todos") NAO fecham
+  nem alteram item nenhum. Se a msg e so cortesia, retorne [].
+- ITEM DE REVISAO/APROVACAO/AVALIACAO (verbos "revisar", "aprovar", "validar", "avaliar", "analisar"):
+  so marque concluido se a msg comentar EXPLICITAMENTE O DOCUMENTO/ENTREGAVEL em si (ex: "revisei o
+  questionario", "aprovei a minuta", "o documento esta ok"). Falar bem da reuniao ou agradecer NAO
+  conta. Na duvida, use confianca "media" (vira proposta pro humano), nunca "alta".
 - DETECCAO DE CONCLUSAO — marque new_status=concluido quando a msg indica:
   * Verbos no PASSADO ("apresentado", "fechado", "criado", "definido", "implementado", "realizado", "feito", "concluido")
   * Anuncio de RESULTADO final ("decisao tomada", "ficou em X", "esta pronto")
@@ -162,7 +326,9 @@ Responda APENAS o JSON array."""
             if not p.get('confianca'):
                 continue
             valid.append(p)
-        return valid
+        # Rede de seguranca deterministica: filtra cortesia + protege itens de julgamento.
+        items_by_id = {str(it['id']): (it.get('acao') or '') for it in items}
+        return _apply_guardrails(valid, items_by_id, text)
     except Exception as e:
         logger.warning(f"propose_updates_from_text falhou: {type(e).__name__}: {e}")
         return []
@@ -194,7 +360,8 @@ def apply_proposal(proposal: Dict, empresa_id: str) -> Optional[Dict]:
             sets.append("prazo = %s"); params.append(proposal['new_prazo'])
         if proposal.get('notes'):
             sets.append("notas = COALESCE(notas, '') || %s")
-            params.append(f"\n[{datetime.now().strftime('%d/%m')}] {proposal['notes'][:200]}")
+            from services.tz import now_utc, format_brt
+            params.append(f"\n[{format_brt(now_utc(), '%d/%m')}] {proposal['notes'][:200]}")
         if not sets:
             conn.close()
             return None  # no-op — nao polui audit log nem reply no grupo
