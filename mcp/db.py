@@ -169,8 +169,14 @@ def search_projects(query: Optional[str] = None, status: Optional[str] = None,
         # Tokeniza: cada termo precisa casar em ALGUM campo (AND entre termos, OR
         # entre campos). Query de 1 palavra = comportamento identico ao anterior.
         # Multi-palavra passa a achar (ex: "cafe jabo" acha "Fazenda ... Cafe Jabo").
+        # unaccent() nos dois lados => "sao paulo" acha "São Paulo" e vice-versa.
+        # Extension unaccent ja usada no projeto (empresas.py, detector_cruzamentos.py).
         for term in query.split():
-            where.append("(nome ILIKE %s OR descricao ILIKE %s OR empresa_relacionada ILIKE %s)")
+            where.append(
+                "(unaccent(nome) ILIKE unaccent(%s) "
+                "OR unaccent(descricao) ILIKE unaccent(%s) "
+                "OR unaccent(empresa_relacionada) ILIKE unaccent(%s))"
+            )
             like = f"%{term}%"
             params += [like, like, like]
     if status:
