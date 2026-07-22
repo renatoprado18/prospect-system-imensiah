@@ -296,3 +296,49 @@ def get_push_service() -> PushNotificationService:
     if _push_service is None:
         _push_service = PushNotificationService()
     return _push_service
+
+
+def dispatch_push(
+    title: str,
+    body: str,
+    *,
+    data: Dict = None,
+    tag: str = None,
+    urgent: bool = False,
+    raise_on_error: bool = False,
+) -> Dict:
+    """Wrapper unico sobre PushNotificationService.send_notification, com os
+    DOIS contratos que os callers precisam (antes duplicados em
+    actuators._do_send_push e notification_router._send_push):
+
+    - raise_on_error=True  (atuador da Tonia): levanta RuntimeError se houver
+      errors REAIS (nao-configurado, 4xx do push). success=False SEM errors
+      (nenhum subscriber) NAO levanta. Devolve o dict de send_notification.
+    - raise_on_error=False (router multi-canal): DEGRADA — nunca levanta.
+      Push nao-configurado ou qualquer excecao -> dict com sent=0. O caller
+      deriva o bool via res['sent'] > 0 e cai em pill.
+
+    Retorna sempre o dict {success, sent, failed, errors} (mesmo shape de
+    send_notification)."""
+    svc = get_push_service()
+
+    if raise_on_error:
+        res = svc.send_notification(
+            title=title, body=body, data=data, tag=tag, urgent=urgent,
+        )
+        if not res.get("success") and res.get("errors"):
+            raise RuntimeError("; ".join(str(e) for e in res["errors"]))
+        return res
+
+    # Modo degrade (router): nunca levanta.
+    try:
+        if not svc.is_configured():
+            logger.info("dispatch_push: push nao configurado — caller degrada (pill)")
+            return {"success": False, "sent": 0, "failed": 0,
+                    "errors": ["Push notifications not configured"]}
+        return svc.send_notification(
+            title=title, body=body, data=data, tag=tag, urgent=urgent,
+        )
+    except Exception as e:
+        logger.warning(f"dispatch_push degrade falhou: {e}")
+        return {"success": False, "sent": 0, "failed": 0, "errors": [str(e)]}

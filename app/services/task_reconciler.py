@@ -168,7 +168,7 @@ def _close_task(task, verdict):
 
 async def _notify_closed(closed):
     """Pill passivo (urgência 3) — lista o que fechou. Não interrompe."""
-    from services.notification_router import route_to_renato
+    from services.notification_router import notify
     lines = "\n".join(f"  - #{c['id']} {c['titulo']}" for c in closed)
     msg = (
         f"✅ {len(closed)} tarefa(s) fechada(s) automaticamente "
@@ -176,13 +176,9 @@ async def _notify_closed(closed):
         f"Se alguma foi engano, me avisa que reabro."
     )
     dedup = "tasks_reconciled:" + "-".join(str(c['id']) for c in sorted(closed, key=lambda x: x['id']))
-    await route_to_renato(
-        source="task_reconciler",
-        payload={"title": "Tarefas fechadas pelo reconciler", "body": msg},
-        msg_type="tasks_reconciled",
-        urgency_score=3,
-        dedup_key=dedup,
-        message_text=msg,
+    await notify(
+        "task_reconciler", "Tarefas fechadas pelo reconciler", msg, 3,
+        msg_type="tasks_reconciled", dedup=dedup,
     )
 
 

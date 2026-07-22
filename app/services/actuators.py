@@ -224,22 +224,22 @@ def _do_send_push(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Dispara push notification (Web Push/VAPID) pros subscribers. Sem
     subscription específica = broadcast pra todos. Reusa o PushNotificationService
     (não reimplementa envio). Retorna {sent, failed}."""
-    from services.push_notifications import get_push_service
+    from services.push_notifications import dispatch_push
     title = (payload.get("title") or "").strip()
     if not title:
         raise ValueError("send_push requer 'title'")
     body = (payload.get("body") or "").strip()
-    res = get_push_service().send_notification(
+    # raise_on_error=True: levanta em problema real (não-configurado, 4xx do
+    # push); sem subscriber (sent=0 sem errors) NÃO levanta. Wrapper unico em
+    # push_notifications.dispatch_push (antes duplicado com o router).
+    res = dispatch_push(
         title=title,
         body=body,
         data=payload.get("data"),
         tag=payload.get("tag"),
         urgent=bool(payload.get("urgent", False)),
+        raise_on_error=True,
     )
-    # success=False COM errors = problema real (não-configurado, 4xx do push).
-    # success=False SEM errors = simplesmente não há subscriber → sent=0, ok.
-    if not res.get("success") and res.get("errors"):
-        raise RuntimeError("; ".join(str(e) for e in res["errors"]))
     return {"sent": res.get("sent", 0), "failed": res.get("failed", 0)}
 
 

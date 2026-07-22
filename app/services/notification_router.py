@@ -321,6 +321,32 @@ def _is_sunday_silence(urgent: bool, urgency_rule: Optional[str]) -> bool:
         return False
 
 
+def _sunday_silence_enqueue(
+    urgent: bool,
+    urgency_rule: Optional[str],
+    source: str,
+    payload: Dict[str, Any],
+    msg_type: Optional[str],
+    urgency_score: Optional[int],
+    dedup_key: Optional[str],
+) -> tuple[bool, Optional[int]]:
+    """Ponto UNICO da politica 'domingo sagrado' (condicao + destino).
+
+    Se domingo-silence aplica (non-urgent + domingo BRT + nao SUNDAY_SILENCE_OFF),
+    enfileira o item pro digest de segunda 8h ('morning') e retorna (True, pid).
+    Senao (False, None). Centraliza a decisao pra o fluxo legado (mode 'off') e o
+    _dispatch_multichannel nao driftarem entre kill-switch on/off — cada branch so
+    monta o return-shape proprio; o QUE decidir e PRA ONDE adiar mora aqui.
+
+    (mode 'on' usa _is_sunday_silence direto: la o item cai no enqueue geral com
+    digest_target='morning', nao num enqueue proprio — nao pode usar este helper
+    sob risco de enfileirar 2x.)"""
+    if not _is_sunday_silence(urgent, urgency_rule):
+        return False, None
+    pid = _enqueue_pending(source, payload, msg_type, urgency_score, "morning", dedup_key)
+    return True, pid
+
+
 async def _send_now(message: str) -> bool:
     """Envia direto via Evolution. Retorna sucesso."""
     phone = (os.getenv(RENATO_PHONE_ENV) or RENATO_PHONE_FALLBACK).strip()
@@ -372,24 +398,19 @@ def _send_push(
 ) -> bool:
     """Envia Web Push via push_notifications. Retorna True se sent>0.
 
-    is_configured()=False ou qualquer excecao -> False (caller cai em pill)."""
-    try:
-        from services.push_notifications import get_push_service
-        svc = get_push_service()
-        if not svc.is_configured():
-            logger.info("router _send_push: push nao configurado — caller cai em pill")
-            return False
-        res = svc.send_notification(
-            title=title,
-            body=body,
-            data=data or {},
-            tag=tag,
-            urgent=urgent,
-        )
-        return bool((res or {}).get("sent", 0) > 0)
-    except Exception as e:
-        logger.warning(f"router _send_push falhou: {e}")
-        return False
+    is_configured()=False ou qualquer excecao -> False (caller cai em pill).
+    Usa o wrapper unico dispatch_push (raise_on_error=False = degrada; mesmo
+    wrapper que actuators usa com raise_on_error=True)."""
+    from services.push_notifications import dispatch_push
+    res = dispatch_push(
+        title=title,
+        body=body,
+        data=data or {},
+        tag=tag,
+        urgent=urgent,
+        raise_on_error=False,
+    )
+    return bool((res or {}).get("sent", 0) > 0)
 
 
 def _log_channel_decision(
@@ -458,21 +479,26 @@ async def _dispatch_multichannel(
     title = payload.get("title") or source
     push_data = payload.get("data") if isinstance(payload.get("data"), dict) else None
 
-    # Domingo silence: non-urgent (push/pill) adia pra morning como pill
-    if channel != "whatsapp" and _is_sunday_silence(urgent, urgency_rule):
-        logger.info(f"domingo silence (multichannel): {source} -> pill/morning")
-        pid = _enqueue_pending(source, payload, msg_type, urgency_score, "morning", dedup_key)
-        _log_channel_decision(
-            source, msg_type, urgency_score, "pill", "sunday_silence",
-            pid is not None, MULTICHANNEL_ON, dedup_key, title,
+    # Domingo silence: non-urgent (push/pill) adia pra morning como pill.
+    # (channel=='whatsapp' so acontece quando urgent; _sunday_silence_enqueue ja
+    # e non-urgent, mas mantemos o guard pra nao nem chamar/enfileirar nesse caso.)
+    if channel != "whatsapp":
+        applies, pid = _sunday_silence_enqueue(
+            urgent, urgency_rule, source, payload, msg_type, urgency_score, dedup_key,
         )
-        return {
-            "action": "queued_sunday_silence" if pid else "duplicate",
-            "pending_id": pid,
-            "channel": "pill",
-            "decision_rule": "sunday_silence",
-            "mode": "multichannel",
-        }
+        if applies:
+            logger.info(f"domingo silence (multichannel): {source} -> pill/morning")
+            _log_channel_decision(
+                source, msg_type, urgency_score, "pill", "sunday_silence",
+                pid is not None, MULTICHANNEL_ON, dedup_key, title,
+            )
+            return {
+                "action": "queued_sunday_silence" if pid else "duplicate",
+                "pending_id": pid,
+                "channel": "pill",
+                "decision_rule": "sunday_silence",
+                "mode": "multichannel",
+            }
 
     # WhatsApp — urgente
     if channel == "whatsapp":
@@ -606,9 +632,11 @@ async def route_to_renato(
 
     # Mode 'off' — comportamento legado (mas com silence guard pra domingo)
     if mode == MODE_OFF:
-        if _is_sunday_silence(urgent, urgency_rule):
+        applies, pid = _sunday_silence_enqueue(
+            urgent, urgency_rule, source, payload, msg_type, urgency_score, dedup_key,
+        )
+        if applies:
             logger.info(f"domingo silence: msg adiada pra segunda 8h (source={source})")
-            pid = _enqueue_pending(source, payload, msg_type, urgency_score, "morning", dedup_key)
             return {
                 "action": "queued_sunday_silence",
                 "pending_id": pid,
@@ -654,6 +682,39 @@ async def route_to_renato(
         "digest_target": digest_target,
         "mode": mode,
     }
+
+
+async def notify(
+    source: str,
+    title: str,
+    body: str,
+    score: Optional[int] = None,
+    *,
+    msg_type: Optional[str] = None,
+    dedup: Optional[str] = None,
+    digest_target: str = "either",
+) -> bool:
+    """Helper fino sobre route_to_renato pros call-sites HOMOGENEOS.
+
+    Centraliza o boilerplate repetido em ~10 call-sites migrados: monta
+    payload={'title', 'body'}, usa body como message_text (WA), e devolve
+    True SSE o item foi enviado imediato (action == 'sent').
+
+    NAO cobre call-sites que precisam de payload rico (force_immediate,
+    contact_id, proposal_id...), que interpretam outras actions
+    (queued/shadow/duplicate) ou que fazem fire-and-forget via create_task —
+    esses continuam chamando route_to_renato direto. Nao engole excecao: o
+    try/except do caller (quando existe) segue valendo."""
+    _r = await route_to_renato(
+        source=source,
+        payload={"title": title, "body": body},
+        msg_type=msg_type,
+        urgency_score=score,
+        digest_target=digest_target,
+        dedup_key=dedup,
+        message_text=body,
+    )
+    return _r.get("action") == "sent"
 
 
 def consume_pending_for_digest(

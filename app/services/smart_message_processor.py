@@ -758,7 +758,7 @@ async def notify_renato_proposal(proposal: Dict):
         return
 
     try:
-        from services.notification_router import route_to_renato
+        from services.notification_router import notify
 
         title = proposal.get('title', 'Acao sugerida')
         description = proposal.get('description', '')
@@ -775,13 +775,10 @@ async def notify_renato_proposal(proposal: Dict):
         )
 
         # Proposta acionavel (executar/ignorar) = medio (6): Web Push.
-        await route_to_renato(
-            source="smart_message_processor",
-            payload={"title": title, "body": message},
+        await notify(
+            "smart_message_processor", title, message, 6,
             msg_type="proposal",
-            urgency_score=6,
-            dedup_key=f"proposal:{proposal_id}" if proposal_id else None,
-            message_text=message,
+            dedup=f"proposal:{proposal_id}" if proposal_id else None,
         )
         logger.info(f"Sent intel notification for proposal #{proposal_id}")
 
@@ -795,14 +792,11 @@ async def notify_renato_text(text: str):
         return
 
     try:
-        from services.notification_router import route_to_renato
+        from services.notification_router import notify
         # Notificacao informativa de processamento de mensagem = 5: Web Push.
-        await route_to_renato(
-            source="smart_message_processor",
-            payload={"title": "INTEL", "body": text},
+        await notify(
+            "smart_message_processor", "INTEL", text, 5,
             msg_type="notification",
-            urgency_score=5,
-            message_text=text,
         )
     except Exception as e:
         logger.error(f"Error sending text notification to Renato: {e}")

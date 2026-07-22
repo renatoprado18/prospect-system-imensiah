@@ -539,7 +539,7 @@ async def check_anthropic_daily_spike(threshold_usd: float = 2.0) -> Dict:
 
     sent = False
     try:
-        from services.notification_router import route_to_renato
+        from services.notification_router import notify
         msg = (
             f"💸 *Anthropic daily spike — {target.strftime('%d/%m')}*\n\n"
             f"Gasto ontem: *${spend:.2f}* (threshold ${threshold_usd:.2f})\n"
@@ -547,15 +547,10 @@ async def check_anthropic_daily_spike(threshold_usd: float = 2.0) -> Dict:
             "Audit: /admin/costs ou cost_report API"
         )
         # Alerta financeiro = 8: WhatsApp (interrompe — custo disparado exige acao).
-        _r = await route_to_renato(
-            source="platform_costs",
-            payload={"title": "Anthropic daily spike", "body": msg},
-            msg_type="cost_daily_spike",
-            urgency_score=8,
-            dedup_key=alert_key,
-            message_text=msg,
+        sent = await notify(
+            "platform_costs", "Anthropic daily spike", msg, 8,
+            msg_type="cost_daily_spike", dedup=alert_key,
         )
-        sent = _r.get("action") == "sent"
     except Exception as e:
         logger.warning(f"check_anthropic_daily_spike: send failed: {e}")
 
@@ -747,20 +742,15 @@ async def check_and_notify_alerts() -> Dict:
 
     sent = False
     try:
-        from services.notification_router import route_to_renato
+        from services.notification_router import notify
         # Alerta financeiro = 7: Web Push. Dedup por periodos agrupados.
         _dedup = "cost_alerts:" + ",".join(
             f"{a['provider']}:{a['to_period'][:7]}" for a in new_alerts
         )
-        _r = await route_to_renato(
-            source="platform_costs",
-            payload={"title": "Cost Tracker — aumento suspeito", "body": msg},
-            msg_type="cost_increase_alert",
-            urgency_score=8,  # WhatsApp: custo disparado interrompe
-            dedup_key=_dedup[:200],
-            message_text=msg,
+        sent = await notify(
+            "platform_costs", "Cost Tracker — aumento suspeito", msg, 8,  # WhatsApp: custo disparado interrompe
+            msg_type="cost_increase_alert", dedup=_dedup[:200],
         )
-        sent = _r.get("action") == "sent"
     except Exception as e:
         logger.warning(f"check_and_notify_alerts: send failed: {e}")
 

@@ -2307,7 +2307,7 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
             priority_val = int(decision.get("priority", 5))
             if classification == "must_read" and priority_val >= 9:
                 try:
-                    from services.notification_router import route_to_renato
+                    from services.notification_router import notify
                     sender_short = (headers.get("from") or "")[:60]
                     subj_short = (headers.get("subject") or "(sem assunto)")[:70]
                     reasons_short = "; ".join(decision.get("reasons", [])[:2])[:120]
@@ -2320,15 +2320,10 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
                     # Score conforme prioridade: urgente(P>=9)->8 (WA), importante->6, senao 4.
                     # Na pratica este branch so roda com P>=9 => 8 => WhatsApp (preserva atual).
                     _urg = 8 if priority_val >= 9 else (6 if priority_val >= 7 else 4)
-                    _r = await route_to_renato(
-                        source="email_triage",
-                        payload={"title": f"Email urgente (P{priority_val})", "body": notif_text},
-                        msg_type="email_urgent",
-                        urgency_score=_urg,
-                        dedup_key=f"email_urgent:{gmail_id}",
-                        message_text=notif_text,
+                    pushed = await notify(
+                        "email_triage", f"Email urgente (P{priority_val})", notif_text, _urg,
+                        msg_type="email_urgent", dedup=f"email_urgent:{gmail_id}",
                     )
-                    pushed = _r.get("action") == "sent"
                     if pushed:
                         stats["wa_urgents_pushed"] = stats.get("wa_urgents_pushed", 0) + 1
                 except Exception as e:

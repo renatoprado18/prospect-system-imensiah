@@ -182,24 +182,20 @@ async def check_and_resolve_tasks(action_type: str, context: dict):
                 )
 
             # Notify Renato
-            from services.notification_router import route_to_renato
+            from services.notification_router import notify
             action_desc = _action_description(action_type, context)
             task_list = "\n".join(f"  - {t['titulo']}" for t in auto_completed)
             msg = f"✅ {action_desc}\n\nTarefas concluidas automaticamente:\n{task_list}"
             # Informativo (3): tarefa ja resolvida sozinha, so registro -> pill.
-            await route_to_renato(
-                source="task_auto_resolver",
-                payload={"title": "Tarefas concluidas automaticamente", "body": msg},
-                msg_type="tasks_auto_completed",
-                urgency_score=3,
-                dedup_key=f"tasks_auto_completed:{action_type}",
-                message_text=msg,
+            await notify(
+                "task_auto_resolver", "Tarefas concluidas automaticamente", msg, 3,
+                msg_type="tasks_auto_completed", dedup=f"tasks_auto_completed:{action_type}",
             )
             logger.info(f"Auto-completed {len(auto_completed)} tasks for {action_type}: {[t['titulo'] for t in auto_completed]}")
 
         # Ask about ambiguous matches
         for task in ambiguous:
-            from services.notification_router import route_to_renato
+            from services.notification_router import notify
             action_desc = _action_description(action_type, context)
             msg = (
                 f"Acabei de registrar: {action_desc}\n\n"
@@ -207,13 +203,9 @@ async def check_and_resolve_tasks(action_type: str, context: dict):
                 f"Responda: sim {task['id']} ou nao {task['id']}"
             )
             # Informativo (3): pergunta nao urgente -> pill.
-            await route_to_renato(
-                source="task_auto_resolver",
-                payload={"title": "Tarefa ambigua — confirmar?", "body": msg},
-                msg_type="task_ambiguous_confirm",
-                urgency_score=3,
-                dedup_key=f"task_ambiguous:{task['id']}",
-                message_text=msg,
+            await notify(
+                "task_auto_resolver", "Tarefa ambigua — confirmar?", msg, 3,
+                msg_type="task_ambiguous_confirm", dedup=f"task_ambiguous:{task['id']}",
             )
             logger.info(f"Asked about ambiguous task #{task['id']}: {task['titulo']}")
 
