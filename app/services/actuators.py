@@ -31,7 +31,11 @@ log = logging.getLogger("actuators")
 
 ALLOWED_ACTIONS = {"create_task", "update_task", "schedule_wa",
                    "send_push", "send_email", "create_calendar_event",
+                   "update_calendar_event", "delete_calendar_event",
                    "triage_inbox"}
+
+# Escopo de recorrência aceito pelo delete (espelha CalendarEventsService.delete_event).
+CALENDAR_DELETE_SCOPES = {"single", "future", "all"}
 
 # Estados válidos de task (espelha os em uso na tabela tasks).
 TASK_STATUSES = {"pending", "in_progress", "on_hold", "completed",
@@ -330,6 +334,91 @@ async def _do_create_calendar_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+async def _do_update_calendar_event(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Edita um evento EXISTENTE na agenda (por event_id) via CalendarEventsService
+    — o gesto que faltava pra fechar "avisei que mudou e a agenda não mexe"
+    (remarcar horário/local, renomear, ou marcar cancelado). Sincroniza pro Google.
+
+    Campos (todos opcionais menos event_id): summary, description, location,
+    start_datetime/end_datetime (ISO-8601), status ('confirmed'|'tentative'|
+    'cancelled'). start/end são parseados como o create (preserva o horário BRT
+    que calendar_events guarda naive). Pelo menos 1 campo além do id.
+
+    NOTA de escopo: recusar convite de TERCEIRO mantendo o evento pros outros
+    (RSVP declined) não é suportado — o service edita o registro/organizador, não
+    o responseStatus do attendee. Para "não vou" a um evento do próprio Renato,
+    use delete_calendar_event ou status='cancelled'. RSVP = débito residual."""
+    eid = payload.get("event_id") or payload.get("id")
+    if eid is None:
+        raise ValueError("update_calendar_event requer 'event_id'")
+    try:
+        eid = int(eid)
+    except (TypeError, ValueError):
+        raise ValueError(f"event_id inválido: {eid!r}")
+
+    updates: Dict[str, Any] = {}
+    for f in ("summary", "description", "location"):
+        v = payload.get(f)
+        if v is not None:
+            updates[f] = str(v)
+
+    status = payload.get("status")
+    if status is not None:
+        updates["status"] = str(status).strip().lower()
+
+    for f in ("start_datetime", "end_datetime"):
+        raw = payload.get(f)
+        if raw:
+            try:
+                updates[f] = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            except ValueError as e:
+                raise ValueError(f"{f} inválido (use ISO-8601): {e}")
+
+    if not updates:
+        raise ValueError("update_calendar_event: nada pra atualizar (informe "
+                         "summary, description, location, start_datetime, "
+                         "end_datetime ou status)")
+
+    from services.calendar_events import get_calendar_events
+    event = await get_calendar_events().update_event(eid, updates, sync_to_google=True)
+    if not event:
+        raise ValueError(f"evento {eid} não encontrado")
+    start = event.get("start_datetime")
+    end = event.get("end_datetime")
+    return {
+        "event_id": event.get("id"),
+        "summary": event.get("summary"),
+        "status": event.get("status"),
+        "start_datetime": start.isoformat() if hasattr(start, "isoformat") else start,
+        "end_datetime": end.isoformat() if hasattr(end, "isoformat") else end,
+    }
+
+
+async def _do_delete_calendar_event(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove um evento da agenda (por event_id) via CalendarEventsService,
+    apagando também no Google. Para "cancela/desmarca X" da agenda do Renato.
+
+    scope: 'single' (default) | 'future' | 'all' — controla recorrência no Google.
+    Só use 'future'/'all' se o Renato pedir explicitamente pra série toda."""
+    eid = payload.get("event_id") or payload.get("id")
+    if eid is None:
+        raise ValueError("delete_calendar_event requer 'event_id'")
+    try:
+        eid = int(eid)
+    except (TypeError, ValueError):
+        raise ValueError(f"event_id inválido: {eid!r}")
+
+    scope = (payload.get("scope") or "single").strip().lower()
+    if scope not in CALENDAR_DELETE_SCOPES:
+        raise ValueError(f"scope inválido: {scope!r} (use {sorted(CALENDAR_DELETE_SCOPES)})")
+
+    from services.calendar_events import get_calendar_events
+    ok = await get_calendar_events().delete_event(eid, delete_from_google=True, scope=scope)
+    if not ok:
+        raise ValueError(f"evento {eid} não encontrado")
+    return {"deleted": True, "event_id": eid, "scope": scope}
+
+
 async def _do_triage_inbox(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Varre o INBOX atual do Renato e organiza nos 4 buckets
     (!!Renato/!Andressa/Financeiro/Arquivar/!!Deletar). Reusa
@@ -410,6 +499,10 @@ async def execute_actuator(action: str, payload: Dict[str, Any], source: str = "
                     result = await _do_send_email(payload)
                 elif action == "create_calendar_event":
                     result = await _do_create_calendar_event(payload)
+                elif action == "update_calendar_event":
+                    result = await _do_update_calendar_event(payload)
+                elif action == "delete_calendar_event":
+                    result = await _do_delete_calendar_event(payload)
                 elif action == "triage_inbox":
                     result = await _do_triage_inbox(payload)
                 _audit_close(cur, audit_id, "success", result=result)
