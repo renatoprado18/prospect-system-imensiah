@@ -279,6 +279,10 @@ _SCHEDULER_JOBS = [
     # ("linkedin-outbound-check", "/api/cron/linkedin-outbound-check", CronTrigger(hour=11, minute=0)),
     # ("linkedin-engagement-prospecting", "/api/cron/linkedin-engagement-prospecting", CronTrigger(hour=11, minute=30)),
     ("raci-weekly-report", "/api/cron/raci-weekly-report", CronTrigger(day_of_week="mon", hour=11, minute=0)),
+    # Monitor read-only do backlog nao-processado do raci_group_shadow (fix 22/07):
+    # alerta se N msgs de grupo ficam sem raci_processed_at por > stale_days (usa o
+    # indice parcial que ja existe). Teria pego o stall de 95% meses atras.
+    ("raci-unprocessed-monitor", "/api/cron/raci-unprocessed-monitor", CronTrigger(hour=13, minute=30)),
     ("weekly-digest", "/api/cron/weekly-digest", CronTrigger(day_of_week="mon", hour=8, minute=0)),
     ("editorial-weekly-briefing", "/api/cron/editorial-weekly-briefing", CronTrigger(day_of_week="sun", hour=21, minute=0)),
     ("daily-synthesis", "/api/cron/daily-synthesis", CronTrigger(hour=1, minute=0)),
