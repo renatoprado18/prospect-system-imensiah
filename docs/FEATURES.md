@@ -73,6 +73,7 @@
 - Cruzamento participantes × contatos INTEL
 - Health médio, quem precisa atenção
 - Sync manual via botão
+- **Mensagens de grupo em `group_messages`** — populadas em TEMPO REAL pelo webhook Evolution (`evolution_api.persist_group_message_realtime`, INSERT idempotente ON CONFLICT por `message_id`, só grupos `social_groups_cache.sync_enabled=TRUE`) + backfill horário pelo pull `run-social-groups`/`group_message_sync.sync_group_messages` (cron :20)
 
 ## 5. Tarefas (`/tarefas-pendentes`)
 - Backlog combinado: tarefas diretas (avulsas, sem projeto) + RACI monitoradas → `rap_tarefas_avulsas.html`

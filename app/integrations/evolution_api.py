@@ -15,6 +15,7 @@ from typing import Optional, Dict, List, Any
 from datetime import datetime
 
 from services.worker_secret import get_worker_secret
+from services.tz import now_utc, UTC
 
 logger = logging.getLogger(__name__)
 
@@ -623,6 +624,105 @@ async def handle_evolution_webhook(payload: Dict) -> Dict:
     return result
 
 
+def _extract_group_message_content(message_obj: Dict) -> tuple:
+    """Espelha a extracao do pull horario (_sync_single_group em
+    group_message_sync.py): retorna (content, message_type)."""
+    content = ''
+    msg_type = 'text'
+    if not isinstance(message_obj, dict):
+        return content, msg_type
+    if 'conversation' in message_obj:
+        content = message_obj.get('conversation') or ''
+    elif 'extendedTextMessage' in message_obj:
+        content = (message_obj.get('extendedTextMessage') or {}).get('text', '')
+    elif 'documentMessage' in message_obj:
+        doc = message_obj.get('documentMessage') or {}
+        doc_name = doc.get('fileName', 'documento')
+        content = doc.get('caption') or f'[Documento: {doc_name}]'
+        msg_type = 'document'
+    elif 'imageMessage' in message_obj:
+        content = (message_obj.get('imageMessage') or {}).get('caption') or '[Imagem]'
+        msg_type = 'image'
+    elif 'videoMessage' in message_obj:
+        content = (message_obj.get('videoMessage') or {}).get('caption') or '[Video]'
+        msg_type = 'video'
+    elif 'audioMessage' in message_obj:
+        content = '[Audio]'
+        msg_type = 'audio'
+    return content, msg_type
+
+
+def persist_group_message_realtime(data: Dict, key: Dict, remote_jid: str,
+                                   message_id: str, from_me: bool) -> bool:
+    """Grava a mensagem de grupo em group_messages em TEMPO REAL (via webhook),
+    ANTES do processamento RACI — assim a conversa do grupo aparece na hora sem
+    esperar o pull horario `run-social-groups` (que segue como backfill).
+
+    Idempotente por message_id (ON CONFLICT DO NOTHING — mesmas colunas e mesma
+    chave anti-dupe que o pull horario usa em _sync_single_group). So grava para
+    grupos com social_groups_cache.sync_enabled = TRUE (mesmo criterio do pull).
+
+    Nunca faz raise: qualquer falha vira warning e o webhook (RACI + ACK) segue.
+    Retorna True se inseriu uma linha nova."""
+    if not message_id:
+        return False
+    try:
+        from database import get_db
+        from services.group_message_sync import _find_contact_by_phone
+
+        message_obj = data.get("message") or {}
+        content, msg_type = _extract_group_message_content(message_obj)
+        # Mesmo filtro do pull: ignora conteudo vazio/muito curto (reactions etc)
+        if not content or len(content) < 2:
+            return False
+
+        # Sender (espelha o pull: participantAlt > participant; from_me = Renato)
+        participant = key.get('participantAlt') or key.get('participant') or ''
+        sender_phone = participant.replace('@s.whatsapp.net', '').replace('@lid', '')
+        sender_name = 'Renato' if from_me else (data.get('pushName') or '')
+
+        # Timestamp: messageTimestamp e epoch (UTC). Armazena naive-UTC (convencao
+        # do DB — coluna TIMESTAMP sem tz). Fallback pra agora se ausente.
+        raw_ts = data.get('messageTimestamp') or 0
+        try:
+            ts_int = int(raw_ts)
+        except (TypeError, ValueError):
+            ts_int = 0
+        if ts_int > 0:
+            ts = datetime.fromtimestamp(ts_int, tz=UTC).replace(tzinfo=None)
+        else:
+            ts = now_utc().replace(tzinfo=None)
+
+        with get_db() as conn:
+            cursor = conn.cursor()
+            # So grava grupos rastreados (mesmo criterio do pull sync_group_messages)
+            cursor.execute(
+                "SELECT 1 FROM social_groups_cache WHERE group_jid = %s AND sync_enabled = TRUE",
+                (remote_jid,),
+            )
+            if not cursor.fetchone():
+                return False
+
+            contact_id = (_find_contact_by_phone(cursor, sender_phone)
+                          if sender_phone and len(sender_phone) > 8 else None)
+
+            cursor.execute("""
+                INSERT INTO group_messages (group_jid, message_id, sender_phone, sender_name,
+                    contact_id, content, message_type, timestamp, from_me)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (message_id) DO NOTHING
+            """, (
+                remote_jid, message_id, sender_phone, sender_name,
+                contact_id, content, msg_type, ts, from_me,
+            ))
+            inserted = cursor.rowcount > 0
+            conn.commit()
+            return inserted
+    except Exception as e:
+        logger.warning(f"group_messages realtime insert failed: {e}")
+        return False
+
+
 async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: datetime = None) -> Dict:
     """Processa mensagem recebida e analisa com IA"""
     from database import get_db
@@ -670,6 +770,12 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
 
     # Group messages: check for RACI updates (smart matcher — texto livre + media)
     if "@g.us" in remote_jid:
+        # Tempo real (#999651): grava a msg do grupo em group_messages ANTES do
+        # RACI, para grupos sync_enabled. Idempotente por message_id (o pull
+        # horario `run-social-groups` grava a mesma coisa como backfill). Nunca
+        # trava o webhook — falha vira warning dentro da propria funcao.
+        persist_group_message_realtime(data, key, remote_jid, message_id, from_me)
+
         if not from_me:
             text_content = ""
             # Fix 28/06/26: payload['data'] ja eh passado como `data` (ver
