@@ -241,26 +241,59 @@ def _llm_functions(cursor, days: int) -> List[Dict[str, Any]]:
             tonia_cost = sum(
                 c["cost_usd"] for c in out if c.get("cost_usd")
             )
-            platform_cost = float(row["amount_usd"]) if row["amount_usd"] is not None else 0.0
+            platform_month_cost = float(row["amount_usd"]) if row["amount_usd"] is not None else 0.0
+
+            # PRORATA: platform_costs e MENSAL (period_start=dia 1). As demais
+            # capacidades respeitam a janela `days`; comparar o custo do mes
+            # inteiro contra a soma da janela mistura escalas e inventa um "gap
+            # cego" (ex: $37/mes - $14.85/14d = $22 fantasma). Prorateamos o
+            # custo mensal pra janela, por dia DECORRIDO do periodo (o mes
+            # corrente ainda nao acabou -> nao usar os 31 dias nominais).
+            p_start = row["period_start"]
+            p_end = row["period_end"]
+            today = now_utc().date()
+            elapsed_days = 1
+            if p_start:
+                ref_end = min(today, p_end) if p_end else today
+                elapsed_days = max(1, (ref_end - p_start).days + 1)
+            per_day = platform_month_cost / elapsed_days
+            window_days = min(days, elapsed_days)
+            platform_window_cost = round(per_day * window_days, 6)
+            uninstrumented = round(max(0.0, platform_window_cost - tonia_cost), 6)
+            coverage = (
+                round(min(tonia_cost / platform_window_cost, 1.0), 4)
+                if platform_window_cost > 0 else None
+            )
             out.append({
                 "capability_key": "llm:anthropic-platform",
                 "capability_type": "llm_function",
-                "cost_usd": round(platform_cost, 6),
+                # custo prorateado A JANELA (comparavel c/ as funcoes acima),
+                # nao o mes inteiro — o mensal bruto fica em extra.
+                "cost_usd": platform_window_cost,
                 "invocations": None,  # platform_costs nao conta chamadas
                 "value_acted": None,
                 "value_ignored": None,
                 "value_ratio": None,
                 "extra": {
-                    "source": "platform_costs (provider=anthropic, ultimo periodo)",
-                    "period_start": row["period_start"].isoformat() if row["period_start"] else None,
-                    "period_end": row["period_end"].isoformat() if row["period_end"] else None,
+                    "source": "platform_costs (provider=anthropic, ultimo periodo, prorateado a janela)",
+                    "period_start": p_start.isoformat() if p_start else None,
+                    "period_end": p_end.isoformat() if p_end else None,
+                    "platform_month_usd": round(platform_month_cost, 6),
+                    "platform_prorated_window_usd": platform_window_cost,
+                    "period_elapsed_days": elapsed_days,
+                    "prorated_over_days": window_days,
                     "tonia_instrumented_usd": round(tonia_cost, 6),
-                    "uninstrumented_usd_estimate": round(platform_cost - tonia_cost, 6),
-                    "value_note": "custo LLM total da conta Anthropic no periodo; a "
-                                  "maior parte ainda NAO e atribuida por-funcao "
-                                  "(so briefing.generate e urgent.judge estao em "
-                                  "tonia_llm_usage). Nao segue a janela days: e o "
-                                  "periodo da linha de platform_costs.",
+                    "uninstrumented_usd_estimate": uninstrumented,
+                    "coverage_pct": coverage,
+                    "value_note": "custo LLM total da conta Anthropic, PRORATEADO da "
+                                  "linha mensal de platform_costs pra janela `days` "
+                                  "(por dia decorrido do periodo) — assim compara com "
+                                  "as funcoes acima na mesma escala. `platform_month_usd` "
+                                  "= mensal bruto. RESSALVA: a instrumentacao por-funcao "
+                                  "e recente (jul/2026); janelas que cruzam o periodo "
+                                  "pre-instrumentacao SUBESTIMAM coverage_pct (o custo "
+                                  "existiu, o registro por-funcao nao). Ler coverage numa "
+                                  "janela curta pos-deploy pra medir a cobertura real.",
                 },
             })
     except Exception as e:
