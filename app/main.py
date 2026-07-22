@@ -10062,21 +10062,29 @@ def _write_cron_cursor(name: str, value: int, total: int = 0) -> None:
 def verify_cron_auth(request: Request) -> bool:
     """Verifica autorizacao de cron job.
 
-    Why: header `x-vercel-cron: true` nao e documentado. Vercel autentica via
-    User-Agent 'vercel-cron/1.0' ou Authorization Bearer CRON_SECRET (quando
-    a env var existe). Antes confiavamos so no x-vercel-cron e crons davam
-    401 silencioso em prod (caso 2026-05-02 — agent_actions vazio por dias).
-    """
-    auth_header = request.headers.get("authorization", "").strip()
-    # strip(): Vercel pode adicionar \n no final de env vars colados pela UI
-    cron_secret = os.getenv("CRON_SECRET", "").strip()
-    user_agent = request.headers.get("user-agent", "")
+    Auth em prod (Railway) = Authorization Bearer CRON_SECRET. Todos os
+    chamadores legitimos mandam isso: o worker Railway
+    (workers/audio-transcriber/main.py) e os ticks do GitHub Actions.
 
-    return (
-        user_agent.startswith("vercel-cron/") or
-        (bool(cron_secret) and auth_header == f"Bearer {cron_secret}") or
-        os.getenv("VERCEL_ENV") != "production"
-    )
+    Bug corrigido (Railway, pos-cutover): a condicao antiga
+    `os.getenv("VERCEL_ENV") != "production"` era um bypass de dev local
+    ("se nao e Vercel-producao, libera"). No Railway `VERCEL_ENV` nao existe
+    -> `None != "production"` = True -> TODA rota de cron passava sem secret.
+    Agora o bypass e POSITIVO: so libera em dev local, detectado por
+    BASE_URL=localhost (setado pelo dev.sh; em prod default = dominio prod).
+    Removido tambem o check `vercel-cron/` User-Agent: era dead (vercel.json
+    crons=[] desde o cutover) e trivialmente spoofavel (qualquer request podia
+    forjar o UA e pular a auth).
+    """
+    # dev.sh seta BASE_URL=http://localhost:8000; em prod default = dominio prod
+    if os.getenv("BASE_URL", "").startswith("http://localhost"):
+        return True
+
+    auth_header = request.headers.get("authorization", "").strip()
+    # strip(): a UI cola \n no final de env vars
+    cron_secret = os.getenv("CRON_SECRET", "").strip()
+
+    return bool(cron_secret) and auth_header == f"Bearer {cron_secret}"
 
 
 @app.get("/api/cron/daily-sync")
