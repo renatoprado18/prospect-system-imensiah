@@ -15149,6 +15149,35 @@ async def raci_group_proposal_apply(proposal_id: int, request: Request):
     return result
 
 
+# ── Monitor de backlog nao-processado (fix 22/07) ────────────────────────────
+# Alerta quando group_messages com raci_processed_at IS NULL envelhecem, sinal de
+# que o sweep travou (como o stall das 5.548). Read-only. PENDENTE: wiring do cron
+# em vercel.json/Railway fica pro gate (ver relatorio).
+@app.get("/api/cron/raci-unprocessed-monitor")
+@track_cron_run
+async def cron_raci_unprocessed_monitor(request: Request):
+    """Cron: alerta o Renato se ha msgs de grupo RACI paradas ha > stale_days.
+    Nao processa nada — so mede o backlog e notifica em caso de stall."""
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+    from services.raci_group_shadow import unprocessed_backlog_stats
+    stale_days = int(request.query_params.get("stale_days", 3))
+    alert_threshold = int(request.query_params.get("threshold", 50))
+    stats = unprocessed_backlog_stats(stale_days=stale_days)
+    if stats.get("stale", 0) >= alert_threshold:
+        try:
+            from services.intel_bot import send_intel_notification
+            await send_intel_notification(
+                f"⚠️ RACI sweep pode ter travado: {stats['stale']} msg(s) de grupo "
+                f"nao-processadas ha > {stale_days}d (backlog total {stats['unprocessed']}, "
+                f"mais antiga {stats.get('oldest')})."
+            )
+            stats["alerted"] = True
+        except Exception:
+            logging.exception("raci monitor: falha notificando Renato")
+    return stats
+
+
 # ---------- ConselhoOS Pre-Meeting Briefing ----------
 
 from services.conselhoos_briefing import generate_pre_meeting_briefing, check_and_generate_briefings_tomorrow

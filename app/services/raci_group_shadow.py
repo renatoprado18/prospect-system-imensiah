@@ -17,7 +17,9 @@ inventar).
 """
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+
+import psycopg2
 
 from database import get_db
 from services.raci_smart_updates import (
@@ -27,6 +29,11 @@ from services.raci_smart_updates import (
 )
 
 log = logging.getLogger("raci_group_shadow")
+
+
+class TransientInfraError(Exception):
+    """Falha de infra (DB/CONSELHOOS indisponivel). Aborta o run atual pra retry
+    no proximo tick — SEM marcar/queimar mensagens (nao perde o backlog)."""
 
 
 def _cos_conn():
@@ -67,6 +74,18 @@ def _resolve_empresa(group_jid: str) -> Optional[Tuple[str, str]]:
     return (str(emp[0]), emp[1]) if emp else None
 
 
+def _resolve_empresa_safe(group_jid: str) -> Optional[Tuple[str, str]]:
+    """_resolve_empresa, mas classifica a falha:
+      - conexao caida (OperationalError/InterfaceError) -> TransientInfraError
+        (o loop aborta o run e tenta de novo no proximo tick, sem queimar msgs);
+      - qualquer outro erro -> propaga como 'poison' daquele jid (o loop marca as
+        msgs desse jid como sem-empresa e AVANCA, pra nao re-travar a janela)."""
+    try:
+        return _resolve_empresa(group_jid)
+    except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+        raise TransientInfraError(f"resolve_empresa({group_jid}): {type(e).__name__}: {e}") from e
+
+
 def _fetch_item_acoes(item_ids: List[str]) -> Dict[str, str]:
     """item_id -> acao (snapshot pro review). ConselhoOS."""
     if not item_ids:
@@ -84,10 +103,93 @@ def _fetch_item_acoes(item_ids: List[str]) -> Dict[str, str]:
         conn2.close()
 
 
+async def _run_sweep(
+    msgs: List[Any],
+    *,
+    resolve_empresa: Callable[[str], Optional[Tuple[str, str]]],
+    propose: Callable[[str, str], Awaitable[List[Dict[str, Any]]]],
+    fetch_acoes: Callable[[List[str]], Dict[str, str]],
+    store_proposal: Callable[..., Optional[Dict[str, Any]]],
+    mark_processed: Callable[[int], None],
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Nucleo resiliente do sweep (deps injetadas -> testavel sem DB).
+
+    Garantia central (fix 22/07): PROGRESSO MONOTONICO. Uma mensagem individual
+    problematica (sender/empresa que nao resolve, INSERT que falha, etc.) NUNCA
+    derruba o batch nem re-trava a janela: pula + loga + AVANCA (marca processada).
+    So uma falha de infra global (DB caido) aborta o run limpo — sem queimar msgs.
+
+    Isso conserta o stall que segurou 5.548 msgs: antes, uma msg que levantava
+    excecao nao era marcada e voltava a ocupar as vagas do LIMIT em todo tick
+    (livelock), impedindo o sweep de avancar."""
+    out: Dict[str, Any] = {"scanned": 0, "proposals": 0, "processed_msgs": 0, "errors": 0}
+    emp_cache: Dict[str, Optional[Tuple[str, str]]] = {}
+    new_proposals: List[Dict[str, Any]] = []
+
+    for m in msgs:
+        out["scanned"] += 1
+        mid = m["id"]
+        jid = m["group_jid"]
+
+        # 1. Resolucao de empresa (uma vez por jid).
+        if jid not in emp_cache:
+            try:
+                emp_cache[jid] = resolve_empresa(jid)
+            except TransientInfraError as e:
+                # Infra global caiu -> aborta o run, retry no proximo tick (sem burn).
+                log.warning("raci_group_shadow: infra transiente (%s) — aborta run, retry depois", e)
+                out["aborted_transient"] = True
+                break
+            except Exception:
+                # jid deterministicamente ruim -> trata as msgs dele como sem-empresa
+                # e AVANCA (nao trava a janela). Cacheia pra nao repetir a query.
+                log.exception("raci_group_shadow: jid %s nao resolve (poison) — msgs viram sem-empresa", jid)
+                emp_cache[jid] = None
+
+        emp = emp_cache[jid]
+
+        # 2. Processamento da mensagem — isolado: erro individual pula + AVANCA.
+        try:
+            if not emp:
+                mark_processed(mid)  # grupo sem empresa mapeada -> nao reabre
+                out["processed_msgs"] += 1
+                continue
+
+            empresa_id, empresa_nome = emp
+            props = await propose(m["content"], empresa_id)
+            acoes = fetch_acoes([str(p.get("item_id")) for p in props]) if props else {}
+
+            for p in props:
+                stored = store_proposal(mid, jid, empresa_id, empresa_nome, m.get("sender_name"), p, acoes)
+                if stored:
+                    new_proposals.append(stored)
+                    out["proposals"] += 1
+
+            mark_processed(mid)
+            out["processed_msgs"] += 1
+        except Exception:
+            # Msg poison (sender/conteudo/INSERT). NAO aborta o sweep: loga + avanca.
+            log.exception(
+                "raci_group_shadow: msg poison id=%s sender=%r content=%r — skip+avanca",
+                mid, m.get("sender_name"), (m.get("content") or "")[:80],
+            )
+            out["errors"] += 1
+            try:
+                mark_processed(mid)  # AVANCA pra nao re-travar a janela (root cause do stall)
+                out["processed_msgs"] += 1
+            except Exception:
+                log.exception("raci_group_shadow: mark_processed falhou id=%s (fica pro proximo run)", mid)
+
+    return out, new_proposals
+
+
 async def process_unreviewed_groups(days: int = 7, limit: int = 40) -> Dict[str, Any]:
     """Varre group_messages nao-processados, gera propostas shadow e notifica o
-    Renato. NUNCA aplica no ConselhoOS. Retorna resumo. Nunca levanta."""
-    out: Dict[str, Any] = {"scanned": 0, "proposals": 0, "processed_msgs": 0, "errors": 0}
+    Renato. NUNCA aplica no ConselhoOS. Retorna resumo. Nunca levanta.
+
+    Resiliente (fix 22/07): msg problematica pula + avanca; so infra caida aborta
+    o run (retry). Ver _run_sweep. Pra reprocessar o backlog historico, aumente
+    `days` (ex: days=3650) e `limit`."""
     try:
         with get_db() as conn:
             cur = conn.cursor()
@@ -108,39 +210,17 @@ async def process_unreviewed_groups(days: int = 7, limit: int = 40) -> Dict[str,
             msgs = cur.fetchall()
     except Exception as e:
         log.exception("raci_group_shadow: falha buscando mensagens")
-        return {**out, "error": f"{type(e).__name__}: {e}"}
+        return {"scanned": 0, "proposals": 0, "processed_msgs": 0, "errors": 0,
+                "error": f"{type(e).__name__}: {e}"}
 
-    emp_cache: Dict[str, Optional[Tuple[str, str]]] = {}
-    new_proposals: List[Dict[str, Any]] = []
-
-    for m in msgs:
-        out["scanned"] += 1
-        mid = m["id"]
-        jid = m["group_jid"]
-        try:
-            if jid not in emp_cache:
-                emp_cache[jid] = _resolve_empresa(jid)
-            emp = emp_cache[jid]
-            if not emp:
-                _mark_processed(mid)  # grupo sem empresa mapeada -> nao reabre
-                out["processed_msgs"] += 1
-                continue
-
-            empresa_id, empresa_nome = emp
-            props = await propose_updates_from_text(m["content"], empresa_id)
-            acoes = _fetch_item_acoes([str(p.get("item_id")) for p in props]) if props else {}
-
-            for p in props:
-                stored = _store_proposal(mid, jid, empresa_id, empresa_nome, m.get("sender_name"), p, acoes)
-                if stored:
-                    new_proposals.append(stored)
-                    out["proposals"] += 1
-
-            _mark_processed(mid)
-            out["processed_msgs"] += 1
-        except Exception:
-            log.exception("raci_group_shadow: erro processando msg id=%s", mid)
-            out["errors"] += 1
+    out, new_proposals = await _run_sweep(
+        msgs,
+        resolve_empresa=_resolve_empresa_safe,
+        propose=propose_updates_from_text,
+        fetch_acoes=_fetch_item_acoes,
+        store_proposal=_store_proposal,
+        mark_processed=_mark_processed,
+    )
 
     if new_proposals:
         try:
@@ -150,6 +230,39 @@ async def process_unreviewed_groups(days: int = 7, limit: int = 40) -> Dict[str,
 
     log.info("raci_group_shadow: %s", out)
     return out
+
+
+def unprocessed_backlog_stats(stale_days: int = 3) -> Dict[str, Any]:
+    """Monitor read-only do backlog de group_messages nao-processadas (usa o
+    indice parcial idx_group_messages_raci_unprocessed). Retorna quantas estao
+    pendentes e quantas ja envelheceram > stale_days. Base do alerta de stall."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT count(*) AS unprocessed,
+                      count(*) FILTER (
+                          WHERE gm.timestamp < (now() AT TIME ZONE 'UTC') - (%s || ' days')::interval
+                      ) AS stale,
+                      MIN(gm.timestamp) AS oldest
+                 FROM group_messages gm
+                 JOIN project_whatsapp_groups pwg
+                   ON pwg.group_jid = gm.group_jid AND pwg.ativo = TRUE
+                WHERE gm.raci_processed_at IS NULL
+                  AND gm.from_me = FALSE
+                  AND gm.content IS NOT NULL
+                  AND length(gm.content) >= %s""",
+            (str(stale_days), MIN_TEXT_LEN_FOR_AI),
+        )
+        row = cur.fetchone()
+    unprocessed = (row["unprocessed"] if isinstance(row, dict) else row[0]) or 0
+    stale = (row["stale"] if isinstance(row, dict) else row[1]) or 0
+    oldest = row["oldest"] if isinstance(row, dict) else row[2]
+    return {
+        "unprocessed": int(unprocessed),
+        "stale": int(stale),
+        "stale_days": stale_days,
+        "oldest": oldest.isoformat() if oldest else None,
+    }
 
 
 def _mark_processed(group_message_id: int) -> None:
