@@ -29,9 +29,13 @@ from services.tz import now_utc, parse_iso
 
 log = logging.getLogger("actuators")
 
-ALLOWED_ACTIONS = {"create_task", "schedule_wa",
+ALLOWED_ACTIONS = {"create_task", "update_task", "schedule_wa",
                    "send_push", "send_email", "create_calendar_event",
                    "triage_inbox"}
+
+# Estados válidos de task (espelha os em uso na tabela tasks).
+TASK_STATUSES = {"pending", "in_progress", "on_hold", "completed",
+                 "cancelled", "delegated"}
 
 
 def _audit_open(cur, action: str, params: Dict[str, Any], source: str) -> Optional[int]:
@@ -108,6 +112,88 @@ def _do_create_task(cur, payload: Dict[str, Any]) -> Dict[str, Any]:
     tid = int(cur.fetchone()["id"])
     return {"task_id": tid, "titulo": titulo,
             "data_vencimento": data_venc.isoformat() if data_venc else None}
+
+
+def _do_update_task(cur, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Atualiza uma task EXISTENTE — o gesto que faltava pra fechar diretivas de
+    espera ("aguarda X / deixa quieto"): em vez de criar uma task-guardrail nova
+    (que não suprime nada), a Tônia SNOOZA a task-fonte (status='on_hold') e ela
+    some da abertura (checkin.open_message filtra por status IN pending/in_progress).
+    Ver feedback_task_state_drift + feedback_cos_action_blindness.
+
+    Campos (todos opcionais menos task_id):
+      - task_id (req)
+      - status: pending|in_progress|on_hold|completed|cancelled|delegated
+      - prioridade: int
+      - data_vencimento: ISO-8601 (reagenda) OU clear_due=True (limpa o prazo →
+        sai da janela de 24h do checkin sem mudar status)
+      - note: texto anexado ao `contexto` com carimbo de data (rastro da diretiva)
+    """
+    tid = payload.get("task_id") or payload.get("id")
+    if tid is None:
+        raise ValueError("update_task requer 'task_id'")
+    try:
+        tid = int(tid)
+    except (TypeError, ValueError):
+        raise ValueError(f"task_id inválido: {tid!r}")
+
+    sets = []
+    args: list = []
+
+    status = payload.get("status")
+    if status is not None:
+        status = str(status).strip().lower()
+        if status not in TASK_STATUSES:
+            raise ValueError(f"status inválido: {status!r} (use {sorted(TASK_STATUSES)})")
+        sets.append("status = %s")
+        args.append(status)
+        # concluir também carimba data_conclusao (paridade com o fluxo normal)
+        if status == "completed":
+            sets.append("data_conclusao = NOW()")
+
+    if payload.get("prioridade") is not None:
+        try:
+            sets.append("prioridade = %s")
+            args.append(int(payload["prioridade"]))
+        except (TypeError, ValueError):
+            raise ValueError(f"prioridade inválida: {payload.get('prioridade')!r}")
+
+    if payload.get("clear_due"):
+        sets.append("data_vencimento = NULL")
+    elif payload.get("data_vencimento"):
+        try:
+            dv = parse_iso(payload["data_vencimento"]).replace(tzinfo=None)
+            sets.append("data_vencimento = %s")
+            args.append(dv)
+        except Exception:
+            raise ValueError(f"data_vencimento inválida (use ISO-8601): {payload.get('data_vencimento')!r}")
+
+    note = (payload.get("note") or "").strip()
+    if note:
+        stamp = now_utc().strftime("%d/%m/%y")
+        sets.append("contexto = COALESCE(contexto, '') || %s")
+        args.append(f"\n[{stamp}] {note}")
+
+    if not sets:
+        raise ValueError("update_task: nada pra atualizar (informe status, prioridade, data_vencimento/clear_due ou note)")
+
+    sets.append("atualizado_em = NOW()")
+    args.append(tid)
+    cur.execute(
+        f"UPDATE tasks SET {', '.join(sets)} WHERE id = %s "
+        "RETURNING id, titulo, status, prioridade, data_vencimento",
+        args,
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f"task {tid} não encontrada")
+    return {
+        "task_id": int(row["id"]),
+        "titulo": row["titulo"],
+        "status": row["status"],
+        "prioridade": row["prioridade"],
+        "data_vencimento": row["data_vencimento"].isoformat() if row["data_vencimento"] else None,
+    }
 
 
 def _do_schedule_wa(payload: Dict[str, Any], source: str) -> Dict[str, Any]:
@@ -314,6 +400,8 @@ async def execute_actuator(action: str, payload: Dict[str, Any], source: str = "
             try:
                 if action == "create_task":
                     result = _do_create_task(cur, payload)
+                elif action == "update_task":
+                    result = _do_update_task(cur, payload)
                 elif action == "schedule_wa":
                     result = _do_schedule_wa(payload, source)
                 elif action == "send_push":
