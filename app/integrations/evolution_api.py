@@ -859,8 +859,10 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
         if has_media_g:
             try:
                 from services.wa_attachment_dispatch import dispatch_attachment_to_worker
-                # participant existe pra incoming; pra outgoing fallback no group_jid
-                participant = key.get("participant", "") or remote_jid
+                # participant existe pra incoming; pra outgoing fallback no group_jid.
+                # LID: participant = <id>@lid; telefone real em participantAlt.
+                # Prefere Alt (espelha o pull em L680) senao sender_phone vira LID id.
+                participant = key.get("participantAlt") or key.get("participant") or remote_jid
                 sender_phone = participant.split("@")[0] if "@" in participant else participant
                 # Bloqueante (~500ms): worker ACK fast quando silent, processa
                 # em background do lado dele. Evita CancelledError do Vercel

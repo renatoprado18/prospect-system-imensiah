@@ -105,6 +105,7 @@ def _parse_record(rec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Normaliza um record do findMessages. Retorna None se não for texto 1:1."""
     key = rec.get("key") or {}
     remote_jid = key.get("remoteJid", "") or ""
+    remote_jid_alt = key.get("remoteJidAlt", "") or ""
     if "@g.us" in remote_jid:  # defensivo: nunca deveria vir grupo aqui
         return None
     message_id = key.get("id")
@@ -121,7 +122,14 @@ def _parse_record(rec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except (TypeError, ValueError):
         msg_date = None
 
-    phone = "".join(ch for ch in remote_jid.split("@")[0] if ch.isdigit()) or None
+    # LID (migracao Meta): remoteJid = <id>@lid (NAO e telefone); o numero real
+    # fica em remoteJidAlt (<digits>@s.whatsapp.net). Prefere o JID que carrega
+    # o telefone real. Sem isso, o phone extraido do @lid quebra a resolucao de
+    # contato (persist_live_direct_message) e polui whatsapp_messages.phone.
+    phone_jid = remote_jid
+    if "@s.whatsapp.net" not in remote_jid and "@s.whatsapp.net" in remote_jid_alt:
+        phone_jid = remote_jid_alt
+    phone = "".join(ch for ch in phone_jid.split("@")[0] if ch.isdigit()) or None
 
     return {
         "message_id": str(message_id),

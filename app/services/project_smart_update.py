@@ -340,7 +340,9 @@ async def _fetch_group_messages(linked_groups: List[Dict], limit_per_group: int 
                     continue
 
                 # Sender
-                sender = key.get('participant', key.get('participantAlt', '')).replace('@s.whatsapp.net', '').replace('@lid', '')
+                # LID: participant = <id>@lid; telefone real em participantAlt.
+                # Prefere Alt (espelha evolution_api / group_message_sync).
+                sender = (key.get('participantAlt') or key.get('participant') or '').replace('@s.whatsapp.net', '').replace('@lid', '')
                 sender_name = m.get('pushName', sender)
                 if key.get('fromMe'):
                     sender_name = 'RENATO'
