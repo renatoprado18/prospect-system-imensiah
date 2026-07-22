@@ -445,6 +445,61 @@ def _update_proposal_status(proposal_id: int, status: str, apply_result: str = N
         )
 
 
+def dismiss_group_proposal(proposal_id: int, reason: str = "") -> Dict[str, Any]:
+    """Descarta UMA proposta shadow (nao vai pro RACI). Reversivel via reopen.
+
+    Fecha o debito flagado no fix 22/07: a metade "apply" ja existia, mas nao havia
+    dismiss/reopen — os 71 dismissed de 22/07 foram por psql manual. Guarda contra
+    transicao perigosa: NUNCA descarta uma proposta 'applied' (a mudanca ja foi ao
+    ConselhoOS; descartar mentiria sobre o estado). dismissar 'dismissed' = no-op."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT status FROM raci_group_proposals WHERE id = %s", (proposal_id,))
+        row = cur.fetchone()
+        if row is None:
+            return {"error": "proposta nao encontrada", "id": proposal_id}
+        st = row["status"]
+        if st == "applied":
+            return {"error": "proposta ja aplicada no RACI — nao pode descartar", "id": proposal_id}
+        if st == "dismissed":
+            return {"ok": True, "id": proposal_id, "status": "dismissed", "noop": True}
+        note = f"dismissed manual: {reason[:200]}" if reason else "dismissed manual"
+        cur.execute(
+            """UPDATE raci_group_proposals
+                  SET status='dismissed', reviewed_at=(now() AT TIME ZONE 'UTC'),
+                      apply_result=%s
+                WHERE id = %s""",
+            (note, proposal_id),
+        )
+    return {"ok": True, "id": proposal_id, "status": "dismissed", "prev": st}
+
+
+def reopen_group_proposal(proposal_id: int) -> Dict[str, Any]:
+    """Reabre UMA proposta descartada/em-erro pra revisao (volta a pending_review).
+
+    Guarda contra transicao perigosa: NUNCA reabre uma proposta 'applied' (reabrir
+    arriscaria re-aplicar a mesma mudanca no ConselhoOS). Reabrir 'pending_review'
+    = no-op. Limpa reviewed_at/apply_result pra revisao limpa."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT status FROM raci_group_proposals WHERE id = %s", (proposal_id,))
+        row = cur.fetchone()
+        if row is None:
+            return {"error": "proposta nao encontrada", "id": proposal_id}
+        st = row["status"]
+        if st == "applied":
+            return {"error": "proposta ja aplicada no RACI — reabrir arriscaria re-aplicar", "id": proposal_id}
+        if st == "pending_review":
+            return {"ok": True, "id": proposal_id, "status": "pending_review", "noop": True}
+        cur.execute(
+            """UPDATE raci_group_proposals
+                  SET status='pending_review', reviewed_at=NULL, apply_result=NULL
+                WHERE id = %s""",
+            (proposal_id,),
+        )
+    return {"ok": True, "id": proposal_id, "status": "pending_review", "prev": st}
+
+
 def list_pending_proposals(limit: int = 50) -> List[Dict[str, Any]]:
     with get_db() as conn:
         cur = conn.cursor()

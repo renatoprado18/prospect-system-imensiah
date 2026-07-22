@@ -15157,6 +15157,30 @@ async def raci_group_proposal_apply(proposal_id: int, request: Request):
     return result
 
 
+@app.post("/api/raci/group-proposals/{proposal_id}/dismiss")
+async def raci_group_proposal_dismiss(proposal_id: int, request: Request):
+    """Descarta UMA proposta shadow (reversivel via reopen). Body opcional {reason}."""
+    from services.raci_group_shadow import dismiss_group_proposal
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    result = dismiss_group_proposal(proposal_id, (body or {}).get("reason", ""))
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.post("/api/raci/group-proposals/{proposal_id}/reopen")
+async def raci_group_proposal_reopen(proposal_id: int, request: Request):
+    """Reabre UMA proposta descartada/em-erro (volta a pending_review)."""
+    from services.raci_group_shadow import reopen_group_proposal
+    result = reopen_group_proposal(proposal_id)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
 # ── Monitor de backlog nao-processado (fix 22/07) ────────────────────────────
 # Alerta quando group_messages com raci_processed_at IS NULL envelhecem, sinal de
 # que o sweep travou (como o stall das 5.548). Read-only. PENDENTE: wiring do cron
