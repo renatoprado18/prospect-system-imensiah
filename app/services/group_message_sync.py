@@ -12,6 +12,7 @@ from typing import Dict, List
 import httpx
 
 from database import get_db
+from services.tz import UTC
 
 logger = logging.getLogger(__name__)
 
@@ -133,11 +134,15 @@ async def _sync_single_group(
             if from_me:
                 sender_name = 'Renato'
 
-            # Timestamp
+            # Timestamp: messageTimestamp e epoch (UTC). Armazena naive-UTC
+            # (convencao do DB — coluna TIMESTAMP sem tz), determinístico
+            # independente do TZ do server. ESPELHA persist_group_message_realtime
+            # (webhook): sem o tz=UTC, fromtimestamp() usava o TZ LOCAL do server —
+            # OK no Railway (UTC) mas 3h defasado em backfill BRT -> dupes/offset.
             timestamp = m.get('messageTimestamp', 0)
             if isinstance(timestamp, (int, float)) and timestamp > 0:
                 try:
-                    timestamp = datetime.fromtimestamp(int(timestamp))
+                    timestamp = datetime.fromtimestamp(int(timestamp), tz=UTC).replace(tzinfo=None)
                 except Exception:
                     continue
             else:
