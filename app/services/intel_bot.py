@@ -261,6 +261,7 @@ TOOLS = [
             "(ex: 'drenado' encontra memorias com 'cansado'/'exausto'). "
             "mode='keyword' so faz match literal. mode='semantic' so via embeddings (Voyage).\n"
             "- manage_intent: gerencia um intent aberto. params: intent_id (int), action ('mark_step'|'mark_blocked'|'mark_completed'|'cancel'), details? (str descrevendo o passo/blocker). Use isso quando voce explicitamente fizer progresso, travar, ou completar um intent. Auto-pickup mostra os intents abertos no system prompt.\n"
+            "- apply_raci_proposal: aplica UMA proposta RACI de grupo (shadow) no ConselhoOS APOS o Renato aprovar. params: proposal_id (int — o N do RACI-N mostrado no bloco 'RACI — PROPOSTAS ESPERANDO SUA APROVACAO'). Idempotente: ja aplicada -> erro claro; item ja no estado alvo -> ok no-op. **RACI-N NAO e task #N** (numeracoes diferentes) — nunca use um task_id aqui. NUNCA aplique sem aprovacao explicita do Renato; uma chamada por proposta aprovada.\n"
             "- trigger_cos_patrol: dispara o CoS Patrol Agent (Sonnet 4.6) AGORA pra varrer estado (mensagens, calendar, tasks, RACI) e mandar propostas via WA. **Use quando Renato disser 'patrol', 'patrulha', 'cos agora', 'varre tudo' ou similar.** Sem params. Resposta vem em mensagens separadas se houver acao.\n"
             "- delegate_to_claude_code: DELEGA tarefa complexa pra Claude Code (versao com Bash + Read + Edit + Agent + WebSearch + acesso completo ao codigo/DB/logs). USE QUANDO o Renato pedir: "
             "(a) 'pensa fundo nisso', 'decisao dificil', 'me ajuda a analisar' — ANALISE estrategica; "
@@ -291,6 +292,7 @@ TOOLS = [
                         "save_feedback",
                         "save_system_memory", "search_system_memories",
                         "manage_intent",
+                        "apply_raci_proposal",
                         "trigger_cos_patrol",
                         "delegate_to_claude_code"
                     ]
@@ -1462,6 +1464,24 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
                 "mensagem": msg,
             }, ensure_ascii=False, default=str)
 
+        elif action == "apply_raci_proposal":
+            # Aplica UMA proposta RACI shadow no ConselhoOS apos aprovacao do Renato.
+            # Reusa apply_group_proposal (mesma funcao que a UI web /api/raci/
+            # group-proposals/{id}/apply): retorno tipado + idempotencia (ja aplicada
+            # -> erro; no-op -> ok) + gate (so aplica quando chamada explicitamente).
+            # Fecha o loop 'aprovo RACI-74' que antes morria sem tool. Ver
+            # project_tonia_raci_approve_loop_broken.
+            proposal_id = params.get("proposal_id")
+            if proposal_id is None:
+                return json.dumps({"erro": "proposal_id e obrigatorio (o N do RACI-N)"}, ensure_ascii=False)
+            try:
+                proposal_id = int(proposal_id)
+            except (TypeError, ValueError):
+                return json.dumps({"erro": f"proposal_id invalido: {proposal_id}"}, ensure_ascii=False)
+            from services.raci_group_shadow import apply_group_proposal
+            result = apply_group_proposal(proposal_id)
+            return json.dumps(result, ensure_ascii=False, default=str)
+
         elif action == "trigger_cos_patrol":
             # Sunset gen-1 (11/07/26): CoS Patrol (cos_sensor) aposentado — so gerava ruido.
             # O cron ja estava off desde 15/06; este era o ultimo gatilho manual (via WhatsApp).
@@ -1764,6 +1784,35 @@ def _get_active_cos_proposal(phone: str, hours: int = 24) -> Optional[Dict]:
     except Exception as e:
         logger.warning(f"_get_active_cos_proposal failed: {e}")
         return None
+
+
+def _get_pending_raci_proposals(limit: int = 12) -> List[Dict[str, Any]]:
+    """Propostas RACI de grupo (shadow) aguardando aprovacao do Renato.
+
+    Injetadas no system prompt (bloco 5d de handle_bot_message) via query DIRETA
+    em raci_group_proposals — mais robusto que depender da janela de historico: o
+    digest sai por send_intel_notification, que NAO persiste em bot_conversations,
+    entao o "RACI-74" nunca esta no historico que a brain le. Fecha o loop
+    'aprovo RACI-74' -> execute_action apply_raci_proposal. Ver
+    project_tonia_raci_approve_loop_broken.
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, empresa_nome, item_acao, action, new_status
+                  FROM raci_group_proposals
+                 WHERE status = 'pending_review'
+                 ORDER BY id DESC
+                 LIMIT %s
+                """,
+                (limit,),
+            )
+            return [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        logger.warning(f"_get_pending_raci_proposals failed: {e}")
+        return []
 
 
 def _load_conversation_history(phone: str, limit: int = 20) -> List[Dict]:
@@ -2620,6 +2669,40 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
             f"\nIMPORTANTE: voce continua sendo a Tonha. Mesma voz, mesma persona. NAO mude o tom nem adicione header/etiqueta por causa deste contexto.\n"
         )
         system_prompt = system_prompt + cos_block
+
+    # 5d. RACI — propostas de grupo (shadow) esperando aprovacao. Injetadas via
+    # query DIRETA (o digest sai por send_intel_notification, que nao persiste no
+    # historico -> a brain nunca via o "RACI-74"). So pro Renato. Fecha o loop
+    # 'aprovo RACI-74' -> apply_raci_proposal; antes a brain casava #74 com a
+    # task #74 (colisao de namespace). Ver project_tonia_raci_approve_loop_broken.
+    if phone == RENATO_PHONE:
+        try:
+            raci_pending = _get_pending_raci_proposals(limit=12)
+        except Exception as e:
+            logger.warning(f"_get_pending_raci_proposals failed: {e}")
+            raci_pending = []
+        if raci_pending:
+            rlines = [
+                "\n\n## RACI — PROPOSTAS ESPERANDO SUA APROVACAO\n",
+                "Mudancas no RACI dos conselhos (extraidas do que foi dito nos grupos) "
+                "em shadow, aguardando o Renato aprovar. Cada uma tem ID no formato "
+                "RACI-N — NAO confunda com task #N (numeracoes independentes).\n",
+            ]
+            for p in raci_pending:
+                alvo = p.get("new_status") or (p.get("action") or "nota")
+                rlines.append(
+                    f"- RACI-{p['id']}: {p.get('empresa_nome') or '?'} — "
+                    f"{(p.get('item_acao') or '')[:60]} -> {alvo}"
+                )
+            rlines.append(
+                "\nSe o Renato aprovar uma ou mais (ex: \"aplica o RACI-74\", "
+                "\"pode aplicar o 74 e 75\", \"pode\" logo apos o digest), chame "
+                "execute_action com action='apply_raci_proposal' e "
+                "params={\"proposal_id\": N} — UMA chamada por proposta aprovada. "
+                "Use SO os IDs da lista acima; nunca invente um proposal_id. "
+                "NUNCA aplique sem aprovacao explicita dele."
+            )
+            system_prompt = system_prompt + "\n".join(rlines)
 
     # 6. Call Claude with tool_use in a loop
     if not ANTHROPIC_API_KEY:

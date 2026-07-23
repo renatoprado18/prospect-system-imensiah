@@ -374,14 +374,18 @@ async def _notify_renato(proposals: List[Dict[str, Any]]) -> None:
     lines = [f"🔎 RACI — {len(proposals)} proposta(s) do grupo pra revisar (shadow):", ""]
     for p in proposals[:15]:
         alvo = p.get("new_status") or (p.get("action") or "nota")
+        # Prefixo RACI-N (nao #N): raci_group_proposals.id e tasks.id sao dois
+        # SERIAL independentes — "#74" colidia com a task #74 e a brain aplicava
+        # o alvo errado. RACI-N desambigua na origem; o inject 5d do intel_bot
+        # mapeia RACI-N -> apply_raci_proposal. Ver project_tonia_raci_approve_loop_broken.
         lines.append(
-            f"#{p['id']} [{p.get('confianca')}] {p.get('empresa')}: "
+            f"RACI-{p['id']} [{p.get('confianca')}] {p.get('empresa')}: "
             f"{(p.get('item_acao') or '')[:45]} → {alvo}"
         )
         if p.get("evidencia"):
             lines.append(f"   ↳ {(p['evidencia'])[:80]}")
     lines.append("")
-    lines.append("Nada foi aplicado. Aprova com os #ids que eu aplico no RACI.")
+    lines.append('Nada foi aplicado. Aprova com os RACI-N (ex: "aplica o RACI-74") que eu aplico no ConselhoOS.')
     await send_intel_notification("\n".join(lines))
 
 
