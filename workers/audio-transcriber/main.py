@@ -366,6 +366,7 @@ def _sync_cron_registry() -> None:
     jobs = [(jid, _interval_min_from_trigger(trig)) for jid, _p, trig in _SCHEDULER_JOBS]
     jobs += [(jid, _interval_min_from_trigger(trig)) for jid, trig in _LOCAL_DEV_DELEGATION_JOBS]
     jobs.append(("tonia-delegate-pickup", _interval_min_from_trigger(_TONIA_PICKUP_TRIGGER)))
+    jobs += [(jid, _interval_min_from_trigger(trig)) for jid, _p, trig, _rt in _TONIA_TICKS]
     try:
         with psycopg.connect(DATABASE_URL) as conn:
             with conn.cursor() as cur:
@@ -437,6 +438,56 @@ async def _call_tonia_delegate_pickup() -> None:
         _record_cron_heartbeat(job_id, http_status, duration_ms)
 
 
+# Ticks da Tonia migrados do GH Actions (23/07) — briefing matinal + urgent.
+# Motivo: o cron AGENDADO do GitHub sofria throttle de ~2h -> o briefing das 7h
+# BRT chegava ~9h (medido: agendado 10:00Z, execucoes reais 11:44-12:13Z). O
+# worker Railway roda 24/7 e dispara no horario exato. Ver feedback_cron_host_choice
+# (briefing critico -> Railway scheduler). Os ymls do repo tonia foram desligados
+# no mesmo movimento pra evitar double-fire.
+_TONIA_BRIEFING_TRIGGER = CronTrigger(hour=10, minute=0)   # 07h BRT
+_TONIA_URGENT_TRIGGER = CronTrigger(minute="*/30")
+
+
+async def _call_tonia_tick(job_id: str, path: str, read_timeout: float) -> None:
+    """POST autenticado a um tick da Tonia (Bearer TONIA_CRON_SECRET) + heartbeat
+    pro monitor-cron-health. Espelha _call_tonia_delegate_pickup, generico pro
+    briefing/urgent. A idempotencia fica no lado da Tonia (already_sent_today no
+    briefing) — sobreposicao eventual nao duplica. Defensivo: nunca levanta."""
+    if not TONIA_CRON_SECRET:
+        logger.warning(f"{job_id}: TONIA_CRON_SECRET/CRON_SECRET ausente — pulando")
+        _record_cron_heartbeat(job_id, None, 0)
+        return
+    url = f"{TONIA_API_URL}{path}"
+    started = datetime.now()
+    http_status: int | None = None
+    try:
+        timeout = httpx.Timeout(connect=5.0, read=read_timeout, write=10.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {TONIA_CRON_SECRET}",
+                    "User-Agent": "intel-worker-scheduler/1.0",
+                    "X-Cron-Source": "railway-worker",
+                },
+            )
+        http_status = resp.status_code
+        logger.info(f"scheduler: {job_id} -> http {resp.status_code}")
+    except Exception as e:
+        http_status = 500
+        logger.exception(f"scheduler: {job_id} failed: {e}")
+    finally:
+        duration_ms = int((datetime.now() - started).total_seconds() * 1000)
+        _record_cron_heartbeat(job_id, http_status, duration_ms)
+
+
+# (job_id, path, trigger, read_timeout) — dispatch dos ticks externos da Tonia.
+_TONIA_TICKS = (
+    ("tonia-briefing-tick", "/briefing/tick", _TONIA_BRIEFING_TRIGGER, 90.0),
+    ("tonia-urgent-tick", "/urgent/tick", _TONIA_URGENT_TRIGGER, 60.0),
+)
+
+
 async def _run_local_dev_delegation(job_id: str) -> None:
     """Handler in-process pros 4 disparos de dev_delegation_pickup.
 
@@ -504,11 +555,24 @@ async def _start_scheduler():
         misfire_grace_time=120,
         replace_existing=True,
     )
+    # Ticks externos migrados do GH Actions (briefing 07h + urgent */30).
+    for job_id, path, trigger, read_to in _TONIA_TICKS:
+        scheduler.add_job(
+            _call_tonia_tick,
+            trigger=trigger,
+            args=[job_id, path, read_to],
+            id=job_id,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=300,
+            replace_existing=True,
+        )
     scheduler.start()
-    n_total = len(_SCHEDULER_JOBS) + len(_LOCAL_DEV_DELEGATION_JOBS) + 1  # +1 = tonia-pickup
+    n_external = 1 + len(_TONIA_TICKS)  # pickup + briefing + urgent
+    n_total = len(_SCHEDULER_JOBS) + len(_LOCAL_DEV_DELEGATION_JOBS) + n_external
     logger.info(
         f"scheduler: started with {n_total} jobs "
-        f"({len(_SCHEDULER_JOBS)} http + {len(_LOCAL_DEV_DELEGATION_JOBS)} local + 1 external)"
+        f"({len(_SCHEDULER_JOBS)} http + {len(_LOCAL_DEV_DELEGATION_JOBS)} local + {n_external} external)"
     )
     # Fonte unica da verdade pro monitor-cron-health: reescreve o registry com
     # os jobs vivos deste boot. Ver _sync_cron_registry / migration 045.
