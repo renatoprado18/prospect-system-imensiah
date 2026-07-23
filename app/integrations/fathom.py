@@ -914,6 +914,22 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
     novas_memorias = [m for m in memorias_criadas if not m.get("skipped")]
     novas_tarefas = [t for t in tarefas_criadas if not t.get("skipped")]
 
+    # Playbook Andressa — extração automática de regras (só reunião Jabô #28).
+    # Gated por kill-switch PLAYBOOK_AUTO_EXTRACT (default off). NUNCA escreve no
+    # Doc aqui — só propõe pro Renato no WhatsApp; a aprovação dispara o merge.
+    # Falha graciosa: nunca derruba o processamento da reunião.
+    playbook_stats = None
+    try:
+        from services import playbook_rules
+        if playbook_rules.is_enabled():
+            matched_ids = [c["id"] for c in matched_contacts]
+            if playbook_rules.is_jabo_meeting(title, summary_md, matched_ids):
+                playbook_stats = await playbook_rules.run_for_meeting(
+                    summary_md, title, str(rec_id) if rec_id else None
+                )
+    except Exception as e:
+        logger.warning(f"playbook: extração pós-reunião falhou: {e}")
+
     return {
         "recording_id": rec_id,
         "title": title,
@@ -926,6 +942,7 @@ async def process_fathom_meeting(meeting_payload: Dict, project_id: Optional[int
         "tarefas_criadas": novas_tarefas,
         "tarefas_delegadas": delegadas_count,  # RACI-aware: tasks com R != Renato
         "nota_projeto_id": nota_id,
+        "playbook": playbook_stats,
         "skipped": {
             "memorias": skipped_memorias,
             "tarefas": skipped_tarefas,

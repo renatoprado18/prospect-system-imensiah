@@ -15181,6 +15181,31 @@ async def raci_group_proposal_reopen(proposal_id: int, request: Request):
     return result
 
 
+# ── Playbook Andressa — extração de regras pós-reunião Fathom (23/07) ─────────
+@app.get("/api/playbook/proposals")
+async def playbook_proposals_list(request: Request):
+    """Lista propostas de regra do Playbook pendentes de aprovacao (projeto Jabo #28)."""
+    from services import playbook_rules
+    return {"pending": playbook_rules.get_pending_proposals()}
+
+
+@app.post("/api/playbook/proposals/{note_id}/apply")
+async def playbook_proposal_apply(note_id: int, request: Request):
+    """Aprova: le o Doc, mescla as regras (tema+numeracao+dedup) e reescreve o Playbook."""
+    from services import playbook_rules
+    result = await playbook_rules.apply_proposal(note_id)
+    if result.get("status") in ("not_found", "no_token", "merge_failed"):
+        raise HTTPException(status_code=400, detail=result)
+    return result
+
+
+@app.post("/api/playbook/proposals/{note_id}/dismiss")
+async def playbook_proposal_dismiss(note_id: int, request: Request):
+    """Descarta uma proposta de regra do Playbook (marca dismissed)."""
+    from services import playbook_rules
+    return playbook_rules.dismiss_proposal(note_id)
+
+
 # ── Monitor de backlog nao-processado (fix 22/07) ────────────────────────────
 # Alerta quando group_messages com raci_processed_at IS NULL envelhecem, sinal de
 # que o sweep travou (como o stall das 5.548). Read-only. PENDENTE: wiring do cron
