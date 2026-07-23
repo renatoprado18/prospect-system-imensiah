@@ -394,9 +394,11 @@ class WhatsAppIntegration:
                         my_interactions.append(msg)
                         continue
 
-                    # Message that mentions me (check participantAlt or message content)
-                    participant_alt = key.get("participantAlt", "")
-                    if my_phone in participant_alt:
+                    # Sender participant — LID-aware: participantAlt carrega o
+                    # telefone real quando o remetente vem como @lid; participant
+                    # e o campo classico pre-LID. Espelha group_message_sync.py.
+                    participant = key.get("participantAlt") or key.get("participant") or ""
+                    if my_phone in participant:
                         my_interactions.append(msg)
                         continue
 
@@ -432,11 +434,12 @@ class WhatsAppIntegration:
             key = msg.get("key", {})
             message = msg.get("message", {})
 
-            # Get participant phone
-            participant_phone = None
-            participant_alt = key.get("participantAlt", "")
-            if participant_alt.endswith("@s.whatsapp.net"):
-                participant_phone = participant_alt.replace("@s.whatsapp.net", "")
+            # Get participant phone — LID-aware: prefere participantAlt (telefone
+            # real quando o remetente vem como @lid), com fallback pro participant
+            # classico (msg de grupo pre-LID, phone em participant sem Alt).
+            # Espelha group_message_sync.py; sem o fallback, msg legada -> None.
+            participant_raw = key.get("participantAlt") or key.get("participant") or ""
+            participant_phone = participant_raw.replace("@s.whatsapp.net", "").replace("@lid", "") or None
 
             # Direction
             from_me = key.get("fromMe", False)
