@@ -175,7 +175,7 @@ def generate_raci_report(empresa_id: str) -> Optional[Dict]:
         return None
 
 
-def format_raci_whatsapp(report: Dict) -> str:
+def format_raci_whatsapp(report: Dict, interactive: bool = True) -> str:
     """Format RACI report for WhatsApp message.
 
     Formato priority-grouped (alinhado com numeracao do report):
@@ -183,6 +183,10 @@ def format_raci_whatsapp(report: Dict) -> str:
       ⚠️ Atrasadas com movimento (alguem mexeu na semana)
       🔄 No prazo (em andamento / pendente)
       ✅ Concluidas
+
+    interactive=True (default, ConselhoOS): rodape convida resposta "nº + status"
+    (captada por parse_raci_update). interactive=False (Jabô): sem loop de
+    resposta — governanca familiar so recebe o preview.
     """
     hoje = date.today().strftime('%d/%m/%Y')
     lines = [
@@ -241,7 +245,10 @@ def format_raci_whatsapp(report: Dict) -> str:
             lines.append(f"{n}. {_clip(item['acao'])} — *{resp}* ✓")
         lines.append("")
 
-    lines.append(f"_Total: {report['total']} | Responda com o nº + status (ex: \"3 concluído\")_")
+    if interactive:
+        lines.append(f"_Total: {report['total']} | Responda com o nº + status (ex: \"3 concluído\")_")
+    else:
+        lines.append(f"_Total: {report['total']}_")
 
     return "\n".join(lines)
 
@@ -350,6 +357,26 @@ async def send_raci_to_groups() -> Dict:
                 logger.error(f"Error sending RACI preview: {e}")
                 results["errors"] += 1
 
+    # --- Governança Jabô (nativo INTEL, fora do ConselhoOS) ---
+    # A governanca da fazenda nao e empresa do ConselhoOS; o RACI de facto sao
+    # as tasks do projeto #28. Gera o mesmo preview a partir delas. build_jabo_
+    # preview abre a propria conexao (fora do with acima).
+    try:
+        jabo_preview = build_jabo_preview()
+        if jabo_preview:
+            ok = await send_intel_notification(jabo_preview)
+            if ok:
+                results["previews_sent"] += 1
+                results["empresas"].append("Governança Jabô")
+                logger.info("RACI preview sent to Renato for Governança Jabô")
+            else:
+                results["errors"] += 1
+        else:
+            results["skipped"] += 1
+    except Exception as e:
+        logger.error(f"Error sending Jabô RACI preview: {e}")
+        results["errors"] += 1
+
     return results
 
 
@@ -380,6 +407,157 @@ def mark_concluidos_as_reported(empresa_id: str) -> int:
     except Exception as e:
         logger.error(f"mark_concluidos_as_reported error: {e}")
         return 0
+
+
+JABO_PROJECT_ID = 28
+
+
+def _infer_task_responsavel(titulo: str) -> str:
+    """Infere o responsavel do prefixo do titulo da task Jabô.
+
+    "[Jabô/Andressa] Enviar..." -> "Andressa"
+    "[Jabô] Classificar..."      -> "—" (tag de projeto, sem pessoa)
+    "Investigar Fiama..."        -> "—"
+    """
+    m = re.match(r'^\s*\[([^\]]+)\]', titulo or '')
+    if m and '/' in m.group(1):
+        resp = m.group(1).split('/', 1)[1].strip()
+        if resp:
+            return resp
+    return '—'
+
+
+def _strip_task_prefix(titulo: str) -> str:
+    """Remove o prefixo [..] do titulo pra nao duplicar com a coluna responsavel."""
+    stripped = re.sub(r'^\s*\[[^\]]+\]\s*', '', titulo or '').strip()
+    return stripped or (titulo or '')
+
+
+def generate_jabo_report(cursor) -> Optional[Dict]:
+    """RACI semanal da Governança Jabô a partir das tasks do projeto #28 (INTEL).
+
+    A governanca da fazenda NAO vive no ConselhoOS — as tasks do #28 sao o
+    "RACI" de facto (mantidas no fluxo normal do Renato/CoS). Espelha os buckets
+    de generate_raci_report (urgente / atrasada-com-movimento / no-prazo /
+    concluida) usando os campos de task. Statuses INTEL:
+    pending/completed/cancelled/on_hold (nao ha 'em_andamento'). on_hold e
+    cancelled ficam de fora (fora do radar). Responsavel inferido do titulo.
+    Retorna o mesmo shape de dict que format_raci_whatsapp consome.
+
+    `cursor` = RealDictCursor do INTEL (get_db()).
+    """
+    cursor.execute("""
+        SELECT id, titulo, status, prioridade, data_vencimento,
+               data_conclusao, atualizado_em
+        FROM tasks
+        WHERE project_id = %s
+          AND status NOT IN ('cancelled', 'on_hold')
+    """, (JABO_PROJECT_ID,))
+    rows = cursor.fetchall()
+    if not rows:
+        return None
+
+    hoje = date.today()
+    now = datetime.now()
+    update_cooldown_hours = 72     # espelha generate_raci_report
+    completed_window_days = 7      # so mostra concluidas recentes
+
+    urgentes, atrasadas_mov, no_prazo, concluidas = [], [], [], []
+
+    for t in rows:
+        prazo_raw = t['data_vencimento']
+        if isinstance(prazo_raw, datetime):
+            prazo_date = prazo_raw.date()
+        elif isinstance(prazo_raw, date):
+            prazo_date = prazo_raw
+        else:
+            prazo_date = None
+        updated_at = t.get('atualizado_em')
+
+        entry = {
+            'id': t['id'],
+            'area': '',
+            'acao': _strip_task_prefix(t['titulo']),
+            'prazo': prazo_date.strftime('%d/%m') if prazo_date else '—',
+            'prazo_date': prazo_date,
+            'responsavel': _infer_task_responsavel(t['titulo']),
+            'status': t['status'],
+            'updated_at': updated_at,
+            'notas': '',
+        }
+
+        if t['status'] == 'completed':
+            done_at = t.get('data_conclusao') or updated_at
+            if done_at and (now - done_at).total_seconds() / 3600 <= completed_window_days * 24:
+                concluidas.append(entry)
+            continue
+
+        # pending
+        is_vencido = bool(prazo_date and prazo_date < hoje)
+        has_recent_update = bool(
+            updated_at and (now - updated_at).total_seconds() / 3600 <= update_cooldown_hours
+        )
+        if is_vencido:
+            (atrasadas_mov if has_recent_update else urgentes).append(entry)
+        else:
+            no_prazo.append(entry)
+
+    for bucket in (urgentes, atrasadas_mov, no_prazo):
+        bucket.sort(key=lambda e: e['prazo_date'] or date.max)
+    concluidas.sort(key=lambda e: e.get('updated_at') or now, reverse=True)
+    concluidas = concluidas[:5]
+
+    total = len(urgentes) + len(atrasadas_mov) + len(no_prazo) + len(concluidas)
+    if total == 0:
+        return None
+
+    return {
+        'empresa_nome': 'Governança Jabô',
+        'empresa_id': None,
+        'urgentes': urgentes,
+        'atrasadas_mov': atrasadas_mov,
+        'no_prazo': no_prazo,
+        'concluidas': concluidas,
+        'recent_updates': [],   # tasks nao tem o formato de notas [DD/MM]; header off
+        'atrasados': urgentes + atrasadas_mov,
+        'pendentes': list(no_prazo),
+        'em_andamento': [],
+        'concluidos': concluidas,
+        'total': total,
+    }
+
+
+def build_jabo_preview() -> Optional[str]:
+    """Monta o preview do RACI Jabô pronto pro Renato revisar e postar no grupo.
+
+    Espelha o wrapper de preview do send_raci_to_groups (ConselhoOS), mas a
+    fonte e o INTEL (tasks #28) e nao ha loop de resposta (interactive=False).
+    Abre a propria conexao — chamado DEPOIS do bloco with do ConselhoOS.
+    """
+    from database import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        report = generate_jabo_report(cursor)
+        if not report:
+            return None
+        cursor.execute("""
+            SELECT group_name FROM project_whatsapp_groups
+            WHERE project_id = %s AND ativo = TRUE
+            LIMIT 1
+        """, (JABO_PROJECT_ID,))
+        g = cursor.fetchone()
+        destino = (g['group_name'] if g else None) or 'Governança Jabô'
+
+    message = format_raci_whatsapp(report, interactive=False)
+    return (
+        f"📝 *PREVIEW RACI — Governança Jabô*\n"
+        f"_Destino: {destino}_\n"
+        f"_Revise, edite se quiser, e cole no grupo._\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{message}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"_Fim do preview. Acima esta o texto pronto pra copiar._"
+    )
 
 
 def parse_raci_update(message: str, empresa_id: str) -> Optional[Dict]:

@@ -290,11 +290,11 @@
   - Assigns R/A/C/I based on participant expertise and cargo
   - Exported as Google Sheet to empresa "RACI" folder (overwrites previous version)
   - `raciSheetDriveId` saved in reunião for email inclusion
-- **RACI Weekly Report**: `services/raci_weekly_report.py` — cron Monday 8h SP
-  - Sends formatted RACI status to empresa WhatsApp group
-  - Groups by status: atrasados (🔴), em andamento (🟡), pendentes (⏳), concluídos (✅)
-  - Captures responses ("3 concluído") from group → updates RACI status in ConselhoOS
-  - Confirmation sent to group
+- **RACI Weekly Report**: `services/raci_weekly_report.py` — cron `raci-weekly-report` (worker Railway, 2ª feira 11h UTC = 8h BRT)
+  - Gera PREVIEW por empresa e manda pro Renato no chat privado (humano-no-loop): ele revisa, edita e cola no grupo. NÃO envia direto pro grupo (design 11/05)
+  - Buckets priority-grouped: 🚨 urgentes (vencida + sem update há +1 semana), ⚠️ atrasadas com movimento (mexeram na semana, cooldown 72h), 🔄 no prazo, ✅ concluídas + header 📝 atualizações da semana
+  - Captura respostas ("3 concluído") do grupo → `parse_raci_update` atualiza status no ConselhoOS (só ConselhoOS)
+  - **Governança Jabô (23/07)**: a governança da fazenda NÃO é empresa do ConselhoOS — o "RACI" de facto são as **tasks do projeto #28** (INTEL). `generate_jabo_report(cursor)` + `build_jabo_preview()` geram o mesmo preview a partir das tasks abertas + recém-concluídas do #28, responsável **inferido do prefixo do título** (`[Jabô/Andressa]` → Andressa; senão "—"), buckets espelhando o ConselhoOS (on_hold/cancelled fora, concluídas só últimos 7d). **Sem loop de resposta** (`format_raci_whatsapp(interactive=False)` — governança familiar, sem "nº + status"). Enfileirado no `send_raci_to_groups` junto do batch. Fonte de verdade = tasks #28 (sem duplicar no ConselhoOS). Testes: `tests/test_raci_jabo_report.py` (19)
 - **Email Distribution**: Sends ata DOCX + RACI Sheet via Gmail
   - Auto-exports RACI Sheet if missing when sending
   - Recipients selected from empresa `pessoas`
