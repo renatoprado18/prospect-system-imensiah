@@ -436,6 +436,57 @@ async def refresh_groups_basic() -> Dict:
     return {"refreshed": upserted, "total_from_api": len(groups)}
 
 
+import unicodedata as _ud
+import re as _re
+
+_PROJ_STOP = {"para", "com", "the", "and", "dos", "das", "por", "pro", "sao", "grupo"}
+
+
+def _match_tokens(s: str) -> list:
+    """Tokens normalizados pra match de nome: sem acento, sem emoji, lower, >=3 chars, sem conectores."""
+    if not s:
+        return []
+    ascii_s = _ud.normalize("NFKD", s).encode("ascii", "ignore").decode()  # tira acento E emoji
+    return [t for t in _re.findall(r"[a-z0-9]{3,}", ascii_s.lower()) if t not in _PROJ_STOP]
+
+
+def suggest_groups_for_project(project_name: str, exclude_jids=None, limit: int = 5) -> List[Dict]:
+    """Sugere grupos WA pra vincular a um projeto, por match do nome.
+
+    Explora o padrao ratificado `<emoji> <Projeto> — <Contraparte>`: o nome do projeto
+    lidera o nome do grupo. Casa os tokens do nome do projeto (unaccent, sem emoji) contra
+    o nome de cada grupo do cache; ordena por nº de tokens em comum, com boost forte quando
+    o token-lider (nome distintivo do projeto) aparece no grupo. Exclui grupos ja vinculados
+    e nomes-placeholder. Read-only — so sugere, nao vincula. Ver [[reference_naming_grupos_projeto]].
+    """
+    exclude = set(exclude_jids or [])
+    # core do projeto = 1º segmento antes do travessao (onde o nome real vive); fallback nome todo
+    core = project_name.split("—")[0] if "—" in project_name else project_name
+    ptoks = _match_tokens(core) or _match_tokens(project_name)
+    if not ptoks:
+        return []
+    pset = set(ptoks)
+    lead = ptoks[0]  # token que lidera (nome distintivo do projeto)
+
+    out = []
+    for g in list_cached_groups():
+        jid = g["group_jid"]
+        name = g.get("group_name") or ""
+        if jid in exclude or "@" in name or not name:
+            continue
+        gtoks = set(_match_tokens(name))
+        overlap = pset & gtoks
+        if not overlap:
+            continue
+        score = len(overlap) + (2 if lead in gtoks else 0)  # boost se o nome-lider casa
+        out.append({
+            "jid": jid, "name": name, "score": score,
+            "matched": sorted(overlap), "sync_enabled": g.get("sync_enabled", False),
+        })
+    out.sort(key=lambda r: -r["score"])
+    return out[:limit]
+
+
 async def _fetch_groups_from_api() -> List[Dict]:
     """Busca grupos da Evolution API via findChats (rapido, ~2s)."""
     base_url = os.getenv('EVOLUTION_API_URL', '')

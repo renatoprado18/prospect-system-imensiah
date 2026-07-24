@@ -2755,11 +2755,36 @@
 
     function openAddGroupModal() {
         document.getElementById('groupSearchInput').value = '';
-        document.getElementById('groupSearchResults').innerHTML = '<p class="text-muted small">Digite para buscar grupos</p>';
+        document.getElementById('groupSearchResults').innerHTML = '<p class="text-muted small">Carregando sugestões...</p>';
         new bootstrap.Modal(document.getElementById('addGroupModal')).show();
 
         // Carregar lista de grupos se ainda nao carregou
         if (!allWaGroups) fetchAllGroups();
+        // Pre-sugere grupos por match de nome (padrao <emoji> <Projeto> — <Contraparte>)
+        loadSuggestedGroups();
+    }
+
+    async function loadSuggestedGroups() {
+        const container = document.getElementById('groupSearchResults');
+        try {
+            const resp = await fetch(`/api/projects/${projectId}/suggested-groups`);
+            const data = resp.ok ? await resp.json() : { suggestions: [] };
+            const sugg = data.suggestions || [];
+            if (sugg.length === 0) {
+                container.innerHTML = '<p class="text-muted small">Digite para buscar grupos</p>';
+                return;
+            }
+            container.innerHTML =
+                '<p class="text-success small fw-semibold mb-1"><i class="bi bi-magic me-1"></i>Sugeridos para este projeto</p>' +
+                sugg.map(g => `
+                    <div class="d-flex justify-content-between align-items-center p-2 mb-1 rounded border border-success" style="cursor:pointer;" onclick="linkGroup('${g.jid}', '${(g.name || '').replace(/'/g, "\\'")}')">
+                        <div class="fw-semibold small"><i class="bi bi-whatsapp text-success me-1"></i>${g.name}</div>
+                        <i class="bi bi-plus-circle text-success"></i>
+                    </div>`).join('') +
+                '<p class="text-muted small mt-2 mb-0">Ou digite acima para buscar outro grupo</p>';
+        } catch (e) {
+            container.innerHTML = '<p class="text-muted small">Digite para buscar grupos</p>';
+        }
     }
 
     async function fetchAllGroups() {

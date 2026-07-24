@@ -22625,6 +22625,25 @@ async def api_get_social_group(group_jid: str):
 
 # ============== PROJECT WHATSAPP GROUPS ==============
 
+@app.get("/api/projects/{project_id}/suggested-groups")
+async def api_suggested_project_groups(project_id: int):
+    """Sugere grupos WA pra vincular ao projeto, por match do nome.
+
+    Explora o padrao `<emoji> <Projeto> — <Contraparte>` (o nome do projeto lidera o do grupo).
+    Read-only: só sugere. Exclui os ja vinculados."""
+    from services.social_groups import suggest_groups_for_project
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT nome FROM projects WHERE id = %s", (project_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+        pname = row['nome']
+        cursor.execute("SELECT group_jid FROM project_whatsapp_groups WHERE project_id = %s", (project_id,))
+        linked = [r['group_jid'] for r in cursor.fetchall()]
+    return {"project": pname, "suggestions": suggest_groups_for_project(pname, exclude_jids=linked)}
+
+
 @app.get("/api/projects/{project_id}/whatsapp-groups")
 async def api_list_project_groups(project_id: int):
     """Lista grupos WhatsApp vinculados ao projeto"""
