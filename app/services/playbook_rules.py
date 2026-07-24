@@ -295,8 +295,12 @@ def format_proposal_wa(rules: List[Dict], meeting_title: str, note_id: int) -> s
         lines.append(f"   {r['texto']}")
     lines += [
         "",
-        f"_Aprovar → grava no Playbook (tema + numeração). Proposta #{note_id}._",
-        "_Responda \"aprovo playbook\" ou \"ignora playbook\"._",
+        # PLAYBOOK-N (não #N): project_notes.id colidiria com task #N e a brain
+        # aplicaria o alvo errado. PLAYBOOK-N desambigua na origem; o inject 5e do
+        # intel_bot mapeia PLAYBOOK-N -> apply_playbook_proposal. Espelha RACI-N (9237cb3).
+        f"_Aprovar → grava no Playbook (tema + numeração). Proposta PLAYBOOK-{note_id}._",
+        "_Responda \"aprovo playbook\" (ou \"aprovo playbook " + str(note_id)
+        + "\" se houver mais de uma) ou \"ignora playbook\"._",
     ]
     return "\n".join(lines)
 

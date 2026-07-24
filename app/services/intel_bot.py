@@ -262,6 +262,7 @@ TOOLS = [
             "mode='keyword' so faz match literal. mode='semantic' so via embeddings (Voyage).\n"
             "- manage_intent: gerencia um intent aberto. params: intent_id (int), action ('mark_step'|'mark_blocked'|'mark_completed'|'cancel'), details? (str descrevendo o passo/blocker). Use isso quando voce explicitamente fizer progresso, travar, ou completar um intent. Auto-pickup mostra os intents abertos no system prompt.\n"
             "- apply_raci_proposal: aplica UMA proposta RACI de grupo (shadow) no ConselhoOS APOS o Renato aprovar. params: proposal_id (int — o N do RACI-N mostrado no bloco 'RACI — PROPOSTAS ESPERANDO SUA APROVACAO'). Idempotente: ja aplicada -> erro claro; item ja no estado alvo -> ok no-op. **RACI-N NAO e task #N** (numeracoes diferentes) — nunca use um task_id aqui. NUNCA aplique sem aprovacao explicita do Renato; uma chamada por proposta aprovada.\n"
+            "- apply_playbook_proposal: aplica UMA proposta do Playbook Andressa (regras operacionais Jabo extraidas de reuniao) — mescla as regras no Google Doc do Playbook APOS o Renato aprovar. params: note_id (int — o N do PLAYBOOK-N mostrado no bloco 'PLAYBOOK ANDRESSA — PROPOSTAS ESPERANDO SUA APROVACAO'). Idempotente: ja aplicada -> ok 'already_applied'. **PLAYBOOK-N NAO e task #N nem RACI-N** (numeracoes independentes) — nunca use um task_id/proposal_id aqui. Use quando Renato disser 'aprovo playbook' / 'aprovo playbook N' / 'aplica o PLAYBOOK-N'. NUNCA aplique sem aprovacao explicita; uma chamada por proposta aprovada.\n"
             "- trigger_cos_patrol: dispara o CoS Patrol Agent (Sonnet 4.6) AGORA pra varrer estado (mensagens, calendar, tasks, RACI) e mandar propostas via WA. **Use quando Renato disser 'patrol', 'patrulha', 'cos agora', 'varre tudo' ou similar.** Sem params. Resposta vem em mensagens separadas se houver acao.\n"
             "- delegate_to_claude_code: DELEGA tarefa complexa pra Claude Code (versao com Bash + Read + Edit + Agent + WebSearch + acesso completo ao codigo/DB/logs). USE QUANDO o Renato pedir: "
             "(a) 'pensa fundo nisso', 'decisao dificil', 'me ajuda a analisar' — ANALISE estrategica; "
@@ -293,6 +294,7 @@ TOOLS = [
                         "save_system_memory", "search_system_memories",
                         "manage_intent",
                         "apply_raci_proposal",
+                        "apply_playbook_proposal",
                         "trigger_cos_patrol",
                         "delegate_to_claude_code"
                     ]
@@ -1482,6 +1484,25 @@ async def _tool_execute_action(action: str, params: Dict) -> str:
             result = apply_group_proposal(proposal_id)
             return json.dumps(result, ensure_ascii=False, default=str)
 
+        elif action == "apply_playbook_proposal":
+            # Aplica UMA proposta do Playbook Andressa apos aprovacao do Renato.
+            # Reusa apply_proposal (mesma funcao que a UI web /api/playbook/
+            # proposals/{note_id}/apply): le o Doc, mescla as regras (LLM, tema+
+            # numeracao+dedup) e reescreve o corpo. Retorno tipado + idempotencia
+            # (ja applied -> 'already_applied' sem reescrever) + gate (so aplica
+            # quando chamada explicitamente). Fecha o loop 'aprovo playbook' que
+            # antes so existia via REST. Espelha apply_raci_proposal (9237cb3).
+            note_id = params.get("note_id")
+            if note_id is None:
+                return json.dumps({"erro": "note_id e obrigatorio (o N do PLAYBOOK-N)"}, ensure_ascii=False)
+            try:
+                note_id = int(note_id)
+            except (TypeError, ValueError):
+                return json.dumps({"erro": f"note_id invalido: {note_id}"}, ensure_ascii=False)
+            from services import playbook_rules
+            result = await playbook_rules.apply_proposal(note_id)
+            return json.dumps(result, ensure_ascii=False, default=str)
+
         elif action == "trigger_cos_patrol":
             # Sunset gen-1 (11/07/26): CoS Patrol (cos_sensor) aposentado — so gerava ruido.
             # O cron ja estava off desde 15/06; este era o ultimo gatilho manual (via WhatsApp).
@@ -1812,6 +1833,24 @@ def _get_pending_raci_proposals(limit: int = 12) -> List[Dict[str, Any]]:
             return [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         logger.warning(f"_get_pending_raci_proposals failed: {e}")
+        return []
+
+
+def _get_pending_playbook_proposals(limit: int = 12) -> List[Dict[str, Any]]:
+    """Propostas do Playbook Andressa (regras Jabo) aguardando aprovacao do Renato.
+
+    Injetadas no system prompt (bloco 5e de handle_bot_message). Reusa
+    playbook_rules.get_pending_proposals() (mesma query da UI web /dev) — a
+    proposta e um project_note tipo 'playbook_proposal' pendente no #28. Como o
+    digest sai por send_intel_notification (nao persiste no historico), a brain
+    nunca ve o "PLAYBOOK-N" sem esta injecao. Fecha o loop 'aprovo playbook' ->
+    execute_action apply_playbook_proposal. Espelha _get_pending_raci_proposals.
+    """
+    try:
+        from services import playbook_rules
+        return list(playbook_rules.get_pending_proposals())[:limit]
+    except Exception as e:
+        logger.warning(f"_get_pending_playbook_proposals failed: {e}")
         return []
 
 
@@ -2703,6 +2742,41 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
                 "NUNCA aplique sem aprovacao explicita dele."
             )
             system_prompt = system_prompt + "\n".join(rlines)
+
+    # 5e. PLAYBOOK Andressa — propostas de regras (Jabo #28) esperando aprovacao.
+    # Mesma logica do 5d RACI: query DIRETA (o digest sai por
+    # send_intel_notification, que nao persiste no historico -> a brain nunca via
+    # o "PLAYBOOK-N"). So pro Renato. Fecha o loop 'aprovo playbook' ->
+    # apply_playbook_proposal; PLAYBOOK-N e namespace proprio (nao task #N/RACI-N).
+    if phone == RENATO_PHONE:
+        try:
+            playbook_pending = _get_pending_playbook_proposals(limit=12)
+        except Exception as e:
+            logger.warning(f"_get_pending_playbook_proposals failed: {e}")
+            playbook_pending = []
+        if playbook_pending:
+            plines = [
+                "\n\n## PLAYBOOK ANDRESSA — PROPOSTAS ESPERANDO SUA APROVACAO\n",
+                "Regras operacionais duraveis do Cafe Jabo (extraidas de reunioes) "
+                "aguardando o Renato aprovar pra mesclar no Google Doc do Playbook. "
+                "Cada uma tem ID no formato PLAYBOOK-N — NAO confunda com task #N "
+                "nem RACI-N (numeracoes independentes).\n",
+            ]
+            for p in playbook_pending:
+                meta = p.get("metadata") or {}
+                n_rules = len(meta.get("rules") or [])
+                titulo = (p.get("titulo") or "").replace("[Playbook] ", "")
+                plines.append(f"- PLAYBOOK-{p['id']}: {titulo[:80]} ({n_rules} regra(s))")
+            plines.append(
+                "\nSe o Renato aprovar uma ou mais (ex: \"aprovo playbook\", "
+                "\"aprovo playbook 2\", \"aplica o PLAYBOOK-42\", \"pode\" logo apos o "
+                "digest), chame execute_action com action='apply_playbook_proposal' e "
+                "params={\"note_id\": N} — UMA chamada por proposta aprovada. Se so "
+                "ha uma pendente e ele disser \"aprovo playbook\" sem numero, use o "
+                "unico ID da lista. Use SO os IDs da lista acima; nunca invente um "
+                "note_id. NUNCA aplique sem aprovacao explicita dele."
+            )
+            system_prompt = system_prompt + "\n".join(plines)
 
     # 6. Call Claude with tool_use in a loop
     if not ANTHROPIC_API_KEY:
