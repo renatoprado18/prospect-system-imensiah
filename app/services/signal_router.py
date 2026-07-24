@@ -114,13 +114,13 @@ def _prefilter(text_norm: str, projects: List[Dict[str, Any]]) -> List[Dict[str,
 def _candidate_inbound(cursor, since_hours: int, limit: int = 200) -> List[Dict[str, Any]]:
     """Inbound recente (email+WA DM) ainda não etiquetado, fora do lixo do email."""
     cursor.execute("""
-        SELECT m.id, cv.canal, c.nome AS sender, m.conteudo,
+        SELECT m.id, cv.canal, c.nome AS sender, m.direcao, m.conteudo,
                COALESCE(m.enviado_em, m.recebido_em) AS ts
         FROM messages m
         JOIN conversations cv ON cv.id = m.conversation_id
         JOIN contacts c ON c.id = cv.contact_id
         LEFT JOIN email_triage et ON et.message_id = m.id
-        WHERE m.direcao = 'incoming'
+        WHERE m.direcao IN ('incoming', 'outgoing')  -- inclui o que o Renato ENVIA
           AND cv.canal IN ('email', 'whatsapp')
           AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - (%s || ' hours')::interval
           AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 20
@@ -135,8 +135,9 @@ def _candidate_inbound(cursor, since_hours: int, limit: int = 200) -> List[Dict[
 async def _confirm_links(msg: Dict[str, Any], candidates: List[Dict[str, Any]], api_key: str) -> List[int]:
     """LLM (FAST) confirma qual(is) candidato(s) a mensagem realmente toca."""
     lst = "\n".join(f"[{p['id']}] {p['nome']} — {p['empresa'] or p['descricao']}" for p in candidates)
+    quem = "enviada pelo Renato" if msg.get("direcao") == "outgoing" else f"de {msg['sender']}"
     prompt = (
-        f"Mensagem recebida ({msg['canal']}, de {msg['sender']}):\n\"\"\"\n{(msg['conteudo'] or '')[:1200]}\n\"\"\"\n\n"
+        f"Mensagem {quem} ({msg['canal']}, contato {msg['sender']}):\n\"\"\"\n{(msg['conteudo'] or '')[:1200]}\n\"\"\"\n\n"
         f"Projetos candidatos (o texto citou um termo de cada):\n{lst}\n\n"
         "Quais desses projetos a mensagem REALMENTE trata (assunto, não menção casual)? "
         "Pode ser nenhum (citação coincidente). Retorne SÓ JSON: {\"project_ids\": [ids]}."
