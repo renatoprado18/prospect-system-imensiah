@@ -72,8 +72,10 @@
 - **Cache** no DB (sync diário, carregamento instantâneo) → `social_groups_cache`
 - Cruzamento participantes × contatos INTEL
 - Health médio, quem precisa atenção
-- Sync manual via botão
-- **Mensagens de grupo em `group_messages`** — populadas em TEMPO REAL pelo webhook Evolution (`evolution_api.persist_group_message_realtime`, INSERT idempotente ON CONFLICT por `message_id`, só grupos `social_groups_cache.sync_enabled=TRUE`) + backfill horário pelo pull `run-social-groups`/`group_message_sync.sync_group_messages` (cron :20)
+- Sync manual via botão (enrichment completo, ~2min → `sync_all_groups_cache`)
+- **"Atualizar agora"** (`POST /api/social-groups/refresh` → `social_groups.refresh_groups_basic`) — refresh RÁPIDO (~2s): `findChats` + UPSERT só jid+nome (sem enrichment) → grupo recém-criado aparece na hora em vez de esperar o cursor cíclico do cron. Enrichment fica pro `run-social-groups`.
+- **Auto-wire no vínculo projeto↔grupo** (`POST /api/projects/{id}/whatsapp-groups`) — além do INSERT do link, liga `toggle_group_sync(True)` + backfill `sync_one_group_messages` no mesmo request (falha graciosa; retorna `wired`). Vincular = sync ligado + histórico populado, sem passo manual.
+- **Mensagens de grupo em `group_messages`** — populadas em TEMPO REAL pelo webhook Evolution (`evolution_api.persist_group_message_realtime`, INSERT idempotente ON CONFLICT por `message_id`, só grupos `social_groups_cache.sync_enabled=TRUE`) + backfill horário pelo pull `run-social-groups`/`group_message_sync.sync_group_messages` (cron :20) + backfill pontual `sync_one_group_messages` (1 grupo) no auto-wire
 
 ## 5. Tarefas (`/tarefas-pendentes`)
 - Backlog combinado: tarefas diretas (avulsas, sem projeto) + RACI monitoradas → `rap_tarefas_avulsas.html`

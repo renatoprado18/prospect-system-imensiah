@@ -22578,6 +22578,16 @@ async def api_sync_group_messages():
     return await sync_group_messages(limit_per_group=50)
 
 
+@app.post("/api/social-groups/refresh")
+async def api_refresh_social_groups():
+    """Refresh RAPIDO do inventario (jid+nome via findChats, ~2s, sem enrichment).
+
+    Faz grupo recem-criado aparecer na lista em segundos; o enrichment
+    (participantes/health/labels) fica pro cron `run-social-groups`."""
+    from services.social_groups import refresh_groups_basic
+    return await refresh_groups_basic()
+
+
 @app.post("/api/social-groups/messages")
 async def api_get_group_messages(request: Request):
     """Retorna mensagens de um grupo"""
@@ -22643,7 +22653,25 @@ async def api_add_project_group(project_id: int, request: Request):
             RETURNING id
         """, (project_id, group_jid, group_name, group_name))
         conn.commit()
-        return {"status": "success", "id": cursor.fetchone()['id']}
+        link_id = cursor.fetchone()['id']
+
+    # Auto-wire: liga sync + backfill do historico do grupo. As 3 pecas ja existiam
+    # soltas (link INSERT + toggle-sync + sync-messages); aqui e o cimento que as encadeia,
+    # pra o grupo vinculado nao precisar de passo manual pra popular group_messages.
+    # Falha graciosa — o vinculo nunca cai por causa do sync/backfill.
+    wired = {"sync_enabled": False, "messages_saved": 0}
+    try:
+        from services.social_groups import toggle_group_sync
+        toggle_group_sync(group_jid, True)
+        wired["sync_enabled"] = True
+        from services.group_message_sync import sync_one_group_messages
+        backfill = await sync_one_group_messages(group_jid, group_name)
+        wired["messages_saved"] = backfill.get("messages_saved", 0)
+    except Exception as e:
+        logger.warning(f"auto-wire sync do grupo {group_jid} falhou: {e}")
+        wired["error"] = str(e)
+
+    return {"status": "success", "id": link_id, "wired": wired}
 
 
 @app.delete("/api/projects/{project_id}/whatsapp-groups/{group_id}")

@@ -397,6 +397,45 @@ async def list_all_social_groups() -> List[Dict]:
     return api_groups
 
 
+async def refresh_groups_basic() -> Dict:
+    """Refresh RAPIDO do inventario de grupos: so jid+nome via findChats (~2s), SEM enrichment.
+
+    Separa "aparecer" (barato) de "enriquecer" (caro). Um grupo recem-criado aparece na
+    pagina em segundos, em vez de esperar o cursor ciclico do cron `run-social-groups`
+    (lotes de SOCIAL_GROUPS_BATCH) chegar nele — participantes/health/labels ficam pro cron.
+
+    UPSERT so do registro basico. ON CONFLICT atualiza APENAS o nome (preserva
+    participantes/health/labels/sync_enabled ja cacheados). Como `_fetch_groups_from_api`
+    so devolve grupos com pushName real, o nome nunca vira vazio; de quebra conserta o
+    placeholder `group_name = group_jid` que o `toggle_group_sync` deixa (esse escondia o
+    grupo da lista, que filtra nomes com '@').
+    """
+    groups = await _fetch_groups_from_api()  # findChats: ja filtra @g.us + pushName, ordenado
+    if not groups:
+        return {"refreshed": 0, "note": "nenhum grupo com nome retornado pela API"}
+
+    def _persist():
+        upserted = 0
+        with get_db() as conn:
+            cursor = conn.cursor()
+            for g in groups:
+                jid, name = g.get('jid'), g.get('name')
+                if not jid or not name:
+                    continue
+                cursor.execute("""
+                    INSERT INTO social_groups_cache (group_jid, group_name)
+                    VALUES (%s, %s)
+                    ON CONFLICT (group_jid) DO UPDATE SET group_name = EXCLUDED.group_name
+                """, (jid, name))
+                upserted += 1
+            conn.commit()
+        return upserted
+
+    import asyncio as aio
+    upserted = await aio.to_thread(_persist)
+    return {"refreshed": upserted, "total_from_api": len(groups)}
+
+
 async def _fetch_groups_from_api() -> List[Dict]:
     """Busca grupos da Evolution API via findChats (rapido, ~2s)."""
     base_url = os.getenv('EVOLUTION_API_URL', '')

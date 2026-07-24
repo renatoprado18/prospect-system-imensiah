@@ -56,6 +56,31 @@ async def sync_group_messages(limit_per_group: int = 50) -> Dict:
     return results
 
 
+async def sync_one_group_messages(group_jid: str, group_name: str = '', limit: int = 50) -> Dict:
+    """Backfill de UM grupo especifico (auto-wire do vinculo projeto<->grupo).
+
+    Reusa a primitiva `_sync_single_group` sem varrer todos os grupos sync_enabled.
+    Idempotente por message_id (o INSERT em group_messages faz ON CONFLICT DO NOTHING).
+    """
+    base_url = os.getenv('EVOLUTION_API_URL', '')
+    api_key = os.getenv('EVOLUTION_API_KEY', '')
+    instance = os.getenv('EVOLUTION_INSTANCE', 'default')
+
+    if not base_url:
+        return {"error": "Evolution API not configured", "messages_saved": 0}
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            saved = await _sync_single_group(
+                client, base_url, api_key, instance,
+                group_jid, group_name or group_jid, limit
+            )
+            return {"group_jid": group_jid, "messages_saved": saved}
+        except Exception as e:
+            logger.error(f"Error syncing group {group_name or group_jid}: {e}")
+            return {"group_jid": group_jid, "error": str(e), "messages_saved": 0}
+
+
 async def _sync_single_group(
     client: httpx.AsyncClient,
     base_url: str, api_key: str, instance: str,

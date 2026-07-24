@@ -182,6 +182,9 @@
             <option value="known">Mais conhecidos</option>
             <option value="total">Mais membros</option>
         </select>
+        <button type="button" class="btn btn-sm btn-outline-success" onclick="refreshGroups(this)" title="Busca grupos novos na hora (rápido, ~2s). Membros/health chegam pelo sync do dia.">
+            <i class="bi bi-arrow-clockwise"></i> Atualizar agora
+        </button>
         <span class="groups-count" id="groupsCount"></span>
     </div>
     <div class="groups-list" id="groupsList">
@@ -449,14 +452,31 @@
             </a>`;
     }
 
+    // Refresh RAPIDO: puxa grupos novos (jid+nome) na hora; enrichment fica pro cron.
+    async function refreshGroups(btn) {
+        const orig = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Atualizando...';
+        try {
+            await fetch('/api/social-groups/refresh', { method: 'POST' });
+            await loadGroups();
+        } catch (e) {
+            alert('Erro ao atualizar grupos');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+        }
+    }
+
+    // Sync COMPLETO do cache (lento, ~2min: enriquece participantes/health/labels).
     async function syncGroups() {
-        const grid = document.getElementById('groupsGrid');
-        grid.innerHTML = '<div class="loading-center"><div class="spinner-border text-success mb-3"></div><p>Sincronizando grupos (pode demorar ~2min)...</p></div>';
+        const list = document.getElementById('groupsList');
+        list.innerHTML = '<div class="loading-center"><div class="spinner-border text-success mb-3"></div><p>Sincronizando grupos (pode demorar ~2min)...</p></div>';
         try {
             await fetch('/api/social-groups/sync', { method: 'POST' });
             loadGroups();
         } catch (e) {
-            grid.innerHTML = '<div class="loading-center text-danger">Erro ao sincronizar</div>';
+            list.innerHTML = '<div class="loading-center text-danger">Erro ao sincronizar</div>';
         }
     }
 
