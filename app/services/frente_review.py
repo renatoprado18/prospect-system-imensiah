@@ -57,6 +57,7 @@ Para a frente, decida:
 Regras duras:
 - Prioridade no INTEL: número MAIOR = mais importante (8-10 gate estratégico; 1-3 baixa).
 - Cite evidência ao afirmar (ID de task, quem disse no grupo). Nunca invente.
+- DATAS E VALORES: copie EXATO da fonte, nunca parafraseie nem aproxime (se a nota diz "17/08", escreva 17/08 — não "início de agosto" nem "01/08").
 - Ignore spam/ruído (ex: "aumente seu limite de crédito", robô) — e diga na nota que ignorou.
 - Português correto, com acento. Tom: informal-com-gravidade, direto, sem preâmbulo, sem emoji.
 
@@ -300,3 +301,41 @@ async def run_daily_review(limit: Optional[int] = None) -> Dict[str, Any]:
         "frentes": debriefs,
         "placar": {"precisa_de_voce": precisa, "vigilias": vigilias, "cobertas": cobertas},
     }
+
+
+def persist_review(payload: Dict[str, Any]) -> int:
+    """Grava o payload do dia em cos_daily_review. Retorna o id."""
+    from services.tz import to_brt
+    run_date = to_brt(now_utc()).date()
+    n_frentes = payload.get("n_frentes", 0)
+    n_precisa = len((payload.get("placar") or {}).get("precisa_de_voce") or [])
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO cos_daily_review (run_date, n_frentes, n_precisa, payload)
+               VALUES (%s, %s, %s, %s) RETURNING id""",
+            (run_date, n_frentes, n_precisa, json.dumps(payload, ensure_ascii=False)),
+        )
+        rid = cur.fetchone()[0]
+        conn.commit()
+    return rid
+
+
+def latest_review() -> Optional[Dict[str, Any]]:
+    """Último debriefing gravado (o que o cockpit lê). None se ainda não rodou."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT payload, run_at FROM cos_daily_review ORDER BY run_at DESC LIMIT 1")
+        row = cur.fetchone()
+    if not row:
+        return None
+    payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+    return payload
+
+
+async def run_and_persist() -> Dict[str, Any]:
+    """Roda o loop completo e persiste. Chamado pelo cron diário."""
+    payload = await run_daily_review()
+    rid = persist_review(payload)
+    return {"id": rid, "n_frentes": payload["n_frentes"],
+            "n_precisa": len(payload["placar"]["precisa_de_voce"])}
