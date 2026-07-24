@@ -127,9 +127,10 @@ def extract_rules(summary_md: str, current_doc_text: str) -> List[Dict]:
         current_doc=(current_doc_text or "(vazio)")[:6000],
         summary=(summary_md or "")[:8000],
     )
-    # nota: llm._call_model ja registra custo (rotulado 'triage.advisor'); um
-    # rotulo proprio 'playbook.*' exigiria refactor do wrapper — fica pra depois.
-    raw = llm._call_model(llm.BALANCED, prompt, max_tokens=1500)
+    # F-E: custo por-funcao rotulado 'playbook.extract_rules' (nao polui o bucket
+    # 'triage.advisor'). _call_model grava em tonia_llm_usage via llm_usage.
+    raw = llm._call_model(llm.BALANCED, prompt, max_tokens=1500,
+                          function="playbook.extract_rules")
     return _parse_json_array(raw)
 
 
@@ -167,7 +168,8 @@ def merge_doc(current_doc_text: str, rules: List[Dict]) -> Optional[str]:
         current_doc=(current_doc_text or "")[:12000],
         rules_json=json.dumps(rules, ensure_ascii=False, indent=2),
     )
-    raw = llm._call_model(llm.BALANCED, prompt, max_tokens=4000)
+    raw = llm._call_model(llm.BALANCED, prompt, max_tokens=4000,
+                          function="playbook.merge_doc")  # F-E: custo por-funcao
     if not raw or not raw.strip():
         return None
     # tira cercas de código se o modelo enrolar

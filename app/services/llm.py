@@ -72,10 +72,16 @@ def advisor_telemetry() -> dict:
     }
 
 
-def _call_model(model: str, prompt: str, max_tokens: int = 200):
+def _call_model(model: str, prompt: str, max_tokens: int = 200,
+                function: str = "triage.advisor"):
     """Chamada síncrona (bloqueante) ao Claude via SDK. Retorna texto bruto ou
     None (sem key / sem SDK / erro de API). SÍNCRONA de propósito —
     classify_with_advisor envolve em asyncio.to_thread.
+
+    `function` = rótulo de custo F-E (vira a coluna `endpoint` de
+    tonia_llm_usage). Default 'triage.advisor' preserva byte-a-byte o caminho do
+    advisor; call-sites de outros módulos (ex playbook) passam seu próprio
+    'modulo.funcao' pra não poluir o bucket da triagem.
     """
     api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
     if not api_key:
@@ -95,7 +101,7 @@ def _call_model(model: str, prompt: str, max_tokens: int = 200):
         )
         try:  # F-E: custo por-funcao (telemetria nunca quebra a chamada real)
             from services import llm_usage
-            llm_usage.record_response("triage.advisor", model, msg.model_dump())
+            llm_usage.record_response(function, model, msg.model_dump())
         except Exception:
             pass
         return msg.content[0].text if msg.content else ""
