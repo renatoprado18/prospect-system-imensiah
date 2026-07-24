@@ -1,3 +1,17 @@
+# ⚠️ DORMENTE — este arquivo NÃO está ativo. O Railway detecta só `Dockerfile`
+# (nome exato) na raiz; como `Dockerfile.slim`, o build atual (Railpack/mise) segue
+# valendo. Feito assim de propósito: o build via Docker NUNCA foi exercitado
+# (docker ausente no ambiente onde foi gerado) e ativá-lo troca o builder.
+#
+# PRA ATIVAR (passo dedicado, com rollback pronto):
+#   1. `docker build -t intel-api-test .` numa máquina com Docker (prova o build)
+#   2. `git mv Dockerfile.slim Dockerfile` + commit
+#   3. No painel Railway (serviço intel-api): LIMPAR o Custom Start Command
+#      (senão sobrepõe o CMD) + confirmar Root Directory = raiz
+#   4. push → 1º build via Docker, OBSERVAR (rollback = deployment anterior)
+# Motivo: hoje (24/07) o GitHub deu 504 no download do CPython e travou 4 builds
+# ~30min; python:3.12-slim (Docker Hub) elimina essa dependência.
+#
 # intel-api build image.
 # Motivo: substituir o Railpack/mise (que baixa o CPython de
 # github.com/astral-sh/python-build-standalone e travou os builds em 24/07 com
