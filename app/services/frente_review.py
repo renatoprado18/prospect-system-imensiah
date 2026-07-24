@@ -354,7 +354,7 @@ def persist_review(payload: Dict[str, Any]) -> int:
                VALUES (%s, %s, %s, %s) RETURNING id""",
             (run_date, n_frentes, n_precisa, json.dumps(payload, ensure_ascii=False)),
         )
-        rid = cur.fetchone()[0]
+        rid = cur.fetchone()["id"]  # RealDictCursor: acesso por chave, não índice
         conn.commit()
     return rid
 
@@ -363,12 +363,12 @@ def latest_review() -> Optional[Dict[str, Any]]:
     """Último debriefing gravado (o que o cockpit lê). None se ainda não rodou."""
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT payload, run_at FROM cos_daily_review ORDER BY run_at DESC LIMIT 1")
+        cur.execute("SELECT payload FROM cos_daily_review ORDER BY run_at DESC LIMIT 1")
         row = cur.fetchone()
     if not row:
         return None
-    payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
-    return payload
+    payload = row["payload"]  # RealDictCursor: por chave
+    return payload if isinstance(payload, dict) else json.loads(payload)
 
 
 async def run_and_persist() -> Dict[str, Any]:
