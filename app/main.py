@@ -10591,6 +10591,31 @@ async def cron_cos_daily_review(request: Request):
         return {"status": "error", "job": "cos-daily-review", "error": f"{type(e).__name__}: {e}"}
 
 
+@app.get("/api/cron/cos-signal-router")
+@track_cron_run
+async def cron_cos_signal_router(request: Request):
+    """
+    (B) Roteador de sinal (fase 0, read-only): etiqueta inbound (email/WA DM) →
+    frente por conteúdo, fechando o furo do gather-por-membership. Roda algumas
+    vezes ao dia; cada run varre a janela recente. Ver services/signal_router.py.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    import asyncio as _aio
+    from services.signal_router import run_router_sweep
+
+    try:
+        result = await _aio.wait_for(run_router_sweep(since_hours=5), timeout=200.0)
+        return {"status": "ok", "job": "cos-signal-router", **result}
+    except _aio.TimeoutError:
+        logger.error("cron_cos_signal_router: run > 200s")
+        return {"status": "error", "job": "cos-signal-router", "error": "timeout > 200s"}
+    except Exception as e:
+        logger.exception("cron_cos_signal_router: exception fatal")
+        return {"status": "error", "job": "cos-signal-router", "error": f"{type(e).__name__}: {e}"}
+
+
 @app.get("/api/cos/daily-review")
 async def api_cos_daily_review(request: Request):
     """Último debriefing da camada (read-only). Admin: sessão OU X-API-Key.
@@ -10598,14 +10623,10 @@ async def api_cos_daily_review(request: Request):
     pra inspeção/validação."""
     from services.frente_review import latest_review
 
-    ok = False
-    try:
-        ok = bool(_require_session(request))
-    except Exception:
-        ok = False
-    if not ok and request.headers.get("X-API-Key") == os.getenv("INTEL_API_KEY"):
-        ok = True
-    if not ok:
+    api_key = request.headers.get("X-API-Key")
+    intel_api_key = os.getenv("INTEL_API_KEY")
+    authed = bool(api_key and intel_api_key and api_key == intel_api_key) or bool(get_current_user(request))
+    if not authed:
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
     payload = latest_review()

@@ -189,6 +189,12 @@ _SCHEDULER_JOBS = [
     # WA quando elegivel pra ligar (manual via /api/admin/auto-archive-enable).
     ("auto-archive-gate-eval", "/api/cron/auto-archive-gate-eval", CronTrigger(hour=5, minute=0)),
     ("catchup", "/api/cron/catchup", CronTrigger(minute=30)),
+    # 24/07/26 — CAMADA DE INTELIGÊNCIA (fase 0, read-only). O roteador etiqueta
+    # inbound→frente por conteúdo (6×/dia, janela 5h); o review varre todas as
+    # frentes e produz o debriefing diário (1×/dia, ~7h BRT, após um run do roteador).
+    # Ver services/signal_router.py + services/frente_review.py.
+    ("cos-signal-router", "/api/cron/cos-signal-router", CronTrigger(hour="*/4", minute=40)),
+    ("cos-daily-review", "/api/cron/cos-daily-review", CronTrigger(hour=10, minute=0)),
     # 28/06/26 — F3.1 WA Triage sweep. Janela 4h batched Sonnet classifica
     # msgs incoming nao classificadas. Shadow mode (status=shadow), sem
     # action_proposal. Migrado de GH Actions (criado nesta mesma sessao por
