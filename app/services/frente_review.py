@@ -21,6 +21,7 @@ read-only) + o padrão de custo `llm_usage.record_response`. NÃO executa ação
 Renato, sob [[feedback_cos_autonomy_policy]].
 """
 import os
+import re
 import json
 import logging
 from datetime import date, datetime
@@ -39,6 +40,8 @@ logger = logging.getLogger(__name__)
 _GROUP_DAYS = 12
 _DM_DAYS = 21
 _NOTES_LIMIT = 3
+_MEM_LIMIT = 5        # memórias duráveis (boards/memos) recuperadas por frente
+_ESTADO_TIPO = "estado_cos"  # #4: nota de estado durável, UMA por projeto (UPSERT)
 
 _SYSTEM = """Você é a camada de inteligência do Renato — o Chief of Staff digital dele, rodando sozinho.
 
@@ -82,6 +85,61 @@ def _target_frentes(cursor) -> List[Dict[str, Any]]:
         ORDER BY p.prioridade DESC NULLS LAST, p.id
     """)
     return [dict(r) for r in cursor.fetchall()]
+
+
+def _gather_memories(project_name: str, description: Optional[str],
+                     member_names: List[str]) -> List[Dict[str, Any]]:
+    """#1 — recupera memórias DURÁVEIS relevantes à frente do store embeddado
+    (`system_memories`, o espelho dos boards/memos .md do Claude Code). Sem isso
+    a camada é CEGA: um fato registrado num board nunca chega ao debriefing.
+
+    ESCOLHA keyword (não semântica) DE PROPÓSITO: (a) a identidade de uma frente é
+    proper-noun — nome do projeto, empresa, membros; keyword casa exato e barato;
+    (b) `search_memories(mode='hybrid'/'semantic')` dispara 1 embedding Voyage por
+    query, e o batch diário (~18 frentes × vários termos, com Semaphore(6)) estouraria
+    o rate limit do Voyage (free = 3 RPM). Keyword é determinístico e sem rede.
+    Se um dia migrar pra semântica, fazer 1 query combinada por frente + throttle.
+
+    Busca por termo distintivo (nome do projeto + tokens do nome + nomes dos membros),
+    merge dedupe por id, mantendo ordem de descoberta (nome do projeto primeiro).
+    Read-only. Falha graciosa = lista vazia (nunca quebra o gather)."""
+    from services.system_memory import search_memories
+
+    terms: List[str] = []
+    seen_terms = set()
+
+    def _add_term(t: Optional[str]) -> None:
+        t = (t or "").strip()
+        if len(t) >= 4 and t.lower() not in seen_terms:
+            terms.append(t)
+            seen_terms.add(t.lower())
+
+    _add_term(project_name)
+    for nm in member_names:
+        _add_term(nm)
+    # tokens distintivos do nome do projeto (empresa/proj), ignorando emoji/separadores
+    for tok in re.split(r"[\s—\-–|·:,/]+", project_name or ""):
+        tok = tok.strip()
+        if tok and tok[:1].isalpha() and len(tok) >= 5:
+            _add_term(tok)
+
+    out: List[Dict[str, Any]] = []
+    seen_ids = set()
+    for term in terms[:8]:  # teto de termos por frente
+        try:
+            hits = search_memories(term, limit=3, mode="keyword")
+        except Exception as e:
+            logger.warning("frente_review: memoria skip (%s)", e)
+            break
+        for m in hits:
+            mid = m.get("id")
+            if mid in seen_ids:
+                continue
+            seen_ids.add(mid)
+            out.append(m)
+            if len(out) >= _MEM_LIMIT:
+                return out
+    return out
 
 
 def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
@@ -150,11 +208,14 @@ def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
         logger.warning("frente_review: routed skip (%s)", e)
         cursor.connection.rollback()
 
-    # Notas recentes (memória curta da frente)
+    # Notas recentes (memória curta da frente). Exclui a própria nota de estado
+    # (tipo=estado_cos, escrita pelo #4) — senão a nota-máquina evictaria as notas
+    # humanas do window LIMIT N e a camada só leria eco de si mesma.
     cursor.execute("""
         SELECT titulo, conteudo, criado_em FROM project_notes
-        WHERE project_id = %s ORDER BY criado_em DESC LIMIT %s
-    """, (project_id, _NOTES_LIMIT))
+        WHERE project_id = %s AND tipo <> %s
+        ORDER BY criado_em DESC LIMIT %s
+    """, (project_id, _ESTADO_TIPO, _NOTES_LIMIT))
     notes = [dict(r) for r in cursor.fetchall()]
 
     # Grupos vinculados
@@ -164,8 +225,13 @@ def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
     """, (project_id,))
     groups = [dict(r) for r in cursor.fetchall()]
 
+    # #1 — memórias duráveis (boards/memos .md espelhados em system_memories).
+    # Abre conexão própria (search_memories usa get_db) — read-only, nested OK.
+    member_names = [m["nome"] for m in members if m.get("nome")]
+    memories = _gather_memories(project["nome"], project.get("descricao"), member_names)
+
     return {"project": project, "tasks": tasks, "members": members, "dms": dms,
-            "routed": routed, "notes": notes, "groups": groups}
+            "routed": routed, "notes": notes, "groups": groups, "memories": memories}
 
 
 def _has_signal(g: Dict[str, Any]) -> bool:
@@ -196,6 +262,14 @@ def _fmt_gather(g: Dict[str, Any]) -> str:
         for n in reversed(g["notes"]):
             dt = str(n.get("criado_em") or "?")[:10]
             parts.append(f"--- {dt} · {n.get('titulo') or ''} ---\n{(n.get('conteudo') or '')[:500]}")
+
+    # #1 — decisões/fatos registrados nos boards e memos duráveis (autoridade;
+    # trate como verdade registrada, não boato). Copie datas/valores EXATOS daqui.
+    if g.get("memories"):
+        parts.append("\nMEMÓRIA / DECISÕES REGISTRADAS (boards e memos duráveis):")
+        for m in g["memories"]:
+            dt = str(m.get("criado_em") or "?")[:10]
+            parts.append(f"--- {dt} · {m.get('titulo') or ''} ---\n{(m.get('conteudo') or '')[:600]}")
 
     # DMs dos membros (agrupadas por contato) — sinal das frentes sem grupo
     if g.get("dms"):
@@ -293,6 +367,71 @@ async def review_frente(project_id: int, gather: Optional[Dict[str, Any]] = None
     }
 
 
+def _fmt_estado_conteudo(d: Dict[str, Any]) -> str:
+    """Corpo legível da nota de estado (o que chat/MCP/humano lê direto)."""
+    pdv = d.get("precisa_de_voce") or {}
+    lines: List[str] = []
+    if d.get("estado"):
+        lines.append(f"ESTADO: {d['estado']}")
+    if d.get("movimento"):
+        lines.append(f"MOVIMENTO: {d['movimento']}")
+    if d.get("trava"):
+        lines.append(f"TRAVA: {d['trava']}")
+    lines.append(f"PRECISA DE VOCÊ: {pdv.get('o_que') or 'sim'}" if pdv.get("sim")
+                 else "PRECISA DE VOCÊ: não")
+    return "\n".join(lines) if lines else "(sem estado)"  # conteudo é NOT NULL
+
+
+def _persist_estado_notes(debriefs: List[Dict[str, Any]]) -> int:
+    """#4 — write-back estruturado. Depois de revisar cada frente, UPSERT numa
+    ÚNICA nota de estado durável por projeto (tipo='estado_cos') capturando
+    {estado, movimento, trava, precisa_de_voce}. UMA linha por projeto: DELETE+INSERT
+    (substitui, NÃO append — sem poluir o histórico). Torna o estado da frente
+    durável+CORRENTE — a camada/chat/MCP leem o estado atual sem re-derivar de janela
+    velha. Nota = reversível = Auto-seguro por [[feedback_cos_autonomy_policy]].
+    Idempotente por (project_id, tipo). Falha graciosa: não quebra o pipeline read-only.
+
+    RealDictCursor: acesso por chave, nunca índice."""
+    if not debriefs:
+        return 0
+    n = 0
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            ts = now_utc()
+            for d in debriefs:
+                pid = d.get("project_id")
+                if not pid:
+                    continue
+                pdv = d.get("precisa_de_voce") or {}
+                meta = {
+                    "estado": d.get("estado") or "",
+                    "movimento": d.get("movimento") or "",
+                    "trava": d.get("trava") or "",
+                    "precisa_de_voce": {"sim": bool(pdv.get("sim")),
+                                        "o_que": (pdv.get("o_que") or "")},
+                    "run_at": ts.isoformat(),
+                }
+                # UPSERT sem constraint única: apaga a anterior, grava a atual.
+                cur.execute(
+                    "DELETE FROM project_notes WHERE project_id = %s AND tipo = %s",
+                    (pid, _ESTADO_TIPO),
+                )
+                cur.execute(
+                    """INSERT INTO project_notes
+                           (project_id, tipo, titulo, conteudo, autor, metadata, criado_em, atualizado_em)
+                       VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s)""",
+                    (pid, _ESTADO_TIPO, "Estado atual (camada CoS)",
+                     _fmt_estado_conteudo(d), "cos_layer",
+                     json.dumps(meta, ensure_ascii=False), ts, ts),
+                )
+                n += 1
+            conn.commit()
+    except Exception as e:
+        logger.warning("frente_review: estado write-back falhou (%s)", e)
+    return n
+
+
 async def run_daily_review(limit: Optional[int] = None) -> Dict[str, Any]:
     """
     Roda a camada sobre todas as frentes-alvo (grupo/canal), read-only.
@@ -325,6 +464,10 @@ async def run_daily_review(limit: Optional[int] = None) -> Dict[str, Any]:
             logger.warning("frente_review pulou #%s: %s", f["id"], r)
         else:
             debriefs.append(r)
+
+    # #4 — write-back: grava o estado CORRENTE de cada frente numa nota durável
+    # (UPSERT, 1 por projeto). Depois dos debriefs, best-effort — não bloqueia o payload.
+    _persist_estado_notes(debriefs)
 
     precisa = [{"frente": d["frente"], "project_id": d["project_id"], "o_que": d["precisa_de_voce"]["o_que"]}
                for d in debriefs if d["precisa_de_voce"]["sim"]]
