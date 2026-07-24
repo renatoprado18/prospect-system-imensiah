@@ -450,23 +450,25 @@ def _match_tokens(s: str) -> list:
     return [t for t in _re.findall(r"[a-z0-9]{3,}", ascii_s.lower()) if t not in _PROJ_STOP]
 
 
-def suggest_groups_for_project(project_name: str, exclude_jids=None, limit: int = 5) -> List[Dict]:
+def suggest_groups_for_project(project_name: str, exclude_jids=None, limit: int = 5, min_score: int = 4) -> List[Dict]:
     """Sugere grupos WA pra vincular a um projeto, por match do nome.
 
-    Explora o padrao ratificado `<emoji> <Projeto> — <Contraparte>`: o nome do projeto
-    lidera o nome do grupo. Casa os tokens do nome do projeto (unaccent, sem emoji) contra
-    o nome de cada grupo do cache; ordena por nº de tokens em comum, com boost forte quando
-    o token-lider (nome distintivo do projeto) aparece no grupo. Exclui grupos ja vinculados
-    e nomes-placeholder. Read-only — so sugere, nao vincula. Ver [[reference_naming_grupos_projeto]].
+    Explora o padrao ratificado `<emoji> <Projeto> — <Contraparte>` (nome do projeto lidera
+    o do grupo), mas tolera nomes de projeto antigos fora do padrao. Casa TODOS os tokens do
+    nome do projeto (unaccent, sem emoji) contra o nome de cada grupo, pesando cada token
+    casado pelo comprimento (nomes proprios longos = mais distintivos) e dobrando o peso dos
+    tokens do "core" do projeto (1º segmento antes do travessao — o nome-lider). `min_score`
+    corta ruido (token curto isolado). Exclui grupos ja vinculados e nomes-placeholder.
+    Read-only — so sugere, nao vincula. Ver [[reference_naming_grupos_projeto]].
     """
     exclude = set(exclude_jids or [])
-    # core do projeto = 1º segmento antes do travessao (onde o nome real vive); fallback nome todo
-    core = project_name.split("—")[0] if "—" in project_name else project_name
-    ptoks = _match_tokens(core) or _match_tokens(project_name)
-    if not ptoks:
+    all_toks = _match_tokens(project_name)
+    if not all_toks:
         return []
-    pset = set(ptoks)
-    lead = ptoks[0]  # token que lidera (nome distintivo do projeto)
+    core = project_name.split("—")[0] if "—" in project_name else project_name
+    core_toks = set(_match_tokens(core))
+    # peso por token: comprimento, dobrado se está no nome-líder do projeto
+    weights = {t: (len(t) * (2 if t in core_toks else 1)) for t in all_toks}
 
     out = []
     for g in list_cached_groups():
@@ -475,13 +477,16 @@ def suggest_groups_for_project(project_name: str, exclude_jids=None, limit: int 
         if jid in exclude or "@" in name or not name:
             continue
         gtoks = set(_match_tokens(name))
-        overlap = pset & gtoks
-        if not overlap:
+        matched = [t for t in weights if t in gtoks]
+        if not matched:
             continue
-        score = len(overlap) + (2 if lead in gtoks else 0)  # boost se o nome-lider casa
+        score = sum(weights[t] for t in matched)
+        if score < min_score:
+            continue
         out.append({
             "jid": jid, "name": name, "score": score,
-            "matched": sorted(overlap), "sync_enabled": g.get("sync_enabled", False),
+            "matched": sorted(matched, key=len, reverse=True),
+            "sync_enabled": g.get("sync_enabled", False),
         })
     out.sort(key=lambda r: -r["score"])
     return out[:limit]
