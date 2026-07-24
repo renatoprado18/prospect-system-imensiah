@@ -661,7 +661,7 @@ async def check_anthropic_credit_balance() -> Dict:
                 from services.intel_bot import send_intel_notification
                 await send_intel_notification(
                     "✅ *Anthropic saldo recuperado* — a API voltou a responder "
-                    "(canary 200). Tônia/briefing/urgent normalizados."
+                    "(canary 200). tonIAH/briefing/urgent normalizados."
                 )
             except Exception as e:
                 logger.warning(f"credit canary: recovery notify failed: {e}")
@@ -682,7 +682,7 @@ async def check_anthropic_credit_balance() -> Dict:
         msg = (
             f"{icon} *Anthropic {head}*\n\n"
             f"{detail}\n\n"
-            "⚠️ A Tônia está CAÍDA — chat, briefing das 7h e urgent falham "
+            "⚠️ A tonIAH está CAÍDA — chat, briefing das 7h e urgent falham "
             "juntos até resolver."
         )
         sent = await send_intel_notification(msg)
