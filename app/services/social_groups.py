@@ -410,7 +410,14 @@ async def refresh_groups_basic() -> Dict:
     placeholder `group_name = group_jid` que o `toggle_group_sync` deixa (esse escondia o
     grupo da lista, que filtra nomes com '@').
     """
-    groups = await _fetch_groups_from_api()  # findChats: ja filtra @g.us + pushName, ordenado
+    # fetchAllGroups: superset do findChats — inclui grupos MUDOS (sem 1a msg).
+    # Elimina o contorno "criar grupo -> 1a msg -> refresh". Fallback gracioso pro
+    # findChats se fetchAllGroups falhar/vier vazio (endpoint mais pesado/instavel).
+    groups = await _fetch_all_groups_evolution()
+    source = "fetchAllGroups"
+    if not groups:
+        groups = await _fetch_groups_from_api()  # findChats: ja filtra @g.us + pushName, ordenado
+        source = "findChats(fallback)"
     if not groups:
         return {"refreshed": 0, "note": "nenhum grupo com nome retornado pela API"}
 
@@ -433,7 +440,7 @@ async def refresh_groups_basic() -> Dict:
 
     import asyncio as aio
     upserted = await aio.to_thread(_persist)
-    return {"refreshed": upserted, "total_from_api": len(groups)}
+    return {"refreshed": upserted, "total_from_api": len(groups), "source": source}
 
 
 import unicodedata as _ud
@@ -515,6 +522,52 @@ async def _fetch_groups_from_api() -> List[Dict]:
             return sorted(groups, key=lambda g: g['name'])
     except Exception as e:
         logger.error(f"Erro ao listar grupos: {e}")
+        return []
+
+
+async def _fetch_all_groups_evolution() -> List[Dict]:
+    """Busca TODOS os grupos que o numero participa via Evolution fetchAllGroups.
+
+    Superset do `findChats`: inclui grupos MUDOS (sem 1a mensagem), que o Baileys
+    so registra como chat depois da 1a msg. Assim um grupo recem-criado aparece na
+    pagina ANTES da 1a mensagem — elimina o contorno "criar grupo -> 1a msg -> refresh".
+
+    Endpoint mais pesado (varre todos os grupos, pode levar dezenas de segundos),
+    por isso timeout generoso. Retorna [{'jid': <id>, 'name': <subject>}] filtrando @g.us.
+    """
+    base_url = os.getenv('EVOLUTION_API_URL', '').strip()
+    api_key = os.getenv('EVOLUTION_API_KEY', '').strip()
+    instance = os.getenv('EVOLUTION_INSTANCE', 'default').strip()
+
+    if not base_url:
+        return []
+
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            resp = await client.get(
+                f'{base_url}/group/fetchAllGroups/{instance}?getParticipants=false',
+                headers={'apikey': api_key}
+            )
+            if resp.status_code != 200:
+                logger.warning(f"fetchAllGroups status {resp.status_code}")
+                return []
+            data = resp.json()
+            # Evolution devolve lista; tolera envelope {groups|data: [...]}
+            if isinstance(data, dict):
+                data = data.get('groups') or data.get('data') or []
+            if not isinstance(data, list):
+                return []
+            groups = []
+            for g in data:
+                if not isinstance(g, dict):
+                    continue
+                jid = g.get('id', '')
+                name = g.get('subject', '')
+                if '@g.us' in jid and name:
+                    groups.append({'jid': jid, 'name': name})
+            return sorted(groups, key=lambda x: x['name'])
+    except Exception as e:
+        logger.warning(f"Erro ao buscar grupos via fetchAllGroups: {e}")
         return []
 
 
