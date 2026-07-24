@@ -3647,7 +3647,7 @@ async def system_feedback_list(
 
 
 @app.get("/api/dev/delegations")
-async def dev_delegations_list(request: Request, days: int = 14):
+async def dev_delegations_list(request: Request, days: int = 14, review_window: int = 7):
     """F-C C1: fila de delegacoes da Tonia pra sessao Dev (/dev) enxergar.
 
     A Tonia enfileira delegacoes de coding em `tonia_dev_delegations` (via
@@ -3662,6 +3662,16 @@ async def dev_delegations_list(request: Request, days: int = 14):
     Investigacoes read-only concluidas (mode=investigate/success) ficam de fora:
     ja foram entregues no WA e nao pedem acao de codigo.
 
+    ENVELHECIMENTO (debito conhecido): como o INTEL nao escreve em tonia_* nao ha
+    estado "revisado" — uma delegacao needs_review/failed que a Dev ja olhou fica
+    poluindo a fila por toda a janela `days`. Delegacoes needs_review/failed mais
+    velhas que `review_window` dias (default 7) sao reclassificadas no bucket
+    'stale' e ficam FORA de `counts` (a fila acionavel do /dev), mas CONTINUAM no
+    array `delegations` — nada some, so deixa de poluir. in_progress
+    (queued/running) NUNCA envelhece: e trabalho vivo. Puramente read-only;
+    nenhum write em tonia_*. Ex: delegacao #2 (comentario smoke tz.py, 10/07) sai
+    da fila acionavel a partir de 7d sem precisar de flag no Neon.
+
     Admin-only (sessao OU X-API-Key). Read-only em `tonia_*` (contrato
     assimetrico: o INTEL le, nao escreve).
     """
@@ -3674,6 +3684,9 @@ async def dev_delegations_list(request: Request, days: int = 14):
         raise HTTPException(status_code=401, detail="Nao autenticado")
 
     days = max(1, min(days, 90))
+    review_window = max(1, min(review_window, days))
+    from services.tz import now_utc as _now_utc, UTC as _UTC
+    stale_cutoff = _now_utc() - timedelta(days=review_window)
     delegations = []
     with get_db() as conn:
         cursor = conn.cursor()
@@ -3710,6 +3723,15 @@ async def dev_delegations_list(request: Request, days: int = 14):
                 r["bucket"] = "failed"
             else:
                 r["bucket"] = "needs_review"
+            # Envelhecimento: needs_review/failed velhos (> review_window dias)
+            # saem da fila acionavel viram 'stale'. in_progress nunca envelhece.
+            # created_at do DB e naive UTC -> torna aware pra comparar com o cutoff.
+            created = r.get("created_at")
+            if (r["bucket"] in ("needs_review", "failed")
+                    and created is not None):
+                created_aware = created if created.tzinfo else created.replace(tzinfo=_UTC)
+                if created_aware < stale_cutoff:
+                    r["bucket"] = "stale"
             for k in ("created_at", "updated_at", "surfaced_at"):
                 if r.get(k):
                     r[k] = r[k].isoformat()
@@ -3717,12 +3739,17 @@ async def dev_delegations_list(request: Request, days: int = 14):
                 r["cost_usd"] = float(r["cost_usd"])
             delegations.append(r)
 
-    # agrupa por prioridade de acao; sort estavel preserva o created_at DESC do SQL
-    rank = {"needs_review": 0, "failed": 1, "in_progress": 2}
+    # agrupa por prioridade de acao; sort estavel preserva o created_at DESC do SQL.
+    # 'stale' vai pro fim (nao-acionavel) e fica fora de `counts`.
+    rank = {"needs_review": 0, "failed": 1, "in_progress": 2, "stale": 3}
     delegations.sort(key=lambda d: rank.get(d["bucket"], 9))
     counts = {b: sum(1 for d in delegations if d["bucket"] == b)
               for b in ("needs_review", "failed", "in_progress")}
-    return {"count": len(delegations), "counts": counts, "delegations": delegations}
+    counts["stale"] = sum(1 for d in delegations if d["bucket"] == "stale")
+    actionable = counts["needs_review"] + counts["failed"] + counts["in_progress"]
+    return {"count": len(delegations), "actionable": actionable,
+            "counts": counts, "review_window_days": review_window,
+            "delegations": delegations}
 
 
 @app.get("/api/dev/feedback")
