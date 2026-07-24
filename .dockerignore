@@ -1,0 +1,53 @@
+# VCS
+.git
+.gitignore
+
+# Claude Code / worktrees / session state
+.claude
+.claude/worktrees
+
+# Python caches / envs
+__pycache__
+**/__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+**/.venv
+mcp/.venv
+
+# Secrets / local env (Railway injeta em runtime)
+.env
+.env.*
+!.env.example
+credentials/
+mcp/oauth_state.db*
+
+# Node (workers/mcp trazem node_modules localmente)
+node_modules
+**/node_modules
+
+# Local data / db dumps
+data/*.db
+*.sqlite3
+.last_sync
+
+# Generated docs / reports
+reports/
+docs/*.docx
+docs/*.pdf
+docs/*.html
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Tests (nao necessarios em runtime prod)
+tests/
