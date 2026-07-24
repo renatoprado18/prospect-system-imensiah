@@ -10635,6 +10635,39 @@ async def api_cos_daily_review(request: Request):
     return payload
 
 
+@app.post("/api/cos/portao-action")
+async def api_cos_portao_action(request: Request):
+    """Fecha o loop do portão: o Renato AGE no cockpit (feito/adiar) → grava o
+    write-back como project_note (tipo='portao_acao') no projeto da frente. A nota
+    entra na memória unificada (a camada lê no próximo run e não re-surfaça o
+    portão). Auth: X-API-Key (a tonIAH proxeia)."""
+    if request.headers.get("X-API-Key") != os.getenv("INTEL_API_KEY"):
+        raise HTTPException(status_code=401, detail="Nao autenticado")
+    data = await request.json()
+    try:
+        pid = int(data.get("project_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="project_id invalido")
+    action = (data.get("action") or "feito").strip().lower()
+    o_que = (data.get("o_que") or "").strip()
+    label = {"feito": "RESOLVIDO", "adiar": "ADIADO"}.get(action, action.upper())
+
+    from services.tz import now_utc, format_brt
+    conteudo = (f'Renato marcou {label} o portão de hoje: "{o_que}" '
+                f'({format_brt(now_utc())}, via cockpit). '
+                f'A camada não deve re-surfaçar este portão hoje.')
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO project_notes (project_id, tipo, titulo, conteudo, autor)
+               VALUES (%s, 'portao_acao', %s, %s, 'cockpit') RETURNING id""",
+            (pid, f"Portão {label.lower()}", conteudo),
+        )
+        nid = cur.fetchone()["id"]
+        conn.commit()
+    return {"ok": True, "note_id": nid, "action": action, "project_id": pid}
+
+
 @app.api_route("/api/cron/agent-intents-tick", methods=["GET", "POST"])
 @track_cron_run
 async def cron_agent_intents_tick(request: Request):
