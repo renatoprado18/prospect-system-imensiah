@@ -128,6 +128,28 @@ def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
         """, (member_ids, _DM_DAYS))
         dms = [dict(r) for r in cursor.fetchall()]
 
+    # Mensagens ROTEADAS por conteúdo (roteador B) — de QUALQUER um, membro ou não.
+    # Fecha o furo do gather-por-membership. Exclui as já cobertas pelo DM dos membros.
+    dm_ids = {m.get("id") for m in dms if m.get("id")}
+    routed: List[Dict[str, Any]] = []
+    try:
+        cursor.execute("""
+            SELECT m.id, cv.canal, m.direcao, COALESCE(m.enviado_em, m.recebido_em) AS ts,
+                   c.nome AS sender, LEFT(m.conteudo, 400) AS conteudo
+            FROM message_project_links l
+            JOIN messages m ON m.id = l.message_id
+            JOIN conversations cv ON cv.id = m.conversation_id
+            JOIN contacts c ON c.id = cv.contact_id
+            WHERE l.project_id = %s
+              AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - (%s || ' days')::interval
+            ORDER BY ts DESC LIMIT 25
+        """, (project_id, _DM_DAYS))
+        routed = [dict(r) for r in cursor.fetchall() if dict(r)["id"] not in dm_ids]
+    except Exception as e:
+        # tabela do roteador (053) pode não existir ainda — degrada gracioso
+        logger.warning("frente_review: routed skip (%s)", e)
+        cursor.connection.rollback()
+
     # Notas recentes (memória curta da frente)
     cursor.execute("""
         SELECT titulo, conteudo, criado_em FROM project_notes
@@ -143,12 +165,12 @@ def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
     groups = [dict(r) for r in cursor.fetchall()]
 
     return {"project": project, "tasks": tasks, "members": members, "dms": dms,
-            "notes": notes, "groups": groups}
+            "routed": routed, "notes": notes, "groups": groups}
 
 
 def _has_signal(g: Dict[str, Any]) -> bool:
     """Frente tem algo pra raciocinar? (evita gastar LLM em casca vazia)."""
-    return bool(g.get("tasks") or g.get("dms") or g.get("groups") or g.get("notes"))
+    return bool(g.get("tasks") or g.get("dms") or g.get("routed") or g.get("groups") or g.get("notes"))
 
 
 def _fmt_gather(g: Dict[str, Any]) -> str:
@@ -187,6 +209,14 @@ def _fmt_gather(g: Dict[str, Any]) -> str:
                 dt = str(m.get("ts") or "?")[:16]
                 sender = "RENATO" if m.get("direcao") == "outgoing" else nome
                 parts.append(f"[{dt}] {sender}: {(m.get('conteudo') or '')[:400]}")
+
+    # Mensagens ROTEADAS por conteúdo (roteador B) — inclui NÃO-membros
+    if g.get("routed"):
+        parts.append("\n--- MENSAGENS LIGADAS À FRENTE POR CONTEÚDO (podem ser de não-membros) ---")
+        for m in g["routed"]:
+            dt = str(m.get("ts") or "?")[:16]
+            who = "RENATO" if m.get("direcao") == "outgoing" else (m.get("sender") or "?")
+            parts.append(f"[{dt} · {m.get('canal')}] {who}: {(m.get('conteudo') or '')[:400]}")
 
     # Mensagens de grupo (fonte principal do 'o que anda')
     for grp in g["groups"]:
