@@ -182,8 +182,11 @@
             <option value="known">Mais conhecidos</option>
             <option value="total">Mais membros</option>
         </select>
-        <button type="button" class="btn btn-sm btn-outline-success" onclick="refreshGroups(this)" title="Busca grupos novos na hora (rápido, ~2s). Membros/health chegam pelo sync do dia.">
+        <button type="button" class="btn btn-sm btn-outline-success" onclick="refreshGroups(this, false)" title="Busca grupos novos na hora (rápido, ~2s). Membros/health chegam pelo sync do dia.">
             <i class="bi bi-arrow-clockwise"></i> Atualizar agora
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="refreshGroups(this, true)" title="Busca TODOS os grupos, incluindo os sem nenhuma mensagem (lento, ~2min). Use só se um grupo recém-criado ainda sem msg não apareceu no 'Atualizar agora'.">
+            <i class="bi bi-search"></i> Buscar todos
         </button>
         <span class="groups-count" id="groupsCount"></span>
     </div>
@@ -452,13 +455,17 @@
             </a>`;
     }
 
-    // Refresh RAPIDO: puxa grupos novos (jid+nome) na hora; enrichment fica pro cron.
-    async function refreshGroups(btn) {
+    // Refresh do inventário (jid+nome; enrichment fica pro cron).
+    // full=false (padrão, ~2s): findChats — grupos com atividade.
+    // full=true (~2min): fetchAllGroups — inclui grupos mudos (sem 1ª msg).
+    async function refreshGroups(btn, full = false) {
         const orig = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Atualizando...';
+        btn.innerHTML = full
+            ? '<span class="spinner-border spinner-border-sm"></span> Buscando todos (~2min)...'
+            : '<span class="spinner-border spinner-border-sm"></span> Atualizando...';
         try {
-            await fetch('/api/social-groups/refresh', { method: 'POST' });
+            await fetch('/api/social-groups/refresh' + (full ? '?full=1' : ''), { method: 'POST' });
             await loadGroups();
         } catch (e) {
             alert('Erro ao atualizar grupos');

@@ -22579,13 +22579,14 @@ async def api_sync_group_messages():
 
 
 @app.post("/api/social-groups/refresh")
-async def api_refresh_social_groups():
-    """Refresh RAPIDO do inventario (jid+nome via findChats, ~2s, sem enrichment).
+async def api_refresh_social_groups(full: bool = False):
+    """Refresh do inventario (jid+nome, sem enrichment).
 
-    Faz grupo recem-criado aparecer na lista em segundos; o enrichment
-    (participantes/health/labels) fica pro cron `run-social-groups`."""
+    `full=false` (padrao, ~2-4s): findChats — grupos com atividade (caso comum).
+    `full=true` (~2min): fetchAllGroups — inclui grupos MUDOS (sem 1a msg); use só se um
+    grupo recem-criado sem mensagem nao apareceu no refresh rapido. Enrichment fica pro cron."""
     from services.social_groups import refresh_groups_basic
-    return await refresh_groups_basic()
+    return await refresh_groups_basic(full=full)
 
 
 @app.post("/api/social-groups/messages")

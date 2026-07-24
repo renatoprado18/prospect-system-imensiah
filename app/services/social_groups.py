@@ -397,29 +397,37 @@ async def list_all_social_groups() -> List[Dict]:
     return api_groups
 
 
-async def refresh_groups_basic() -> Dict:
-    """Refresh RAPIDO do inventario de grupos: so jid+nome via findChats (~2s), SEM enrichment.
+async def refresh_groups_basic(full: bool = False) -> Dict:
+    """Refresh RAPIDO do inventario de grupos: so jid+nome, SEM enrichment.
 
     Separa "aparecer" (barato) de "enriquecer" (caro). Um grupo recem-criado aparece na
     pagina em segundos, em vez de esperar o cursor ciclico do cron `run-social-groups`
     (lotes de SOCIAL_GROUPS_BATCH) chegar nele — participantes/health/labels ficam pro cron.
 
+    Duas fontes (trade-off velocidade × cobertura):
+    - `full=False` (padrao, ~2-4s): `findChats` — so grupos COM atividade (>=1 msg). Cobre o
+      caso comum: grupo novo + saudacao de abertura ja aparece na hora.
+    - `full=True` (~2min): `fetchAllGroups` da Evolution — superset que inclui grupos MUDOS
+      (sem 1a msg). Endpoint pesado (varre todos os grupos); so vale quando um grupo
+      recem-criado ainda sem nenhuma mensagem nao apareceu no refresh rapido. Fallback pro
+      findChats se falhar/vier vazio.
+
     UPSERT so do registro basico. ON CONFLICT atualiza APENAS o nome (preserva
-    participantes/health/labels/sync_enabled ja cacheados). Como `_fetch_groups_from_api`
-    so devolve grupos com pushName real, o nome nunca vira vazio; de quebra conserta o
-    placeholder `group_name = group_jid` que o `toggle_group_sync` deixa (esse escondia o
-    grupo da lista, que filtra nomes com '@').
+    participantes/health/labels/sync_enabled ja cacheados). Como as fontes so devolvem grupos
+    com nome real, o nome nunca vira vazio; de quebra conserta o placeholder
+    `group_name = group_jid` que o `toggle_group_sync` deixa (esse escondia o grupo da lista).
     """
-    # fetchAllGroups: superset do findChats — inclui grupos MUDOS (sem 1a msg).
-    # Elimina o contorno "criar grupo -> 1a msg -> refresh". Fallback gracioso pro
-    # findChats se fetchAllGroups falhar/vier vazio (endpoint mais pesado/instavel).
-    groups = await _fetch_all_groups_evolution()
-    source = "fetchAllGroups"
+    if full:
+        groups = await _fetch_all_groups_evolution()  # pesado (~2min), inclui mudos
+        source = "fetchAllGroups"
+        if not groups:
+            groups = await _fetch_groups_from_api()  # fallback: findChats
+            source = "findChats(fallback)"
+    else:
+        groups = await _fetch_groups_from_api()  # findChats: rapido, ja filtra @g.us + pushName
+        source = "findChats"
     if not groups:
-        groups = await _fetch_groups_from_api()  # findChats: ja filtra @g.us + pushName, ordenado
-        source = "findChats(fallback)"
-    if not groups:
-        return {"refreshed": 0, "note": "nenhum grupo com nome retornado pela API"}
+        return {"refreshed": 0, "note": "nenhum grupo com nome retornado pela API", "source": source}
 
     def _persist():
         upserted = 0
