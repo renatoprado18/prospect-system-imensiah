@@ -22579,14 +22579,28 @@ async def api_sync_group_messages():
 
 
 @app.post("/api/social-groups/refresh")
-async def api_refresh_social_groups(full: bool = False):
+async def api_refresh_social_groups(background_tasks: BackgroundTasks, full: bool = False):
     """Refresh do inventario (jid+nome, sem enrichment).
 
-    `full=false` (padrao, ~2-4s): findChats — grupos com atividade (caso comum).
+    `full=false` (padrao, ~2-4s): findChats — grupos com atividade (caso comum). SINCRONO.
     `full=true` (~2min): fetchAllGroups — inclui grupos MUDOS (sem 1a msg); use só se um
-    grupo recem-criado sem mensagem nao apareceu no refresh rapido. Enrichment fica pro cron."""
+    grupo recem-criado sem mensagem nao apareceu no refresh rapido. Enrichment fica pro cron.
+    Roda em BACKGROUND (Railway always-on) e retorna 202 na hora — nao bloqueia os ~2min."""
+    if full:
+        from services.social_groups import refresh_groups_full_background, try_acquire_full_refresh
+        if not try_acquire_full_refresh():
+            return JSONResponse(status_code=202, content={
+                "status": "already_running",
+                "message": "Busca completa ja em andamento em segundo plano."
+            })
+        background_tasks.add_task(asyncio.create_task, refresh_groups_full_background())
+        return JSONResponse(status_code=202, content={
+            "status": "started",
+            "message": "Busca completa iniciada em segundo plano (~2min)."
+        })
+
     from services.social_groups import refresh_groups_basic
-    return await refresh_groups_basic(full=full)
+    return await refresh_groups_basic(full=False)
 
 
 @app.post("/api/social-groups/messages")

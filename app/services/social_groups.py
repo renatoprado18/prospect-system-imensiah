@@ -451,6 +451,46 @@ async def refresh_groups_basic(full: bool = False) -> Dict:
     return {"refreshed": upserted, "total_from_api": len(groups), "source": source}
 
 
+# --- Refresh completo em BACKGROUND (Railway always-on) ------------------------
+# `full=True` bate no fetchAllGroups (~2min) e travava a request HTTP. No Railway o
+# processo eh always-on, entao `asyncio.create_task` sobrevive pos-response (ao
+# contrario do Vercel serverless, onde a task era cortada). O endpoint dispara isto
+# e retorna 202 na hora; o guard evita disparos concorrentes duplicados.
+_full_refresh_running = False
+
+
+def is_full_refresh_running() -> bool:
+    """True se um refresh completo (fetchAllGroups) esta em andamento."""
+    return _full_refresh_running
+
+
+def try_acquire_full_refresh() -> bool:
+    """Check-and-set atomico (event loop single-thread) do guard anti-duplicata.
+    Retorna True se conseguiu a vaga; False se ja tem um refresh completo rodando.
+    Quem adquire DEVE garantir que refresh_groups_full_background() rode (ele libera)."""
+    global _full_refresh_running
+    if _full_refresh_running:
+        return False
+    _full_refresh_running = True
+    return True
+
+
+async def refresh_groups_full_background() -> Dict:
+    """Roda refresh_groups_basic(full=True) em background e libera o guard no fim.
+    Pressupoe que try_acquire_full_refresh() ja adquiriu a vaga. Chamado via
+    asyncio.create_task (fire-and-forget) — nunca propaga excecao pro caller."""
+    global _full_refresh_running
+    try:
+        result = await refresh_groups_basic(full=True)
+        logger.info(f"refresh completo de grupos concluido: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"refresh completo de grupos falhou: {e}")
+        return {"error": str(e)}
+    finally:
+        _full_refresh_running = False
+
+
 import unicodedata as _ud
 import re as _re
 

@@ -185,7 +185,7 @@
         <button type="button" class="btn btn-sm btn-outline-success" onclick="refreshGroups(this, false)" title="Busca grupos novos na hora (rápido, ~2s). Membros/health chegam pelo sync do dia.">
             <i class="bi bi-arrow-clockwise"></i> Atualizar agora
         </button>
-        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="refreshGroups(this, true)" title="Busca TODOS os grupos, incluindo os sem nenhuma mensagem (lento, ~2min). Use só se um grupo recém-criado ainda sem msg não apareceu no 'Atualizar agora'.">
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="refreshGroups(this, true)" title="Busca TODOS os grupos, incluindo os sem nenhuma mensagem. Roda em segundo plano (~2min) — clique 'Atualizar agora' depois pra ver o resultado. Use só se um grupo recém-criado ainda sem msg não apareceu no 'Atualizar agora'.">
             <i class="bi bi-search"></i> Buscar todos
         </button>
         <span class="groups-count" id="groupsCount"></span>
@@ -461,12 +461,23 @@
     async function refreshGroups(btn, full = false) {
         const orig = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = full
-            ? '<span class="spinner-border spinner-border-sm"></span> Buscando todos (~2min)...'
-            : '<span class="spinner-border spinner-border-sm"></span> Atualizando...';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Atualizando...';
         try {
-            await fetch('/api/social-groups/refresh' + (full ? '?full=1' : ''), { method: 'POST' });
-            await loadGroups();
+            const resp = await fetch('/api/social-groups/refresh' + (full ? '?full=1' : ''), { method: 'POST' });
+            if (full) {
+                // Busca completa roda em background no servidor (~2min): nao bloqueia.
+                let msg = 'Busca completa iniciada em segundo plano (~2min). A lista nao atualiza sozinha — clique "Atualizar agora" em alguns minutos.';
+                try {
+                    const data = await resp.json();
+                    if (data && data.status === 'already_running') {
+                        msg = 'Busca completa ja esta em andamento. Aguarde e clique "Atualizar agora" em alguns minutos.';
+                    }
+                } catch (_) { /* mantem msg padrao */ }
+                alert(msg);
+                await loadGroups();  // mostra o que ja tem no cache agora
+            } else {
+                await loadGroups();
+            }
         } catch (e) {
             alert('Erro ao atualizar grupos');
         } finally {
