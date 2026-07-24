@@ -308,15 +308,23 @@ async def run_daily_review(limit: Optional[int] = None) -> Dict[str, Any]:
 
     # Pula frentes sem nenhum sinal (casca vazia) — não gasta LLM.
     frentes = [f for f in frentes if _has_signal(gathers.get(f["id"], {}))]
-    skipped = 0
+
+    # Paraleliza as revisões (semáforo) — sequencial estourava 280s com ~18 frentes.
+    import asyncio
+    sem = asyncio.Semaphore(6)
+
+    async def _one(f):
+        async with sem:
+            return await review_frente(f["id"], gather=gathers.get(f["id"]))
+
+    results = await asyncio.gather(*[_one(f) for f in frentes], return_exceptions=True)
 
     debriefs: List[Dict[str, Any]] = []
-    for f in frentes:
-        deb = await review_frente(f["id"], gather=gathers.get(f["id"]))
-        if not deb.get("error"):
-            debriefs.append(deb)
+    for f, r in zip(frentes, results):
+        if isinstance(r, Exception) or (isinstance(r, dict) and r.get("error")):
+            logger.warning("frente_review pulou #%s: %s", f["id"], r)
         else:
-            logger.warning("frente_review pulou #%s: %s", f["id"], deb.get("error"))
+            debriefs.append(r)
 
     # Placar DETERMINÍSTICO (sem 2ª chamada LLM)
     precisa = [{"frente": d["frente"], "project_id": d["project_id"], "o_que": d["precisa_de_voce"]["o_que"]}
