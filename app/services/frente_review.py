@@ -326,19 +326,73 @@ async def run_daily_review(limit: Optional[int] = None) -> Dict[str, Any]:
         else:
             debriefs.append(r)
 
-    # Placar DETERMINÍSTICO (sem 2ª chamada LLM)
     precisa = [{"frente": d["frente"], "project_id": d["project_id"], "o_que": d["precisa_de_voce"]["o_que"]}
                for d in debriefs if d["precisa_de_voce"]["sim"]]
     vigilias = [{"frente": d["frente"], "project_id": d["project_id"], "item": v}
                 for d in debriefs for v in d["vigilias"]]
     cobertas = [d["frente"] for d in debriefs if not d["precisa_de_voce"]["sim"]]
 
+    # 2º corte cross-frente: dos N "precisa de você", quais ≤3 são de HOJE (portão
+    # real). O resto continua visível como "esta semana" — vira lista, não portão.
+    syn = await _synthesize_portao(precisa)
+    hoje_ids = set(syn["hoje_ids"])
+    hoje = [{**p, "porque": syn["porques"].get(p["project_id"], "")}
+            for p in precisa if p["project_id"] in hoje_ids]
+    esta_semana = [p for p in precisa if p["project_id"] not in hoje_ids]
+
     return {
         "run_at": now_utc().isoformat(),
         "n_frentes": len(debriefs),
         "frentes": debriefs,
-        "placar": {"precisa_de_voce": precisa, "vigilias": vigilias, "cobertas": cobertas},
+        "placar": {"hoje": hoje, "esta_semana": esta_semana,
+                   "precisa_de_voce": precisa,  # compat
+                   "vigilias": vigilias, "cobertas": cobertas},
     }
+
+
+async def _synthesize_portao(precisa: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Dos itens 'precisa de você' de TODAS as frentes, escolhe os <=3 que
+    GENUINAMENTE precisam do Renato HOJE (prazo hoje/vencido, irreversível, janela
+    fecha hoje). O resto espera. 1 chamada LLM; falha graciosa = top-3 crus."""
+    import os
+    if len(precisa) <= 3:
+        return {"hoje_ids": [p["project_id"] for p in precisa], "porques": {}}
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    fallback = {"hoje_ids": [p["project_id"] for p in precisa[:3]], "porques": {}}
+    if not api_key:
+        return fallback
+    lst = "\n".join(f"[{p['project_id']}] {p['frente']}: {p['o_que']}" for p in precisa)
+    prompt = (
+        f"Hoje é {date.today().isoformat()}. Cada item abaixo é algo que uma frente diz precisar de "
+        "uma decisão ou ação do Renato. Mas nem tudo é pra HOJE.\n\n"
+        "Escolha no MÁXIMO 3 que GENUINAMENTE precisam dele HOJE — prazo hoje/vencido, irreversível, "
+        "ou a janela fecha hoje. Logística e 'pode esperar' ficam de fora. Na dúvida, deixa fora.\n\n"
+        f"{lst}\n\n"
+        "Retorne SÓ JSON: {\"hoje\": [{\"project_id\": N, \"porque\": \"1 frase curta\"}]} "
+        "— no máximo 3, ordenados por urgência."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": llm.BALANCED, "max_tokens": 400,
+                      "messages": [{"role": "user", "content": prompt}]},
+            )
+        if resp.status_code != 200:
+            return fallback
+        result = resp.json()
+        llm_usage.record_response("cos.portao_synthesis", llm.BALANCED, result)
+        text = result.get("content", [{}])[0].get("text", "")
+        s, e = text.find("{"), text.rfind("}") + 1
+        data = json.loads(text[s:e])
+        valid = {p["project_id"] for p in precisa}
+        hoje = [h for h in (data.get("hoje") or [])[:3] if h.get("project_id") in valid]
+        return {"hoje_ids": [h["project_id"] for h in hoje],
+                "porques": {h["project_id"]: (h.get("porque") or "").strip() for h in hoje}}
+    except Exception as ex:
+        logger.warning("synthesize_portao: %s", ex)
+        return fallback
 
 
 def persist_review(payload: Dict[str, Any]) -> int:
