@@ -174,8 +174,111 @@ def get_active_cos_config() -> Optional[Dict]:
         return None
 
 
+# Buraco #3 (memória em 2 silos) — leitura reconciliada.
+# `tonia_memories` é da tonIAH (repo/serviço separado): o MCP CoPiloto GRAVA
+# fatos/decisões/regras lá (save_memory), mas a camada INTEL só lia
+# `system_memories` — logo fatos salvos via MCP (ex.: "David Azzi", "parceria
+# Jabô×Guaxupé") eram invisíveis pro frente_review/briefing. Aqui a leitura une
+# os dois silos SEM tocar na escrita (INTEL NUNCA escreve em tonia_*). Read-only,
+# degrada gracioso se a tabela não existir (dev local pode não ter). Kill-switch
+# abaixo caso a tonIAH mude o schema e queira desligar sem redeploy de lógica.
+_INCLUDE_TONIA = True
+# ids de tonia_memories colidem com system_memories (ambos SERIAL de 1). Namespace
+# em string evita colisão no dedup-por-id dos consumidores (frente_review, bot).
+_TONIA_ID_PREFIX = "tonia:"
+
+
+def _embed_query_literal(query: str) -> Optional[str]:
+    """Embeda a query 1x (input_type='query') e devolve o literal pg::vector.
+    Compartilhado pelas buscas semânticas dos 2 silos — 1 chamada Voyage só."""
+    if not embeddings_enabled():
+        return None
+    try:
+        vec = embed_sync(query, input_type="query")
+        if not vec:
+            return None
+        return embedding_to_pg_literal(vec)
+    except Exception as e:
+        logger.error(f"_embed_query_literal error: {e}")
+        return None
+
+
+def _search_tonia_keyword(query: str, limit: int) -> List[Dict]:
+    """Keyword (ILIKE) sobre key+value de tonia_memories. Mapeia pro mesmo
+    schema de saída (titulo←key, conteudo←value, tipo←kind). Read-only."""
+    if not _INCLUDE_TONIA:
+        return []
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            like = f"%{query}%"
+            cursor.execute(
+                """
+                SELECT id, key AS titulo, value AS conteudo, kind AS tipo,
+                       created_at AS criado_em, NULL::float AS similarity
+                FROM tonia_memories
+                WHERE key ILIKE %s OR value ILIKE %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (like, like, limit),
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        # tabela pode não existir (dev local) — degrada gracioso
+        logger.warning(f"_search_tonia_keyword skip: {e}")
+        return []
+    for r in rows:
+        r["id"] = f"{_TONIA_ID_PREFIX}{r['id']}"
+    return rows
+
+
+def _search_tonia_semantic(vec_literal: Optional[str], limit: int) -> List[Dict]:
+    """Semantic sobre tonia_memories reusando o embedding já calculado. Read-only."""
+    if not _INCLUDE_TONIA or not vec_literal:
+        return []
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, key AS titulo, value AS conteudo, kind AS tipo,
+                       created_at AS criado_em,
+                       (1 - (embedding <=> %s::vector)) AS similarity
+                FROM tonia_memories
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> %s::vector ASC
+                LIMIT %s
+                """,
+                (vec_literal, vec_literal, limit),
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        logger.warning(f"_search_tonia_semantic skip: {e}")
+        return []
+    for r in rows:
+        r["id"] = f"{_TONIA_ID_PREFIX}{r['id']}"
+    return rows
+
+
+def _merge_dedup(primary: List[Dict], extra: List[Dict], limit: int) -> List[Dict]:
+    """Une duas listas de hits mantendo `primary` primeiro, dedup por id, teto limit."""
+    seen = {r["id"] for r in primary}
+    merged = list(primary)
+    for r in extra:
+        if r["id"] in seen:
+            continue
+        merged.append(r)
+        seen.add(r["id"])
+        if len(merged) >= limit:
+            break
+    return merged[:limit]
+
+
 def _search_keyword(query: str, limit: int) -> List[Dict]:
-    """Keyword search (ILIKE) sobre titulo + conteudo."""
+    """Keyword search (ILIKE) sobre titulo + conteudo. Une system_memories +
+    tonia_memories (leitura reconciliada, buraco #3)."""
+    sys_rows: List[Dict] = []
     try:
         with get_db() as conn:
             cursor = conn.cursor()
@@ -191,25 +294,23 @@ def _search_keyword(query: str, limit: int) -> List[Dict]:
                 """,
                 (like, like, limit),
             )
-            return [dict(r) for r in cursor.fetchall()]
+            sys_rows = [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         logger.error(f"_search_keyword error: {e}")
-        return []
+    return _merge_dedup(sys_rows, _search_tonia_keyword(query, limit), limit)
 
 
 def _search_semantic(query: str, limit: int) -> List[Dict]:
-    """Semantic search via pgvector cosine distance.
+    """Semantic search via pgvector cosine distance sobre os 2 silos.
 
     Retorna [] se VOYAGE_API_KEY nao configurada ou Voyage falhar — caller
-    decide se faz fallback (em hybrid o fallback eh natural).
-    """
-    if not embeddings_enabled():
+    decide se faz fallback (em hybrid o fallback eh natural). Une system_memories
+    + tonia_memories reusando 1 embedding só (buraco #3)."""
+    vec_literal = _embed_query_literal(query)
+    if not vec_literal:
         return []
+    sys_rows: List[Dict] = []
     try:
-        vec = embed_sync(query, input_type="query")
-        if not vec:
-            return []
-        vec_literal = embedding_to_pg_literal(vec)
         with get_db() as conn:
             cursor = conn.cursor()
             # cosine distance (<=>) varia 0 (igual) a 2 (oposto). similarity = 1 - dist/2
@@ -225,10 +326,16 @@ def _search_semantic(query: str, limit: int) -> List[Dict]:
                 """,
                 (vec_literal, vec_literal, limit),
             )
-            return [dict(r) for r in cursor.fetchall()]
+            sys_rows = [dict(r) for r in cursor.fetchall()]
     except Exception as e:
         logger.error(f"_search_semantic error: {e}")
-        return []
+    # merge por similaridade decrescente (não system-first) — em semântica o
+    # score é comparável entre os silos, então ordenamos por ele.
+    tonia_rows = _search_tonia_semantic(vec_literal, limit)
+    merged = _merge_dedup(sys_rows, tonia_rows, limit * 2)
+    merged.sort(key=lambda r: (r.get("similarity") is not None, r.get("similarity") or 0.0),
+                reverse=True)
+    return merged[:limit]
 
 
 def search_memories(query: str, limit: int = 10, mode: str = "hybrid") -> List[Dict]:
