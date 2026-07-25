@@ -776,6 +776,28 @@ class EmailTriageService:
         else:
             from_name = from_header
 
+        # RC (calibracao Renato 24/07 + recalibracao 25/07): roteamento por
+        # ACAO-REQUERIDA. Gate humano (EMAIL_TRIAGE_CALIBRATION_ENABLED, default
+        # OFF). RODA ANTES do R3 (frente keyword) de proposito: recibos/alertas-
+        # de-dispositivo/newsletters que MENCIONAM uma frente ("Poli Angels",
+        # "IBGC", "Anthropic") batiam R3_frente -> !!Renato indevidamente (ping
+        # WA de falso-positivo). O RC classifica pela ACAO: recibo -> Financeiro,
+        # device-alert -> arquivar, marketing -> arquivar. So o que EXIGE decisao
+        # (RC1 convocacao, RC5 juridico de frente ativa) segue pro Renato. Com o
+        # gate OFF este bloco e no-op e o fluxo cai byte-a-byte no R3 legado.
+        _calib = enable_calibration if enable_calibration is not None else is_calibration_enabled()
+        if _calib:
+            rc = classify_calibrated(
+                subject=subject,
+                body_text=body_text,
+                from_email=from_email,
+                from_name=from_name,
+                sender_domain=sender_domain,
+                account_type=account_type,
+            )
+            if rc is not None:
+                return rc
+
         # R3: Frente keyword em subject, from_name OU dominio do remetente.
         # Cobre ASSESPRO-SP (from_name) + "Planejamento Estratégico" no subject
         # (com acento, agora normalizado em is_frente_keyword).
@@ -1035,23 +1057,9 @@ class EmailTriageService:
                 "rule_hits": rule_hits,
             }
 
-        # RC (calibracao Renato 24/07): roteamento por ACAO-REQUERIDA. Gate humano
-        # (EMAIL_TRIAGE_CALIBRATION_ENABLED, default OFF). Roda ANTES de R4/R5/R6
-        # porque estes casos chegam de remetentes automaticos mas exigem acao
-        # (tabeliao/lastpass/convocacao) ou merecem arquivar (ML transacional) —
-        # o noreply-genrico do R4 os classificaria errado.
-        _calib = enable_calibration if enable_calibration is not None else is_calibration_enabled()
-        if _calib:
-            rc = classify_calibrated(
-                subject=subject,
-                body_text=body_text,
-                from_email=from_email,
-                from_name=from_name,
-                sender_domain=sender_domain,
-                account_type=account_type,
-            )
-            if rc is not None:
-                return rc
+        # (bloco RC de calibracao movido pra ANTES do R3 — ver acima. Rodava
+        # aqui ate 24/07 mas o R3_frente pre-emptava recibo/device-alert/
+        # marketing que mencionava frente. Recalibracao 25/07.)
 
         # R4: no-reply / notifications / system
         if from_email:
@@ -2809,6 +2817,11 @@ async def apply_triage_to_inbox(
                     "subject": (headers.get("subject") or "(sem assunto)")[:60],
                     "classification": classification,
                     "confidence": round(confidence, 2),
+                    # Diagnosticabilidade (calibracao): POR QUE caiu nesse balde.
+                    # Ganho permanente pro preview — quem auditar ve a regra que
+                    # disparou (rule_hits) + a justificativa (reasons).
+                    "rule_hits": list(decision.get("rule_hits") or []),
+                    "reasons": list(decision.get("reasons") or []),
                 })
                 stats["processed"] += 1
 
@@ -3025,9 +3038,11 @@ def route_archive_bucket(rule_hits: List[str], confidence: float) -> str:
         return "noop"
     if "R5_unsub" in hits or "R6_cold" in hits:
         return "deletar"
-    # R4 noreply + calibracao Renato 24/07 que vale ARQUIVAR (nao deletar):
-    # RC4 Mercado Livre transacional, RC5 juridico sem frente ativa casada.
-    if hits & {"R4_noreply", "RC4_ml_transacional", "RC5_juridico_sem_frente"}:
+    # R4 noreply + calibracao Renato que vale ARQUIVAR (nao deletar):
+    # RC4 ML transacional, RC5 juridico sem frente, RC7 device-alert, RC8
+    # marketing (recalibracao 25/07).
+    if hits & {"R4_noreply", "RC4_ml_transacional", "RC5_juridico_sem_frente",
+               "RC7_device_notify", "RC8_vendor_marketing"}:
         return "arquivar"
     return "noop"
 
@@ -3098,6 +3113,60 @@ _RC5_LEGAL_PHRASES = (
     "novas publicacoes",
 )
 
+# RC6 — Recibo/comprovante/fatura -> Financeiro (funde em Andressa no inbox-zero).
+# Recalibracao 25/07: recibos ("Your receipt from Anthropic", "Recibo Poli Angels")
+# batiam R3_frente -> !!Renato. Sao EXECUCAO (registro contabil), nao decisao.
+# FRASES de alta precisao (nao keyword solta) pra nao capturar copy generica.
+_RC6_RECIBO_PHRASES = (
+    "your receipt", "seu recibo", "recibo de pagamento", "recibo de compra",
+    "recibo do pagamento", "comprovante de pagamento", "comprovante de transferencia",
+    "comprovante de pix", "payment receipt", "receipt for", "receipt from",
+    "your invoice", "invoice for", "invoice from", "nota fiscal", "nf-e",
+    "pagamento confirmado", "pagamento recebido", "payment confirmation",
+    "payment received", "your payment", "fatura", "boleto",
+)
+# RC7 — Alerta de DISPOSITIVO/login/servico que NAO exige decisao -> arquivar.
+# Recalibracao 25/07: "Anthropic: Security alert: new trusted device added" e
+# "gov.br: acesso em novo dispositivo" sao NOTIFICACOES (nada a fazer). Rodam
+# ANTES do RC3 (seguranca->Andressa) mas cedem pro RC3 se houver frase-de-ACAO
+# (redefinir senha / confirme conta / atividade suspeita).
+_RC7_DEVICE_NOTIFY_PHRASES = (
+    "new device", "novo dispositivo", "new trusted device", "trusted device",
+    "dispositivo confiavel", "new sign-in", "new sign in", "novo acesso",
+    "acesso em novo dispositivo", "acesso em um novo", "new login", "novo login",
+    "you signed in", "was accessed", "foi acessada", "login realizado",
+    "acesso realizado", "sign-in from", "seu codigo de acesso",
+    "verification code", "codigo de verificacao", "codigo de seguranca",
+    "your verification code", "codigo de acesso",
+)
+_RC7_ACTION_OVERRIDE_PHRASES = (
+    "redefinir sua senha", "redefinir a senha", "reset your password",
+    "confirme sua conta", "confirm your account", "atividade suspeita",
+    "suspicious activity", "verifique sua conta", "verify your account",
+    "senha comprometida", "password compromised", "confirme que foi voce",
+    "confirm it was you", "was this you", "confirmar sua identidade",
+)
+# RC8 — Newsletter/marketing de vendor -> arquivar. Recalibracao 25/07: IBGC
+# "Ultimas vagas | Masterclass" e Railway/QuintoAndar bulk news vazavam pro
+# Renato (via R3_frente ou R7 professional-default->silent). RODA POR ULTIMO
+# (menor precisao). Dois sinais: (a) frase de marketing no ASSUNTO; (b) sub-
+# dominio de disparo em massa (news./email./mkt.). RC6 roda ANTES entao recibo/
+# fatura real nunca cai aqui.
+_RC8_MARKETING_SUBJECT_PHRASES = (
+    "ultimas vagas", "garanta sua vaga", "vagas abertas", "masterclass",
+    "webinar", "inscreva-se", "inscricoes abertas", "inscricao aberta",
+    "promocao", "oferta imperdivel", "oferta exclusiva", "desconto", "cupom",
+    "black friday", "pre-aprovado", "cartao de credito disponivel",
+    "cartao de credito empresarial", "free friday", "imperdivel", "saldao",
+    "ultimas horas", "% da parcela", "% off", "off!", "conheca o consorcio",
+    "aumentamos seu", "garanta ja", "aproveite a oferta",
+    # "novidade:" com dois-pontos (prefixo de copy de marketing). NAO captura
+    # "Novidades da semana" (sem ':') — preserva o teste RC4 ML-sem-txn.
+    "novidade:",
+)
+_RC8_BULK_SUBDOMAIN_LABELS = ("news", "newsletter", "mkt", "marketing", "email")
+
+
 _ACCENT_MAP = str.maketrans("áàâãäéèêëíìîïóòôõöúùûüç", "aaaaaeeeeiiiiooooouuuuc")
 
 
@@ -3154,6 +3223,20 @@ def classify_calibrated(
             "RC1_decisao_renato",
         )
 
+    # RC6 — Recibo/comprovante/fatura -> Financeiro (funde em Andressa). ACAO:
+    # registrar (execucao), nao decidir. Roda cedo (antes de RC2/RC3/marketing)
+    # pra que fatura/boleto real NUNCA seja capturado por marketing (RC8) ou
+    # device-alert (RC7). Tag "financeiro" -> route_mustread_labels -> bucket
+    # financeiro -> funde em Andressa no inbox-zero (Renato 24/07).
+    if _has_phrase(subj_n, _RC6_RECIBO_PHRASES) or _has_phrase(body_n, _RC6_RECIBO_PHRASES):
+        return _decision(
+            "must_read", 6, 0.85,
+            ["RC6: recibo/comprovante/fatura -> Financeiro (Andressa), nao decisao"],
+            ["!!Renato", "financeiro"],
+            [{"type": "delegate", "to": "andressa", "reason": "recibo/fatura"}],
+            "RC6_recibo_financeiro",
+        )
+
     # RC2 — Tabeliao / cancelamento de protesto -> Andressa (mecanico).
     if _has_phrase(hay, _RC2_TABELIAO_PHRASES):
         return _decision(
@@ -3162,6 +3245,22 @@ def classify_calibrated(
             ["!Andressa", "admin", "protesto"],
             [{"type": "delegate", "to": "andressa", "reason": "protesto/tabeliao"}],
             "RC2_tabeliao_andressa",
+        )
+
+    # RC7 — Alerta de DISPOSITIVO/login/servico SEM acao -> arquivar. Roda ANTES
+    # do RC3 mas cede pra ele se houver frase-de-ACAO (reset/confirme/suspeita):
+    # "new trusted device"/"acesso em novo dispositivo" = notificacao (nada a
+    # fazer); "reset your password" = execucao -> RC3/Andressa.
+    if (
+        _has_phrase(hay, _RC7_DEVICE_NOTIFY_PHRASES)
+        and not _has_phrase(hay, _RC7_ACTION_OVERRIDE_PHRASES)
+    ):
+        return _decision(
+            "archive_proposed", 2, 0.85,
+            ["RC7: alerta de dispositivo/login/servico sem acao -> arquivar"],
+            ["arquivar-direto", "device-alert"],
+            [{"type": "archive", "reason": "device/login notify"}],
+            "RC7_device_notify",
         )
 
     # RC3 — LastPass / seguranca-de-conta -> Andressa (+ possivel phishing).
@@ -3207,6 +3306,22 @@ def classify_calibrated(
             ["arquivar-direto", "juridico"],
             [{"type": "archive", "reason": "juridico sem frente"}],
             "RC5_juridico_sem_frente",
+        )
+
+    # RC8 — Newsletter/marketing de vendor -> arquivar (menor precisao, por
+    # ultimo). Sinal (a): frase de marketing no ASSUNTO. Sinal (b): subdominio
+    # de disparo em massa (news./email./mkt.). RC6 ja tirou recibo/fatura real
+    # do caminho, entao aqui e ruido comercial. Arquivar (nao deletar): sai do
+    # inbox e do Renato, mas fica recuperavel.
+    first_label = dom.split(".")[0] if dom else ""
+    is_bulk_subdomain = first_label in _RC8_BULK_SUBDOMAIN_LABELS
+    if _has_phrase(subj_n, _RC8_MARKETING_SUBJECT_PHRASES) or is_bulk_subdomain:
+        return _decision(
+            "archive_proposed", 2, 0.85,
+            ["RC8: newsletter/marketing de vendor -> arquivar (fora do Renato)"],
+            ["arquivar-direto", "marketing"],
+            [{"type": "archive", "reason": "vendor marketing/newsletter"}],
+            "RC8_vendor_marketing",
         )
 
     return None
@@ -3284,6 +3399,8 @@ def _email_juridico_matches_active_front(text: str) -> Optional[Dict]:
 _ARQUIVAR_RULE_HITS = {
     "R4_noreply", "R7_personal_default",
     "RC4_ml_transacional", "RC5_juridico_sem_frente",
+    # Recalibracao 25/07: device-alert e marketing viram arquivar (nao Renato).
+    "RC7_device_notify", "RC8_vendor_marketing",
 }
 
 

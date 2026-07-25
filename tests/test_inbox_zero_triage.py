@@ -122,6 +122,134 @@ class TestCalibratedRules:
 
 
 # ---------------------------------------------------------------------------
+# Recalibracao 25/07 — RC6 recibo / RC7 device-alert / RC8 marketing
+# ---------------------------------------------------------------------------
+class TestRecalibration2507:
+    def test_rc6_receipt_vira_financeiro(self):
+        # "Your receipt from Anthropic" batia R3_frente->Renato. Agora recibo
+        # = execucao contabil -> Financeiro (funde em Andressa no inbox-zero).
+        d = _calib(subject="Your receipt from Anthropic, PBC",
+                   from_email="receipts@anthropic.com", domain="anthropic.com")
+        assert d["classification"] == "must_read"
+        assert "financeiro" in d["suggested_tags"]
+        assert d["rule_hits"] == ["RC6_recibo_financeiro"]
+
+    def test_rc6_recibo_pt(self):
+        d = _calib(subject="Recibo de pagamento -  Poli Angels",
+                   from_email="mailer@vindi.com.br", domain="vindi.com.br")
+        assert d["rule_hits"] == ["RC6_recibo_financeiro"]
+        assert "financeiro" in d["suggested_tags"]
+
+    def test_rc6_boleto_real_nao_vira_marketing(self):
+        # "Boleto disponível" (Serasa) tem RC6 (boleto) ANTES do RC8 marketing:
+        # boleto real nunca eh arquivado como marketing.
+        d = _calib(subject="Boleto disponível! 🚨",
+                   from_email="carteiradigital@comunicados.serasa.com.br",
+                   domain="comunicados.serasa.com.br")
+        assert d["rule_hits"] == ["RC6_recibo_financeiro"]
+
+    def test_rc7_device_notify_vira_arquivar(self):
+        # "new trusted device added" = notificacao (nada a fazer) -> arquivar.
+        d = _calib(subject="Anthropic: Security alert: new trusted device added",
+                   from_email="noreply@anthropic.com", domain="anthropic.com")
+        assert d["classification"] == "archive_proposed"
+        assert d["rule_hits"] == ["RC7_device_notify"]
+
+    def test_rc7_govbr_novo_dispositivo(self):
+        d = _calib(subject="gov.br: Alerta de segurança: acesso em novo dispositivo",
+                   from_email="naoresponda@acesso.gov.br", domain="acesso.gov.br")
+        assert d["rule_hits"] == ["RC7_device_notify"]
+
+    def test_rc7_cede_pra_rc3_quando_exige_acao(self):
+        # "security alert" + "reset your password" = AÇÃO -> RC3 (Andressa),
+        # nao RC7 (a frase-de-acao vence a notificacao de dispositivo).
+        d = _calib(subject="Security alert: new sign-in — reset your password now",
+                   from_email="noreply@somebank.com", domain="somebank.com")
+        assert d["rule_hits"] == ["RC3_seguranca_andressa"]
+        assert "!Andressa" in d["suggested_tags"]
+
+    def test_rc8_marketing_subject_vira_arquivar(self):
+        # IBGC "Últimas vagas | Masterclass" batia R3_frente->Renato. Agora RC8.
+        d = _calib(subject="Últimas vagas | Masterclass – Governança Climática",
+                   from_email="notifications@instructure.com",
+                   domain="instructure.com")
+        assert d["classification"] == "archive_proposed"
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+
+    def test_rc8_bulk_subdomain_vira_arquivar(self):
+        # Railway news (news.railway.app) sem frase de marketing — subdominio
+        # de disparo em massa (news.) -> arquivar.
+        d = _calib(subject="DNS logs, query the Railway API from the CLI",
+                   from_email="hello@news.railway.app", domain="news.railway.app")
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+
+    def test_rc8_cora_novidade_prefixo(self):
+        # "Novidade:" (com ':') = copy de marketing -> arquivar.
+        d = _calib(subject="Novidade: cartão virtual temporário para sua empresa",
+                   from_email="nao-responda@cora.com.br", domain="cora.com.br")
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+
+    def test_rc8_novidades_sem_dois_pontos_nao_dispara(self):
+        # Guard do teste RC4: "Novidades da semana" (sem ':') nao vira marketing.
+        d = _calib(subject="Novidades da semana",
+                   from_email="contato@empresa.com.br", domain="empresa.com.br")
+        assert d is None
+
+    def test_rc8_route_archive_bucket_arquivar(self):
+        assert et.route_archive_bucket(["RC8_vendor_marketing"], 0.85) == "arquivar"
+        assert et.route_archive_bucket(["RC7_device_notify"], 0.85) == "arquivar"
+
+    def test_rc7_rc8_inbox_zero_arquivam_nao_renato(self):
+        # No inbox-zero, RC7/RC8 (archive_proposed) NAO caem na fila do Renato.
+        for hit in ("RC7_device_notify", "RC8_vendor_marketing"):
+            a = et.resolve_inbox_action(
+                _dec("archive_proposed", hits=[hit], conf=0.85), ACC, True)
+            assert a["bucket"] == "arquivar", hit
+            assert a["notify_renato"] is False, hit
+
+
+# ---------------------------------------------------------------------------
+# Ordem: calibracao roda ANTES do R3 (frente keyword) — raiz do FP 25/07
+# ---------------------------------------------------------------------------
+class TestCalibrationBeforeFrente:
+    def _svc_classify(self, monkeypatch, subject, from_email, domain,
+                      enable_calibration):
+        # Forca is_frente_keyword a "casar" QUALQUER texto (simula 'Anthropic'/
+        # 'IBGC'/'Poli Angels' serem frente keywords no DB de prod).
+        import services.cos_keywords as ck
+        monkeypatch.setattr(ck, "is_frente_keyword", lambda text: 2)
+        svc = et.EmailTriageService()
+        headers = {"from": f"X <{from_email}>", "subject": subject}
+        return svc.classify_email_cos(
+            headers=headers, body_text="", gmail_label_ids=[],
+            account_email=ACC, account_type="professional",
+            contact_id=None, enable_calibration=enable_calibration,
+        )
+
+    def test_receipt_com_frente_kw_vai_pra_financeiro_nao_r3(self, monkeypatch):
+        # Recibo que MENCIONA frente: calibracao ON -> RC6 (nao R3_frente).
+        d = self._svc_classify(
+            monkeypatch, "Your receipt from Anthropic",
+            "receipts@anthropic.com", "anthropic.com", enable_calibration=True)
+        assert d["rule_hits"] == ["RC6_recibo_financeiro"]
+
+    def test_marketing_com_frente_kw_vai_pra_rc8_nao_r3(self, monkeypatch):
+        d = self._svc_classify(
+            monkeypatch, "Últimas vagas | Masterclass IBGC",
+            "notifications@instructure.com", "instructure.com",
+            enable_calibration=True)
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+
+    def test_legado_calibracao_off_ainda_bate_r3_frente(self, monkeypatch):
+        # Kill-switch OFF: comportamento LEGADO — R3_frente vence (byte-a-byte).
+        d = self._svc_classify(
+            monkeypatch, "Your receipt from Anthropic",
+            "receipts@anthropic.com", "anthropic.com", enable_calibration=False)
+        assert d["rule_hits"] == ["R3_frente"]
+        assert "!!Renato" in d["suggested_tags"]
+
+
+# ---------------------------------------------------------------------------
 # route_archive_bucket com os novos rule_hits
 # ---------------------------------------------------------------------------
 class TestRouteArchiveBucket:
