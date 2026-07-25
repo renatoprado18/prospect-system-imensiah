@@ -185,6 +185,13 @@ _SCHEDULER_JOBS = [
     # 24/06/2026 — aging policy: auto-dismiss pendings estourados (silent>2d,
     # important>7d, must_read/urgent>14d, archive_proposed>3d com archive Gmail).
     ("email-triage-aging", "/api/cron/email-triage-aging", CronTrigger(hour=6, minute=0)),
+    # 25/07/26 — INBOX-ZERO autônomo (corredor + calibração Renato). A cada 2h
+    # em horário de vigília (UTC 10,12,...,2 = BRT 7h-23h). Params explícitos no
+    # URL (inbox_zero+calibration) → não depende dos env flags (ficam OFF, mantendo
+    # o sweep/legado seguro). Determinístico (sem LLM), idempotente, ping só em
+    # !!Renato novo. Ver services/email_triage.py:apply_triage_to_inbox.
+    ("inbox-zero-scan", "/api/cron/triage-inbox-scan?inbox_zero=true&calibration=true&limit=100",
+     CronTrigger(hour="10,12,14,16,18,20,22,0,2", minute=25)),
     # 24/06/2026 — gate de auto-archive: avalia FP rate per conta, notifica
     # WA quando elegivel pra ligar (manual via /api/admin/auto-archive-enable).
     ("auto-archive-gate-eval", "/api/cron/auto-archive-gate-eval", CronTrigger(hour=5, minute=0)),
