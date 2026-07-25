@@ -688,3 +688,242 @@ class TestVendorBulkGuardServiceLevel:
         d = self._svc("Extrato disponível", "noreply@itau.com.br",
                       "itau.com.br", False)
         assert d["rule_hits"] == ["R3_5_financial_gov"]
+
+
+# ---------------------------------------------------------------------------
+# Extensão 25/07 — CAMPANHA de massa em domínio FINANCEIRO não-telecom
+# ---------------------------------------------------------------------------
+class TestFinancialBulkCampaign2507:
+    """Pesquisa/NPS/indicação de domínio financeiro -> arquivar.
+
+    Casos reais medidos hoje (todos R3_5_financial_gov conf 0.78 -> !!Renato+
+    financeiro -> balde Andressa -> a camada esperta ainda encaminhava).
+    """
+
+    # --- os e-mails REAIS ---------------------------------------------------
+    def test_quintoandar_nps_pesquisa_vira_arquivar(self):
+        d = _calib(subject="Ainda dá tempo de responder a pesquisa!",
+                   from_email="nao-responda@quintoandar.com.br",
+                   from_name="QuintoAndar", domain="quintoandar.com.br",
+                   account_type="personal")
+        assert d["classification"] == "archive_proposed"
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+        assert "!Andressa" not in d["suggested_tags"]
+        assert "!!Renato" not in d["suggested_tags"]
+
+    def test_quintoandar_melhorar_experiencia_vira_arquivar(self):
+        d = _calib(subject="Queremos melhorar sua experiência",
+                   from_email="nao-responda@quintoandar.com.br",
+                   domain="quintoandar.com.br", account_type="personal")
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+
+    def test_cora_campanha_indicacao_vira_arquivar(self):
+        d = _calib(subject="Lembrete: Sua indicação vale até R$2.000 em limite",
+                   from_email="nao-responda@cora.com.br", domain="cora.com.br")
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+
+    def test_quintoandar_consorcio_vira_arquivar(self):
+        d = _calib(subject="Conheça o Consórcio QuintoAndar e pague 50% da parcela",
+                   from_email="noreply@email.quintoandar.com.br",
+                   domain="email.quintoandar.com.br", account_type="personal")
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+
+    # --- direção proibida: cobrança/aviso real NÃO pode regredir ------------
+    def test_boleto_aluguel_quintoandar_continua_financeiro(self):
+        d = _calib(subject="Boleto de aluguel disponível — vence em 05/08",
+                   from_email="nao-responda@quintoandar.com.br",
+                   domain="quintoandar.com.br")
+        assert d["rule_hits"] == ["RC6_recibo_financeiro"]
+        assert "financeiro" in d["suggested_tags"]
+
+    def test_pesquisa_com_boleto_no_assunto_nao_arquiva(self):
+        # Assunto misto: evidência de cobrança sempre ganha da copy de campanha.
+        d = _calib(subject="Responda a pesquisa e veja seu boleto",
+                   from_email="nao-responda@quintoandar.com.br",
+                   domain="quintoandar.com.br")
+        assert d["rule_hits"] == ["RC6_recibo_financeiro"]
+
+    def test_pesquisa_com_cobranca_no_corpo_nao_arquiva(self):
+        # Mais restrito que o guard de telecom (que tolera fatura só no rodapé):
+        # em domínio financeiro, cobrança no CORPO já desliga o guard.
+        assert et._financial_bulk_campaign(
+            "avalie sua experiencia", "sua fatura vence amanha",
+            "cora.com.br", from_email="nao-responda@cora.com.br") is False
+
+    def test_cobranca_cora_continua_na_trilha(self):
+        d = _calib(subject="Aviso de cobrança", from_email="nao-responda@cora.com.br",
+                   domain="cora.com.br")
+        # Nem RC8: cai fora das regras calibradas e segue pro whitelist (R3.5).
+        assert d is None or d["rule_hits"] != ["RC8_vendor_marketing"]
+
+    def test_mudanca_contratual_cora_continua_na_trilha(self):
+        # Caso real 24/07, MESMA caixa (nao-responda@) das campanhas: não tem
+        # keyword financeira nenhuma e mesmo assim tem que ir pro Renato.
+        d = _calib(subject="Alteração dos Termos e Condições do Cartão de Crédito Cora",
+                   from_email="nao-responda@cora.com.br", domain="cora.com.br")
+        assert d is None
+
+    def test_seguranca_de_conta_bancaria_continua_na_trilha(self):
+        d = _calib(subject="Detectamos atividade suspeita na sua conta",
+                   from_email="nao-responda@cora.com.br", domain="cora.com.br")
+        assert d["rule_hits"] == ["RC3_seguranca_andressa"]
+
+    def test_extrato_nao_e_campanha(self):
+        assert et._financial_bulk_campaign(
+            "extrato mensal disponivel", "", "itau.com.br") is False
+
+    def test_fatura_comgas_nao_entra_neste_guard(self):
+        # Comgás é telecom/utility: guard próprio, este aqui nem olha.
+        assert et._is_financial_bulk_domain("comgas.com.br") is False
+        assert _calib(subject="Conta Comgas", from_email="suafatura@comgas.com.br",
+                      domain="comgas.com.br") is None
+
+    def test_gov_receita_intocado(self):
+        assert et._is_financial_bulk_domain("receita.fazenda.gov.br") is False
+        assert et._is_financial_bulk_domain("tjmg.jus.br") is False
+        assert et._financial_bulk_campaign(
+            "responda a pesquisa de satisfacao", "",
+            "receita.fazenda.gov.br") is False
+
+    # --- helpers ------------------------------------------------------------
+    def test_helper_dominio_derivado_do_whitelist(self):
+        assert et._is_financial_bulk_domain("quintoandar.com.br") is True
+        assert et._is_financial_bulk_domain("email.quintoandar.com.br") is True
+        assert et._is_financial_bulk_domain("cora.com.br") is True
+        assert et._is_financial_bulk_domain("itau.com.br") is True
+        assert et._is_financial_bulk_domain("vivo.com.br") is False   # telecom
+        assert et._is_financial_bulk_domain("empresa.com.br") is False
+        assert et._is_financial_bulk_domain("") is False
+
+    def test_caixa_de_cobranca_desliga_o_guard(self):
+        assert et._financial_bulk_campaign(
+            "avalie sua experiencia com o atendimento", "",
+            "cora.com.br", from_email="boleto@cora.com.br") is False
+
+    def test_nps_de_caixa_de_cobranca_ainda_cai_no_rc8_generico(self):
+        # Divergência CONSCIENTE: o sinal (a) do RC8 é domain-agnóstico. Um
+        # assunto que diz explicitamente "avalie sua experiência" é pesquisa,
+        # não cobrança — o local-part não muda o que o e-mail PEDE (nada).
+        d = _calib(subject="Avalie sua experiência com o atendimento",
+                   from_email="boleto@cora.com.br", domain="cora.com.br")
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+
+    def test_bucket_final_e_arquivar_no_inbox_zero(self):
+        d = _calib(subject="Ainda dá tempo de responder a pesquisa!",
+                   from_email="nao-responda@quintoandar.com.br",
+                   domain="quintoandar.com.br", account_type="personal")
+        a = et.resolve_inbox_action(d, ACC, True)
+        assert a["bucket"] == "arquivar"
+        assert a["notify_renato"] is False
+        assert a["archive"] is True
+
+
+class TestPrintiTrustvoxNPS:
+    """Printi <coleta@info.trustvox.com.br> — 'quantas estrelas o seu pedido
+    merece?'. VEREDITO: mesma CLASSE de ação-requerida (nenhuma), mecanismo
+    DIFERENTE — trustvox não é domínio financeiro, então não dá pra tratar pelo
+    guard financeiro. Entra pelo sinal (a) do RC8 (frase de campanha no assunto,
+    válida pra qualquer remetente). R1 (imprensa) e R2 (C1/C2) rodam ANTES do
+    bloco RC, então pesquisa de contato do círculo 1 continua protegida, e
+    arquivar é reversível."""
+
+    def test_printi_nps_vira_arquivar(self):
+        d = _calib(subject="ALMEIDA, quantas estrelas o seu pedido merece?",
+                   from_email="coleta@info.trustvox.com.br",
+                   from_name="Printi", domain="info.trustvox.com.br")
+        assert d["classification"] == "archive_proposed"
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+        assert et.resolve_inbox_action(d, ACC, True)["bucket"] == "arquivar"
+
+    def test_pesquisa_generica_de_qualquer_remetente(self):
+        for subj in ("Pesquisa de satisfação — como fomos?",
+                     "Sua opinião é muito importante pra nós",
+                     "Indique e ganhe R$100"):
+            d = _calib(subject=subj, from_email="x@fornecedor.com.br",
+                       domain="fornecedor.com.br")
+            assert d is not None and d["rule_hits"] == ["RC8_vendor_marketing"], subj
+
+    def test_palavra_pesquisa_sozinha_nao_arquiva(self):
+        # "pesquisa" solta (pesquisa de mercado/jurídica) NÃO é gatilho.
+        assert _calib(subject="Resultado da pesquisa de mercado do setor",
+                      from_email="x@fornecedor.com.br",
+                      domain="fornecedor.com.br") is None
+
+
+class TestFinancialBulkCampaignServiceLevel:
+    """Replay pelo classify_email_cos — o caminho que rodou em produção."""
+
+    def _svc(self, subject, from_email, domain, calibration, body="",
+             account_type="personal"):
+        svc = et.EmailTriageService()
+        return svc.classify_email_cos(
+            headers={"from": f"X <{from_email}>", "subject": subject},
+            body_text=body, gmail_label_ids=[],
+            account_email="renato.almeida.prado@gmail.com",
+            account_type=account_type, contact_id=None,
+            enable_calibration=calibration,
+        )
+
+    def test_regressao_quintoandar_calibracao_on(self):
+        d = self._svc("Ainda dá tempo de responder a pesquisa!",
+                      "nao-responda@quintoandar.com.br", "quintoandar.com.br", True)
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+        assert et.resolve_inbox_action(d, ACC, True)["bucket"] == "arquivar"
+
+    def test_regressao_cora_calibracao_on(self):
+        d = self._svc("Lembrete: Sua indicação vale até R$2.000 em limite",
+                      "nao-responda@cora.com.br", "cora.com.br", True)
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+        assert et.resolve_inbox_action(d, ACC, True)["bucket"] == "arquivar"
+
+    def test_calibracao_off_sai_do_whitelist_financeiro(self):
+        d = self._svc("Ainda dá tempo de responder a pesquisa!",
+                      "nao-responda@quintoandar.com.br", "quintoandar.com.br", False)
+        assert "R3_5_financial_gov" not in d["rule_hits"]
+        assert "financeiro" not in [str(t).lower() for t in d["suggested_tags"]]
+
+    def test_calibracao_off_cora_nao_cai_no_balde_andressa_por_r3_6(self):
+        # cora.com.br está em ANDRESSA_DOMAINS (R3.6): sem o guard lá também, o
+        # bug só mudaria de porta (R3.5 -> R3.6) e o e-mail continuaria indo
+        # pro balde da Andressa.
+        d = self._svc("Lembrete: Sua indicação vale até R$2.000 em limite",
+                      "nao-responda@cora.com.br", "cora.com.br", False)
+        assert "R3_6_andressa" not in d["rule_hits"]
+        assert "!Andressa" not in d["suggested_tags"]
+
+    def test_cora_admin_normal_continua_indo_pra_andressa(self):
+        # Sem copy de campanha, cora.com.br segue a trilha de sempre.
+        d = self._svc("Documentos do mês", "nao-responda@cora.com.br",
+                      "cora.com.br", False)
+        assert d["rule_hits"] == ["R3_5_financial_gov"]
+
+    def test_boleto_aluguel_calibracao_off_continua_financeiro(self):
+        d = self._svc("Boleto de aluguel disponível",
+                      "nao-responda@quintoandar.com.br", "quintoandar.com.br", False)
+        assert d["rule_hits"] == ["R3_5_financial_gov"]
+        assert d["classification"] == "must_read"
+
+    def test_mudanca_contratual_calibracao_off_continua_financeiro(self):
+        d = self._svc("Alteração dos Termos e Condições do Cartão de Crédito Cora",
+                      "nao-responda@cora.com.br", "cora.com.br", False)
+        assert d["rule_hits"] == ["R3_5_financial_gov"]
+
+    def test_itau_extrato_nao_regride(self):
+        for calib in (False, True):
+            d = self._svc("Extrato disponível", "noreply@itau.com.br",
+                          "itau.com.br", calib)
+            assert d["rule_hits"] == ["R3_5_financial_gov"], calib
+
+    def test_receita_gov_nao_regride(self):
+        for calib in (False, True):
+            d = self._svc("Sua declaração IRPF 2026",
+                          "noreply@receita.fazenda.gov.br",
+                          "receita.fazenda.gov.br", calib)
+            assert d["rule_hits"] == ["R3_5_financial_gov"], calib
+            assert "gov" in [str(t).lower() for t in d["suggested_tags"]]
+
+    def test_comgas_conta_nao_regride(self):
+        for calib in (False, True):
+            d = self._svc("Conta Comgas", "suafatura@comgas.com.br",
+                          "comgas.com.br", calib)
+            assert d["rule_hits"] == ["R3_5_financial_gov"], calib

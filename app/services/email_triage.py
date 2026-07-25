@@ -865,31 +865,10 @@ class EmailTriageService:
         # mas sao must_read. Cobre Agilize TFE (Andressa deixou passar) +
         # boletos legitimos no personal (vs promo "FATURA DIGITAL" da Claro
         # que NAO bate whitelist).
-        FINANCIAL_DOMAINS = (
-            "agilize.com.br", "serasa.com.br", "serasaexperian.com.br",
-            "scpc.org.br", "boletobancario.com",
-            "itau.com.br", "bradesco.com.br", "santander.com.br",
-            "bb.com.br", "nubank.com.br", "inter.co",
-            "btg.com", "btgpactual.com", "xpinc.com",
-            "stone.com.br", "pagseguro.uol.com.br", "wise.com",
-            # NOVOS (calibracao 10/06): bancos + cartoes + telco + AI billing
-            "cora.com.br",                # banco PJ
-            "c6bank.com.br",              # boleto
-            "c6.com.br",
-            "esfera.com.vc",              # Santander Esfera
-            "santander.com.vc",
-            "claro.com.br",               # fatura real (filtro telco abaixo)
-            "mi.claro.com.br",            # subdominio fatura Claro
-            "vivo.com.br",
-            "tim.com.br",
-            "claude.ai",                  # Anthropic billing
-            "anthropic.com",
-            # 25/06/2026: faturas locais que cairam em archive_proposed
-            "meres.com.br",               # fatura Méres
-            "comgas.com.br",              # fatura gás
-            "quintoandar.com.br",         # fatura aluguel
-        )
-        GOV_DOMAINS = (".gov.br", ".jus.br")
+        # Lista hoisted pra modulo (_FINANCIAL_DOMAINS) em 25/07 — fonte unica
+        # tambem do guard de campanha (_is_financial_bulk_domain deriva dela).
+        FINANCIAL_DOMAINS = _FINANCIAL_DOMAINS
+        GOV_DOMAINS = _GOV_DOMAINS
         financial_keywords = (
             "fatura", "pagamento devido", "boleto", "cobranca",
             "vencimento", "imposto", "irpf", "darf", "guia tfe",
@@ -923,6 +902,25 @@ class EmailTriageService:
                 # Vendor de massa sem prova de cobranca — fluir pra R4/R5/R7
                 # (ou, com calibracao ON, ja arquivado pelo RC8 sinal (c)).
                 is_financial_domain = False
+
+        # Guard de CAMPANHA em dominio financeiro nao-telecom (extensao 25/07).
+        # Casos reais: QuintoAndar NPS ("Ainda da tempo de responder a pesquisa!",
+        # "Queremos melhorar sua experiencia") e Cora indicacao ("Sua indicacao
+        # vale ate R$2.000") entravam no whitelist -> !!Renato+financeiro ->
+        # balde Andressa. Aqui o gate e opt-IN por evidencia POSITIVA de campanha
+        # NO ASSUNTO (ver _financial_bulk_campaign): cobranca, aviso de seguranca,
+        # mudanca contratual e extrato continuam na trilha atual. GOV nao entra.
+        # Com calibracao ON o RC8 ja devolveu 'arquivar' antes de chegar aqui;
+        # este gate e o caminho de calibracao OFF.
+        is_financial_campaign = _financial_bulk_campaign(
+            _norm_txt(subject), _norm_txt(body_text[:3000]),
+            sender_domain, from_email=from_email,
+        )
+        if is_financial_campaign:
+            # Nao e financeiro (R3.5) NEM admin da Andressa (R3.6) — flui pra
+            # R4/R5/R7 e sai do inbox pelo caminho de arquivar.
+            is_financial_domain = False
+
         # Whitelist domain = must_read (alta priority com keyword, media sem).
         # Whitelist e altamente seletiva — Agilize/banco/Receita so manda
         # comunicacoes legitimas operacionais. Priority menor sem keyword
@@ -960,7 +958,10 @@ class EmailTriageService:
             sender_domain.endswith(d) for d in ANDRESSA_DOMAINS
         )
         is_andressa_sender = any(p in (from_email or "").lower() for p in ANDRESSA_SENDER_PATTERNS)
-        if is_andressa_domain or is_andressa_sender:
+        # cora.com.br esta em ANDRESSA_DOMAINS: sem este `and not`, a campanha de
+        # indicacao barrada no R3.5 cairia aqui e iria pro balde da Andressa do
+        # mesmo jeito (o bug so mudaria de porta).
+        if (is_andressa_domain and not is_financial_campaign) or is_andressa_sender:
             reasons.append(f"Andressa admin sender ({sender_domain or from_email})")
             rule_hits.append("R3_6_andressa")
             return {
@@ -3432,12 +3433,122 @@ _BILLING_SENDER_LOCALPARTS = (
 )
 
 
+# -----------------------------------------------------------------------------
+# EXTENSAO 25/07 — CAMPANHA DE MASSA em dominio FINANCEIRO nao-telecom
+# -----------------------------------------------------------------------------
+# Mesma classe de erro do guard de vendor, medida hoje nas runs reais (todos
+# R3_5_financial_gov conf 0.78 -> !!Renato+financeiro -> balde Andressa):
+#   - QuintoAndar "Ainda da tempo de responder a pesquisa!" e "Queremos melhorar
+#     sua experiencia" (NPS)
+#   - Cora "Sua indicacao vale ate R$2.000 em limite" (campanha de indicacao)
+# Pesquisa/NPS/indicacao/convite promocional nao exigem DECISAO do Renato nem
+# EXECUCAO da Andressa -> arquivar (principio-mae: roteia por ACAO-REQUERIDA).
+#
+# POR QUE NAO FUNDE COM _VENDOR_BULK_DOMAINS: o default e o OPOSTO. Em telecom/
+# utility, a AUSENCIA de evidencia de cobranca ja basta pra arquivar ("Veja seu
+# contrato dos servicos Vivo"). Aqui nao basta — "Alteracao dos Termos e
+# Condicoes do Cartao de Credito Cora" (medido 24/07, mesma caixa nao-responda@)
+# nao tem uma keyword financeira sequer e MESMO ASSIM tem que continuar indo pro
+# Renato. Num dominio financeiro o custo do erro e maior (boleto de aluguel,
+# aviso do banco), entao aqui a regra e invertida: exige evidencia POSITIVA de
+# campanha NO ASSUNTO, e qualquer sinal de cobranca/seguranca/mudanca contratual
+# desliga o guard. Fundir as duas listas apagaria essa diferenca de default.
+#
+# Selecao de dominio: e derivada de _FINANCIAL_DOMAINS (fonte unica) MENOS o que
+# ja tem guard proprio (telecom/utility) e MENOS gov (.gov.br/.jus.br, intocados
+# por decisao explicita do Renato — Receita/governo/cartorio nao entram).
+
+# Pesquisa de satisfacao / NPS. Frases (nao keyword solta: "pesquisa" sozinho
+# pega pesquisa de mercado/juridica). Zero acao requerida por definicao.
+_SURVEY_NPS_SUBJECT_PHRASES = (
+    "responder a pesquisa", "responda a pesquisa", "responder nossa pesquisa",
+    "responda nossa pesquisa", "responder a nossa pesquisa",
+    "pesquisa de satisfacao", "pesquisa de opiniao", "pesquisa rapida",
+    "queremos melhorar sua experiencia", "queremos saber sua opiniao",
+    "avalie sua experiencia", "avalie seu atendimento", "avalie o atendimento",
+    "avalie sua compra", "avalie seu pedido", "avalie nosso",
+    "quantas estrelas", "como foi sua experiencia", "conte pra gente como foi",
+    "sua opiniao e muito importante", "sua opiniao importa",
+    "deixe sua avaliacao", "nos avalie", "net promoter score",
+)
+# Campanha de indicacao / member-get-member.
+_REFERRAL_CAMPAIGN_SUBJECT_PHRASES = (
+    "indique e ganhe", "indique um amigo", "indique amigos", "indique e receba",
+    "sua indicacao vale", "programa de indicacao", "convide amigos",
+    "convide um amigo", "ganhe indicando", "cupom de indicacao",
+)
+# Evidencia POSITIVA de campanha de massa — vale pra qualquer remetente (entra
+# tambem no sinal (a) do RC8, ver comentario do Printi/trustvox la embaixo).
+_BULK_CAMPAIGN_SUBJECT_PHRASES = (
+    _SURVEY_NPS_SUBJECT_PHRASES + _REFERRAL_CAMPAIGN_SUBJECT_PHRASES
+)
+
+# Assuntos que, num dominio financeiro, NUNCA sao campanha descartavel: mudanca
+# contratual, tarifa, extrato, rendimento, renegociacao. Checado so no ASSUNTO
+# (rodape de peca promocional cita "termos e condicoes" o tempo todo).
+_FINANCIAL_KEEP_SUBJECT_PHRASES = (
+    "termos e condicoes", "termos de uso", "alteracao contratual",
+    "alteracao do contrato", "alteracao dos termos", "atualizacao dos termos",
+    "mudanca contratual", "novas condicoes", "aditivo", "contrato",
+    "politica de privacidade", "tarifa", "tarifas",
+    "aviso importante", "comunicado importante", "aviso legal",
+    "extrato", "posicao consolidada", "informe de rendimentos",
+    "imposto de renda", "renegociacao", "acordo", "limite de credito",
+    "bloqueio", "desbloqueio", "encerramento da conta",
+)
+
+_GOV_DOMAINS = (".gov.br", ".jus.br")
+
+# Fonte unica do whitelist financeiro (era local em classify_email_cos; hoisted
+# 25/07 pra que o guard de campanha derive dela em vez de duplicar a lista).
+_FINANCIAL_DOMAINS = (
+    "agilize.com.br", "serasa.com.br", "serasaexperian.com.br",
+    "scpc.org.br", "boletobancario.com",
+    "itau.com.br", "bradesco.com.br", "santander.com.br",
+    "bb.com.br", "nubank.com.br", "inter.co",
+    "btg.com", "btgpactual.com", "xpinc.com",
+    "stone.com.br", "pagseguro.uol.com.br", "wise.com",
+    # NOVOS (calibracao 10/06): bancos + cartoes + telco + AI billing
+    "cora.com.br",                # banco PJ
+    "c6bank.com.br",              # boleto
+    "c6.com.br",
+    "esfera.com.vc",              # Santander Esfera
+    "santander.com.vc",
+    "claro.com.br",               # fatura real (filtro telco abaixo)
+    "mi.claro.com.br",            # subdominio fatura Claro
+    "vivo.com.br",
+    "tim.com.br",
+    "claude.ai",                  # Anthropic billing
+    "anthropic.com",
+    # 25/06/2026: faturas locais que cairam em archive_proposed
+    "meres.com.br",               # fatura Méres
+    "comgas.com.br",              # fatura gás
+    "quintoandar.com.br",         # fatura aluguel
+)
+
+
 def _is_vendor_bulk_domain(dom: str) -> bool:
     """Dominio (ou subdominio) de fornecedor telecom/utility de disparo em massa."""
     d = (dom or "").lower()
     if not d:
         return False
     return any(d == v or d.endswith("." + v) for v in _VENDOR_BULK_DOMAINS)
+
+
+def _is_financial_bulk_domain(dom: str) -> bool:
+    """Dominio financeiro do whitelist que NAO e telecom/utility nem gov.
+
+    Derivado de _FINANCIAL_DOMAINS (nao duplica lista). Telecom/utility ja tem
+    guard proprio (_vendor_bulk_marketing, default oposto); gov fica intocado.
+    """
+    d = (dom or "").lower()
+    if not d:
+        return False
+    if _is_vendor_bulk_domain(d):
+        return False
+    if any(d.endswith(g) for g in _GOV_DOMAINS):
+        return False
+    return any(d == f or d.endswith("." + f) for f in _FINANCIAL_DOMAINS)
 
 
 def _is_billing_sender(from_email: str) -> bool:
@@ -3474,6 +3585,51 @@ def _vendor_bulk_marketing(subj_n: str, body_n: str, dom: str,
     if _has_phrase(body_n, _BILLING_EVIDENCE_PHRASES):
         return promo
     return True
+
+
+def _financial_bulk_campaign(subj_n: str, body_n: str, dom: str,
+                             from_email: str = "") -> bool:
+    """True = campanha de massa (pesquisa/NPS/indicacao) de dominio FINANCEIRO
+    nao-telecom -> arquivar. Extensao 25/07 do guard de vendor, com a MESMA
+    mecanica (_BILLING_EVIDENCE_PHRASES + _is_billing_sender + precedencia
+    conservadora), mas com o default invertido: aqui so vira marketing com
+    evidencia POSITIVA de campanha NO ASSUNTO.
+
+    Precedencia (6 travas antes do True — na duvida NAO e marketing):
+      1. dominio nao e financeiro-nao-telecom -> False (gov/Receita/cartorio e
+         telecom/utility nunca chegam aqui).
+      2. remetente e caixa de cobranca (suafatura@/boleto@/cobranca@) -> False.
+      3. evidencia de cobranca no ASSUNTO **ou no CORPO** -> False. Mais restrito
+         que o guard de telecom (que tolera fatura so no rodape): boleto de
+         aluguel/cobranca de banco custa caro demais pra arquivar por engano.
+      4. sinal de SEGURANCA de conta (reusa _RC3_SECURITY_PHRASES) -> False.
+      5. tabeliao/protesto (reusa _RC2_TABELIAO_PHRASES) -> False.
+      6. assunto de mudanca contratual/tarifa/extrato/rendimento -> False
+         ("Alteracao dos Termos e Condicoes do Cartao de Credito Cora").
+    Só então: assunto com pesquisa/NPS/indicacao -> True.
+    """
+    if not _is_financial_bulk_domain(dom):
+        return False
+    if _is_billing_sender(from_email):
+        return False
+    hay = f"{subj_n}\n{body_n}"
+    if _has_phrase(hay, _BILLING_EVIDENCE_PHRASES):
+        return False
+    if _has_phrase(hay, _RC3_SECURITY_PHRASES):
+        return False
+    if _has_phrase(hay, _RC2_TABELIAO_PHRASES):
+        return False
+    if _has_phrase(subj_n, _FINANCIAL_KEEP_SUBJECT_PHRASES):
+        return False
+    # Evidencia POSITIVA de campanha no assunto: pesquisa/NPS/indicacao +
+    # a copy de marketing que o RC8 ja reconhece ("conheca o consorcio",
+    # "% da parcela", "pre-aprovado", "cartao de credito empresarial" — todas
+    # medidas em Cora/QuintoAndar). Reusar a lista do RC8 mantem calibracao
+    # ON e OFF com o mesmo veredito.
+    return (
+        _has_phrase(subj_n, _BULK_CAMPAIGN_SUBJECT_PHRASES)
+        or _has_phrase(subj_n, _RC8_MARKETING_SUBJECT_PHRASES)
+    )
 
 
 _ACCENT_MAP = str.maketrans("áàâãäéèêëíìîïóòôõöúùûüç", "aaaaaeeeeiiiiooooouuuuc")
@@ -3527,6 +3683,13 @@ def classify_calibrated(
     # RC8 (sinal (c): arquiva a peca de massa).
     vendor_bulk_mkt = _vendor_bulk_marketing(
         subj_n, body_n, dom, has_unsubscribe, from_email=from_email
+    )
+    # Extensao 25/07: campanha de massa (pesquisa/NPS/indicacao) vinda de dominio
+    # FINANCEIRO nao-telecom. Consumido SO pelo RC8 — de proposito nao mexe no
+    # RC6: se aparecer qualquer frase de recibo/fatura, a trilha financeira vence
+    # (na duvida NAO e marketing, e aqui o custo do erro e maior).
+    financial_bulk_mkt = _financial_bulk_campaign(
+        subj_n, body_n, dom, from_email=from_email
     )
 
     # RC1 — DECISAO do Renato (subject prevalece; body confirma). ACAO: decidir.
@@ -3638,14 +3801,32 @@ def classify_calibrated(
     # inbox e do Renato, mas fica recuperavel.
     first_label = dom.split(".")[0] if dom else ""
     is_bulk_subdomain = first_label in _RC8_BULK_SUBDOMAIN_LABELS
-    if _has_phrase(subj_n, _RC8_MARKETING_SUBJECT_PHRASES) or is_bulk_subdomain or vendor_bulk_mkt:
-        reason = (
-            "RC8: comunicacao de massa de telecom/utility SEM evidencia de "
-            f"cobranca ({dom}) -> arquivar (nem decisao do Renato, nem execucao "
-            "da Andressa)"
-            if vendor_bulk_mkt
-            else "RC8: newsletter/marketing de vendor -> arquivar (fora do Renato)"
-        )
+    # Sinal (a) ganhou as frases de pesquisa/NPS/indicacao (25/07). Vale pra
+    # QUALQUER remetente de proposito: "Printi <coleta@info.trustvox.com.br> —
+    # 'quantas estrelas o seu pedido merece?'" caiu em !!Renato via R7 professio-
+    # nal-default, e trustvox nao e dominio financeiro (nao da pra tratar pelo
+    # guard financeiro). NPS e a MESMA classe de acao-requerida: nenhuma. R1
+    # (imprensa) e R2 (C1/C2) rodam ANTES do bloco RC, entao pesquisa de contato
+    # do circulo 1 continua protegida; e arquivar e reversivel.
+    is_campaign_subject = (
+        _has_phrase(subj_n, _RC8_MARKETING_SUBJECT_PHRASES)
+        or _has_phrase(subj_n, _BULK_CAMPAIGN_SUBJECT_PHRASES)
+    )
+    if is_campaign_subject or is_bulk_subdomain or vendor_bulk_mkt or financial_bulk_mkt:
+        if vendor_bulk_mkt:
+            reason = (
+                "RC8: comunicacao de massa de telecom/utility SEM evidencia de "
+                f"cobranca ({dom}) -> arquivar (nem decisao do Renato, nem "
+                "execucao da Andressa)"
+            )
+        elif financial_bulk_mkt:
+            reason = (
+                f"RC8: campanha de massa (pesquisa/NPS/indicacao) de {dom} "
+                "SEM evidencia de cobranca/seguranca/mudanca contratual -> "
+                "arquivar (nem decisao do Renato, nem execucao da Andressa)"
+            )
+        else:
+            reason = "RC8: newsletter/marketing de vendor -> arquivar (fora do Renato)"
         return _decision(
             "archive_proposed", 2, 0.85,
             [reason],
