@@ -915,7 +915,10 @@ class EmailTriageService:
         is_vendor_bulk = _is_vendor_bulk_domain(sender_domain)
         if is_vendor_bulk and is_financial_domain:
             text_norm_fin = _norm_txt(text_lc_fin)
-            has_billing_evidence = _has_phrase(text_norm_fin, _BILLING_EVIDENCE_PHRASES)
+            has_billing_evidence = (
+                _has_phrase(text_norm_fin, _BILLING_EVIDENCE_PHRASES)
+                or _is_billing_sender(from_email)   # caixa suafatura@/boleto@
+            )
             if not has_billing_evidence:
                 # Vendor de massa sem prova de cobranca — fluir pra R4/R5/R7
                 # (ou, com calibracao ON, ja arquivado pelo RC8 sinal (c)).
@@ -3395,6 +3398,21 @@ _VENDOR_PROMO_SUBJECT_PHRASES = (
 )
 
 
+# Caixa de DISPARO de cobranca (local-part do remetente). Achado na auditoria
+# do dia 1: "Comgas <suafatura@comgas.com.br> — 'Conta Comgas'" e uma fatura de
+# gas REAL cujo assunto nao diz "fatura" e cujo corpo nao trouxe keyword
+# financeira (run 11:02, R3_5_financial_gov "sem keyword"). Sem este sinal o
+# guard arquivaria a conta de gas. O local-part e evidencia forte e generica:
+# vendor separa a caixa de cobranca (suafatura@/boleto@/cobranca@) da caixa de
+# campanha (mkt@/ofertas@/news@/contratoeletronico@).
+_BILLING_SENDER_LOCALPARTS = (
+    "fatura", "faturas", "faturamento", "suafatura", "minhafatura",
+    "boleto", "boletos", "cobranca", "cobrancas", "financeiro", "contas",
+    "billing", "invoice", "invoices", "pagamento", "pagamentos",
+    "arrecadacao", "recebiveis",
+)
+
+
 def _is_vendor_bulk_domain(dom: str) -> bool:
     """Dominio (ou subdominio) de fornecedor telecom/utility de disparo em massa."""
     d = (dom or "").lower()
@@ -3403,20 +3421,33 @@ def _is_vendor_bulk_domain(dom: str) -> bool:
     return any(d == v or d.endswith("." + v) for v in _VENDOR_BULK_DOMAINS)
 
 
+def _is_billing_sender(from_email: str) -> bool:
+    """Local-part do remetente indica caixa de cobranca (suafatura@, boleto@...)."""
+    local = _norm_txt((from_email or "").split("@")[0]).replace(".", "").replace("-", "")
+    if not local:
+        return False
+    return any(tok in local for tok in _BILLING_SENDER_LOCALPARTS)
+
+
 def _vendor_bulk_marketing(subj_n: str, body_n: str, dom: str,
-                           has_unsubscribe: bool = False) -> bool:
+                           has_unsubscribe: bool = False,
+                           from_email: str = "") -> bool:
     """True = comunicacao de MASSA de telecom/utility SEM prova de cobranca.
 
     Precedencia (conservadora — na duvida NAO e marketing):
-      1. assunto com evidencia de cobranca ("fatura", "2a via", "vence em")
+      1. remetente e caixa de cobranca (suafatura@/boleto@/cobranca@) -> NUNCA
+         marketing (cobre fatura cujo assunto nao diz "fatura": "Conta Comgas").
+      2. assunto com evidencia de cobranca ("fatura", "2a via", "vence em")
          -> NUNCA marketing (fatura real segue pra Andressa/Financeiro).
-      2. corpo com evidencia de cobranca -> so vira marketing se o ASSUNTO for
+      3. corpo com evidencia de cobranca -> so vira marketing se o ASSUNTO for
          promocional explicito ou o email trouxer List-Unsubscribe (rodape
          "consulte sua fatura no app" em peca de campanha).
-      3. zero evidencia de cobranca -> massa/institucional ("Veja seu contrato
+      4. zero evidencia de cobranca -> massa/institucional ("Veja seu contrato
          dos servicos Vivo") -> marketing -> arquivar.
     """
     if not _is_vendor_bulk_domain(dom):
+        return False
+    if _is_billing_sender(from_email):
         return False
     if _has_phrase(subj_n, _BILLING_EVIDENCE_PHRASES):
         return False
@@ -3475,7 +3506,9 @@ def classify_calibrated(
     # Guard de vendor de massa (telecom/utility) — computado uma vez, consumido
     # pelo RC6 (nao deixa copy promocional entrar na trilha financeira) e pelo
     # RC8 (sinal (c): arquiva a peca de massa).
-    vendor_bulk_mkt = _vendor_bulk_marketing(subj_n, body_n, dom, has_unsubscribe)
+    vendor_bulk_mkt = _vendor_bulk_marketing(
+        subj_n, body_n, dom, has_unsubscribe, from_email=from_email
+    )
 
     # RC1 — DECISAO do Renato (subject prevalece; body confirma). ACAO: decidir.
     if _has_phrase(subj_n, _RC1_DECISION_PHRASES) or _has_phrase(body_n, _RC1_DECISION_PHRASES):

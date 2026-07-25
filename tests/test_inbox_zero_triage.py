@@ -603,6 +603,27 @@ class TestVendorBulkGuard2507:
                       from_email="contato@empresa.com.br",
                       domain="empresa.com.br") is None
 
+    def test_conta_comgas_caixa_de_cobranca_nao_arquiva(self):
+        # Achado da auditoria do dia 1 (run 11:02): "Comgas <suafatura@comgas.
+        # com.br> — 'Conta Comgas'" é fatura de gás REAL, mas nem o assunto nem
+        # o corpo trazem keyword financeira. O local-part é quem salva.
+        assert _calib(subject="Conta Comgas", body="",
+                      from_email="suafatura@comgas.com.br",
+                      domain="comgas.com.br") is None
+
+    def test_caixa_de_cobranca_vence_ate_com_assunto_promocional(self):
+        d = _calib(subject="Conheça as vantagens", body="",
+                   from_email="boleto@claro.com.br", domain="claro.com.br")
+        assert d is None  # não vira RC8; segue pro whitelist financeiro
+
+    def test_helper_billing_sender(self):
+        assert et._is_billing_sender("suafatura@comgas.com.br") is True
+        assert et._is_billing_sender("cobranca@vivo.com.br") is True
+        assert et._is_billing_sender("financeiro@x.com") is True
+        assert et._is_billing_sender("contratoeletronico@vivo.com.br") is False
+        assert et._is_billing_sender("mkt@vivo.com.br") is False
+        assert et._is_billing_sender("") is False
+
     def test_helper_dominio_e_subdominio(self):
         assert et._is_vendor_bulk_domain("vivo.com.br") is True
         assert et._is_vendor_bulk_domain("email.vivo.com.br") is True
@@ -651,6 +672,14 @@ class TestVendorBulkGuardServiceLevel:
     def test_fatura_real_calibracao_off_continua_financeiro(self):
         d = self._svc("Sua fatura Vivo já está disponível",
                       "faturadigital@vivo.com.br", "vivo.com.br", False)
+        assert d["rule_hits"] == ["R3_5_financial_gov"]
+        assert d["classification"] == "must_read"
+
+    def test_conta_comgas_continua_financeiro_calibracao_off(self):
+        # Regressão do dia 1 replicada pelo caminho real (R3.5): o local-part
+        # suafatura@ mantém a conta de gás no whitelist -> Andressa/Financeiro.
+        d = self._svc("Conta Comgas", "suafatura@comgas.com.br",
+                      "comgas.com.br", False)
         assert d["rule_hits"] == ["R3_5_financial_gov"]
         assert d["classification"] == "must_read"
 
