@@ -403,6 +403,37 @@ def get_cockpit() -> Dict[str, Any]:
     }
 
 
+def get_daily_review() -> Dict[str, Any]:
+    """Último debriefing da camada de inteligência (o PORTÃO do cron das 10h).
+
+    Espelha services/frente_review.py:latest_review() do INTEL — lê a última linha
+    de cos_daily_review (Neon prod) ORDER BY run_at DESC. Retorna o `placar`
+    (hoje ≤3 = portão real / esta_semana / vigilias / cobertas) + run_at +
+    n_frentes. NÃO despeja os debriefs inteiros (o portão é ≤3; frentes pode ter
+    dezenas). Degrada gracioso: {"status":"empty"} se a tabela não existe ou vazia.
+
+    NOTA schema: cos_daily_review (migration 052) NAO tem view copilot.* -> lida
+    da tabela fisica direto, como projects/documentos (ver disciplina no topo)."""
+    try:
+        row = _one(
+            "SELECT payload FROM cos_daily_review ORDER BY run_at DESC LIMIT 1"
+        )
+    except Exception as e:
+        logger.warning("get_daily_review: %s", e)
+        return {"status": "empty", "note": "camada ainda não rodou"}
+    if not row or not row.get("payload"):
+        return {"status": "empty", "note": "camada ainda não rodou"}
+    payload = row["payload"]
+    if not isinstance(payload, dict):
+        payload = json.loads(payload)
+    return {
+        "status": "ok",
+        "run_at": payload.get("run_at"),
+        "n_frentes": payload.get("n_frentes", 0),
+        "placar": payload.get("placar") or {},
+    }
+
+
 # ---- ConselhoOS (read-only, DB separado) ----------------------------------
 def get_conselho(empresa: Optional[str] = None) -> Dict[str, Any]:
     """Reunioes + RACI + decisoes do ConselhoOS. Read-only (outro Neon).

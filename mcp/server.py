@@ -123,6 +123,17 @@ def get_cockpit() -> str:
 
 
 @mcp.tool()
+def get_daily_review() -> str:
+    """PORTÃO do dia: a síntese da camada de inteligência (cron das 10h) do INTEL.
+    Retorna o `placar` — hoje (portão real, <=3 coisas que SÓ o Renato pode
+    decidir/fazer HOJE) + esta_semana + vigilias + cobertas — mais run_at e
+    n_frentes (quantas frentes a camada varreu). Use no /cockpit pra ler o que
+    precisa do Renato sem depender do endpoint local (funciona no remoto/celular).
+    Se a camada ainda não rodou, retorna {"status":"empty"}."""
+    return _json(db.get_daily_review())
+
+
+@mcp.tool()
 def get_conselho(empresa: Optional[str] = None) -> str:
     """ConselhoOS (read-only): reunioes, itens RACI e decisoes dos conselhos.
     empresa: filtra por nome (ex: 'Vallen'). Sem empresa = todas as visiveis.
