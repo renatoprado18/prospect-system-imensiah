@@ -67,6 +67,17 @@ _FK_TABLES_TO_CONTACTS = [
     'conselhoos_board_members',
     'reminders',
     'tasks',
+    # SEM FK declarada — a lista original foi levantada pelas constraints, entao
+    # estas passavam batido: o DELETE nao falha, mas o contact_id fica apontando
+    # pra linha inexistente (orfa silenciosa, pior que erro). Auditadas 25/07/26
+    # comparando information_schema.columns contra esta lista.
+    'analyzer_feedback',
+    'tonha_role_contacts',
+    # tonia_*: o INTEL nao escreve CONTEUDO nessas tabelas (convencao), mas
+    # reparo referencial e outra coisa — sem isto a tonIAH passa a ler um
+    # contato fantasma depois de todo merge.
+    'tonia_conversations',
+    'tonia_media_index',
 ]
 
 # Tabelas com unique constraint composta envolvendo contact_id.

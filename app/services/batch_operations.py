@@ -1,6 +1,7 @@
 """
 Batch Operations Service - Operacoes em lote para contatos
 """
+import json as _json
 from typing import List, Dict, Optional
 from datetime import datetime
 from database import get_db
@@ -210,9 +211,15 @@ class BatchOperationsService:
                         atualizado_em = NOW()
                     WHERE id = %s
                 """, (
-                    str(primary_emails).replace("'", '"'),
-                    str(primary_phones).replace("'", '"'),
-                    str(primary_tags).replace("'", '"'),
+                    # json.dumps, NAO str().replace("'", '"'): o hack quebrava
+                    # em qualquer valor nao-string. Telefone carrega
+                    # {"whatsapp": true} -> str() da o `True` do Python ->
+                    # JSON invalido -> o cast ::jsonb estourava. Apostrofo em
+                    # nome/tag ("O'Brien") tambem corrompia. Por isso os merges
+                    # de contato vinham sendo feitos por SQL manual.
+                    _json.dumps(primary_emails, ensure_ascii=False),
+                    _json.dumps(primary_phones, ensure_ascii=False),
+                    _json.dumps(primary_tags, ensure_ascii=False),
                     total_interacoes,
                     ultimo_contato,
                     empresa,
