@@ -167,17 +167,24 @@ def _close_task(task, verdict):
 
 
 async def _notify_closed(closed):
-    """Pill passivo (urgência 3) — lista o que fechou. Não interrompe."""
+    """Pill passivo (urgência 3) — 'te conto o que fiz': lista o que fechou, POR QUÊ
+    (a conversa que resolveu) e COMO DESFAZER (comando desfaz N, reusa run_smart_undo
+    do agent_actions — o _close_task loga task_resolved+undo_hint). Não interrompe.
+    Padrão espelha a camada esperta do inbox (email)."""
     from services.notification_router import notify
-    lines = "\n".join(f"  - #{c['id']} {c['titulo']}" for c in closed)
+    lines = "\n".join(
+        f"  • #{c['id']} {c['titulo']}" +
+        (f" — {(c.get('reason') or '').strip()[:80]}" if c.get('reason') else "")
+        for c in closed
+    )
     msg = (
-        f"✅ {len(closed)} tarefa(s) fechada(s) automaticamente "
-        f"(resolvidas por conversa direta):\n{lines}\n\n"
-        f"Se alguma foi engano, me avisa que reabro."
+        f"🤖 Reconciliação (conversa/WA) — fechei {len(closed)} tarefa(s) que você "
+        f"resolveu direto:\n{lines}\n\n"
+        f"Se alguma foi engano, responde \"desfaz N\" (N = nº da tarefa) que eu reabro."
     )
     dedup = "tasks_reconciled:" + "-".join(str(c['id']) for c in sorted(closed, key=lambda x: x['id']))
     await notify(
-        "task_reconciler", "Tarefas fechadas pelo reconciler", msg, 3,
+        "task_reconciler", "Reconciliação: tarefas fechadas", msg, 3,
         msg_type="tasks_reconciled", dedup=dedup,
     )
 
