@@ -28585,11 +28585,52 @@ async def cron_monitor_cron_health(request: Request):
                 """
             )
             rows = cursor.fetchall()
+
+            # Fallback pra `cron_runs`: `cron_heartbeats` so e alimentado pelo
+            # worker Railway (workers/audio-transcriber/main.py). Um job que
+            # roda de verdade, mas cujo ultimo disparo veio de outro lugar
+            # (Vercel pre-cutover, GH Actions, curl manual), fica SEM heartbeat
+            # e era declarado "nunca disparou".
+            #
+            # Morde exatamente os jobs de intervalo LONGO: `platform-costs-
+            # snapshot` e mensal (dia 2), rodou certinho em 02/06 e 02/07 — mas
+            # como o worker so assumiu os crons em 13/07, o primeiro heartbeat
+            # dele so vem em 02/08. Resultado: alerta diario de "nunca disparou"
+            # por ~8 dias, pra um job saudavel. E a 2a vez desta classe (24/07
+            # foi cos-daily-review/cos-signal-router recem-registrados).
+            #
+            # `cron_runs` e gravado pelo `track_cron_run` do lado do INTEL,
+            # independente de quem disparou — e a evidencia mais confiavel de
+            # "este job executou". Convencao de path: /api/cron/<job_id>[?...].
+            # Job cujo path nao segue a convencao nao casa e mantem o
+            # comportamento antigo (sem regressao).
+            cursor.execute(
+                """
+                SELECT job_id, MAX(started_at) AS last_run FROM (
+                    SELECT regexp_replace(path, '^/api/cron/([^?]+).*$', '\\1') AS job_id,
+                           started_at
+                    FROM cron_runs
+                    WHERE status = 'success'
+                      AND path LIKE '/api/cron/%%'
+                      AND started_at > NOW() - INTERVAL '120 days'
+                ) t
+                GROUP BY job_id
+                """
+            )
+            run_rows = cursor.fetchall()
     except Exception as e:
         logging.exception(f"monitor-cron-health: DB query failed: {e}")
         raise HTTPException(status_code=500, detail=f"db_error: {e}")
 
     last_seen = {r["job_id"]: r["last_fired"] for r in rows}
+    # So preenche onde nao ha heartbeat — o heartbeat continua sendo a fonte
+    # preferencial (mais proxima do agendador).
+    last_run = {r["job_id"]: r["last_run"] for r in run_rows}
+    fallback_used: set = set()
+    for _jid, _ts in last_run.items():
+        if last_seen.get(_jid) is None and _ts is not None:
+            last_seen[_jid] = _ts
+            fallback_used.add(_jid)
 
     for job_id, expected_minutes in JOB_INTERVALS.items():
         last = last_seen.get(job_id)
@@ -28623,6 +28664,9 @@ async def cron_monitor_cron_health(request: Request):
             "expected_interval_min": expected_minutes,
             "gap_min": round(gap_min, 1),
             "status": status,
+            # Transparencia: de onde veio a evidencia de execucao. 'cron_runs'
+            # = o job rodou mas nao pelo worker (ver fallback acima).
+            "evidence": "cron_runs" if job_id in fallback_used else "heartbeat",
         })
 
         if status == "stale":
