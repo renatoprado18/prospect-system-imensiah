@@ -511,8 +511,8 @@ async def _synthesize_portao(precisa: List[Dict[str, Any]]) -> Dict[str, Any]:
         "Escolha no MÁXIMO 3 que GENUINAMENTE precisam dele HOJE — prazo hoje/vencido, irreversível, "
         "ou a janela fecha hoje. Logística e 'pode esperar' ficam de fora. Na dúvida, deixa fora.\n\n"
         f"{lst}\n\n"
-        "Retorne SÓ JSON: {\"hoje\": [{\"project_id\": N, \"porque\": \"1 frase curta\"}]} "
-        "— no máximo 3, ordenados por urgência."
+        "Retorne SÓ os IDS, ordenados por urgência (o mais urgente primeiro), no máximo 3. "
+        "JSON: {\"hoje\": [42, 26, 47]}"
     )
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -530,9 +530,19 @@ async def _synthesize_portao(precisa: List[Dict[str, Any]]) -> Dict[str, Any]:
         s, e = text.find("{"), text.rfind("}") + 1
         data = json.loads(text[s:e])
         valid = {p["project_id"] for p in precisa}
-        hoje = [h for h in (data.get("hoje") or [])[:3] if h.get("project_id") in valid]
-        return {"hoje_ids": [h["project_id"] for h in hoje],
-                "porques": {h["project_id"]: (h.get("porque") or "").strip() for h in hoje}}
+        # aceita [42, 26] OU (defensivo) [{"project_id":42}, ...] — só ids, sem
+        # porque re-gerado pelo LLM (era a fonte da troca de fios #42↔#41).
+        raw = data.get("hoje") or []
+        hoje_ids = []
+        for h in raw:
+            pid = h.get("project_id") if isinstance(h, dict) else h
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                continue
+            if pid in valid and pid not in hoje_ids:
+                hoje_ids.append(pid)
+        return {"hoje_ids": hoje_ids[:3], "porques": {}}
     except Exception as ex:
         logger.warning("synthesize_portao: %s", ex)
         return fallback
