@@ -147,7 +147,24 @@ def _has_embedded_errors(result: Any) -> tuple:
 
 
 # Sources validos pro header X-Cron-Source. Qualquer outro valor cai pra 'scheduled'.
-_VALID_TRIGGER_SOURCES = ("scheduled", "manual", "catch_up")
+#
+# 25/07/26 — 'railway-worker' ACEITO (era descartado pro fallback 'scheduled').
+# Motivo: o scheduler do worker Railway JA manda X-Cron-Source: railway-worker
+# (workers/audio-transcriber/main.py:131), mas o valor nao estava na lista e
+# degradava pra 'scheduled' — exatamente o mesmo carimbo de um curl ad-hoc (que
+# nao manda header nenhum). Resultado: cron_runs ficou sem como distinguir run
+# agendado de preview manual. Foi o que produziu a leitura de "duas series" de
+# /api/cron/triage-inbox-scan em 25/07 (as dry_run=true das 12:26 e 14:10 BRT
+# eram previews manuais da sessao Dev, nao um cron zumbi — nao ha segunda
+# entrada registrada em _SCHEDULER_JOBS nem em cron_registry).
+#
+# Efeito: runs do worker passam a gravar 'railway-worker'; curl ad-hoc continua
+# 'scheduled'. Pra jobs cujo unico agendador e o worker (inbox-zero-scan), a
+# distincao vira exata. Vercel cron / GH Actions nao mandam header e seguem
+# 'scheduled' (sem mudanca). Consumidores: o badge do dashboard so pinta
+# 'manual'/'catch_up' (valor novo = sem badge) e a query de catch-up filtra
+# 'catch_up' — nenhum quebra.
+_VALID_TRIGGER_SOURCES = ("scheduled", "manual", "catch_up", "railway-worker")
 
 
 def _insert_run(path: str, trigger_source: str = "scheduled") -> Optional[int]:
