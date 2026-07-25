@@ -42,6 +42,22 @@ _DM_DAYS = 21
 _NOTES_LIMIT = 3
 _MEM_LIMIT = 5        # memórias duráveis (boards/memos) recuperadas por frente
 _ESTADO_TIPO = "estado_cos"  # #4: nota de estado durável, UMA por projeto (UPSERT)
+_OUTBOUND_DAYS = 10   # janela do "o que o Renato JÁ fez" (outbound email+WA)
+_OUTBOUND_LIMIT = 12  # cap de ações outbound recentes surfaçadas por frente
+
+
+def _outbound_awareness_on() -> bool:
+    """Kill-switch da consciência de outbound (fix action-blindness 25/07).
+    Muda comportamento em prod (rebaixa precisa_de_voce quando o Renato já agiu),
+    então é reversível por env: COS_OUTBOUND_AWARENESS=0 volta ao comportamento
+    anterior (sem bloco de outbound, sem regra no prompt). Default = ligado."""
+    return os.getenv("COS_OUTBOUND_AWARENESS", "1").strip().lower() not in ("0", "false", "off", "no")
+
+
+# Regra injetada no system prompt SÓ quando a consciência de outbound está ligada.
+_OUTBOUND_RULE = """
+
+REGRA DE OUTBOUND (o Renato já agiu?): ANTES de marcar precisa_de_voce, confira o bloco "AÇÕES RECENTES DO RENATO" e as mensagens de grupo com remetente RENATO. Se ele JÁ EXECUTOU a ação que você ia pedir (enviou o e-mail, mandou a mensagem, comunicou a decisão), a expectativa JÁ FOI CUMPRIDA — NÃO marque precisa_de_voce por ela; na nota, registre que a ação já foi feita, com data e evidência (ex.: "e-mail aos 4 enviado 24/07"). Um ANÚNCIO de intenção ("vou mandar em breve") NÃO conta como feito — mas o e-mail/mensagem efetivamente ENVIADO que aparece no bloco de outbound SIM conta. Nunca re-cobre o que ele já fez."""
 
 _SYSTEM = """Você é a camada de inteligência do Renato — o Chief of Staff digital dele, rodando sozinho.
 
@@ -142,6 +158,39 @@ def _gather_memories(project_name: str, description: Optional[str],
     return out
 
 
+def _gather_renato_outbound(cursor, project_id: int, member_ids: List[int]) -> List[Dict[str, Any]]:
+    """AÇÕES do Renato: outbound (email+WA) que ELE já enviou nesta frente, por
+    MEMBERSHIP (DM a membro) OU por LINK do roteador (não-membro). Recency-first,
+    cap pequeno. Fecha a cegueira de outbound: a prova do que ele JÁ fez chega
+    SEMPRE ao debriefing, num bloco próprio — independente do LIMIT do window de
+    DM (que truncava o e-mail recém-enviado) e independente do roteador ter ligado
+    a mensagem. Read-only; falha graciosa = lista vazia (nunca quebra o gather)."""
+    rows: List[Dict[str, Any]] = []
+    try:
+        cursor.execute("""
+            SELECT DISTINCT m.id, cv.canal, COALESCE(m.enviado_em, m.recebido_em) AS ts,
+                   c.nome AS para, LEFT(m.conteudo, 500) AS conteudo
+            FROM messages m
+            JOIN conversations cv ON cv.id = m.conversation_id
+            JOIN contacts c ON c.id = cv.contact_id
+            LEFT JOIN message_project_links l
+                   ON l.message_id = m.id AND l.project_id = %s
+            WHERE m.direcao = 'outgoing'
+              AND cv.canal IN ('email', 'whatsapp')
+              AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - (%s || ' days')::interval
+              AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 10
+              AND (cv.contact_id = ANY(%s) OR l.project_id = %s)
+            ORDER BY ts DESC
+            LIMIT %s
+        """, (project_id, _OUTBOUND_DAYS, member_ids or [0], project_id, _OUTBOUND_LIMIT))
+        rows = [dict(r) for r in cursor.fetchall()]
+    except Exception as e:
+        # message_project_links (053) pode não existir — degrada gracioso.
+        logger.warning("frente_review: renato_outbound skip (%s)", e)
+        cursor.connection.rollback()
+    return rows
+
+
 def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
     """Reúne o estado real de uma frente (read-only). Espelha o smart_update."""
     cursor.execute("SELECT id, nome, descricao FROM projects WHERE id = %s", (project_id,))
@@ -172,8 +221,13 @@ def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
     dms: List[Dict[str, Any]] = []
     member_ids = [m["contact_id"] for m in members if m.get("contact_id")]
     if member_ids:
+        # RECÊNCIA-FIRST: ordena por ts DESC antes do LIMIT. O ORDER BY ts ASC
+        # antigo mantinha os 40 MAIS ANTIGOS e truncava as mensagens recentes —
+        # foi o que escondeu o e-mail que o Renato JÁ tinha enviado (Luminosità,
+        # 25/07: 48 msgs no window, o outbound recém-enviado caía fora do LIMIT).
+        # O _fmt_gather re-ordena cronológico por contato na hora de exibir.
         cursor.execute("""
-            SELECT m.conteudo, m.direcao, COALESCE(m.enviado_em, m.recebido_em) AS ts,
+            SELECT m.id, m.conteudo, m.direcao, COALESCE(m.enviado_em, m.recebido_em) AS ts,
                    c.nome AS contact_nome
             FROM messages m
             JOIN conversations cv ON cv.id = m.conversation_id
@@ -181,7 +235,7 @@ def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
             WHERE cv.contact_id = ANY(%s)
               AND COALESCE(m.enviado_em, m.recebido_em) > NOW() - (%s || ' days')::interval
               AND m.conteudo IS NOT NULL AND LENGTH(m.conteudo) > 10
-            ORDER BY cv.contact_id, COALESCE(m.enviado_em, m.recebido_em) ASC
+            ORDER BY COALESCE(m.enviado_em, m.recebido_em) DESC
             LIMIT 40
         """, (member_ids, _DM_DAYS))
         dms = [dict(r) for r in cursor.fetchall()]
@@ -230,8 +284,14 @@ def _gather_frente(cursor, project_id: int) -> Dict[str, Any]:
     member_names = [m["nome"] for m in members if m.get("nome")]
     memories = _gather_memories(project["nome"], project.get("descricao"), member_names)
 
+    # Ações outbound do Renato (o que ELE já fez) — só quando a consciência de
+    # outbound está ligada (kill-switch). Reversível: off = gather sem o bloco.
+    renato_outbound = (_gather_renato_outbound(cursor, project_id, member_ids)
+                       if _outbound_awareness_on() else [])
+
     return {"project": project, "tasks": tasks, "members": members, "dms": dms,
-            "routed": routed, "notes": notes, "groups": groups, "memories": memories}
+            "routed": routed, "notes": notes, "groups": groups, "memories": memories,
+            "renato_outbound": renato_outbound}
 
 
 def _has_signal(g: Dict[str, Any]) -> bool:
@@ -271,13 +331,24 @@ def _fmt_gather(g: Dict[str, Any]) -> str:
             dt = str(m.get("criado_em") or "?")[:10]
             parts.append(f"--- {dt} · {m.get('titulo') or ''} ---\n{(m.get('conteudo') or '')[:600]}")
 
-    # DMs dos membros (agrupadas por contato) — sinal das frentes sem grupo
+    # AÇÕES RECENTES DO RENATO (outbound) — o que ELE já fez. Bloco próprio e no
+    # topo pra o julgamento de precisa_de_voce não re-cobrar ação já executada.
+    if g.get("renato_outbound"):
+        parts.append("\n✅ AÇÕES RECENTES DO RENATO (outbound — e-mail/WA que ELE JÁ enviou nesta frente):")
+        for m in g["renato_outbound"]:
+            dt = str(m.get("ts") or "?")[:16]
+            parts.append(f"[{dt} · {m.get('canal')} → {m.get('para') or '?'}] RENATO: {(m.get('conteudo') or '')[:450]}")
+
+    # DMs dos membros (agrupadas por contato) — sinal das frentes sem grupo.
+    # O fetch vem ts DESC (recência sobrevive ao LIMIT); re-ordena cronológico
+    # por contato aqui e mostra as 12 MAIS RECENTES.
     if g.get("dms"):
         from collections import defaultdict
         convos = defaultdict(list)
         for m in g["dms"]:
             convos[m["contact_nome"]].append(m)
         for nome, msgs in convos.items():
+            msgs = sorted(msgs, key=lambda x: str(x.get("ts") or ""))
             parts.append(f"\n--- DM com {nome} (recentes) ---")
             for m in msgs[-12:]:
                 dt = str(m.get("ts") or "?")[:16]
@@ -324,6 +395,7 @@ async def review_frente(project_id: int, gather: Optional[Dict[str, Any]] = None
         return {"project_id": project_id, "error": "frente nao encontrada"}
 
     prompt = _fmt_gather(gather)
+    system = _SYSTEM + (_OUTBOUND_RULE if _outbound_awareness_on() else "")
     try:
         async with httpx.AsyncClient(timeout=45.0) as client:
             resp = await client.post(
@@ -332,7 +404,7 @@ async def review_frente(project_id: int, gather: Optional[Dict[str, Any]] = None
                 json={
                     "model": llm.BALANCED,
                     "max_tokens": 900,
-                    "system": _SYSTEM,
+                    "system": system,
                     "messages": [{"role": "user", "content": prompt}],
                 },
             )
