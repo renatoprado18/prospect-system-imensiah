@@ -17188,6 +17188,8 @@ async def cron_triage_inbox_scan(
     dry_run: bool = False,
     limit: int = 40,
     account: str = None,
+    inbox_zero: Optional[bool] = None,
+    calibration: Optional[bool] = None,
 ):
     """Aplica a triagem 4-bucket no INBOX ATUAL (backlog), nao so email novo.
 
@@ -17195,12 +17197,17 @@ async def cron_triage_inbox_scan(
       - dry_run: se true, so PREVIEW (nao age) — devolve per_email do que faria.
       - limit: max de emails por conta (default 40).
       - account: email de UMA conta (opcional); default = as 2 conectadas.
+      - inbox_zero: override do kill-switch (None=env INBOX_ZERO_ENABLED, default
+        OFF). true = modo "corredor" (tudo sai do inbox, 4 baldes + WA no !!Renato).
+      - calibration: override do kill-switch das regras Renato 24/07 (RC1-RC5;
+        None=env EMAIL_TRIAGE_CALIBRATION_ENABLED, default OFF). Use com dry_run
+        pra PREVIEW da experiencia calibrada sem tocar a caixa.
 
     Auth: Bearer CRON_SECRET (verify_cron_auth), como o email-triage-sweep.
 
     Returns:
-        {job, ok, processed, by_bucket, acted, dry_run, per_email, errors,
-         by_account, label_skipped_cap, duration_ms}
+        {job, ok, processed, by_bucket, acted, dry_run, inbox_zero_mode, per_email,
+         errors, by_account, label_skipped_cap, wa_renato_pushed, duration_ms}
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
@@ -17212,6 +17219,8 @@ async def cron_triage_inbox_scan(
             account_email=(account or None),
             limit=limit,
             dry_run=dry_run,
+            inbox_zero=inbox_zero,
+            calibration=calibration,
         )
         return {"job": "triage-inbox-scan", **result}
     except Exception as e:

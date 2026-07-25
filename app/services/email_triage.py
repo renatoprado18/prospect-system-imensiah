@@ -89,6 +89,36 @@ MAX_LABELS_PER_DAY = 50
 # inbox (!!Renato / !Andressa) usam o gate de 0.85 ja existente no must_read.
 ARCHIVE_ACTION_MIN_CONFIDENCE = 0.85
 
+
+# =============================================================================
+# Kill-switches (INBOX-ZERO + calibracao Renato 24/07) — GATE HUMANO
+# =============================================================================
+# Dois flags, AMBOS default OFF (comportamento preservador/legado byte-a-byte).
+# Renato liga cada um manualmente apos validar em dry_run. Lidos com .strip()
+# porque Vercel/Railway as vezes colam \n na env var ([[feedback_env_var_whitespace]]).
+#
+#   INBOX_ZERO_ENABLED               -> apply_triage_to_inbox vira "corredor":
+#                                       TUDO sai do inbox e cai em 1 dos 4 baldes.
+#                                       OFF = comportamento legado (must_read fica
+#                                       no inbox; incerto/silent ficam no inbox).
+#   EMAIL_TRIAGE_CALIBRATION_ENABLED -> liga as regras calibradas Renato 24/07
+#                                       (RC1-RC5, roteamento por ACAO-REQUERIDA)
+#                                       em classify_email_cos. OFF = classificador
+#                                       legado byte-a-byte (nao muda o prod sweep).
+
+def is_inbox_zero_enabled() -> bool:
+    """Kill-switch do modo INBOX-ZERO (apply_triage_to_inbox). Default OFF."""
+    return (os.getenv("INBOX_ZERO_ENABLED") or "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
+def is_calibration_enabled() -> bool:
+    """Kill-switch das regras calibradas Renato 24/07 (RC1-RC5). Default OFF."""
+    return (os.getenv("EMAIL_TRIAGE_CALIBRATION_ENABLED") or "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
 # Auto-archive gate (24/06/2026) — substitui o flag global por config
 # per conta em google_accounts.auto_archive_enabled. Lido a cada sweep.
 # Criterio destrava: FP rate < 1% em 14d (manual via Renato).
@@ -599,6 +629,7 @@ class EmailTriageService:
         account_email: str,
         account_type: str,
         contact_id: Optional[int] = None,
+        enable_calibration: Optional[bool] = None,
     ) -> Dict:
         """Classifica um email pelo modelo CoS (must_read | archive_proposed | silent).
 
@@ -1003,6 +1034,24 @@ class EmailTriageService:
                 "escalation": False,
                 "rule_hits": rule_hits,
             }
+
+        # RC (calibracao Renato 24/07): roteamento por ACAO-REQUERIDA. Gate humano
+        # (EMAIL_TRIAGE_CALIBRATION_ENABLED, default OFF). Roda ANTES de R4/R5/R6
+        # porque estes casos chegam de remetentes automaticos mas exigem acao
+        # (tabeliao/lastpass/convocacao) ou merecem arquivar (ML transacional) —
+        # o noreply-genrico do R4 os classificaria errado.
+        _calib = enable_calibration if enable_calibration is not None else is_calibration_enabled()
+        if _calib:
+            rc = classify_calibrated(
+                subject=subject,
+                body_text=body_text,
+                from_email=from_email,
+                from_name=from_name,
+                sender_domain=sender_domain,
+                account_type=account_type,
+            )
+            if rc is not None:
+                return rc
 
         # R4: no-reply / notifications / system
         if from_email:
@@ -2553,6 +2602,8 @@ async def apply_triage_to_inbox(
     account_email: Optional[str] = None,
     limit: int = 40,
     dry_run: bool = False,
+    inbox_zero: Optional[bool] = None,
+    calibration: Optional[bool] = None,
 ) -> Dict:
     """Aplica a triagem 4-bucket no INBOX ATUAL (backlog), nao so em email novo.
 
@@ -2560,33 +2611,46 @@ async def apply_triage_to_inbox(
     row em email_triage (idempotencia). Resultado: o inbox EXISTENTE do Renato
     (classificado sob o fluxo antigo, que nao agia) nunca recebe roteamento.
     Esta funcao varre `in:inbox` (sem janela de tempo), classifica CADA email
-    via classify_email_cos e roteia pros MESMOS 4 buckets do sweep, REUSANDO
-    route_mustread_labels/route_archive_bucket e as MESMAS chamadas Gmail
-    (_apply_generic_label / archive_message):
+    via classify_email_cos e roteia via resolve_inbox_action (puro/testavel),
+    reusando as MESMAS chamadas Gmail (_apply_generic_label / archive_message).
 
+    Dois modos (kill-switch `inbox_zero` / env INBOX_ZERO_ENABLED, default OFF):
+
+    LEGADO (inbox_zero=False, preservador):
       - must_read       -> !!Renato / !Andressa / Financeiro (MANTEM inbox).
       - R4 (noreply)     -> arquivar: remove INBOX, sem label (conf>=0.85).
       - R5/R6 (unsub/cold)-> deletar: label !!Deletar + remove INBOX (conf>=0.85).
       - silent / incerto -> no-op (fica no inbox).
 
+    INBOX-ZERO (inbox_zero=True — "corredor", tudo sai do inbox):
+      - must_read       -> label do balde + ARQUIVA (sai do inbox). Financeiro
+                           FUNDE em Andressa.
+      - R4/R7-personal/RC4/RC5-sem-frente -> arquivar (sai, sem label).
+      - R5/R6           -> !!Deletar + arquiva.
+      - silent / incerto -> !!Renato + arquiva (vira FILA de revisao do Renato).
+      - Novo !!Renato   -> aviso WhatsApp (so esse balde interrompe).
+
     NAO pula ja-triados (o alvo E o backlog). Idempotencia vem do Gmail:
-    label ja presente = no-op, arquivo ja fora do inbox = skip. Antes de agir,
-    checa o label atual (name->id da conta) e pula a acao se ja aplicada / ja
-    fora do inbox.
+    label ja presente = no-op, arquivo ja fora do inbox = skip.
 
     Args:
         account_email: se None, roda nas 2 contas conectadas; senao so nessa.
         limit: max de emails por conta (default 40).
         dry_run: se True, NAO age — devolve so o PREVIEW (per_email) do que faria.
+        inbox_zero: None => le env INBOX_ZERO_ENABLED (default OFF); bool força.
+        calibration: None => le env EMAIL_TRIAGE_CALIBRATION_ENABLED (default
+                     OFF) dentro do classify; bool força (pra preview em dry_run).
 
     Returns:
         {ok, processed, by_bucket:{renato,andressa,financeiro,arquivar,deletar,noop},
-         acted, dry_run, per_email:[...], errors, by_account, label_skipped_cap,
-         duration_ms}
+         acted, dry_run, inbox_zero_mode, per_email:[...], errors, by_account,
+         label_skipped_cap, wa_renato_pushed, wa_renato_would_push, duration_ms}
     """
     import time
     started = time.time()
     from integrations.gmail import GmailIntegration
+
+    iz = is_inbox_zero_enabled() if inbox_zero is None else bool(inbox_zero)
 
     stats: Dict = {
         "ok": True,
@@ -2597,10 +2661,13 @@ async def apply_triage_to_inbox(
         },
         "acted": 0,
         "dry_run": bool(dry_run),
+        "inbox_zero_mode": iz,
         "per_email": [],
         "errors": [],
         "by_account": {},
         "label_skipped_cap": 0,
+        "wa_renato_pushed": 0,
+        "wa_renato_would_push": 0,
         "duration_ms": 0,
     }
 
@@ -2732,6 +2799,7 @@ async def apply_triage_to_inbox(
                     account_email=acct_email,
                     account_type=acct_type,
                     contact_id=contact_id,
+                    enable_calibration=calibration,
                 )
                 classification = decision["classification"]
                 confidence = float(decision.get("ai_confidence") or 0.5)
@@ -2777,116 +2845,118 @@ async def apply_triage_to_inbox(
                     stats["per_email"].append(entry)
                     continue
 
-                # ---- Rota + acao (mesma logica do sweep 4f/4g) ----
-                if classification == "must_read":
-                    labels = route_mustread_labels(
-                        decision.get("suggested_tags"), acct_email
-                    )
-                    bucket = _mustread_bucket_name(labels)
-                    # Ja aplicado? (todos os labels-alvo ja presentes na msg)
-                    missing = [
-                        ln for ln in labels
-                        if not (name_to_id.get(ln) and name_to_id[ln] in label_ids)
-                    ]
-                    entry["bucket"] = bucket
-                    if not missing:
-                        entry["action"] = "skip:already_labeled"
-                        stats["by_bucket"]["noop"] += 1
-                    elif dry_run:
-                        entry["action"] = f"label:{','.join(missing)}"
-                        stats["by_bucket"][bucket] += 1
-                    else:
-                        applied_any = False
-                        for ln in missing:
-                            if labels_today >= MAX_LABELS_PER_DAY:
-                                stats["label_skipped_cap"] += 1
-                                break
-                            try:
-                                res = await _apply_generic_label(
-                                    gmail, ref["access_token"], gmail_id,
-                                    acct_email, None, None, ln,
-                                )
-                                if res.get("applied"):
-                                    applied_any = True
-                                    labels_today += 1
-                            except Exception as e:
-                                stats["errors"].append(
-                                    f"label {ln} {gmail_id[:12]}: {str(e)[:80]}"
-                                )
-                        entry["action"] = f"label:{','.join(missing)}" if applied_any else "skip:already_labeled"
-                        stats["by_bucket"][bucket] += 1
-                        if applied_any:
-                            stats["acted"] += 1
+                # ---- Rota + acao (roteamento PURO via resolve_inbox_action) ----
+                # Kill-switch iz decide LEGADO vs INBOX-ZERO. Executor unico:
+                # aplica label(s) faltantes -> arquiva (se pedido) -> remove
+                # !!Renato (arquivar/deletar) -> WA push se novo !!Renato.
+                action = resolve_inbox_action(decision, acct_email, iz)
+                bucket = action["bucket"]
+                labels = action["labels"]
+                entry["bucket"] = bucket
 
-                elif classification == "archive_proposed":
-                    bucket = route_archive_bucket(decision.get("rule_hits"), confidence)
-                    entry["bucket"] = bucket
-                    if bucket == "noop":
-                        entry["action"] = "noop:uncertain"
-                        stats["by_bucket"]["noop"] += 1
-                    elif "INBOX" not in label_ids:
-                        # Ja fora do inbox — nada a fazer.
-                        entry["action"] = "skip:not_in_inbox"
-                        stats["by_bucket"]["noop"] += 1
-                    elif dry_run:
-                        entry["action"] = (
-                            "label:!!Deletar+archive" if bucket == "deletar" else "archive"
-                        )
-                        stats["by_bucket"][bucket] += 1
-                    elif labels_today >= MAX_LABELS_PER_DAY:
-                        entry["action"] = "skip:cap"
+                if bucket == "noop":
+                    entry["action"] = (
+                        "noop:uncertain" if classification == "archive_proposed"
+                        else "noop:silent"
+                    )
+                    stats["by_bucket"]["noop"] += 1
+                    stats["per_email"].append(entry)
+                    continue
+
+                renato_label_id = name_to_id.get("!!Renato")
+                missing = [
+                    ln for ln in labels
+                    if not (name_to_id.get(ln) and name_to_id[ln] in label_ids)
+                ]
+                needs_archive = bool(action["archive"]) and ("INBOX" in label_ids)
+                needs_unlabel = bool(action["remove_renato"]) and bool(
+                    renato_label_id and renato_label_id in label_ids
+                )
+
+                # Preview do que faria (dry_run) / nada a fazer.
+                planned = []
+                if missing:
+                    planned.append("label:" + ",".join(missing))
+                if needs_archive:
+                    planned.append("archive")
+                if needs_unlabel:
+                    planned.append("unlabel_renato")
+
+                if not planned:
+                    entry["action"] = (
+                        "skip:not_in_inbox"
+                        if (action["archive"] and "INBOX" not in label_ids)
+                        else "skip:already_labeled"
+                    )
+                    stats["by_bucket"]["noop"] += 1
+                    stats["per_email"].append(entry)
+                    continue
+
+                if dry_run:
+                    entry["action"] = "+".join(planned)
+                    if action["notify_renato"] and "!!Renato" in missing:
+                        entry["would_notify_renato"] = True
+                        stats["wa_renato_would_push"] += 1
+                    stats["by_bucket"][bucket] += 1
+                    stats["per_email"].append(entry)
+                    continue
+
+                # ---- AGE ----
+                acted_this = False
+                new_renato_applied = False
+                for ln in missing:
+                    if labels_today >= MAX_LABELS_PER_DAY:
                         stats["label_skipped_cap"] += 1
-                    else:
-                        acted_this = False
-                        if bucket == "deletar":
-                            del_id = name_to_id.get("!!Deletar")
-                            if not (del_id and del_id in label_ids):
-                                try:
-                                    lr = await _apply_generic_label(
-                                        gmail, ref["access_token"], gmail_id,
-                                        acct_email, None, None, "!!Deletar",
-                                    )
-                                    if lr.get("applied"):
-                                        acted_this = True
-                                except Exception as e:
-                                    stats["errors"].append(
-                                        f"deletar_label {gmail_id[:12]}: {str(e)[:80]}"
-                                    )
-                        try:
-                            archived_ok = await gmail.archive_message(
-                                ref["access_token"], gmail_id
-                            )
-                        except Exception as e:
-                            archived_ok = False
-                            stats["errors"].append(
-                                f"archive {gmail_id[:12]}: {str(e)[:80]}"
-                            )
-                        # Feedback Renato (21/07): arquivar/deletar tem que TIRAR
-                        # o email da lista de atencao — remove !!Renato tambem
-                        # (no-op se ausente). Aditivo, nao muda a classificacao.
-                        try:
-                            await _remove_renato_label(
-                                gmail, ref["access_token"], gmail_id,
-                                renato_label_id=name_to_id.get("!!Renato"),
-                            )
-                        except Exception as e:
-                            stats["errors"].append(
-                                f"unlabel_renato {gmail_id[:12]}: {str(e)[:80]}"
-                            )
+                        break
+                    try:
+                        res = await _apply_generic_label(
+                            gmail, ref["access_token"], gmail_id,
+                            acct_email, None, None, ln,
+                        )
+                        if res.get("applied"):
+                            acted_this = True
+                            labels_today += 1
+                            if ln == "!!Renato":
+                                new_renato_applied = True
+                    except Exception as e:
+                        stats["errors"].append(
+                            f"label {ln} {gmail_id[:12]}: {str(e)[:80]}"
+                        )
+                if needs_archive:
+                    try:
+                        archived_ok = await gmail.archive_message(
+                            ref["access_token"], gmail_id
+                        )
                         if archived_ok:
                             acted_this = True
-                            labels_today += 1  # conta como acao destrutiva do dia
-                        entry["action"] = (
-                            "label:!!Deletar+archive" if bucket == "deletar" else "archive"
+                    except Exception as e:
+                        stats["errors"].append(
+                            f"archive {gmail_id[:12]}: {str(e)[:80]}"
                         )
-                        stats["by_bucket"][bucket] += 1
-                        if acted_this:
-                            stats["acted"] += 1
+                # Feedback Renato (21/07): arquivar/deletar tem que TIRAR o email
+                # da lista de atencao — remove !!Renato (no-op se ausente).
+                if action["remove_renato"]:
+                    try:
+                        await _remove_renato_label(
+                            gmail, ref["access_token"], gmail_id,
+                            renato_label_id=renato_label_id,
+                        )
+                    except Exception as e:
+                        stats["errors"].append(
+                            f"unlabel_renato {gmail_id[:12]}: {str(e)[:80]}"
+                        )
 
-                else:  # silent
-                    entry["bucket"] = "noop"
-                    entry["action"] = "noop:silent"
-                    stats["by_bucket"]["noop"] += 1
+                entry["action"] = "+".join(planned)
+                stats["by_bucket"][bucket] += 1
+                if acted_this:
+                    stats["acted"] += 1
+
+                # WA push SO quando um NOVO !!Renato entra (so esse balde
+                # interrompe — Renato 24/07). Dedup por gmail_id no notify.
+                if new_renato_applied and action["notify_renato"]:
+                    pushed = await _notify_new_renato(headers, gmail_id, decision)
+                    if pushed:
+                        stats["wa_renato_pushed"] += 1
 
             except Exception as e:
                 stats["errors"].append(f"process {gmail_id[:12]}: {str(e)[:120]}")
@@ -2955,9 +3025,371 @@ def route_archive_bucket(rule_hits: List[str], confidence: float) -> str:
         return "noop"
     if "R5_unsub" in hits or "R6_cold" in hits:
         return "deletar"
-    if "R4_noreply" in hits:
+    # R4 noreply + calibracao Renato 24/07 que vale ARQUIVAR (nao deletar):
+    # RC4 Mercado Livre transacional, RC5 juridico sem frente ativa casada.
+    if hits & {"R4_noreply", "RC4_ml_transacional", "RC5_juridico_sem_frente"}:
         return "arquivar"
     return "noop"
+
+
+# =============================================================================
+# Calibracao Renato (24/07/2026) — roteamento por ACAO-REQUERIDA
+# =============================================================================
+# PRINCIPIO-MAE (ratificado 24/07): roteia pelo que o email PEDE, nao por
+# categoria/remetente. "Exige DECISAO/escolha do Renato?" -> Renato.
+# "Execucao mecanica de algo ja decidido?" -> Andressa.
+#
+# Ex.: Club Athletico "convocacao p/ compra de titulo" PARECE administrativo mas
+# exige a DECISAO do Renato -> Renato (RC1). Comgas/Zoom/LastPass = executar ->
+# Andressa. Regras de alta precisao (FRASES, nao keyword solta) que devolvem um
+# decision dict completo — ou None (nao se aplica -> segue o fluxo R4+).
+#
+# Todas gated por EMAIL_TRIAGE_CALIBRATION_ENABLED (caller checa). Puras e
+# testaveis (classify_calibrated nao toca DB, exceto RC5 que cruza frente ativa).
+
+# RC1 — DECISAO do Renato (convocacao/assembleia/edital/subscricao/titulo).
+_RC1_DECISION_PHRASES = (
+    "convocação", "convocacao", "edital de convocação", "edital de convocacao",
+    "assembleia", "compra de título", "compra de titulo", "subscrição",
+    "subscricao", "chamada de capital", "capital call", "deliberação",
+    "deliberacao", "aprovação necessária", "aprovacao necessaria",
+    "sua decisão", "sua decisao", "aguardamos sua deliberação",
+    "aguardamos sua deliberacao", "requer sua aprovação", "requer sua aprovacao",
+    "ordem do dia",
+)
+# RC2 — Tabeliao / cancelamento de protesto -> Andressa (execucao mecanica).
+_RC2_TABELIAO_PHRASES = (
+    "cancelamento de protesto", "cancelamento do protesto", "tabelião",
+    "tabeliao", "tabelionato", "cartório de protesto", "cartorio de protesto",
+    "instrumento de protesto", "carta de anuência", "carta de anuencia",
+    "3º tabelião", "3o tabeliao",
+)
+# RC3 — LastPass / seguranca-de-conta -> Andressa (+ possivel phishing).
+_RC3_SECURITY_DOMAINS = (
+    "lastpass.com", "1password.com", "dashlane.com", "bitwarden.com",
+)
+_RC3_SECURITY_PHRASES = (
+    "lastpass", "1password", "senha mestra", "master password",
+    "alerta de segurança", "alerta de seguranca", "security alert",
+    "verificação de segurança", "verificacao de seguranca",
+    "atividade suspeita", "suspicious activity", "confirme sua conta",
+    "confirm your account", "redefinir sua senha", "reset your password",
+)
+# RC4 — Mercado Livre transacional (compra chegou / devolucao) -> Arquivar.
+_RC4_ML_DOMAINS = (
+    "mercadolivre.com.br", "mercadolivre.com", "mercadolibre.com",
+)
+_RC4_ML_TXN_PHRASES = (
+    "seu pacote", "sua compra", "seu pedido", "a caminho", "foi entregue",
+    "chegou", "devolução", "devolucao", "reembolso", "acompanhe seu envio",
+    "código de rastreamento", "codigo de rastreamento", "produto enviado",
+    "avaliação do produto", "avaliacao do produto", "compra realizada",
+)
+# RC5 — Monitoramento juridico (Jusbrasil/Escavador) — cruza FRENTE ATIVA.
+_RC5_LEGAL_DOMAINS = (
+    "jusbrasil.com.br", "jusbrasil.com", "escavador.com", "escavador.com.br",
+    "digesto.com.br",
+)
+_RC5_LEGAL_PHRASES = (
+    "nova publicação", "nova publicacao", "publicações do seu",
+    "publicacoes do seu", "monitoramento", "diário oficial", "diario oficial",
+    "intimação", "intimacao", "andamento processual", "novo processo",
+    "movimentação processual", "movimentacao processual", "novas publicações",
+    "novas publicacoes",
+)
+
+_ACCENT_MAP = str.maketrans("áàâãäéèêëíìîïóòôõöúùûüç", "aaaaaeeeeiiiiooooouuuuc")
+
+
+def _norm_txt(s: str) -> str:
+    """lower + sem acento + espaco colapsado — comparacao estavel de frase."""
+    return re.sub(r"\s+", " ", (s or "").lower().translate(_ACCENT_MAP)).strip()
+
+
+def _has_phrase(text_norm: str, phrases) -> bool:
+    return any(_norm_txt(p) in text_norm for p in phrases)
+
+
+def _decision(classification, priority, conf, reasons, tags, actions, rule_hit,
+              escalation=False):
+    """Monta o decision dict no formato de classify_email_cos."""
+    return {
+        "classification": classification,
+        "priority": priority,
+        "ai_confidence": conf,
+        "reasons": reasons if isinstance(reasons, list) else [reasons],
+        "suggested_tags": tags,
+        "suggested_actions": actions,
+        "escalation": escalation,
+        "rule_hits": [rule_hit],
+    }
+
+
+def classify_calibrated(
+    subject: str,
+    body_text: str,
+    from_email: str,
+    from_name: str,
+    sender_domain: str,
+    account_type: str = "professional",
+) -> Optional[Dict]:
+    """Regras calibradas Renato 24/07 — roteamento por ACAO-REQUERIDA.
+
+    Ordem = precisao decrescente. Retorna decision dict (mesmo shape do
+    classify_email_cos) ou None (nenhuma se aplica). Puro exceto RC5 (que cruza
+    frente ativa via _email_juridico_matches_active_front). Gate no caller.
+    """
+    subj_n = _norm_txt(subject)
+    body_n = _norm_txt(body_text[:3000])
+    hay = f"{subj_n}\n{body_n}"
+    dom = (sender_domain or "").lower()
+
+    # RC1 — DECISAO do Renato (subject prevalece; body confirma). ACAO: decidir.
+    if _has_phrase(subj_n, _RC1_DECISION_PHRASES) or _has_phrase(body_n, _RC1_DECISION_PHRASES):
+        return _decision(
+            "must_read", 8, 0.85,
+            ["RC1: exige DECISAO do Renato (convocacao/assembleia/deliberacao)"],
+            ["!!Renato", "decisao"],
+            [{"type": "decide", "reason": "convocacao/deliberacao"}],
+            "RC1_decisao_renato",
+        )
+
+    # RC2 — Tabeliao / cancelamento de protesto -> Andressa (mecanico).
+    if _has_phrase(hay, _RC2_TABELIAO_PHRASES):
+        return _decision(
+            "must_read", 6, 0.85,
+            ["RC2: tabeliao/cancelamento de protesto -> Andressa (execucao)"],
+            ["!Andressa", "admin", "protesto"],
+            [{"type": "delegate", "to": "andressa", "reason": "protesto/tabeliao"}],
+            "RC2_tabeliao_andressa",
+        )
+
+    # RC3 — LastPass / seguranca-de-conta -> Andressa (+ possivel phishing).
+    is_sec_dom = bool(dom) and any(dom == d or dom.endswith("." + d) for d in _RC3_SECURITY_DOMAINS)
+    if is_sec_dom or _has_phrase(hay, _RC3_SECURITY_PHRASES):
+        return _decision(
+            "must_read", 6, 0.85,
+            ["RC3: seguranca-de-conta (LastPass etc) -> Andressa. "
+             "POSSIVEL PHISHING: nao clicar link, verificar remetente"],
+            ["!Andressa", "seguranca-conta", "possivel-phishing"],
+            [{"type": "delegate", "to": "andressa", "reason": "seguranca-conta"}],
+            "RC3_seguranca_andressa",
+        )
+
+    # RC4 — Mercado Livre transacional -> Arquivar (nao deletar, nao Renato).
+    is_ml_dom = bool(dom) and any(dom == d or dom.endswith("." + d) for d in _RC4_ML_DOMAINS)
+    if is_ml_dom and _has_phrase(hay, _RC4_ML_TXN_PHRASES):
+        return _decision(
+            "archive_proposed", 2, 0.88,
+            ["RC4: Mercado Livre transacional (compra/entrega/devolucao) -> arquivar"],
+            ["arquivar-direto", "mercadolivre"],
+            [{"type": "archive", "reason": "ML transacional"}],
+            "RC4_ml_transacional",
+        )
+
+    # RC5 — Monitoramento juridico: cruza FRENTE ATIVA. Escala pro Renato SO se
+    # bate projeto/contato ativo; senao arquiva. NAO e regra fixa (Renato 24/07).
+    is_legal_dom = bool(dom) and any(dom == d or dom.endswith("." + d) for d in _RC5_LEGAL_DOMAINS)
+    if is_legal_dom or _has_phrase(hay, _RC5_LEGAL_PHRASES):
+        match = _email_juridico_matches_active_front(f"{subject}\n{body_text[:3000]}")
+        if match:
+            return _decision(
+                "must_read", 8, 0.82,
+                [f"RC5: monitoramento juridico de FRENTE ATIVA "
+                 f"({match.get('project_name')} #{match.get('project_id')})"],
+                ["!!Renato", "juridico", f"frente_{match.get('project_id')}"],
+                [{"type": "review", "reason": "juridico frente ativa"}],
+                "RC5_juridico_frente",
+            )
+        return _decision(
+            "archive_proposed", 2, 0.85,
+            ["RC5: monitoramento juridico SEM frente ativa casada -> arquivar"],
+            ["arquivar-direto", "juridico"],
+            [{"type": "archive", "reason": "juridico sem frente"}],
+            "RC5_juridico_sem_frente",
+        )
+
+    return None
+
+
+# Tokens genericos que NAO identificam entidade (reaproveita ideia do
+# detector_cruzamentos — mantido local pra nao acoplar ao detector, que esta
+# desativado — [[project_signals_deactivated]]).
+_JURIDICO_STOP = {
+    "grupo", "clinica", "consultoria", "associacao", "brasil", "group",
+    "holding", "company", "empresa", "conselho", "conselhos", "empresarial",
+    "foundation", "ltda", "sociedade", "participacoes", "servicos", "solucoes",
+    "tecnologia", "digital", "projeto", "onboarding", "processo", "publicacao",
+    "publicacoes", "diario", "oficial", "intimacao", "andamento", "juridico",
+    "jusbrasil", "escavador", "monitoramento", "recuperacao",
+}
+
+
+def _entity_tokens_local(*names: str) -> List[str]:
+    seen: set = set()
+    out: List[str] = []
+    for name in names:
+        for t in re.findall(r"[a-z0-9]+", _norm_txt(name)):
+            if len(t) >= 4 and t not in _JURIDICO_STOP and t not in seen:
+                seen.add(t)
+                out.append(t)
+    return out
+
+
+def _email_juridico_matches_active_front(text: str) -> Optional[Dict]:
+    """Cruza o texto de um email juridico com FRENTES ATIVAS (projetos + contatos).
+
+    Retorna {project_id, project_name} do 1o match, ou None. Deterministico,
+    sem LLM/signal (signals OFF — [[project_signals_deactivated]]): so um lookup
+    sincrono. So e chamado quando RC5 ja detectou um email juridico (raro), entao
+    o custo por-email e amortizado. Match = token significativo (>=4 chars) da
+    empresa_relacionada/nome do projeto (ou empresa de um contato ligado ao
+    projeto) aparece NOMEADO no texto do email (word-start).
+    """
+    text_n = _norm_txt(text)
+    if not text_n:
+        return None
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            # Projetos ativos (exclui os terminais). status default 'ativo'.
+            cur.execute(
+                """
+                SELECT id, nome, empresa_relacionada
+                FROM projects
+                WHERE COALESCE(status, 'ativo') NOT IN
+                      ('concluido', 'concluído', 'cancelado', 'arquivado', 'pausado')
+                """
+            )
+            projects = cur.fetchall()
+    except Exception as e:
+        logger.warning(f"_email_juridico_matches_active_front falhou: {e}")
+        return None
+
+    for p in projects:
+        tokens = _entity_tokens_local(p.get("empresa_relacionada") or "", p.get("nome") or "")
+        for t in tokens:
+            if re.search(r"\b" + re.escape(t), text_n):
+                return {"project_id": p.get("id"), "project_name": p.get("nome")}
+    return None
+
+
+# =============================================================================
+# INBOX-ZERO — roteamento por ACAO (puro, testavel sem Gmail)
+# =============================================================================
+# rule_hits de archive_proposed que valem ARQUIVAR direto (bucket 'arquivar'):
+# R4 noreply, R7 personal-default (promo pessoal), RC4 ML transacional, RC5
+# juridico sem frente. NAO inclui R7_personal_default no route_archive_bucket
+# LEGADO (mudaria o prod sweep) — so aqui, no modo INBOX-ZERO (gated).
+_ARQUIVAR_RULE_HITS = {
+    "R4_noreply", "R7_personal_default",
+    "RC4_ml_transacional", "RC5_juridico_sem_frente",
+}
+
+
+def resolve_inbox_action(
+    decision: Dict,
+    account_email: str,
+    inbox_zero: bool,
+) -> Dict:
+    """Roteamento PURO (testavel sem Gmail): decisao do classificador -> acao
+    concreta no inbox. Kill-switch: inbox_zero=False reproduz o comportamento
+    LEGADO byte-a-byte; True liga o modo INBOX-ZERO ("corredor": tudo sai).
+
+    Returns:
+        {bucket, labels, archive, remove_renato, notify_renato}
+          bucket        : 'renato'|'andressa'|'financeiro'|'arquivar'|'deletar'|'noop'
+          labels        : label(s) a ADICIONAR
+          archive       : remove da INBOX
+          remove_renato : tira !!Renato (arquivar/deletar)
+          notify_renato : WA interrompe (novo balde !!Renato) — so bucket renato
+    """
+    classification = decision.get("classification")
+    confidence = float(decision.get("ai_confidence") or 0.5)
+    rule_hits = decision.get("rule_hits") or []
+    suggested_tags = decision.get("suggested_tags") or []
+
+    # ---------------- LEGADO (preservador) — comportamento pre-24/07 ----------
+    if not inbox_zero:
+        if classification == "must_read":
+            labels = route_mustread_labels(suggested_tags, account_email)
+            return {
+                "bucket": _mustread_bucket_name(labels), "labels": labels,
+                "archive": False, "remove_renato": False, "notify_renato": False,
+            }
+        if classification == "archive_proposed":
+            bucket = route_archive_bucket(rule_hits, confidence)
+            if bucket == "deletar":
+                return {"bucket": "deletar", "labels": ["!!Deletar"], "archive": True,
+                        "remove_renato": True, "notify_renato": False}
+            if bucket == "arquivar":
+                return {"bucket": "arquivar", "labels": [], "archive": True,
+                        "remove_renato": True, "notify_renato": False}
+            return {"bucket": "noop", "labels": [], "archive": False,
+                    "remove_renato": False, "notify_renato": False}
+        # silent
+        return {"bucket": "noop", "labels": [], "archive": False,
+                "remove_renato": False, "notify_renato": False}
+
+    # ---------------- INBOX-ZERO (corredor) — TUDO sai do inbox ---------------
+    if classification == "must_read":
+        labels = route_mustread_labels(suggested_tags, account_email)
+        bucket = _mustread_bucket_name(labels)
+        # Financeiro FUNDE em Andressa (nao e balde proprio) — Renato 24/07.
+        if bucket == "financeiro":
+            bucket, labels = "andressa", ["!Andressa"]
+        return {
+            "bucket": bucket, "labels": labels, "archive": True,
+            "remove_renato": False, "notify_renato": (bucket == "renato"),
+        }
+
+    if classification == "archive_proposed":
+        hits = set(rule_hits)
+        if "R5_unsub" in hits or "R6_cold" in hits:
+            return {"bucket": "deletar", "labels": ["!!Deletar"], "archive": True,
+                    "remove_renato": True, "notify_renato": False}
+        if hits & _ARQUIVAR_RULE_HITS:
+            return {"bucket": "arquivar", "labels": [], "archive": True,
+                    "remove_renato": True, "notify_renato": False}
+        # Incerto/no-op -> Renato (fila de revisao). MUDANCA 1 (24/07): incerto
+        # NAO fica no inbox nem vira lixo; vira fila do Renato.
+        return {"bucket": "renato", "labels": ["!!Renato"], "archive": True,
+                "remove_renato": False, "notify_renato": True}
+
+    # silent (professional default, sem sinal forte) -> Renato review queue.
+    # MUDANCA 2 (24/07): silent tambem SAI do inbox pro balde certo.
+    return {"bucket": "renato", "labels": ["!!Renato"], "archive": True,
+            "remove_renato": False, "notify_renato": True}
+
+
+async def _notify_new_renato(
+    headers: Dict,
+    gmail_id: str,
+    decision: Dict,
+) -> bool:
+    """WA push quando um NOVO !!Renato entra na fila (so esse balde interrompe).
+
+    Renato 24/07: aviso por WhatsApp quando chegar um NOVO !!Renato. Dedup por
+    gmail_id (nao repete). Score 8 => WA imediato ([[porta_voz_signal_routing]]).
+    Defensivo: engole excecao (notificacao nunca derruba a triagem).
+    """
+    try:
+        from services.notification_router import notify
+        sender = (headers.get("from") or "")[:60]
+        subj = (headers.get("subject") or "(sem assunto)")[:70]
+        why = "; ".join((decision.get("reasons") or [])[:2])[:120]
+        txt = (
+            f"⭐ Novo !!Renato (inbox-zero)\n"
+            f"De: {sender}\n"
+            f"Assunto: {subj}\n"
+            f"Por que: {why}"
+        )
+        return await notify(
+            "inbox_triage", "Novo !!Renato", txt, 8,
+            msg_type="inbox_renato", dedup=f"inbox_renato:{gmail_id}",
+        )
+    except Exception:
+        return False
 
 
 async def _remove_renato_label(
