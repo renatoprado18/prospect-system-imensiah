@@ -119,6 +119,38 @@ def is_calibration_enabled() -> bool:
         "1", "true", "on", "yes",
     )
 
+
+def is_smart_layer_enabled() -> bool:
+    """Kill-switch da CAMADA ESPERTA do inbox (25/07/2026). Default OFF.
+
+    Liga o comportamento AGE + REVERSÍVEL sobre o roteamento do apply_triage_to_inbox:
+      - !Andressa  -> encaminha o email pra Andressa (idempotente por label Gmail).
+      - !!Renato   -> triagem inteligente: cruza a frente (signal_router), julga
+                      (1 LLM) e, se RESOLVIDO-CLARO (conf>=0.85 + task casada),
+                      FECHA/REMARCA a task (caminho task_reconciler: undo+audit),
+                      grava nota durável, tira !!Renato e NÃO pinga. Senão mantém
+                      !!Renato e escala no resumo.
+      - resumo     -> UM WhatsApp por run (só quando agiu ou há needs-you).
+
+    Com OFF o apply_triage_to_inbox roda byte-a-byte como antes (aditivo, gate
+    humano). Lido com .strip()/lower ([[feedback_env_var_whitespace]])."""
+    return (os.getenv("INBOX_SMART_LAYER") or "0").strip().lower() in (
+        "1", "true", "on", "yes",
+    )
+
+
+# Camada esperta (25/07/2026) — destino do encaminhamento + controle de idempotência.
+ANDRESSA_FORWARD_TO = "andressa@almeida-prado.com"
+# Label Gmail próprio do forward: checado ANTES de reenviar (o cron das 2h NÃO
+# pode re-encaminhar). Aplicado após o forward; a partir daí o email aparece em
+# label_ids e o forward vira no-op nas runs seguintes.
+ANDRESSA_FORWARD_LABEL = "andressa-encaminhado"
+# Barra pra AGIR sozinho na task (fechar/remarcar). Mesma do task_reconciler.
+SMART_RESOLVE_MIN_CONFIDENCE = 0.85
+# tipo da nota durável de "resolvido pelo email" — DISTINTO de estado_cos (que o
+# frente_review UPSERTa por DELETE+INSERT); aqui é append, não clobbera aquilo.
+SMART_NOTE_TIPO = "email_resolvido"
+
 # Auto-archive gate (24/06/2026) — substitui o flag global por config
 # per conta em google_accounts.auto_archive_enabled. Lido a cada sweep.
 # Criterio destrava: FP rate < 1% em 14d (manual via Renato).
@@ -2612,6 +2644,7 @@ async def apply_triage_to_inbox(
     dry_run: bool = False,
     inbox_zero: Optional[bool] = None,
     calibration: Optional[bool] = None,
+    smart: Optional[bool] = None,
 ) -> Dict:
     """Aplica a triagem 4-bucket no INBOX ATUAL (backlog), nao so em email novo.
 
@@ -2648,6 +2681,11 @@ async def apply_triage_to_inbox(
         inbox_zero: None => le env INBOX_ZERO_ENABLED (default OFF); bool força.
         calibration: None => le env EMAIL_TRIAGE_CALIBRATION_ENABLED (default
                      OFF) dentro do classify; bool força (pra preview em dry_run).
+        smart: None => le env INBOX_SMART_LAYER (default OFF); bool força. Liga a
+                     CAMADA ESPERTA (aditiva): forward Andressa + triagem
+                     inteligente do !!Renato (fecha/remarca task com undo+audit) +
+                     UM resumo WhatsApp/run. Em dry_run NÃO age — só reporta o que
+                     encaminharia/fecharia. Com OFF, roda byte-a-byte como antes.
 
     Returns:
         {ok, processed, by_bucket:{renato,andressa,financeiro,arquivar,deletar,noop},
@@ -2659,6 +2697,7 @@ async def apply_triage_to_inbox(
     from integrations.gmail import GmailIntegration
 
     iz = is_inbox_zero_enabled() if inbox_zero is None else bool(inbox_zero)
+    sl = is_smart_layer_enabled() if smart is None else bool(smart)
 
     stats: Dict = {
         "ok": True,
@@ -2678,6 +2717,28 @@ async def apply_triage_to_inbox(
         "wa_renato_would_push": 0,
         "duration_ms": 0,
     }
+    # Camada esperta: SÓ adiciona chaves ao stats quando ligada (OFF => dict
+    # de retorno byte-a-byte idêntico ao legado). Acumuladores por-run.
+    smart_forwarded = 0
+    smart_resolved_items: List[Dict] = []   # {task_id, action_label, reason, ...}
+    smart_needs_you: List[Dict] = []        # {from, subject, reason}
+    smart_project_index: List[Dict] = []
+    smart_api_key = ""
+    if sl:
+        stats["smart_mode"] = True
+        stats["smart_forwarded"] = 0
+        stats["smart_would_forward"] = 0
+        stats["smart_resolved"] = 0
+        stats["smart_would_resolve"] = 0
+        stats["smart_needs_you"] = 0
+        smart_api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        # Índice de frentes 1x/run (reuso do signal_router — cruza email->projeto).
+        try:
+            from services.signal_router import build_project_index
+            with get_db() as _conn:
+                smart_project_index = build_project_index(_conn.cursor())
+        except Exception as e:
+            stats["errors"].append(f"smart_index: {str(e)[:80]}")
 
     gmail = GmailIntegration()
     service = get_email_triage_service()
@@ -2867,6 +2928,101 @@ async def apply_triage_to_inbox(
                 labels = action["labels"]
                 entry["bucket"] = bucket
 
+                # ================= CAMADA ESPERTA (aditiva, gated por sl) =========
+                # A) !Andressa -> encaminha (idempotente por label). Aditivo: o
+                #    roteamento normal (!Andressa/arquiva) segue depois.
+                if sl and bucket == "andressa":
+                    try:
+                        fwd = await _smart_forward_to_andressa(
+                            gmail, ref["access_token"], gmail_id, headers, body,
+                            acct_email, label_ids, name_to_id, dry_run,
+                        )
+                    except Exception as e:
+                        fwd = {"status": f"erro:{str(e)[:40]}"}
+                        stats["errors"].append(f"smart_fwd {gmail_id[:12]}: {str(e)[:80]}")
+                    entry["smart_forward"] = fwd.get("status")
+                    if fwd.get("forwarded"):
+                        smart_forwarded += 1
+                        stats["smart_forwarded"] += 1
+                    elif fwd.get("would"):
+                        stats["smart_would_forward"] += 1
+
+                # B) !!Renato -> triagem inteligente (o coração). Julga se o email
+                #    RESOLVE uma task; se sim (conf>=barra + task casada), AGE
+                #    (fecha/remarca via task_reconciler + nota) e tira !!Renato.
+                #    Senão, mantém !!Renato e escala no resumo consolidado.
+                if sl and bucket == "renato":
+                    try:
+                        outcome = await _smart_triage_renato(
+                            gmail_id=gmail_id, headers=headers,
+                            from_email=from_email, contact_id=contact_id,
+                            body_text=(body.get("text") or ""),
+                            project_index=smart_project_index,
+                            api_key=smart_api_key,
+                        )
+                    except Exception as e:
+                        stats["errors"].append(f"smart_renato {gmail_id[:12]}: {str(e)[:80]}")
+                        outcome = {"resolved": False, "record": {
+                            "from": from_hdr[:40],
+                            "subject": (headers.get("subject") or "")[:60],
+                            "reason": f"erro:{str(e)[:40]}",
+                        }}
+
+                    if outcome.get("resolved"):
+                        rec = outcome["record"]
+                        entry["smart"] = "resolved"
+                        entry["smart_action"] = rec.get("action_label")
+                        entry["smart_task_id"] = rec.get("task_id")
+                        entry["bucket"] = "resolved"
+                        if dry_run:
+                            stats["smart_would_resolve"] += 1
+                            smart_resolved_items.append(rec)
+                            entry["action"] = (
+                                f"would:{rec.get('action_label')} "
+                                f"#{rec.get('task_id')}+unlabel_renato"
+                            )
+                            stats["per_email"].append(entry)
+                            continue
+                        # ---- AGE: fecha/remarca a task + nota durável ----
+                        try:
+                            _smart_apply_resolution(rec)
+                            stats["smart_resolved"] += 1
+                            stats["acted"] += 1
+                            smart_resolved_items.append(rec)
+                        except Exception as e:
+                            stats["errors"].append(
+                                f"smart_apply {gmail_id[:12]}: {str(e)[:80]}"
+                            )
+                        # Tira o email da fila !!Renato (não pinga).
+                        try:
+                            await _remove_renato_label(
+                                gmail, ref["access_token"], gmail_id,
+                                renato_label_id=name_to_id.get("!!Renato"),
+                            )
+                        except Exception as e:
+                            stats["errors"].append(
+                                f"smart_unlabel {gmail_id[:12]}: {str(e)[:80]}"
+                            )
+                        # Modo corredor (inbox-zero): resolvido também sai do inbox.
+                        if iz and "INBOX" in label_ids:
+                            try:
+                                await gmail.archive_message(ref["access_token"], gmail_id)
+                            except Exception:
+                                pass
+                        entry["action"] = (
+                            f"resolved:{rec.get('action_label')} "
+                            f"#{rec.get('task_id')}+unlabel_renato"
+                        )
+                        stats["per_email"].append(entry)
+                        continue
+                    else:
+                        # Precisa de decisão / ambíguo / sem match: mantém !!Renato
+                        # (fluxo normal abaixo) e entra no resumo. Ping individual
+                        # é suprimido (consolidado no fim do run).
+                        entry["smart"] = "needs_you"
+                        smart_needs_you.append(outcome["record"])
+                        stats["smart_needs_you"] += 1
+
                 if bucket == "noop":
                     entry["action"] = (
                         "noop:uncertain" if classification == "archive_proposed"
@@ -2907,7 +3063,9 @@ async def apply_triage_to_inbox(
 
                 if dry_run:
                     entry["action"] = "+".join(planned)
-                    if action["notify_renato"] and "!!Renato" in missing:
+                    # Camada esperta suprime o ping individual — o resumo
+                    # consolidado (1 WA/run) cobre os needs-you.
+                    if action["notify_renato"] and "!!Renato" in missing and not sl:
                         entry["would_notify_renato"] = True
                         stats["wa_renato_would_push"] += 1
                     stats["by_bucket"][bucket] += 1
@@ -2966,7 +3124,9 @@ async def apply_triage_to_inbox(
 
                 # WA push SO quando um NOVO !!Renato entra (so esse balde
                 # interrompe — Renato 24/07). Dedup por gmail_id no notify.
-                if new_renato_applied and action["notify_renato"]:
+                # Camada esperta suprime o ping individual — resumo consolidado
+                # (1 WA/run) cobre os needs-you.
+                if new_renato_applied and action["notify_renato"] and not sl:
                     pushed = await _notify_new_renato(headers, gmail_id, decision)
                     if pushed:
                         stats["wa_renato_pushed"] += 1
@@ -2976,6 +3136,22 @@ async def apply_triage_to_inbox(
                 logger.exception(f"inbox-scan process {gmail_id}")
                 entry.setdefault("action", f"error:{str(e)[:40]}")
             stats["per_email"].append(entry)
+
+    # Resumo consolidado da camada esperta (1 WA/run) — SÓ quando agiu ou há
+    # needs-you (dia parado = zero WA). Em dry_run vira preview no stats (usa a
+    # contagem de would-forward pra o preview refletir o que faria).
+    if sl:
+        fwd_for_summary = (
+            smart_forwarded if not dry_run else stats.get("smart_would_forward", 0)
+        )
+        if fwd_for_summary or smart_resolved_items or smart_needs_you:
+            try:
+                await _send_smart_summary(
+                    stats, fwd_for_summary, smart_resolved_items,
+                    smart_needs_you, dry_run,
+                )
+            except Exception as e:
+                stats["errors"].append(f"smart_summary: {str(e)[:80]}")
 
     stats["duration_ms"] = int((time.time() - started) * 1000)
     return stats
@@ -3841,6 +4017,400 @@ def compute_archive_fp_rate(days: int = 14) -> Dict:
         # google_accounts.auto_archive_enabled. Use compute_auto_archive_gate().
         "auto_archive_enabled_global_deprecated": False,
     }
+
+
+# =============================================================================
+# CAMADA ESPERTA DO INBOX (25/07/2026) — forward Andressa + triagem inteligente
+# =============================================================================
+# Tudo gated por INBOX_SMART_LAYER (default OFF). AGE + REVERSÍVEL: só age quando
+# há match claro; toda ação passa pelo undo+audit do agent_actions (mesmo contrato
+# do task_reconciler). Reuso: signal_router (email->frente), task_reconciler
+# (fechar task), agent_actions (undo/audit), gmail (forward/label), notification
+# (resumo WA). NÃO reinventa auto-close.
+
+
+async def _smart_forward_to_andressa(
+    gmail, access_token, gmail_id, headers, body,
+    account_email, label_ids, name_to_id, dry_run,
+) -> Dict:
+    """PARTE A — encaminha o email pra Andressa. Idempotente por label Gmail
+    próprio (ANDRESSA_FORWARD_LABEL): checa ANTES de reenviar (o cron das 2h não
+    re-encaminha) e aplica o label depois. dry_run => só reporta 'would_forward'."""
+    fwd_label_id = name_to_id.get(ANDRESSA_FORWARD_LABEL)
+    if fwd_label_id and fwd_label_id in (label_ids or []):
+        return {"status": "already_forwarded", "forwarded": False}
+    subject = headers.get("subject") or "(sem assunto)"
+    if dry_run:
+        return {"status": "would_forward", "would": True}
+    orig_from = headers.get("from") or ""
+    orig_date = headers.get("date") or ""
+    body_text = (body.get("text") or "")[:EMAIL_BODY_MAX_CHARS]
+    fwd_body = (
+        "Delegado por Renato via triagem automática.\n\n"
+        "---------- Mensagem encaminhada ----------\n"
+        f"De: {orig_from}\nData: {orig_date}\nAssunto: {subject}\n\n{body_text}"
+    )
+    res = await gmail.send_message(
+        access_token=access_token,
+        to=ANDRESSA_FORWARD_TO,
+        subject=f"Fwd: {subject}",
+        body=fwd_body,
+    )
+    if isinstance(res, dict) and res.get("error"):
+        return {"status": f"send_error:{str(res.get('error'))[:40]}", "forwarded": False}
+    # Idempotência: aplica o label próprio (cria se faltar; no-op nas próximas runs).
+    try:
+        await _apply_generic_label(
+            gmail, access_token, gmail_id, account_email, None, None,
+            ANDRESSA_FORWARD_LABEL,
+        )
+    except Exception as e:
+        logger.warning("inbox_smart forward label falhou: %s", e)
+    return {"status": "forwarded", "forwarded": True}
+
+
+def _smart_candidate_tasks(project_ids, contact_id, limit: int = 12) -> List[Dict]:
+    """Tasks pending relacionadas à(s) frente(s) confirmada(s) OU ao contato do
+    email. Sem match nenhum => lista vazia (o julgamento nem roda)."""
+    project_ids = [p for p in (project_ids or []) if p]
+    if not project_ids and not contact_id:
+        return []
+    clauses, params = [], []
+    if project_ids:
+        clauses.append("project_id = ANY(%s)")
+        params.append(list(project_ids))
+    if contact_id:
+        clauses.append("contact_id = %s")
+        params.append(contact_id)
+    where = " OR ".join(clauses)
+    sql = f"""
+        SELECT id, titulo, descricao, project_id, contact_id,
+               data_vencimento, data_criacao
+        FROM tasks
+        WHERE status = 'pending' AND ({where})
+        ORDER BY data_criacao DESC
+        LIMIT %s
+    """
+    params.append(limit)
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        logger.warning("inbox_smart candidate_tasks falhou: %s", e)
+        return []
+
+
+async def _smart_judge_resolution(subject, from_hdr, body_text, tasks, api_key) -> Dict:
+    """1 chamada LLM (FAST/Haiku, instrumentada) — decide se o email RESOLVE
+    (fecha/remarca) UMA das tasks candidatas, de forma inequívoca. Barra alta;
+    na dúvida resolved=false. JSON estrito; erro => resolved=false."""
+    import httpx
+    from services import llm, llm_usage
+
+    task_lines = "\n".join(
+        f"[#{t['id']}] {t['titulo']}"
+        + (f" — {(t.get('descricao') or '')[:120]}" if t.get("descricao") else "")
+        + (f" (vence {t['data_vencimento']:%d/%m/%Y})"
+           if t.get("data_vencimento") and hasattr(t["data_vencimento"], "strftime") else "")
+        for t in tasks
+    )
+    prompt = f"""Você decide se um EMAIL recebido evidencia, de forma INEQUÍVOCA, que uma TAREFA pendente foi concluída ou precisa ser remarcada.
+
+EMAIL:
+De: {from_hdr}
+Assunto: {subject}
+Corpo: {(body_text or '')[:1500]}
+
+TAREFAS PENDENTES CANDIDATAS:
+{task_lines}
+
+REGRAS (barra ALTA — na dúvida, resolved=false):
+- resolved=true SÓ se o email prova claramente que UMA tarefa foi concluída/avançada (ex.: terceiro confirmou "documento enviado", "boleto pago", "assinado/protocolado", "reunião remarcada para DATA").
+- action="close" quando a tarefa está concluída.
+- action="reschedule" quando o email remarca uma data — informe new_due_date (YYYY-MM-DD).
+- Cobrança, pergunta, pedido de decisão, menção casual, newsletter => resolved=false (o Renato decide).
+- Escolha UM task_id EXATAMENTE da lista acima; nunca invente.
+
+Responda APENAS um JSON: {{"resolved": true|false, "task_id": <id ou null>, "action": "close"|"reschedule"|"none", "new_due_date": "YYYY-MM-DD"|null, "confidence": 0.0-1.0, "reason": "1 frase curta"}}"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": llm.FAST, "max_tokens": 220,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+        if resp.status_code != 200:
+            logger.warning("inbox_smart judge %s: %s", resp.status_code, resp.text[:150])
+            return {"resolved": False, "confidence": 0.0, "reason": "llm erro"}
+        result = resp.json()
+        try:
+            llm_usage.record_response("inbox_smart.judge", llm.FAST, result)
+        except Exception:
+            pass
+        text = result.get("content", [{}])[0].get("text", "")
+        s, e = text.find("{"), text.rfind("}") + 1
+        if s < 0 or e <= s:
+            return {"resolved": False, "confidence": 0.0, "reason": "parse falhou"}
+        data = json.loads(text[s:e])
+        raw_tid = data.get("task_id")
+        tid = None
+        if raw_tid not in (None, "", "null"):
+            try:
+                tid = int(raw_tid)
+            except (TypeError, ValueError):
+                tid = None
+        return {
+            "resolved": bool(data.get("resolved")),
+            "task_id": tid,
+            "action": (data.get("action") or "none"),
+            "new_due_date": data.get("new_due_date"),
+            "confidence": float(data.get("confidence") or 0.0),
+            "reason": str(data.get("reason") or "")[:200],
+        }
+    except Exception as ex:
+        logger.warning("inbox_smart judge erro: %s", ex)
+        return {"resolved": False, "confidence": 0.0, "reason": f"erro: {ex}"}
+
+
+async def _smart_triage_renato(
+    *, gmail_id, headers, from_email, contact_id, body_text,
+    project_index, api_key,
+) -> Dict:
+    """PARTE B — o coração. Cruza a frente (signal_router), acha tasks candidatas
+    e julga (1 LLM). Retorna:
+        {"resolved": True,  "record": {task/action/...}}  -> AGE (fecha/remarca)
+        {"resolved": False, "record": {from/subject/reason}} -> mantém !!Renato
+
+    Guardrails: só resolved com conf>=barra E task DA LISTA candidata E ação
+    concreta (close/reschedule-com-data). Qualquer dúvida -> não age, escala."""
+    from services.signal_router import _prefilter, _confirm_links, _norm as _sr_norm
+
+    subject = headers.get("subject") or ""
+    from_hdr = headers.get("from") or ""
+    needs_record = {"from": from_hdr[:40], "subject": subject[:60], "reason": ""}
+    text = f"{subject}\n{body_text[:2000]}"
+
+    # 1. Cruza a frente: prefiltro barato -> confirma LLM só no que passou.
+    project_ids: List[int] = []
+    if project_index and api_key:
+        try:
+            cand = _prefilter(_sr_norm(text), project_index)
+        except Exception:
+            cand = []
+        if cand:
+            synth = {
+                "id": gmail_id, "canal": "email", "sender": from_hdr[:80],
+                "direcao": "incoming", "conteudo": text,
+            }
+            try:
+                project_ids = await _confirm_links(synth, cand, api_key)
+            except Exception:
+                project_ids = []
+
+    # 2. Tasks candidatas (por frente confirmada OU contato). Sem tasks -> escala.
+    tasks = _smart_candidate_tasks(project_ids, contact_id)
+    if not tasks:
+        needs_record["reason"] = "sem task/frente casada — decisão sua"
+        return {"resolved": False, "record": needs_record}
+    if not api_key:
+        needs_record["reason"] = "sem API key — mantido p/ você"
+        return {"resolved": False, "record": needs_record}
+
+    # 3. Julga (1 LLM).
+    verdict = await _smart_judge_resolution(subject, from_hdr, body_text, tasks, api_key)
+    tid = verdict.get("task_id")
+    task_map = {t["id"]: t for t in tasks}
+    action = verdict.get("action")
+    if (
+        verdict.get("resolved")
+        and float(verdict.get("confidence") or 0.0) >= SMART_RESOLVE_MIN_CONFIDENCE
+        and tid in task_map
+        and action in ("close", "reschedule")
+    ):
+        if action == "reschedule" and not verdict.get("new_due_date"):
+            needs_record["reason"] = verdict.get("reason") or "remarcação sem data clara"
+            return {"resolved": False, "record": needs_record}
+        task = task_map[tid]
+        rec = {
+            "task_id": tid,
+            "titulo": task.get("titulo"),
+            "action": action,
+            "action_label": "fechei" if action == "close" else "remarquei",
+            "new_due_date": verdict.get("new_due_date"),
+            "reason": verdict.get("reason") or "",
+            "confidence": float(verdict.get("confidence") or 0.0),
+            "project_id": task.get("project_id"),
+            "contact_id": task.get("contact_id"),
+            "task": task,
+            "from": from_hdr,
+            "subject": subject,
+        }
+        return {"resolved": True, "record": rec}
+
+    needs_record["reason"] = verdict.get("reason") or "precisa de decisão sua"
+    return {"resolved": False, "record": needs_record}
+
+
+def _smart_reschedule_task(task, new_due_date, confidence, reason) -> None:
+    """Remarca data de vencimento da task + log com undo (restaura a data antiga)."""
+    old = task.get("data_vencimento")
+    if old is None:
+        old_sql = "NULL"
+    else:
+        old_str = old.strftime("%Y-%m-%d") if hasattr(old, "strftime") else str(old)
+        old_sql = f"'{old_str}'"
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE tasks SET data_vencimento=%s WHERE id=%s AND status='pending'",
+            (new_due_date, task["id"]),
+        )
+        conn.commit()
+    from services.agent_actions import log_action
+    log_action(
+        action_type="task_rescheduled",
+        category="tasks",
+        title=f"Tarefa remarcada (inbox esperto): {task['titulo']}",
+        details=f"Remarcada p/ {new_due_date} por email. Confiança {confidence:.2f}. {reason}",
+        scope_ref={"task_id": task["id"], "contact_id": task.get("contact_id"),
+                   "project_id": task.get("project_id")},
+        source="inbox_smart_layer",
+        payload={"confidence": confidence, "reason": reason, "new_due_date": new_due_date},
+        undo_hint=f"UPDATE tasks SET data_vencimento={old_sql} WHERE id={task['id']}",
+    )
+
+
+def _persist_smart_note(project_id, task_id, action_label, from_hdr, subject) -> None:
+    """Nota durável na frente ('resolvido pelo email'). Append (tipo próprio),
+    NÃO clobbera a nota estado_cos do frente_review. Best-effort."""
+    if not project_id:
+        return
+    try:
+        from services.tz import format_brt
+        conteudo = (
+            f"{action_label.capitalize()} a tarefa #{task_id} a partir do email "
+            f"\"{(subject or '')[:120]}\" de {(from_hdr or '')[:80]} "
+            f"(triagem inteligente do inbox, {format_brt(now_utc())})."
+        )
+        meta = {
+            "task_id": task_id, "action": action_label, "source": "inbox_smart_layer",
+            "from": (from_hdr or "")[:120], "subject": (subject or "")[:200],
+        }
+        with get_db() as conn:
+            cur = conn.cursor()
+            ts = now_utc()
+            cur.execute(
+                """INSERT INTO project_notes
+                       (project_id, tipo, titulo, conteudo, autor, metadata, criado_em, atualizado_em)
+                   VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s)""",
+                (project_id, SMART_NOTE_TIPO, "Resolvido pelo email (inbox esperto)",
+                 conteudo, "inbox_smart_layer", json.dumps(meta, ensure_ascii=False), ts, ts),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.warning("inbox_smart note falhou: %s", e)
+
+
+def _smart_apply_resolution(rec) -> None:
+    """AGE: fecha/remarca a task REUSANDO o caminho do task_reconciler (fechar) —
+    undo+audit garantidos — + grava a nota durável na frente."""
+    task = rec["task"]
+    if rec["action"] == "close":
+        from services.task_reconciler import _close_task
+        _close_task(task, {"confidence": rec["confidence"], "reason": rec["reason"]})
+    elif rec["action"] == "reschedule":
+        _smart_reschedule_task(task, rec.get("new_due_date"), rec["confidence"], rec["reason"])
+    _persist_smart_note(
+        rec.get("project_id"), rec["task_id"], rec["action_label"],
+        rec.get("from"), rec.get("subject"),
+    )
+
+
+async def _send_smart_summary(stats, forwarded, resolved_items, needs_you, dry_run) -> None:
+    """PARTE C — UM WhatsApp/run consolidado (só quando agiu ou há needs-you).
+    dry_run => preview no stats, não envia."""
+    lines = ["🤖 Triagem inteligente (inbox)"]
+    if forwarded:
+        _fwd_verb = "Encaminharia" if dry_run else "Encaminhei"
+        lines.append(f"• {_fwd_verb} p/ Andressa: {forwarded}")
+    if resolved_items:
+        parts = []
+        for r in resolved_items:
+            rr = (r.get("reason") or "")[:40]
+            parts.append(
+                f"{r.get('action_label')} #{r.get('task_id')}" + (f" ({rr})" if rr else "")
+            )
+        lines.append("• Resolvi sozinho: " + " · ".join(parts))
+        lines.append(f"  desfaz: responde \"desfaz {resolved_items[0].get('task_id')}\"")
+    if needs_you:
+        lines.append(f"• Precisa de você ({len(needs_you)}):")
+        for n in needs_you[:5]:
+            subj = (n.get("subject") or "(sem assunto)")[:50]
+            frm = (n.get("from") or "")[:28]
+            lines.append(f"  - {subj} ({frm})")
+        if len(needs_you) > 5:
+            lines.append(f"  - +{len(needs_you) - 5} outros")
+    text = "\n".join(lines)
+    if dry_run:
+        stats["smart_summary_preview"] = text
+        return
+    from services.notification_router import notify
+    dedup = f"inbox_smart:{now_utc():%Y%m%d%H}"
+    await notify(
+        "inbox_smart", "Triagem inteligente", text, 8,
+        msg_type="inbox_smart_summary", dedup=dedup,
+    )
+    stats["smart_summary_sent"] = True
+
+
+def run_smart_undo(task_id: int) -> Dict:
+    """Desfaz a última ação da camada esperta sobre a task (reabre/restaura data).
+    Reusa o undo+audit do agent_actions (mesmo contrato do task_reconciler) —
+    executa o undo_hint gravado e marca a ação como 'undone'. Usado pelo comando
+    WhatsApp 'desfaz N' (N = task id). Aceita também a ação do próprio reconciler
+    (fonte-agnóstico por task_id) — desfazer um fechamento é sempre válido."""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id, undo_hint, action_type, title
+                FROM agent_actions
+                WHERE status = 'done'
+                  AND undo_hint IS NOT NULL
+                  AND action_type IN ('task_resolved', 'task_rescheduled')
+                  AND (scope_ref->>'task_id') = %s
+                ORDER BY criado_em DESC
+                LIMIT 1
+                """,
+                (str(task_id),),
+            )
+            row = cur.fetchone()
+        if not row:
+            return {"undone": False, "reason": "nada recente pra desfazer"}
+        hint = (row["undo_hint"] or "").strip()
+        up = hint.upper()
+        if not (up.startswith("UPDATE ") or up.startswith("DELETE ")):
+            return {"undone": False, "reason": "undo inválido"}
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute(hint)
+            conn.commit()
+        from services.agent_actions import mark_undone
+        mark_undone(row["id"])
+        return {"undone": True, "action_id": row["id"], "titulo": row.get("title")}
+    except Exception as e:
+        logger.warning("run_smart_undo falhou (task %s): %s", task_id, e)
+        return {"undone": False, "reason": str(e)[:80]}
 
 
 # Singleton

@@ -17190,6 +17190,7 @@ async def cron_triage_inbox_scan(
     account: str = None,
     inbox_zero: Optional[bool] = None,
     calibration: Optional[bool] = None,
+    smart: Optional[bool] = None,
 ):
     """Aplica a triagem 4-bucket no INBOX ATUAL (backlog), nao so email novo.
 
@@ -17202,6 +17203,10 @@ async def cron_triage_inbox_scan(
       - calibration: override do kill-switch das regras Renato 24/07 (RC1-RC5;
         None=env EMAIL_TRIAGE_CALIBRATION_ENABLED, default OFF). Use com dry_run
         pra PREVIEW da experiencia calibrada sem tocar a caixa.
+      - smart: override do kill-switch da CAMADA ESPERTA (None=env
+        INBOX_SMART_LAYER, default OFF). true = forward Andressa + triagem
+        inteligente do !!Renato (fecha/remarca task com undo+audit) + 1 resumo
+        WhatsApp/run. Use com dry_run pra PREVIEW do que encaminharia/fecharia.
 
     Auth: Bearer CRON_SECRET (verify_cron_auth), como o email-triage-sweep.
 
@@ -17221,6 +17226,7 @@ async def cron_triage_inbox_scan(
             dry_run=dry_run,
             inbox_zero=inbox_zero,
             calibration=calibration,
+            smart=smart,
         )
         return {"job": "triage-inbox-scan", **result}
     except Exception as e:

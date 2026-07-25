@@ -2627,6 +2627,21 @@ async def handle_bot_message(phone: str, message: str, message_id: str, mode: st
         logger.warning(f"Unauthorized bot message from {phone}")
         return "Este bot e de uso exclusivo. Acesso nao autorizado."
 
+    # 1b. Comando deterministico "desfaz N" (N = task id) — undo da camada esperta
+    # do inbox (fechei/remarquei uma task). Reusa run_smart_undo (undo+audit do
+    # agent_actions). Roda ANTES do brain LLM pra ser confiavel/barato.
+    _undo_m = re.match(r"^\s*desfaz\s+#?(\d+)\s*$", message.strip(), re.IGNORECASE)
+    if _undo_m:
+        _tid = int(_undo_m.group(1))
+        try:
+            from services.email_triage import run_smart_undo
+            _res = run_smart_undo(_tid)
+        except Exception as e:
+            return f"Nao consegui desfazer #{_tid}: {e}"
+        if _res.get("undone"):
+            return f"Feito — desfiz a acao da triagem na tarefa #{_tid} (reaberta/restaurada)."
+        return f"Nada recente pra desfazer em #{_tid} ({_res.get('reason','')})."
+
     # 2. Skip trivial messages
     if SKIP_PATTERNS.match(message.strip()):
         logger.debug(f"Skipping trivial message: {message}")
