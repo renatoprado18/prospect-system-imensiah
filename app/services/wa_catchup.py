@@ -130,6 +130,45 @@ def _existing_message_ids(conn, external_ids: List[str]) -> set:
     return {r["external_id"] for r in cur.fetchall()}
 
 
+# Decisoes do handler que NAO vao mudar por re-tentativa: a mensagem nao gera
+# linha em `messages` por natureza (sem conteudo, editada/revogada, de grupo,
+# do proprio bot). Replay de novo so queima Evolution + LLM e polui o audit.
+_TERMINAL_DECISIONS = (
+    "empty_content",
+    "null_message",
+    "group_message",
+    "group_or_self",
+    "bot_origin_skipped",
+)
+
+
+def _already_settled_ids(conn, external_ids: List[str]) -> set:
+    """IDs que o handler ja avaliou e descartou por razao terminal.
+
+    Why: sem isso o catchup entra em LIVELOCK — a msg nunca vira linha em
+    `messages`, entao toda run a re-detecta como 'missing' e re-replaya. Medido
+    em 25/07/26: 11 fosseis (jan-mai) re-tentados 40-95x/dia, ~495 replays
+    inuteis, com 2 deles estourando erro a cada run.
+    """
+    if not external_ids:
+        return set()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT DISTINCT message_id
+        FROM webhook_audit
+        WHERE message_id = ANY(%s)
+          AND decision IN ('skipped', 'error')
+          AND (
+              decision_reason = ANY(%s)
+              OR decision_reason LIKE 'bot_origin_skipped%%'
+          )
+        """,
+        (external_ids, list(_TERMINAL_DECISIONS)),
+    )
+    return {r["message_id"] for r in cur.fetchall()}
+
+
 async def _replay_through_webhook(record: Dict, instance: str) -> Optional[Dict]:
     """Simula payload de webhook e chama handler — garante mesma logica + audit."""
     from integrations.evolution_api import handle_evolution_webhook
@@ -156,17 +195,41 @@ async def _replay_through_webhook(record: Dict, instance: str) -> Optional[Dict]
         return {"error": str(e)}
 
 
+def _within_window(record: Dict, cutoff_epoch: int) -> bool:
+    """messageTimestamp dentro da janela do catchup.
+
+    Why: `hours` era parametro morto — o job varria as ultimas 20 msgs de cada
+    jid sem filtro de tempo, entao mensagem de janeiro entrava como 'missing'
+    num job que promete recuperar as ultimas 2h. Sem timestamp legivel a msg
+    passa (fail-open: melhor re-checar que perder recuperacao real).
+    """
+    ts = record.get("messageTimestamp")
+    if isinstance(ts, dict):  # Baileys as vezes manda {low, high, unsigned}
+        ts = ts.get("low")
+    try:
+        return int(ts) >= cutoff_epoch
+    except (TypeError, ValueError):
+        return True
+
+
 async def catchup_recent_dms(hours: int = 2, max_contacts: int = 50) -> Dict:
     """Itera contatos prioritarios, fetch ultimas msgs, replay faltantes."""
+    import time
+
     from database import get_db
 
     _, _, instance = _evolution_base()
+    cutoff_epoch = int(time.time()) - hours * 3600
 
     stats = {
+        "window_hours": hours,
         "checked_contacts": 0,
         "evolution_msgs_seen": 0,
         "missing_found": 0,
         "recovered": 0,
+        "skipped_terminal": 0,
+        "skipped_out_of_window": 0,
+        "skipped_by_handler": 0,
         "errors": 0,
         "details": [],
     }
@@ -199,21 +262,41 @@ async def catchup_recent_dms(hours: int = 2, max_contacts: int = 50) -> Dict:
 
                 with get_db() as conn:
                     existing = _existing_message_ids(conn, ext_ids)
+                    settled = _already_settled_ids(conn, ext_ids)
 
                 missing = [r for r in records
                            if (r.get("key") or {}).get("id") and (r.get("key") or {}).get("id") not in existing]
                 if not missing:
                     continue
 
-                stats["missing_found"] += len(missing)
-                logger.info(f"catchup: {c.get('nome')} ({jid}) — {len(missing)} missing msgs")
-
+                # Antes de replay: descarta o que ja foi julgado terminal e o
+                # que esta fora da janela. Ambos sao no-op garantido.
+                fresh = []
                 for rec in missing:
+                    if (rec.get("key") or {}).get("id") in settled:
+                        stats["skipped_terminal"] += 1
+                    elif not _within_window(rec, cutoff_epoch):
+                        stats["skipped_out_of_window"] += 1
+                    else:
+                        fresh.append(rec)
+
+                stats["missing_found"] += len(missing)
+                if not fresh:
+                    continue
+
+                logger.info(f"catchup: {c.get('nome')} ({jid}) — {len(fresh)} missing msgs a recuperar")
+
+                for rec in fresh:
                     res = await _replay_through_webhook(rec, instance)
                     if res and res.get("processed"):
                         stats["recovered"] += 1
                     elif res and res.get("error"):
                         stats["errors"] += 1
+                    else:
+                        # Handler recusou (skipped). Nao e erro, mas some das
+                        # contas se nao for contado — era o buraco entre
+                        # missing_found e recovered+errors.
+                        stats["skipped_by_handler"] += 1
 
                 stats["details"].append({
                     "contact_id": c.get("id"),
@@ -221,6 +304,7 @@ async def catchup_recent_dms(hours: int = 2, max_contacts: int = 50) -> Dict:
                     "jid": jid,
                     "evolution_count": len(records),
                     "missing": len(missing),
+                    "replayed": len(fresh),
                 })
             except Exception as e:
                 logger.warning(f"catchup contact {c.get('id')} jid {jid} error: {e}")

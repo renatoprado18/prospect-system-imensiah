@@ -728,8 +728,11 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
     from database import get_db
     import asyncio
 
-    message = data.get("message", {})
-    key = data.get("key", {})
+    # `or {}` (nao `.get(k, {})`): a Evolution manda "message": null explicito
+    # em mensagem EDITADA/revogada no store — o default do .get so vale se a
+    # chave faltar, entao o None passava e estourava no `in message` abaixo.
+    message = data.get("message") or {}
+    key = data.get("key") or {}
 
     # Extrair dados
     remote_jid = key.get("remoteJid", "")
@@ -927,24 +930,38 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
     elif "extendedTextMessage" in message:
         content = message["extendedTextMessage"].get("text", "")
     elif "imageMessage" in message:
-        content = message["imageMessage"].get("caption", "[Imagem]")
+        # `or` (nao default do .get): caption presente-e-vazia e o caso comum
+        # (imagem sem legenda) — com o default a msg virava content="" e caia
+        # no empty_content, perdendo o registro de que houve imagem.
+        content = message["imageMessage"].get("caption") or "[Imagem]"
         message_type = "image"
     elif "videoMessage" in message:
-        content = message["videoMessage"].get("caption", "[Vídeo]")
+        content = message["videoMessage"].get("caption") or "[Vídeo]"
         message_type = "video"
     elif "audioMessage" in message:
         content = "[Áudio]"
         message_type = "audio"
     elif "documentMessage" in message:
-        content = message["documentMessage"].get("fileName", "[Documento]")
+        content = message["documentMessage"].get("fileName") or "[Documento]"
         message_type = "document"
     elif "stickerMessage" in message:
         content = "[Figurinha]"
         message_type = "sticker"
+    elif "contactMessage" in message:
+        _nome = (message["contactMessage"] or {}).get("displayName") or ""
+        content = f"[Contato: {_nome}]" if _nome else "[Contato]"
+        message_type = "contact"
+    elif "contactsArrayMessage" in message:
+        content = "[Contatos]"
+        message_type = "contact"
 
     if not content:
-        _audit("skipped", "empty_content")
-        return {"processed": False, "reason": "empty_content"}
+        # Distingue os dois modos de "sem conteudo": message ausente/null
+        # (editada ou revogada no store da Evolution — nao ha o que gravar,
+        # nunca vai mudar) de tipo nao-mapeado (candidato a novo branch acima).
+        reason = "null_message" if data.get("message") is None else "empty_content"
+        _audit("skipped", reason)
+        return {"processed": False, "reason": reason}
 
     # Verificar se e uma resposta do Renato a uma proposta de acao
     # fromMe = True significa que a mensagem foi enviada do celular conectado (Renato)
