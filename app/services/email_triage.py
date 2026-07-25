@@ -3141,14 +3141,29 @@ async def apply_triage_to_inbox(
                 entry.setdefault("action", f"error:{str(e)[:40]}")
             stats["per_email"].append(entry)
 
-    # Resumo consolidado da camada esperta (1 WA/run) — SÓ quando agiu ou há
-    # needs-you (dia parado = zero WA). Em dry_run vira preview no stats (usa a
-    # contagem de would-forward pra o preview refletir o que faria).
+    # Resumo consolidado da camada esperta (1 WA/run). Em dry_run vira preview no
+    # stats (usa a contagem de would-forward pra o preview refletir o que faria).
+    #
+    # GATILHO — recalibração 25/07 (decisão do Renato, opção (a)): ENCAMINHAR PRA
+    # ANDRESSA NÃO INTERROMPE. Medido hoje: 2 WhatsApps em 2 runs só pra anunciar
+    # 5 encaminhamentos (3 errados), com smart_resolved=0 nas 8 runs do dia. O
+    # forward é execução mecânica — continua acontecendo e continua REGISTRADO
+    # (label andressa-encaminhado + agent_actions + per_email/stats), só some do
+    # WhatsApp.
+    #
+    # O resumo sai quando a camada mexeu no MUNDO do Renato:
+    #   (1) fechou/remarcou task (parte B) — decisão explícita do Renato; ou
+    #   (2) há e-mail que exige DECISÃO dele (needs_you). Este continua no gatilho
+    #       porque com a camada ON o ping individual de novo !!Renato está
+    #       SUPRIMIDO (ver `and not sl` acima): tirá-lo daqui deixaria o único
+    #       balde que interrompe (Renato 24/07) completamente mudo.
+    # Se o resumo sai por (1) ou (2), o encaminhamento É citado no texto — ele só
+    # deixa de ser motivo pra tocar o telefone, não vira invisível.
     if sl:
         fwd_for_summary = (
             smart_forwarded if not dry_run else stats.get("smart_would_forward", 0)
         )
-        if fwd_for_summary or smart_resolved_items or smart_needs_you:
+        if smart_resolved_items or smart_needs_you:
             try:
                 await _send_smart_summary(
                     stats, fwd_for_summary, smart_resolved_items,
@@ -3156,6 +3171,10 @@ async def apply_triage_to_inbox(
                 )
             except Exception as e:
                 stats["errors"].append(f"smart_summary: {str(e)[:80]}")
+        elif fwd_for_summary:
+            # Telemetria: a run agiu (encaminhou) e ficou calada de propósito —
+            # fica no cron_runs pra auditoria não achar que a camada não rodou.
+            stats["smart_summary_skipped"] = "forward_only"
 
     stats["duration_ms"] = int((time.time() - started) * 1000)
     return stats
@@ -4170,7 +4189,12 @@ async def _smart_forward_to_andressa(
 ) -> Dict:
     """PARTE A — encaminha o email pra Andressa. Idempotente por label Gmail
     próprio (ANDRESSA_FORWARD_LABEL): checa ANTES de reenviar (o cron das 2h não
-    re-encaminha) e aplica o label depois. dry_run => só reporta 'would_forward'."""
+    re-encaminha) e aplica o label depois. dry_run => só reporta 'would_forward'.
+
+    SILENCIOSO desde 25/07 (não entra no gatilho do resumo WhatsApp). Por isso o
+    rastro é explícito: label no Gmail + linha própria em agent_actions (além do
+    gmail_label_add que _apply_generic_label já grava). Sem undo_hint: e-mail
+    enviado não se desenvia — o que dá pra reverter é o roteamento no Gmail."""
     fwd_label_id = name_to_id.get(ANDRESSA_FORWARD_LABEL)
     if fwd_label_id and fwd_label_id in (label_ids or []):
         return {"status": "already_forwarded", "forwarded": False}
@@ -4201,6 +4225,21 @@ async def _smart_forward_to_andressa(
         )
     except Exception as e:
         logger.warning("inbox_smart forward label falhou: %s", e)
+    # Auditoria explícita da ação silenciosa (surface /agent-actions).
+    try:
+        from services.agent_actions import log_action
+        log_action(
+            action_type="email_forwarded_andressa",
+            category="email",
+            title=f"Encaminhado p/ Andressa: {subject[:80]}",
+            details=f"De: {orig_from[:80]} | conta: {_short_account(account_email)}",
+            scope_ref={"gmail_id": gmail_id, "account_email": account_email,
+                       "to": ANDRESSA_FORWARD_TO},
+            source="inbox_smart_layer",
+            payload={"subject": subject[:200], "from": orig_from[:120]},
+        )
+    except Exception as e:
+        logger.warning("inbox_smart forward audit falhou: %s", e)
     return {"status": "forwarded", "forwarded": True}
 
 
@@ -4471,8 +4510,10 @@ def _smart_apply_resolution(rec) -> None:
 
 
 async def _send_smart_summary(stats, forwarded, resolved_items, needs_you, dry_run) -> None:
-    """PARTE C — UM WhatsApp/run consolidado (só quando agiu ou há needs-you).
-    dry_run => preview no stats, não envia."""
+    """PARTE C — UM WhatsApp/run consolidado. O GATILHO fica no caller (25/07:
+    fechou/remarcou task OU precisa de você; encaminhamento sozinho NÃO dispara).
+    Quando o resumo sai, o encaminhamento é citado junto. dry_run => preview no
+    stats, não envia."""
     lines = ["🤖 Triagem inteligente (inbox)"]
     if forwarded:
         _fwd_verb = "Encaminharia" if dry_run else "Encaminhei"
