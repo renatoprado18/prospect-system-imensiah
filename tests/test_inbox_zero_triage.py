@@ -510,3 +510,152 @@ class TestApplyDryRun:
         # Toda ação de inbox-zero inclui archive (sai do inbox).
         for e in r["per_email"]:
             assert "archive" in e["action"]
+
+
+# ---------------------------------------------------------------------------
+# B1 (25/07) — guard de vendor de massa telecom/utility.
+#
+# Bug real (run 13:25 BRT, cron_runs #46449): dois e-mails da Vivo foram pro
+# balde ANDRESSA via R3_5_financial_gov ("Whitelist financeiro (vivo.com.br)
+# (sem keyword — priority menor)"), e a camada esperta ainda os ENCAMINHOU.
+# Causa-raiz: o DOMÍNIO estava valendo como prova de cobrança.
+#
+# Correção genérica (nenhuma regra cita "Vivo" como marca): categoria de
+# fornecedor (telecom/utilities) + exigência de evidência POSITIVA de cobrança.
+# ---------------------------------------------------------------------------
+class TestVendorBulkGuard2507:
+    # --- os dois e-mails REAIS da run 13:25 --------------------------------
+    def test_vivo_contrato_eletronico_vira_arquivar(self):
+        d = _calib(subject="Veja seu contrato dos serviços Vivo",
+                   from_email="contratoeletronico@vivo.com.br",
+                   from_name="Vivo - Contrato do Cliente",
+                   domain="vivo.com.br", account_type="personal")
+        assert d["classification"] == "archive_proposed"
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+        assert "!Andressa" not in d["suggested_tags"]
+        assert "!!Renato" not in d["suggested_tags"]
+
+    def test_vivo_campanha_app_vira_arquivar(self):
+        d = _calib(subject="Vai de App Vivo! Benefícios.",
+                   from_email="vivo@vivo.com.br", from_name="",
+                   domain="vivo.com.br", account_type="personal")
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+
+    # --- direção oposta: cobrança REAL não pode regredir -------------------
+    def test_vivo_fatura_real_continua_financeiro(self):
+        d = _calib(subject="Sua fatura Vivo já está disponível",
+                   from_email="faturadigital@vivo.com.br", domain="vivo.com.br")
+        assert d["classification"] == "must_read"
+        assert "financeiro" in d["suggested_tags"]
+        assert d["rule_hits"] == ["RC6_recibo_financeiro"]
+
+    def test_vivo_boleto_segunda_via_continua_financeiro(self):
+        d = _calib(subject="Segunda via do boleto — vencimento em 30/07",
+                   from_email="cobranca@vivo.com.br", domain="vivo.com.br")
+        assert d["rule_hits"] == ["RC6_recibo_financeiro"]
+        assert "financeiro" in d["suggested_tags"]
+
+    def test_comgas_fatura_continua_financeiro(self):
+        d = _calib(subject="Comgás - Sua fatura de gás venceu",
+                   from_email="naoresponda@comgas.com.br", domain="comgas.com.br")
+        assert d["rule_hits"] == ["RC6_recibo_financeiro"]
+
+    def test_cobranca_no_assunto_vence_copy_promocional(self):
+        # Assunto misto (promo + cobrança): cobrança no ASSUNTO sempre ganha.
+        d = _calib(subject="Aproveite o desconto e pague sua fatura hoje",
+                   from_email="mkt@claro.com.br", domain="claro.com.br")
+        assert d["rule_hits"] == ["RC6_recibo_financeiro"]
+
+    def test_rodape_com_fatura_em_peca_promocional_vira_arquivar(self):
+        # Campanha cujo ÚNICO sinal financeiro está no rodapé + assunto promo.
+        d = _calib(subject="Oferta exclusiva: dobro de internet",
+                   body="Aproveite. Consulte sua fatura no app Meu Vivo.",
+                   from_email="ofertas@vivo.com.br", domain="vivo.com.br")
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+
+    def test_rodape_com_fatura_sem_assunto_promo_nao_arquiva(self):
+        # Sem copy promocional no assunto e sem List-Unsubscribe: conservador,
+        # o corpo com "fatura" mantém a trilha financeira (RC6).
+        d = _calib(subject="Comunicado Vivo",
+                   body="Segue o valor a pagar da sua fatura deste mês.",
+                   from_email="atendimento@vivo.com.br", domain="vivo.com.br")
+        assert d["rule_hits"] == ["RC6_recibo_financeiro"]
+
+    def test_list_unsubscribe_conta_como_marcador_de_massa(self):
+        d = et.classify_calibrated(
+            subject="Comunicado Vivo", body_text="Consulte sua fatura no app.",
+            from_email="news@vivo.com.br", from_name="Vivo",
+            sender_domain="vivo.com.br", has_unsubscribe=True,
+        )
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+
+    # --- generalidade: não é hardcode de marca -----------------------------
+    def test_guard_vale_pra_outros_vendors_da_categoria(self):
+        for dom in ("claro.com.br", "tim.com.br", "enel.com.br", "cpfl.com.br",
+                    "sabesp.com.br", "email.comgas.com.br"):
+            d = _calib(subject="Conheça as vantagens do nosso clube",
+                       from_email=f"mkt@{dom}", domain=dom)
+            assert d is not None and d["rule_hits"] == ["RC8_vendor_marketing"], dom
+
+    def test_nao_vaza_pra_fornecedor_fora_da_categoria(self):
+        # Domínio comum sem copy de marketing continua caindo fora do RC8.
+        assert _calib(subject="Veja seu contrato dos serviços",
+                      from_email="contato@empresa.com.br",
+                      domain="empresa.com.br") is None
+
+    def test_helper_dominio_e_subdominio(self):
+        assert et._is_vendor_bulk_domain("vivo.com.br") is True
+        assert et._is_vendor_bulk_domain("email.vivo.com.br") is True
+        assert et._is_vendor_bulk_domain("") is False
+        assert et._is_vendor_bulk_domain("naovivo.com.br") is False
+
+    def test_bucket_final_e_arquivar_no_inbox_zero(self):
+        d = _calib(subject="Veja seu contrato dos serviços Vivo",
+                   from_email="contratoeletronico@vivo.com.br",
+                   domain="vivo.com.br", account_type="personal")
+        a = et.resolve_inbox_action(d, ACC, True)
+        assert a["bucket"] == "arquivar"
+        assert a["notify_renato"] is False
+        assert a["archive"] is True
+
+
+class TestVendorBulkGuardServiceLevel:
+    """Replay pelo classify_email_cos — o caminho que rodou em produção."""
+
+    def _svc(self, subject, from_email, domain, calibration, body="",
+             account_type="personal", headers_extra=None):
+        svc = et.EmailTriageService()
+        headers = {"from": f"X <{from_email}>", "subject": subject}
+        headers.update(headers_extra or {})
+        return svc.classify_email_cos(
+            headers=headers, body_text=body, gmail_label_ids=[],
+            account_email="renato.almeida.prado@gmail.com",
+            account_type=account_type, contact_id=None,
+            enable_calibration=calibration,
+        )
+
+    def test_regressao_vivo_calibracao_on(self):
+        d = self._svc("Veja seu contrato dos serviços Vivo",
+                      "contratoeletronico@vivo.com.br", "vivo.com.br", True)
+        assert d["rule_hits"] == ["RC8_vendor_marketing"]
+        assert et.resolve_inbox_action(d, ACC, True)["bucket"] == "arquivar"
+
+    def test_regressao_vivo_calibracao_off_sai_do_whitelist(self):
+        # Com calibração OFF o RC não roda: o guard do R3.5 é quem impede que
+        # o domínio Vivo, sozinho, vire "financeiro" -> Andressa.
+        d = self._svc("Veja seu contrato dos serviços Vivo",
+                      "contratoeletronico@vivo.com.br", "vivo.com.br", False)
+        assert "R3_5_financial_gov" not in d["rule_hits"]
+        assert "financeiro" not in [str(t).lower() for t in d["suggested_tags"]]
+
+    def test_fatura_real_calibracao_off_continua_financeiro(self):
+        d = self._svc("Sua fatura Vivo já está disponível",
+                      "faturadigital@vivo.com.br", "vivo.com.br", False)
+        assert d["rule_hits"] == ["R3_5_financial_gov"]
+        assert d["classification"] == "must_read"
+
+    def test_banco_fora_da_categoria_nao_muda(self):
+        # Guard é só telecom/utility: banco continua no whitelist financeiro.
+        d = self._svc("Extrato disponível", "noreply@itau.com.br",
+                      "itau.com.br", False)
+        assert d["rule_hits"] == ["R3_5_financial_gov"]

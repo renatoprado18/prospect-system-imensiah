@@ -695,6 +695,10 @@ class EmailTriageService:
         list_unsubscribe = headers.get("list-unsubscribe", "") or headers.get("List-Unsubscribe", "")
         # Gmail headers may be only in payload — passar headers ja parseados
         # mas list-unsubscribe nem sempre vem. Buscamos no msg payload tbm.
+        # Computado AQUI (nao mais so no R5) porque o bloco RC — que roda antes —
+        # usa List-Unsubscribe como marcador de disparo em massa (guard de vendor).
+        headers_lower = {k.lower(): v for k, v in (headers or {}).items()}
+        has_unsubscribe = bool(list_unsubscribe or headers_lower.get("list-unsubscribe"))
 
         # Extrai email do remetente
         from_email = ""
@@ -826,6 +830,7 @@ class EmailTriageService:
                 from_name=from_name,
                 sender_domain=sender_domain,
                 account_type=account_type,
+                has_unsubscribe=has_unsubscribe,
             )
             if rc is not None:
                 return rc
@@ -896,25 +901,24 @@ class EmailTriageService:
         text_lc_fin = f"{subject} {body_text[:1500]}".lower()
         has_financial_kw = any(kw in text_lc_fin for kw in financial_keywords)
 
-        # Telco exception: dominios telco entram no FINANCIAL_DOMAINS pq
-        # fatura real e legitima, mas newsletters promocionais (oferta wifi,
-        # multas, desconto) sao noise. Se bate promo SEM bate fatura, sai
-        # do whitelist (vai cair em R4/R5 e arquivar).
-        TELCO_DOMAINS = ("claro.com.br", "mi.claro.com.br", "vivo.com.br", "tim.com.br")
-        is_telco = bool(sender_domain) and any(sender_domain.endswith(d) for d in TELCO_DOMAINS)
-        if is_telco and is_financial_domain:
-            fatura_kw = (
-                "fatura", "boleto", "vencimento", "pagamento devido",
-                "atraso", "nota fiscal", "segunda via",
-            )
-            promo_kw = (
-                "oferta", "promocao", "promoção", "desconto", "ganhe",
-                "contrate", "novidade", "wifi mais", "wi-fi mais",
-            )
-            has_fatura = any(k in text_lc_fin for k in fatura_kw)
-            has_promo = any(k in text_lc_fin for k in promo_kw)
-            if has_promo and not has_fatura:
-                # Promo telco — nao vira must_read, fluir pra R4/R5
+        # Guard de vendor de massa (telecom/utility). Estes dominios entram no
+        # FINANCIAL_DOMAINS porque a fatura real e legitima — mas o DOMINIO
+        # SOZINHO nao prova cobranca, so diz quem mandou. Recalibracao 25/07
+        # (run real 13:25 BRT): "Veja seu contrato dos servicos Vivo" e "Vai de
+        # App Vivo! Beneficios." caiam no whitelist -> !!Renato+financeiro ->
+        # bucket Andressa. Nem decisao do Renato, nem execucao da Andressa.
+        #
+        # Inversao do gate (era opt-out por keyword de promo, agora e opt-IN por
+        # evidencia de cobranca): sem "fatura/boleto/2a via/vencimento/codigo de
+        # barras" o email NAO e financeiro. Estritamente mais amplo que a regra
+        # antiga (promo sem fatura continua saindo), e fatura real nao regride.
+        is_vendor_bulk = _is_vendor_bulk_domain(sender_domain)
+        if is_vendor_bulk and is_financial_domain:
+            text_norm_fin = _norm_txt(text_lc_fin)
+            has_billing_evidence = _has_phrase(text_norm_fin, _BILLING_EVIDENCE_PHRASES)
+            if not has_billing_evidence:
+                # Vendor de massa sem prova de cobranca — fluir pra R4/R5/R7
+                # (ou, com calibracao ON, ja arquivado pelo RC8 sinal (c)).
                 is_financial_domain = False
         # Whitelist domain = must_read (alta priority com keyword, media sem).
         # Whitelist e altamente seletiva — Agilize/banco/Receita so manda
@@ -1169,10 +1173,7 @@ class EmailTriageService:
                 }
 
         # R5: List-Unsubscribe + dominio comercial
-        # Re-extrai do payload header (mais robusto)
-        headers_lower = {k.lower(): v for k, v in (headers or {}).items()}
-        has_unsubscribe = bool(list_unsubscribe or headers_lower.get("list-unsubscribe"))
-
+        # (headers_lower/has_unsubscribe ja computados no topo — o bloco RC usa)
         # Tambem chega via lookup direto no message.payload.headers — caller
         # pode injetar via headers dict ja com lowercase
         if has_unsubscribe and sender_domain:
@@ -3342,6 +3343,88 @@ _RC8_MARKETING_SUBJECT_PHRASES = (
 )
 _RC8_BULK_SUBDOMAIN_LABELS = ("news", "newsletter", "mkt", "marketing", "email")
 
+# RC8 sinal (c) — VENDOR DE MASSA (telecom/utilities). Recalibracao 25/07 (run
+# real 13:25 BRT): "Vivo - Contrato do Cliente <contratoeletronico@vivo.com.br>
+# — Veja seu contrato dos servicos Vivo" e "Vai de App Vivo! Beneficios." foram
+# pro balde Andressa via R3_5_financial_gov (vivo.com.br esta no FINANCIAL_
+# DOMAINS por causa da fatura legitima). Causa-raiz: o DOMINIO sozinho estava
+# sendo tratado como prova de cobranca. Ele so diz QUEM mandou.
+#
+# Principio-mae: rotear por ACAO-REQUERIDA. Comunicacao promocional/transacional
+# -de-massa de telecom/utility (contrato eletronico, campanha de app, beneficio,
+# oferta) NAO exige decisao do Renato NEM execucao da Andressa -> arquivar.
+# Cobranca de verdade (fatura/boleto/2a via/codigo de barras) traz evidencia
+# EXPLICITA e continua indo pro Financeiro -> Andressa (RC6 roda antes, e o
+# guard abaixo exige evidencia negativa antes de arquivar). Generico: a lista e
+# de CATEGORIA de fornecedor, nao de marca ("Vivo" nao aparece em regra nenhuma
+# alem desta lista de dominios, igual claro/tim/comgas ja apareciam).
+_VENDOR_BULK_DOMAINS = (
+    # telecom
+    "vivo.com.br", "claro.com.br", "mi.claro.com.br", "tim.com.br",
+    "oi.com.br", "algartelecom.com.br", "sky.com.br", "nextel.com.br",
+    "telefonica.com", "telefonica.com.br", "net.com.br",
+    # utilities (energia/gas/agua)
+    "comgas.com.br", "enel.com", "enel.com.br", "cpfl.com.br",
+    "sabesp.com.br", "light.com.br", "cemig.com.br", "copel.com",
+    "neoenergia.com", "equatorialenergia.com.br", "eletropaulo.com.br",
+)
+
+# Evidencia POSITIVA de cobranca. Enquanto ela aparecer o email NAO e tratado
+# como marketing — volta pra trilha financeira (Financeiro/Andressa). Esta e a
+# trava que impede o guard de comer boleto de verdade.
+_BILLING_EVIDENCE_PHRASES = (
+    "fatura", "boleto", "vencimento", "vence em", "vence amanha", "venceu",
+    "pagamento devido", "pagamento em atraso", "em atraso", "cobranca",
+    "segunda via", "2a via", "nota fiscal", "nf-e", "codigo de barras",
+    "linha digitavel", "valor a pagar", "total a pagar", "debito automatico",
+    "conta de consumo", "conta a pagar", "invoice", "amount due",
+    "pagamento confirmado", "pagamento recebido", "comprovante", "recibo",
+    "pix copia e cola",
+)
+
+# Copy promocional NO ASSUNTO — aplicada SO a vendor de massa (blast radius
+# limitado; nao entra no _RC8_MARKETING_SUBJECT_PHRASES global, que vale pra
+# qualquer remetente). Fatura de verdade nunca traz "oferta"/"beneficios"/
+# "baixe o app" no assunto.
+_VENDOR_PROMO_SUBJECT_PHRASES = (
+    "oferta", "promocao", "desconto", "beneficio", "beneficios", "vantagens",
+    "aproveite", "ganhe", "contrate", "assine", "clube de vantagens",
+    "baixe o app", "no app", "vai de app", "upgrade", "migre", "portabilidade",
+    "conheca", "novidade", "campanha", "combo", "planos a partir de",
+    "dobro de internet", "wifi mais", "wi-fi mais", "pontos",
+)
+
+
+def _is_vendor_bulk_domain(dom: str) -> bool:
+    """Dominio (ou subdominio) de fornecedor telecom/utility de disparo em massa."""
+    d = (dom or "").lower()
+    if not d:
+        return False
+    return any(d == v or d.endswith("." + v) for v in _VENDOR_BULK_DOMAINS)
+
+
+def _vendor_bulk_marketing(subj_n: str, body_n: str, dom: str,
+                           has_unsubscribe: bool = False) -> bool:
+    """True = comunicacao de MASSA de telecom/utility SEM prova de cobranca.
+
+    Precedencia (conservadora — na duvida NAO e marketing):
+      1. assunto com evidencia de cobranca ("fatura", "2a via", "vence em")
+         -> NUNCA marketing (fatura real segue pra Andressa/Financeiro).
+      2. corpo com evidencia de cobranca -> so vira marketing se o ASSUNTO for
+         promocional explicito ou o email trouxer List-Unsubscribe (rodape
+         "consulte sua fatura no app" em peca de campanha).
+      3. zero evidencia de cobranca -> massa/institucional ("Veja seu contrato
+         dos servicos Vivo") -> marketing -> arquivar.
+    """
+    if not _is_vendor_bulk_domain(dom):
+        return False
+    if _has_phrase(subj_n, _BILLING_EVIDENCE_PHRASES):
+        return False
+    promo = _has_phrase(subj_n, _VENDOR_PROMO_SUBJECT_PHRASES) or bool(has_unsubscribe)
+    if _has_phrase(body_n, _BILLING_EVIDENCE_PHRASES):
+        return promo
+    return True
+
 
 _ACCENT_MAP = str.maketrans("áàâãäéèêëíìîïóòôõöúùûüç", "aaaaaeeeeiiiiooooouuuuc")
 
@@ -3377,6 +3460,7 @@ def classify_calibrated(
     from_name: str,
     sender_domain: str,
     account_type: str = "professional",
+    has_unsubscribe: bool = False,
 ) -> Optional[Dict]:
     """Regras calibradas Renato 24/07 — roteamento por ACAO-REQUERIDA.
 
@@ -3388,6 +3472,10 @@ def classify_calibrated(
     body_n = _norm_txt(body_text[:3000])
     hay = f"{subj_n}\n{body_n}"
     dom = (sender_domain or "").lower()
+    # Guard de vendor de massa (telecom/utility) — computado uma vez, consumido
+    # pelo RC6 (nao deixa copy promocional entrar na trilha financeira) e pelo
+    # RC8 (sinal (c): arquiva a peca de massa).
+    vendor_bulk_mkt = _vendor_bulk_marketing(subj_n, body_n, dom, has_unsubscribe)
 
     # RC1 — DECISAO do Renato (subject prevalece; body confirma). ACAO: decidir.
     if _has_phrase(subj_n, _RC1_DECISION_PHRASES) or _has_phrase(body_n, _RC1_DECISION_PHRASES):
@@ -3404,7 +3492,14 @@ def classify_calibrated(
     # pra que fatura/boleto real NUNCA seja capturado por marketing (RC8) ou
     # device-alert (RC7). Tag "financeiro" -> route_mustread_labels -> bucket
     # financeiro -> funde em Andressa no inbox-zero (Renato 24/07).
-    if _has_phrase(subj_n, _RC6_RECIBO_PHRASES) or _has_phrase(body_n, _RC6_RECIBO_PHRASES):
+    # Excecao 25/07: vendor de massa cujo unico sinal financeiro esta no RODAPE
+    # ("consulte sua fatura no Meu Vivo") com assunto promocional -> NAO e
+    # cobranca, e campanha. Cede pro RC8. Se a cobranca aparece no ASSUNTO,
+    # _vendor_bulk_marketing ja devolve False e o RC6 vale normalmente.
+    if (
+        (_has_phrase(subj_n, _RC6_RECIBO_PHRASES) or _has_phrase(body_n, _RC6_RECIBO_PHRASES))
+        and not vendor_bulk_mkt
+    ):
         return _decision(
             "must_read", 6, 0.85,
             ["RC6: recibo/comprovante/fatura -> Financeiro (Andressa), nao decisao"],
@@ -3491,10 +3586,17 @@ def classify_calibrated(
     # inbox e do Renato, mas fica recuperavel.
     first_label = dom.split(".")[0] if dom else ""
     is_bulk_subdomain = first_label in _RC8_BULK_SUBDOMAIN_LABELS
-    if _has_phrase(subj_n, _RC8_MARKETING_SUBJECT_PHRASES) or is_bulk_subdomain:
+    if _has_phrase(subj_n, _RC8_MARKETING_SUBJECT_PHRASES) or is_bulk_subdomain or vendor_bulk_mkt:
+        reason = (
+            "RC8: comunicacao de massa de telecom/utility SEM evidencia de "
+            f"cobranca ({dom}) -> arquivar (nem decisao do Renato, nem execucao "
+            "da Andressa)"
+            if vendor_bulk_mkt
+            else "RC8: newsletter/marketing de vendor -> arquivar (fora do Renato)"
+        )
         return _decision(
             "archive_proposed", 2, 0.85,
-            ["RC8: newsletter/marketing de vendor -> arquivar (fora do Renato)"],
+            [reason],
             ["arquivar-direto", "marketing"],
             [{"type": "archive", "reason": "vendor marketing/newsletter"}],
             "RC8_vendor_marketing",
