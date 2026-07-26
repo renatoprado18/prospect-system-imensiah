@@ -9,6 +9,19 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from urllib.parse import urlencode
 
+from services.contact_dedup import get_name_score, normalize_phone
+from services.contact_identity import (
+    ContactIndex,
+    GOOGLE_IDS_COLUMN,
+    cascade_enabled,
+    google_ids_blob,
+    google_ids_map,
+    link_google_id,
+    merge_contexto,
+    merge_json_lists,
+    unlink_google_id,
+)
+
 # Google API endpoints
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -344,6 +357,167 @@ def parse_google_contact(person: Dict, account_email: str) -> Dict:
     }
 
 
+def _apply_contact(
+    cursor,
+    index: "ContactIndex",
+    contact: Dict,
+    account_email: str,
+    legacy_email_fallback: bool = False
+) -> str:
+    """
+    Grava UM contato vindo do Google, resolvendo identidade antes de inserir.
+
+    Este e o ponto unico onde os dois syncs (incremental do cron daily-sync e
+    importacao completa) decidem "isso e alguem que ja tenho ou e gente nova".
+    Antes, o incremental so olhava `google_contact_id` — que e POR CONTA — e
+    por isso inseria uma ficha nova pra cada pessoa que existe nas duas contas
+    do Google. Ver o cabecalho de services/contact_identity.py.
+
+    Devolve 'imported' ou 'updated'.
+    """
+    gid = contact.get("google_contact_id")
+    existing_id = None
+    matched_by = None
+
+    # Tier 1 — coluna escalar, consultada direto no banco (autoritativa,
+    # enxerga escrita concorrente; o indice e um snapshot).
+    if gid:
+        cursor.execute("SELECT id FROM contacts WHERE google_contact_id = %s", (gid,))
+        row = cursor.fetchone()
+        if row:
+            existing_id, matched_by = row["id"], "google_contact_id"
+
+    if existing_id is None:
+        if cascade_enabled():
+            # Tiers a/b/c: mapa multi-conta -> e-mail -> telefone+nome
+            index.ensure_loaded(cursor)
+            hit = index.resolve(contact, account_email)
+            existing_id, matched_by = hit["contact_id"], hit["matched_by"]
+        elif legacy_email_fallback and contact.get("emails"):
+            # Caminho antigo da importacao completa: so o e-mail PRIMARIO, cru
+            primary_email = contact["emails"][0]["email"]
+            cursor.execute(
+                "SELECT id FROM contacts WHERE emails @> %s::jsonb",
+                (json.dumps([{"email": primary_email}]),)
+            )
+            row = cursor.fetchone()
+            if row:
+                existing_id, matched_by = row["id"], "email_legacy"
+
+    # ---------- INSERT ----------
+    if existing_id is None:
+        cursor.execute(f'''
+            INSERT INTO contacts (
+                nome, empresa, cargo, emails, telefones, foto_url,
+                linkedin, aniversario, enderecos, relacionamentos,
+                google_contact_id, contexto, origem, {GOOGLE_IDS_COLUMN}
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        ''', (
+            contact["nome"],
+            contact["empresa"],
+            contact["cargo"],
+            json.dumps(contact["emails"]),
+            json.dumps(contact["telefones"]),
+            contact["foto_url"],
+            contact["linkedin"],
+            contact["aniversario"],
+            json.dumps(contact.get("enderecos", [])),
+            json.dumps(contact.get("relacionamentos", [])),
+            gid,
+            contact["contexto"],
+            contact["origem"],
+            google_ids_blob(account_email, gid) if cascade_enabled() else json.dumps({}),
+        ))
+        new_row = cursor.fetchone()
+        new_id = new_row["id"] if new_row else None
+        if new_id and cascade_enabled():
+            # Mantem o snapshot em dia: dois registros do MESMO lote (a mesma
+            # pessoa nas duas contas, num full resync) precisam casar entre si.
+            index.register(new_id, contact, account_email, gid)
+        return "imported"
+
+    # ---------- UPDATE ----------
+    cursor.execute(f'''
+        SELECT nome, emails, telefones, contexto, {GOOGLE_IDS_COLUMN}
+        FROM contacts WHERE id = %s
+    ''', (existing_id,))
+    current = cursor.fetchone()
+    current = dict(current) if current else {}
+
+    # "Cross-account" = esta linha e alimentada por mais de uma conta do Google.
+    # Nesse caso NAO da pra substituir emails/telefones/contexto pelo que veio
+    # da conta que rodou agora — seria ping-pong diario, cada sync apagando o
+    # que o outro escreveu. Uniao em vez de substituicao.
+    other_accounts = [
+        acc for acc in google_ids_map(current).keys() if acc != account_email
+    ]
+    cross_account = bool(
+        cascade_enabled()
+        and (matched_by not in ("google_contact_id", None) or other_accounts)
+    )
+
+    if cross_account:
+        emails = merge_json_lists(current.get("emails"), contact["emails"], "email")
+        telefones = merge_json_lists(
+            current.get("telefones"), contact["telefones"], "number", normalize_phone
+        )
+        contexto = merge_contexto(current.get("contexto"), contact["contexto"])
+        # nome: fica o de melhor qualidade, nao o da ultima conta que sincronizou
+        current_nome = current.get("nome") or ""
+        nome = contact["nome"]
+        if current_nome and get_name_score(current_nome) > get_name_score(nome):
+            nome = current_nome
+    else:
+        emails = contact["emails"]
+        telefones = contact["telefones"]
+        contexto = contact["contexto"]
+        nome = contact["nome"]
+
+    cursor.execute('''
+        UPDATE contacts SET
+            nome = %s,
+            empresa = COALESCE(NULLIF(%s, ''), empresa),
+            cargo = COALESCE(NULLIF(%s, ''), cargo),
+            emails = %s,
+            telefones = %s,
+            foto_url = COALESCE(%s, foto_url),
+            linkedin = COALESCE(%s, linkedin),
+            aniversario = COALESCE(%s, aniversario),
+            enderecos = COALESCE(%s, enderecos),
+            relacionamentos = COALESCE(%s, relacionamentos),
+            contexto = %s,
+            atualizado_em = CURRENT_TIMESTAMP
+        WHERE id = %s
+    ''', (
+        nome,
+        contact["empresa"],
+        contact["cargo"],
+        json.dumps(emails),
+        json.dumps(telefones),
+        contact["foto_url"],
+        contact["linkedin"],
+        contact["aniversario"],
+        json.dumps(contact.get("enderecos", [])),
+        json.dumps(contact.get("relacionamentos", [])),
+        contexto,
+        existing_id,
+    ))
+
+    if cascade_enabled() and gid:
+        link_google_id(cursor, existing_id, account_email, gid)
+
+    if cascade_enabled():
+        index.register(
+            existing_id,
+            {"nome": nome, "emails": emails, "telefones": telefones},
+            account_email,
+            gid,
+        )
+
+    return "updated"
+
+
 async def sync_contacts_from_google(
     access_token: str,
     refresh_token: str,
@@ -385,6 +559,7 @@ async def sync_contacts_from_google(
             raise
 
     cursor = db_connection.cursor()
+    index = ContactIndex()
 
     for person in google_contacts:
         try:
@@ -394,100 +569,14 @@ async def sync_contacts_from_google(
                 stats["skipped"] += 1
                 continue
 
-            # Check if contact exists by google_contact_id
-            if contact["google_contact_id"]:
-                cursor.execute(
-                    "SELECT id FROM contacts WHERE google_contact_id = %s",
-                    (contact["google_contact_id"],)
-                )
-                existing = cursor.fetchone()
-
-                if existing:
-                    # Update existing contact
-                    cursor.execute('''
-                        UPDATE contacts SET
-                            nome = %s,
-                            empresa = %s,
-                            cargo = %s,
-                            emails = %s,
-                            telefones = %s,
-                            foto_url = COALESCE(%s, foto_url),
-                            linkedin = COALESCE(%s, linkedin),
-                            aniversario = COALESCE(%s, aniversario),
-                            enderecos = COALESCE(%s, enderecos),
-                            relacionamentos = COALESCE(%s, relacionamentos),
-                            contexto = %s,
-                            atualizado_em = CURRENT_TIMESTAMP
-                        WHERE google_contact_id = %s
-                    ''', (
-                        contact["nome"],
-                        contact["empresa"],
-                        contact["cargo"],
-                        json.dumps(contact["emails"]),
-                        json.dumps(contact["telefones"]),
-                        contact["foto_url"],
-                        contact["linkedin"],
-                        contact["aniversario"],
-                        json.dumps(contact.get("enderecos", [])),
-                        json.dumps(contact.get("relacionamentos", [])),
-                        contact["contexto"],
-                        contact["google_contact_id"]
-                    ))
-                    stats["updated"] += 1
-                    continue
-
-            # Check by email match
-            if contact["emails"]:
-                primary_email = contact["emails"][0]["email"]
-                cursor.execute(
-                    "SELECT id FROM contacts WHERE emails @> %s::jsonb",
-                    (json.dumps([{"email": primary_email}]),)
-                )
-                existing = cursor.fetchone()
-
-                if existing:
-                    # Update with google_contact_id
-                    cursor.execute('''
-                        UPDATE contacts SET
-                            google_contact_id = %s,
-                            foto_url = COALESCE(%s, foto_url),
-                            linkedin = COALESCE(%s, linkedin),
-                            aniversario = COALESCE(%s, aniversario),
-                            atualizado_em = CURRENT_TIMESTAMP
-                        WHERE id = %s
-                    ''', (
-                        contact["google_contact_id"],
-                        contact["foto_url"],
-                        contact["linkedin"],
-                        contact["aniversario"],
-                        existing["id"]
-                    ))
-                    stats["updated"] += 1
-                    continue
-
-            # Insert new contact
-            cursor.execute('''
-                INSERT INTO contacts (
-                    nome, empresa, cargo, emails, telefones, foto_url,
-                    linkedin, aniversario, enderecos, relacionamentos,
-                    google_contact_id, contexto, origem
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ''', (
-                contact["nome"],
-                contact["empresa"],
-                contact["cargo"],
-                json.dumps(contact["emails"]),
-                json.dumps(contact["telefones"]),
-                contact["foto_url"],
-                contact["linkedin"],
-                contact["aniversario"],
-                json.dumps(contact.get("enderecos", [])),
-                json.dumps(contact.get("relacionamentos", [])),
-                contact["google_contact_id"],
-                contact["contexto"],
-                contact["origem"]
-            ))
-            stats["imported"] += 1
+            # Cascata de identidade (gid -> mapa multi-conta -> e-mail ->
+            # telefone+nome). Com o kill-switch desligado cai no caminho
+            # antigo: gid, depois e-mail primario cru.
+            outcome = _apply_contact(
+                cursor, index, contact, account_email,
+                legacy_email_fallback=True
+            )
+            stats[outcome] += 1
 
         except Exception as e:
             stats["errors"] += 1
@@ -852,6 +941,7 @@ async def sync_contacts_incremental(
 
     stats["next_sync_token"] = result["next_sync_token"]
     cursor = db_connection.cursor()
+    index = ContactIndex()
 
     for person in result["contacts"]:
         try:
@@ -862,12 +952,18 @@ async def sync_contacts_incremental(
                 resource_name = person.get("resourceName", "")
                 google_contact_id = resource_name.replace("people/", "") if resource_name else None
                 if google_contact_id:
-                    cursor.execute(
-                        "DELETE FROM contacts WHERE google_contact_id = %s",
-                        (google_contact_id,)
-                    )
-                    if cursor.rowcount > 0:
-                        stats["deleted"] += 1
+                    if cascade_enabled():
+                        # A ficha pode ser compartilhada com a outra conta:
+                        # so apaga se nao sobrou ninguem apontando pra ela.
+                        if unlink_google_id(cursor, account_email, google_contact_id) == "deleted":
+                            stats["deleted"] += 1
+                    else:
+                        cursor.execute(
+                            "DELETE FROM contacts WHERE google_contact_id = %s",
+                            (google_contact_id,)
+                        )
+                        if cursor.rowcount > 0:
+                            stats["deleted"] += 1
                 continue
 
             contact = parse_google_contact(person, account_email)
@@ -876,70 +972,11 @@ async def sync_contacts_incremental(
                 stats["skipped"] += 1
                 continue
 
-            # Check if contact exists
-            if contact["google_contact_id"]:
-                cursor.execute(
-                    "SELECT id FROM contacts WHERE google_contact_id = %s",
-                    (contact["google_contact_id"],)
-                )
-                existing = cursor.fetchone()
-
-                if existing:
-                    # Update existing (including addresses and relations)
-                    cursor.execute('''
-                        UPDATE contacts SET
-                            nome = %s,
-                            empresa = %s,
-                            cargo = %s,
-                            emails = %s,
-                            telefones = %s,
-                            foto_url = COALESCE(%s, foto_url),
-                            linkedin = COALESCE(%s, linkedin),
-                            aniversario = COALESCE(%s, aniversario),
-                            enderecos = COALESCE(%s, enderecos),
-                            relacionamentos = COALESCE(%s, relacionamentos),
-                            contexto = %s,
-                            atualizado_em = CURRENT_TIMESTAMP
-                        WHERE google_contact_id = %s
-                    ''', (
-                        contact["nome"],
-                        contact["empresa"],
-                        contact["cargo"],
-                        json.dumps(contact["emails"]),
-                        json.dumps(contact["telefones"]),
-                        contact["foto_url"],
-                        contact["linkedin"],
-                        contact["aniversario"],
-                        json.dumps(contact.get("enderecos", [])),
-                        json.dumps(contact.get("relacionamentos", [])),
-                        contact["contexto"],
-                        contact["google_contact_id"]
-                    ))
-                    stats["updated"] += 1
-                else:
-                    # Insert new (including addresses and relations)
-                    cursor.execute('''
-                        INSERT INTO contacts (
-                            nome, empresa, cargo, emails, telefones, foto_url,
-                            linkedin, aniversario, enderecos, relacionamentos,
-                            google_contact_id, contexto, origem
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ''', (
-                        contact["nome"],
-                        contact["empresa"],
-                        contact["cargo"],
-                        json.dumps(contact["emails"]),
-                        json.dumps(contact["telefones"]),
-                        contact["foto_url"],
-                        contact["linkedin"],
-                        contact["aniversario"],
-                        json.dumps(contact.get("enderecos", [])),
-                        json.dumps(contact.get("relacionamentos", [])),
-                        contact["google_contact_id"],
-                        contact["contexto"],
-                        contact["origem"]
-                    ))
-                    stats["imported"] += 1
+            # Cascata de identidade. ESTE e o caminho do cron daily-sync das 5h
+            # — o que antes reconhecia SO por google_contact_id (por conta) e
+            # por isso duplicava toda pessoa presente nas duas contas.
+            outcome = _apply_contact(cursor, index, contact, account_email)
+            stats[outcome] += 1
 
         except Exception as e:
             stats["errors"] += 1
