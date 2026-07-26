@@ -6102,6 +6102,61 @@ async def cron_detectors_run(request: Request, only: str = ""):
     return run_all_detectors(only=only_list)
 
 
+@app.get("/api/cron/voice-policy-refresh")
+@track_cron_run
+async def cron_voice_policy_refresh(request: Request, dry_run: str = "", include_all: str = ""):
+    """Regenera a politica de voz do Renato a partir do corpus real (fase 1: WA).
+
+    Destila por PERFIL DE DESTINATARIO e grava em `system_memories`
+    ('reference_renato_voice') — de onde CoS, camada esperta do inbox e tonIAH
+    leem antes de rascunhar. Sem isso o gerador escreve num registro medio e o
+    Renato reescreve (gatilho: 5 rounds num WA de 3 linhas pra Andressa).
+
+    Nao precisa rodar com frequencia: a voz muda devagar. Mensal/manual basta —
+    por isso NAO esta registrado no scheduler; roda por disparo.
+
+    `?dry_run=1` devolve o documento sem gravar.
+    `?include_all=1` inclui o perfil intimo (omitido por padrao — a politica e
+    lida pelo briefing/bot; ver DEFAULT_EXCLUDE_FROM_MEMORY).
+
+    Ver services/voice_policy.py + project_voice_policy.
+    """
+    if not verify_cron_auth(request):
+        raise HTTPException(status_code=401, detail="Unauthorized cron request")
+
+    from database import get_db
+    from services.voice_policy import (
+        distill_policy,
+        persist_policy,
+        render_policy_md,
+    )
+    from services.voice_policy import DEFAULT_EXCLUDE_FROM_MEMORY
+
+    seco = dry_run.strip().lower() in ("1", "true", "on", "yes")
+    exclude = () if include_all.strip().lower() in ("1", "true", "on", "yes") else DEFAULT_EXCLUDE_FROM_MEMORY
+
+    with get_db() as conn:
+        destilado = distill_policy(conn)
+        markdown = render_policy_md(destilado, exclude=exclude)
+        memory_id = None if seco else persist_policy(conn, markdown)
+
+    return {
+        "job": "voice-policy-refresh",
+        "dry_run": seco,
+        "perfis": {
+            p: {
+                "n": d["metricas"].get("n", 0),
+                "destilado": bool(d.get("regras")),
+                "omitido": p in exclude,
+            }
+            for p, d in destilado.items()
+        },
+        "corpus_total": sum(d["metricas"].get("n", 0) for d in destilado.values()),
+        "memory_id": memory_id,
+        "doc_bytes": len(markdown),
+    }
+
+
 @app.get("/api/cron/task-reconciler")
 @track_cron_run
 async def cron_task_reconciler(request: Request, dry_run: str = ""):

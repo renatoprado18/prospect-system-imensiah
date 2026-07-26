@@ -396,3 +396,45 @@ Estanca a **causa** das duplicatas de contato em vez de limpar o efeito. `contac
 - **Kill-switches** — `CONTACT_SYNC_IDENTITY_CASCADE=0` desliga a cascata inteira (os dois syncs voltam ao comportamento antigo, inclusive o fallback de e-mail primário da importação completa); `CONTACT_SYNC_PHONE_MATCH=0` mantém (a)+(b) e desliga só o tier telefone. Default dos dois: **ligado**.
 - **Dry-run read-only** — `scripts/dryrun_google_identity_cascade.py` mede o que a cascata reconheceria nos grupos duplicados **já existentes**, sem escrever nada. Não faz merge: a limpeza da base é decisão do Renato.
 - **Testes** — `tests/test_contact_identity.py` (33): guarda do fixo compartilhado (Douglas × Orestes), critério por tipo de linha, cascata completa (gid/mapa/e-mail/telefone+nome/não casa→insere), mapa multi-conta, união sem ping-pong, delete multi-conta, kill-switches.
+
+## 28. Política de voz do Renato — destilada do corpus (26/07/26)
+
+Faz o gerador de rascunho (CoS, camada esperta do inbox, tonIAH) escrever já no
+registro do Renato, sem iteração. Gatilho: 5 rounds num WA de 3 linhas pra Andressa.
+
+**`app/services/voice_policy.py`** — duas camadas, de propósito:
+- **Medição determinística** (`measure_style`): contagens verificáveis por perfil
+  (saudação, fechamento, `grato`×`obrigado`, emoji, `vc`, tamanho, multilinha).
+  É o que dá autoridade à regra e deixa o Renato refutar linha por linha.
+- **Síntese LLM** (`distill_policy`, BALANCED, rótulo de custo `voice_policy.distill`):
+  recebe as métricas JÁ apuradas + amostra determinística de 25 msgs e escreve a
+  regra acionável. Não inventa traço — só verbaliza o que foi medido.
+
+**3 gates de qualidade do corpus** (cada um evita aprender a voz errada):
+- `metadata->>'instance' <> 'intel-bot-v2'` → não aprende a voz da tonIAH.
+- `contact_id NOT IN SELF_CONTACT_IDS` → self-chat é anotação, não comunicação.
+- `clean_outgoing()` → trunca bloco de export do WhatsApp colado no conteúdo
+  (import .txt iOS, 67 casos, com falas de TERCEIROS embutidas) + tira marca
+  invisível U+200E. Trunca em vez de descartar: o texto antes do bloco é dele.
+
+**8 perfis por destinatário** (`classify_recipient`, por tags/cargo/círculo — papel,
+não pessoa): companheira · familia · assistente · par_profissional · cliente ·
+prestador · circulo_proximo · outros. Política única faria o gerador falar com a
+companheira como fala com um conselho.
+
+**Persistência:** `system_memories` título `reference_renato_voice` (sem DDL) —
+é a memória que briefing/camada/bot JÁ leem em prod. `get_voice_guidance(conn,
+contact_id)` recorta a seção do perfil + as hipóteses e devolve pro gerador;
+retorna `None` se não há política (chamador degrada, nunca trava o draft).
+
+**Privacidade:** `DEFAULT_EXCLUDE_FROM_MEMORY = ("companheira",)` — o perfil
+íntimo fica FORA do documento persistido (a política é lida pelo briefing/bot).
+`include_all=1` inclui.
+
+**Endpoint:** `GET /api/cron/voice-policy-refresh` (`?dry_run=1`, `?include_all=1`).
+NÃO agendado — a voz muda devagar, roda por disparo.
+
+**1º resultado (26/07, corpus 4.991 msgs):** hipótese "grato, nunca obrigado"
+**CONFIRMADA** (102× contra 7×). Refutou a suposição da spec de que com a
+assistente a voz é seca: é o perfil de mensagens mais LONGAS (190 chars) e o de
+maior uso proporcional de "grato". Fase 2 = e-mail (Gmail Sent).
