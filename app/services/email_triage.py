@@ -3338,6 +3338,11 @@ _RC7_DEVICE_NOTIFY_PHRASES = (
     "acesso realizado", "sign-in from", "seu codigo de acesso",
     "verification code", "codigo de verificacao", "codigo de seguranca",
     "your verification code", "codigo de acesso",
+    # 25/07: "new passkey added" caiu no balde da Andressa por
+    # RC3_seguranca_andressa enquanto os irmaos ("new trusted device") foram
+    # arquivados aqui — na MESMA run. Passkey e notificacao de dispositivo,
+    # mesma classe.
+    "passkey", "chave de acesso", "security key", "chave de seguranca",
 )
 _RC7_ACTION_OVERRIDE_PHRASES = (
     "redefinir sua senha", "redefinir a senha", "reset your password",

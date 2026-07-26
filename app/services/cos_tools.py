@@ -945,6 +945,58 @@ def create_draft_response(
         return {"erro": str(e)}
 
 
+def get_voice_guidance_tool(
+    cycle_id: str,
+    iteration: int,
+    contact_id: int,
+    channel: str = "whatsapp",
+) -> Dict:
+    """Política de voz do Renato pro PERFIL deste contato, NESTE canal.
+
+    Why: o agente escreve `text_draft` inteiro antes de chamar
+    `create_draft_response` — se a voz não chega até ele ANTES disso, o rascunho
+    sai num registro médio e o Renato reescreve (5 rounds num WA de 3 linhas pra
+    Andressa foi o gatilho da frente). O `draft_message` da tonIAH já consome a
+    política desde `dc06ae8`; o agente CoS era o consumidor que faltava.
+
+    Sob demanda de propósito: injetar o documento inteiro (8 perfis × 2 canais,
+    ~30k) no system prompt gastaria contexto em todo ciclo, inclusive nos que não
+    rascunham nada. Aqui volta só a seção do perfil (~3k).
+    """
+    started = time.time()
+    params_log = {"contact_id": contact_id, "channel": channel}
+    try:
+        canal = "email" if channel == "email" else "whatsapp"
+        from services.voice_policy import classify_recipient, get_voice_guidance
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT nome, tags, cargo, circulo FROM contacts WHERE id = %s",
+                (contact_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError(f"contato {contact_id} nao encontrado")
+            perfil = classify_recipient(dict(row))
+            bloco = get_voice_guidance(conn, contact_id, canal=canal)
+
+        result = {
+            "contact_id": contact_id,
+            "canal": canal,
+            "perfil": perfil,
+            # None = não há política destilada pra este perfil/canal. O agente
+            # segue e rascunha como antes; degradar é melhor que travar o ciclo.
+            "voz": bloco,
+        }
+        log_tool_call(cycle_id, "get_voice_guidance", params_log, {"perfil": perfil, "tem_voz": bool(bloco)},
+                      iteration, int((time.time() - started) * 1000))
+        return result
+    except Exception as e:
+        log_tool_call(cycle_id, "get_voice_guidance", params_log, None, iteration,
+                      int((time.time() - started) * 1000), str(e))
+        return {"erro": str(e)}
+
+
 def record_observation(
     cycle_id: str,
     iteration: int,
@@ -1172,12 +1224,33 @@ COS_TOOLS: List[Dict[str, Any]] = [
         },
     },
     {
+        "name": "get_voice_guidance",
+        "description": (
+            "Devolve a POLÍTICA DE VOZ do Renato pro perfil deste contato, no canal indicado "
+            "(whatsapp|email). Destilada do corpus real dele (o que ele mesmo já mandou), com a "
+            "contagem que sustenta cada regra. CHAME SEMPRE antes de create_draft_response — o "
+            "registro muda por destinatário e por canal (com a assistente, no e-mail, ele abre com "
+            "saudação em 60% e fecha em 67%; no WhatsApp, ~17% e ~8%). Se 'voz' vier null, não há "
+            "política pra esse perfil/canal: rascunhe normalmente."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "integer", "description": "ID do contato no banco INTEL."},
+                "channel": {"type": "string", "enum": ["whatsapp", "email"],
+                            "description": "Canal do rascunho. linkedin_dm usa a voz de whatsapp."},
+            },
+            "required": ["contact_id"],
+        },
+    },
+    {
         "name": "create_draft_response",
         "description": (
             "Cria um RASCUNHO de resposta pra Renato aprovar/disparar manualmente. Não envia nada — "
             "só salva o texto em cos_draft_responses (pending, expira 48h). Channel ∈ "
             "{whatsapp, email, linkedin_dm}. USE só quando há histórico real (você leu via "
-            "get_messages_with) e você sabe o que responder. SEMPRE inclua motivo (justificativa curta). "
+            "get_messages_with) e você sabe o que responder. CHAME get_voice_guidance ANTES e escreva "
+            "seguindo a voz que ela devolver. SEMPRE inclua motivo (justificativa curta). "
             "Cria item ✅ FEITO automaticamente."
         ),
         "input_schema": {
@@ -1287,6 +1360,12 @@ def execute_tool(
                 cycle_id, iteration,
                 limit=tool_input.get("limit", 20),
                 classification=tool_input.get("classification"),
+            )
+        if tool_name == "get_voice_guidance":
+            return get_voice_guidance_tool(
+                cycle_id, iteration,
+                contact_id=tool_input["contact_id"],
+                channel=tool_input.get("channel", "whatsapp"),
             )
         if tool_name == "create_draft_response":
             return create_draft_response(

@@ -155,6 +155,25 @@ class TestRecalibration2507:
         assert d["classification"] == "archive_proposed"
         assert d["rule_hits"] == ["RC7_device_notify"]
 
+    def test_rc7_passkey_e_notificacao_de_dispositivo(self):
+        """Caso real 25/07: "new passkey added" foi pro balde da Andressa por
+        RC3_seguranca_andressa enquanto os dois irmãos ("new trusted device")
+        foram arquivados por RC7 — na MESMA run. Passkey é da mesma classe."""
+        d = _calib(subject="Security alert: new passkey added to your Claude account",
+                   from_email="no-reply@mail.anthropic.com", domain="mail.anthropic.com")
+        assert d["classification"] == "archive_proposed"
+        assert d["rule_hits"] == ["RC7_device_notify"]
+
+    def test_rc7_passkey_ainda_cede_pra_acao_exigida(self):
+        """O acréscimo não pode engolir o caso que EXIGE ação do Renato.
+
+        `_calib` devolvendo None = nenhuma regra RC bateu, ou seja, o RC7 cedeu
+        pra frase-de-ação e o e-mail segue o fluxo normal de classificação —
+        que é exatamente o desejado. O que não pode é virar arquivamento."""
+        d = _calib(subject="Passkey alert: confirme que foi você",
+                   from_email="no-reply@mail.anthropic.com", domain="mail.anthropic.com")
+        assert d is None or d["classification"] != "archive_proposed"
+
     def test_rc7_govbr_novo_dispositivo(self):
         d = _calib(subject="gov.br: Alerta de segurança: acesso em novo dispositivo",
                    from_email="naoresponda@acesso.gov.br", domain="acesso.gov.br")

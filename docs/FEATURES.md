@@ -477,6 +477,12 @@ com 4 fica de fora pelo gate). "grato" 18× contra "obrigado" 3× — **hipótes
 confirmada também no e-mail**. Registro bem distinto do WhatsApp: saudação 60% e
 despedida 67% no perfil `assistente` (contra ~17%/8% no WhatsApp).
 
-**Wiring:** `draft_message` (tonIAH) é WhatsApp-específico e segue no default. O
-gerador de rascunho de e-mail é o agente CoS, que escreve o texto antes de chamar
-`create_draft_response(channel='email')` — injetar a política lá é o próximo passo.
+**Wiring — 2 consumidores:** `draft_message` (tonIAH) é WhatsApp-específico e usa
+o default desde `dc06ae8`. O **agente CoS** (`cos_investigator`) ganhou a tool
+`get_voice_guidance(contact_id, channel)` (`cos_tools.py`), que ele chama **antes**
+de `create_draft_response` — o texto é escrito pelo LLM antes da tool de salvar, então
+a voz precisa chegar antes disso, ou o rascunho sai no registro médio. Sob demanda de
+propósito: injetar o documento inteiro (8 perfis × 2 canais, ~30k) no system prompt
+gastaria contexto em todo ciclo, inclusive nos que não rascunham nada — a tool devolve
+só a seção do perfil (~3k). `channel='linkedin_dm'` usa a voz de WhatsApp; `voz=null`
+(perfil sem política destilada) faz o agente rascunhar como antes, nunca trava o ciclo.
