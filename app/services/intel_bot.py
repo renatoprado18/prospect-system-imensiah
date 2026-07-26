@@ -1649,8 +1649,39 @@ async def _tool_draft_message(contact_id: int, context: str) -> str:
         if contact.get("ultimo_contato"):
             contact_ctx += f"\nUltimo contato: {contact['ultimo_contato']}"
 
+        # Politica de voz do perfil deste destinatario (services/voice_policy).
+        # Sem ela o prompt dizia so "tom profissional mas cordial" — o registro
+        # MEDIO que fazia o Renato reescrever o rascunho (5 rounds num WA de 3
+        # linhas pra Andressa foi o gatilho da frente). A politica e destilada do
+        # corpus real e muda por relacao: com a assistente ele escreve LONGO e
+        # usa "grato"; com par profissional fecha em "abraco"; com cliente e
+        # protocolar. Degrada em silencio (None -> instrucao generica antiga).
+        voice_block = None
+        try:
+            from services.voice_policy import get_voice_guidance
+            voice_block = get_voice_guidance(conn, contact_id)
+        except Exception as e:
+            logger.warning(f"draft_message: voice_policy indisponivel: {e}")
+
+        if voice_block:
+            tom_instr = (
+                "A mensagem deve soar como o PROPRIO Renato escreveria PARA ESTE "
+                "destinatario. A politica de voz abaixo foi destilada do corpus real "
+                "dele (mensagens que ele mesmo mandou) — siga-a como especificacao, "
+                "nao como sugestao:\n\n" + voice_block
+            )
+            # A regra final NAO pode repetir "profissional, cordial, direto":
+            # instrucao generica no fecho do prompt competia com a politica e
+            # puxava o texto de volta pro registro medio.
+            tom_regra = ("Siga a POLITICA DE VOZ acima a risca — ela vale mais "
+                         "que qualquer nocao generica de tom.")
+        else:
+            tom_instr = ("A mensagem deve ser natural, no tom do Renato "
+                         "(profissional mas cordial), em portugues.")
+            tom_regra = "Escreva no tom do Renato: profissional, cordial, direto."
+
         system = f"""Voce e o assistente de Renato Prado. Escreva um rascunho de mensagem WhatsApp para o contato abaixo.
-A mensagem deve ser natural, no tom do Renato (profissional mas cordial), em portugues.
+{tom_instr}
 Use o contexto completo do relacionamento para personalizar.
 
 CONTATO:
@@ -1674,7 +1705,7 @@ REGRAS CRITICAS:
 - NUNCA invente fatos. Se nao sabe se a pessoa curtiu, comentou ou fez algo, NAO mencione.
 - Use APENAS informacoes que estao nos dados acima.
 - Se o objetivo menciona "meu post", inclua o link se disponivel no contexto.
-- Escreva no tom do Renato: profissional, cordial, direto.
+- {tom_regra}
 
 Escreva APENAS a mensagem, pronta para enviar. Sem explicacoes."""
 
