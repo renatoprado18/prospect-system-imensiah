@@ -516,6 +516,98 @@ class TestGuardaLinhaDeMuitos:
         assert _apply_contact(cur, idx, rec, PESSOAL) == "imported"
 
 
+class TestDuplicataPreExistenteNaoGeraOutra:
+    """Regressão de 26/07: a guarda de ambiguidade era a fábrica de duplicatas.
+
+    `_resolve_by_phone` abstinha sempre que 2+ candidatos passavam no
+    `names_match`. Como duplicata pré-existente tem, por definição, nome
+    equivalente e mesmo telefone, TODAS passavam — a cascata abstinha e
+    inseria mais uma ficha, agravando o grupo a cada sync. Medido em prod:
+    2.218 telefones nessa condição, 5.877 fichas.
+
+    Caso real: `Diana Berezin` #1275/#22106/#24146 (mesmo celular, nome
+    idêntico) → resolve devolvia `ambiguo:` → nasceu a #26673.
+    """
+
+    def _index(self, nomes, phone="11983835373"):
+        idx = ContactIndex()
+        for cid, nome in nomes:
+            idx.add_contact({
+                "id": cid, "nome": nome, "emails": [],
+                "telefones": [{"number": phone}],
+                "google_contact_id": f"g{cid}", GOOGLE_IDS_COLUMN: {},
+            })
+        idx.loaded = True
+        return idx
+
+    def test_tres_fichas_do_mesmo_nome_casam_com_a_mais_antiga(self):
+        idx = self._index([(24146, "Diana Berezin"),
+                           (1275, "Diana Berezin"),
+                           (22106, "Diana Berezin")])
+        hit = idx.resolve(
+            {"nome": "Diana Berezin", "google_contact_id": "gid-novo",
+             "telefones": [{"number": "11983835373"}], "emails": []},
+            PESSOAL,
+        )
+        assert hit["contact_id"] == 1275          # menor id = a ficha original
+        assert hit["matched_by"] == "phone_name_dup"
+
+    def test_pessoas_distintas_no_mesmo_fixo_seguem_ambiguas(self):
+        """Ambiguidade REAL continua abstendo — é o que a guarda existe pra
+        proteger. 'Ana Silva Costa' contém as duas, mas 'Ana Silva' e
+        'Ana Costa' não casam entre si: são duas pessoas no fixo de casa."""
+        idx = self._index([(10, "Ana Silva"), (20, "Ana Costa")],
+                          phone="1130001000")
+        hit = idx.resolve(
+            {"nome": "Ana Silva Costa", "google_contact_id": "gid-novo",
+             "telefones": [{"number": "1130001000"}], "emails": []},
+            PESSOAL,
+        )
+        assert hit["contact_id"] is None
+        assert hit["detail"].startswith("ambiguo:")
+
+    def test_equivalencia_e_par_a_par_nao_por_transitividade(self):
+        """`names_match` não é transitivo: num celular, o mononimo 'Andressa'
+        casa com 'Andressa Souza' E com 'Andressa Lima' — que são pessoas
+        diferentes. Aceitar por transitividade as fundiria."""
+        idx = self._index([(10, "Andressa Souza"), (20, "Andressa Lima")])
+        hit = idx.resolve(
+            {"nome": "Andressa", "google_contact_id": "gid-novo",
+             "telefones": [{"number": "11983835373"}], "emails": []},
+            PESSOAL,
+        )
+        assert hit["contact_id"] is None
+
+    def test_fixo_compartilhado_nem_chega_na_guarda(self):
+        """O caso que motivou o design (551135761505, Douglas x Orestes): quem
+        protege é o `names_match`, que devolve UM candidato — a regra de
+        ambiguidade não é acionada, então mexer nela não afeta este caso."""
+        idx = self._index([(1360, "Douglas Bassi"),
+                           (4376, "Orestes Alves de Almeida Prado")],
+                          phone="1135761505")
+        for nome, esperado in (("Douglas Bassi", 1360),
+                               ("Orestes Alves de Almeida Prado", 4376)):
+            hit = idx.resolve(
+                {"nome": nome, "google_contact_id": "gid-novo",
+                 "telefones": [{"number": "1135761505"}], "emails": []},
+                PESSOAL,
+            )
+            assert hit["contact_id"] == esperado
+            assert hit["matched_by"] == "phone_name"
+
+    def test_nao_insere_quarta_ficha_ponta_a_ponta(self):
+        """O efeito que importa: `_apply_contact` passa a atualizar, não criar."""
+        rows = [{
+            "id": cid, "nome": "Diana Berezin", "emails": [],
+            "telefones": [{"number": "11983835373"}],
+            "google_contact_id": f"g{cid}", GOOGLE_IDS_COLUMN: {},
+            "contexto": "personal",
+        } for cid in (1275, 22106, 24146)]
+        cur, idx = FakeCursor(rows), ContactIndex()
+        rec = parsed("Diana Berezin", "gid-novo", PESSOAL, phones=["11983835373"])
+        assert _apply_contact(cur, idx, rec, PESSOAL) == "updated"
+
+
 class TestHelpersDeUniao:
     def test_merge_json_lists_preserva_ordem_e_dedup(self):
         got = merge_json_lists(

@@ -572,7 +572,32 @@ class ContactIndex:
                     "detail": f"{phone}/{kind}",
                 }
             if len(passed) > 1:
-                # varios candidatos plausiveis: abster e mais barato que errar
+                # Varios candidatos passaram contra o nome que CHEGOU. Duas
+                # situacoes muito diferentes se escondem aqui:
+                #
+                #  (1) eles sao equivalentes ENTRE SI ("Diana Berezin" x
+                #      "Diana Berezin" x "Diana Berezin", mesmo telefone) —
+                #      isso nao e ambiguidade, e uma duplicata que a base JA
+                #      tem. Abster-se aqui insere mais uma ficha e agrava o
+                #      grupo a cada sync: medido em 26/07, 2.218 telefones
+                #      nessa condicao (5.877 fichas) = 2.218 gatilhos armados.
+                #      Casa com o menor id, exatamente como `_resolve_by_email`
+                #      ja resolve o mesmo empate.
+                #
+                #  (2) eles NAO sao equivalentes entre si ("Ana Silva" x
+                #      "Ana Costa" no fixo de casa) — ambiguidade real, e
+                #      abster continua sendo mais barato que errar.
+                #
+                # Nota: o caso que motivou a guarda (fixo 551135761505,
+                # Douglas Bassi x Orestes) nem chega aqui — `names_match` ja
+                # devolve um so candidato. Quem protege ali e o criterio de
+                # nome, nao esta regra.
+                if self._all_equivalent(passed, kind):
+                    return {
+                        "contact_id": min(passed),
+                        "matched_by": "phone_name_dup",
+                        "detail": f"{phone}/{kind}/dup:{len(passed)}",
+                    }
                 return {
                     "contact_id": None,
                     "matched_by": None,
@@ -580,6 +605,21 @@ class ContactIndex:
                     "ambiguous": [self.names.get(c, "") for c in passed],
                 }
         return None
+
+    def _all_equivalent(self, contact_ids: List[int], kind: str) -> bool:
+        """Todos estes contatos sao a mesma pessoa entre si?
+
+        Exige equivalencia par-a-par, nao so contra o nome de entrada:
+        `names_match` nao e transitivo (um mononimo casa com dois sobrenomes
+        diferentes num celular), e aceitar por transitividade fundiria pessoas
+        distintas. Com o teto de SHARED_LINE_MAX_CONTACTS=8 sao no maximo 28
+        comparacoes de string.
+        """
+        for i, a in enumerate(contact_ids):
+            for b in contact_ids[i + 1:]:
+                if not names_match(self.names.get(a, ""), self.names.get(b, ""), kind):
+                    return False
+        return True
 
     def resolve(self, contact: Dict, account_email: str) -> Dict:
         """
