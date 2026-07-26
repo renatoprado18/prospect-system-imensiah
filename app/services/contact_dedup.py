@@ -797,6 +797,10 @@ async def propagate_contact_to_google(
 
     contexto = contact_data.get('contexto', '')
     existing_google_id = contact_data.get('google_contact_id')
+    # Mapa {conta: resourceName} — a mesma pessoa tem um id DIFERENTE em cada
+    # conta Google, e a coluna escalar so guarda um deles.
+    from services.contact_identity import google_ids_map
+    ids_map = google_ids_map(contact_data)
 
     # Determine which accounts should have this contact
     # If contexto contains both 'personal' and 'professional', sync to both
@@ -837,19 +841,32 @@ async def propagate_contact_to_google(
             except:
                 pass  # Token might still be valid
 
-            # Check if contact exists in this Google account
-            # For now, we use google_contact_id which is account-specific
-            # In the future, we'd need a mapping table for multi-account IDs
+            # Qual resourceName vale NESTA conta. O `google_contact_id` escalar
+            # pertence a UMA conta — usa-lo na outra fazia o update falhar e o
+            # codigo cair no create, ou seja: a propagacao CRIAVA duplicata no
+            # Google, o oposto do objetivo. O mapa {conta: resourceName}
+            # (contacts.empresa_dados._google_contact_ids) resolve por conta.
+            account_gid = ids_map.get(account_email)
+            if not account_gid and len(ids_map) == 0:
+                # Contato pre-cascata: nao tem mapa ainda. Cai no escalar SO se
+                # a conta bate com a origem registrada — senao trata como
+                # inexistente nesta conta (create), que e o correto.
+                if (contact_data.get("origem") or "") == f"google_{account_email}":
+                    account_gid = existing_google_id
+            existing_google_id_for_account = account_gid
 
-            if existing_google_id:
+            if existing_google_id_for_account:
                 # Try to update existing contact
                 success = await google_contacts_module.update_google_contact(
                     access_token,
-                    existing_google_id,
+                    existing_google_id_for_account,
                     contact_data
                 )
                 if success:
-                    results[account_email] = {'status': 'updated', 'google_id': existing_google_id}
+                    results[account_email] = {
+                        'status': 'updated',
+                        'google_id': existing_google_id_for_account,
+                    }
                 else:
                     # Contact might not exist in this account, create it
                     new_id = await google_contacts_module.create_google_contact(
@@ -929,28 +946,61 @@ async def propagate_merge_to_google(
     )
     results['updates'] = update_results
 
-    # Delete the other contacts from Google
+    # Apaga no Google as fichas absorvidas — cada id NA SUA conta.
+    #
+    # Antes: loop `for account in accounts` tentando o MESMO id em todas. Como
+    # resourceName e por conta, a tentativa na conta errada dava 404 (ruido que
+    # esconde erro real) e, pior, a funcao lia so `google_contact_id` (escalar)
+    # — um contato com ficha nas duas contas tem DOIS ids e o outro nunca era
+    # apagado, deixando a duplicata viva no Google. Como o sync completo traz de
+    # volta o que existe no Google, essa metade esquecida RECRIAVA a duplicata
+    # no INTEL no dia seguinte (medido 26/07: Manuela e Wanelise voltaram).
+    from services.contact_identity import google_ids_map
+
     accounts = await get_google_accounts(db_connection)
+    tokens_por_conta = {a['email']: a['access_token'] for a in accounts}
 
     for deleted in deleted_contacts:
-        google_id = deleted.get('google_contact_id')
-        if not google_id:
-            continue
+        # Todos os ids desta ficha, por conta: o mapa novo + o escalar legado
+        # (contato pre-cascata, cuja conta de origem vem em `origem`).
+        por_conta = dict(google_ids_map(deleted))
+        escalar = deleted.get('google_contact_id')
+        if escalar and escalar not in por_conta.values():
+            origem = (deleted.get('origem') or '')
+            conta_origem = origem[len('google_'):] if origem.startswith('google_') else None
+            if conta_origem in tokens_por_conta:
+                por_conta.setdefault(conta_origem, escalar)
+            elif len(tokens_por_conta) == 1:
+                # Uma conta conectada: nao ha ambiguidade.
+                por_conta.setdefault(next(iter(tokens_por_conta)), escalar)
+            else:
+                # Sem como saber a conta — NAO chuta (apagar na errada e
+                # irreversivel do lado do Google).
+                results['deletions'][escalar] = {
+                    'skipped': 'conta_indeterminada',
+                    'contact_id': deleted.get('id'),
+                }
 
-        for account in accounts:
+        for account_email, google_id in por_conta.items():
+            access_token = tokens_por_conta.get(account_email)
+            if not access_token:
+                results['deletions'][google_id] = {
+                    'account': account_email,
+                    'skipped': 'conta_nao_conectada',
+                }
+                continue
             try:
-                access_token = account['access_token']
                 success = await google_contacts_module.delete_google_contact(
                     access_token,
                     google_id
                 )
                 results['deletions'][google_id] = {
-                    'account': account['email'],
+                    'account': account_email,
                     'success': success
                 }
             except Exception as e:
                 results['deletions'][google_id] = {
-                    'account': account['email'],
+                    'account': account_email,
                     'error': str(e)
                 }
 

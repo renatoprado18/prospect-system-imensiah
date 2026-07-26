@@ -124,6 +124,17 @@ _NAME_PARTICLES = {
     "la", "le", "van", "von", "y", "dell",
 }
 
+# Titulos/pronomes de tratamento. NAO identificam ninguem e, pior, ocupavam a
+# posicao de PRIMEIRO token — que o `names_match` exige que bata. Medido em
+# 26/07: "Dra. Vanelise" tinha primeiro token 'dra', entao a comparacao contra
+# "Wanelise B Carvalho" morria antes de olhar o nome. Descartar e seguro: um
+# titulo nunca e a evidencia que distingue duas pessoas na mesma linha.
+_NAME_TITLES = {
+    "dr", "dra", "drs", "sr", "sra", "srta", "prof", "profa", "professor",
+    "professora", "eng", "enga", "adv", "advogado", "advogada", "cel",
+    "gen", "pe", "padre", "irma", "dom", "exmo", "ilmo", "mestre", "med",
+}
+
 
 # ============== Nome ==============
 
@@ -137,7 +148,16 @@ def significant_tokens(name: str) -> List[str]:
     """
     base = normalize_name_for_dedup(name or "")
     base = re.sub(r"[^a-z0-9 ]+", " ", base)
-    return [t for t in base.split() if len(t) > 1 and t not in _NAME_PARTICLES]
+    toks = [
+        t for t in base.split()
+        if len(t) > 1 and t not in _NAME_PARTICLES and t not in _NAME_TITLES
+    ]
+    # Se sobrou NADA (ficha chamada so "Dr." ou "Sra."), devolve os tokens sem
+    # o filtro de titulo — melhor comparar algo do que virar lista vazia, que
+    # `names_match` trata como "nao casa" e viraria insercao silenciosa.
+    if not toks:
+        toks = [t for t in base.split() if len(t) > 1 and t not in _NAME_PARTICLES]
+    return toks
 
 
 def phone_kind(normalized: str) -> str:
@@ -162,6 +182,75 @@ def phone_kind(normalized: str) -> str:
     if len(d) == 10:
         return "landline"
     return "unknown"
+
+
+def _edit_distance_le1(a: str, b: str) -> bool:
+    """Levenshtein <= 1 (uma troca, insercao ou remocao). Curto-circuita cedo."""
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    if la == lb:  # uma substituicao
+        return sum(1 for x, y in zip(a, b) if x != y) <= 1
+    # uma insercao/remocao: caminha em paralelo com um deslocamento
+    short, long_ = (a, b) if la < lb else (b, a)
+    i = j = 0
+    folga = True
+    while i < len(short) and j < len(long_):
+        if short[i] == long_[j]:
+            i += 1
+            j += 1
+        elif folga:
+            folga = False
+            j += 1
+        else:
+            return False
+    return True
+
+
+# Primeiro nome so aceita variante ortografica a partir deste tamanho. Curto
+# (Ana/Ane, Rita/Rito, Luis/Luiz... e tambem Ana/Ada) tem distancia 1 entre
+# nomes de pessoas DIFERENTES com frequencia alta; a partir de 6 letras a
+# colisao vira rara e o ganho real aparece (Vanelise/Wanelise, Katia/Catia nao
+# entra, Cristina/Christina entra).
+_FIRST_NAME_VARIANT_MIN_LEN = 6
+
+
+def _first_names_match(a: str, b: str) -> bool:
+    """Primeiro nome igual, ou variante ortografica de 1 caractere.
+
+    Why: a mesma pessoa aparece com grafia diferente entre as agendas —
+    "Dra. Vanelise" (conta pessoal) x "Wanelise B Carvalho" (profissional),
+    medido 26/07 na advogada da penhora. Exigir igualdade exata recriava a
+    duplicata em todo sync completo.
+    """
+    if a == b:
+        return True
+    if len(a) < _FIRST_NAME_VARIANT_MIN_LEN or len(b) < _FIRST_NAME_VARIANT_MIN_LEN:
+        return False
+    return _edit_distance_le1(a, b)
+
+
+def _is_initials_of(token: str, others: List[str]) -> bool:
+    """`token` e a sigla das iniciais de `others`? ("dap" <- dansieri almeida prado)
+
+    Why: "Manuela DAP" x "Manuela Dansieri de Almeida Prado" (a filha do Renato)
+    nao tinha NENHUM token em comum alem do primeiro nome, entao o tier celular
+    recusava. Sigla e evidencia forte e barata: exige que cada letra case, em
+    ordem, com a inicial de um sobrenome distinto.
+    """
+    if not (2 <= len(token) <= 4) or not others:
+        return False
+    iniciais = [t[0] for t in others]
+    idx = 0
+    for ch in token:
+        while idx < len(iniciais) and iniciais[idx] != ch:
+            idx += 1
+        if idx >= len(iniciais):
+            return False
+        idx += 1
+    return True
 
 
 def names_match(name_a: str, name_b: str, kind: str = "unknown") -> bool:
@@ -206,7 +295,7 @@ def names_match(name_a: str, name_b: str, kind: str = "unknown") -> bool:
     if ta == tb:
         return True
 
-    if ta[0] != tb[0]:
+    if not _first_names_match(ta[0], tb[0]):
         return False
 
     sa, sb = set(ta), set(tb)
@@ -215,7 +304,15 @@ def names_match(name_a: str, name_b: str, kind: str = "unknown") -> bool:
     if kind == "mobile":
         if len(shorter) == 1:
             return True
-        return bool((sa & sb) - {ta[0]})
+        if (sa & sb) - {ta[0], tb[0]}:
+            return True
+        # Sigla dos sobrenomes conta como token em comum ("Manuela DAP").
+        resto_a, resto_b = ta[1:], tb[1:]
+        return any(
+            _is_initials_of(t, resto_b) for t in resto_a
+        ) or any(
+            _is_initials_of(t, resto_a) for t in resto_b
+        )
 
     if len(shorter) < 2:
         return False

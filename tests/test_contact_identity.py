@@ -529,3 +529,60 @@ class TestHelpersDeUniao:
         assert merge_contexto("personal,professional", "professional") == \
             "personal,professional"
         assert merge_contexto(None, "personal") == "personal"
+
+
+class TestNamesMatchRecalibracao2607:
+    """Ajustes vindos do full sync real de 26/07 (12.706 registros).
+
+    Aquele sync provou a cascata (77 fichas novas contra ~10.000 antes), mas
+    RECRIOU duas duplicatas que tinham sido fundidas no dia anterior — porque
+    `names_match` exigia primeiro nome idêntico e pelo menos um sobrenome
+    literalmente igual.
+    """
+
+    # --- os dois casos reais que falharam ---
+
+    def test_titulo_nao_ocupa_a_posicao_de_primeiro_nome(self):
+        """'Dra. Vanelise': 'dra' era o 1º token, então a comparação morria
+        antes de olhar o nome."""
+        assert significant_tokens("Dra. Vanelise") == ["vanelise"]
+        assert significant_tokens("Prof. Ana Maria") == ["ana", "maria"]
+
+    def test_grafia_divergente_no_primeiro_nome(self):
+        """Vanelise x Wanelise — a advogada da penhora, mesma pessoa nas 2 agendas."""
+        assert names_match("Dra. Vanelise", "Wanelise B Carvalho", "mobile") is True
+
+    def test_sigla_dos_sobrenomes_conta_como_token_comum(self):
+        """'Manuela DAP' x 'Manuela Dansieri de Almeida Prado'."""
+        assert names_match("Manuela DAP", "Manuela Dansieri de Almeida Prado", "mobile") is True
+
+    # --- contra-casos: o afrouxamento não pode fundir pessoas distintas ---
+
+    def test_primeiro_nome_curto_nao_aceita_variante(self):
+        """Ana/Ane, Rita/Rito: distância 1 entre nomes de pessoas DIFERENTES é
+        comum abaixo de 6 letras."""
+        assert names_match("Ana Silva", "Ane Silva", "mobile") is False
+        assert names_match("Rita Souza", "Rito Souza", "mobile") is False
+        assert names_match("Luis Prado", "Luiz Prado", "mobile") is False
+
+    def test_sigla_tem_que_casar_em_ordem(self):
+        assert names_match("Joao XYZ", "Joao Xavier Yuri Zamora", "mobile") is True
+        assert names_match("Joao ZYX", "Joao Xavier Yuri Zamora", "mobile") is False
+        assert names_match("Joao ABC", "Joao Xavier Yuri Zamora", "mobile") is False
+
+    def test_o_caso_de_referencia_segue_barrado(self):
+        """Fixo compartilhado — o motivo de a guarda existir."""
+        assert names_match("Douglas Bassi", "Orestes Alves de Almeida Prado", "landline") is False
+        assert names_match("Douglas Bassi", "Orestes Alves de Almeida Prado", "mobile") is False
+
+    def test_mesmo_endereco_nomes_diferentes_segue_barrado(self):
+        assert names_match("Ana Silva", "Ana Costa", "landline") is False
+        assert names_match("Marcos Moliterno", "Eduardo Lafraia", "landline") is False
+
+    def test_ficha_lixo_sem_relacao_nao_casa(self):
+        """'Me Eu' no mesmo celular da Manuela: não há evidência de nome, então
+        NÃO casa. Fica duplicata — preferível a fundir às cegas."""
+        assert names_match("Me Eu", "Manuela Dansieri de Almeida Prado", "mobile") is False
+
+    def test_ficha_so_com_titulo_nao_vira_lista_vazia(self):
+        assert significant_tokens("Dr.") == ["dr"]
