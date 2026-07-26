@@ -422,19 +422,59 @@ não pessoa): companheira · familia · assistente · par_profissional · client
 prestador · circulo_proximo · outros. Política única faria o gerador falar com a
 companheira como fala com um conselho.
 
-**Persistência:** `system_memories` título `reference_renato_voice` (sem DDL) —
-é a memória que briefing/camada/bot JÁ leem em prod. `get_voice_guidance(conn,
-contact_id)` recorta a seção do perfil + as hipóteses e devolve pro gerador;
-retorna `None` se não há política (chamador degrada, nunca trava o draft).
+**Persistência:** `system_memories`, **um documento por canal** (sem DDL) —
+`reference_renato_voice` (WhatsApp) e `reference_renato_voice_email` (e-mail).
+É a memória que briefing/camada/bot JÁ leem em prod. `get_voice_guidance(conn,
+contact_id, canal="whatsapp")` recorta a seção do perfil + as hipóteses e devolve
+pro gerador; retorna `None` se não há política (chamador degrada, nunca trava o
+draft). Canal sem política destilada cai no de WhatsApp.
 
 **Privacidade:** `DEFAULT_EXCLUDE_FROM_MEMORY = ("companheira",)` — o perfil
 íntimo fica FORA do documento persistido (a política é lida pelo briefing/bot).
 `include_all=1` inclui.
 
-**Endpoint:** `GET /api/cron/voice-policy-refresh` (`?dry_run=1`, `?include_all=1`).
-NÃO agendado — a voz muda devagar, roda por disparo.
+**Endpoint:** `GET /api/cron/voice-policy-refresh` (`?canal=whatsapp|email`,
+`?dry_run=1`, `?include_all=1`). NÃO agendado — a voz muda devagar, roda por disparo.
 
-**1º resultado (26/07, corpus 4.991 msgs):** hipótese "grato, nunca obrigado"
-**CONFIRMADA** (102× contra 7×). Refutou a suposição da spec de que com a
-assistente a voz é seca: é o perfil de mensagens mais LONGAS (190 chars) e o de
-maior uso proporcional de "grato". Fase 2 = e-mail (Gmail Sent).
+**1º resultado (26/07, corpus WhatsApp):** hipótese "grato, nunca obrigado"
+**CONFIRMADA** (95× contra 5×). Refutou a suposição da spec de que com a
+assistente a voz é seca: é o perfil de mensagens mais LONGAS e o de maior uso
+proporcional de "grato".
+
+### 28.1 Fase 2 — e-mail (26/07/26)
+
+**O canal mora em `conversations.canal`, não em `messages`** — e é por isso que
+`collect_corpus(conn, canal=...)` faz o JOIN. Sem ele os 138 e-mails (1.836
+caracteres em média) entravam no corpus de WhatsApp (136 de média) e distorciam
+a métrica de tamanho e a amostra, que é ordenada por comprimento: os e-mails
+ocupavam justamente a cauda longa. Era um defeito da fase 1, corrigido aqui.
+
+**`clean_email()`** — o e-mail carrega muito mais coisa que não é voz do Renato:
+- thread citada (`Em <data>, <Fulano> escreveu:` / `On … wrote:` / `----- Mensagem
+  encaminhada -----`) → corta dali pra baixo; é fala de TERCEIRO, mesma classe do
+  bloco de export do WhatsApp;
+- bloco de assinatura (telefone, `LinkedIn:`, e-mail dele, `Saudações/Regards`, as
+  3 grafias com que ele assina) → corta. **A despedida `Abraço,\nRenato` FICA** —
+  é fechamento, e é o que a métrica de despedida conta;
+- encaminhamento da camada esperta (`Delegado por Renato via triagem automática`)
+  → descarta a mensagem inteira: é texto de máquina + corpo de terceiro.
+
+**Backfill:** `sync_account_outbound` ganhou paginação (`max_pages`, default 1 =
+cron intacto) e `post_process=False`. O flag existe porque `dismiss_stale_on_reply`
+sobre corpus histórico fecharia em massa propostas vivas — um e-mail de meses
+atrás não é evidência de que ele já respondeu algo de hoje. Backfill de 365d:
+**367 e-mails listados, 188 registrados, 0 erros** → corpus de e-mail 40 → 138.
+
+**Calibração própria do canal:** `min_len` 60 (abaixo disso é confirmação, não
+voz) · `MIN_CORPUS` 12 (e-mails são ~13× mais longos; 12 carregam mais sinal que
+30 WhatsApps) · amostra de 10 × 900 caracteres · `max_tokens` 2400 (com 1200 o
+JSON do perfil `familia` voltava truncado e a seção degradava em silêncio).
+
+**Resultado:** corpus 90 e-mails úteis, 5 de 6 perfis destilados (`circulo_proximo`
+com 4 fica de fora pelo gate). "grato" 18× contra "obrigado" 3× — **hipótese
+confirmada também no e-mail**. Registro bem distinto do WhatsApp: saudação 60% e
+despedida 67% no perfil `assistente` (contra ~17%/8% no WhatsApp).
+
+**Wiring:** `draft_message` (tonIAH) é WhatsApp-específico e segue no default. O
+gerador de rascunho de e-mail é o agente CoS, que escreve o texto antes de chamar
+`create_draft_response(channel='email')` — injetar a política lá é o próximo passo.

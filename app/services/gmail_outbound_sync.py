@@ -128,8 +128,14 @@ async def sync_account_outbound(
     account: Dict,
     gmail: GmailIntegration,
     hours: int = 24,
+    max_pages: int = 1,
+    post_process: bool = True,
 ) -> Dict[str, Any]:
     """Sync 1 conta — varre Sent newer_than:Nd e registra outgoing.
+
+    `max_pages=1` (default) preserva o comportamento do cron de 30min: 1 página
+    de 50 e-mails, custo previsivel. Backfill historico passa max_pages alto —
+    a paginacao existe pra isso, nao pro caminho agendado.
 
     Returns: {emails_listed, processed, registered, contacts_resolved, errors}
     """
@@ -140,6 +146,7 @@ async def sync_account_outbound(
         "registered": 0,
         "contacts_resolved": 0,
         "skipped_existing": 0,
+        "pages": 0,
         "errors": 0,
         "error_samples": [],
     }
@@ -163,17 +170,30 @@ async def sync_account_outbound(
 
     days = max(1, hours // 24)
     query = f"in:sent newer_than:{days}d"
-    list_result = await gmail.list_messages(
-        access_token=access_token,
-        query=query,
-        max_results=50,
-    )
-    if not list_result or list_result.get("error"):
-        stats["errors"] += 1
-        stats["error_samples"].append({"step": "list", "error": (list_result or {}).get("error", "no_response")})
-        return stats
 
-    messages = list_result.get("messages", []) or []
+    messages: List[Dict] = []
+    page_token = None
+    for _ in range(max(1, max_pages)):
+        list_result = await gmail.list_messages(
+            access_token=access_token,
+            query=query,
+            max_results=50,
+            page_token=page_token,
+        )
+        if not list_result or list_result.get("error"):
+            stats["errors"] += 1
+            stats["error_samples"].append({"step": "list", "error": (list_result or {}).get("error", "no_response")})
+            # Pagina 1 falhou = nada a processar; falha numa pagina posterior
+            # ainda deixa as anteriores utilizaveis.
+            if not messages:
+                return stats
+            break
+        stats["pages"] += 1
+        messages.extend(list_result.get("messages", []) or [])
+        page_token = list_result.get("nextPageToken")
+        if not page_token:
+            break
+
     stats["emails_listed"] = len(messages)
 
     contact_ids_touched: set = set()
@@ -239,8 +259,13 @@ async def sync_account_outbound(
 
         conn.commit()
 
-    # Pos-processamento: auto-dismiss proposals pendentes pra cada contato tocado
-    if contact_ids_touched:
+    # Pos-processamento: auto-dismiss proposals pendentes pra cada contato tocado.
+    #
+    # `post_process=False` existe pro BACKFILL historico: um e-mail de meses atras
+    # nao e evidencia de que o Renato ja respondeu a uma proposta aberta HOJE —
+    # rodar o dismiss sobre corpus antigo fecharia propostas vivas em massa. O
+    # caminho agendado (janela de 1 dia) segue com o dismiss ligado.
+    if contact_ids_touched and post_process:
         try:
             from services.action_proposals import get_action_proposals
             svc = get_action_proposals()
@@ -257,7 +282,8 @@ async def sync_account_outbound(
     return stats
 
 
-async def sync_all_outbound(hours: int = 24) -> Dict[str, Any]:
+async def sync_all_outbound(hours: int = 24, max_pages: int = 1,
+                            post_process: bool = True) -> Dict[str, Any]:
     """Itera google_accounts conectadas e roda sync_account_outbound."""
     out = {"accounts": [], "registered_total": 0, "errors_total": 0}
     gmail = GmailIntegration()
@@ -270,7 +296,9 @@ async def sync_all_outbound(hours: int = 24) -> Dict[str, Any]:
 
     for account in accounts:
         try:
-            stats = await sync_account_outbound(account, gmail, hours=hours)
+            stats = await sync_account_outbound(account, gmail, hours=hours,
+                                                max_pages=max_pages,
+                                                post_process=post_process)
         except Exception as e:
             logger.exception(f"sync_account_outbound crash for {account.get('email')}: {e}")
             stats = {"account": account.get("email"), "errors": 1, "error_samples": [{"step": "crash", "error": str(e)[:200]}]}

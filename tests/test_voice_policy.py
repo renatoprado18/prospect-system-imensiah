@@ -1,16 +1,24 @@
-"""Testes da política de voz (fase 1 — WhatsApp).
+"""Testes da política de voz (fase 1 — WhatsApp; fase 2 — e-mail).
 
 Cobre as partes determinísticas: limpeza do corpus, classificação de perfil e
 medição. A síntese por LLM não é testada aqui (não-determinística) — o que se
 testa é que ela recebe corpus LIMPO, que é onde estava o risco real.
 """
+import pytest
+
 from services.voice_policy import (
     BOT_INSTANCE,
+    CANAIS,
     DEFAULT_EXCLUDE_FROM_MEMORY,
+    MEMORY_TITLE,
+    MEMORY_TITLE_EMAIL,
+    MIN_CORPUS,
     SELF_CONTACT_IDS,
     classify_recipient,
+    clean_email,
     clean_outgoing,
     measure_style,
+    memory_title_for,
     render_policy_md,
     sample_for_profile,
 )
@@ -157,3 +165,125 @@ class TestGuardasDoCorpus:
         """Os dois filtros que impedem a política de aprender a voz errada."""
         assert BOT_INSTANCE == "intel-bot-v2"
         assert 25613 in SELF_CONTACT_IDS
+
+
+# ====================== Fase 2 — e-mail ======================
+
+
+class TestCleanEmail:
+    """Um e-mail enviado carrega muito mais coisa que não é voz do Renato do que
+    uma mensagem de WhatsApp: a thread citada, a assinatura e — no caso dos
+    encaminhamentos da camada esperta — o corpo inteiro de um e-mail alheio."""
+
+    def test_thread_citada_e_cortada(self):
+        """A parte de baixo é fala de TERCEIRO. Mesma classe do bloco de export
+        do WhatsApp, mecanismo diferente."""
+        bruto = (
+            "O que você recomenda?\n\n"
+            "Em qui., 16 de jul. de 2026 às 21:58, Andressa Santos <\n"
+            "andressa@almeida-prado.com> escreveu:\n\n"
+            "> Olá!\n>\n> Segue o retorno da conta Google.\n"
+        )
+        limpo = clean_email(bruto)
+        assert limpo == "O que você recomenda?"
+        assert "Andressa" not in limpo
+
+    def test_thread_citada_em_ingles(self):
+        bruto = "Thanks, Nick.\n\nOn Fri, Jul 24, 2026 at 3:00 PM Nick <n@x.it> wrote:\n\n> Hi Renato\n"
+        assert clean_email(bruto) == "Thanks, Nick."
+
+    def test_encaminhamento_automatico_e_descartado_inteiro(self):
+        """Texto de máquina + corpo de terceiro. Não é voz dele em parte alguma —
+        devolve "" e o gate de min_len descarta a mensagem."""
+        bruto = ("Delegado por Renato via triagem automática.\n\n"
+                 "---------- Mensagem encaminhada ----------\n"
+                 "De: \"Amazon.com\" <shipment-tracking@amazon.com>\n"
+                 "Assunto: Shipped: 1 Shoes item\n")
+        assert clean_email(bruto) == ""
+
+    def test_bloco_de_assinatura_sai(self):
+        bruto = ("Roger,\n\nSem pressa. Sigo à disposição.\n\n"
+                 "Saudações/Regards,\n\nRenato A Prado\n"
+                 "+55(11)98415-3337\nrenato.almeida.prado@gmail.com\n"
+                 "LinkedIn: https://www.linkedin.com/in/renatoaprado/\n")
+        limpo = clean_email(bruto)
+        assert limpo == "Roger,\n\nSem pressa. Sigo à disposição."
+        assert "LinkedIn" not in limpo and "98415" not in limpo
+
+    def test_despedida_e_preservada(self):
+        """'Abraço,\\nRenato' é FECHAMENTO, não assinatura — é exatamente o que a
+        métrica de despedida conta. Cortá-lo zeraria o traço que se quer medir."""
+        bruto = "Roger, tudo bem?\n\nConseguiu olhar os dois nomes?\n\nAbraço,\nRenato"
+        limpo = clean_email(bruto)
+        assert limpo.endswith("Abraço,\nRenato")
+        assert measure_style([limpo])["com_fechamento"] == 1
+
+    @pytest.mark.parametrize("assinatura", [
+        "Renato A Prado",
+        "Renato F A Prado",
+        "Renato de Faria e Almeida Prado",
+    ])
+    def test_grafias_de_assinatura_que_ele_usa(self, assinatura):
+        assert clean_email(f"Segue o combinado.\n\n{assinatura}\n") == "Segue o combinado."
+
+    def test_nome_no_meio_do_texto_nao_corta(self):
+        """O corte de assinatura exige a LINHA inteira ser o nome — senão um
+        e-mail que fala dele na terceira pessoa perderia metade do corpo."""
+        t = "Falei com o Renato Prado ontem sobre o caso e ele concordou."
+        assert clean_email(t) == t
+
+    def test_separador_padrao_de_assinatura(self):
+        assert clean_email("Segue em anexo.\n\n-- \nRenato\nCEO") == "Segue em anexo."
+
+    def test_linhas_citadas_soltas_somem(self):
+        assert clean_email("Concordo.\n> texto antigo\n> mais texto") == "Concordo."
+
+    def test_email_limpo_passa_intacto(self):
+        t = "Pai,\n\nO Club Athletico convocou a compra do título social."
+        assert clean_email(t) == t
+
+    def test_vazio_e_none(self):
+        assert clean_email(None) == ""
+        assert clean_email("") == ""
+
+
+class TestSeparacaoDeCanal:
+    """O canal mora em `conversations.canal`, não em `messages`. Sem o JOIN os
+    138 e-mails (1.836 caracteres em média) entravam no corpus de WhatsApp
+    (136 de média) e distorciam tamanho e amostra."""
+
+    def test_canais_declarados(self):
+        assert CANAIS == ("whatsapp", "email")
+
+    def test_documento_por_canal(self):
+        assert memory_title_for("whatsapp") == MEMORY_TITLE
+        assert memory_title_for("email") == MEMORY_TITLE_EMAIL
+        assert MEMORY_TITLE != MEMORY_TITLE_EMAIL
+
+    def test_canal_invalido_falha_alto(self):
+        """Errar o canal em silêncio devolveria corpus vazio e uma política
+        vazia gravada por cima da boa."""
+        from services.voice_policy import collect_corpus
+        with pytest.raises(ValueError, match="canal inválido"):
+            collect_corpus(None, canal="telegram")
+
+    def test_gate_de_corpus_menor_no_email(self):
+        """E-mails são ~13× mais longos: 12 deles carregam mais sinal de estilo
+        que 30 mensagens de WhatsApp."""
+        assert MIN_CORPUS["email"] < MIN_CORPUS["whatsapp"]
+
+    def test_render_rotula_o_canal(self):
+        destilado = {
+            "assistente": {
+                "metricas": measure_style(["Segue o pedido. Grato"]),
+                "regras": {"abertura": "vocativo", "fechamento": "Grato",
+                           "tamanho": "médio", "tom": "executivo",
+                           "faça": [], "evite": [], "exemplo_canonico": "Segue."},
+            }
+        }
+        md_email = render_policy_md(destilado, canal="email")
+        assert "e-mail" in md_email
+        assert "e-mails enviados" in md_email
+        md_wa = render_policy_md(destilado, canal="whatsapp")
+        assert "WhatsApp" in md_wa
+        assert "mensagens enviados" in md_wa

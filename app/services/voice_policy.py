@@ -16,8 +16,10 @@ Duas camadas, de propósito:
      em instrução acionável. O LLM não INVENTA regra: ele recebe as métricas já
      apuradas e as amostras reais.
 
-Fase 1 = WhatsApp. E-mail (Gmail Sent) fica pra fase 2 — corpus precisa de
-backfill e o registro de e-mail é outro.
+Fase 1 = WhatsApp. Fase 2 = e-mail (Gmail Sent), com coletor e limpeza próprios:
+o registro é outro (mais longo, com vocativo e assinatura) e o texto vem sujo de
+citação da thread. O canal NÃO mora em `messages` — mora em `conversations.canal`,
+e é por isso que `collect_corpus` faz o JOIN: sem ele os dois corpora se misturam.
 
 Ver [[project_voice_policy]].
 """
@@ -30,7 +32,17 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Um documento por canal: a voz de e-mail é outra e misturá-las produziria uma
+# média que não descreve nenhuma das duas. O título do WhatsApp fica inalterado
+# pra não quebrar quem já lê a política da fase 1.
 MEMORY_TITLE = "reference_renato_voice"
+MEMORY_TITLE_EMAIL = "reference_renato_voice_email"
+
+CANAIS = ("whatsapp", "email")
+
+
+def memory_title_for(canal: str) -> str:
+    return MEMORY_TITLE_EMAIL if canal == "email" else MEMORY_TITLE
 
 # Fichas do PRÓPRIO Renato: self-chat é anotação pessoal, não comunicação com
 # terceiro — treinar nisso ensina o gerador a falar sozinho. IDs conferidos em
@@ -61,6 +73,78 @@ def clean_outgoing(text: Optional[str]) -> str:
     m = _EXPORT_BLOCK.search(t)
     if m:
         t = t[:m.start()]
+    return t.strip()
+
+
+# ---- Limpeza específica de e-mail (fase 2) ----
+#
+# Um e-mail enviado carrega, além do texto do Renato: a thread citada abaixo
+# (que é fala de TERCEIRO — o mesmo erro de corpus que o bloco de export do
+# WhatsApp causava na fase 1), a assinatura, e o corpo inteiro do e-mail alheio
+# quando é encaminhamento. Sem cortar isso, a "voz" medida seria a dos outros.
+
+# "Em qui., 16 de jul. de 2026 às 21:58, Fulano <x@y> escreveu:" e variantes
+# (pt-BR e en). Tudo daí pra baixo é thread citada.
+_EMAIL_QUOTE_HEADER = re.compile(
+    r"(?:^|\n)\s*(?:"
+    # O cabeçalho de citação quebra em várias linhas quando o nome + e-mail do
+    # remetente são longos — o limite precisa caber "Em <data> às <hora>,
+    # <Nome Completo> <\n<email@dominio>> escreveu:".
+    r"Em\s+.{0,200}?escreveu:"
+    r"|On\s+.{0,200}?wrote:"
+    r"|-{2,}\s*Mensagem (?:original|encaminhada)\s*-{2,}"
+    r"|-{2,}\s*(?:Original|Forwarded) [Mm]essage\s*-{2,}"
+    r"|_{10,}"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Assinatura. O corte é pelo BLOCO estrutural (telefone, LinkedIn, e-mail dele,
+# "Saudações/Regards"), não pela despedida: "Abraço,\nRenato" é fechamento e
+# PRECISA ficar no corpus — é justamente o que a métrica de despedida conta.
+_EMAIL_SIGNATURE = re.compile(
+    r"(?:^|\n)[ \t]*(?:"
+    r"--\s*$"
+    r"|Sauda[çc][õo]es\s*/\s*Regards"
+    # Linha que é só o nome dele, em qualquer das grafias que ele assina
+    # ("Renato A Prado", "Renato F A Prado", "Renato de Faria e Almeida Prado").
+    # A despedida "Abraço,\nRenato" NÃO cai aqui: exige sobrenome.
+    r"|Renato(?:\s+(?:[A-ZÀ-Ú][\wÀ-ú]*\.?|de|da|e))*\s+Prado\s*$"
+    r"|\+?55\s*\(?\d{2}\)?\s*9?\d{4,5}[-\s]?\d{4}"
+    r"|LinkedIn:\s*https?://"
+    r"|renato[\w.]*@[\w.-]+\s*$"
+    r")",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Encaminhamento gerado pela camada esperta do inbox — texto de máquina + corpo
+# de terceiro. Não é voz dele em nenhuma parte; descarta a mensagem inteira.
+_EMAIL_AUTO_FORWARD = re.compile(r"^\s*Delegado por Renato via triagem", re.IGNORECASE)
+
+# Linhas de citação (">") que sobrem depois do corte.
+_EMAIL_QUOTED_LINE = re.compile(r"^\s*>.*$", re.MULTILINE)
+
+
+def clean_email(text: Optional[str]) -> str:
+    """Só o texto que o Renato escreveu neste e-mail — sem thread, sem assinatura.
+
+    Devolve "" para o que não é voz dele (encaminhamento automático), o que faz
+    o chamador descartar a mensagem pelo mesmo gate de `min_len`.
+    """
+    if not text:
+        return ""
+    t = _INVISIBLE.sub("", text).replace("\r\n", "\n").replace("\r", "\n")
+    if _EMAIL_AUTO_FORWARD.search(t):
+        return ""
+    m = _EMAIL_QUOTE_HEADER.search(t)
+    if m:
+        t = t[:m.start()]
+    m = _EMAIL_SIGNATURE.search(t)
+    if m:
+        t = t[:m.start()]
+    t = _EMAIL_QUOTED_LINE.sub("", t)
+    # Colapsa as linhas em branco que os cortes deixam pra trás.
+    t = re.sub(r"\n{3,}", "\n\n", t)
     return t.strip()
 
 
@@ -183,34 +267,50 @@ def measure_style(messages: List[str]) -> Dict:
     return acc
 
 
-def collect_corpus(conn, min_len: int = 15) -> Dict[str, List[str]]:
-    """Corpus outgoing limpo, agrupado por perfil de destinatário.
+def collect_corpus(conn, canal: str = "whatsapp",
+                   min_len: Optional[int] = None) -> Dict[str, List[str]]:
+    """Corpus outgoing limpo de UM canal, agrupado por perfil de destinatário.
 
     Filtros (cada um é um gate de qualidade, não capricho):
+      - `conversations.canal = %(canal)s` -> não mistura WhatsApp com e-mail.
+        O canal NÃO está em `messages`; sem este JOIN os 138 e-mails (1.836
+        caracteres em média) entravam no corpus de WhatsApp (136 de média) e
+        distorciam a métrica de tamanho e a amostra, que é ordenada por
+        comprimento — os e-mails ocupavam justamente a cauda longa.
       - `instance <> BOT_INSTANCE`  -> não aprende a voz da tonIAH
       - contato não é o próprio Renato -> não aprende self-chat
       - sem placeholder de mídia / link puro -> não é texto
-      - `clean_outgoing` -> tira bloco de export com fala de terceiros
+      - limpeza por canal -> tira fala de terceiros (bloco de export no WhatsApp,
+        thread citada e assinatura no e-mail)
     """
+    if canal not in CANAIS:
+        raise ValueError(f"canal inválido: {canal!r}. Use um de {CANAIS}.")
+    # E-mail tem piso maior: abaixo disso é "ok, obrigado" — confirmação, não voz.
+    if min_len is None:
+        min_len = 60 if canal == "email" else 15
+    limpar = clean_email if canal == "email" else clean_outgoing
+
     cur = conn.cursor()
     cur.execute(
         """
         SELECT m.conteudo, c.id AS contact_id, c.nome, c.tags, c.cargo, c.circulo
         FROM messages m
         JOIN contacts c ON c.id = m.contact_id
+        JOIN conversations cv ON cv.id = m.conversation_id
         WHERE m.direcao = 'outgoing'
+          AND cv.canal = %s
           AND COALESCE(m.metadata->>'instance', '') <> %s
           AND m.contact_id <> ALL(%s)
           AND m.conteudo IS NOT NULL
           AND m.conteudo !~ %s
           AND m.conteudo !~* '^https?://\\S+$'
         """,
-        (BOT_INSTANCE, list(SELF_CONTACT_IDS), _MEDIA_PLACEHOLDER.pattern),
+        (canal, BOT_INSTANCE, list(SELF_CONTACT_IDS), _MEDIA_PLACEHOLDER.pattern),
     )
     por_perfil: Dict[str, List[str]] = defaultdict(list)
     for row in cur.fetchall():
         r = dict(row)
-        texto = clean_outgoing(r.get("conteudo"))
+        texto = limpar(r.get("conteudo"))
         if len(texto) < min_len:
             continue
         por_perfil[classify_recipient(r)].append(texto)
@@ -232,7 +332,17 @@ def sample_for_profile(messages: List[str], k: int = 25) -> List[str]:
 
 # ============== Síntese (LLM) ==============
 
-_DISTILL_PROMPT = """Você recebe MÉTRICAS APURADAS e AMOSTRAS REAIS de mensagens de WhatsApp
+_CANAL_LABEL = {
+    "whatsapp": "mensagens de WhatsApp",
+    "email": "e-mails (já sem a thread citada e sem assinatura)",
+}
+
+# Gate de corpus por canal. E-mail é mais baixo de propósito: são textos ~13×
+# mais longos que os de WhatsApp, então 12 e-mails carregam mais sinal de estilo
+# que 30 mensagens de WhatsApp — e o corpus total de e-mail é 138.
+MIN_CORPUS = {"whatsapp": 30, "email": 12}
+
+_DISTILL_PROMPT = """Você recebe MÉTRICAS APURADAS e AMOSTRAS REAIS de {canal_label}
 que Renato de Faria e Almeida Prado enviou para um tipo específico de destinatário.
 
 Sua tarefa: escrever a regra de voz que um gerador de rascunho deve seguir para
@@ -264,34 +374,47 @@ Responda em JSON, exatamente estas chaves:
   "exemplo_canonico": "uma mensagem curta que você escreveria neste perfil"}}"""
 
 
-def distill_policy(conn, perfis: Optional[List[str]] = None) -> Dict[str, Dict]:
-    """Roda a síntese por perfil. Devolve {perfil: {metricas, regras}}."""
+def distill_policy(conn, perfis: Optional[List[str]] = None,
+                   canal: str = "whatsapp") -> Dict[str, Dict]:
+    """Roda a síntese por perfil, num canal. Devolve {perfil: {metricas, regras}}."""
     import json as _json
 
     from services.llm import BALANCED, _call_model
 
-    corpus = collect_corpus(conn)
+    corpus = collect_corpus(conn, canal=canal)
+    minimo = MIN_CORPUS.get(canal, 30)
+    # E-mail é longo: amostra menor e trecho maior por amostra cabem melhor no
+    # mesmo orçamento de prompt do que 25 e-mails truncados em 300 caracteres.
+    k_amostra, corte = (10, 900) if canal == "email" else (25, 300)
     out: Dict[str, Dict] = {}
     for perfil, msgs in corpus.items():
         if perfis and perfil not in perfis:
             continue
-        if len(msgs) < 30:
-            logger.info("voice_policy: perfil %s com só %d msgs — pulando", perfil, len(msgs))
+        if len(msgs) < minimo:
+            logger.info("voice_policy[%s]: perfil %s com só %d msgs — pulando",
+                        canal, perfil, len(msgs))
             out[perfil] = {"metricas": measure_style(msgs), "regras": None,
-                           "nota": "corpus insuficiente (<30) — não destilado"}
+                           "nota": f"corpus insuficiente (<{minimo}) — não destilado"}
             continue
         m = measure_style(msgs)
-        amostras = sample_for_profile(msgs, k=25)
+        amostras = sample_for_profile(msgs, k=k_amostra)
         prompt = _DISTILL_PROMPT.format(
+            canal_label=_CANAL_LABEL[canal],
             perfil=perfil, n=m["n"], len_medio=m["len_medio"],
             pct_com_saudacao=m["pct_com_saudacao"], saudacoes=m["saudacoes"],
             pct_com_fechamento=m["pct_com_fechamento"], fechamentos=m["fechamentos"],
             pct_pergunta=m["pct_pergunta"], pct_exclamacao=m["pct_exclamacao"],
             pct_emoji=m["pct_emoji"], pct_vc_abreviado=m["pct_vc_abreviado"],
             pct_multilinha=m["pct_multilinha"],
-            amostras="\n".join(f"- {a[:300]}" for a in amostras),
+            amostras="\n".join(f"- {a[:corte]}" for a in amostras),
         )
-        raw = _call_model(BALANCED, prompt, max_tokens=1200, function="voice_policy.distill")
+        # E-mail produz regra mais longa (mais traços por amostra: vocativo,
+        # estrutura, fechamento). Com 1200 o JSON do perfil `familia` voltou
+        # truncado e o parse falhou — a seção degradava pra "síntese não
+        # disponível" em silêncio.
+        raw = _call_model(BALANCED, prompt,
+                          max_tokens=2400 if canal == "email" else 1200,
+                          function=f"voice_policy.distill.{canal}")
         regras = None
         if raw:
             try:
@@ -314,23 +437,31 @@ DEFAULT_EXCLUDE_FROM_MEMORY = ("companheira",)
 
 
 def render_policy_md(destilado: Dict[str, Dict],
-                     exclude: tuple = DEFAULT_EXCLUDE_FROM_MEMORY) -> str:
+                     exclude: tuple = DEFAULT_EXCLUDE_FROM_MEMORY,
+                     canal: str = "whatsapp") -> str:
     """Markdown que o Renato lê e corrige. Métrica ao lado de cada regra — é o
     que separa 'política revisável' de caixa-preta."""
     from services.tz import format_brt, now_utc
 
+    titulo = "WhatsApp" if canal == "whatsapp" else "e-mail"
+    nota_canal = (
+        "Fase 1 = WhatsApp; a política de e-mail vive em documento próprio."
+        if canal == "whatsapp" else
+        "Fase 2 = e-mail. Corpus vem do Gmail Sent, já sem a thread citada e "
+        "sem assinatura — só o que ele escreveu."
+    )
     linhas = [
-        "# Política de voz — Renato (WhatsApp)",
+        f"# Política de voz — Renato ({titulo})",
         "",
-        f"Destilada do corpus real em {format_brt(now_utc())}. "
-        "Fase 1 = WhatsApp; e-mail é fase 2.",
+        f"Destilada do corpus real em {format_brt(now_utc())}. {nota_canal}",
         "",
         "Cada regra vem com a contagem que a sustenta. Discordou? A regra está "
         "errada ou o corpus mudou — corrija aqui e o gerador passa a seguir.",
         "",
     ]
     total = sum(d["metricas"].get("n", 0) for d in destilado.values())
-    linhas.append(f"**Corpus:** {total} mensagens enviadas, "
+    unidade = "mensagens" if canal == "whatsapp" else "e-mails"
+    linhas.append(f"**Corpus:** {total} {unidade} enviados, "
                   f"{len(destilado)} perfis de destinatário.")
     linhas.append("")
 
@@ -384,16 +515,20 @@ def render_policy_md(destilado: Dict[str, Dict],
     return "\n".join(linhas)
 
 
-def persist_policy(conn, markdown: str) -> int:
-    """Grava/atualiza a política em `system_memories`.
+def persist_policy(conn, markdown: str, canal: str = "whatsapp") -> int:
+    """Grava/atualiza a política do canal em `system_memories`.
 
     Why system_memories: é a memória que a camada, o briefing e o bot JÁ leem em
     prod (o `search_memories` une system_memories + tonia_memories desde
     `aace664`). Guardar num .md do Mac não serviria — prod não vê o disco dele.
     Sem DDL.
     """
+    import json as _json
+
+    titulo = memory_title_for(canal)
+    tags = _json.dumps(["voz", "draft", canal])
     cur = conn.cursor()
-    cur.execute("SELECT id FROM system_memories WHERE titulo = %s", (MEMORY_TITLE,))
+    cur.execute("SELECT id FROM system_memories WHERE titulo = %s", (titulo,))
     row = cur.fetchone()
     if row:
         mid = dict(row)["id"]
@@ -407,10 +542,9 @@ def persist_policy(conn, markdown: str) -> int:
     else:
         cur.execute(
             """INSERT INTO system_memories (titulo, conteudo, tipo, tags, fonte)
-               VALUES (%s, %s, 'reference', '["voz","draft","whatsapp"]'::jsonb,
-                       'voice_policy.distill')
+               VALUES (%s, %s, 'reference', %s::jsonb, 'voice_policy.distill')
                RETURNING id""",
-            (MEMORY_TITLE, markdown),
+            (titulo, markdown, tags),
         )
         mid = dict(cur.fetchone())["id"]
     conn.commit()
@@ -419,12 +553,16 @@ def persist_policy(conn, markdown: str) -> int:
 
 # ============== Consumo pelos geradores ==============
 
-def get_voice_guidance(conn, contact_id: int) -> Optional[str]:
-    """Bloco de instrução de voz pro perfil deste contato.
+def get_voice_guidance(conn, contact_id: int, canal: str = "whatsapp") -> Optional[str]:
+    """Bloco de instrução de voz pro perfil deste contato, NESTE canal.
 
     É o que CoS / camada esperta / tonIAH injetam ANTES de rascunhar. Devolve
     None se não há política gravada — o chamador segue com o comportamento
     antigo (degradação silenciosa, nunca trava o draft).
+
+    Se o canal pedido ainda não tem política destilada, cai no WhatsApp: uma voz
+    aproximada do mesmo autor é melhor que nenhuma, e é o que já rodava antes da
+    fase 2. O `canal` default preserva todos os chamadores existentes.
     """
     cur = conn.cursor()
     cur.execute("SELECT nome, tags, cargo, circulo FROM contacts WHERE id = %s", (contact_id,))
@@ -433,8 +571,12 @@ def get_voice_guidance(conn, contact_id: int) -> Optional[str]:
         return None
     perfil = classify_recipient(dict(row))
 
-    cur.execute("SELECT conteudo FROM system_memories WHERE titulo = %s", (MEMORY_TITLE,))
+    cur.execute("SELECT conteudo FROM system_memories WHERE titulo = %s",
+                (memory_title_for(canal),))
     pol = cur.fetchone()
+    if not pol and canal != "whatsapp":
+        cur.execute("SELECT conteudo FROM system_memories WHERE titulo = %s", (MEMORY_TITLE,))
+        pol = cur.fetchone()
     if not pol:
         return None
     texto = dict(pol)["conteudo"]

@@ -6104,17 +6104,20 @@ async def cron_detectors_run(request: Request, only: str = ""):
 
 @app.get("/api/cron/voice-policy-refresh")
 @track_cron_run
-async def cron_voice_policy_refresh(request: Request, dry_run: str = "", include_all: str = ""):
-    """Regenera a politica de voz do Renato a partir do corpus real (fase 1: WA).
+async def cron_voice_policy_refresh(request: Request, dry_run: str = "",
+                                    include_all: str = "", canal: str = "whatsapp"):
+    """Regenera a politica de voz do Renato a partir do corpus real.
 
     Destila por PERFIL DE DESTINATARIO e grava em `system_memories`
-    ('reference_renato_voice') — de onde CoS, camada esperta do inbox e tonIAH
-    leem antes de rascunhar. Sem isso o gerador escreve num registro medio e o
-    Renato reescreve (gatilho: 5 rounds num WA de 3 linhas pra Andressa).
+    ('reference_renato_voice' pra WhatsApp, 'reference_renato_voice_email' pra
+    e-mail) — de onde CoS, camada esperta do inbox e tonIAH leem antes de
+    rascunhar. Sem isso o gerador escreve num registro medio e o Renato
+    reescreve (gatilho: 5 rounds num WA de 3 linhas pra Andressa).
 
     Nao precisa rodar com frequencia: a voz muda devagar. Mensal/manual basta —
     por isso NAO esta registrado no scheduler; roda por disparo.
 
+    `?canal=email` destila a fase 2 (corpus do Gmail Sent). Default `whatsapp`.
     `?dry_run=1` devolve o documento sem gravar.
     `?include_all=1` inclui o perfil intimo (omitido por padrao — a politica e
     lida pelo briefing/bot; ver DEFAULT_EXCLUDE_FROM_MEMORY).
@@ -6130,18 +6133,24 @@ async def cron_voice_policy_refresh(request: Request, dry_run: str = "", include
         persist_policy,
         render_policy_md,
     )
-    from services.voice_policy import DEFAULT_EXCLUDE_FROM_MEMORY
+    from services.voice_policy import CANAIS, DEFAULT_EXCLUDE_FROM_MEMORY
+
+    canal = (canal or "whatsapp").strip().lower()
+    if canal not in CANAIS:
+        raise HTTPException(status_code=400,
+                            detail=f"canal invalido: {canal!r}. Use um de {list(CANAIS)}.")
 
     seco = dry_run.strip().lower() in ("1", "true", "on", "yes")
     exclude = () if include_all.strip().lower() in ("1", "true", "on", "yes") else DEFAULT_EXCLUDE_FROM_MEMORY
 
     with get_db() as conn:
-        destilado = distill_policy(conn)
-        markdown = render_policy_md(destilado, exclude=exclude)
-        memory_id = None if seco else persist_policy(conn, markdown)
+        destilado = distill_policy(conn, canal=canal)
+        markdown = render_policy_md(destilado, exclude=exclude, canal=canal)
+        memory_id = None if seco else persist_policy(conn, markdown, canal=canal)
 
     return {
         "job": "voice-policy-refresh",
+        "canal": canal,
         "dry_run": seco,
         "perfis": {
             p: {
