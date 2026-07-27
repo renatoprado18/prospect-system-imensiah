@@ -21140,9 +21140,56 @@ async def briefing_draft_message(request: Request, data: BriefingMessageDraft):
 
     context_text = context_prompts.get(data.context, context_prompts["followup"])
 
+    # Politica de voz do perfil deste destinatario (services/voice_policy).
+    # Ate 27/07 este gerador — o dos 3 botoes da ficha do contato, e o UNICO
+    # gerador de rascunho que o Renato consegue acionar hoje — trazia
+    # "Tom casual mas profissional" hardcoded, o registro MEDIO que fez ele
+    # reescrever o rascunho 5 vezes e originou a frente da voz. Os outros dois
+    # consumidores wired (draft_message do bot INTEL, agente CoS) estao em
+    # caminhos que nao rodam: o bot nao recebe mensagem no agent loop e o cron
+    # cos-investigator esta aposentado desde 22/06. Degrada em silencio
+    # (None -> instrucao generica antiga).
+    voice_block = None
+    try:
+        from services.voice_policy import get_voice_guidance
+        with get_db() as conn:
+            voice_block = get_voice_guidance(conn, data.contact_id, canal=data.channel)
+    except Exception as e:
+        logging.warning(f"briefing_draft_message: voice_policy indisponivel: {e}")
+
+    # Colado em {context_text} sem quebra propria: quando nao ha politica o
+    # prompt fica byte-a-byte igual ao anterior a esta mudanca.
+    bloco_voz = f"""
+POLITICA DE VOZ — a mensagem deve soar como o PROPRIO Renato escreveria PARA
+ESTE destinatario NESTE canal. O bloco abaixo foi destilado do corpus real dele
+(mensagens que ele mesmo mandou) — siga como especificacao, nao como sugestao.
+Ela vale mais que qualquer nocao generica de tom que apareca adiante:
+
+{voice_block}
+""" if voice_block else ""
+
+    # Regras de canal. A linha de tom generico so entra quando NAO ha politica
+    # de voz — senao ela compete com o corpus destilado e puxa o texto de volta
+    # pro registro medio (mesma correcao feita no draft_message em dc06ae8).
+    if data.channel == "whatsapp":
+        regras_canal = "\n".join([
+            "REGRAS PARA WHATSAPP:",
+            "- Maximo 2-3 frases curtas e diretas",
+            '- OBRIGATORIO: Mencione uma oportunidade especifica do briefing acima (ex: "levar metodologia ImensIAH", "parceria estrategica", "mentoria cruzada")',
+            "- Proponha acao clara: cafe, call, ou encontro no proximo conselho",
+            "- Maximo 1 emoji",
+            ("- Siga a POLITICA DE VOZ acima a risca" if voice_block
+             else "- Tom casual mas profissional"),
+            '- NAO use frases genericas como "trocar ideias" sem especificar o que',
+        ])
+    else:
+        regras_canal = "(Email pode ser mais elaborado)"
+        if voice_block:
+            regras_canal += "\nSiga a POLITICA DE VOZ acima a risca."
+
     # Add contact details
     prompt = f"""
-{context_text}
+{context_text}{bloco_voz}
 
 INFORMACOES DO CONTATO:
 - Nome completo: {contact['nome']}
@@ -21159,13 +21206,7 @@ INFORMACOES DO CONTATO:
 {f"USE ESTE GANCHO NA MENSAGEM: {hook_suggestion}" if hook_suggestion else ""}
 
 CANAL: {data.channel.upper()}
-{'''REGRAS PARA WHATSAPP:
-- Maximo 2-3 frases curtas e diretas
-- OBRIGATORIO: Mencione uma oportunidade especifica do briefing acima (ex: "levar metodologia ImensIAH", "parceria estrategica", "mentoria cruzada")
-- Proponha acao clara: cafe, call, ou encontro no proximo conselho
-- Maximo 1 emoji
-- Tom casual mas profissional
-- NAO use frases genericas como "trocar ideias" sem especificar o que''' if data.channel == "whatsapp" else "(Email pode ser mais elaborado)"}
+{regras_canal}
 
 IMPORTANTE: A mensagem DEVE mencionar uma OPORTUNIDADE ESPECIFICA do briefing. Seja direto sobre o que voce quer propor.
 
