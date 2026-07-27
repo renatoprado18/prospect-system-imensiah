@@ -3292,14 +3292,25 @@ async def apply_triage_to_inbox(
     #      => 48 runs/dia) manda "📧 Email urgente (P{N})" por conta própria,
     #      one-shot por gmail_id. Foi ele que mandou o e-mail do pai 30-60min
     #      ANTES do resumo, nos dias 26 e 27/07 — a duplicata que motivou isto.
-    #   b) briefing das 8h: sweep_email_triage INSERE row em email_triage com
-    #      needs_attention=true; cos_investigator chama get_pending_email_triage
-    #      (cos_tools.py) no cron cos-daily-review e escala must_read P>=9 /
-    #      agrupa must_read P<9 -> os items viram o briefing matinal.
+    #   b) briefing das 7h da tonIAH: le copilot.emails direto (status='pending'
+    #      AND needs_attention AND priority>=7, janela 72h) — repo tonia,
+    #      services/emails.py + briefing.py. Vivo e independente deste arquivo.
     #   c) Gmail: o e-mail continua com !!Renato (este ramo NÃO mexe em label —
     #      ver o `else` do bucket renato acima), então a fila visual fica igual.
-    #   d) "Fiz por você": forward e task fechada estão em agent_actions e entram
-    #      no digest de 24h do cron daily-morning-briefing.
+    #
+    # ⚠️ DOIS CAMINHOS QUE **NÃO** COBREM (verificado 27/07 — não os cite como
+    # garantia, foi o erro que este proprio comentario veio corrigir):
+    #   - `get_pending_email_triage` (cos_tools.py) so e chamada pelo
+    #     `cos_investigator`, cujo cron esta COMENTADO no worker desde 22/06
+    #     (workers/audio-transcriber/main.py:232). O cron `cos-daily-review` que
+    #     roda de verdade executa `frente_review.run_and_persist()`, que nao usa
+    #     as tools do agente. Ultima run do cos-investigator em cron_runs: 22/06.
+    #   - `daily-morning-briefing` tambem esta COMENTADO no worker (linha 176),
+    #     junto com `daily-evening-debriefing` (177). Sao os unicos chamadores de
+    #     `consume_pending_for_digest`, entao a fila `pending_notifications` nao
+    #     e drenada desde 13/07 (medido: 4 itens com sent_at IS NULL).
+    #   O `summarize_for_digest` de agent_actions, portanto, tambem nao chega
+    #   hoje. O que sustenta a decisao sao (a) e (b), que sao one-shot e vivos.
     #
     # Ou seja: o bloco "Precisa de você" era a SEGUNDA leitura do mesmo e-mail, e
     # a única N-SHOT (o acumulador é por run; e-mail não resolvido reaparecia a
