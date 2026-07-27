@@ -5223,7 +5223,16 @@ async def api_notifications_silenced(request: Request, hours: int = 24, show: st
             SELECT id, source, msg_type, payload, urgency_score, digest_target,
                    queued_at, sent_at, sent_in_digest, expired_at, acked_at
             FROM pending_notifications
-            WHERE queued_at >= NOW() - (%s || ' hours')::interval
+            WHERE (
+                    queued_at >= NOW() - (%s || ' hours')::interval
+                    -- 27/07: item nunca entregue E nao-reconhecido NAO some pela
+                    -- borda da janela. Antes, com o digest desligado (os 2 crons
+                    -- que drenavam estao comentados desde 13/07 e nao voltam por
+                    -- decisao do Renato), passar de 24h significava sair da unica
+                    -- tela onde ele apareceria. Teto de 30d evita fila infinita.
+                    OR (sent_at IS NULL AND acked_at IS NULL
+                        AND queued_at >= NOW() - INTERVAL '30 days')
+                  )
               {ack_filter}
             ORDER BY queued_at DESC
             LIMIT 200

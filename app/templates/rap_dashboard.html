@@ -2971,7 +2971,13 @@
                 const r = await fetch('/api/admin/notifications-silenced?hours=24');
                 const d = await r.json();
                 const items = d.items || [];
-                const meta = `<div style="font-size:0.82rem;margin-bottom:10px;color:#64748b;">${d.pending} aguardando proximo digest · ${d.sent} ja digeridas. Avalie se cada item podia esperar — se nao, click "deveria ter vindo na hora" pra calibrar regras.</div>`;
+                // 27/07: o texto dizia "aguardando proximo digest". NAO ha digest —
+                // os crons daily-morning-briefing/daily-evening-debriefing (unicos
+                // chamadores de consume_pending_for_digest) estao comentados no
+                // worker desde 13/07, e o Renato decidiu que NAO voltam. Esta tela
+                // e a superficie destes itens, nao uma sala de espera. Mesma classe
+                // da promessa "desfaz N" que nao tinha receptor.
+                const meta = `<div style="font-size:0.82rem;margin-bottom:10px;color:#64748b;">${d.pending} silenciadas (nao interromperam) · ${d.sent} ja entregues. Esta tela e o destino delas — nao ha digest. Avalie se cada uma podia esperar; se nao, click "deveria ter vindo na hora" pra calibrar as regras.</div>`;
                 const rows = items.length
                     ? items.map(it => {
                         const payload = it.payload || {};
