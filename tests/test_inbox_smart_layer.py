@@ -174,7 +174,12 @@ class TestTriageRenato:
 # PARTE C — resumo consolidado + undo
 # ---------------------------------------------------------------------------
 class TestSummary:
-    def test_dry_run_preview(self):
+    def test_dry_run_preview(self, monkeypatch):
+        # RECALIBRADO 27/07: sem lista de "Precisa de você" e sem a promessa de
+        # `desfaz N` (ver tests/test_inbox_smart_quiet.py). O que a camada FEZ
+        # continua no texto.
+        monkeypatch.delenv("INBOX_SMART_NEEDS_YOU_WA", raising=False)
+        monkeypatch.delenv("INBOX_SMART_UNDO_HINT", raising=False)
         stats = {}
         asyncio.run(et._send_smart_summary(
             stats, forwarded=2,
@@ -184,8 +189,9 @@ class TestSummary:
         p = stats["smart_summary_preview"]
         assert "Encaminharia p/ Andressa: 2" in p
         assert "fechei #101" in p
-        assert 'desfaz 101' in p
-        assert "Precisa de você (1)" in p
+        assert "/agent-actions" in p
+        assert "Precisa de você" not in p
+        assert "Deixei 1 em !!Renato" in p
         assert "smart_summary_sent" not in stats  # dry-run não envia
 
 
@@ -369,6 +375,8 @@ class TestApplySmartDryRun:
         assert r["wa_renato_would_push"] == 2
 
     def test_smart_needs_you_suppresses_individual_ping(self, monkeypatch):
+        # RECALIBRADO 27/07: o ping individual continua suprimido, mas o resumo
+        # também não sai — needs_you saiu do gatilho (urgent-tick/briefing cobrem).
         async def _needs(**k):
             return {"resolved": False, "record": {
                 "from": (k["headers"].get("from") or "")[:40],
@@ -378,6 +386,18 @@ class TestApplySmartDryRun:
         assert r["smart_mode"] is True
         assert r["smart_needs_you"] == 2
         assert r["wa_renato_would_push"] == 0  # consolidado, não 1 por email
+        assert "smart_summary_preview" not in r
+        assert r["smart_summary_skipped"] == "needs_you_only"
+
+    def test_needs_you_volta_com_kill_switch(self, monkeypatch):
+        monkeypatch.setenv("INBOX_SMART_NEEDS_YOU_WA", "1")
+
+        async def _needs(**k):
+            return {"resolved": False, "record": {
+                "from": (k["headers"].get("from") or "")[:40],
+                "subject": (k["headers"].get("subject") or "")[:60],
+                "reason": "precisa de decisão"}}
+        r = _run_smart(monkeypatch, smart=True, triage_stub=_needs)
         assert "Precisa de você (2)" in r["smart_summary_preview"]
 
     def test_smart_resolved_dry_run_reports(self, monkeypatch):
@@ -425,6 +445,10 @@ class TestSummaryTrigger2507:
         assert r["smart_summary_skipped"] == "forward_only"   # telemetria da run
 
     def test_forward_aparece_no_resumo_quando_ele_sai_por_outro_motivo(self, monkeypatch):
+        # RECALIBRADO 27/07: needs_you sozinho não abre mais o resumo (nem com
+        # forward junto). Com o kill-switch ON o comportamento de 25/07 volta.
+        monkeypatch.setenv("INBOX_SMART_NEEDS_YOU_WA", "1")
+
         async def _needs(**k):
             return {"resolved": False, "record": {
                 "from": "x", "subject": k["headers"].get("subject") or "",
@@ -437,6 +461,18 @@ class TestSummaryTrigger2507:
         assert "Encaminharia p/ Andressa: 1" in p   # não vira invisível
         assert "Precisa de você (1)" in p
         assert "smart_summary_skipped" not in r
+
+    def test_forward_mais_needs_you_fica_calado_por_padrao(self, monkeypatch):
+        async def _needs(**k):
+            return {"resolved": False, "record": {
+                "from": "x", "subject": k["headers"].get("subject") or "",
+                "reason": "precisa de decisão"}}
+        r = _run_smart(monkeypatch, smart=True, triage_stub=_needs, msgs=[
+            _msg_andressa(),
+            _msg("m9", "Alguém <random@desconhecido.example.com>", "Oi", body="tudo bem?"),
+        ])
+        assert "smart_summary_preview" not in r
+        assert r["smart_summary_skipped"] == "forward_and_needs_you"
 
     def test_resolveu_task_e_encaminhou_menciona_os_dois(self, monkeypatch):
         async def _resolve(**k):
@@ -453,7 +489,67 @@ class TestSummaryTrigger2507:
         p = r["smart_summary_preview"]
         assert "Encaminharia p/ Andressa: 1" in p
         assert "fechei #101" in p
-        assert 'desfaz 101' in p                     # endereça pelo ID da task
+        # 27/07: a linha 'responde "desfaz N"' saiu (não havia receptor no
+        # self-chat da rap-whatsapp). Volta com INBOX_SMART_UNDO_HINT=1.
+        assert 'desfaz 101' not in p
+        assert "/agent-actions" in p
+
+    def test_robo_no_bucket_renato_nao_entra_em_needs_you(self, monkeypatch):
+        """GUARD 27/07 end-to-end: o e-mail continua sendo processado e
+        etiquetado normalmente, mas não vira item de "precisa de você"."""
+        async def _needs(**k):
+            return {"resolved": False, "record": {
+                "from": (k["headers"].get("from") or "")[:40],
+                "subject": (k["headers"].get("subject") or "")[:60],
+                "reason": "precisa de decisão"}}
+        r = _run_smart(monkeypatch, smart=True, triage_stub=_needs, msgs=[
+            # Caso REAL medido: cai em bucket renato por R7_professional_default
+            # ("silent/incerto -> !!Renato", fila de revisão do inbox-zero).
+            _msg("mr1", "Jusbrasil Alertas <nao-responda@jusbrasil.com.br>",
+                 "Verifique a situação atual do processo"),
+            _msg("mr2", "Alguém <random@desconhecido.example.com>", "Oi",
+                 body="tudo bem?"),
+        ])
+        assert r["smart_needs_you"] == 1                  # só o humano
+        assert r["smart_auto_sender_skipped"] == 1
+        skipped = [e for e in r["per_email"]
+                   if e.get("smart") == "auto_sender_no_escalate"]
+        assert len(skipped) == 1
+        assert "automatico" in skipped[0]["smart_reason"]
+        # o guard NÃO mexe no roteamento/label — isso é do classificador.
+        assert skipped[0]["bucket"] == "renato"
+
+    def test_guard_desligavel_por_env(self, monkeypatch):
+        monkeypatch.setenv("INBOX_SMART_AUTO_SENDER_GUARD", "0")
+
+        async def _needs(**k):
+            return {"resolved": False, "record": {
+                "from": (k["headers"].get("from") or "")[:40],
+                "subject": (k["headers"].get("subject") or "")[:60],
+                "reason": "precisa de decisão"}}
+        r = _run_smart(monkeypatch, smart=True, triage_stub=_needs, msgs=[
+            # Caso REAL medido: cai em bucket renato por R7_professional_default
+            # ("silent/incerto -> !!Renato", fila de revisão do inbox-zero).
+            _msg("mr1", "Jusbrasil Alertas <nao-responda@jusbrasil.com.br>",
+                 "Verifique a situação atual do processo"),
+        ])
+        assert r["smart_needs_you"] == 1
+        assert "smart_auto_sender_skipped" not in r
+
+    def test_undo_hint_volta_com_kill_switch(self, monkeypatch):
+        monkeypatch.setenv("INBOX_SMART_UNDO_HINT", "1")
+
+        async def _resolve(**k):
+            return {"resolved": True, "record": {
+                "task_id": 101, "titulo": "t", "action": "close",
+                "action_label": "fechei", "new_due_date": None,
+                "reason": "confirmado", "confidence": 0.9, "project_id": 5,
+                "contact_id": 9, "task": {"id": 101}, "from": "f",
+                "subject": k["headers"].get("subject") or ""}}
+        r = _run_smart(monkeypatch, smart=True, triage_stub=_resolve, msgs=[
+            _msg("m9", "Fulano <fulano@gmail.com>", "Convite: Reunião de board"),
+        ])
+        assert 'desfaz 101' in r["smart_summary_preview"]
 
 
 class TestForwardAudit2507:

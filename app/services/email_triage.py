@@ -129,14 +129,111 @@ def is_smart_layer_enabled() -> bool:
                       (1 LLM) e, se RESOLVIDO-CLARO (conf>=0.85 + task casada),
                       FECHA/REMARCA a task (caminho task_reconciler: undo+audit),
                       grava nota durável, tira !!Renato e NÃO pinga. Senão mantém
-                      !!Renato e escala no resumo.
-      - resumo     -> UM WhatsApp por run (só quando agiu ou há needs-you).
+                      !!Renato (a fila visual dele) e NÃO pinga — quem cobre o
+                      que ela não resolveu é o urgent-tick/briefing (27/07).
+      - resumo     -> no máximo 1 WhatsApp por dia BRT, e só quando ela AGIU
+                      (fechou/remarcou task). Ver is_smart_needs_you_wa_enabled,
+                      smart_summary_max_per_day, is_smart_auto_sender_guard_enabled.
 
     Com OFF o apply_triage_to_inbox roda byte-a-byte como antes (aditivo, gate
     humano). Lido com .strip()/lower ([[feedback_env_var_whitespace]])."""
     return (os.getenv("INBOX_SMART_LAYER") or "0").strip().lower() in (
         "1", "true", "on", "yes",
     )
+
+
+def _smart_flag(name: str, default: bool) -> bool:
+    """Kill-switch booleano por env com DEFAULT EXPLÍCITO (os outros switches do
+    arquivo têm default OFF hardcoded; estes aqui nascem ON). Env vazia/ausente
+    => default. .strip()/lower porque a Vercel cola '\\n' no valor
+    ([[feedback_env_var_whitespace]])."""
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "on", "yes", "sim")
+
+
+def is_smart_needs_you_wa_enabled() -> bool:
+    """Kill-switch do bloco "Precisa de você" no WhatsApp. Default OFF (27/07).
+
+    MEDIÇÃO 26-27/07: dos 10 itens que saíram nesse bloco, 6 não deviam ter
+    interrompido — 3 eram robô (Jusbrasil nao-responda, IBGC marketing 22:30,
+    QuintoAndar promo), 1 era duplicata literal e 2 eram o MESMO e-mail do pai
+    que o urgent-tick (`📧 Email urgente (P9)`, sweep_email_triage) já tinha
+    mandado 30-60min antes. Repassar o que a camada NÃO resolveu é trabalho do
+    urgent-tick/briefing — aqui só nascia a segunda interrupção.
+
+    A informação NÃO some ao desligar (ver comentário do gatilho em
+    apply_triage_to_inbox): o e-mail continua com !!Renato no Gmail, continua
+    com row em email_triage (sweep) e continua chegando pelo
+    `get_pending_email_triage` do cos_investigator -> briefing das 8h.
+
+    ON = comportamento pré-27/07 (bloco volta ao WhatsApp)."""
+    return _smart_flag("INBOX_SMART_NEEDS_YOU_WA", False)
+
+
+def smart_summary_max_per_day() -> int:
+    """Teto de resumos da camada esperta por dia BRT. Default 1 (27/07).
+
+    O cron inbox-zero-scan roda a cada 2h entre 7h e 23h BRT => até 9 runs/dia.
+    O que a camada FEZ não precisa de 9 avisos: forward e resolução já são
+    duráveis em agent_actions e entram no digest "Fiz por você" do briefing
+    matinal (main.py cron daily-morning-briefing -> summarize_for_digest).
+
+    0 (ou negativo) = sem teto (comportamento pré-27/07, 1 resumo por run)."""
+    raw = (os.getenv("INBOX_SMART_SUMMARY_MAX_PER_DAY") or "").strip()
+    if not raw:
+        return 1
+    try:
+        return int(raw)
+    except ValueError:
+        return 1
+
+
+def is_smart_auto_sender_guard_enabled() -> bool:
+    """Kill-switch do guard de REMETENTE AUTOMÁTICO (27/07). Default ON.
+
+    Robô (noreply@/nao-responda@/notificacao@/newsletter@/mkt@) não escala pra
+    "precisa de você" — no máximo fica etiquetado. Mecânica igual à dos guards
+    de campanha já existentes (_vendor_bulk_marketing / _financial_bulk_campaign):
+    escada de travas conservadoras ANTES do rebaixamento. OFF = robô volta a
+    poder escalar."""
+    return _smart_flag("INBOX_SMART_AUTO_SENDER_GUARD", True)
+
+
+def is_smart_undo_hint_enabled() -> bool:
+    """Kill-switch da linha 'responde "desfaz N"' no resumo. Default OFF (27/07).
+
+    A promessa não tinha receptor: `desfaz N` só existe em
+    intel_bot.handle_bot_message (instância intel-bot-v2), e este resumo sai
+    pela rap-whatsapp em self-chat, cujo caminho de entrada
+    (evolution_api.process_incoming_message) não tem branch de bot. Auditoria:
+    agent_actions em 10 dias = 12 linhas 'done' e ZERO 'undone'.
+
+    ON quando o roteamento do bot voltar (mudança de infra, fora deste arquivo)."""
+    return _smart_flag("INBOX_SMART_UNDO_HINT", False)
+
+
+def is_email_urgent_wa_enabled() -> bool:
+    """Kill-switch do WhatsApp de e-mail urgente (P>=9) do sweep. Default ON.
+
+    27/07 — o sweep (`email-triage-sweep`, minute 7,37 => 48 runs/dia) e a
+    camada esperta (9 runs/dia) mandavam WhatsApp sobre o MESMO e-mail sem
+    supressão cruzada (dedup keys `email_urgent:{gmail_id}` vs `inbox_smart:*`,
+    sources diferentes). Aconteceu com "Re: Regularização contábil das minhas 7
+    empresas" (do pai) em 26/07 e de novo em 27/07.
+
+    QUEM CALA: o bloco "Precisa de você" do resumo (ver
+    is_smart_needs_you_wa_enabled), NÃO este push. Razão: este é ONE-SHOT por
+    e-mail (dedup por gmail_id, nunca repete) e cobre só a faixa P>=9
+    (imprensa/C1); o bloco do resumo era N-SHOT — o acumulador é reconstruído a
+    cada run e o mesmo e-mail não-resolvido reaparecia a cada 2h enquanto
+    ficasse em !!Renato. A repetição nascia lá, não aqui.
+
+    Ganha kill-switch mesmo assim porque não tinha nenhum (condição hardcoded
+    em `if classification == "must_read" and priority_val >= 9`). Default ON
+    preserva o comportamento atual — desligar é decisão do Renato."""
+    return _smart_flag("EMAIL_URGENT_WA_ENABLED", True)
 
 
 # Camada esperta (25/07/2026) — destino do encaminhamento + controle de idempotência.
@@ -2397,9 +2494,18 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
 
             # 4f-bis. WA push pra urgents (24/06/2026) — priority>=9 sao
             # imprensa/jornalista (R1) ou C1 contato (R2). Notifica Renato
-            # imediatamente via intel-bot-v2 (instancia de notificacoes CoS).
+            # imediatamente via notification_router (score 8 => WhatsApp na
+            # instancia rap-whatsapp). O comentario antigo dizia "intel-bot-v2
+            # (instancia de notificacoes CoS)" — caminho que nao existe mais;
+            # quem entrega e o `notify` abaixo (corrigido 27/07).
+            #
+            # ESTE e o caminho canonico do e-mail URGENTE (one-shot por
+            # gmail_id). A camada esperta deixou de repassar "precisa de voce"
+            # justamente pra nao duplicar isto — ver is_email_urgent_wa_enabled.
+            # Kill-switch adicionado 27/07 (antes a condicao era hardcoded).
             priority_val = int(decision.get("priority", 5))
-            if classification == "must_read" and priority_val >= 9:
+            if (classification == "must_read" and priority_val >= 9
+                    and is_email_urgent_wa_enabled()):
                 try:
                     from services.notification_router import notify
                     sender_short = (headers.get("from") or "")[:60]
@@ -2689,8 +2795,11 @@ async def apply_triage_to_inbox(
         smart: None => le env INBOX_SMART_LAYER (default OFF); bool força. Liga a
                      CAMADA ESPERTA (aditiva): forward Andressa + triagem
                      inteligente do !!Renato (fecha/remarca task com undo+audit) +
-                     UM resumo WhatsApp/run. Em dry_run NÃO age — só reporta o que
-                     encaminharia/fecharia. Com OFF, roda byte-a-byte como antes.
+                     resumo WhatsApp (<=1/dia BRT desde 27/07). Em dry_run NÃO
+                     age — só reporta o que encaminharia/fecharia. Com OFF, roda
+                     byte-a-byte como antes — atenção: OFF NÃO é "modo
+                     silencioso", ele RESSUSCITA o ping individual por e-mail
+                     (_notify_new_renato, suprimido pelo `and not sl` abaixo).
 
     Returns:
         {ok, processed, by_bucket:{renato,andressa,financeiro,arquivar,deletar,noop},
@@ -3022,11 +3131,34 @@ async def apply_triage_to_inbox(
                         continue
                     else:
                         # Precisa de decisão / ambíguo / sem match: mantém !!Renato
-                        # (fluxo normal abaixo) e entra no resumo. Ping individual
-                        # é suprimido (consolidado no fim do run).
-                        entry["smart"] = "needs_you"
-                        smart_needs_you.append(outcome["record"])
-                        stats["smart_needs_you"] += 1
+                        # (fluxo normal abaixo). Ping individual é suprimido
+                        # (consolidado no fim do run).
+                        #
+                        # GUARD 27/07 — REMETENTE AUTOMÁTICO NÃO ESCALA. Roda
+                        # DEPOIS do julgamento de propósito: o julgamento pode
+                        # FECHAR task (e para robô ele custa ~zero, porque
+                        # _smart_triage_renato já curto-circuita sem task casada,
+                        # antes do LLM). O guard só decide se o item pode
+                        # INTERROMPER — nunca muda label/arquivamento, que são
+                        # domínio do classificador (RC4-RC8).
+                        _auto_reason = (
+                            smart_automated_no_escalate(
+                                from_email,
+                                headers.get("subject") or "",
+                                body.get("text") or "",
+                                has_unsubscribe=bool(headers.get("list-unsubscribe")),
+                            ) if is_smart_auto_sender_guard_enabled() else None
+                        )
+                        if _auto_reason:
+                            entry["smart"] = "auto_sender_no_escalate"
+                            entry["smart_reason"] = _auto_reason
+                            stats["smart_auto_sender_skipped"] = (
+                                stats.get("smart_auto_sender_skipped", 0) + 1
+                            )
+                        else:
+                            entry["smart"] = "needs_you"
+                            smart_needs_you.append(outcome["record"])
+                            stats["smart_needs_you"] += 1
 
                 if bucket == "noop":
                     entry["action"] = (
@@ -3152,19 +3284,40 @@ async def apply_triage_to_inbox(
     # (label andressa-encaminhado + agent_actions + per_email/stats), só some do
     # WhatsApp.
     #
+    # RECALIBRAÇÃO 27/07 — needs_you SAI DO GATILHO (kill-switch
+    # INBOX_SMART_NEEDS_YOU_WA=1 devolve). O comentário de 25/07 acima dizia que
+    # tirá-lo "deixaria o balde !!Renato mudo". FALSO — auditado antes de mexer:
+    #
+    #   a) urgent-tick: sweep_email_triage (cron email-triage-sweep, minute 7,37
+    #      => 48 runs/dia) manda "📧 Email urgente (P{N})" por conta própria,
+    #      one-shot por gmail_id. Foi ele que mandou o e-mail do pai 30-60min
+    #      ANTES do resumo, nos dias 26 e 27/07 — a duplicata que motivou isto.
+    #   b) briefing das 8h: sweep_email_triage INSERE row em email_triage com
+    #      needs_attention=true; cos_investigator chama get_pending_email_triage
+    #      (cos_tools.py) no cron cos-daily-review e escala must_read P>=9 /
+    #      agrupa must_read P<9 -> os items viram o briefing matinal.
+    #   c) Gmail: o e-mail continua com !!Renato (este ramo NÃO mexe em label —
+    #      ver o `else` do bucket renato acima), então a fila visual fica igual.
+    #   d) "Fiz por você": forward e task fechada estão em agent_actions e entram
+    #      no digest de 24h do cron daily-morning-briefing.
+    #
+    # Ou seja: o bloco "Precisa de você" era a SEGUNDA leitura do mesmo e-mail, e
+    # a única N-SHOT (o acumulador é por run; e-mail não resolvido reaparecia a
+    # cada 2h enquanto ficasse em !!Renato). Quem cala é ele; o urgent-tick, que
+    # é one-shot, fica — e ganhou kill-switch próprio (is_email_urgent_wa_enabled).
+    #
     # O resumo sai quando a camada mexeu no MUNDO do Renato:
-    #   (1) fechou/remarcou task (parte B) — decisão explícita do Renato; ou
-    #   (2) há e-mail que exige DECISÃO dele (needs_you). Este continua no gatilho
-    #       porque com a camada ON o ping individual de novo !!Renato está
-    #       SUPRIMIDO (ver `and not sl` acima): tirá-lo daqui deixaria o único
-    #       balde que interrompe (Renato 24/07) completamente mudo.
-    # Se o resumo sai por (1) ou (2), o encaminhamento É citado no texto — ele só
-    # deixa de ser motivo pra tocar o telefone, não vira invisível.
+    #   (1) fechou/remarcou task (parte B) — ação autônoma dela; ou
+    #   (2) needs_you, SÓ com INBOX_SMART_NEEDS_YOU_WA=1 (default OFF).
+    # Se o resumo sai, o encaminhamento É citado no texto — ele só deixa de ser
+    # motivo pra tocar o telefone, não vira invisível.
+    # Teto: 1 resumo/dia BRT (INBOX_SMART_SUMMARY_MAX_PER_DAY), dentro do _send.
     if sl:
         fwd_for_summary = (
             smart_forwarded if not dry_run else stats.get("smart_would_forward", 0)
         )
-        if smart_resolved_items or smart_needs_you:
+        _needs_you_triggers = bool(smart_needs_you) and is_smart_needs_you_wa_enabled()
+        if smart_resolved_items or _needs_you_triggers:
             try:
                 await _send_smart_summary(
                     stats, fwd_for_summary, smart_resolved_items,
@@ -3172,10 +3325,13 @@ async def apply_triage_to_inbox(
                 )
             except Exception as e:
                 stats["errors"].append(f"smart_summary: {str(e)[:80]}")
-        elif fwd_for_summary:
-            # Telemetria: a run agiu (encaminhou) e ficou calada de propósito —
-            # fica no cron_runs pra auditoria não achar que a camada não rodou.
-            stats["smart_summary_skipped"] = "forward_only"
+        elif fwd_for_summary or smart_needs_you:
+            # Telemetria: a run agiu e ficou calada de propósito — fica no
+            # cron_runs pra auditoria não achar que a camada não rodou.
+            stats["smart_summary_skipped"] = (
+                "needs_you_only" if smart_needs_you and not fwd_for_summary
+                else ("forward_and_needs_you" if smart_needs_you else "forward_only")
+            )
 
     stats["duration_ms"] = int((time.time() - started) * 1000)
     return stats
@@ -3647,6 +3803,126 @@ def _norm_txt(s: str) -> str:
 
 def _has_phrase(text_norm: str, phrases) -> bool:
     return any(_norm_txt(p) in text_norm for p in phrases)
+
+
+# -----------------------------------------------------------------------------
+# GUARD 27/07 — REMETENTE AUTOMATICO NAO ESCALA (camada esperta)
+# -----------------------------------------------------------------------------
+# Medicao 26-27/07 no bloco "Precisa de voce": 3 dos 6 falsos-positivos eram
+# robo puro — Jusbrasil <nao-responda@> ("Verifique a situacao atual do
+# processo"), IBGC <notif...> (marketing as 22:30) e QuintoAndar <noreply@> (
+# promocao). Nenhum exigia decisao do Renato.
+#
+# Local-part normalizado igual ao _is_billing_sender (lower, sem acento, sem
+# '.'/'-'): "no-reply" -> "noreply", "nao-responda" -> "naoresponda",
+# "notificacoes" -> "notificacoes". Substring: "notif" cobre notif/notifica/
+# notification/notificacao numa entrada so.
+_AUTOMATED_SENDER_LOCALPARTS = (
+    "noreply", "naoresponda", "naoresponder", "donotreply", "dontreply",
+    "notif",          # notif@/notifica@/notification@/notificacao@/notifications@
+    "newsletter", "newsletters", "mailer", "mailing", "mailman",
+    "marketing", "mkt", "campanha", "campaign", "promo", "ofertas",
+    "bounce", "postmaster", "automatico", "automatica", "robo", "bot",
+)
+
+# Assunto (SO no assunto) que, num remetente automatico, NUNCA e descartavel:
+# ato judicial/fiscal com prazo. Deliberadamente SEM "processo"/"acao"/"prazo"
+# genericos — o alerta do Jusbrasil ("situacao atual do processo") e monitoramento
+# de rotina, nao intimacao, e e exatamente ele que precisa parar de interromper.
+# So no ASSUNTO pelo mesmo motivo do _FINANCIAL_KEEP_SUBJECT_PHRASES: rodape de
+# peca automatica cita "intimacao"/"citacao" o tempo todo.
+_JUDICIAL_KEEP_SUBJECT_PHRASES = (
+    "intimacao", "intimado", "citacao", "citado", "mandado", "oficio",
+    "audiencia", "sentenca", "despacho judicial", "penhora", "bloqueio judicial",
+    "execucao fiscal", "auto de infracao", "notificacao fiscal", "termo de",
+    "certidao de divida ativa", "divida ativa", "cda", "protocolo judicial",
+)
+
+
+def _is_automated_sender(from_email: str) -> bool:
+    """Local-part do remetente indica DISPARO AUTOMATICO (noreply@/nao-responda@/
+    notificacao@/newsletter@/mkt@). Mesma normalizacao do _is_billing_sender."""
+    local = _norm_txt((from_email or "").split("@")[0]).replace(".", "").replace("-", "").replace("_", "")
+    if not local:
+        return False
+    return any(tok in local for tok in _AUTOMATED_SENDER_LOCALPARTS)
+
+
+def smart_automated_no_escalate(
+    from_email: str,
+    subject: str,
+    body_text: str = "",
+    has_unsubscribe: bool = False,
+) -> Optional[str]:
+    """REBAIXA (tira de "precisa de voce") e-mail de remetente automatico.
+
+    Retorna o MOTIVO (string curta pra telemetria/entry) quando o item nao deve
+    escalar, ou None quando deve continuar escalando.
+
+    Mesma mecanica dos guards de campanha ja existentes neste arquivo
+    (_vendor_bulk_marketing / _financial_bulk_campaign): escada de travas
+    conservadoras ANTES do rebaixamento. O falso-positivo INVERSO e caro —
+    fatura, cobranca, codigo de seguranca, movimentacao bancaria e intimacao
+    tambem chegam de no-reply@ — entao cada trava abaixo devolve None (escala).
+
+    Escada (na duvida NAO rebaixa):
+      0. remetente nao e automatico -> None (guard nao opina).
+      1. dominio .gov.br/.jus.br (_GOV_DOMAINS) -> None. Robo de orgao publico
+         nunca e marketing.
+      2. caixa de cobranca (_is_billing_sender: suafatura@/boleto@/cobranca@)
+         -> None. Precedencia identica a do _vendor_bulk_marketing.
+      3. evidencia de cobranca (_BILLING_EVIDENCE_PHRASES) no assunto OU no
+         corpo -> None. Mais restrito que o guard de telecom (que tolera fatura
+         so no rodape) pelo mesmo motivo do _financial_bulk_campaign: boleto
+         soterrado custa caro demais.
+      4. seguranca de conta (_RC3_SECURITY_PHRASES) -> None.
+      5. notificacao de dispositivo/codigo (_RC7_DEVICE_NOTIFY_PHRASES) ou frase
+         de acao de seguranca (_RC7_ACTION_OVERRIDE_PHRASES) -> None. Aqui a
+         lista RC7 entra com polaridade INVERTIDA a do RC8: la ela prova
+         "notificacao, nada a fazer -> arquivar"; aqui ela prova "transacional/
+         seguranca -> nao e robo de campanha", e a pergunta em jogo e outra
+         (pode um robo interromper o Renato?), onde o conservador e MANTER.
+      6. tabeliao/protesto (_RC2_TABELIAO_PHRASES) -> None.
+      7. ato judicial/fiscal no ASSUNTO (_JUDICIAL_KEEP_SUBJECT_PHRASES) -> None.
+      8. mudanca contratual/tarifa/extrato no ASSUNTO
+         (_FINANCIAL_KEEP_SUBJECT_PHRASES) -> None.
+    Sobreviveu a escada => robo sem nada transacional => rebaixa.
+    """
+    if not _is_automated_sender(from_email):
+        return None
+    dom = (from_email or "").split("@")[-1].strip().lower()
+    if dom and any(dom == g.lstrip(".") or dom.endswith(g) for g in _GOV_DOMAINS):
+        return None
+    if _is_billing_sender(from_email):
+        return None
+
+    subj_n = _norm_txt(subject)
+    body_n = _norm_txt((body_text or "")[:3000])
+    hay = f"{subj_n}\n{body_n}"
+
+    if _has_phrase(hay, _BILLING_EVIDENCE_PHRASES):
+        return None
+    if _has_phrase(hay, _RC3_SECURITY_PHRASES):
+        return None
+    if _has_phrase(hay, _RC7_DEVICE_NOTIFY_PHRASES):
+        return None
+    if _has_phrase(hay, _RC7_ACTION_OVERRIDE_PHRASES):
+        return None
+    if _has_phrase(hay, _RC2_TABELIAO_PHRASES):
+        return None
+    if _has_phrase(subj_n, _JUDICIAL_KEEP_SUBJECT_PHRASES):
+        return None
+    if _has_phrase(subj_n, _FINANCIAL_KEEP_SUBJECT_PHRASES):
+        return None
+
+    # Evidencia POSITIVA de campanha reforca o motivo (nao e condicao: robo sem
+    # nada transacional ja nao tem porque tocar o telefone do Renato).
+    if has_unsubscribe:
+        return "remetente automatico + list-unsubscribe"
+    if (_has_phrase(subj_n, _RC8_MARKETING_SUBJECT_PHRASES)
+            or _has_phrase(subj_n, _BULK_CAMPAIGN_SUBJECT_PHRASES)):
+        return "remetente automatico + assunto de campanha"
+    return "remetente automatico sem sinal transacional"
 
 
 def _decision(classification, priority, conf, reasons, tags, actions, rule_hit,
@@ -4695,11 +4971,84 @@ def _smart_apply_resolution(rec) -> None:
     )
 
 
+def _dedup_by_subject_sender(items: List[Dict]) -> List[Dict]:
+    """Dedup por (assunto, remetente) normalizados, preservando a ordem.
+
+    Medido 27/07: "CDA's Federais - Empresas Inativas" saiu DUAS VEZES na MESMA
+    mensagem. CAUSA-RAIZ (auditoria, cron_runs da run 14:25): o mesmo e-mail
+    está nas DUAS contas Google e o run varre as duas — o result_json traz o
+    mesmo assunto com `account: pro` e `account: pess`. Por isso a chave é
+    (assunto, remetente) IGNORANDO a conta e ignorando o gmail_id: os ids são
+    diferentes por definição, dedup por id não pegaria nada."""
+    seen, out = set(), []
+    for it in items or []:
+        key = (
+            _norm_txt(str(it.get("subject") or ""))[:120],
+            _norm_txt(str(it.get("from") or ""))[:80],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(it)
+    return out
+
+
+def _dedup_by_task_id(items: List[Dict]) -> List[Dict]:
+    """Mesma classe de duplicata do bloco acima, do lado do 'resolvi sozinho':
+    duas contas podem trazer o e-mail que fecha a MESMA task."""
+    seen, out = set(), []
+    for it in items or []:
+        tid = it.get("task_id")
+        if tid in seen:
+            continue
+        seen.add(tid)
+        out.append(it)
+    return out
+
+
+def _smart_summaries_sent_today() -> int:
+    """Quantos resumos da camada já saíram HOJE (dia BRT). Ledger = agent_actions
+    (sem DDL): o próprio _send_smart_summary grava 'inbox_smart_summary_sent'
+    depois de enviar. Falha de leitura => 0 (na dúvida deixa falar; o custo de
+    um resumo a mais é menor que o de silenciar um 'desfaz')."""
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            # criado_em é TIMESTAMP naive em UTC — normaliza pra data BRT com o
+            # padrão do projeto (CLAUDE.md, "SQL com timezone") em vez de fazer
+            # a conta em Python.
+            cur.execute(
+                """
+                SELECT COUNT(*) AS n FROM agent_actions
+                WHERE action_type = 'inbox_smart_summary_sent'
+                  AND (criado_em AT TIME ZONE 'UTC'
+                       AT TIME ZONE 'America/Sao_Paulo')::date
+                      = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+                """
+            )
+            r = cur.fetchone()
+            return int((r["n"] if r else 0) or 0)
+    except Exception as e:
+        logger.warning("inbox_smart budget read falhou: %s", e)
+        return 0
+
+
 async def _send_smart_summary(stats, forwarded, resolved_items, needs_you, dry_run) -> None:
-    """PARTE C — UM WhatsApp/run consolidado. O GATILHO fica no caller (25/07:
-    fechou/remarcou task OU precisa de você; encaminhamento sozinho NÃO dispara).
-    Quando o resumo sai, o encaminhamento é citado junto. dry_run => preview no
-    stats, não envia."""
+    """PARTE C — resumo consolidado do que a camada FEZ. O GATILHO fica no caller.
+
+    Mudanças 27/07 (feedback do Renato, medição de 10 itens em produção):
+      - "Precisa de você" SAI do WhatsApp por padrão (kill-switch
+        INBOX_SMART_NEEDS_YOU_WA=1 devolve). O que a camada não resolveu já tem
+        dono: !!Renato no Gmail + row em email_triage -> urgent-tick / briefing.
+      - Dedup por (assunto, remetente) na montagem (o item repetido não sai 2x).
+      - Teto de 1 resumo por dia BRT (INBOX_SMART_SUMMARY_MAX_PER_DAY=0 remove o
+        teto). O que ela fez também entra no digest "Fiz por você" do briefing
+        matinal via agent_actions — o WhatsApp aqui é o extra, não a fonte.
+    dry_run => preview no stats, não envia e não consome o teto."""
+    show_needs_you = is_smart_needs_you_wa_enabled()
+    resolved_items = _dedup_by_task_id(resolved_items)
+    needs_you = _dedup_by_subject_sender(needs_you)
+
     lines = ["🤖 Triagem inteligente (inbox)"]
     if forwarded:
         _fwd_verb = "Encaminharia" if dry_run else "Encaminhei"
@@ -4712,8 +5061,19 @@ async def _send_smart_summary(stats, forwarded, resolved_items, needs_you, dry_r
                 f"{r.get('action_label')} #{r.get('task_id')}" + (f" ({rr})" if rr else "")
             )
         lines.append("• Resolvi sozinho: " + " · ".join(parts))
-        lines.append(f"  desfaz: responde \"desfaz {resolved_items[0].get('task_id')}\"")
-    if needs_you:
+        # 27/07 — a promessa "responde 'desfaz N'" estava MENTINDO: o comando só
+        # existe em intel_bot.handle_bot_message, alcançável pela instância
+        # intel-bot-v2; este resumo sai pela rap-whatsapp em self-chat, onde a
+        # resposta cai em evolution_api.process_incoming_message, que não tem
+        # branch de bot. Evidência: agent_actions em 10 dias = 12 'done', ZERO
+        # 'undone'. Sem receptor, a linha só ensina o Renato a desconfiar do
+        # resumo. Volta por env quando o roteamento do bot for religado (decisão
+        # de infra, fora deste arquivo).
+        if is_smart_undo_hint_enabled():
+            lines.append(f"  desfaz: responde \"desfaz {resolved_items[0].get('task_id')}\"")
+        else:
+            lines.append("  reverter: /agent-actions (undo por ação)")
+    if needs_you and show_needs_you:
         lines.append(f"• Precisa de você ({len(needs_you)}):")
         for n in needs_you[:5]:
             subj = (n.get("subject") or "(sem assunto)")[:50]
@@ -4721,17 +5081,48 @@ async def _send_smart_summary(stats, forwarded, resolved_items, needs_you, dry_r
             lines.append(f"  - {subj} ({frm})")
         if len(needs_you) > 5:
             lines.append(f"  - +{len(needs_you) - 5} outros")
+    elif needs_you:
+        # Não repassa a lista (isso é do urgent-tick/briefing); só declara que a
+        # fila !!Renato cresceu, sem virar segunda leitura do mesmo e-mail.
+        lines.append(f"• Deixei {len(needs_you)} em !!Renato pra você (vem no briefing)")
+
     text = "\n".join(lines)
     if dry_run:
         stats["smart_summary_preview"] = text
         return
+
+    cap = smart_summary_max_per_day()
+    if cap > 0:
+        already = _smart_summaries_sent_today()
+        if already >= cap:
+            stats["smart_summary_skipped"] = f"daily_cap:{already}/{cap}"
+            return
+
     from services.notification_router import notify
-    dedup = f"inbox_smart:{now_utc():%Y%m%d%H}"
+    from services.tz import to_brt as _to_brt
+    dedup = f"inbox_smart:{_to_brt(now_utc()):%Y%m%d}"
     await notify(
         "inbox_smart", "Triagem inteligente", text, 8,
         msg_type="inbox_smart_summary", dedup=dedup,
     )
     stats["smart_summary_sent"] = True
+    # Consome o teto do dia. category='system' de propósito: o digest "Fiz por
+    # você" já lista as ações REAIS (forward/task) — este row é só o ledger do
+    # orçamento diário, não uma ação a mais no mundo do Renato.
+    try:
+        from services.agent_actions import log_action
+        log_action(
+            action_type="inbox_smart_summary_sent",
+            category="system",
+            title="Resumo da triagem inteligente enviado",
+            details=f"{len(resolved_items)} resolvido(s), {forwarded} encaminhado(s), "
+                    f"{len(needs_you)} em !!Renato",
+            source="inbox_smart_layer",
+            payload={"resolved": len(resolved_items), "forwarded": forwarded,
+                     "needs_you": len(needs_you), "needs_you_in_wa": show_needs_you},
+        )
+    except Exception as e:
+        logger.warning("inbox_smart budget write falhou: %s", e)
 
 
 def run_smart_undo(task_id: int) -> Dict:
