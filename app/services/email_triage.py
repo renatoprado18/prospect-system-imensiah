@@ -2520,9 +2520,15 @@ async def sweep_email_triage(hours: int = 1) -> Dict:
                     # Score conforme prioridade: urgente(P>=9)->8 (WA), importante->6, senao 4.
                     # Na pratica este branch so roda com P>=9 => 8 => WhatsApp (preserva atual).
                     _urg = 8 if priority_val >= 9 else (6 if priority_val >= 7 else 4)
+                    # topic = assunto INTEIRO do header, nao o `subj_short`:
+                    # cada produtor trunca num tamanho diferente (70 aqui, 60 no
+                    # _send_smart_summary), e comparar texto ja cortado faria o
+                    # MESMO e-mail gerar chaves diferentes. O router normaliza e
+                    # corta em 48, abaixo do menor corte em uso.
                     pushed = await notify(
                         "email_triage", f"Email urgente (P{priority_val})", notif_text, _urg,
                         msg_type="email_urgent", dedup=f"email_urgent:{gmail_id}",
+                        topic=headers.get("subject"),
                     )
                     if pushed:
                         stats["wa_urgents_pushed"] = stats.get("wa_urgents_pushed", 0) + 1
@@ -4307,6 +4313,7 @@ async def _notify_new_renato(
         return await notify(
             "inbox_triage", "Novo !!Renato", txt, 8,
             msg_type="inbox_renato", dedup=f"inbox_renato:{gmail_id}",
+            topic=headers.get("subject"),
         )
     except Exception:
         return False
@@ -5112,9 +5119,17 @@ async def _send_smart_summary(stats, forwarded, resolved_items, needs_you, dry_r
     from services.notification_router import notify
     from services.tz import to_brt as _to_brt
     dedup = f"inbox_smart:{_to_brt(now_utc()):%Y%m%d}"
+    # topics SO quando a lista de needs_you esta de fato no texto: e nesse caso
+    # que este resumo pode repetir um e-mail que o urgent-tick ja mandou (caso
+    # Orestes, 26 e 27/07). Com show_needs_you=False o resumo fala do que a
+    # camada FEZ — mandar os assuntos ali faria o router rebaixa-lo por causa de
+    # um e-mail que ele nem menciona.
+    _topics = ([n.get("subject") for n in needs_you if n.get("subject")]
+               if (needs_you and show_needs_you) else None)
     await notify(
         "inbox_smart", "Triagem inteligente", text, 8,
         msg_type="inbox_smart_summary", dedup=dedup,
+        topics=_topics,
     )
     stats["smart_summary_sent"] = True
     # Consome o teto do dia. category='system' de propósito: o digest "Fiz por
