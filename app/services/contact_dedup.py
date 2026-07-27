@@ -846,7 +846,13 @@ async def propagate_contact_to_google(
             # codigo cair no create, ou seja: a propagacao CRIAVA duplicata no
             # Google, o oposto do objetivo. O mapa {conta: resourceName}
             # (contacts.empresa_dados._google_contact_ids) resolve por conta.
-            account_gid = ids_map.get(account_email)
+            # ids_map agora e {conta: [gids]}. Se a mesma agenda tem 2 fichas
+            # desta pessoa, atualiza a PRIMEIRA (ordem estavel). As demais sao o
+            # passivo de duplicata do lado do Google, que o Renato decidiu em
+            # 27/07 nao limpar agora — atualizar todas aqui equivaleria a uma
+            # limpeza implicita, fora do escopo desta propagacao.
+            _gids_conta = ids_map.get(account_email) or []
+            account_gid = _gids_conta[0] if _gids_conta else None
             if not account_gid and len(ids_map) == 0:
                 # Contato pre-cascata: nao tem mapa ainda. Cai no escalar SO se
                 # a conta bate com a origem registrada — senao trata como
@@ -963,16 +969,22 @@ async def propagate_merge_to_google(
     for deleted in deleted_contacts:
         # Todos os ids desta ficha, por conta: o mapa novo + o escalar legado
         # (contato pre-cascata, cuja conta de origem vem em `origem`).
-        por_conta = dict(google_ids_map(deleted))
+        # {conta: [gids]} — a ficha pode ter 2 resourceNames na MESMA agenda.
+        # Aqui a ficha do INTEL foi apagada, entao TODAS as representacoes dela
+        # no Google devem sair junto; deletar so a primeira deixaria a outra
+        # viva e o proximo sync completo a traria de volta — exatamente o
+        # mecanismo de recriacao que esta funcao existe pra fechar.
+        por_conta = {acc: list(gids) for acc, gids in google_ids_map(deleted).items()}
         escalar = deleted.get('google_contact_id')
-        if escalar and escalar not in por_conta.values():
+        _todos_gids = [g for gids in por_conta.values() for g in gids]
+        if escalar and escalar not in _todos_gids:
             origem = (deleted.get('origem') or '')
             conta_origem = origem[len('google_'):] if origem.startswith('google_') else None
             if conta_origem in tokens_por_conta:
-                por_conta.setdefault(conta_origem, escalar)
+                por_conta.setdefault(conta_origem, []).append(escalar)
             elif len(tokens_por_conta) == 1:
                 # Uma conta conectada: nao ha ambiguidade.
-                por_conta.setdefault(next(iter(tokens_por_conta)), escalar)
+                por_conta.setdefault(next(iter(tokens_por_conta)), []).append(escalar)
             else:
                 # Sem como saber a conta — NAO chuta (apagar na errada e
                 # irreversivel do lado do Google).
@@ -981,28 +993,29 @@ async def propagate_merge_to_google(
                     'contact_id': deleted.get('id'),
                 }
 
-        for account_email, google_id in por_conta.items():
+        for account_email, google_ids in por_conta.items():
             access_token = tokens_por_conta.get(account_email)
-            if not access_token:
-                results['deletions'][google_id] = {
-                    'account': account_email,
-                    'skipped': 'conta_nao_conectada',
-                }
-                continue
-            try:
-                success = await google_contacts_module.delete_google_contact(
-                    access_token,
-                    google_id
-                )
-                results['deletions'][google_id] = {
-                    'account': account_email,
-                    'success': success
-                }
-            except Exception as e:
-                results['deletions'][google_id] = {
-                    'account': account_email,
-                    'error': str(e)
-                }
+            for google_id in google_ids:
+                if not access_token:
+                    results['deletions'][google_id] = {
+                        'account': account_email,
+                        'skipped': 'conta_nao_conectada',
+                    }
+                    continue
+                try:
+                    success = await google_contacts_module.delete_google_contact(
+                        access_token,
+                        google_id
+                    )
+                    results['deletions'][google_id] = {
+                        'account': account_email,
+                        'success': success
+                    }
+                except Exception as e:
+                    results['deletions'][google_id] = {
+                        'account': account_email,
+                        'error': str(e)
+                    }
 
     return results
 

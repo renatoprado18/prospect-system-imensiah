@@ -136,7 +136,40 @@ _NAME_TITLES = {
 }
 
 
+# Nomes que NAO identificam ninguem: o cartao do proprio dono da agenda, que o
+# Google exporta como "Eu"/"Me"/"Meu perfil". 27/07 — o cartao da agenda veio
+# como `Me Eu` #26634 carregando o telefone da Manuela #4067; `names_match`
+# corretamente disse "nao casa" (os nomes SAO diferentes) e a cascata inseriu,
+# partindo o historico dela (904 msgs) e desfazendo o merge do dia anterior.
+# O defeito nao esta na comparacao — esta em tratar um rotulo vazio como nome.
+_PLACEHOLDER_NAMES = {
+    "me", "eu", "myself", "voce", "self", "meu perfil", "my profile",
+    "eu mesmo", "me eu", "eu me", "owner", "dono", "perfil", "profile",
+    "sem nome", "no name", "unnamed", "desconhecido", "unknown", "contato",
+    "contact", "novo contato", "new contact",
+}
+
+
 # ============== Nome ==============
+
+def is_placeholder_name(name: str) -> bool:
+    """O nome e um rotulo vazio em vez de identificar alguem?
+
+    Conservador de proposito: casa o nome INTEIRO normalizado contra a lista,
+    nunca um token isolado. "Eduardo Melo" nao vira placeholder por conter
+    "me"; "Maria Eunice" nao vira por conter "eu". So o rotulo puro passa.
+    """
+    base = normalize_name_for_dedup(name or "")
+    base = re.sub(r"[^a-z0-9 ]+", " ", base)
+    base = " ".join(base.split())
+    if not base:
+        return True
+    if base in _PLACEHOLDER_NAMES:
+        return True
+    # "Me"/"Eu" sozinho tambem chega com token unico apos normalizacao.
+    toks = base.split()
+    return len(toks) == 1 and toks[0] in _PLACEHOLDER_NAMES
+
 
 def significant_tokens(name: str) -> List[str]:
     """
@@ -372,15 +405,61 @@ def contact_phones(contact: Dict) -> List[str]:
     return out
 
 
-def google_ids_map(contact: Dict) -> Dict[str, str]:
-    """Le o mapa {conta: resourceName} de um row de contacts."""
+def google_ids_map(contact: Dict) -> Dict[str, List[str]]:
+    """Le o mapa {conta: [resourceNames]} de um row de contacts.
+
+    27/07 — ERA `{conta: gid}` ESCALAR, E ISSO CRIAVA DUPLICATA. A mesma pessoa
+    pode ter DUAS fichas na MESMA agenda Google (a `Francine Harumi Kaga` tinha,
+    e o Renato tinha 3 do filho na profissional). Com um slot escalar por conta,
+    o 2o resourceName nunca era reconhecido: o tier de gid falhava, a cascata
+    caia pros tiers seguintes e, quando o telefone ainda nao estava propagado,
+    INSERIA ficha nova. Foi assim que nasceu a #26520 (criada 12:11 na 1a run;
+    a #2107 so recebeu o telefone as 15:32, na 2a). Alcance medido em prod:
+    28 fichas com gid escalar fora do proprio mapa.
+
+    LEITURA RETROCOMPATIVEL: aceita o formato legado (`{conta: "gid"}`) e o novo
+    (`{conta: ["gid1","gid2"]}`), sempre devolvendo lista. Por isso a migracao
+    dos ~9,5k registros ja gravados NAO e pre-requisito — os dois formatos
+    convivem, e cada `link_google_id` reescreve no formato novo naturalmente.
+    """
     blob = _as_dict(contact.get(GOOGLE_IDS_COLUMN))
     raw = blob.get(GOOGLE_IDS_KEY)
-    out = {}
-    for account, gid in _as_dict(raw).items():
-        if account and gid:
-            out[str(account)] = str(gid)
+    out: Dict[str, List[str]] = {}
+    for account, gids in _as_dict(raw).items():
+        if not account:
+            continue
+        # str = formato legado; list = formato novo. Qualquer outra coisa (int,
+        # dict, None) e dado corrompido e e ignorada em vez de virar "None".
+        valores = [gids] if isinstance(gids, str) else (gids if isinstance(gids, list) else [])
+        limpos: List[str] = []
+        for gid in valores:
+            if not gid or not isinstance(gid, (str, int)):
+                continue
+            s = str(gid)
+            if s not in limpos:
+                limpos.append(s)
+        if limpos:
+            out[str(account)] = limpos
     return out
+
+
+def google_ids_all(contact: Dict) -> List[str]:
+    """Todos os resourceNames da ficha, de todas as contas, sem repetir.
+
+    Pro indice, que so precisa saber "este gid aponta pra este contato" — nao
+    de que conta ele veio.
+    """
+    todos: List[str] = []
+    for gids in google_ids_map(contact).values():
+        for gid in gids:
+            if gid not in todos:
+                todos.append(gid)
+    return todos
+
+
+def google_ids_for_account(contact: Dict, account_email: str) -> List[str]:
+    """resourceNames desta ficha NAQUELA conta (lista; pode ter 2+)."""
+    return list(google_ids_map(contact).get(account_email) or [])
 
 
 def merge_json_lists(existing: Any, incoming: Any, key: str,
@@ -472,8 +551,11 @@ class ContactIndex:
         gid = row.get("google_contact_id")
         if gid:
             self.by_gid.setdefault(str(gid), contact_id)
-        for account, mapped in google_ids_map(row).items():
-            self.by_gid.setdefault(str(mapped), contact_id)
+        # TODOS os gids da ficha, nao um por conta: e exatamente o 2o gid da
+        # mesma agenda que o formato escalar perdia, fazendo o tier de gid
+        # falhar e a cascata inserir ficha nova (ver google_ids_map).
+        for mapped in google_ids_all(row):
+            self.by_gid.setdefault(mapped, contact_id)
 
         for email in contact_emails(row):
             if contact_id not in self.by_email[email]:
@@ -554,12 +636,31 @@ class ContactIndex:
 
     def _resolve_by_phone(self, contact: Dict) -> Optional[Dict]:
         nome = contact.get("nome") or ""
+        placeholder = is_placeholder_name(nome)
         for phone in contact_phones(contact):
             candidates = self.by_phone.get(phone) or []
             if not candidates or len(candidates) > SHARED_LINE_MAX_CONTACTS:
                 continue
 
             kind = phone_kind(phone)
+
+            # Nome-placeholder ("Me", "Eu", "Meu perfil"): o cartao do PROPRIO
+            # dono da agenda, que o Google exporta com nome inutil. Comparar por
+            # nome aqui e garantia de nao casar — foi assim que `Me Eu` #26634
+            # nasceu com o telefone da Manuela #4067 e partiu de novo o historico
+            # dela (904 msgs), desfazendo na pratica o merge do dia anterior.
+            # Com UM candidato so, o telefone e evidencia suficiente e o nome de
+            # origem nao contradiz nada (ele nao diz nada). Com 2+, abstem: nao
+            # ha como escolher, e inserir seria repetir o defeito.
+            if placeholder:
+                if len(candidates) == 1:
+                    return {
+                        "contact_id": candidates[0],
+                        "matched_by": "phone_placeholder_name",
+                        "detail": f"{phone}/{kind}/nome_lixo:{nome[:20]}",
+                    }
+                continue
+
             passed = [
                 cid for cid in candidates
                 if names_match(nome, self.names.get(cid, ""), kind)
@@ -647,10 +748,11 @@ class ContactIndex:
 # ============== Escrita do mapa multi-conta ==============
 
 def google_ids_blob(account_email: str, gid: str) -> str:
-    """JSON pronto pro INSERT de um contato novo."""
+    """JSON pronto pro INSERT de um contato novo. Grava LISTA (ver
+    google_ids_map): a mesma conta pode acumular um 2o resourceName depois."""
     if not account_email or not gid:
         return json.dumps({})
-    return json.dumps({GOOGLE_IDS_KEY: {account_email: gid}})
+    return json.dumps({GOOGLE_IDS_KEY: {account_email: [gid]}})
 
 
 def link_google_id(cursor, contact_id: int, account_email: str, gid: str) -> None:
@@ -665,13 +767,27 @@ def link_google_id(cursor, contact_id: int, account_email: str, gid: str) -> Non
     if not contact_id or not account_email or not gid:
         return
 
+    # ACUMULA na lista daquela conta em vez de sobrescrever o slot. O UPDATE e
+    # atomico (read-modify-write em Python abriria corrida entre o sync e o
+    # webhook). O CASE normaliza o formato legado no caminho: string vira array
+    # de 1, ausente vira array vazio — por isso nao ha migracao a rodar.
+    # DISTINCT + ORDER BY mantem a lista sem repetido e deterministica.
     cursor.execute(f"""
         UPDATE contacts
         SET {GOOGLE_IDS_COLUMN} = jsonb_set(
                 COALESCE({GOOGLE_IDS_COLUMN}, '{{}}'::jsonb),
                 %s,
                 COALESCE({GOOGLE_IDS_COLUMN} -> %s, '{{}}'::jsonb)
-                    || jsonb_build_object(%s::text, %s::text),
+                    || jsonb_build_object(%s::text, (
+                        SELECT jsonb_agg(DISTINCT v ORDER BY v)
+                        FROM jsonb_array_elements(
+                            CASE jsonb_typeof({GOOGLE_IDS_COLUMN} -> %s -> %s)
+                                WHEN 'array'  THEN {GOOGLE_IDS_COLUMN} -> %s -> %s
+                                WHEN 'string' THEN jsonb_build_array({GOOGLE_IDS_COLUMN} -> %s -> %s)
+                                ELSE '[]'::jsonb
+                            END || jsonb_build_array(%s::text)
+                        ) AS v
+                    )),
                 true
             ),
             google_contact_id = COALESCE(google_contact_id, %s)
@@ -680,6 +796,9 @@ def link_google_id(cursor, contact_id: int, account_email: str, gid: str) -> Non
         "{" + GOOGLE_IDS_KEY + "}",
         GOOGLE_IDS_KEY,
         account_email,
+        GOOGLE_IDS_KEY, account_email,
+        GOOGLE_IDS_KEY, account_email,
+        GOOGLE_IDS_KEY, account_email,
         gid,
         gid,
         contact_id,
@@ -703,31 +822,44 @@ def unlink_google_id(cursor, account_email: str, gid: str) -> Optional[str]:
     if not gid:
         return None
 
+    # O `->> %s = %s` so casava quando o valor era STRING; com lista ele devolve
+    # NULL e a ficha nao seria achada. O containment (`@>`) cobre os dois
+    # formatos: array que contem o gid, e string igual ao gid.
     cursor.execute(f"""
         SELECT id, google_contact_id, {GOOGLE_IDS_COLUMN}
         FROM contacts
         WHERE google_contact_id = %s
+           OR {GOOGLE_IDS_COLUMN} -> %s -> %s @> to_jsonb(%s::text)
            OR {GOOGLE_IDS_COLUMN} -> %s ->> %s = %s
         LIMIT 1
-    """, (gid, GOOGLE_IDS_KEY, account_email, gid))
+    """, (gid,
+          GOOGLE_IDS_KEY, account_email, gid,
+          GOOGLE_IDS_KEY, account_email, gid))
     row = cursor.fetchone()
     if not row:
         return None
 
     row = dict(row)
     contact_id = row["id"]
-    remaining = {
-        acc: mapped for acc, mapped in google_ids_map(row).items()
-        if acc != account_email
-    }
+
+    # Tira APENAS este gid — nao a conta inteira. A mesma conta pode ter um 2o
+    # resourceName pra esta pessoa (e a razao desta frente): apagar uma das duas
+    # fichas no Google nao pode desvincular a que sobrou, nem levar junto a
+    # ficha do INTEL com todo o historico pendurado nela.
+    remaining: Dict[str, List[str]] = {}
+    for acc, gids in google_ids_map(row).items():
+        sobra = [g for g in gids if not (acc == account_email and g == gid)]
+        if sobra:
+            remaining[acc] = sobra
 
     if not remaining:
         cursor.execute("DELETE FROM contacts WHERE id = %s", (contact_id,))
         return "deleted" if cursor.rowcount > 0 else None
 
-    # Outra conta ainda usa esta ficha: tira so a chave desta conta e, se a
-    # coluna escalar apontava pro id apagado, repassa pra uma conta viva.
-    fallback_gid = next(iter(remaining.values()))
+    # Ainda ha gid vivo (outra conta, OU a mesma conta com um 2o resourceName):
+    # tira so este e, se a coluna escalar apontava pro id apagado, repassa pra
+    # um gid vivo.
+    fallback_gid = next(iter(remaining.values()))[0]
     cursor.execute(f"""
         UPDATE contacts
         SET {GOOGLE_IDS_COLUMN} = jsonb_set(

@@ -106,13 +106,22 @@ class FakeCursor:
                 }]
 
         elif norm.startswith(f"SELECT id, google_contact_id, {GOOGLE_IDS_COLUMN}"):
-            gid, _key, account, _gid2 = params
+            # 27/07: o SELECT ganhou o ramo de containment (`@> to_jsonb`) pro
+            # formato de lista, alem do `->>` legado. 7 params agora.
+            gid, _key, account = params[0], params[1], params[2]
+
+            def _tem_gid(r):
+                if r.get("google_contact_id") == gid:
+                    return True
+                slot = (r[GOOGLE_IDS_COLUMN].get(GOOGLE_IDS_KEY, {}) or {}).get(account)
+                if isinstance(slot, list):
+                    return gid in slot
+                return slot == gid
+
             self._result = [
                 {"id": r["id"], "google_contact_id": r.get("google_contact_id"),
                  GOOGLE_IDS_COLUMN: r[GOOGLE_IDS_COLUMN]}
-                for r in self.rows.values()
-                if r.get("google_contact_id") == gid
-                or (r[GOOGLE_IDS_COLUMN].get(GOOGLE_IDS_KEY, {}) or {}).get(account) == gid
+                for r in self.rows.values() if _tem_gid(r)
             ][:1]
 
         elif norm.startswith("INSERT INTO contacts"):
@@ -143,10 +152,16 @@ class FakeCursor:
 
         elif norm.startswith(f"UPDATE contacts SET {GOOGLE_IDS_COLUMN} = jsonb_set"):
             if "jsonb_build_object" in norm:          # link_google_id
-                _path, _key, account, gid, gid2, cid = params
+                # 27/07: o slot da conta virou LISTA e o UPDATE acumula em vez
+                # de sobrescrever (jsonb_agg DISTINCT ORDER BY). O fake imita:
+                # normaliza o legado (string -> [string]), junta, ordena, sem
+                # repetido. Params foram de 6 pra 12.
+                account, gid, gid2, cid = params[2], params[-3], params[-2], params[-1]
                 row = self.rows[cid]
                 blob = row[GOOGLE_IDS_COLUMN].setdefault(GOOGLE_IDS_KEY, {})
-                blob[account] = gid
+                atual = blob.get(account)
+                atual = [atual] if isinstance(atual, str) else list(atual or [])
+                blob[account] = sorted(set(atual + [gid]))
                 if not row.get("google_contact_id"):
                     row["google_contact_id"] = gid2
             else:                                      # unlink_google_id
@@ -340,7 +355,7 @@ class TestCascata:
                      emails=["outro@x.com", "PICCINO@Clinica.com.br"])
         assert _apply_contact(cur, idx, rec, PROFISSIONAL) == "updated"
         assert len(cur.rows) == 1
-        assert google_ids_map(cur.rows[1])[PROFISSIONAL] == "gid-prof"
+        assert google_ids_map(cur.rows[1])[PROFISSIONAL] == ["gid-prof"]
 
     def test_casa_por_telefone_mais_nome(self):
         """
@@ -387,7 +402,7 @@ class TestMapaMultiConta:
                      phones=["11984153337"])
         _apply_contact(cur, idx, rec, PROFISSIONAL)
         mapa = google_ids_map(cur.rows[1])
-        assert mapa == {PESSOAL: "gid-pessoal", PROFISSIONAL: "gid-prof"}
+        assert mapa == {PESSOAL: ["gid-pessoal"], PROFISSIONAL: ["gid-prof"]}
 
     def test_coluna_escalar_nao_e_sobrescrita(self):
         """Ela tem UNIQUE constraint e consumidores legados: preenche so se NULL."""
@@ -402,7 +417,7 @@ class TestMapaMultiConta:
         rec = parsed("Gente Nova", "gid-x", PROFISSIONAL)
         _apply_contact(cur, idx, rec, PROFISSIONAL)
         novo = cur.rows[max(cur.rows)]
-        assert google_ids_map(novo) == {PROFISSIONAL: "gid-x"}
+        assert google_ids_map(novo) == {PROFISSIONAL: ["gid-x"]}
 
     def test_index_reconhece_gid_vindo_do_mapa(self):
         idx = ContactIndex()
@@ -458,7 +473,7 @@ class TestDelete:
         cur.rows[1][GOOGLE_IDS_COLUMN][GOOGLE_IDS_KEY][PROFISSIONAL] = "gid-prof"
         assert unlink_google_id(cur, PESSOAL, "gid-pessoal") == "unlinked"
         assert 1 in cur.rows
-        assert google_ids_map(cur.rows[1]) == {PROFISSIONAL: "gid-prof"}
+        assert google_ids_map(cur.rows[1]) == {PROFISSIONAL: ["gid-prof"]}
         # escalar apontava pro gid apagado -> repassa pra conta viva
         assert cur.rows[1]["google_contact_id"] == "gid-prof"
 
@@ -672,9 +687,184 @@ class TestNamesMatchRecalibracao2607:
         assert names_match("Marcos Moliterno", "Eduardo Lafraia", "landline") is False
 
     def test_ficha_lixo_sem_relacao_nao_casa(self):
-        """'Me Eu' no mesmo celular da Manuela: não há evidência de nome, então
-        NÃO casa. Fica duplicata — preferível a fundir às cegas."""
+        """'Me Eu' x 'Manuela': os nomes REALMENTE nao casam, e names_match
+        acerta ao dizer False — a comparacao de nomes nao e o lugar de resolver
+        isto. Quem resolve e `_resolve_by_phone`, que trata nome-placeholder
+        como ausencia de nome (ver TestNomePlaceholder)."""
         assert names_match("Me Eu", "Manuela Dansieri de Almeida Prado", "mobile") is False
 
     def test_ficha_so_com_titulo_nao_vira_lista_vazia(self):
         assert significant_tokens("Dr.") == ["dr"]
+
+
+# ==================== Causa (B): mapa multi-gid ====================
+
+class TestMapaMultiGid:
+    """27/07 — o mapa era `{conta: gid}` ESCALAR e por isso CRIAVA duplicata.
+
+    A mesma pessoa pode ter DUAS fichas na MESMA agenda Google (a Francine
+    tinha; o Renato tinha 3 do filho na profissional). Com um slot escalar, o
+    2o resourceName nunca era reconhecido -> tier de gid falhava -> cascata caia
+    pros tiers seguintes -> quando o telefone ainda nao estava propagado,
+    INSERIA. Alcance medido em prod: 28 fichas.
+    """
+
+    def test_leitura_aceita_formato_legado_string(self):
+        """Retrocompatibilidade: os ~9,5k registros ja gravados como string
+        continuam legiveis, por isso nao ha migracao a rodar."""
+        row = {GOOGLE_IDS_COLUMN: {GOOGLE_IDS_KEY: {PESSOAL: "gid-legado"}}}
+        assert google_ids_map(row) == {PESSOAL: ["gid-legado"]}
+
+    def test_leitura_aceita_formato_novo_lista(self):
+        row = {GOOGLE_IDS_COLUMN: {GOOGLE_IDS_KEY: {PESSOAL: ["g1", "g2"]}}}
+        assert google_ids_map(row) == {PESSOAL: ["g1", "g2"]}
+
+    def test_leitura_ignora_lixo_sem_virar_none(self):
+        row = {GOOGLE_IDS_COLUMN: {GOOGLE_IDS_KEY: {
+            PESSOAL: None, PROFISSIONAL: [], "x@y.com": {"nao": "esperado"},
+        }}}
+        assert google_ids_map(row) == {}
+
+    def test_dois_gids_na_mesma_conta_ambos_indexados(self):
+        """O CERNE DA CAUSA (B): com escalar, 'gid-2' nao era achado e a
+        cascata inseria ficha nova."""
+        idx = ContactIndex()
+        idx.add_contact({
+            "id": 1, "nome": "Francine Harumi Kaga", "emails": [], "telefones": [],
+            "google_contact_id": "gid-1",
+            GOOGLE_IDS_COLUMN: {GOOGLE_IDS_KEY: {PESSOAL: ["gid-1", "gid-2"]}},
+        })
+        idx.loaded = True
+        for gid in ("gid-1", "gid-2"):
+            hit = idx.resolve({"google_contact_id": gid, "nome": "Francine"}, PESSOAL)
+            assert hit["contact_id"] == 1, f"{gid} deveria resolver pra ficha 1"
+
+    def test_link_acumula_segundo_gid_na_mesma_conta(self):
+        cur = FakeCursor([{
+            "id": 1, "nome": "Francine Harumi Kaga",
+            "google_contact_id": "gid-1",
+            GOOGLE_IDS_COLUMN: {GOOGLE_IDS_KEY: {PESSOAL: ["gid-1"]}},
+        }])
+        from services.contact_identity import link_google_id
+        link_google_id(cur, 1, PESSOAL, "gid-2")
+        assert google_ids_map(cur.rows[1]) == {PESSOAL: ["gid-1", "gid-2"]}
+
+    def test_link_do_mesmo_gid_duas_vezes_nao_duplica(self):
+        cur = FakeCursor([{
+            "id": 1, "nome": "X", "google_contact_id": "gid-1",
+            GOOGLE_IDS_COLUMN: {GOOGLE_IDS_KEY: {PESSOAL: ["gid-1"]}},
+        }])
+        from services.contact_identity import link_google_id
+        link_google_id(cur, 1, PESSOAL, "gid-1")
+        assert google_ids_map(cur.rows[1]) == {PESSOAL: ["gid-1"]}
+
+    def test_link_migra_legado_string_para_lista(self):
+        cur = FakeCursor([{
+            "id": 1, "nome": "X", "google_contact_id": "gid-1",
+            GOOGLE_IDS_COLUMN: {GOOGLE_IDS_KEY: {PESSOAL: "gid-1"}},
+        }])
+        from services.contact_identity import link_google_id
+        link_google_id(cur, 1, PESSOAL, "gid-2")
+        assert google_ids_map(cur.rows[1]) == {PESSOAL: ["gid-1", "gid-2"]}
+
+    def test_unlink_de_um_gid_preserva_o_outro_da_MESMA_conta(self):
+        """Apagar UMA das duas fichas no Google nao pode levar junto a ficha do
+        INTEL — o historico esta pendurado nela."""
+        cur = FakeCursor([{
+            "id": 1, "nome": "Francine", "google_contact_id": "gid-1",
+            GOOGLE_IDS_COLUMN: {GOOGLE_IDS_KEY: {PESSOAL: ["gid-1", "gid-2"]}},
+        }])
+        assert unlink_google_id(cur, PESSOAL, "gid-1") == "unlinked"
+        assert 1 in cur.rows, "a ficha NAO podia ser apagada"
+        assert google_ids_map(cur.rows[1]) == {PESSOAL: ["gid-2"]}
+        assert cur.rows[1]["google_contact_id"] == "gid-2", "escalar repassado"
+
+    def test_unlink_do_ultimo_gid_apaga(self):
+        cur = FakeCursor([{
+            "id": 1, "nome": "X", "google_contact_id": "gid-1",
+            GOOGLE_IDS_COLUMN: {GOOGLE_IDS_KEY: {PESSOAL: ["gid-1"]}},
+        }])
+        assert unlink_google_id(cur, PESSOAL, "gid-1") == "deleted"
+        assert 1 not in cur.rows
+
+    def test_unlink_acha_ficha_no_formato_lista(self):
+        """O SELECT antigo usava `->> = gid`, que devolve NULL contra array:
+        a ficha nao seria achada e o unlink viraria no-op silencioso."""
+        cur = FakeCursor([{
+            "id": 1, "nome": "X", "google_contact_id": None,
+            GOOGLE_IDS_COLUMN: {GOOGLE_IDS_KEY: {PESSOAL: ["gid-a", "gid-b"]}},
+        }])
+        assert unlink_google_id(cur, PESSOAL, "gid-b") == "unlinked"
+        assert google_ids_map(cur.rows[1]) == {PESSOAL: ["gid-a"]}
+
+
+# ==================== Causa (C): nome-placeholder ====================
+
+class TestNomePlaceholder:
+    """27/07 — o cartao do proprio dono da agenda vem como 'Me'/'Eu' e, por
+    nao casar com nome nenhum, virava ficha nova. Foi assim que `Me Eu` #26634
+    nasceu com o telefone da Manuela #4067 e partiu de novo o historico dela
+    (904 msgs), desfazendo o merge do dia anterior.
+    """
+
+    def test_reconhece_os_rotulos_vazios(self):
+        from services.contact_identity import is_placeholder_name
+        for n in ("Me", "Eu", "Me Eu", "eu", "MYSELF", "Meu Perfil",
+                  "sem nome", "Desconhecido", "", "   ", "Novo Contato"):
+            assert is_placeholder_name(n) is True, n
+
+    def test_nao_confunde_nome_de_gente(self):
+        """O guard casa o nome INTEIRO, nunca um token — senao 'Eduardo Melo'
+        (contem 'me') e 'Maria Eunice' (contem 'eu') virariam placeholder."""
+        from services.contact_identity import is_placeholder_name
+        for n in ("Eduardo Melo", "Maria Eunice", "Manuela Dansieri",
+                  "Euclides Santos", "Mercedes Silva", "Renato Prado"):
+            assert is_placeholder_name(n) is False, n
+
+    def test_placeholder_casa_com_o_unico_dono_do_telefone(self):
+        idx = ContactIndex()
+        idx.add_contact({
+            "id": 4067, "nome": "Manuela Dansieri de Almeida Prado",
+            "emails": [], "telefones": [{"number": "+5511988887777"}],
+            "google_contact_id": "gid-manu", GOOGLE_IDS_COLUMN: {},
+        })
+        idx.loaded = True
+        hit = idx.resolve({
+            "nome": "Me Eu", "emails": [],
+            "telefones": [{"number": "+5511988887777"}],
+        }, PESSOAL)
+        assert hit["contact_id"] == 4067
+        assert hit["matched_by"] == "phone_placeholder_name"
+
+    def test_placeholder_com_dois_donos_abstem(self):
+        """Sem nome utilizavel E com 2 candidatos, nao ha como escolher —
+        abster e mais barato que fundir a pessoa errada."""
+        idx = ContactIndex()
+        for cid, nome in ((1, "Ana Silva"), (2, "Bruno Costa")):
+            idx.add_contact({
+                "id": cid, "nome": nome, "emails": [],
+                "telefones": [{"number": "+551135761505"}],
+                "google_contact_id": f"gid-{cid}", GOOGLE_IDS_COLUMN: {},
+            })
+        idx.loaded = True
+        hit = idx.resolve({
+            "nome": "Me", "emails": [],
+            "telefones": [{"number": "+551135761505"}],
+        }, PESSOAL)
+        assert hit["contact_id"] is None
+
+    def test_nome_de_gente_segue_pela_regra_normal(self):
+        """O guard nao pode virar atalho: nome real continua exigindo
+        names_match — o fixo Douglas x Orestes segue barrado."""
+        idx = ContactIndex()
+        idx.add_contact({
+            "id": 1, "nome": "Orestes Alves de Almeida Prado", "emails": [],
+            "telefones": [{"number": "+551135761505"}],
+            "google_contact_id": "gid-o", GOOGLE_IDS_COLUMN: {},
+        })
+        idx.loaded = True
+        hit = idx.resolve({
+            "nome": "Douglas Bassi", "emails": [],
+            "telefones": [{"number": "+551135761505"}],
+        }, PESSOAL)
+        assert hit["contact_id"] is None
