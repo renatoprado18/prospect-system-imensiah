@@ -176,6 +176,15 @@ def classify_recipient(contact: Dict) -> str:
 
     if "companheira" in tags or "esposa" in tags:
         return "companheira"
+    # Cargo de PRESTADOR vence a tag de família (27/07, decisão do Renato sobre
+    # o Dr. Piccino #2869 — parente E advogado da reorg das 7 empresas). Quando
+    # a pessoa tem cargo de serviço cadastrado, o que pauta a conversa é o
+    # assunto profissional, e o rascunho tem que sair nesse registro: escrever
+    # "Pai," pra quem está conduzindo um processo fiscal soa errado.
+    # Medido na base: 3 contatos combinam tag de família com cargo de prestador,
+    # e a Emma segue intocada porque `companheira` é checada antes de tudo.
+    if any(k in cargo for k in _SERVICE_CARGO):
+        return "prestador"
     if any(t in tags for t in _FAMILY_TAGS):
         return "familia"
     # Assistente é papel, não círculo: identifica por cargo, não por nome

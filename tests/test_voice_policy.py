@@ -75,6 +75,23 @@ class TestClassifyRecipient:
     def test_prestador_por_cargo(self):
         assert classify_recipient({"tags": [], "cargo": "Dermatologista", "circulo": 1}) == "prestador"
 
+    def test_prestador_vence_familia(self):
+        """Dr. Piccino #2869: parente E advogado da reorg das 7 empresas.
+        Quem conduz um processo fiscal não recebe rascunho que abre com 'Pai,'
+        — o assunto profissional é que pauta o registro (decisão 27/07)."""
+        c = {"tags": ["familia"], "cargo": "Advogado", "circulo": 3}
+        assert classify_recipient(c) == "prestador"
+
+    def test_companheira_vence_prestador(self):
+        """A ordem nova não pode passar por cima do perfil íntimo: a Emma tem
+        tag companheira E cargo Massagista."""
+        c = {"tags": ["companheira", "familia"], "cargo": "Massagista", "circulo": 1}
+        assert classify_recipient(c) == "companheira"
+
+    def test_familia_sem_cargo_de_servico_segue_familia(self):
+        assert classify_recipient({"tags": ["filho", "familia"], "cargo": "Software Engineer",
+                                   "circulo": 1}) == "familia"
+
     def test_fallback_por_circulo(self):
         assert classify_recipient({"tags": [], "cargo": "", "circulo": 2}) == "circulo_proximo"
         assert classify_recipient({"tags": [], "cargo": "", "circulo": 5}) == "outros"
