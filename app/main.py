@@ -28616,6 +28616,130 @@ async def _editorial_metrics_reminder_impl():
     }
 
 
+# ---------------------------------------------------------------------------
+# monitor-cron-health — regra de veredito (pura, testavel em tests/test_cron_health_window.py)
+# ---------------------------------------------------------------------------
+#
+# 27/07/26 — 3a ocorrencia da MESMA classe de falso-positivo
+# ("<job>: nunca disparou"). Historico:
+#   1) 10/07 — lista hardcoded de jobs paralela ao worker -> stale-forever.
+#      Fix: cron_registry (migration 045).
+#   2) 25/07 (047d30b) — o monitor lia SO `cron_heartbeats`, alimentado apenas
+#      pelo worker Railway; `platform-costs-snapshot` (mensal) so ganharia
+#      heartbeat em 02/08 e alertava todo dia ate la. Fix: fallback pra
+#      `cron_runs`.
+#   3) 24/07 — `cos-daily-review`/`cos-signal-router` recem-registrados,
+#      alertados na PRIMEIRA passada do monitor, antes do 1o disparo deles.
+#
+# Por que (2) nao matou a classe: o fix de 25/07 mexeu em ONDE a evidencia e
+# buscada, nao em COMO a ausencia de evidencia e interpretada. A regra continuou
+# sendo "sem evidencia agora => alerta agora", com janela efetiva ZERO e
+# independente da periodicidade do job. Toda nova maneira de a evidencia faltar
+# (cutover de agendador, job novo, fonte que ainda nao escreve, borda de
+# lookback) recria o mesmo falso-positivo. Somar fontes reduz a frequencia;
+# nao remove a causa.
+#
+# Regra correta: ausencia de evidencia so vira veredito depois de decorrido
+# tempo PROPORCIONAL ao intervalo declarado no cron_registry. Um job mensal
+# (44640min) so pode ser chamado de "nunca disparou" ~38 dias depois de o
+# monitor passar a enxerga-lo; um job de 5min, em ~1h.
+#
+# Fontes de "ultima execucao" — qual reflete a realidade (checado em prod
+# 27/07/26, 52 jobs ativos):
+#   * `cron_heartbeats` — escrito pelo worker Railway APOS o HTTP call
+#     (workers/audio-transcriber/main.py:98), com QUALQUER http_status (inclui
+#     401/500). Significa "o agendador disparou", nao "o job funcionou". So
+#     existe desde 11/06/26 e so pros jobs que o worker agenda. Cobre hoje
+#     51/52 jobs — inclusive os que nao viram linha em cron_runs porque o path
+#     nao bate com o job_id (dev-delegation-pickup-*, tonia-*, inbox-zero-scan).
+#   * `cron_runs` — escrito pelo `track_cron_run` do lado do INTEL, com status
+#     success/error real, para qualquer chamador (worker, Vercel, curl).
+#     Existe desde 02/05/26. E a UNICA evidencia de `platform-costs-snapshot`
+#     (mensal, sem heartbeat ate 02/08).
+# Nenhuma das duas e suficiente sozinha; heartbeat e preferencial (mais perto
+# do agendador) e cron_runs preenche o vazio. Nenhuma das duas tem purga.
+_CRON_NEVER_FIRED_GRACE_MIN = 60.0     # piso de folga (drift/reboot do worker)
+_CRON_NEVER_FIRED_GRACE_RATIO = 0.25   # folga proporcional ao intervalo
+
+
+def _cron_as_utc(dt):
+    """Normaliza pra UTC tz-aware. Colunas naive do Postgres sao UTC por
+    convencao do projeto (ver CLAUDE.md / services/tz.py)."""
+    if dt is None:
+        return None
+    from services.tz import UTC
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
+
+
+def _cron_never_fired_window_min(expected_interval_min) -> float:
+    """Quanto tempo de observacao sem NENHUMA evidencia autoriza dizer
+    'nunca disparou'. Proporcional ao intervalo declarado: 1x o intervalo
+    (tempo minimo pro job ter tido a chance de disparar) + folga de 25%,
+    com piso de 60min.
+
+        5min   -> 65min       |  1440min (diario) -> 30h
+        480min -> 10h         |  44640min (mensal) -> ~38,8 dias
+    """
+    exp = max(1, int(expected_interval_min or 0))
+    return exp + max(_CRON_NEVER_FIRED_GRACE_MIN, exp * _CRON_NEVER_FIRED_GRACE_RATIO)
+
+
+def _cron_job_verdict(
+    *,
+    now,
+    expected_interval_min,
+    last_seen=None,
+    observed_since=None,
+    proportional: bool = True,
+) -> dict:
+    """Veredito de UM job. Pura (sem I/O) de proposito — e a regra que ja
+    errou 3x, entao vive coberta por teste.
+
+    `last_seen`      = evidencia de execucao (heartbeat ou cron_runs), ou None.
+    `observed_since` = desde quando o monitor enxerga este job (1a vez que ele
+                       apareceu no proprio `jobs` do monitor). None = job visto
+                       agora pela 1a vez.
+    `proportional`   = kill-switch. False restaura o comportamento anterior
+                       (sem evidencia => alerta imediato), sem tocar no resto.
+
+    Status possiveis:
+      ok                -> tem evidencia recente
+      stale             -> tem evidencia, mas gap > 2x o intervalo (ALERTA)
+      never_fired       -> sem evidencia depois da janela proporcional (ALERTA)
+      pending_first_run -> sem evidencia, mas ainda dentro da janela (SEM alerta)
+    """
+    exp = max(1, int(expected_interval_min or 0))
+
+    if last_seen is not None:
+        last = _cron_as_utc(last_seen)
+        gap_min = (now - last).total_seconds() / 60.0
+        threshold = 2 * exp
+        return {
+            "status": "ok" if gap_min <= threshold else "stale",
+            "last_fired": last,
+            "gap_min": round(gap_min, 1),
+            "window_min": float(threshold),
+        }
+
+    if not proportional:
+        # Comportamento pre-27/07: ausencia de evidencia = alerta imediato.
+        return {"status": "never_fired", "last_fired": None, "gap_min": None,
+                "waiting_min": None, "window_min": 0.0}
+
+    window_min = _cron_never_fired_window_min(exp)
+    since = _cron_as_utc(observed_since)
+    waiting_min = 0.0 if since is None else max(0.0, (now - since).total_seconds() / 60.0)
+    status = "never_fired" if waiting_min > window_min else "pending_first_run"
+    return {
+        "status": status,
+        "last_fired": None,
+        "gap_min": None,
+        "waiting_min": round(waiting_min, 1),
+        "window_min": round(window_min, 1),
+        "observed_since": since.isoformat() if since else None,
+    }
+
+
 @app.get("/api/cron/monitor-cron-health")
 @track_cron_run
 async def cron_monitor_cron_health(request: Request):
@@ -28634,6 +28758,10 @@ async def cron_monitor_cron_health(request: Request):
     reescreve no boot com _SCHEDULER_JOBS). Cobre TODOS os jobs ativos, nao so
     um subset hand-picked — desligar um job no worker propaga pro monitor
     sozinho. Meta-fix 10/07: ver migration 045_cron_registry.sql.
+
+    27/07: a decisao de cada job saiu daqui pra `_cron_job_verdict` (acima),
+    que exige tempo de observacao PROPORCIONAL ao intervalo antes de declarar
+    "nunca disparou". Kill-switch: CRON_HEALTH_PROPORTIONAL_WINDOW=0.
     """
     if not verify_cron_auth(request):
         raise HTTPException(status_code=401, detail="Unauthorized cron request")
@@ -28678,6 +28806,17 @@ async def cron_monitor_cron_health(request: Request):
     alerts: list[dict] = []
     jobs_status: list[dict] = []
 
+    # Kill-switch: CRON_HEALTH_PROPORTIONAL_WINDOW=0 volta ao comportamento
+    # anterior (sem evidencia => "nunca disparou" na hora). strip() porque a
+    # Vercel cola \n no valor (ver feedback_env_var_whitespace).
+    proportional = (os.getenv("CRON_HEALTH_PROPORTIONAL_WINDOW", "1") or "1").strip().lower() \
+        not in ("0", "false", "off", "no")
+
+    # Lookback do fallback proporcional ao maior intervalo declarado (3x),
+    # piso de 120 dias — ver comentario na query abaixo.
+    _intervals = [v for v in JOB_INTERVALS.values() if v] or [1440]
+    runs_lookback_min = max(120 * 24 * 60, int(max(_intervals) * 3))
+
     try:
         from database import get_db
         with get_db() as conn:
@@ -28709,6 +28848,11 @@ async def cron_monitor_cron_health(request: Request):
             # "este job executou". Convencao de path: /api/cron/<job_id>[?...].
             # Job cujo path nao segue a convencao nao casa e mantem o
             # comportamento antigo (sem regressao).
+            #
+            # 27/07: o lookback era fixo em 120 dias — outra janela fixa contra
+            # periodicidade variavel. Um job trimestral/anual perderia a propria
+            # evidencia pela borda e voltaria a "nunca disparou". Agora e
+            # proporcional ao maior intervalo declarado (3x), com piso de 120d.
             cursor.execute(
                 """
                 SELECT job_id, MAX(started_at) AS last_run FROM (
@@ -28717,10 +28861,11 @@ async def cron_monitor_cron_health(request: Request):
                     FROM cron_runs
                     WHERE status = 'success'
                       AND path LIKE '/api/cron/%%'
-                      AND started_at > NOW() - INTERVAL '120 days'
+                      AND started_at > NOW() - make_interval(mins => %s)
                 ) t
                 GROUP BY job_id
-                """
+                """,
+                (runs_lookback_min,),
             )
             run_rows = cursor.fetchall()
     except Exception as e:
@@ -28737,50 +28882,88 @@ async def cron_monitor_cron_health(request: Request):
             last_seen[_jid] = _ts
             fallback_used.add(_jid)
 
+    # Sem NENHUMA evidencia: precisamos saber ha quanto tempo o monitor enxerga
+    # o job pra decidir se ja deu tempo de ele ter disparado. O proprio historico
+    # do monitor serve de relogio: `cron_registry.updated_at` NAO serve porque o
+    # worker reescreve a tabela inteira a cada boot (main.py:392 do worker), ou
+    # seja e "ultimo deploy", nao "registrado em" — usa-lo faria um job mensal
+    # morto nunca alertar (o worker reinicia bem antes de 31 dias).
+    # A 1a vez que o job_id aparece em `result_json->jobs` de uma run passada
+    # deste mesmo endpoint e um "primeiro avistamento" honesto, e ja esta gravado
+    # (sem DDL). Query so roda quando ha candidato — no caso normal, zero custo.
+    # Medido em prod 27/07: 14ms, index-backed (idx_cron_runs_path_started).
+    candidates = [j for j in JOB_INTERVALS if last_seen.get(j) is None]
+    observed_since: dict = {}
+    if candidates and proportional:
+        try:
+            from database import get_db
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT j->>'job_id' AS job_id, MIN(cr.started_at) AS first_observed
+                    FROM cron_runs cr, LATERAL jsonb_array_elements(cr.result_json->'jobs') j
+                    WHERE cr.path = '/api/cron/monitor-cron-health'
+                      AND cr.status = 'success'
+                      AND cr.started_at > NOW() - INTERVAL '400 days'
+                      AND jsonb_typeof(cr.result_json->'jobs') = 'array'
+                      AND j->>'job_id' = ANY(%s)
+                    GROUP BY 1
+                    """,
+                    (candidates,),
+                )
+                observed_since = {r["job_id"]: r["first_observed"] for r in cursor.fetchall()}
+        except Exception as e:
+            # Falha aqui => observed_since vazio => todo candidato vira
+            # "visto agora pela 1a vez" => nao alerta neste ciclo. Conservador
+            # na direcao certa: silencio de 1h contra 15 falsos-positivos.
+            logging.warning(f"monitor-cron-health: observed_since query failed: {e}")
+            observed_since = {}
+
     for job_id, expected_minutes in JOB_INTERVALS.items():
-        last = last_seen.get(job_id)
-        if last is None:
-            jobs_status.append({
-                "job_id": job_id,
-                "last_fired": None,
-                "expected_interval_min": expected_minutes,
-                "gap_min": None,
-                "status": "never_fired",
-            })
-            alerts.append({
-                "job_id": job_id,
-                "reason": "never_fired",
-                "expected_interval_min": expected_minutes,
-            })
-            continue
+        verdict = _cron_job_verdict(
+            now=now,
+            expected_interval_min=expected_minutes,
+            last_seen=last_seen.get(job_id),
+            observed_since=observed_since.get(job_id),
+            proportional=proportional,
+        )
+        status = verdict["status"]
+        last = verdict.get("last_fired")
 
-        # last_fired vem como TIMESTAMPTZ — ja eh tz-aware
-        if last.tzinfo is None:
-            from datetime import timezone as _tz
-            last = last.replace(tzinfo=_tz.utc)
-
-        gap_min = (now - last).total_seconds() / 60.0
-        threshold = 2 * expected_minutes
-        status = "ok" if gap_min <= threshold else "stale"
-
-        jobs_status.append({
+        entry = {
             "job_id": job_id,
-            "last_fired": last.isoformat(),
+            "last_fired": last.isoformat() if last else None,
             "expected_interval_min": expected_minutes,
-            "gap_min": round(gap_min, 1),
+            "gap_min": verdict.get("gap_min"),
             "status": status,
+        }
+        if last is not None:
             # Transparencia: de onde veio a evidencia de execucao. 'cron_runs'
             # = o job rodou mas nao pelo worker (ver fallback acima).
-            "evidence": "cron_runs" if job_id in fallback_used else "heartbeat",
-        })
+            entry["evidence"] = "cron_runs" if job_id in fallback_used else "heartbeat"
+        else:
+            entry["evidence"] = "none"
+            entry["waiting_min"] = verdict.get("waiting_min")
+            entry["window_min"] = verdict.get("window_min")
+            entry["observed_since"] = verdict.get("observed_since")
+        jobs_status.append(entry)
 
         if status == "stale":
             alerts.append({
                 "job_id": job_id,
                 "reason": "gap_exceeds_2x",
-                "gap_min": round(gap_min, 1),
+                "gap_min": verdict["gap_min"],
                 "expected_interval_min": expected_minutes,
                 "last_fired": last.isoformat(),
+            })
+        elif status == "never_fired":
+            alerts.append({
+                "job_id": job_id,
+                "reason": "never_fired",
+                "expected_interval_min": expected_minutes,
+                "waiting_min": verdict.get("waiting_min"),
+                "window_min": verdict.get("window_min"),
             })
 
     # Dispara WA so pra alertas NOVOS — dedup 24h por job_id.
@@ -28824,7 +29007,14 @@ async def cron_monitor_cron_health(request: Request):
         lines = ["[INTEL] Cron health alert:"]
         for a in new_alerts:
             if a["reason"] == "never_fired":
-                lines.append(f"- {a['job_id']}: nunca disparou (esperado {a['expected_interval_min']}min)")
+                # Mostra ha quanto tempo observamos sem disparo — sem isso o
+                # alerta nao dizia se era um job novo ou um job morto.
+                _wait_h = (a.get("waiting_min") or 0) / 60.0
+                _wait = f"{_wait_h/24:.0f}d" if _wait_h >= 48 else f"{_wait_h:.0f}h"
+                lines.append(
+                    f"- {a['job_id']}: nunca disparou em {_wait} de observacao "
+                    f"(esperado a cada {a['expected_interval_min']}min)"
+                )
             else:
                 lines.append(
                     f"- {a['job_id']}: gap {a['gap_min']:.0f}min "
