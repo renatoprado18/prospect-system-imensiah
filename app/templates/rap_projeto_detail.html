@@ -677,6 +677,7 @@
             renderProject();
             loadProjectDocuments();
             loadWaGroups();
+            loadRaciResumo();
             // Load AI briefing in parallel (non-blocking)
             loadBriefing();
 
@@ -888,6 +889,21 @@
                         </div>
                     </div>
 
+                    <!-- RACI (resumo; a matriz cheia + PDF on-brand vive em /projetos/{id}/raci) -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h3 class="section-title">
+                                <i class="bi bi-diagram-3 text-secondary"></i> RACI
+                            </h3>
+                            <a class="btn btn-sm btn-outline-primary" href="/projetos/${project.id}/raci">
+                                <i class="bi bi-printer"></i> Matriz / PDF
+                            </a>
+                        </div>
+                        <div class="section-body" id="raciResumo">
+                            <div class="text-muted small">Carregando…</div>
+                        </div>
+                    </div>
+
                     <!-- Milestones -->
                     <div class="section-card">
                         <div class="section-header">
@@ -1063,6 +1079,48 @@
     }
 
     // ========== DOCUMENTS FUNCTIONS ==========
+
+    // Resumo do RACI no detalhe do projeto. A matriz cheia (com R/A/C/I,
+    // filtro e print on-brand) vive em /projetos/{id}/raci — aqui so entra o
+    // que cabe numa olhada: quantos atrasados, quantos abertos, e o proximo
+    // prazo. Duplicar a matriz nas duas telas so criaria duas verdades.
+    async function loadRaciResumo() {
+        const container = document.getElementById('raciResumo');
+        if (!container) return;
+        try {
+            const response = await fetch(`/api/projects/${projectId}/raci`);
+            if (!response.ok) throw new Error('falhou');
+            const data = await response.json();
+            const r = data.resumo || {};
+            const abertos = (r.atrasado || 0) + (r.pendente || 0) + (r.em_andamento || 0);
+
+            if (!data.total) {
+                container.innerHTML = `<p class="text-muted small mb-0">
+                    Nenhum item de RACI. <a href="/projetos/${projectId}/raci">Criar o primeiro</a>.</p>`;
+                return;
+            }
+
+            const proximo = (data.itens || []).find(i => i.prazo && i.status_efetivo !== 'concluido');
+            const badge = (n, cor, txt) => n
+                ? `<span class="badge bg-${cor} me-1">${n} ${txt}</span>` : '';
+
+            container.innerHTML = `
+                <div class="d-flex align-items-center flex-wrap gap-2">
+                    ${badge(r.atrasado, 'danger', 'atrasado' + (r.atrasado > 1 ? 's' : ''))}
+                    ${badge(r.pendente, 'secondary', 'pendente' + (r.pendente > 1 ? 's' : ''))}
+                    ${badge(r.em_andamento, 'warning', 'em andamento')}
+                    ${badge(r.concluido, 'success', 'concluído' + (r.concluido > 1 ? 's' : ''))}
+                    <span class="text-muted small ms-1">${abertos} aberto${abertos === 1 ? '' : 's'} de ${data.total}</span>
+                </div>
+                ${proximo ? `<div class="small text-muted mt-2">
+                    <i class="bi bi-calendar-event"></i> Próximo prazo <strong>${proximo.prazo_br}</strong> —
+                    ${proximo.acao.replace(/</g, '&lt;')}${proximo.r ? ` <em>(${proximo.r.replace(/</g, '&lt;')})</em>` : ''}
+                </div>` : ''}`;
+        } catch (error) {
+            console.error('Error loading RACI:', error);
+            container.innerHTML = '<p class="text-muted small mb-0">Erro ao carregar</p>';
+        }
+    }
 
     async function loadProjectDocuments() {
         const container = document.getElementById('projectDocumentsContainer');

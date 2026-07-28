@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Matriz RACI — INTEL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;1,500&family=Montserrat:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ===========================================================================
+   Identidade Almeida Prado (cartão de visitas): charcoal + creme + dourado,
+   Playfair Display + Montserrat + JetBrains Mono. NÃO é a UI do INTEL — esta
+   página existe pra virar PDF e ir pra fora (Piccino, Priscila, conselheiros),
+   então segue a marca do Renato, não o tema do sistema.
+   =========================================================================== */
+:root{
+  --charcoal:#262019; --charcoal-soft:#332b22;
+  --creme:#f4efe7; --card:#faf7f1;
+  --gold:#c39553; --gold-deep:#a97f42; --frame:#d8c6a4;
+  --ink:#2a231d; --muted:#8a7d72; --border:#e6ded0;
+  --atrasado:#a13b2f; --pendente:#8a7d72; --andamento:#a97f42; --concluido:#4a6b52;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--creme); color:var(--ink);
+  font-family:'Montserrat',system-ui,sans-serif; font-size:14px; line-height:1.5;
+  padding:28px 20px 60px;
+}
+.sheet{max-width:1080px;margin:0 auto}
+
+/* ---------- cabeçalho ---------- */
+.head{
+  background:var(--charcoal); color:var(--creme);
+  border-radius:10px; padding:26px 30px; position:relative; overflow:hidden;
+}
+.head::after{content:'';position:absolute;inset:8px;border:1px solid rgba(216,198,164,.28);border-radius:6px;pointer-events:none}
+.eyebrow{
+  font-size:10px; font-weight:600; letter-spacing:.22em; text-transform:uppercase;
+  color:var(--gold);
+}
+.head h1{
+  font-family:'Playfair Display',Georgia,serif; font-weight:700;
+  font-size:27px; line-height:1.2; margin:8px 0 0; color:#f2ece0;
+}
+.filete{width:52px;height:2px;background:var(--gold);margin:12px 0 10px;border-radius:2px}
+.head .meta{font-family:'JetBrains Mono',monospace;font-size:11px;color:#bdb2a4}
+.head .meta b{color:var(--frame);font-weight:500}
+
+/* ---------- resumo ---------- */
+.resumo{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0 14px}
+.stat{
+  background:var(--card); border:1px solid var(--border); border-radius:8px;
+  padding:10px 16px; min-width:118px; cursor:pointer; transition:.15s;
+  border-left:3px solid var(--muted);
+}
+.stat:hover{border-color:var(--gold);box-shadow:0 1px 6px rgba(38,32,25,.08)}
+.stat.on{border-color:var(--gold);background:#fff;box-shadow:inset 0 0 0 1px var(--gold)}
+.stat .n{font-family:'Playfair Display',Georgia,serif;font-size:24px;font-weight:700;line-height:1}
+.stat .l{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:4px;font-weight:600}
+.stat[data-s="atrasado"]{border-left-color:var(--atrasado)}
+.stat[data-s="pendente"]{border-left-color:var(--pendente)}
+.stat[data-s="em_andamento"]{border-left-color:var(--andamento)}
+.stat[data-s="concluido"]{border-left-color:var(--concluido)}
+
+/* ---------- barra de ações (some no print) ---------- */
+.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+button,.btn{
+  font-family:'Montserrat',sans-serif;font-size:11px;font-weight:600;
+  letter-spacing:.08em;text-transform:uppercase;
+  padding:8px 15px;border-radius:6px;border:1px solid var(--border);
+  background:var(--card);color:var(--ink);cursor:pointer;text-decoration:none;transition:.15s;
+}
+button:hover,.btn:hover{border-color:var(--gold);color:var(--gold-deep)}
+.btn-gold{background:var(--charcoal);color:var(--creme);border-color:var(--charcoal)}
+.btn-gold:hover{background:var(--gold-deep);border-color:var(--gold-deep);color:#fff}
+
+/* ---------- tabela ---------- */
+table{width:100%;border-collapse:collapse;background:var(--card);
+      border:1px solid var(--border);border-radius:8px;overflow:hidden}
+thead th{
+  background:var(--charcoal-soft);color:var(--frame);
+  font-size:9.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;
+  padding:11px 12px;text-align:left;white-space:nowrap;
+}
+tbody td{padding:12px;border-top:1px solid var(--border);vertical-align:top}
+tbody tr{page-break-inside:avoid;break-inside:avoid}
+tbody tr:hover{background:#fff}
+.acao{font-weight:600;max-width:340px}
+.acao .area{
+  display:block;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--gold-deep);font-weight:600;margin-bottom:3px;
+}
+.acao .notas{display:block;font-weight:400;font-size:12px;color:var(--muted);margin-top:4px}
+.papel{font-size:12.5px;white-space:nowrap}
+.papel.vazio{color:#c9bfb2}
+.prazo{font-family:'JetBrains Mono',monospace;font-size:12px;white-space:nowrap}
+.prazo .rel{display:block;font-size:10px;color:var(--muted);margin-top:2px}
+.pill{
+  display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.1em;
+  text-transform:uppercase;padding:3px 9px;border-radius:11px;white-space:nowrap;
+  color:#fff;
+}
+.pill.atrasado{background:var(--atrasado)}
+.pill.pendente{background:var(--pendente)}
+.pill.em_andamento{background:var(--andamento)}
+.pill.concluido{background:var(--concluido)}
+.fonte{
+  font-family:'JetBrains Mono',monospace;font-size:9px;color:#b3a898;
+  letter-spacing:.06em;text-transform:uppercase;
+}
+.acoes-linha{white-space:nowrap}
+.acoes-linha button{padding:4px 8px;font-size:9.5px;letter-spacing:.06em}
+
+.vazio-msg{padding:40px 20px;text-align:center;color:var(--muted);
+           background:var(--card);border:1px dashed var(--border);border-radius:8px}
+.aviso{
+  background:#fdf6e8;border:1px solid var(--frame);border-left:3px solid var(--gold);
+  border-radius:6px;padding:10px 14px;font-size:12px;margin-bottom:14px;color:#6b5b45;
+}
+.rodape{
+  margin-top:22px;padding-top:12px;border-top:1px solid var(--border);
+  font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--muted);
+  display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;
+}
+
+/* ---------- formulário de item novo ---------- */
+#form-novo{
+  background:var(--card);border:1px solid var(--border);border-radius:8px;
+  padding:16px;margin-bottom:14px;display:none;grid-template-columns:repeat(4,1fr);gap:10px;
+}
+#form-novo.on{display:grid}
+#form-novo label{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+                 color:var(--muted);font-weight:600;display:block;margin-bottom:4px}
+#form-novo input,#form-novo select{
+  width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:5px;
+  font-family:'Montserrat',sans-serif;font-size:13px;background:#fff;color:var(--ink);
+}
+#form-novo .wide{grid-column:span 4}
+#form-novo .acoes{grid-column:span 4;display:flex;gap:8px;justify-content:flex-end}
+
+/* ---------- impressão: A4 on-brand ----------
+   PAISAGEM, não retrato: são 8 colunas (ação + R/A/C/I + prazo + status) e em
+   A4 retrato a matriz simplesmente saía cortada na largura — as colunas C, I,
+   prazo e status ficavam fora do papel. Num RACI, "quem é consultado" e "até
+   quando" são metade do documento; um PDF que corta justo isso não serve pro
+   que ele existe (mandar pro Piccino, pra Priscila, pro conselho).
+   `table-layout:fixed` + larguras explícitas travam o resultado: sem isso o
+   navegador redistribui as colunas por conteúdo e uma ação longa volta a
+   espremer o resto. */
+@media print{
+  @page{size:A4 landscape;margin:10mm}
+  body{background:#fff;padding:0;font-size:8.5pt;
+       -webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .sheet{max-width:none}
+  .no-print{display:none !important}
+  .head{border-radius:0;padding:14px 18px}
+  .head h1{font-size:20pt}
+  .stat{cursor:default;padding:7px 12px;min-width:96px}
+  .stat .n{font-size:16pt}
+  .resumo{margin:12px 0 10px}
+  thead{display:table-header-group}   /* repete o cabeçalho a cada página */
+  thead th{padding:7px 8px;font-size:6.5pt}
+  tbody td{padding:7px 8px}
+  tbody tr{page-break-inside:avoid}
+  /* `overflow:hidden` (que existe na tela só pra arredondar os cantos) cria
+     contexto de formatação e faz o Chrome empurrar a tabela inteira pra
+     próxima página em vez de quebrá-la: dava 2 linhas por folha e o resto em
+     branco. No papel não há canto arredondado a proteger. */
+  table{border-radius:0;table-layout:fixed;overflow:visible}
+  .acao{max-width:none}
+  .acao .notas{font-size:7.5pt}
+  .prazo{font-size:8pt}
+  .pill{font-size:6.5pt;padding:2px 7px}
+  /* ação · R · A · C · I · prazo · status */
+  th:nth-child(1),td:nth-child(1){width:30%}
+  th:nth-child(2),td:nth-child(2),
+  th:nth-child(3),td:nth-child(3),
+  th:nth-child(4),td:nth-child(4),
+  th:nth-child(5),td:nth-child(5){width:13%}
+  th:nth-child(6),td:nth-child(6){width:9%}
+  th:nth-child(7),td:nth-child(7){width:9%}
+  .papel{white-space:normal;word-break:break-word}
+  a{text-decoration:none;color:inherit}
+}
+@media(max-width:760px){
+  #form-novo{grid-template-columns:1fr}
+  #form-novo .wide,#form-novo .acoes{grid-column:span 1}
+  table{display:block;overflow-x:auto}
+}
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header class="head">
+    <div class="eyebrow">Matriz RACI</div>
+    <h1 id="proj-nome">—</h1>
+    <div class="filete"></div>
+    <div class="meta" id="proj-meta"></div>
+  </header>
+
+  <div id="avisos"></div>
+
+  <div class="resumo" id="resumo"></div>
+
+  <div class="bar no-print">
+    <button class="btn-gold" onclick="window.print()">Imprimir / PDF</button>
+    <button onclick="toggleForm()">+ Novo item</button>
+    <!-- As notas de acompanhamento (sobretudo as do ConselhoOS, que carregam
+         o histórico de ata inteiro) triplicam a altura da linha e engordam o
+         PDF. Truncar por conta própria esconderia informação de quem recebe o
+         documento sem ele saber; então o controle é do Renato, e o que estiver
+         na tela é o que sai no papel. -->
+    <button id="btn-notas" onclick="toggleNotas()">Notas: exibindo</button>
+    <button id="btn-limpar" onclick="filtrar(null)" style="display:none">Ver todos</button>
+    <a class="btn" id="link-projeto" href="#">← Voltar ao projeto</a>
+  </div>
+
+  <form id="form-novo" class="no-print" onsubmit="criar(event)">
+    <div class="wide">
+      <label for="f-acao">Ação *</label>
+      <input id="f-acao" required placeholder="O que precisa ser feito">
+    </div>
+    <div><label for="f-area">Área</label><input id="f-area" placeholder="Tributário"></div>
+    <div><label for="f-r">R — executa</label><input id="f-r"></div>
+    <div><label for="f-a">A — dono</label><input id="f-a"></div>
+    <div><label for="f-c">C — consultado</label><input id="f-c"></div>
+    <div><label for="f-i">I — informado</label><input id="f-i"></div>
+    <div><label for="f-prazo">Prazo</label><input id="f-prazo" type="date"></div>
+    <div>
+      <label for="f-status">Status</label>
+      <select id="f-status">
+        <option value="pendente">Pendente</option>
+        <option value="em_andamento">Em andamento</option>
+        <option value="concluido">Concluído</option>
+      </select>
+    </div>
+    <div><label for="f-notas">Notas</label><input id="f-notas"></div>
+    <div class="acoes">
+      <button type="button" onclick="toggleForm()">Cancelar</button>
+      <button type="submit" class="btn-gold">Adicionar</button>
+    </div>
+  </form>
+
+  <div id="tabela"></div>
+
+  <div class="rodape">
+    <span id="rodape-fonte"></span>
+    <span>Renato de Faria e Almeida Prado · almeida-prado.com</span>
+  </div>
+</div>
+
+<script>
+const PROJECT_ID = {{ project_id }};
+let dados = null, filtro = null;
+
+const esc = s => (s ?? '').toString()
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+const LABELS = {atrasado:'Atrasado', pendente:'Pendente',
+                em_andamento:'Em andamento', concluido:'Concluído'};
+
+async function carregar(){
+  const url = `/api/projects/${PROJECT_ID}/raci` + (filtro ? `?status=${filtro}` : '');
+  const r = await fetch(url);
+  if(!r.ok){ document.getElementById('tabela').innerHTML =
+    '<div class="vazio-msg">Não consegui carregar a matriz.</div>'; return; }
+  dados = await r.json();
+  render();
+}
+
+function render(){
+  const p = dados.project;
+  document.getElementById('proj-nome').textContent = p.nome;
+  document.getElementById('link-projeto').href = `/projetos/${PROJECT_ID}`;
+
+  const partes = [`Projeto <b>#${p.id}</b>`];
+  if(p.empresa) partes.push(`Empresa <b>${esc(p.empresa)}</b>`);
+  partes.push(`Emitido em <b>${dados.gerado_em}</b>`);
+  document.getElementById('proj-meta').innerHTML = partes.join(' · ');
+  document.getElementById('rodape-fonte').textContent =
+    dados.fontes.map(f => `${f.fonte}: ${f.itens} ${f.itens === 1 ? 'item' : 'itens'}`).join('  ·  ');
+
+  // Fonte que falhou vira aviso VISÍVEL (inclusive no PDF): uma matriz
+  // incompleta que se apresenta como completa é pior que erro na cara.
+  const quebradas = dados.fontes.filter(f => f.erro);
+  document.getElementById('avisos').innerHTML = quebradas.length
+    ? `<div class="aviso"><b>Matriz possivelmente incompleta.</b> Não consegui ler a fonte
+       <b>${quebradas.map(f => esc(f.fonte)).join(', ')}</b> (${esc(quebradas[0].erro)}).
+       O que está abaixo é só o restante.</div>`
+    : '';
+
+  document.getElementById('resumo').innerHTML =
+    ['atrasado','pendente','em_andamento','concluido'].map(s => `
+      <div class="stat ${filtro === s ? 'on' : ''}" data-s="${s}" onclick="filtrar('${s}')">
+        <div class="n">${dados.resumo[s] || 0}</div>
+        <div class="l">${LABELS[s]}</div>
+      </div>`).join('');
+
+  document.getElementById('btn-limpar').style.display = filtro ? '' : 'none';
+
+  if(!dados.itens.length){
+    document.getElementById('tabela').innerHTML =
+      `<div class="vazio-msg">${filtro
+        ? 'Nenhum item com esse status.'
+        : 'Nenhum item de RACI neste projeto ainda. Use “+ Novo item”.'}</div>`;
+    return;
+  }
+
+  document.getElementById('tabela').innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Ação</th><th>R — executa</th><th>A — dono</th><th>C — consultado</th>
+        <th>I — informado</th><th>Prazo</th><th>Status</th><th class="no-print"></th>
+      </tr></thead>
+      <tbody>${dados.itens.map(linha).join('')}</tbody>
+    </table>`;
+}
+
+function linha(it){
+  const papel = v => v ? `<td class="papel">${esc(v)}</td>`
+                       : `<td class="papel vazio">—</td>`;
+  let rel = '';
+  if(it.dias_para_prazo !== null && it.status_efetivo !== 'concluido'){
+    const d = it.dias_para_prazo;
+    rel = d < 0 ? `${-d}d em atraso` : d === 0 ? 'hoje' : `em ${d}d`;
+  }
+  return `<tr>
+    <td class="acao">
+      ${it.area ? `<span class="area">${esc(it.area)}</span>` : ''}
+      ${esc(it.acao)}
+      ${it.notas && mostrarNotas ? `<span class="notas">${esc(it.notas)}</span>` : ''}
+      ${it.fonte === 'conselhoos' ? '<span class="fonte">ConselhoOS</span>' : ''}
+    </td>
+    ${papel(it.r)}${papel(it.a)}${papel(it.c)}${papel(it.i)}
+    <td class="prazo">${it.prazo_br || '—'}${rel ? `<span class="rel">${rel}</span>` : ''}</td>
+    <td><span class="pill ${it.status_efetivo}">${esc(it.status_label)}</span></td>
+    <td class="no-print acoes-linha">${it.editavel ? `
+      <button onclick="mudarStatus(${it.id}, '${it.status}')">Status</button>
+      <button onclick="remover(${it.id})">×</button>` : ''}</td>
+  </tr>`;
+}
+
+function filtrar(s){ filtro = (filtro === s) ? null : s; carregar(); }
+function toggleForm(){ document.getElementById('form-novo').classList.toggle('on'); }
+
+let mostrarNotas = true;
+function toggleNotas(){
+  mostrarNotas = !mostrarNotas;
+  document.getElementById('btn-notas').textContent =
+    'Notas: ' + (mostrarNotas ? 'exibindo' : 'ocultas');
+  render();
+}
+
+async function criar(e){
+  e.preventDefault();
+  const v = id => document.getElementById(id).value.trim();
+  const r = await fetch(`/api/projects/${PROJECT_ID}/raci`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      acao:v('f-acao'), area:v('f-area'),
+      responsavel_r:v('f-r'), responsavel_a:v('f-a'),
+      responsavel_c:v('f-c'), responsavel_i:v('f-i'),
+      prazo:v('f-prazo') || null, status:v('f-status'), notas:v('f-notas')
+    })
+  });
+  if(!r.ok){ alert('Não consegui criar o item.'); return; }
+  document.getElementById('form-novo').querySelectorAll('input').forEach(i => i.value = '');
+  toggleForm(); carregar();
+}
+
+// Ciclo pendente → em andamento → concluído → pendente. Um clique só: a
+// alternativa (modal de edição completa) é mais tela pra menos uso — o que
+// muda no dia a dia é status.
+const CICLO = {pendente:'em_andamento', em_andamento:'concluido', concluido:'pendente'};
+async function mudarStatus(id, atual){
+  const novo = CICLO[atual] || 'pendente';
+  const r = await fetch(`/api/raci-itens/${id}`, {
+    method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({status:novo})
+  });
+  if(r.ok) carregar();
+}
+
+async function remover(id){
+  if(!confirm('Remover este item da matriz?')) return;
+  const r = await fetch(`/api/raci-itens/${id}`, {method:'DELETE'});
+  if(r.ok) carregar();
+}
+
+carregar();
+</script>
+</body>
+</html>

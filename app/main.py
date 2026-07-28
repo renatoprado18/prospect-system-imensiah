@@ -22897,6 +22897,70 @@ async def api_get_social_group(group_jid: str):
     return result
 
 
+# ============== RACI GENERICO POR PROJETO ==============
+#
+# Matriz RACI de QUALQUER projeto (conselho ou nao), unindo na LEITURA as duas
+# fontes: `raci_itens` do INTEL + `raci_itens` do ConselhoOS (cross-DB,
+# read-only). Nada e sincronizado nem duplicado — ver services/raci_matrix.py.
+# Escrita so no lado INTEL; item de conselho se edita no ConselhoOS.
+
+@app.get("/api/projects/{project_id}/raci")
+async def api_project_raci(project_id: int, status: Optional[str] = None):
+    """Matriz RACI do projeto. `status` filtra por status EFETIVO (o resumo
+    continua sendo do conjunto completo)."""
+    from services.raci_matrix import get_matrix
+    result = get_matrix(project_id, status=status)
+    if result.get("error") == "projeto não encontrado":
+        raise HTTPException(status_code=404, detail="Projeto nao encontrado")
+    return result
+
+
+@app.post("/api/projects/{project_id}/raci")
+async def api_create_project_raci_item(project_id: int, request: Request):
+    """Cria item de RACI no lado INTEL."""
+    from services.raci_matrix import create_item
+    data = await request.json()
+    result = create_item(project_id, data)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.patch("/api/raci-itens/{item_id}")
+async def api_update_raci_item(item_id: int, request: Request):
+    """Atualiza item de RACI do INTEL. So mexe nos campos enviados."""
+    from services.raci_matrix import update_item
+    data = await request.json()
+    result = update_item(item_id, data)
+    if result.get("error") == "item não encontrado":
+        raise HTTPException(status_code=404, detail="Item nao encontrado")
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.delete("/api/raci-itens/{item_id}")
+async def api_delete_raci_item(item_id: int):
+    """Remove item de RACI do INTEL."""
+    from services.raci_matrix import delete_item
+    result = delete_item(item_id)
+    if result.get("error"):
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@app.get("/projetos/{project_id}/raci", response_class=HTMLResponse)
+async def projeto_raci_page(request: Request, project_id: int):
+    """Matriz RACI do projeto — pagina on-brand, imprimivel em PDF num clique."""
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("rap_projeto_raci.html", {
+        "request": request,
+        "project_id": project_id,
+    })
+
+
 # ============== PROJECT WHATSAPP GROUPS ==============
 
 @app.get("/api/projects/{project_id}/suggested-groups")
