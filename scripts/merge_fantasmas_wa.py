@@ -11,10 +11,18 @@ webhook criava ficha "Desconhecido +55..." pra quem JÁ tinha ficha.
 O vazamento está fechado. Isto aqui é o PASSIVO: as fichas fantasma que
 nasceram enquanto ele estava aberto, cada uma com a conversa presa dentro.
 
-CRITÉRIO (conservador): só entra no merge quem casa pelo número INTEIRO
-normalizado. Match por sufixo de 8 dígitos é o que a busca usa, mas pra
+CRITÉRIO (conservador): só entra no merge quem casa pelo número INTEIRO na
+forma CANÔNICA. Match por sufixo de 8 dígitos é o que a busca usa, mas pra
 FUNDIR ficha — operação que apaga uma linha — sufixo não basta: um celular de
 outro DDD pode terminar igual.
+
+"Canônica" carrega o 9º dígito da Anatel: até 2013-2016 o celular brasileiro
+tinha 8 dígitos de assinante, e `35 9985-1122` / `35 99985-1122` são A MESMA
+LINHA, não dois números parecidos. Comparar literalmente trataria essa
+equivalência determinística como coincidência de sufixo — foi o que
+inicialmente barrou o par Marcos Ribeiro (#26433/#26434), onde o WhatsApp
+entregou o número sem o 9 e o cadastro manual tinha com o 9, cinco minutos
+depois. Fixo não recebe o 9 (assinante 2-5 na regra da Anatel).
 
 A ficha REAL é sempre a primária (é a que tem nome, e-mail, cargo, histórico
 do Google); a fantasma é absorvida. `merge_duplicate_contacts` repointa as FKs
@@ -47,7 +55,7 @@ CAMPOS = ("id, nome, empresa, cargo, emails, telefones, foto_url, linkedin, "
 
 
 def levantar(cursor):
-    """Pares fantasma->real, só match de número inteiro. Read-only."""
+    """Pares fantasma->real, match do número inteiro CANÔNICO. Read-only."""
     cursor.execute("""
         WITH nums AS (
           SELECT c.id, c.origem,
@@ -59,14 +67,27 @@ def levantar(cursor):
             FROM contacts c
            WHERE c.telefones IS NOT NULL
         ),
-        fant AS (SELECT * FROM nums WHERE origem = 'wa_unknown' AND length(d) >= 10),
-        reais AS (SELECT * FROM nums WHERE origem IS DISTINCT FROM 'wa_unknown'
-                                       AND length(d) >= 10)
-        SELECT f.id AS fantasma_id, min(r.id) AS real_id, f.d AS numero,
+        canon AS (
+          -- espelho SQL de contact_identity.canonical_br_phone: celular BR no
+          -- formato pré-Anatel recebe o 9; fixo (assinante 2-5) fica intacto
+          SELECT id, origem, d,
+                 CASE
+                   WHEN length(d) = 12 AND left(d, 2) = '55'
+                        AND substr(d, 5, 1) IN ('6','7','8','9')
+                        THEN substr(d, 1, 4) || '9' || substr(d, 5)
+                   WHEN length(d) = 10 AND substr(d, 3, 1) IN ('6','7','8','9')
+                        THEN substr(d, 1, 2) || '9' || substr(d, 3)
+                   ELSE d END AS c
+            FROM nums
+        ),
+        fant AS (SELECT * FROM canon WHERE origem = 'wa_unknown' AND length(d) >= 10),
+        reais AS (SELECT * FROM canon WHERE origem IS DISTINCT FROM 'wa_unknown'
+                                        AND length(d) >= 10)
+        SELECT f.id AS fantasma_id, min(r.id) AS real_id, f.c AS numero,
                count(DISTINCT r.id) AS candidatos
           FROM fant f
-          JOIN reais r ON r.d = f.d          -- número INTEIRO, não sufixo
-         GROUP BY f.id, f.d
+          JOIN reais r ON r.c = f.c          -- número INTEIRO canônico
+         GROUP BY f.id, f.c
          ORDER BY f.id
     """)
     return [dict(r) for r in cursor.fetchall()]

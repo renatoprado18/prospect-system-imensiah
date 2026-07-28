@@ -193,13 +193,71 @@ def significant_tokens(name: str) -> List[str]:
     return toks
 
 
+# ============== O 9o digito (migracao Anatel) ==============
+#
+# Ate 2013-2016 o celular brasileiro tinha 8 digitos de assinante; a Anatel
+# prefixou um 9 e ele passou a ter 9. `11 8415-3337` e `11 98415-3337` sao
+# A MESMA LINHA — nao sao dois numeros parecidos.
+#
+# O que isso custava aqui (medido em prod 28/07/26): a base tem 226 numeros no
+# formato antigo, e como `normalize_phone` nao equipara as duas eras, o indice
+# `ContactIndex.by_phone` guardava a mesma linha sob DUAS chaves. Consequencia:
+# o tier (c) da cascata nunca via os dois lados juntos, e o sync criava ficha
+# nova. Sao **13 pessoas com ficha duplicada por este motivo e mais nenhum**
+# (Carla Werkhaizer, Rodrigo Maia, Fredy Schaible, Rafael Prado, Paloma
+# Pinheiro, Isaac, Daniel Kras, Sidnei Madeira, Maria Guevara, Fernanda,
+# Pousada Tatuapara, Marcos Ribeiro).
+#
+# COMO DISTINGUIR CELULAR ANTIGO DE FIXO: pelo primeiro digito do assinante.
+# A Anatel reserva 2-5 pra fixo e 6-9 pra movel. Confere com a base: dos 869
+# numeros BR de 8 digitos de assinante, 643 comecam com 2-5 (fixo) e 226 com
+# 7/8/9 (celular antigo) — nenhum com 6.
+#
+# RISCO ASSUMIDO: fixos MUITO antigos de cidades pequenas chegaram a comecar
+# com 6 ou 7 antes da padronizacao. Sao 5 numeros com prefixo 7 na base. Se um
+# deles for fixo, a forma canonica dele vira um celular que nao existe — e um
+# numero que nao casa com nada, nao um match errado. Pra virar dano precisaria
+# existir um celular real com aquele numero E o nome bater (o tier (c) exige
+# `names_match`). Nao reescrevemos o dado gravado: a canonizacao existe so pra
+# COMPARAR.
+_BR_MOBILE_PREFIXES = ("6", "7", "8", "9")
+
+
+def canonical_br_phone(digits: Any) -> str:
+    """
+    Forma canonica de um telefone pra fins de COMPARACAO: celular brasileiro
+    no formato antigo recebe o 9 que a Anatel prefixou.
+
+        553599851122   ->  5535999851122
+        5535999851122  ->  5535999851122   (ja canonico)
+        551130624437   ->  551130624437    (fixo, intocado)
+
+    Nao normaliza DDI nem formata: entra e sai so-digitos.
+    """
+    d = re.sub(r"\D", "", str(digits or ""))
+    # 55 + DDD(2) + assinante(8), assinante comecando por prefixo movel
+    if len(d) == 12 and d.startswith("55") and d[4] in _BR_MOBILE_PREFIXES:
+        return d[:4] + "9" + d[4:]
+    # DDD(2) + assinante(8), sem DDI
+    if len(d) == 10 and d[2] in _BR_MOBILE_PREFIXES:
+        return d[:2] + "9" + d[2:]
+    return d
+
+
 def phone_kind(normalized: str) -> str:
     """
     Classifica um telefone JA normalizado por `normalize_phone`.
 
-    'mobile'   -> celular (assinante de 9 digitos, comeca com 9)
-    'landline' -> fixo (assinante de 8 digitos)
+    'mobile'   -> celular (assinante de 9 digitos, ou de 8 no formato
+                  pre-Anatel, que se reconhece pelo prefixo movel)
+    'landline' -> fixo (assinante de 8 digitos comecando em 2-5)
     'unknown'  -> internacional / formato que nao da pra afirmar
+
+    O ramo do celular ANTIGO importa alem da etiqueta: `names_match` e mais
+    rigoroso pra 'landline' (por causa do fixo compartilhado Douglas x
+    Orestes) e a guarda de linha compartilhada tambem. Chamar 226 celulares de
+    fixo era aplicar a eles o criterio de uma linha que varias pessoas dividem
+    — celular e pessoal.
     """
     d = normalized or ""
     if not d.isdigit():
@@ -208,12 +266,12 @@ def phone_kind(normalized: str) -> str:
         if len(d) == 13:
             return "mobile"
         if len(d) == 12:
-            return "landline"
+            return "mobile" if d[4] in _BR_MOBILE_PREFIXES else "landline"
         return "unknown"
     if len(d) == 11 and d[2] == "9":
         return "mobile"
     if len(d) == 10:
-        return "landline"
+        return "mobile" if d[2] in _BR_MOBILE_PREFIXES else "landline"
     return "unknown"
 
 
@@ -393,13 +451,21 @@ def contact_emails(contact: Dict) -> List[str]:
 
 
 def contact_phones(contact: Dict) -> List[str]:
-    """Telefones normalizados com DDD, deduplicados."""
+    """
+    Telefones normalizados com DDD, deduplicados, na forma CANONICA.
+
+    Canonico (`canonical_br_phone`) e o que faz a mesma linha nas duas eras da
+    numeracao brasileira cair na MESMA chave do indice `by_phone`. Sem isso,
+    `11 8415-3337` e `11 98415-3337` viravam duas chaves e a cascata nunca
+    enxergava que sao a mesma pessoa — 13 duplicatas da base nasceram assim.
+    """
     out = []
     for item in _as_list(contact.get("telefones")):
         raw = item.get("number", "") if isinstance(item, dict) else str(item)
         norm = normalize_phone(raw or "")
         if len(norm) < MIN_PHONE_DIGITS:
             continue
+        norm = canonical_br_phone(norm)
         if norm not in out:
             out.append(norm)
     return out
@@ -918,14 +984,28 @@ _PHONE_MATCH_COND = """jsonb_typeof({alias}.telefones) = 'array' AND EXISTS (
              WHERE right(regexp_replace(_t->>'number', '[^0-9]', '', 'g'), {n}) = %s
         )"""
 
+# Canonizacao do 9o digito em SQL — o espelho de `canonical_br_phone`, pra
+# que o desempate compare as duas eras da numeracao como iguais em vez de
+# tratar `553599851122` e `5535999851122` como numeros diferentes.
+_SQL_CANON = """(CASE
+              WHEN length({d}) = 12 AND left({d}, 2) = '55'
+                   AND substr({d}, 5, 1) IN ('6','7','8','9')
+                   THEN substr({d}, 1, 4) || '9' || substr({d}, 5)
+              WHEN length({d}) = 10 AND substr({d}, 3, 1) IN ('6','7','8','9')
+                   THEN substr({d}, 1, 2) || '9' || substr({d}, 3)
+              ELSE {d} END)"""
+
+_SQL_DIGITS = "regexp_replace(_t->>'number', '[^0-9]', '', 'g')"
+
 # Desempate deterministico. O LIKE antigo fazia `LIMIT 1` sem ORDER BY, entao
 # com mais de um candidato a ficha escolhida dependia da ordem fisica da
-# tabela. Prefere o numero que bate INTEIRO (match forte, imune a colisao de
-# sufixo entre um numero BR e um internacional) e, no empate, o menor id —
-# mesma regra que `_resolve_by_email`/`phone_name_dup` ja usam pra duplicata.
+# tabela. Prefere o numero que bate INTEIRO na forma canonica (match forte,
+# imune a colisao de sufixo entre um numero BR e um internacional) e, no
+# empate, o menor id — mesma regra que `_resolve_by_email`/`phone_name_dup`
+# ja usam pra duplicata.
 _PHONE_MATCH_ORDER = """(NOT EXISTS (
             SELECT 1 FROM jsonb_array_elements({alias}.telefones) _t
-             WHERE regexp_replace(_t->>'number', '[^0-9]', '', 'g') = %s
+             WHERE """ + _SQL_CANON.format(d=_SQL_DIGITS) + """ = %s
         )), {alias}.id"""
 
 
@@ -953,8 +1033,8 @@ def phone_match_sql(alias: str = "c") -> str:
 
 
 def phone_match_order_sql(alias: str = "c") -> str:
-    """ORDER BY que acompanha `phone_match_sql`. Consome UM parametro: os
-    digitos do numero INTEIRO (`re.sub(r'\\D', '', phone)`)."""
+    """ORDER BY que acompanha `phone_match_sql`. Consome UM parametro: o
+    numero INTEIRO na forma canonica (`canonical_br_phone(phone)`)."""
     return _PHONE_MATCH_ORDER.format(alias=alias)
 
 
@@ -969,7 +1049,10 @@ def find_contact_by_phone(cursor, phone: Any,
     key = phone_lookup_key(phone)
     if not key:
         return None
-    full = re.sub(r"\D", "", str(phone or ""))
+    # Canonico dos dois lados: senao um numero que chega no formato antigo
+    # nunca seria "match inteiro" contra a ficha gravada no formato novo, e o
+    # desempate cairia no menor id em vez de na ficha certa.
+    full = canonical_br_phone(phone)
     cursor.execute(
         f"SELECT {columns} FROM contacts c "
         f"WHERE {phone_match_sql('c')} "

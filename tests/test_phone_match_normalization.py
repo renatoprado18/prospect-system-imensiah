@@ -31,7 +31,9 @@ sys.path.insert(0, _ROOT)
 
 from services.contact_identity import (  # noqa: E402
     PHONE_MATCH_DIGITS,
+    canonical_br_phone,
     find_contact_by_phone,
+    phone_kind,
     phone_lookup_key,
     phone_match_order_sql,
     phone_match_sql,
@@ -81,6 +83,60 @@ def test_o_9o_digito_brasileiro_nao_separa_a_mesma_pessoa():
     """Numero antigo (8 digitos de assinante) e novo (9) do mesmo par
     DDD+linha convergem — e a razao de o corte ser 8 e nao 9."""
     assert phone_lookup_key("551192526344") == phone_lookup_key("5511992526344")
+
+
+# ==================== o 9o digito (migracao Anatel) ====================
+#
+# Ate 2013-2016 o celular BR tinha 8 digitos de assinante; a Anatel prefixou um
+# 9. `35 9985-1122` e `35 99985-1122` sao A MESMA LINHA. A base tem 226 numeros
+# no formato antigo e 13 pessoas com ficha duplicada só por causa disto.
+
+def test_celular_no_formato_antigo_e_no_novo_tem_a_mesma_forma_canonica():
+    assert canonical_br_phone("553599851122") == canonical_br_phone("5535999851122")
+    assert canonical_br_phone("553599851122") == "5535999851122"
+
+
+def test_canonizacao_e_idempotente():
+    uma = canonical_br_phone("553599851122")
+    assert canonical_br_phone(uma) == uma
+
+
+def test_fixo_nao_recebe_o_nono_digito():
+    """O que separa fixo de celular antigo é o primeiro dígito do assinante:
+    a Anatel reserva 2-5 pra fixo e 6-9 pra móvel. Inserir o 9 num fixo
+    inventaria um número que não existe."""
+    assert canonical_br_phone("551130624437") == "551130624437"   # 3 = fixo
+    assert canonical_br_phone("551145678901") == "551145678901"   # 4 = fixo
+
+
+def test_canoniza_tambem_sem_ddi():
+    assert canonical_br_phone("3599851122") == "35999851122"
+
+
+def test_numero_internacional_passa_intacto():
+    """Um US de 11 dígitos não pode ganhar um 9 brasileiro no meio."""
+    assert canonical_br_phone("19734744164") == "19734744164"
+
+
+def test_canonizacao_nao_reescreve_formatacao():
+    """Entra e sai só-dígitos — a função é pra COMPARAR, não pra gravar."""
+    assert canonical_br_phone("+55 (35) 9985-1122") == "5535999851122"
+
+
+def test_celular_antigo_e_classificado_como_celular_nao_como_fixo():
+    """`names_match` e a guarda de linha compartilhada são mais rigorosos pra
+    'landline' (por causa do fixo que Douglas e Orestes dividem). Chamar 226
+    celulares de fixo aplicava a eles o critério de uma linha que várias
+    pessoas usam — celular é pessoal."""
+    assert phone_kind("553599851122") == "mobile"
+    assert phone_kind("5535999851122") == "mobile"
+    assert phone_kind("551130624437") == "landline"
+
+
+def test_a_chave_de_busca_ja_absorvia_o_9_e_continua_absorvendo():
+    """O corte de 8 dígitos sempre atravessou a migração — é por isso que ele
+    é 8 e não 9. A canonização não muda a busca, muda o DESEMPATE."""
+    assert phone_lookup_key("553599851122") == phone_lookup_key("5535999851122")
 
 
 # ==================== fragmentos SQL ====================
@@ -214,3 +270,31 @@ def test_desempate_prefere_match_do_numero_inteiro(cursor_com_contatos):
 def test_colunas_extras_chegam_no_resultado(cursor_com_contatos):
     achado = find_contact_by_phone(cursor_com_contatos, WA_CRU, columns="id, nome")
     assert achado["nome"] == "Formatado Google"
+
+
+def test_numero_no_formato_antigo_acha_a_ficha_gravada_no_formato_novo(cursor_com_contatos):
+    """O caso Marcos Ribeiro: o WhatsApp entregou sem o 9, a ficha tem com o 9.
+    Exercita a canonização no SQL (o CASE do ORDER BY), não só em Python."""
+    cursor_com_contatos.execute("""
+        INSERT INTO contacts (id, nome, telefones) VALUES
+          (20, 'Marcos Ribeiro',
+               '[{"type":"mobile","number":"+5535999851122","whatsapp":true}]')
+    """)
+    achado = find_contact_by_phone(cursor_com_contatos, "553599851122")
+    assert achado is not None
+    assert achado["id"] == 20
+
+
+def test_desempate_canonico_vence_o_literal(cursor_com_contatos):
+    """Duas fichas casam pelo sufixo, mas só uma é a mesma LINHA do número
+    buscado — e ela está gravada na outra era da numeração. Sem canonizar o
+    ORDER BY, o desempate cairia no menor id (a ficha errada)."""
+    cursor_com_contatos.execute("""
+        INSERT INTO contacts (id, nome, telefones) VALUES
+          (30, 'Colisao de sufixo (outro DDD)',
+               '[{"type":"mobile","number":"+5511999851122"}]'),
+          (31, 'Mesma linha, formato novo',
+               '[{"type":"mobile","number":"+5535999851122"}]')
+    """)
+    achado = find_contact_by_phone(cursor_com_contatos, "553599851122")
+    assert achado["id"] == 31, "a canonização do ORDER BY não está valendo"
