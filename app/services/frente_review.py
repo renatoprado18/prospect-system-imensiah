@@ -42,6 +42,37 @@ _DM_DAYS = 21
 _NOTES_LIMIT = 3
 _MEM_LIMIT = 5        # memórias duráveis (boards/memos) recuperadas por frente
 _ESTADO_TIPO = "estado_cos"  # #4: nota de estado durável, UMA por projeto (UPSERT)
+
+# Quanto de cada memória chega ao prompt. Era 600, e medido em 28/07 isso
+# entregava 20% de um memo típico (2-10k chars) — o fato relevante podia estar
+# depois do corte e simplesmente não existir pra camada. 2500 entrega inteiros
+# os memos de até ~2,5k (a maioria) sem estourar contexto; com os documentos de
+# PROCESSO fora da busca (ver _MEMORY_TITLE_DENYLIST) o custo por frente cai
+# mesmo subindo o corte.
+_MEM_CHARS = 2500
+_NOTE_CHARS = 500
+
+# Documentos de PROCESSO da sessão, não fato sobre nenhuma frente. Eles casam
+# com qualquer termo (são o log de tudo) e por isso apareciam em TODA frente:
+# medido em 28/07, o `session_locks` ocupava 1 dos 5 slots de memória das
+# frentes #47, #24 e #28 — servindo 600 de 167.503 chars, 0,36% de si mesmo. O
+# board do CoS ocupava um segundo slot na #47. Dois quintos da memória da
+# frente gastos com documento de processo entregue a 0,4%.
+#
+# Tirá-los NÃO perde fato: o que eles têm de durável já vive nos memos
+# temáticos (é de lá que o /fim os monta). Casa por prefixo do título, em
+# minúsculas.
+_MEMORY_TITLE_DENYLIST = (
+    "session-locks",
+    "cos status board",
+    "dev backlog",
+)
+
+
+def _is_process_doc(titulo: Optional[str]) -> bool:
+    """Documento de processo da sessão (board/lock), não fato de frente."""
+    t = (titulo or "").strip().lower()
+    return any(t.startswith(p) for p in _MEMORY_TITLE_DENYLIST)
 _OUTBOUND_DAYS = 10   # janela do "o que o Renato JÁ fez" (outbound email+WA)
 _OUTBOUND_LIMIT = 12  # cap de ações outbound recentes surfaçadas por frente
 
@@ -74,6 +105,7 @@ Para a frente, decida:
 - **nota**: honestidade — se uma task está alarmista/desatualizada, se há spam/ruído a ignorar, se algo está driftando. Vazio se nada.
 
 Regras duras:
+- **HIERARQUIA DAS FONTES.** Se o bloco "MEMÓRIA / DECISÕES REGISTRADAS" contradisser qualquer outra coisa (nota da frente, task, mensagem), **a MEMÓRIA vence** — ela é o registro durável, revisado e corrigido pelo Renato; nota e task são o rascunho do dia e envelhecem sem que ninguém volte pra consertar. Quando houver contradição, use o que diz a MEMÓRIA **e registre a divergência no campo `nota`**, nomeando o que contradiz (ex.: "a nota de 27/07 trata o Orestes como sócio; o memo diz que ele só financia — nota desatualizada").
 - Prioridade no INTEL: número MAIOR = mais importante (8-10 gate estratégico; 1-3 baixa).
 - Cite evidência ao afirmar (ID de task, quem disse no grupo). Nunca invente.
 - DATAS E VALORES: copie EXATO da fonte, nunca parafraseie nem aproxime (se a nota diz "17/08", escreva 17/08 — não "início de agosto" nem "01/08").
@@ -152,6 +184,11 @@ def _gather_memories(project_name: str, description: Optional[str],
             if mid in seen_ids:
                 continue
             seen_ids.add(mid)
+            # Board/lock casa com qualquer termo (é o log de tudo) e ocupava
+            # slot em TODA frente entregando 0,4% de si mesmo. Marcar como
+            # visto e pular: assim ele não volta pelos termos seguintes.
+            if _is_process_doc(m.get("titulo")):
+                continue
             out.append(m)
             if len(out) >= _MEM_LIMIT:
                 return out
@@ -317,19 +354,29 @@ def _fmt_gather(g: Dict[str, Any]) -> str:
             desc = f" — {t['descricao'][:220]}" if t.get("descricao") else ""
             parts.append(f"- [#{t['id']} prio{t.get('prioridade')}]{atrasada} {t['titulo']} (vence {venc}{resp}){desc}")
 
-    if g["notes"]:
-        parts.append("\nNOTAS RECENTES DA FRENTE:")
-        for n in reversed(g["notes"]):
-            dt = str(n.get("criado_em") or "?")[:10]
-            parts.append(f"--- {dt} · {n.get('titulo') or ''} ---\n{(n.get('conteudo') or '')[:500]}")
-
-    # #1 — decisões/fatos registrados nos boards e memos duráveis (autoridade;
-    # trate como verdade registrada, não boato). Copie datas/valores EXATOS daqui.
+    # #1 — decisões/fatos registrados nos memos duráveis. Vem ANTES das notas
+    # de propósito: é a fonte de MAIOR autoridade (registro revisado e corrigido
+    # pelo Renato) e a hierarquia está declarada no _SYSTEM. Até 28/07 esta
+    # ordem era a inversa e a hierarquia existia só num comentário Python — que
+    # o modelo nunca lê. Numa contradição, o que decidia era a saliência: a nota
+    # vinha primeiro e era mais recente, então a fonte mais frágil ganhava.
     if g.get("memories"):
-        parts.append("\nMEMÓRIA / DECISÕES REGISTRADAS (boards e memos duráveis):")
+        parts.append("\nMEMÓRIA / DECISÕES REGISTRADAS (FONTE DE MAIOR AUTORIDADE — "
+                     "prevalece sobre notas e tasks em caso de contradição):")
         for m in g["memories"]:
             dt = str(m.get("criado_em") or "?")[:10]
-            parts.append(f"--- {dt} · {m.get('titulo') or ''} ---\n{(m.get('conteudo') or '')[:600]}")
+            corpo = m.get("conteudo") or ""
+            corte = "" if len(corpo) <= _MEM_CHARS else "\n[…truncado]"
+            parts.append(f"--- {dt} · {m.get('titulo') or ''} ---\n{corpo[:_MEM_CHARS]}{corte}")
+
+    if g["notes"]:
+        parts.append("\nNOTAS RECENTES DA FRENTE (rascunho do dia — envelhece; "
+                     "perde pra MEMÓRIA quando as duas discordam):")
+        for n in reversed(g["notes"]):
+            dt = str(n.get("criado_em") or "?")[:10]
+            corpo = n.get("conteudo") or ""
+            corte = "" if len(corpo) <= _NOTE_CHARS else "\n[…truncado]"
+            parts.append(f"--- {dt} · {n.get('titulo') or ''} ---\n{corpo[:_NOTE_CHARS]}{corte}")
 
     # AÇÕES RECENTES DO RENATO (outbound) — o que ELE já fez. Bloco próprio e no
     # topo pra o julgamento de precisa_de_voce não re-cobrar ação já executada.
@@ -403,7 +450,13 @@ async def review_frente(project_id: int, gather: Optional[Dict[str, Any]] = None
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
                 json={
                     "model": llm.BALANCED,
-                    "max_tokens": 900,
+                    # 1400, não 900: com a regra de hierarquia de fontes o
+                    # debriefing passou a incluir a divergência no campo `nota`
+                    # quando acha uma, e 900 cortava o JSON no meio — a resposta
+                    # inteira virava erro de parse e a frente saía sem
+                    # debriefing. Custo de saída só é cobrado pelo que o modelo
+                    # de fato escreve; o teto é limite, não consumo.
+                    "max_tokens": 1400,
                     "system": system,
                     "messages": [{"role": "user", "content": prompt}],
                 },

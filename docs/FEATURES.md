@@ -317,6 +317,14 @@
   - Auto-exports RACI Sheet if missing when sending
   - Recipients selected from empresa `pessoas`
 
+### 19.1. Hierarquia de fontes da camada de inteligência (28/07, task #999697)
+A camada (`frente_review.py`) monta o prompt de cada frente com duas fontes que podem discordar: `project_notes` (rascunho do dia) e `system_memories` (espelho dos memos `.md`, registro durável revisado pelo Renato). Três defeitos medidos em prod, todos corrigidos:
+- **A hierarquia existia num comentário Python** ("autoridade; trate como verdade registrada") — que o modelo nunca lê. No prompt os blocos eram neutros e a NOTA vinha primeiro, então numa contradição vencia a saliência: a fonte mais frágil. Agora a regra está no `_SYSTEM` (**MEMÓRIA vence, e a divergência é registrada no campo `nota`, nomeando o que contradiz**), os rótulos dos blocos declaram a autoridade, e MEMÓRIA vem antes de NOTAS.
+- **Truncagem em 600 chars**: 227 dos 229 memos são maiores, entrega média ~20% do conteúdo (2% nos maiores). Subiu pra `_MEM_CHARS=2500` + marca `[…truncado]` (sem ela, o modelo lê um texto cortado no meio da frase como se fosse o documento inteiro).
+- **Documentos de PROCESSO ocupavam slot de memória em toda frente**: `session_locks` (167k), board CoS (100k) e dev backlog (154k) casam com qualquer termo — são o log de tudo — e serviam **0,4% de si mesmos**. Medido: queimavam 1-2 dos 5 slots nas frentes #47, #24 e #28. `_MEMORY_TITLE_DENYLIST` + `_is_process_doc` os tiram da busca; o que eles têm de durável já vive nos memos temáticos (é de lá que o `/fim` os monta).
+- **`max_tokens` 900 → 1400**: com a divergência no `nota`, 900 cortava o JSON no meio e a frente saía sem debriefing (erro de parse).
+- Custo: +~2k tokens de entrada por frente (~$3/mês em Sonnet). Validado ao vivo com contradição sintética na #47 — o debriefing detectou, resolveu pela memória, nomeou a nota divergente e cruzou com a evidência real. Testes: `tests/test_frente_review_fontes.py` (20)
+
 ### 20.1. RACI genérico por projeto (28/07) — `services/raci_matrix.py`
 Matriz RACI de **qualquer** projeto do INTEL, seja conselho ou não, imprimível em PDF on-brand num clique. Fecha o buraco entre as duas superfícies acima: o RACI do ConselhoOS só existe pra empresa de conselho, e fora dele o RACI virava **texto** dentro de uma `project_note` (a #268 do #47) — que não ordena por prazo, não filtra por status e não imprime.
 - **União na LEITURA, sem sync** — a matriz lê `raci_itens` do INTEL **+** `raci_itens` do ConselhoOS (cross-DB, read-only, via `CONSELHOOS_DATABASE_URL` em call-time+strip) e normaliza as duas no mesmo formato. Nada é copiado: são 2 Neons sem sync ([[feedback_intel_conselhoos_sync_lacuna]]) e uma terceira cópia do mesmo fato seria mais uma a divergir. **Escrita só no lado INTEL** (`editavel` marca a linha); item de conselho continua se editando no ConselhoOS.
