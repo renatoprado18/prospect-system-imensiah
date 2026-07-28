@@ -29032,7 +29032,28 @@ async def cron_monitor_cron_health(request: Request):
             notified_jobs.append(a["job_id"])
         msg = "\n".join(lines)[:900]
         try:
-            await send_intel_notification(msg)
+            # Passa pelo notification_router (nao mais send_intel_notification
+            # direto): sem isso o alerta ficava fora do channel_decisions e o
+            # teto diario nao o governava — foram 15 msgs em 14d, quase todas
+            # do mesmo falso-positivo que o 246e904 corrigiu.
+            #
+            # score 8 preserva a intencao atual (interromper). Nao confundir
+            # com a regra `cron_error_prod`, que fura o teto: aquela e sobre um
+            # cron que ERROU em producao; esta e o monitor de PERIODICIDADE,
+            # que e observacao — se o teto ja estourou, pode descer pra push.
+            #
+            # dedup pelo conjunto de jobs alertados: enquanto os mesmos jobs
+            # seguirem em alerta, e a mesma noticia. Job novo entrando no
+            # conjunto muda a chave e volta a notificar.
+            from services.notification_router import notify
+            await notify(
+                "cron_health",
+                "Cron health alert",
+                msg,
+                8,
+                msg_type="cron_health_alert",
+                dedup="cron_health:" + "-".join(sorted(notified_jobs)),
+            )
         except Exception as e:
             logging.warning(f"monitor-cron-health: WA notify failed: {e}")
 

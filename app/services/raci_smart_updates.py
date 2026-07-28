@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 from services import llm
 from services import llm_usage
+import hashlib
 import json
 import logging
 import re
@@ -609,6 +610,29 @@ async def extract_text_from_media(message: Dict, message_key: Dict, instance: st
     return extracted
 
 
+def format_pending_review_wa(pending: List[Dict], empresa_nome: str = "") -> str:
+    """Texto do aviso de propostas media-confianca esperando aprovacao."""
+    lines = [f"⚠️ Update RACI {empresa_nome or 'empresa'} precisa aprovacao:"]
+    for p in pending:
+        lines.append(f"- _{(p.get('evidencia') or '')[:80]}_")
+        lines.append(f"  → propor {p.get('new_status') or 'note'} (conf {p.get('confianca')})")
+    lines.append("\nResponda no app /editorial ou edite manual no ConselhoOS.")
+    return "\n".join(lines)
+
+
+def pending_review_dedup_key(empresa_id: str, body: str) -> str:
+    """Chave de dedup do aviso — empresa + hash do CONTEUDO.
+
+    Por que nao empresa+dia: em 27/07 sairam dois avisos da MESMA Vallen Clinic
+    (13:31 e 15:14) com evidencias diferentes ("Jessica fica fora de 08-26/08" e
+    "buscamos uma administrativa..."). Uma chave por empresa engoliria o
+    segundo, que era noticia nova. O hash do corpo colapsa so a repeticao
+    literal — que e o caso do mesmo sweep reprocessando a mesma mensagem.
+    """
+    sig = hashlib.sha1(body.encode("utf-8")).hexdigest()[:12]
+    return f"raci_pending:{empresa_id}:{sig}"
+
+
 async def process_group_message(text: str, empresa_id: str, empresa_nome: str = "") -> Dict:
     """Pipeline completo: tenta regex, fallback AI, aplica alta confianca,
     notifica Renato pra media confianca. Retorna resumo do que rolou.
@@ -648,13 +672,28 @@ async def process_group_message(text: str, empresa_id: str, empresa_nome: str = 
     # 3. Notif Renato pra media
     if pending:
         try:
-            from services.intel_bot import send_intel_notification
-            lines = [f"⚠️ Update RACI {empresa_nome or 'empresa'} precisa aprovacao:"]
-            for p in pending:
-                lines.append(f"- _{(p.get('evidencia') or '')[:80]}_")
-                lines.append(f"  → propor {p.get('new_status') or 'note'} (conf {p.get('confianca')})")
-            lines.append(f"\nResponda no app /editorial ou edite manual no ConselhoOS.")
-            await send_intel_notification("\n".join(lines))
+            # Passa pelo notification_router (nao mais send_intel_notification
+            # direto). Este era o MAIOR produtor de WhatsApp da casa — 19 msgs
+            # em 14d, mais que qualquer um que ja estava no router — e nao
+            # aparecia em channel_decisions, entao o teto diario nao o
+            # governava. score 8 preserva a intencao (e acionavel: o Renato
+            # aprova pelo WA).
+            #
+            # dedup pelo CONTEUDO, nao por empresa+dia: em 27/07 sairam duas
+            # notificacoes da mesma Vallen Clinic (13:31 e 15:14) com
+            # evidencias DIFERENTES. Deduplicar por empresa engoliria a
+            # segunda; hash do texto colapsa so a repeticao literal.
+            from services.notification_router import notify
+            body = format_pending_review_wa(pending, empresa_nome)
+            await notify(
+                "raci_smart_update",
+                f"Update RACI {empresa_nome or 'empresa'}",
+                body,
+                8,
+                msg_type="raci_pending_review",
+                dedup=pending_review_dedup_key(empresa_id, body),
+                topic=empresa_nome or None,
+            )
         except Exception as e:
             logger.warning(f"notif Renato pending review falhou: {e}")
 

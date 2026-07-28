@@ -17,6 +17,8 @@ import textwrap
 from datetime import datetime, date
 from typing import Dict, List, Optional
 
+from services.tz import now_utc, to_brt
+
 
 def _clip(s: Optional[str], width: int = 120) -> str:
     """Quebra em palavra com reticencias, evita cortar frases no meio."""
@@ -262,6 +264,42 @@ def _short_name(name: str) -> str:
     return f"{parts[0]} {parts[-1][0]}."
 
 
+def _iso_week() -> str:
+    """Semana ISO em BRT ('2026-W30') — granularidade do dedup do preview.
+
+    O preview e SEMANAL (cron sabado 18h). Duas runs na mesma semana sao a
+    mesma coisa; o dedup por semana evita que um re-disparo manual interrompa
+    de novo. Em BRT porque a semana do Renato e a de Brasilia — sabado 18h BRT
+    e domingo 21h UTC, e o dedup por semana UTC ja teria virado.
+    """
+    y, w, _ = to_brt(now_utc()).isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+async def _send_preview(title: str, body: str, dedup: str, topic: Optional[str] = None) -> bool:
+    """Despacha um preview RACI pelo notification_router. True se ENTREGOU.
+
+    Antes ia por send_intel_notification direto, fora do channel_decisions —
+    logo fora do teto diario de interrupcao. Nao da pra usar o helper notify()
+    aqui porque ele devolve `action == 'sent'`, e um preview REBAIXADO pra push
+    devolveria False; o caller conta isso como erro. O que importa pro contador
+    e se foi ENTREGUE por algum canal, entao lemos a action: so 'skipped' e
+    falha de verdade ('duplicate' tambem nao e erro — e o dedup funcionando).
+    """
+    from services.notification_router import route_to_renato
+
+    r = await route_to_renato(
+        source="raci_weekly_preview",
+        payload={"title": title, "body": body},
+        msg_type="raci_weekly_preview",
+        urgency_score=8,
+        dedup_key=dedup,
+        message_text=body,
+        topic_key=topic,
+    )
+    return r.get("action") != "skipped"
+
+
 async def send_raci_to_groups() -> Dict:
     """Envia PREVIEW dos reports RACI semanais pro Renato no chat privado.
 
@@ -273,7 +311,6 @@ async def send_raci_to_groups() -> Dict:
     Mantem o nome da funcao pra nao quebrar callers (cron_raci_weekly_report).
     """
     from database import get_db
-    from services.intel_bot import send_intel_notification
 
     results = {"previews_sent": 0, "skipped": 0, "errors": 0, "empresas": []}
 
@@ -346,7 +383,12 @@ async def send_raci_to_groups() -> Dict:
             )
 
             try:
-                ok = await send_intel_notification(preview)
+                ok = await _send_preview(
+                    f"PREVIEW RACI — {empresa['nome']}",
+                    preview,
+                    f"raci_preview:{empresa['id']}:{_iso_week()}",
+                    topic=empresa["nome"],
+                )
                 if ok:
                     results["previews_sent"] += 1
                     results["empresas"].append(empresa['nome'])
@@ -364,7 +406,12 @@ async def send_raci_to_groups() -> Dict:
     try:
         jabo_preview = build_jabo_preview()
         if jabo_preview:
-            ok = await send_intel_notification(jabo_preview)
+            ok = await _send_preview(
+                "PREVIEW RACI — Governança Jabô",
+                jabo_preview,
+                f"raci_preview:jabo:{_iso_week()}",
+                topic="Governança Jabô",
+            )
             if ok:
                 results["previews_sent"] += 1
                 results["empresas"].append("Governança Jabô")

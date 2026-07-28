@@ -14,6 +14,7 @@ from typing import Dict, List
 import httpx
 
 from database import get_db
+from services.tz import now_utc, to_brt
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +62,24 @@ async def generate_daily_group_digests(days: int = 1) -> Dict:
     if digests:
         wa_text = _format_digests_for_whatsapp(digests)
         try:
-            from services.intel_bot import send_intel_notification
-            await send_intel_notification(wa_text)
+            # Passa pelo notification_router (nao mais send_intel_notification
+            # direto): sem isso o digest nao aparecia em channel_decisions e
+            # ficava FORA do teto diario de interrupcao — era um dos 5
+            # produtores INTEL que faziam a regua do teto medir a minoria.
+            # score 8 preserva a intencao atual (interromper); quem decide o
+            # canal agora e o router. dedup por dia BRT: o digest e 1x/dia, e
+            # duas runs no mesmo dia sao a mesma coisa.
+            from services.notification_router import notify
+            await notify(
+                "group_digest",
+                "Digest dos Grupos",
+                wa_text,
+                8,
+                msg_type="group_digest",
+                dedup=f"group_digest:{to_brt(now_utc()).strftime('%Y%m%d')}",
+            )
+            # Conta o DESPACHO, nao o canal: rebaixado pra push continua
+            # entregue (o canal fica registrado em channel_decisions).
             results["digests_sent"] = 1
         except Exception as e:
             results["errors"].append(f"WhatsApp send: {e}")

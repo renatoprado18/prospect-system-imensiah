@@ -369,7 +369,12 @@ def _store_proposal(mid, jid, empresa_id, empresa_nome, sender, p, acoes) -> Opt
 
 async def _notify_renato(proposals: List[Dict[str, Any]]) -> None:
     """Digest WA pro Renato com as propostas pendentes. Nao aplica nada."""
-    from services.intel_bot import send_intel_notification
+    # Passa pelo notification_router (nao mais send_intel_notification direto):
+    # sem isso a notificacao nao entrava em channel_decisions e ficava fora do
+    # teto diario. score 8 preserva a intencao — e acionavel ("aplica o
+    # RACI-74"). dedup pelos IDs das propostas: a mesma lista notificada duas
+    # vezes e a mesma coisa; lista diferente passa.
+    from services.notification_router import notify
 
     lines = [f"🔎 RACI — {len(proposals)} proposta(s) do grupo pra revisar (shadow):", ""]
     for p in proposals[:15]:
@@ -386,7 +391,16 @@ async def _notify_renato(proposals: List[Dict[str, Any]]) -> None:
             lines.append(f"   ↳ {(p['evidencia'])[:80]}")
     lines.append("")
     lines.append('Nada foi aplicado. Aprova com os RACI-N (ex: "aplica o RACI-74") que eu aplico no ConselhoOS.')
-    await send_intel_notification("\n".join(lines))
+    _ids = "-".join(str(p["id"]) for p in sorted(proposals[:15], key=lambda x: x["id"]))
+    await notify(
+        "raci_group_shadow",
+        f"RACI — {len(proposals)} proposta(s) do grupo",
+        "\n".join(lines),
+        8,
+        msg_type="raci_group_review",
+        dedup=f"raci_shadow:{_ids}",
+        topics=[p["empresa"] for p in proposals[:15] if p.get("empresa")] or None,
+    )
 
 
 def apply_group_proposal(proposal_id: int) -> Dict[str, Any]:
