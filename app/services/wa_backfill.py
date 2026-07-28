@@ -24,6 +24,9 @@ from typing import Any, Dict, List, Optional
 
 from database import get_db
 from integrations.evolution_api import get_evolution_client
+from services.contact_identity import (
+    phone_lookup_key, phone_match_sql, phone_match_order_sql,
+)
 
 log = logging.getLogger("intel.wa_backfill")
 
@@ -60,13 +63,16 @@ _UPSERT = """
 
 # Resolve contato por sufixo do telefone + flag de relevância (mesma política
 # do backfill: círculo<=2 OU projeto ativo). Usado pela persistência ao vivo.
-_RESOLVE_CONTACT = """
+# O casamento é por dígitos dos dois lados (phone_match_sql): o número chega
+# cru do WhatsApp e na base pode estar formatado pelo Google.
+_RESOLVE_CONTACT = f"""
     SELECT c.id, c.nome,
            (COALESCE(c.circulo, 9) <= 2 OR EXISTS (
                SELECT 1 FROM tasks t JOIN projects p ON p.id = t.project_id
                 WHERE t.contact_id = c.id AND p.status = 'ativo')) AS relevant
       FROM contacts c
-     WHERE c.telefones::text LIKE %s
+     WHERE {phone_match_sql('c')}
+     ORDER BY {phone_match_order_sql('c')}
      LIMIT 5
 """
 
@@ -150,12 +156,12 @@ def _resolve_relevant_contact(phone: str) -> Optional[Dict[str, Any]]:
     Alinha com o fallback do find_contact do backfill. Colisão de 8 dígitos
     dentro do conjunto de relevantes (~55) é desprezível."""
     digits = "".join(ch for ch in str(phone) if ch.isdigit())
-    if len(digits) < 8:
+    key = phone_lookup_key(digits)
+    if not key:
         return None
-    suffix = digits[-8:]
     with get_db() as conn:
         cur = conn.cursor()
-        cur.execute(_RESOLVE_CONTACT, (f"%{suffix}%",))
+        cur.execute(_RESOLVE_CONTACT, (key, digits))
         for row in cur.fetchall():
             if row["relevant"]:
                 return {"id": row["id"], "nome": row["nome"]}

@@ -36,6 +36,7 @@ import re
 import unicodedata
 from typing import Dict, List, Set
 
+from services.contact_identity import phone_lookup_key, phone_match_sql
 from services.detectors._base import DetectorRun, emit_signal, expire_stale_signals, make_signal_hash, savepoint
 
 DETECTOR_NAME = "detector_cruzamentos"
@@ -177,11 +178,13 @@ def run(conn) -> DetectorRun:
     res = DetectorRun(detector=DETECTOR_NAME)
     current_hashes: List[str] = []
     topical_on = _topical_enabled()
-    # Sufixo do RENATO_PHONE pra excluir o self (e suas duplicatas) dos membros
+    # Chave do RENATO_PHONE pra excluir o self (e suas duplicatas) dos membros
     # de projeto. Fallback = numero canonico ([[feedback_no_hardcoded...]] usa
-    # este valor). Ultimos 9 digitos = robusto a +55 / DDI / formatacao.
+    # este valor). Compara so digitos dos dois lados (`phone_match_sql`) — o
+    # sufixo cru de antes nao via a ficha do Renato quando o numero dela esta
+    # formatado pelo Google, e ai o self voltava a aparecer como cruzamento.
     _renato_digits = re.sub(r"\D", "", (os.getenv("RENATO_PHONE") or "5511984153337"))
-    self_phone_like = f"%{_renato_digits[-9:]}%"
+    self_phone_key = phone_lookup_key(_renato_digits)
     cur = conn.cursor()
 
     try:
@@ -312,18 +315,18 @@ def run(conn) -> DetectorRun:
                 # ([[feedback_no_hardcoded_contact_ids]]). NOT EXISTS = seguro
                 # com NULL e com telefone ausente (fallback: nao exclui ninguem).
                 cur.execute(
-                    """
+                    f"""
                     SELECT c.id, c.nome, c.circulo, c.cargo, pm.papel
                     FROM project_members pm
                     JOIN contacts c ON c.id = pm.contact_id
                     WHERE pm.project_id = %s
                       AND NOT EXISTS (
                           SELECT 1 FROM contacts self_c
-                          WHERE self_c.telefones::text LIKE %s
+                          WHERE {phone_match_sql('self_c')}
                             AND self_c.nome = c.nome
                       )
                     """,
-                    (pid, self_phone_like),
+                    (pid, self_phone_key),
                 )
                 for c in cur.fetchall():
                     ex = by_id.get(c["id"])

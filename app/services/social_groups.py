@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 import httpx
 
 from database import get_db
+from services.contact_identity import find_contact_by_phone
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +48,16 @@ def _cross_phone_with_contacts(phones: List[str]) -> List[Dict]:
     with get_db() as conn:
         cursor = conn.cursor()
         for phone in phones:
-            last_digits = phone[-8:] if len(phone) >= 8 else phone
-            if len(last_digits) < 6:
-                continue
-            cursor.execute("""
-                SELECT id, nome, empresa, cargo, circulo, health_score, foto_url
-                FROM contacts WHERE telefones::text LIKE %s LIMIT 1
-            """, (f'%{last_digits}%',))
-            contact = cursor.fetchone()
+            # So digitos dos dois lados — o participante vem cru do WhatsApp e
+            # o numero na base pode estar formatado pelo Google. Com o LIKE
+            # anterior, participante conhecido com numero formatado nao
+            # aparecia como conhecido.
+            contact = find_contact_by_phone(
+                cursor, phone,
+                columns="id, nome, empresa, cargo, circulo, health_score, foto_url",
+            )
             if contact:
-                known.append(dict(contact))
+                known.append(contact)
     return known
 
 

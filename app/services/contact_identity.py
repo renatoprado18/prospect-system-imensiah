@@ -879,3 +879,102 @@ def unlink_google_id(cursor, account_email: str, gid: str) -> Optional[str]:
         contact_id,
     ))
     return "unlinked"
+
+
+# ============== Busca online por telefone (WhatsApp -> ficha) ==============
+#
+# PROBLEMA (reproduzido pela CoS em 28/07/26, medido em prod no mesmo dia)
+# ----------------------------------------------------------------------
+# O WhatsApp entrega o numero CRU (`5511992526344`). O Google entrega
+# FORMATADO (`+55 (11) 99252-6344`). Oito call-sites comparavam os dois com
+#
+#     WHERE telefones::text LIKE '%<ultimos 8 digitos do numero cru>%'
+#
+# e o hifen do formato do Google cai EXATAMENTE no meio desses 8 digitos
+# (celular BR e `9XXXX-XXXX`: os ultimos 8 sao `XXXX-XXXX`). Ou seja: nao era
+# um caso de borda, era 100% dos numeros formatados — 3.659 dos 9.149 numeros
+# da base (40%).
+#
+# Efeito por consumidor: o webhook de WA inbound criava ficha fantasma
+# "Desconhecido +55..." pra quem JA tinha ficha (18 das 44 fantasmas da base
+# tinham ficha real — Gustavo Glasser, Piccino, Francine, Raimundo...); o
+# sync de grupo deixava `group_messages.contact_id` NULL; a lista de
+# participantes de grupo escondia gente conhecida.
+#
+# A correcao e comparar SO DIGITOS dos dois lados, por campo `number` do
+# JSONB — nao pelo texto do JSON inteiro, que carrega `type`/`whatsapp` e
+# poderia casar por acidente.
+
+# Quantos digitos finais comparar. 8 e o mesmo criterio que os call-sites ja
+# usavam, mantido de proposito: esta frente conserta a NORMALIZACAO, nao
+# afrouxa nem aperta o criterio. 8 absorve as duas divergencias comuns entre
+# origens — o 9o digito de celular BR e o 0 de operadora — sem exigir DDI.
+PHONE_MATCH_DIGITS = 8
+
+# Condicao SQL reutilizavel. `{alias}` e a tabela de contatos no escopo do
+# chamador; o placeholder recebe a chave de `phone_lookup_key`.
+_PHONE_MATCH_COND = """jsonb_typeof({alias}.telefones) = 'array' AND EXISTS (
+            SELECT 1 FROM jsonb_array_elements({alias}.telefones) _t
+             WHERE right(regexp_replace(_t->>'number', '[^0-9]', '', 'g'), {n}) = %s
+        )"""
+
+# Desempate deterministico. O LIKE antigo fazia `LIMIT 1` sem ORDER BY, entao
+# com mais de um candidato a ficha escolhida dependia da ordem fisica da
+# tabela. Prefere o numero que bate INTEIRO (match forte, imune a colisao de
+# sufixo entre um numero BR e um internacional) e, no empate, o menor id —
+# mesma regra que `_resolve_by_email`/`phone_name_dup` ja usam pra duplicata.
+_PHONE_MATCH_ORDER = """(NOT EXISTS (
+            SELECT 1 FROM jsonb_array_elements({alias}.telefones) _t
+             WHERE regexp_replace(_t->>'number', '[^0-9]', '', 'g') = %s
+        )), {alias}.id"""
+
+
+def phone_lookup_key(phone: Any) -> Optional[str]:
+    """
+    Chave de comparacao de um telefone, venha ele do WhatsApp ou do Google.
+
+    Devolve os ultimos PHONE_MATCH_DIGITS digitos, ou None quando o numero e
+    curto demais pra identificar alguem (o chamador deve pular a busca).
+    """
+    digits = re.sub(r"\D", "", str(phone or ""))
+    if len(digits) < PHONE_MATCH_DIGITS:
+        return None
+    return digits[-PHONE_MATCH_DIGITS:]
+
+
+def phone_match_sql(alias: str = "c") -> str:
+    """
+    Condicao pro WHERE de quem monta a propria query (JOIN, colunas extras).
+
+    Consome UM parametro: `phone_lookup_key(phone)`. Para desempate estavel,
+    use junto de `phone_match_order_sql`.
+    """
+    return _PHONE_MATCH_COND.format(alias=alias, n=PHONE_MATCH_DIGITS)
+
+
+def phone_match_order_sql(alias: str = "c") -> str:
+    """ORDER BY que acompanha `phone_match_sql`. Consome UM parametro: os
+    digitos do numero INTEIRO (`re.sub(r'\\D', '', phone)`)."""
+    return _PHONE_MATCH_ORDER.format(alias=alias)
+
+
+def find_contact_by_phone(cursor, phone: Any,
+                          columns: str = "id, nome") -> Optional[Dict]:
+    """
+    Acha a ficha dona de um numero de telefone, em qualquer formato de origem.
+
+    Ponto unico de resolucao online telefone->contato. Devolve o dict do
+    contato (com as `columns` pedidas) ou None. Nao cria, nao escreve.
+    """
+    key = phone_lookup_key(phone)
+    if not key:
+        return None
+    full = re.sub(r"\D", "", str(phone or ""))
+    cursor.execute(
+        f"SELECT {columns} FROM contacts c "
+        f"WHERE {phone_match_sql('c')} "
+        f"ORDER BY {phone_match_order_sql('c')} LIMIT 1",
+        (key, full),
+    )
+    row = cursor.fetchone()
+    return dict(row) if row else None

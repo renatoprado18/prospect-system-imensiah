@@ -16,6 +16,7 @@ from datetime import datetime
 
 from services.worker_secret import get_worker_secret
 from services.tz import now_utc, UTC
+from services.contact_identity import find_contact_by_phone
 
 logger = logging.getLogger(__name__)
 
@@ -974,13 +975,12 @@ async def process_incoming_message(data: Dict, audit_ctx: Dict = None, started: 
     with get_db() as conn:
         cursor = conn.cursor()
 
-        # Buscar contato
-        cursor.execute("""
-            SELECT id, nome FROM contacts
-            WHERE telefones::text LIKE %s
-            LIMIT 1
-        """, (f'%{phone[-8:]}%',))
-        contact = cursor.fetchone()
+        # Buscar contato. Compara SO DIGITOS dos dois lados: o numero chega
+        # cru do WhatsApp e na base pode estar formatado pelo Google
+        # ("+55 (11) 99252-6344"), cujo hifen quebrava o LIKE antigo e fazia
+        # esta busca falhar pra 40% da base -> fantasma pra quem ja tinha
+        # ficha. Ver find_contact_by_phone.
+        contact = find_contact_by_phone(cursor, phone)
 
         if not contact:
             # Política B (ratificada 11/06/26): criar contato fantasma em vez de dropar.

@@ -20,6 +20,7 @@ from typing import Optional
 import httpx
 
 from database import get_connection
+from services.contact_identity import find_contact_by_phone
 
 logger = logging.getLogger(__name__)
 
@@ -102,12 +103,11 @@ def _find_or_create_contact(cursor, contact_id: Optional[int], phone: Optional[s
             return contact_id
 
     if phone:
-        clean = phone.replace("+", "").replace(" ", "").replace("-", "")
-        cursor.execute(
-            "SELECT id FROM contacts WHERE telefones::text ILIKE %s LIMIT 1",
-            (f"%{clean}%",)
-        )
-        row = cursor.fetchone()
+        # Normalizado dos dois lados. O ILIKE anterior limpava `+`/espaco/hifen
+        # so do lado do NUMERO e comparava contra o texto do JSON como esta
+        # gravado — entao numero formatado pelo Google nunca casava e o
+        # screenshot criava phantom pra quem ja tinha ficha.
+        row = find_contact_by_phone(cursor, phone, columns="id")
         if row:
             return row["id"]
 

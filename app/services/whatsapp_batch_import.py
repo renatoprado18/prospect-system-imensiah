@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Optional, Any, Tuple
 from database import get_db
+from services.contact_identity import find_contact_by_phone
 
 logger = logging.getLogger(__name__)
 
@@ -232,33 +233,19 @@ class WhatsAppBatchImporter:
         with get_db() as conn:
             cursor = conn.cursor()
 
-            # 1. Tentar por telefone (múltiplas variações)
+            # 1. Tentar por telefone. As "múltiplas variações" de sufixo eram
+            # redundantes — todas contidas na de 8 dígitos, que é a mais
+            # permissiva — e nenhuma delas via número formatado, porque
+            # comparavam dígitos crus contra o texto do JSON. Uma busca só,
+            # normalizada dos dois lados.
             if phone:
-                phone_digits = self.normalize_phone(phone)
-
-                # Tentar diferentes partes do telefone
-                phone_variants = []
-                if len(phone_digits) >= 8:
-                    phone_variants.append(phone_digits[-8:])  # Últimos 8 dígitos
-                if len(phone_digits) >= 9:
-                    phone_variants.append(phone_digits[-9:])  # Últimos 9 dígitos
-                if len(phone_digits) >= 10:
-                    phone_variants.append(phone_digits[-10:])  # Últimos 10 dígitos
-                if len(phone_digits) >= 11:
-                    phone_variants.append(phone_digits[-11:])  # Todos os dígitos
-
-                for variant in phone_variants:
-                    cursor.execute("""
-                        SELECT id, nome, telefones, foto_url
-                        FROM contacts
-                        WHERE telefones IS NOT NULL
-                          AND telefones::text LIKE %s
-                        LIMIT 1
-                    """, (f'%{variant}%',))
-                    result = cursor.fetchone()
-                    if result:
-                        logger.info(f"Contato encontrado por telefone: {result['nome']}")
-                        return dict(result)
+                result = find_contact_by_phone(
+                    cursor, self.normalize_phone(phone),
+                    columns="id, nome, telefones, foto_url",
+                )
+                if result:
+                    logger.info(f"Contato encontrado por telefone: {result['nome']}")
+                    return result
 
             if not name:
                 return None
@@ -388,30 +375,21 @@ class WhatsAppBatchImporter:
         with get_db() as conn:
             cursor = conn.cursor()
 
-            # 1. ALTA CONFIANÇA: Match por telefone
+            # 1. ALTA CONFIANÇA: Match por telefone (normalizado dos dois lados)
             for phone in all_phones:
                 if phone and len(phone) >= 10:
-                    phone_normalized = self.normalize_phone(phone)
-                    for variant in [phone_normalized[-11:], phone_normalized[-10:], phone_normalized[-9:], phone_normalized[-8:]]:
-                        if len(variant) >= 8:
-                            cursor.execute("""
-                                SELECT id, nome, telefones, foto_url
-                                FROM contacts
-                                WHERE telefones::text LIKE %s
-                                LIMIT 1
-                            """, (f'%{variant}%',))
-                            result = cursor.fetchone()
-                            if result:
-                                contact = dict(result)
-                                confidence = 'high'
-                                match_reason = f'Telefone {phone} encontrado'
-                                logger.info(f"Auto-detect: HIGH by phone {phone} -> {contact['nome']}")
-                                return {
-                                    'contact': contact,
-                                    'confidence': confidence,
-                                    'match_reason': match_reason,
-                                    'alternatives': []
-                                }
+                    result = find_contact_by_phone(
+                        cursor, self.normalize_phone(phone),
+                        columns="id, nome, telefones, foto_url",
+                    )
+                    if result:
+                        logger.info(f"Auto-detect: HIGH by phone {phone} -> {result['nome']}")
+                        return {
+                            'contact': result,
+                            'confidence': 'high',
+                            'match_reason': f'Telefone {phone} encontrado',
+                            'alternatives': []
+                        }
 
             # 2. ALTA CONFIANÇA: Match por nome exato (usando ILIKE para ser mais tolerante)
             if clean_contact_name:

@@ -50,6 +50,7 @@
 - Quick actions contextuais → `GET /api/briefing/quick-actions/{id}`
 - Merge duplicatas → `contact_dedup.py`
 - Exportar CSV/JSON → `export.py`
+- **Resolução telefone → ficha (ponto único)** — `contact_identity.find_contact_by_phone(cursor, phone, columns=...)`, com os fragmentos `phone_match_sql(alias)` / `phone_match_order_sql(alias)` pra quem monta a própria query (JOIN/colunas extras). Compara **só dígitos dos dois lados**, por campo `number` do JSONB: o WhatsApp entrega o número cru (`5511992526344`) e o Google entrega formatado (`+55 (11) 99252-6344`). Antes de 28/07 os 9 consumidores faziam `telefones::text LIKE '%<8 dígitos crus>%'`, e o hífen do formato do Google cai no meio desses 8 dígitos (celular BR é `9XXXX-XXXX`) → **40% da base era invisível ao match** (3.659 de 9.149 números). Consumidores: webhook WA inbound (`evolution_api`, criava ficha "Desconhecido" pra quem já tinha ficha), `group_message_sync._find_contact_by_phone` (deixava `group_messages.contact_id` NULL), `social_groups` (participantes conhecidos), `wa_backfill` (DM 1:1 ao vivo), `whatsapp_batch_import` (×2), `screenshot_ingest`, `detector_cruzamentos` (exclusão do self). Desempate determinístico: match do número **inteiro** vence o de sufixo; empate resolve pelo menor id. Testes: `tests/test_phone_match_normalization.py` (22, os de SQL contra Postgres local em tabela temporária)
 
 ## 2.1. Empresas (`/empresas`) — F2 CoS v2
 - Entidade unificada pra agregar contatos/sinais por empresa → `services/empresas.py`

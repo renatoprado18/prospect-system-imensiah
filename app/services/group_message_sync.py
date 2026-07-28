@@ -12,6 +12,7 @@ from typing import Dict, List
 import httpx
 
 from database import get_db
+from services.contact_identity import find_contact_by_phone
 from services.tz import UTC
 
 logger = logging.getLogger(__name__)
@@ -205,15 +206,16 @@ async def _sync_single_group(
 
 
 def _find_contact_by_phone(cursor, phone: str):
-    """Find contact_id by phone number (last 8 digits match)."""
-    if not phone or len(phone) < 8:
-        return None
-    last_digits = phone[-8:]
-    cursor.execute("""
-        SELECT id FROM contacts WHERE telefones::text LIKE %s LIMIT 1
-    """, (f'%{last_digits}%',))
-    row = cursor.fetchone()
-    return row['id'] if row else None
+    """
+    Find contact_id by phone number.
+
+    Compara so digitos dos dois lados (`find_contact_by_phone`): o remetente
+    chega cru do WhatsApp e na base o numero pode estar formatado pelo Google.
+    O LIKE anterior sobre `telefones::text` nao via nenhum numero formatado, o
+    que e boa parte do `contact_id` NULL em `group_messages`.
+    """
+    row = find_contact_by_phone(cursor, phone, columns="id")
+    return row["id"] if row else None
 
 
 def get_group_messages(group_jid: str, limit: int = 50, since: datetime = None) -> List[Dict]:
